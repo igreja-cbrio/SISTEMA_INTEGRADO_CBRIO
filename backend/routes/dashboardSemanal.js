@@ -1684,4 +1684,59 @@ router.delete('/indicadores-custom/:id', async (req, res) => {
   }
 });
 
+// GET /next-presenca-mensal?meses=12 · quantas pessoas estiveram PRESENTES no
+// NEXT por mês (aba simples do Dashboard Semanal). Presença = inscrição do NEXT
+// com check-in feito (next_inscricoes.check_in_at) — mesma régua do módulo /next.
+// Agrupa pelo mês do EVENTO (next_eventos.data · "no NEXT de tal mês"); se o
+// evento não tiver data, cai no mês do próprio check-in. Paginado (cap 1000).
+router.get('/next-presenca-mensal', async (req, res) => {
+  try {
+    const meses = Math.min(Math.max(parseInt(req.query.meses, 10) || 12, 1), 36);
+    // Janela: início do mês, `meses` meses atrás.
+    const hoje = new Date();
+    const inicio = new Date(Date.UTC(hoje.getUTCFullYear(), hoje.getUTCMonth() - (meses - 1), 1));
+
+    // Puxa os check-ins do NEXT (volume pequeno) paginando pra fugir do cap de 1000.
+    let linhas = [];
+    let offset = 0;
+    const page = 1000;
+    while (true) {
+      const { data, error } = await supabase
+        .from('next_inscricoes')
+        .select('id, check_in_at, evento:next_eventos(data)')
+        .not('check_in_at', 'is', null)
+        .range(offset, offset + page - 1);
+      if (error) throw error;
+      if (!data || !data.length) break;
+      linhas = linhas.concat(data);
+      if (data.length < page) break;
+      offset += page;
+    }
+
+    // Agrupa por mês (AAAA-MM) do evento; fallback pro mês do check-in.
+    const porMes = {};
+    for (const l of linhas) {
+      const ref = l.evento?.data || l.check_in_at;
+      if (!ref) continue;
+      const ym = String(ref).slice(0, 7); // AAAA-MM
+      if (ym < inicio.toISOString().slice(0, 7)) continue; // fora da janela
+      porMes[ym] = (porMes[ym] || 0) + 1;
+    }
+
+    // Monta a série contínua dos últimos `meses` (mês sem NEXT aparece como 0).
+    const MESES_PT = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+    const serie = [];
+    for (let i = 0; i < meses; i++) {
+      const d = new Date(Date.UTC(inicio.getUTCFullYear(), inicio.getUTCMonth() + i, 1));
+      const ym = d.toISOString().slice(0, 7);
+      serie.push({ mes: ym, label: `${MESES_PT[d.getUTCMonth()]}/${d.getUTCFullYear()}`, presentes: porMes[ym] || 0 });
+    }
+    const total = serie.reduce((s, m) => s + m.presentes, 0);
+    res.json({ serie, total });
+  } catch (e) {
+    console.error('[DASH-SEM] next-presenca-mensal', e.message);
+    res.status(500).json({ error: 'Erro ao carregar presença do NEXT' });
+  }
+});
+
 module.exports = router;

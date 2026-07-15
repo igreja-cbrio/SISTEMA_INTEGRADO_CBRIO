@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
 import { Button } from '../components/ui/button';
-import { Calendar, TrendingUp, Target, Sparkles, Maximize2, Minimize2, Banknote, Activity, BarChart3, FileText, Loader2 } from 'lucide-react';
+import { Calendar, TrendingUp, Target, Sparkles, Maximize2, Minimize2, Banknote, Activity, BarChart3, FileText, Loader2, UserCheck } from 'lucide-react';
 import DashSemanalAba from '../components/dashboard-semanal/DashSemanalAba';
 import DashMensalAba from '../components/dashboard-semanal/DashMensalAba';
+import DashNextAba from '../components/dashboard-semanal/DashNextAba';
 import DashMediaMovelAba from '../components/dashboard-semanal/DashMediaMovelAba';
 import DashKpisAba from '../components/dashboard-semanal/DashKpisAba';
 import DashMetasAba from '../components/dashboard-semanal/DashMetasAba';
@@ -33,7 +34,7 @@ export default function DashboardSemanal() {
   const { isAdmin, canFinanceiro, getAccessLevel } = useAuth();
   const verFinanceiro = isAdmin || canFinanceiro;
   const verRelatorios = isAdmin || getAccessLevel(['relatorios']) >= 1;
-  const nColsCls = { 6: 'grid-cols-2 sm:grid-cols-3 md:grid-cols-6', 7: 'grid-cols-2 sm:grid-cols-4 md:grid-cols-7', 8: 'grid-cols-2 sm:grid-cols-4 md:grid-cols-8' }[6 + (verFinanceiro ? 1 : 0) + (verRelatorios ? 1 : 0)] || 'grid-cols-2 sm:grid-cols-4 md:grid-cols-8';
+  const nColsCls = { 7: 'grid-cols-2 sm:grid-cols-4 md:grid-cols-7', 8: 'grid-cols-2 sm:grid-cols-4 md:grid-cols-8', 9: 'grid-cols-3 sm:grid-cols-5 md:grid-cols-9' }[7 + (verFinanceiro ? 1 : 0) + (verRelatorios ? 1 : 0)] || 'grid-cols-3 sm:grid-cols-5 md:grid-cols-9';
   const [tab, setTab] = useState('semanal');
   const wrapperRef = useRef(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -103,6 +104,7 @@ export default function DashboardSemanal() {
         <TabsList className={`grid w-full ${nColsCls} max-w-[1200px]`}>
           <TabsTrigger value="semanal"><Calendar className="h-4 w-4 mr-1.5" />Semanal</TabsTrigger>
           <TabsTrigger value="mensal"><TrendingUp className="h-4 w-4 mr-1.5" />Mensal</TabsTrigger>
+          <TabsTrigger value="next"><UserCheck className="h-4 w-4 mr-1.5" />NEXT</TabsTrigger>
           <TabsTrigger value="media-movel"><Activity className="h-4 w-4 mr-1.5" />Média Móvel</TabsTrigger>
           <TabsTrigger value="kpis"><BarChart3 className="h-4 w-4 mr-1.5" />KPIs</TabsTrigger>
           {verFinanceiro && <TabsTrigger value="financeiro"><Banknote className="h-4 w-4 mr-1.5" />Financeiro</TabsTrigger>}
@@ -116,6 +118,9 @@ export default function DashboardSemanal() {
         </TabsContent>
         <TabsContent value="mensal" className="mt-4">
           <DashMensalAba />
+        </TabsContent>
+        <TabsContent value="next" className="mt-4">
+          <DashNextAba />
         </TabsContent>
         <TabsContent value="media-movel" className="mt-4">
           <DashMediaMovelAba />
