@@ -54,6 +54,19 @@ export default function VolAdmin() {
     }
   };
 
+  const [nascLoading, setNascLoading] = useState(false);
+  const handleBackfillNascimento = async () => {
+    setNascLoading(true);
+    try {
+      const r: any = await voluntariado.backfillNascimento();
+      toast.success(`Aniversários atualizados: ${r.updated || 0} preenchidos · ${r.skipped_existing || 0} já tinham · ${r.total_birthdays_pco || 0} no PCO`);
+    } catch (err: any) {
+      toast.error(err.message || 'Erro ao puxar aniversários do PCO');
+    } finally {
+      setNascLoading(false);
+    }
+  };
+
   const handleDiagnostics = async () => {
     setDiagLoading(true);
     setDiagData(null);
@@ -152,6 +165,18 @@ export default function VolAdmin() {
               Sincronizar
             </Button>
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Backfill de aniversários do PCO */}
+      <Card>
+        <CardHeader><CardTitle className="flex items-center gap-2"><History className="h-5 w-5" /> Aniversários do Planning Center</CardTitle></CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-sm text-muted-foreground">Puxa a data de nascimento dos voluntários do Planning Center (People) e preenche quem está sem no cadastro — assim o aniversário no WhatsApp funciona. Não sobrescreve quem já tem data.</p>
+          <Button onClick={handleBackfillNascimento} disabled={nascLoading}>
+            {nascLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <History className="h-4 w-4 mr-2" />}
+            Puxar aniversários do PCO
+          </Button>
         </CardContent>
       </Card>
 
