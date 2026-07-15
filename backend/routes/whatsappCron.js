@@ -5,12 +5,28 @@ const { supabase } = require('../utils/supabase');
 const { requireCron } = require('../utils/cronAuth');
 const wpp = require('../services/whatsappService');
 
-// GET /api/whatsapp-cron/aniversarios — parabeniza quem faz aniversário hoje.
-// Marketing → respeita opt-in (notificarMembro já exige). Roda 1x/dia.
+// GET /api/whatsapp-cron/aniversarios — parabeniza os VOLUNTÁRIOS que fazem
+// aniversário hoje (Ministério do Voluntariado · template WHATSAPP_TEMPLATE_ANIVERSARIO2).
+// Consolidado: é o ÚNICO aniversário por WhatsApp (o antigo, genérico pra todo
+// membro do app, foi removido pra não duplicar). Marketing → respeita opt-in
+// (notificarMembro já exige). Roda 1x/dia.
 router.get('/aniversarios', requireCron, async (_req, res) => {
   try {
     const hoje = new Date(Date.now() - 3 * 3600 * 1000); // BRT
     const mmdd = `${String(hoje.getUTCMonth() + 1).padStart(2, '0')}-${String(hoje.getUTCDate()).padStart(2, '0')}`;
+
+    // Conjunto de membros que são VOLUNTÁRIOS ativos (vínculo aberto · ate IS NULL).
+    const voluntarios = new Set();
+    for (let off = 0; ; off += 1000) {
+      const { data: vs, error: ve } = await supabase.from('mem_voluntarios')
+        .select('membro_id').is('deleted_at', null).is('ate', null)
+        .not('membro_id', 'is', null).range(off, off + 999);
+      if (ve) throw ve;
+      if (!vs || !vs.length) break;
+      vs.forEach(v => voluntarios.add(v.membro_id));
+      if (vs.length < 1000) break;
+    }
+
     let alvo = 0, enviados = 0, offset = 0;
     while (true) {
       const { data, error } = await supabase.from('mem_membros')
@@ -22,6 +38,7 @@ router.get('/aniversarios', requireCron, async (_req, res) => {
       if (!data || !data.length) break;
       for (const m of data) {
         if (String(m.data_nascimento).slice(5, 10) !== mmdd) continue;
+        if (!voluntarios.has(m.id)) continue; // só voluntários
         alvo++;
         const primeiroNome = (m.nome || '').trim().split(/\s+/)[0] || m.nome;
         const r = await wpp.notificarMembro(m.id, 'aniversario', [primeiroNome]);
@@ -30,7 +47,7 @@ router.get('/aniversarios', requireCron, async (_req, res) => {
       if (data.length < 1000) break;
       offset += 1000;
     }
-    res.json({ ok: true, aniversariantes: alvo, enviados });
+    res.json({ ok: true, voluntarios_aniversariantes: alvo, enviados });
   } catch (e) {
     console.error('[wpp-cron] aniversarios:', e.message);
     res.status(500).json({ error: 'Erro no cron de aniversários' });
