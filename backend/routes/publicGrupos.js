@@ -97,29 +97,50 @@ router.get('/buscar', async (req, res) => {
       g.modo_inscricao === 'sempre_aberto'
       || (g.modo_inscricao !== 'fechado' && (!g.temporada || abertas.has(g.temporada))));
 
-    // Enriquecer com líder
+    // Enriquecer com líder principal (mem_grupos.lider_id — é quem recebe a
+    // aprovação por WhatsApp) + líderes ADICIONAIS do roster (funcao lider/
+    // co_lider · Marcos 15/07: grupo com dois líderes aparece na busca por
+    // QUALQUER um deles).
     const liderIds = [...new Set((grupos || []).map(g => g.lider_id).filter(Boolean))];
     let lideresMap = {};
     if (liderIds.length > 0) {
       const { data: lideres } = await supabase.from('mem_membros').select('id, nome, foto_url').in('id', liderIds);
       (lideres || []).forEach(l => { lideresMap[l.id] = l; });
     }
+    const gIds = (grupos || []).map(g => g.id);
+    const rosterLideres = {};
+    for (let i = 0; i < gIds.length; i += 200) {
+      const { data: rl } = await supabase.from('mem_grupo_membros')
+        .select('grupo_id, mem_membros!inner(nome)')
+        .in('grupo_id', gIds.slice(i, i + 200))
+        .in('funcao', ['lider', 'co_lider'])
+        .is('saiu_em', null).is('deleted_at', null);
+      (rl || []).forEach(v => {
+        if (!v.mem_membros?.nome) return;
+        (rosterLideres[v.grupo_id] = rosterLideres[v.grupo_id] || []).push(v.mem_membros.nome);
+      });
+    }
 
-    let resultado = (grupos || []).map(g => ({
-      ...g,
-      lider_nome: lideresMap[g.lider_id]?.nome || null,
-      lider_foto: lideresMap[g.lider_id]?.foto_url || null,
-    }));
+    let resultado = (grupos || []).map(g => {
+      const principal = lideresMap[g.lider_id]?.nome || null;
+      const lideresNomes = [...new Set([principal, ...(rosterLideres[g.id] || [])].filter(Boolean))];
+      return {
+        ...g,
+        lider_nome: principal,
+        lider_foto: lideresMap[g.lider_id]?.foto_url || null,
+        lideres_nomes: lideresNomes,
+      };
+    });
 
     if (lider_nome) {
       const term = String(lider_nome).toLowerCase();
-      resultado = resultado.filter(g => g.lider_nome?.toLowerCase().includes(term));
+      resultado = resultado.filter(g => (g.lideres_nomes || []).some(n => n.toLowerCase().includes(term)));
     }
     if (q) {
       const term = String(q).toLowerCase();
       resultado = resultado.filter(g =>
         g.nome?.toLowerCase().includes(term)
-        || g.lider_nome?.toLowerCase().includes(term)
+        || (g.lideres_nomes || []).some(n => n.toLowerCase().includes(term))
         || g.bairro?.toLowerCase().includes(term)
         || g.local?.toLowerCase().includes(term)
         || g.codigo?.toLowerCase().includes(term)

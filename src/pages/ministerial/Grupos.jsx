@@ -470,13 +470,29 @@ export default function Grupos() {
     } catch { toast.error('Erro ao remover'); }
   };
 
+  // Troca a função do membro no estado local NA HORA (otimista) — o badge
+  // reflete no clique, sem esperar a rede; o loadDetail confirma atrás e,
+  // em erro, restaura o estado real (Marcos · 15/07: promover a líder só
+  // aparecia depois do F5).
+  const aplicarFuncaoLocal = (participacaoId, funcao) => {
+    setDetailData(d => d ? {
+      ...d,
+      membros: (d.membros || []).map(m => m.participacao_id === participacaoId ? { ...m, funcao } : m),
+    } : d);
+  };
+
   // Marca/desmarca um membro como "líder em treinamento" naquele grupo (opcional).
   const handleToggleTreinamento = async (participacaoId, emTreino) => {
+    const novaFuncao = emTreino ? 'frequentador' : 'lider_treinamento';
+    aplicarFuncaoLocal(participacaoId, novaFuncao);
     try {
-      await api.setFuncaoMembro(participacaoId, emTreino ? 'frequentador' : 'lider_treinamento');
+      await api.setFuncaoMembro(participacaoId, novaFuncao);
       toast.success(emTreino ? 'Removido de líder em treinamento' : 'Marcado como líder em treinamento');
       loadDetail(selectedGrupo);
-    } catch (e) { toast.error(e.message || 'Erro ao atualizar função'); }
+    } catch (e) {
+      toast.error(e.message || 'Erro ao atualizar função');
+      loadDetail(selectedGrupo); // desfaz o otimista com o estado real
+    }
   };
 
   // Define/troca/remove o supervisor DESTE grupo (fonte da verdade por grupo;
@@ -491,13 +507,20 @@ export default function Grupos() {
   };
 
   // Marca/desmarca um membro como "líder" do grupo. Um grupo pode ter vários
-  // líderes (o "principal" fica em mem_grupos.lider_id; os demais aqui via funcao).
+  // líderes (o "principal" fica em mem_grupos.lider_id e é quem recebe a
+  // aprovação por WhatsApp; os demais aqui via funcao — e a busca pública
+  // acha o grupo por qualquer um deles).
   const handleToggleLider = async (participacaoId, isLider) => {
+    const novaFuncao = isLider ? 'frequentador' : 'lider';
+    aplicarFuncaoLocal(participacaoId, novaFuncao);
     try {
-      await api.setFuncaoMembro(participacaoId, isLider ? 'frequentador' : 'lider');
+      await api.setFuncaoMembro(participacaoId, novaFuncao);
       toast.success(isLider ? 'Removido de líder' : 'Marcado como líder');
       loadDetail(selectedGrupo);
-    } catch (e) { toast.error(e.message || 'Erro ao atualizar função'); }
+    } catch (e) {
+      toast.error(e.message || 'Erro ao atualizar função');
+      loadDetail(selectedGrupo); // desfaz o otimista com o estado real
+    }
   };
 
   const handleUploadMaterial = async (file) => {
