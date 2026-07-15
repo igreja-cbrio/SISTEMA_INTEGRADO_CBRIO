@@ -160,7 +160,9 @@ const TEMPLATES_APP = {
   kids_precheckin:      process.env.WHATSAPP_TEMPLATE_KIDS_PRECHECKIN,// {{1}} responsável (ou código)
   batismo_lembrete:     process.env.WHATSAPP_TEMPLATE_BATISMO,        // {{1}} data · {{2}} hora
   escala_voluntario:    process.env.WHATSAPP_TEMPLATE_ESCALA,         // {{1}} ministério · {{2}} evento · {{3}} quando
-  aniversario:          process.env.WHATSAPP_TEMPLATE_ANIVERSARIO,    // {{1}} nome (Marketing)
+  // Aniversário do VOLUNTARIADO ({{1}} nome · Marketing). Usa o env ...ANIVERSARIO2
+  // (o ...ANIVERSARIO antigo, genérico do app, foi aposentado — fallback só por segurança).
+  aniversario:          process.env.WHATSAPP_TEMPLATE_ANIVERSARIO2 || process.env.WHATSAPP_TEMPLATE_ANIVERSARIO,
   pedido_atualizado:    process.env.WHATSAPP_TEMPLATE_PEDIDO,         // {{1}} nome {{2}} solicitação {{3}} status {{4}} detalhe {{5}} link
 };
 const TEMPLATES_MARKETING = new Set(['aniversario']);
