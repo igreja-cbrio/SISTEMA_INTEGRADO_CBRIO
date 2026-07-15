@@ -940,6 +940,31 @@ router.get('/pedidos/list', async (req, res) => {
       if (p.mem_grupos && ocupacao[p.grupo_id] !== undefined) p.mem_grupos.membros_ativos = ocupacao[p.grupo_id];
     });
 
+    // Contato do pedido ≠ contato do cadastro (só pros ABERTOS com membro
+    // ligado — é onde orienta a decisão): a aprovação vai atualizar o
+    // cadastro (somar, não substituir · Marcos 15/07) e o selo avisa a
+    // triagem. Divergência = os DOIS lados têm valor e diferem (cadastro
+    // vazio é só preenchido, não ganha selo). Lotes de 200 no .in().
+    try {
+      const abertosComMembro = rows.filter(p =>
+        ['pendente', 'devolvido', 'encaminhado'].includes(p.status) && p.membro_id && (p.telefone || p.email));
+      const memIds = [...new Set(abertosComMembro.map(p => p.membro_id))];
+      const memMap = {};
+      for (let i = 0; i < memIds.length; i += 200) {
+        const { data: mems } = await supabase.from('mem_membros')
+          .select('id, telefone, email').in('id', memIds.slice(i, i + 200));
+        (mems || []).forEach(m => { memMap[m.id] = m; });
+      }
+      abertosComMembro.forEach(p => {
+        const m = memMap[p.membro_id];
+        if (!m) return;
+        const telNovo = normalizarTelefone(p.telefone), telVelho = normalizarTelefone(m.telefone);
+        const emNovo = normalizarEmail(p.email), emVelho = normalizarEmail(m.email);
+        p.contato_divergente = Boolean(
+          (telNovo && telVelho && telNovo !== telVelho) || (emNovo && emVelho && emNovo !== emVelho));
+      });
+    } catch (e) { console.error('[Pedidos list contato]', e.message); }
+
     // Track de origem (label "Next"): pessoa com encaminhamento do Next
     // batendo por membro ou telefone — cobre também quem foi direcionada
     // pelo Next e depois se inscreveu sozinha pelo form.
@@ -1311,6 +1336,41 @@ async function aprovarPedidoCore(pedidoId, user) {
         const { data: gAlvo } = await supabase.from('mem_grupos').select('nome').eq('id', pedido.grupo_id).maybeSingle();
         await registrarEventoPedido(pedido.id, 'aprovado', { grupo: gAlvo?.nome || null }, user?.name || null);
       } catch (e) { console.error('[Pedido aprovado · eventos]', e.message); }
+    })();
+
+    // "Somar, não substituir" (Marcos · 15/07): inscrição aprovada com
+    // telefone/e-mail DIFERENTES do cadastro atualiza o cadastro — quem se
+    // reinscreve com contato novo mudou de contato, e a aprovação humana é o
+    // gate de confiança. O contato anterior vai pras observações; campo vazio
+    // no cadastro é só preenchido (sem nota). Acessório: falha aqui não
+    // desfaz a aprovação.
+    (async () => {
+      try {
+        const telPedido = normalizarTelefone(pedido.telefone);
+        const emailPedido = normalizarEmail(pedido.email);
+        if (!telPedido && !emailPedido) return;
+        const { data: mem } = await supabase.from('mem_membros')
+          .select('telefone, email, observacoes').eq('id', membroId).maybeSingle();
+        if (!mem) return;
+        const telMem = normalizarTelefone(mem.telefone);
+        const emailMem = normalizarEmail(mem.email);
+        const upd = {};
+        const antigos = [];
+        if (telPedido && telPedido !== telMem) {
+          upd.telefone = telPedido;
+          if (telMem) antigos.push(`telefone anterior: ${mem.telefone}`);
+        }
+        if (emailPedido && emailPedido !== emailMem) {
+          upd.email = emailPedido;
+          if (emailMem) antigos.push(`e-mail anterior: ${mem.email}`);
+        }
+        if (!Object.keys(upd).length) return;
+        if (antigos.length) {
+          const nota = `[Contato atualizado na inscrição · ${new Date().toLocaleDateString('pt-BR')}] ${antigos.join(' · ')}`;
+          upd.observacoes = mem.observacoes ? `${mem.observacoes}\n${nota}` : nota;
+        }
+        await supabase.from('mem_membros').update(upd).eq('id', membroId);
+      } catch (e) { console.error('[Pedido aprovado · contato]', e.message); }
     })();
 
     // Fluxo de boas-vindas: notifica a pessoa (rica) e o líder (novo membro)
