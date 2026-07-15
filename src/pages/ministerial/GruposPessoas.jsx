@@ -188,8 +188,11 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
   const [fichaEditando, setFichaEditando] = useState(false);
   const [fichaForm, setFichaForm] = useState({});
   const [fichaSalvando, setFichaSalvando] = useState(false);
+  // CPF já pertence a outro cadastro → mesma pessoa (Marcos · 15/07): em vez
+  // de só recusar, oferece fundir os dois na hora escolhendo qual manter.
+  const [fichaConflito, setFichaConflito] = useState(null); // { outroId, outroNome }
   useEffect(() => {
-    setFicha(null); setFichaEditando(false);
+    setFicha(null); setFichaEditando(false); setFichaConflito(null);
     if (!selected?.membro_id) return;
     let vivo = true;
     api.pessoaFicha(selected.membro_id)
@@ -218,7 +221,30 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
       setFichaEditando(false);
       toast.success('Ficha atualizada');
       if (r.nome !== selected.nome) { setSelected(s => ({ ...s, nome: r.nome })); carregar(); }
-    } catch (e) { toast.error(e.message || 'Erro ao salvar a ficha'); }
+    } catch (e) {
+      if (e.codigo === 'cpf_em_uso' && e.outro?.id) setFichaConflito({ outroId: e.outro.id, outroNome: e.outro.nome });
+      else toast.error(e.message || 'Erro ao salvar a ficha');
+    } finally { setFichaSalvando(false); }
+  };
+
+  // Funde os dois cadastros do conflito de CPF. Mantendo o ATUAL, a fusão
+  // puxa o CPF do outro (é o mesmo) e o modal continua; mantendo o OUTRO,
+  // o cadastro aberto deixa de existir → fecha o modal.
+  const fundirConflito = async (keepId) => {
+    const mergeId = keepId === selected.membro_id ? fichaConflito.outroId : selected.membro_id;
+    setFichaSalvando(true);
+    try {
+      await api.duplicatas.fundir(keepId, [mergeId]);
+      toast.success('Cadastros fundidos em um só — nada se perdeu');
+      setFichaConflito(null); setFichaEditando(false);
+      if (keepId === selected.membro_id) {
+        const f = await api.pessoaFicha(selected.membro_id).catch(() => null);
+        if (f) setFicha(f);
+      } else {
+        setSelected(null);
+      }
+      carregar();
+    } catch (e) { toast.error(e.message || 'Erro ao fundir'); }
     finally { setFichaSalvando(false); }
   };
 
@@ -509,7 +535,29 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
                     )}
                   </div>
 
-                  {!fichaEditando ? (
+                  {fichaConflito ? (
+                    <div style={{ background: `${C.amber}12`, border: `1px solid ${C.amber}55`, borderRadius: 10, padding: 12 }}>
+                      <p style={{ fontSize: 12.5, color: C.text, margin: '0 0 10px', lineHeight: 1.6 }}>
+                        Este CPF já pertence ao cadastro de <strong>{fichaConflito.outroNome}</strong>.
+                        Mesmo CPF é a mesma pessoa — em vez de dois cadastros, funda os dois em um.
+                        Nada se perde: o histórico é movido e os dados diferentes são somados nas observações.
+                      </p>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        <button onClick={() => fundirConflito(selected.membro_id)} disabled={fichaSalvando}
+                          style={{ background: C.primary, border: 'none', borderRadius: 8, padding: '9px 14px', fontSize: 12.5, fontWeight: 700, color: '#fff', cursor: fichaSalvando ? 'wait' : 'pointer', textAlign: 'left' }}>
+                          Manter «{selected.nome}» e fundir o outro cadastro neste
+                        </button>
+                        <button onClick={() => fundirConflito(fichaConflito.outroId)} disabled={fichaSalvando}
+                          style={{ background: 'transparent', border: `1px solid ${C.primary}`, borderRadius: 8, padding: '9px 14px', fontSize: 12.5, fontWeight: 700, color: C.primary, cursor: fichaSalvando ? 'wait' : 'pointer', textAlign: 'left' }}>
+                          Manter «{fichaConflito.outroNome}» e fundir este cadastro nele
+                        </button>
+                        <button onClick={() => setFichaConflito(null)} disabled={fichaSalvando}
+                          style={{ background: 'none', border: 'none', color: C.t3, cursor: 'pointer', fontSize: 12, padding: '2px 0', textAlign: 'left' }}>
+                          Cancelar — voltar pra edição
+                        </button>
+                      </div>
+                    </div>
+                  ) : !fichaEditando ? (
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '8px 16px', fontSize: 12.5 }}>
                       <FichaItem rotulo="Telefone" valor={ficha.telefone} />
                       <FichaItem rotulo="E-mail" valor={ficha.email} />
