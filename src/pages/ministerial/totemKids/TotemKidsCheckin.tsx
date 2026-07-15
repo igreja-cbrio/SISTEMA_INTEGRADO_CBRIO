@@ -142,8 +142,11 @@ function formatCpf(v: string): string {
   return d.replace(/(\d{3})(\d)/, '$1.$2').replace(/(\d{3})(\d)/, '$1.$2').replace(/(\d{3})(\d{1,2})$/, '$1-$2');
 }
 
+// PIN do supervisor pra liberar o check-in SEM CPF (válvula · Marcos 2026-07-15).
+const DISPENSA_PIN = '0000';
+
 // Modal do CPF obrigatório do responsável (Marcos 2026-07-15). Digitou → imprime.
-// "Não tenho o CPF agora" → supervisor libera (PIN do totem, se houver + motivo).
+// "Não tenho o CPF agora" → supervisor libera (PIN 0000 + motivo).
 function ModalCpfResponsavel({ respNome, onConfirmar, onDispensar, onCancelar }: {
   respNome: string;
   onConfirmar: (cpf: string) => void;
@@ -156,10 +159,9 @@ function ModalCpfResponsavel({ respNome, onConfirmar, onDispensar, onCancelar }:
   const [motivo, setMotivo] = useState('');
   const [erro, setErro] = useState('');
   const ok = cpfValido(cpf);
-  const pinSalvo = (() => { try { return (localStorage.getItem('cbrio-totem-kids-pin') || '').trim(); } catch { return ''; } })();
 
   function confirmarDispensa() {
-    if (pinSalvo && pin.trim() !== pinSalvo) { setErro('PIN incorreto'); return; }
+    if (pin.trim() !== DISPENSA_PIN) { setErro('PIN incorreto'); return; }
     if (!motivo.trim()) { setErro('Diga o motivo (ex.: estrangeiro, esqueceu o documento).'); return; }
     onDispensar(motivo.trim());
   }
@@ -189,11 +191,9 @@ function ModalCpfResponsavel({ respNome, onConfirmar, onDispensar, onCancelar }:
           </div>
         ) : (
           <div className="space-y-3">
-            <p className="text-sm">Liberar o check-in <b>sem CPF</b> — só um supervisor. O responsável vai ser cobrado no próximo check-in.</p>
-            {pinSalvo && (
-              <Input type="password" inputMode="numeric" placeholder="PIN do supervisor" value={pin}
-                onChange={(e) => { setPin(e.target.value.replace(/\D/g, '')); setErro(''); }} className="h-12 text-center tracking-widest" />
-            )}
+            <p className="text-sm">Liberar o check-in <b>sem CPF</b> — só um supervisor (PIN). O responsável vai ser cobrado no próximo check-in.</p>
+            <Input type="password" inputMode="numeric" placeholder="PIN do supervisor" value={pin} autoFocus
+              onChange={(e) => { setPin(e.target.value.replace(/\D/g, '')); setErro(''); }} className="h-12 text-center tracking-widest" />
             <Input placeholder="Motivo (ex.: estrangeiro, esqueceu o documento)" value={motivo} onChange={(e) => { setMotivo(e.target.value); setErro(''); }} />
             {!!erro && <p className="text-xs text-red-500">{erro}</p>}
             <div className="flex gap-2">
