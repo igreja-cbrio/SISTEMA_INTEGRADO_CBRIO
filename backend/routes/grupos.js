@@ -1916,6 +1916,11 @@ router.get('/duplicatas', authorizeModule('grupos', 3), async (req, res) => {
 // Funde os cadastros no escolhido via merge_membros (move FKs, enriquece o
 // mantido com o que faltava, loga snapshot em mem_merge_log). Restrito ao
 // universo de grupos — é o escopo da triagem.
+// SOMAR, NÃO SUBSTITUIR (Marcos · 15/07): a RPC preenche o que FALTA no
+// mantido; o que DIVERGE (outro e-mail/telefone, grafia do nome, nascimento
+// diferente) não pode se perder — vira nota nas observações do cadastro
+// mantido. O e-mail/telefone principal segue um só (concatenar no campo
+// quebraria o matching), mas o alternativo fica visível na ficha.
 router.post('/duplicatas/fundir', authorizeModule('grupos', 5), async (req, res) => {
   try {
     const { keep_id, merge_ids } = req.body || {};
@@ -1927,6 +1932,12 @@ router.post('/duplicatas/fundir', authorizeModule('grupos', 5), async (req, res)
     const fora = [keep_id, ...merges].filter(id => !gruposDe.has(id));
     if (fora.length) return res.status(403).json({ error: 'Só cadastros do universo de grupos podem ser fundidos por aqui.' });
 
+    // Snapshot ANTES da fusão — é daqui que saem os divergentes a somar
+    const { data: antes } = await supabase.from('mem_membros')
+      .select('id, nome, cpf, telefone, email, data_nascimento')
+      .in('id', [keep_id, ...merges]);
+    const mergedAntes = (antes || []).filter(m => m.id !== keep_id);
+
     const { data, error } = await supabase.rpc('merge_membros', {
       p_keep_id: keep_id,
       p_merge_ids: merges,
@@ -1935,7 +1946,44 @@ router.post('/duplicatas/fundir', authorizeModule('grupos', 5), async (req, res)
     });
     if (error) throw error;
     _dupCache = { ts: 0, payload: null };
-    res.json(data ?? { ok: true });
+
+    // Divergências → observações do mantido (comparadas contra o keep PÓS-
+    // fusão, que já absorveu os campos que estavam vazios). Nunca derruba a
+    // fusão: se a nota falhar, o snapshot do mem_merge_log ainda guarda tudo.
+    const dadosSomados = [];
+    try {
+      const { data: keepDepois } = await supabase.from('mem_membros')
+        .select('nome, cpf, telefone, email, data_nascimento, observacoes').eq('id', keep_id).maybeSingle();
+      if (keepDepois) {
+        const emailK = normalizarEmail(keepDepois.email);
+        const telK = normalizarTelefone(keepDepois.telefone);
+        const nomeK = normalizarNome(keepDepois.nome);
+        const cpfK = normalizarCpf(keepDepois.cpf);
+        const vistos = new Set();
+        const soma = (chave, texto) => { if (!vistos.has(chave)) { vistos.add(chave); dadosSomados.push(texto); } };
+        const fmtBr = (iso) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || '')); return m ? `${m[3]}/${m[2]}/${m[1]}` : iso; };
+        for (const m of mergedAntes) {
+          const em = normalizarEmail(m.email);
+          if (em && em !== emailK) soma(`em:${em}`, `e-mail alternativo: ${m.email}`);
+          const tl = normalizarTelefone(m.telefone);
+          if (tl && tl !== telK) soma(`tl:${tl}`, `telefone alternativo: ${m.telefone}`);
+          const nm = normalizarNome(m.nome);
+          if (nm && nm !== nomeK) soma(`nm:${nm}`, `também cadastrado como: ${m.nome}`);
+          if (m.data_nascimento && keepDepois.data_nascimento && m.data_nascimento !== keepDepois.data_nascimento) {
+            soma(`dt:${m.data_nascimento}`, `nascimento no cadastro fundido: ${fmtBr(m.data_nascimento)}`);
+          }
+          const cp = normalizarCpf(m.cpf);
+          if (cp && cpfK && cp !== cpfK) soma(`cp:${cp}`, `CPF divergente no cadastro fundido: ${m.cpf}`);
+        }
+        if (dadosSomados.length) {
+          const nota = `[Fusão de cadastros · ${new Date().toLocaleDateString('pt-BR')}] ${dadosSomados.join(' · ')}`.slice(0, 1500);
+          const obs = keepDepois.observacoes ? `${keepDepois.observacoes}\n${nota}` : nota;
+          await supabase.from('mem_membros').update({ observacoes: obs }).eq('id', keep_id);
+        }
+      }
+    } catch (e) { console.error('[Grupos duplicatas fundir · nota]', e.message); }
+
+    res.json({ ...(data && typeof data === 'object' ? data : {}), ok: true, dados_somados: dadosSomados });
   } catch (e) { console.error('[Grupos duplicatas fundir]', e.message); res.status(500).json({ error: e.message || 'Erro ao fundir cadastros' }); }
 });
 

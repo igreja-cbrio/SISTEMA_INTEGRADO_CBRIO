@@ -74,13 +74,18 @@ export default function GruposDuplicatas({ podeResolver = false }) {
     const keepNome = c.pessoas.find(p => p.id === keep)?.nome;
     if (!confirm(
       `Fundir ${merges.length} cadastro(s) em "${keepNome}"?\n\n` +
-      'O histórico (grupos, presenças, jornada) é movido pro cadastro mantido e os dados que faltarem nele ' +
-      '(CPF, telefone, nascimento, foto) são aproveitados dos outros. A fusão fica registrada no log.'
+      'Nenhum dado se perde: o histórico (grupos, presenças, jornada) é movido pro cadastro mantido, ' +
+      'o que faltar nele (CPF, telefone, nascimento, foto) é completado com os outros, e o que for ' +
+      'DIFERENTE (outro e-mail, outro telefone, outra grafia do nome) é somado nas observações da ficha. ' +
+      'A fusão fica registrada no log.'
     )) return;
     setBusyIdx(i);
     try {
-      await api.duplicatas.fundir(keep, merges);
-      toast.success('Cadastros fundidos em um só');
+      const r = await api.duplicatas.fundir(keep, merges);
+      const n = r?.dados_somados?.length || 0;
+      toast.success(n > 0
+        ? `Cadastros fundidos — ${n} dado${n === 1 ? '' : 's'} divergente${n === 1 ? '' : 's'} somado${n === 1 ? '' : 's'} nas observações da ficha`
+        : 'Cadastros fundidos em um só');
       await load(true);
     } catch (e) { toast.error(e.message || 'Erro ao fundir'); }
     finally { setBusyIdx(null); }
@@ -110,8 +115,12 @@ export default function GruposDuplicatas({ podeResolver = false }) {
           </h3>
           <p style={{ fontSize: 12, color: C.t3, margin: '4px 0 0', maxWidth: 680, lineHeight: 1.55 }}>
             Cadastros do universo de grupos que parecem ser a mesma pessoa (mesmo CPF, telefone, e-mail,
-            nome e nascimento — ou nome muito parecido). Escolha qual manter e funda os demais nele: o
-            histórico é preservado e nada se perde. Se não for a mesma pessoa, marque «Não é duplicata».
+            nome e nascimento — ou nome muito parecido). Escolha qual manter e funda os demais nele.
+            <strong style={{ color: C.t2 }}> Fundir não apaga nada:</strong> o histórico (grupos, presenças)
+            é movido, o que falta no cadastro mantido é completado com os outros e o que for diferente
+            (outro e-mail, outro telefone, outra grafia do nome) é <strong style={{ color: C.t2 }}>somado
+            nas observações</strong> da ficha — não substituído. Se não for a mesma pessoa, marque
+            «Não é duplicata».
           </p>
         </div>
         <Button size="sm" variant="outline" onClick={() => load(true)}>
@@ -189,7 +198,10 @@ export default function GruposDuplicatas({ podeResolver = false }) {
               </div>
 
               {podeResolver ? (
-                <div style={{ padding: '10px 14px', display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                <div style={{ padding: '10px 14px', display: 'flex', gap: 10, justifyContent: 'flex-end', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 11, color: C.t3, marginRight: 'auto' }}>
+                    Fundir não apaga nada — dados diferentes são somados nas observações da ficha.
+                  </span>
                   <Button size="sm" variant="ghost" disabled={busyIdx === i} onClick={() => ignorar(c, i)} style={{ color: C.t2 }}>
                     Não é duplicata
                   </Button>
