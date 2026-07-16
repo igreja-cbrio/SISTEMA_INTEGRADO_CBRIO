@@ -134,6 +134,15 @@ async function reconciliarCpfTardio({ membroId, cpf, origem, origemId, dataNasci
         });
         return { acao: 'conflito_pendencia', conflito_id: donoAgora.id };
       }
+      // Sem dono VIVO e mesmo assim 23505: o CPF está preso num cadastro
+      // soft-deletado — em prod ainda existe a constraint TOTAL antiga
+      // mem_membros_cpf_key (pré-20260715120000), que trava o CPF até de
+      // deletados. Vira pendência (fundir/restaurar é decisão humana).
+      await registrarPendencia({
+        tipo: 'cpf_conflito', membroId, conflitoId: null, origem, origemId,
+        detalhe: 'CPF preso num cadastro deletado (constraint total mem_membros_cpf_key).',
+      });
+      return { acao: 'conflito_pendencia', conflito_id: null };
     }
     throw e2;
   }
