@@ -62,14 +62,19 @@ async function logHistorico(membroId, acao, observacao) {
 }
 
 // reconciliarCpfTardio · um CPF acabou de chegar pra um membro já existente.
+// `dataNascimento` (opcional): nascimento informado junto com o CPF — se
+// divergir do nascimento do membro, o vínculo por sinal fraco provavelmente
+// ligou a pessoa ERRADA (mãe/filha homônimas com telefone compartilhado) →
+// não grava, vira pendência.
 // Retorna { acao } ∈ ja_tinha | cpf_preenchido | conflito_pendencia |
-//                    divergente_pendencia | cpf_invalido | membro_nao_encontrado
-async function reconciliarCpfTardio({ membroId, cpf, origem, origemId } = {}) {
+//   divergente_pendencia | nascimento_divergente_pendencia | cpf_invalido |
+//   membro_nao_encontrado
+async function reconciliarCpfTardio({ membroId, cpf, origem, origemId, dataNascimento } = {}) {
   const cpf11 = normalizarCpf(cpf);
   if (!membroId || !cpf11 || !cpfValido(cpf11)) return { acao: 'cpf_invalido' };
 
   const { data: membro, error } = await supabase.from('mem_membros')
-    .select('id, nome, cpf, deleted_at')
+    .select('id, nome, cpf, data_nascimento, deleted_at')
     .eq('id', membroId)
     .maybeSingle();
   if (error) throw error;
@@ -77,6 +82,18 @@ async function reconciliarCpfTardio({ membroId, cpf, origem, origemId } = {}) {
 
   const cpfAtual = normalizarCpf(membro.cpf);
   if (cpfAtual === cpf11) return { acao: 'ja_tinha' };
+
+  // Nascimento divergente = forte suspeita de que o membro ligado é OUTRA
+  // pessoa (o sinal fraco errou) → não consolida, fila humana decide.
+  const nascInput = dataNascimento ? String(dataNascimento).slice(0, 10) : null;
+  const nascMembro = membro.data_nascimento ? String(membro.data_nascimento).slice(0, 10) : null;
+  if (nascInput && nascMembro && nascInput !== nascMembro) {
+    await registrarPendencia({
+      tipo: 'vinculo_divergente', membroId, conflitoId: null, origem, origemId,
+      detalhe: 'CPF chegou com data de nascimento diferente da do membro vinculado — provável vínculo por sinal fraco na pessoa errada.',
+    });
+    return { acao: 'nascimento_divergente_pendencia' };
+  }
 
   // Membro já tem OUTRO CPF → não sobrescreve identidade · fila humana decide
   if (cpfAtual) {
@@ -101,10 +118,11 @@ async function reconciliarCpfTardio({ membroId, cpf, origem, origemId } = {}) {
   }
 
   // Caminho feliz: enriquece o membro com o CPF
-  const { error: e2 } = await supabase.from('mem_membros')
+  const { data: upd, error: e2 } = await supabase.from('mem_membros')
     .update({ cpf: cpf11, updated_at: new Date().toISOString() })
     .eq('id', membroId)
-    .is('cpf', null);
+    .is('cpf', null)
+    .select('id');
   if (e2) {
     // 23505 = corrida com outro fluxo gravando o mesmo CPF · vira conflito
     if (e2.code === '23505') {
@@ -118,6 +136,19 @@ async function reconciliarCpfTardio({ membroId, cpf, origem, origemId } = {}) {
       }
     }
     throw e2;
+  }
+  if (!upd || upd.length === 0) {
+    // Corrida: o membro recebeu OUTRO CPF entre o read e o write (a guarda
+    // .is('cpf', null) casou 0 linhas). Sem isso, retornava 'cpf_preenchido'
+    // com histórico mentiroso e o conflito real era engolido.
+    const { data: m2 } = await supabase.from('mem_membros')
+      .select('cpf').eq('id', membroId).maybeSingle();
+    if (normalizarCpf(m2?.cpf) === cpf11) return { acao: 'ja_tinha' };
+    await registrarPendencia({
+      tipo: 'cpf_divergente', membroId, conflitoId: null, origem, origemId,
+      detalhe: 'Corrida: o membro recebeu outro CPF durante a reconciliação.',
+    });
+    return { acao: 'divergente_pendencia', conflito_id: null };
   }
 
   await logHistorico(membroId, 'cpf_recebido',

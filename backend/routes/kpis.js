@@ -487,6 +487,7 @@ router.put('/decisoes-pessoas/:id', authorizeIntegracao, async (req, res) => {
         await reconciliarCpfTardio({
           membroId: data.membro_id, cpf: update.cpf,
           origem: 'decisao_edicao', origemId: data.id,
+          dataNascimento: data.data_nascimento || null,
         });
         await propagarCpfConvertido({ membroId: data.membro_id });
       } catch (e) {
@@ -986,6 +987,7 @@ router.post('/batismos/:id/checkin', authorizeBatismo, async (req, res) => {
       await reconciliarCpfTardio({
         membroId: insc.membro_id, cpf: cpfClean,
         origem: 'batismo_checkin', origemId: insc.id,
+        dataNascimento: insc.data_nascimento || null,
       });
       await propagarCpfConvertido({ membroId: insc.membro_id });
     } catch (e) {
