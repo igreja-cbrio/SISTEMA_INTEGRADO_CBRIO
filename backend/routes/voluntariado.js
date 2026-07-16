@@ -1,7 +1,9 @@
 const router = require('express').Router();
 const { authenticate, authorizeModule, getEffectiveLevel, bustPermissionCaches } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
-const { acharOuCriarGuardado } = require('../services/membroMatch');
+const { acharOuCriarGuardado, acharMembroGuardado } = require('../services/membroMatch');
+const { reconciliarCpfTardio } = require('../services/cpfReconciliar');
+const { cpfValido } = require('../utils/cpf');
 const { getPCCredentials, fetchWithRetry, PC_SERVICES_BASE, assignVolunteersToTeams, syncTeamMembersFromSchedules, fetchAllServiceTypes } = require('../services/planningCenter');
 const { enqueueSync } = require('../services/cerebroSync');
 const { resolverVoluntarioPorQr } = require('../services/volCheckinResolver');
@@ -629,11 +631,11 @@ router.put('/me', async (req, res) => {
     // MEMBER_NOT_FOUND para que o frontend peca o cadastro obrigatório.
     let membroMatch = null;
     if (cpfChanged) {
-      if (cleanCpf.length !== 11) {
-        return res.status(400).json({ error: 'CPF invalido' });
+      if (cleanCpf.length !== 11 || !cpfValido(cleanCpf)) {
+        return res.status(400).json({ error: 'CPF inválido — confira os dígitos' });
       }
       const { data: membro } = await supabase.from('mem_membros')
-        .select('id, nome, telefone, email').eq('cpf', cleanCpf).maybeSingle();
+        .select('id, nome, telefone, email').eq('cpf', cleanCpf).is('deleted_at', null).maybeSingle();
       if (!membro) {
         return res.status(409).json({
           error: 'CPF não encontrado no cadastro de membros. Complete o cadastro para continuar.',
@@ -697,7 +699,7 @@ router.post('/me/register-member', async (req, res) => {
     if (!celular || !celular.trim()) return res.status(400).json({ error: 'Celular obrigatorio' });
 
     const cleanCpf = String(cpf).replace(/\D/g, '');
-    if (cleanCpf.length !== 11) return res.status(400).json({ error: 'CPF invalido' });
+    if (cleanCpf.length !== 11 || !cpfValido(cleanCpf)) return res.status(400).json({ error: 'CPF inválido — confira os dígitos' });
     const cleanPhone = String(celular).replace(/\D/g, '');
     if (cleanPhone.length < 10) return res.status(400).json({ error: 'Celular invalido' });
 
@@ -1155,6 +1157,9 @@ router.post('/profiles', async (req, res) => {
     const { full_name, email, phone, cpf } = req.body;
     if (!full_name || !full_name.trim()) return res.status(400).json({ error: 'Nome obrigatorio' });
     const cleanCpf = cpf ? cpf.replace(/\D/g, '') : null;
+    if (cleanCpf && (cleanCpf.length !== 11 || !cpfValido(cleanCpf))) {
+      return res.status(400).json({ error: 'CPF inválido — confira os dígitos' });
+    }
 
     // Membresia e fonte única: garantir mem_membros antes de criar vol_profile
     let membresiaId = null;
@@ -2124,7 +2129,7 @@ router.put('/profiles/:id/contact', async (req, res) => {
 
     if (cpf != null && String(cpf).trim() !== '') {
       const cleanCpf = String(cpf).replace(/\D/g, '');
-      if (cleanCpf.length !== 11) return res.status(400).json({ error: 'CPF invalido' });
+      if (cleanCpf.length !== 11 || !cpfValido(cleanCpf)) return res.status(400).json({ error: 'CPF inválido — confira os dígitos' });
       update.cpf = cleanCpf;
     }
     if (phone != null && String(phone).trim() !== '') {
@@ -3480,7 +3485,17 @@ router.patch('/inscricoes/:id/dados', async (req, res) => {
 
     if (cpf !== undefined) {
       const d = String(cpf || '').replace(/\D+/g, '');
-      if (d && d.length !== 11) return res.status(400).json({ error: 'CPF deve ter 11 dígitos' });
+      if (d && (d.length !== 11 || !cpfValido(d))) {
+        // Grandfathering do legado: CPF idêntico ao já armazenado passa sem
+        // DV (o modal da ficha sempre reenvia o cpf — sem isso, um CPF legado
+        // DV-inválido travaria a edição de QUALQUER campo). DV só pra novo/alterado.
+        const { data: atual } = await supabase.from('vol_inscricoes')
+          .select('cpf').eq('id', req.params.id).maybeSingle();
+        const atualNorm = String(atual?.cpf || '').replace(/\D+/g, '');
+        if (!atualNorm || d !== atualNorm) {
+          return res.status(400).json({ error: 'CPF inválido — confira os dígitos' });
+        }
+      }
       patch.cpf = d || null;
     }
     if (data_nascimento !== undefined) {
@@ -3511,6 +3526,55 @@ router.patch('/inscricoes/:id/dados', async (req, res) => {
     const { data, error } = await supabase.from('vol_inscricoes')
       .update(patch).eq('id', req.params.id).select().single();
     if (error) throw error;
+
+    // Reconciliação de CPF tardio (auditoria CPF 2026-07-16): completar o CPF
+    // na ficha não refazia o match de membro — a inscrição ficava com CPF e o
+    // vínculo (ou a falta dele) congelado. Agora: se a inscrição já tem membro,
+    // consolida o CPF nele (conflito vira pendência de identidade); se não tem,
+    // tenta ligar pelo matcher canônico (CPF → email+nome → tel+nome → nasc+nome,
+    // read-only · não cria stub aqui). Fire-and-forget.
+    if (patch.cpf && data) {
+      (async () => {
+        try {
+          if (data.membro_id) {
+            // Confiança FRACA: o vínculo pode ter nascido de match fraco
+            // (telefone/e-mail+nome) numa requisição anterior — sem nascimento
+            // conferível dos 2 lados, o CPF vira pendência, não identidade.
+            await reconciliarCpfTardio({
+              membroId: data.membro_id, cpf: patch.cpf,
+              origem: 'vol_ficha', origemId: data.id,
+              dataNascimento: data.data_nascimento || null,
+              confianca: 'fraca',
+            });
+          } else {
+            const hit = await acharMembroGuardado({
+              cpf: patch.cpf, email: data.email, telefone: data.telefone,
+              nome: data.nome_completo || [data.nome, data.sobrenome].filter(Boolean).join(' '),
+              dataNascimento: data.data_nascimento || null,
+            });
+            if (hit?.membro_id) {
+              await supabase.from('vol_inscricoes')
+                .update({ membro_id: hit.membro_id, updated_at: new Date().toISOString() })
+                .eq('id', data.id).is('membro_id', null);
+              // Vínculo nasceu de match fraco (não-CPF) → consolida o CPF no
+              // membro achado (senão o CPF fica preso na inscrição e o membro
+              // segue sem CPF — o buraco que esta porta fecha). Confiança
+              // 'fraca': sem nascimento conferível dos 2 lados vira pendência.
+              if (hit.matched_by !== 'cpf') {
+                await reconciliarCpfTardio({
+                  membroId: hit.membro_id, cpf: patch.cpf,
+                  origem: 'vol_ficha', origemId: data.id,
+                  dataNascimento: data.data_nascimento || null,
+                  confianca: 'fraca',
+                });
+              }
+            }
+          }
+        } catch (e2) {
+          console.error('[inscricao dados] reconciliar cpf:', e2.message);
+        }
+      })();
+    }
     res.json(data);
   } catch (e) {
     console.error('[inscricao dados]', e.message);

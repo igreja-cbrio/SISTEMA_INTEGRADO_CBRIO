@@ -180,6 +180,8 @@ router.get('/inscricoes/:id', async (req, res) => {
 });
 
 const { acharOuCriarGuardado } = require('../services/membroMatch');
+const { reconciliarCpfTardio } = require('../services/cpfReconciliar');
+const { normalizarCpf, cpfValido } = require('../utils/cpf');
 
 router.post('/inscricoes', async (req, res) => {
   const { evento_id, nome, sobrenome, cpf, telefone, email, data_nascimento, observacoes, origem_lista } = req.body || {};
@@ -692,6 +694,9 @@ router.get('/matriculas', async (req, res) => {
 router.post('/matriculas', async (req, res) => {
   const b = req.body || {};
   if (!b.nome || !String(b.nome).trim()) return res.status(400).json({ error: 'nome obrigatório' });
+  if (b.cpf && String(b.cpf).replace(/\D/g, '') && !cpfValido(b.cpf)) {
+    return res.status(400).json({ error: 'CPF inválido — confira os dígitos' });
+  }
   // Porta guardada: sem membro_id explícito, resolve/cria via matcher forte
   // (cpf>email>tel+nome>nome+nasc · cria stub se não achar). Não deixa órfão —
   // toda matrícula fica ligada a um mem_membros e acessível em /membresia.
@@ -709,7 +714,8 @@ router.post('/matriculas', async (req, res) => {
   const row = {
     turma_id: b.turma_id || null,
     nome: String(b.nome).trim(), sobrenome: b.sobrenome || null,
-    cpf: b.cpf || null, telefone: b.telefone || null, email: b.email || null,
+    // digits-only: CPF com máscara fura o UNIQUE(turma_id,cpf) e todo matching
+    cpf: normalizarCpf(b.cpf), telefone: b.telefone || null, email: b.email || null,
     data_nascimento: b.data_nascimento || null, observacoes: b.observacoes || null,
     membro_id,
     ja_batizado: !!b.ja_batizado, ja_voluntario: !!b.ja_voluntario, ja_doador: !!b.ja_doador,
@@ -770,9 +776,46 @@ router.patch('/matriculas/:id', async (req, res) => {
   ['turma_id', 'nome', 'sobrenome', 'cpf', 'telefone', 'email', 'data_nascimento', 'observacoes', 'membro_id',
     'ja_batizado', 'ja_voluntario', 'ja_doador', 'indicou_batismo', 'indicou_servir', 'indicou_grupo', 'indicou_dizimo',
     'status'].forEach(k => { if (k in b) patch[k] = b[k]; });
+  if ('cpf' in patch) {
+    if (patch.cpf && String(patch.cpf).replace(/\D/g, '') && !cpfValido(patch.cpf)) {
+      return res.status(400).json({ error: 'CPF inválido — confira os dígitos' });
+    }
+    patch.cpf = normalizarCpf(patch.cpf); // digits-only sempre
+  }
   patch.updated_at = new Date().toISOString();
   const { data, error } = await supabase.from('next_matriculas').update(patch).eq('id', req.params.id).is('deleted_at', null).select().maybeSingle();
   if (error) return res.status(500).json({ error: error.message });
+
+  // Reconciliação de CPF tardio (auditoria CPF 2026-07-16): editar a matrícula
+  // preenchendo o CPF não tocava o membro vinculado (podiam divergir pra
+  // sempre). Se a matrícula tem membro, consolida o CPF nele (conflito vira
+  // pendência de identidade); se não tem, resolve/cria pelo matcher canônico.
+  if (patch.cpf && data && !('membro_id' in patch)) {
+    (async () => {
+      try {
+        if (data.membro_id) {
+          await reconciliarCpfTardio({
+            membroId: data.membro_id, cpf: patch.cpf,
+            origem: 'next_matricula_edicao', origemId: data.id,
+            dataNascimento: data.data_nascimento || null,
+          });
+        } else {
+          const r = await acharOuCriarGuardado({
+            cpf: data.cpf, email: data.email, telefone: data.telefone,
+            nome: [data.nome, data.sobrenome].filter(Boolean).join(' '),
+            dataNascimento: data.data_nascimento || null, status: 'visitante',
+          });
+          if (r?.membro_id) {
+            await supabase.from('next_matriculas')
+              .update({ membro_id: r.membro_id, updated_at: new Date().toISOString() })
+              .eq('id', data.id).is('membro_id', null);
+          }
+        }
+      } catch (e2) {
+        console.error('[next/matriculas PATCH] reconciliar cpf:', e2.message);
+      }
+    })();
+  }
   // se mudou de turma, recalcula o status na turma de destino
   if ('turma_id' in b && b.turma_id) await recomputarStatusTurma(b.turma_id);
   recalcularKpisNext();

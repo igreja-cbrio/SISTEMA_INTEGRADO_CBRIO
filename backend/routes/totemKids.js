@@ -631,7 +631,7 @@ router.get('/criancas/:id', authorizeModule('kids', 1), async (req, res) => {
 //     responsável: { nome, telefone, cpf, parentesco, email? } }
 router.post('/criancas', authorizeModule('kids', 2), async (req, res) => {
   try {
-    const { crianca, responsavel, responsaveis, amigo_de_crianca_id } = req.body || {};
+    const { crianca, responsavel, responsaveis, amigo_de_crianca_id, permitir_sem_cpf } = req.body || {};
     if (!crianca?.nome) return res.status(400).json({ error: 'crianca.nome obrigatorio' });
 
     const txt = (cond, v) => (cond && v ? String(v).trim().slice(0, 500) : null);
@@ -692,6 +692,24 @@ router.post('/criancas', authorizeModule('kids', 2), async (req, res) => {
       return res.status(400).json({ error: 'Informe ao menos um responsável (nome e telefone)' });
     }
 
+    // CPF do responsável obrigatório NO SERVIDOR (auditoria CPF 2026-07-16 ·
+    // antes a regra vivia só no gate do React: chamada direta gravava membro
+    // sem CPF e CPF malformado era descartado em silêncio pelo normalizarCpf).
+    // Válvula do supervisor (permitir_sem_cpf) continua valendo — a política é
+    // nunca travar o atendimento, mas a dispensa fica registrada.
+    for (const r of validos) {
+      const bruto = String(r.cpf || '').replace(/\D/g, '');
+      if (bruto && (bruto.length !== 11 || !cpfValido(bruto))) {
+        return res.status(400).json({ error: `CPF de ${r.nome} inválido — confira os dígitos` });
+      }
+      if (!bruto && !permitir_sem_cpf) {
+        return res.status(422).json({
+          error: `CPF de ${r.nome} é obrigatório — sem o documento agora, o supervisor pode liberar`,
+          code: 'cpf_obrigatorio',
+        });
+      }
+    }
+
     // Resolve cada responsável (find-or-create membro) + resolve a família
     // (compartilhada por todos · a do 1º que já tiver, senão cria uma nova).
     const membros = [];
@@ -735,6 +753,22 @@ router.post('/criancas', authorizeModule('kids', 2), async (req, res) => {
       vinc.push({ crianca_id: criancaCriada.id, membro_id: m.membro.id, parentesco: m.parentesco, autorizado_buscar: m.autorizado_buscar });
     }
     if (vinc.length) await supabase.from('kids_responsaveis').insert(vinc);
+
+    // Dispensa de CPF registrada (auditoria CPF 2026-07-16): fica rastreável
+    // QUEM entrou sem CPF pela válvula (a cobrança volta no próximo check-in).
+    // mem_historico só tem `descricao` (não existem colunas acao/observacao).
+    // O servidor NÃO valida o PIN do supervisor (fica no totem) — o registro
+    // aponta o OPERADOR autenticado que acionou a dispensa, não "o supervisor".
+    if (permitir_sem_cpf) {
+      for (const m of membros) {
+        if (m.cpf) continue;
+        supabase.from('mem_historico').insert({
+          membro_id: m.membro.id,
+          descricao: `[cpf_dispensado] Cadastro Kids liberado sem CPF via válvula do totem (criança ${criancaCriada.nome} · operador ${req.user?.userId || req.user?.id || 'desconhecido'}).`,
+          created_at: new Date().toISOString(),
+        }).then(({ error }) => { if (error) console.warn('[totemKids/criancas] historico dispensa:', error.message); });
+      }
+    }
 
     res.status(201).json({
       crianca: criancaCriada,
@@ -2123,13 +2157,26 @@ router.post('/criancas/:id/responsaveis', authorizeModule('kids', 2), async (req
 // Usado pelo modal de auto-cadastro quando criança chega sem responsável.
 router.post('/criancas/:id/responsavel-rapido', authorizeModule('kids', 2), async (req, res) => {
   try {
-    const { nome, telefone, cpf, parentesco, autorizado_buscar } = req.body || {};
+    const { nome, telefone, cpf, parentesco, autorizado_buscar, permitir_sem_cpf } = req.body || {};
     if (!nome || !nome.trim()) return res.status(400).json({ error: 'nome obrigatorio' });
     if (!telefone || !telefone.trim()) return res.status(400).json({ error: 'telefone obrigatorio' });
 
     const tel = normalizarTelefone(telefone);
     const cpfNorm = normalizarCpf(cpf);
     if (!tel) return res.status(400).json({ error: 'telefone invalido (precisa ter pelo menos 8 digitos)' });
+
+    // Obrigatoriedade + DV do CPF no servidor (antes era só no gate do React ·
+    // CPF malformado era descartado em silêncio). Válvula do supervisor mantém.
+    const cpfBruto = String(cpf || '').replace(/\D/g, '');
+    if (cpfBruto && (cpfBruto.length !== 11 || !cpfValido(cpfBruto))) {
+      return res.status(400).json({ error: 'CPF do responsável inválido — confira os dígitos' });
+    }
+    if (!cpfBruto && !permitir_sem_cpf) {
+      return res.status(422).json({
+        error: 'CPF do responsável é obrigatório — sem o documento agora, o supervisor pode liberar',
+        code: 'cpf_obrigatorio',
+      });
+    }
 
     // 1. Resolve criança + família (pra vincular novo mem_membros na família)
     const { data: crianca, error: errC } = await supabase
@@ -2150,6 +2197,17 @@ router.post('/criancas/:id/responsavel-rapido', authorizeModule('kids', 2), asyn
     // Membro já existia sem família → herda a da criança
     if (!r.created && crianca.familia_id && !membro.familia_id) {
       await supabase.from('mem_membros').update({ familia_id: crianca.familia_id }).eq('id', membro.id);
+    }
+
+    // Dispensa de CPF registrada (auditoria CPF 2026-07-16) · best-effort.
+    // mem_historico só tem `descricao`; o registro aponta o OPERADOR (o PIN do
+    // supervisor não é validado no servidor).
+    if (permitir_sem_cpf && !cpfNorm) {
+      supabase.from('mem_historico').insert({
+        membro_id: membro.id,
+        descricao: `[cpf_dispensado] Responsável Kids liberado sem CPF via válvula do totem (criança ${crianca.nome} · operador ${req.user?.userId || req.user?.id || 'desconhecido'}).`,
+        created_at: new Date().toISOString(),
+      }).then(({ error }) => { if (error) console.warn('[totemKids/responsavel-rapido] historico dispensa:', error.message); });
     }
 
     // 4. Vincula kids_responsaveis (upsert · idempotente)

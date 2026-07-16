@@ -632,14 +632,26 @@ function ResponsaveisManager({ crianca, onChanged }: { crianca: any; onChanged: 
     try { await api.criancas.removeResponsavelVinculo(criancaId, r.membro_id); toast.success('Responsável removido'); onChanged(); }
     catch (e: any) { toast.error(e?.message || 'Erro ao remover'); }
   }
-  async function adicionar() {
+  async function adicionar(permitirSemCpf?: unknown) {
+    const dispensa = permitirSemCpf === true; // onClick passa o evento — só true explícito vale
     if (!novo.nome.trim() || !novo.telefone.trim()) { toast.error('Nome e telefone são obrigatórios'); return; }
     setBusy(true);
+    let retry = false;
     try {
-      await api.criancas.addResponsavelRapido(criancaId, { nome: novo.nome.trim(), telefone: novo.telefone.trim(), cpf: novo.cpf.trim() || null, parentesco: novo.parentesco });
+      await api.criancas.addResponsavelRapido(criancaId, { nome: novo.nome.trim(), telefone: novo.telefone.trim(), cpf: novo.cpf.trim() || null, parentesco: novo.parentesco, ...(dispensa ? { permitir_sem_cpf: true } : {}) });
       toast.success('Responsável adicionado');
       setNovo({ nome: '', telefone: '', cpf: '', parentesco: 'mae' }); setAddOpen(false); onChanged();
-    } catch (e: any) { toast.error(e?.message || 'Erro ao adicionar'); } finally { setBusy(false); }
+    } catch (e: any) {
+      // Válvula da obrigatoriedade de CPF (esta tela não tem o PIN do totem):
+      // confirma a liberação e reenvia com a dispensa — nunca travar o fluxo.
+      if (e?.code === 'cpf_obrigatorio' && !dispensa
+          && window.confirm('O CPF do responsável é obrigatório. Cadastrar sem CPF mesmo assim? A liberação fica registrada no histórico — colete o documento no próximo check-in.')) {
+        retry = true; // busy fica true até o reenvio terminar (senão o botão reabilita com a requisição em voo → duplo submit)
+      } else {
+        toast.error(e?.message || 'Erro ao adicionar');
+      }
+    } finally { if (!retry) setBusy(false); }
+    if (retry) return adicionar(true);
   }
 
   return (
@@ -812,15 +824,18 @@ function NovaCrianca({ onClose, onCreated }: { onClose: () => void; onCreated: (
     const r = new FileReader(); r.onload = () => cb(r.result as string); r.readAsDataURL(f);
   };
 
-  async function salvar() {
+  async function salvar(permitirSemCpf?: unknown) {
+    const dispensa = permitirSemCpf === true; // onClick passa o evento — só true explícito vale
     if (!nome.trim()) { toast.error('Informe o nome da criança'); return; }
     const validos = resps.filter(r => r.nome.trim() && r.telefone.trim());
     if (!validos.length) { toast.error('Informe ao menos um responsável (nome e telefone)'); return; }
     setSalvando(true);
+    let retry = false;
     try {
       const r = await api.criancas.create({
         crianca: { nome: nome.trim(), data_nascimento: nascimento || null, sexo: sexo || null, serie: serie.trim() || null, necessidades_especiais: necessidade.trim() || null, consent_marketing: consentMkt },
         responsaveis: validos.map(x => ({ nome: x.nome.trim(), telefone: x.telefone.trim(), cpf: x.cpf?.trim() || null, parentesco: x.parentesco, autorizado_buscar: x.autorizado_buscar })),
+        ...(dispensa ? { permitir_sem_cpf: true } : {}),
       });
       // Fotos (best-effort · não travam o cadastro se falharem). r.responsaveis
       // volta na MESMA ordem dos validos → casa a foto pelo índice.
@@ -832,7 +847,17 @@ function NovaCrianca({ onClose, onCreated }: { onClose: () => void; onCreated: (
       }
       toast.success('Criança cadastrada');
       onCreated();
-    } catch (e: any) { toast.error(e?.message || 'Erro ao cadastrar'); } finally { setSalvando(false); }
+    } catch (e: any) {
+      // Válvula da obrigatoriedade de CPF (esta tela não tem o PIN do totem):
+      // confirma a liberação e reenvia com a dispensa — nunca travar o fluxo.
+      if (e?.code === 'cpf_obrigatorio' && !dispensa
+          && window.confirm('O CPF do responsável é obrigatório. Cadastrar sem CPF mesmo assim? A liberação fica registrada no histórico — colete o documento no próximo check-in.')) {
+        retry = true; // salvando fica true até o reenvio terminar (senão o botão reabilita com a requisição em voo → duplo submit)
+      } else {
+        toast.error(e?.message || 'Erro ao cadastrar');
+      }
+    } finally { if (!retry) setSalvando(false); }
+    if (retry) return salvar(true);
   }
 
   const temAlteracoes = (

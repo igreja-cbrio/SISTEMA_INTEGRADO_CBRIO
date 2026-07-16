@@ -6,6 +6,8 @@ const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const { coletarTodos } = require('../services/kpiAutoCollector');
 const { acharOuCriarGuardado } = require('../services/membroMatch');
+const { reconciliarCpfTardio, propagarCpfConvertido } = require('../services/cpfReconciliar');
+const { cpfValido } = require('../utils/cpf');
 const painelCache = require('../services/painelCache');
 const { isAuthorizedCron } = require('../utils/cronAuth');
 
@@ -379,8 +381,8 @@ router.post('/cultos/:id/decisoes-pessoas', authorizeIntegracao, async (req, res
     if (respTelLimpo.length !== 11) {
       return res.status(400).json({ error: 'Telefone do responsável deve ter 11 digitos pra decisão Kids' });
     }
-    if (respCpfLimpo && respCpfLimpo.length !== 11) {
-      return res.status(400).json({ error: 'CPF do responsável deve ter 11 digitos (ou deixe vazio)' });
+    if (respCpfLimpo && (respCpfLimpo.length !== 11 || !cpfValido(respCpfLimpo))) {
+      return res.status(400).json({ error: 'CPF do responsável inválido — confira os dígitos (ou deixe vazio)' });
     }
     // Criança não precisa de telefone próprio
     telLimpo = telLimpo || '';
@@ -392,8 +394,10 @@ router.post('/cultos/:id/decisoes-pessoas', authorizeIntegracao, async (req, res
     if (telLimpo.length !== 11) {
       return res.status(400).json({ error: 'Telefone deve ter 11 digitos (DDD + 9 + numero)' });
     }
-    if (cpfLimpo && cpfLimpo.length !== 11) {
-      return res.status(400).json({ error: 'CPF deve ter 11 digitos' });
+    if (cpfLimpo && (cpfLimpo.length !== 11 || !cpfValido(cpfLimpo))) {
+      // DV no servidor: com o CPF sob índice UNIQUE, um CPF digitado errado
+      // "ocupa a vaga" e bloqueia o dono verdadeiro em todas as portas.
+      return res.status(400).json({ error: 'CPF inválido — confira os dígitos' });
     }
   }
 
@@ -461,9 +465,27 @@ router.put('/decisoes-pessoas/:id', authorizeIntegracao, async (req, res) => {
     'responsavel_nome', 'responsavel_telefone', 'responsavel_cpf',
   ];
   const update = {};
+  // CPFs já armazenados na decisão: idênticos ao payload passam SEM validar DV
+  // (grandfathering — o modal reenvia o cpf existente; sem isso um CPF legado
+  // DV-inválido travaria a edição de QUALQUER campo). DV só pra CPF novo/alterado.
+  let cpfsAtuais = null;
+  const precisaCpfAtual = ['cpf', 'responsavel_cpf'].some((k) => req.body?.[k]);
+  if (precisaCpfAtual) {
+    const { data: atual } = await supabase.from('cultos_decisoes_pessoas')
+      .select('cpf, responsavel_cpf').eq('id', req.params.id).maybeSingle();
+    cpfsAtuais = atual || {};
+  }
   for (const [k, v] of Object.entries(req.body || {})) {
     if (!allowed.includes(k)) continue;
-    if ((k === 'cpf' || k === 'responsavel_cpf') && v) update[k] = String(v).replace(/\D/g, '');
+    if ((k === 'cpf' || k === 'responsavel_cpf') && v) {
+      const d = String(v).replace(/\D/g, '');
+      const atualNorm = String(cpfsAtuais?.[k] || '').replace(/\D/g, '');
+      if (d && atualNorm && d === atualNorm) { update[k] = d; continue; }
+      if (d.length !== 11 || !cpfValido(d)) {
+        return res.status(400).json({ error: 'CPF inválido — confira os dígitos' });
+      }
+      update[k] = d;
+    }
     else if ((k === 'telefone' || k === 'responsavel_telefone') && v) update[k] = String(v).replace(/\D/g, '');
     else if (k === 'email' && v) update[k] = String(v).trim().toLowerCase();
     else if (k === 'idade') update[k] = v ? Number(v) : null;
@@ -474,6 +496,26 @@ router.put('/decisoes-pessoas/:id', authorizeIntegracao, async (req, res) => {
     .from('cultos_decisoes_pessoas').update(update)
     .eq('id', req.params.id).select().single();
   if (error) return res.status(500).json({ error: error.message });
+
+  // Reconciliação de CPF tardio ("censo posterior" · auditoria CPF 2026-07-16):
+  // o trigger resolve_membro é BEFORE INSERT — editar a decisão preenchendo o
+  // CPF depois NÃO atualizava o membro-stub criado sem CPF. Agora o CPF que
+  // chega pela edição é consolidado no membro vinculado (ou vira pendência de
+  // identidade se conflitar) e espelhado no convertido. Fire-and-forget.
+  if (update.cpf && data?.membro_id && data.tipo_decisao !== 'kids') {
+    (async () => {
+      try {
+        await reconciliarCpfTardio({
+          membroId: data.membro_id, cpf: update.cpf,
+          origem: 'decisao_edicao', origemId: data.id,
+          dataNascimento: data.data_nascimento || null,
+        });
+        await propagarCpfConvertido({ membroId: data.membro_id });
+      } catch (e) {
+        console.error('[kpis/decisoes-pessoas PUT] reconciliar cpf:', e.message);
+      }
+    })();
+  }
   res.json(data);
 });
 
@@ -802,6 +844,9 @@ router.post('/batismos', authorizeBatismo, async (req, res) => {
   const areaKpiValida = AREAS_OK.includes(area_kpi) ? area_kpi : 'sede';
 
   const cpfClean = cpf ? cpf.replace(/\D/g, '') : null;
+  if (cpfClean && (cpfClean.length !== 11 || !cpfValido(cpfClean))) {
+    return res.status(400).json({ error: 'CPF inválido — confira os dígitos' });
+  }
 
   // Guarda na origem (membroMatch · 2026-06-19): resolve-ou-cria UM membro
   // deduplicado em vez do match-só-por-CPF (que deixava órfão quem inscrevia sem
@@ -928,6 +973,9 @@ router.get('/batismos/checkin/do-dia', authorizeBatismo, async (req, res) => {
 router.post('/batismos/:id/checkin', authorizeBatismo, async (req, res) => {
   const { cpf, consentiu } = req.body || {};
   const cpfClean = cpf ? String(cpf).replace(/\D/g, '') : null;
+  if (cpfClean && (cpfClean.length !== 11 || !cpfValido(cpfClean))) {
+    return res.status(400).json({ error: 'CPF inválido — confira os dígitos' });
+  }
 
   const { data: insc, error: e0 } = await supabase
     .from('batismo_inscricoes')
@@ -955,6 +1003,22 @@ router.post('/batismos/:id/checkin', authorizeBatismo, async (req, res) => {
     } catch (e) {
       console.error('[kpis/batismos/checkin] acharOuCriarGuardado:', e.message);
       // fail-open: segue sem vínculo (Entradas liga depois)
+    }
+  } else if (cpfClean && cpfClean.length === 11 && insc.membro_id) {
+    // Reconciliação de CPF tardio: a inscrição JÁ estava ligada a um membro
+    // (tipicamente um stub criado sem CPF na conversão) e o CPF chegou agora,
+    // na presença física. Antes o CPF ficava só na inscrição — o membro seguia
+    // sem CPF e a identidade global nunca consolidava. Conflito não sobrescreve
+    // nada: vira pendência de identidade (fila humana).
+    try {
+      await reconciliarCpfTardio({
+        membroId: insc.membro_id, cpf: cpfClean,
+        origem: 'batismo_checkin', origemId: insc.id,
+        dataNascimento: insc.data_nascimento || null,
+      });
+      await propagarCpfConvertido({ membroId: insc.membro_id });
+    } catch (e) {
+      console.error('[kpis/batismos/checkin] reconciliar cpf:', e.message);
     }
   }
 
