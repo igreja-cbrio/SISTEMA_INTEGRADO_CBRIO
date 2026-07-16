@@ -301,6 +301,65 @@ router.get('/funcionarios/:id', async (req, res) => {
   }
 });
 
+// GET /api/rh/funcionarios/:id/pagamentos
+// Histórico de pagamentos do colaborador, cruzado do FINANCEIRO: lê os
+// lançamentos de despesa de pessoal (plano de contas 4.01%) cujo texto do
+// lançamento contém o nome do colaborador, agrupados por competência (mês).
+// Somente leitura (não altera nada). Só quem pode ver remuneração.
+// ⚠️ Limitação conhecida: pagamentos via cartão corporativo/PJ+ (ex.: "caju
+// lider pj+") e lançamentos sem o nome no texto NÃO são atribuídos.
+router.get('/funcionarios/:id/pagamentos', async (req, res) => {
+  try {
+    if (!podeEditarRemuneracao(req)) return res.status(403).json({ error: 'Sem permissão para ver pagamentos (exige RH nível ≥ 4).' });
+
+    let fq = supabase.from('rh_funcionarios').select('id, nome').eq('id', req.params.id);
+    fq = applyAccessFilter(fq, req, 'rh', { areaColumn: 'area', ownerColumn: 'email', ownerEmail: true });
+    const { data: func, error: fErr } = await fq.maybeSingle();
+    if (fErr || !func) return res.status(404).json({ error: 'Funcionário não encontrado' });
+
+    const nome = (func.nome || '').trim();
+    if (nome.length < 4) return res.json({ nome, meses: [], total_encontrado: 0 });
+
+    // Escapa curingas do ILIKE (nomes normais não têm, mas por segurança)
+    const termo = nome.replace(/[%_]/g, '\\$&');
+    const { data: tx, error: tErr } = await supabase
+      .from('vw_fin_transacoes_completa')
+      .select('id, data_competencia, data_pagamento, valor, status, plano_contas_codigo, plano_contas_nome, descricao')
+      .like('plano_contas_codigo', '4.01%')
+      .eq('tipo', 'despesa')
+      .neq('status', 'cancelado')
+      .ilike('descricao', `%${termo}%`)
+      .order('data_competencia', { ascending: false })
+      .limit(2000);
+    if (tErr) return res.status(400).json({ error: tErr.message });
+
+    // Agrupa por competência (mês da data_competencia)
+    const mapa = new Map();
+    for (const t of tx || []) {
+      const d = t.data_competencia ? String(t.data_competencia).slice(0, 7) : 'sem-data';
+      if (!mapa.has(d)) mapa.set(d, { mes: d, total: 0, qtd: 0, itens: [] });
+      const g = mapa.get(d);
+      g.total += Number(t.valor || 0);
+      g.qtd += 1;
+      g.itens.push({
+        id: t.id,
+        data_competencia: t.data_competencia,
+        data_pagamento: t.data_pagamento,
+        valor: Number(t.valor || 0),
+        status: t.status,
+        plano_codigo: t.plano_contas_codigo,
+        plano_nome: t.plano_contas_nome,
+        descricao: t.descricao,
+      });
+    }
+    const meses = [...mapa.values()].sort((a, b) => (a.mes < b.mes ? 1 : -1));
+    res.json({ nome, meses, total_encontrado: (tx || []).length });
+  } catch (e) {
+    console.error('[RH] Pagamentos do funcionário:', e.message);
+    res.status(500).json({ error: 'Erro ao buscar pagamentos' });
+  }
+});
+
 // POST /api/rh/funcionarios
 router.post('/funcionarios', async (req, res) => {
   try {
