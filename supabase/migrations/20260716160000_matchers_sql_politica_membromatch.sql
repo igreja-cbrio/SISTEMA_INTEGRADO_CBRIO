@@ -249,14 +249,19 @@ BEGIN
     RETURN v_membro_id;
   END;
 
+  -- Rastro de auditoria: mem_historico só tem `descricao` (NOT NULL) — não
+  -- existem colunas acao/observacao (o insert antigo falhava 100% das vezes e
+  -- o EXCEPTION WHEN OTHERS engolia · nenhum criado_auto ficava rastreável).
+  -- O handler agora é específico e AVISA em vez de falhar mudo.
   BEGIN
-    INSERT INTO public.mem_historico (membro_id, acao, observacao, created_at)
+    INSERT INTO public.mem_historico (membro_id, descricao, created_at)
     VALUES (
-      v_membro_id, 'criado_auto',
-      'Criado automaticamente via ' || coalesce(p_fonte, 'fluxo'),
+      v_membro_id,
+      '[criado_auto] Criado automaticamente via ' || coalesce(p_fonte, 'fluxo'),
       now()
     );
-  EXCEPTION WHEN OTHERS THEN NULL;
+  EXCEPTION WHEN OTHERS THEN
+    RAISE WARNING 'fn_link_or_create_membro: rastro criado_auto não gravado (%)', SQLERRM;
   END;
 
   RETURN v_membro_id;

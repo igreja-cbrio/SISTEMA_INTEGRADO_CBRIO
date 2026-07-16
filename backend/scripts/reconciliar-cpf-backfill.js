@@ -24,6 +24,7 @@ require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 const { supabase } = require(path.join(__dirname, '..', 'utils', 'supabase'));
 const { normalizarCpf, cpfValido } = require(path.join(__dirname, '..', 'utils', 'cpf'));
 const { reconciliarCpfTardio, registrarPendencia } = require(path.join(__dirname, '..', 'services', 'cpfReconciliar'));
+const { nomesMesmaPessoa } = require(path.join(__dirname, '..', 'services', 'membroMatch'));
 
 const APPLY = process.argv.includes('--apply');
 
@@ -31,7 +32,9 @@ async function fetchAll(tabela, cols, decorate) {
   const page = 1000;
   let out = [], offset = 0;
   for (;;) {
-    let q = supabase.from(tabela).select(cols).range(offset, offset + page - 1);
+    // .order é obrigatório: sem ordenação estável, offset-pagination pode pular
+    // ou duplicar linhas entre páginas (plano muda / escrita concorrente).
+    let q = supabase.from(tabela).select(cols).order('id', { ascending: true }).range(offset, offset + page - 1);
     if (decorate) q = decorate(q);
     const { data, error } = await q;
     if (error) throw new Error(`${tabela}: ${error.message}`);
@@ -90,8 +93,25 @@ async function main() {
         continue;
       }
 
-      // vínculo aponta pra membro deletado → repoint pro dono ativo
+      // vínculo aponta pra membro deletado → repoint pro dono ativo, MAS só
+      // com o nome da linha compatível com o do dono. Sem esse gate, uma linha
+      // corretamente ligada à esposa (tel+nome) com o CPF do marido digitado
+      // errado seria movida pro MARIDO quando o cadastro da esposa fosse
+      // fundido — apagando um vínculo certo (e, em batismo 'realizado', o
+      // trigger trg_batismo_realizado promoveria a pessoa errada).
       if ((!vinculado || vinculado.deleted_at) && dono) {
+        const nomeLinha = r.nome_completo || [r.nome, r.sobrenome].filter(Boolean).join(' ');
+        if (!nomesMesmaPessoa(dono.nome, nomeLinha)) {
+          conta(`${sat.tabela}.repoint_nome_incompativel_pendencia`);
+          if (APPLY) {
+            await registrarPendencia({
+              tipo: 'vinculo_divergente', membroId: dono.id, conflitoId: null,
+              origem: sat.origem, origemId: r.id,
+              detalhe: `Vínculo aponta pra membro deletado; o dono ativo do CPF tem nome incompatível com a linha (${nomeLinha || 'sem nome'}) — decidir o repoint manualmente.`,
+            });
+          }
+          continue;
+        }
         conta(`${sat.tabela}.repoint_membro_deletado`);
         if (APPLY) {
           const { error } = await supabase.from(sat.tabela)

@@ -3539,6 +3539,18 @@ router.patch('/inscricoes/:id/dados', async (req, res) => {
               await supabase.from('vol_inscricoes')
                 .update({ membro_id: hit.membro_id, updated_at: new Date().toISOString() })
                 .eq('id', data.id).is('membro_id', null);
+              // Vínculo nasceu de match fraco (não-CPF) → consolida o CPF no
+              // membro achado (senão o CPF fica preso na inscrição e o membro
+              // segue sem CPF — o buraco que esta porta fecha). Confiança
+              // 'fraca': sem nascimento conferível dos 2 lados vira pendência.
+              if (hit.matched_by !== 'cpf') {
+                await reconciliarCpfTardio({
+                  membroId: hit.membro_id, cpf: patch.cpf,
+                  origem: 'vol_ficha', origemId: data.id,
+                  dataNascimento: data.data_nascimento || null,
+                  confianca: 'fraca',
+                });
+              }
             }
           }
         } catch (e2) {
