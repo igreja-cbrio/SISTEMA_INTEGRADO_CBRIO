@@ -3527,6 +3527,7 @@ router.patch('/inscricoes/:id/dados', async (req, res) => {
             await reconciliarCpfTardio({
               membroId: data.membro_id, cpf: patch.cpf,
               origem: 'vol_ficha', origemId: data.id,
+              dataNascimento: data.data_nascimento || null,
             });
           } else {
             const hit = await acharMembroGuardado({
