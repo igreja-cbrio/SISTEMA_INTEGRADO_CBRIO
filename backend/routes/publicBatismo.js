@@ -140,6 +140,7 @@ router.post('/', limiter, async (req, res) => {
       observacoes, horario_culto, area_kpi, fez_next,
       // Novos · LGPD/integracao
       eh_crianca, possui_deficiencia, deficiencia_descricao,
+      whatsapp_optin, // consentimento p/ mensagens no WhatsApp (Marketing · LGPD)
     } = req.body || {};
 
     // Validacoes básicas
@@ -183,6 +184,17 @@ router.post('/', limiter, async (req, res) => {
     } catch (e) {
       console.error('[publicBatismo] acharOuCriarGuardado:', e.message);
       // fail-open: segue sem vínculo (o funil/Entradas liga depois)
+    }
+
+    // Opt-in de WhatsApp (só liga, nunca desliga um consentimento existente).
+    if (whatsapp_optin && membroId) {
+      try {
+        await supabase.from('mem_membros')
+          .update({ whatsapp_optin: true, whatsapp_optin_em: new Date().toISOString() })
+          .eq('id', membroId).is('deleted_at', null);
+      } catch (e) {
+        console.warn('[publicBatismo] optin membro:', e.message);
+      }
     }
 
     // Dedup de INSCRIÇÃO: a mesma pessoa não se inscreve 2x pro batismo em aberto

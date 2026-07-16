@@ -186,6 +186,7 @@ export default function InscricaoBatismo() {
   const [error, setError] = useState('');
   const [sent, setSent] = useState(false);
   const [grupoUrl, setGrupoUrl] = useState<string | null>(null);
+  const [whatsappOptin, setWhatsappOptin] = useState(false);
 
   useEffect(() => {
     batismoPublico.horarios()
@@ -239,6 +240,7 @@ export default function InscricaoBatismo() {
         observacoes: form.observacoes || null,
         horario_culto: form.horario_culto || null,
         area_kpi: form.area_kpi || null,
+        whatsapp_optin: whatsappOptin,
       });
       setGrupoUrl(resp?.grupo_url || null);
       setSent(true);
@@ -462,6 +464,25 @@ export default function InscricaoBatismo() {
                 value={form.observacoes}
                 onChange={set('observacoes')}
               />
+
+              <label style={{
+                display: 'flex', gap: 10, alignItems: 'flex-start',
+                background: C.isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
+                border: `1px solid ${C.inputBorder}`,
+                borderRadius: 12, padding: '14px 16px', margin: '4px 0 16px', cursor: 'pointer',
+              }}>
+                <input
+                  type="checkbox"
+                  checked={whatsappOptin}
+                  onChange={(e) => setWhatsappOptin(e.target.checked)}
+                  style={{ marginTop: 3, width: 18, height: 18, accentColor: '#00B39D', flexShrink: 0 }}
+                />
+                <span style={{ fontSize: 12.5, color: C.text3, lineHeight: 1.55 }}>
+                  Aceito receber mensagens da CBRio no <strong>WhatsApp</strong> (lembretes do
+                  batismo, avisos e felicitações). Você pode cancelar quando quiser. Seus dados
+                  são tratados conforme a LGPD.
+                </span>
+              </label>
 
               <button
                 type="submit"

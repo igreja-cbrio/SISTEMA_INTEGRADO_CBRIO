@@ -75,6 +75,7 @@ router.post('/inscrever', async (req, res) => {
   try {
     const {
       nome, sobrenome, cpf, telefone, email, data_nascimento, motivo, observacoes,
+      whatsapp_optin, // consentimento p/ mensagens no WhatsApp (Marketing · LGPD)
       website, // honeypot
     } = req.body || {};
 
@@ -116,6 +117,17 @@ router.post('/inscrever', async (req, res) => {
       membroId = r.membro_id;
     } catch (e) {
       console.error('publicNext acharOuCriarGuardado:', e.message);
+    }
+
+    // Opt-in de WhatsApp (só liga, nunca desliga um consentimento existente).
+    if (whatsapp_optin && membroId) {
+      try {
+        await supabase.from('mem_membros')
+          .update({ whatsapp_optin: true, whatsapp_optin_em: new Date().toISOString() })
+          .eq('id', membroId).is('deleted_at', null);
+      } catch (e) {
+        console.warn('publicNext optin membro:', e.message);
+      }
     }
 
     // Snapshot do status pre-NEXT (pra coletor saber 'estava nao-batizado').
