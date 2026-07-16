@@ -165,12 +165,13 @@ const TEMPLATES_APP = {
   aniversario:          process.env.WHATSAPP_TEMPLATE_ANIVERSARIO2 || process.env.WHATSAPP_TEMPLATE_ANIVERSARIO,
   pedido_atualizado:    process.env.WHATSAPP_TEMPLATE_PEDIDO,         // {{1}} nome {{2}} solicitação {{3}} status {{4}} detalhe {{5}} link
 };
-// Templates de categoria MARKETING (Meta exige opt-in). O aniversário foi
-// reaprovado como UTILITY (2026-07-16 · decisão do Matheus) → NÃO exige opt-in,
-// alcança todos os voluntários com telefone. ⚠️ Se algum dia voltar a ser
-// Marketing na Meta, re-adicionar 'aniversario' aqui (senão vira envio de
-// marketing sem consentimento — risco de penalidade da conta).
-const TEMPLATES_MARKETING = new Set([]);
+// Templates de categoria MARKETING (Meta exige opt-in · compliance).
+// O aniversário é MARKETING de forma inescapável: o Meta classifica saudação
+// de aniversário como Marketing (não é transacional sobre conta/pedido), e
+// tentar aprovar como Utility é REJEITADO (verificado 2026-07-16). Então o
+// envio automático só sai pra quem tem whatsapp_optin=true. O botão manual
+// "Parabenizar" (wa.me) alcança qualquer um sem depender disto.
+const TEMPLATES_MARKETING = new Set(['aniversario']);
 const OPTIN_SEMPRE = process.env.WHATSAPP_OPTIN_OBRIGATORIO === '1';
 const ENVIO_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN || TOKEN;
 
