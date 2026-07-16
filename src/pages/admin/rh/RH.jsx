@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { Users, Pencil, Trash2, Palmtree, X, Save, AlertTriangle, Download, UserPlus, Briefcase, Calendar, Search, Filter, Eye, Edit, MoreVertical, LayoutDashboard, Network, Receipt, Star, Clock, CalendarDays, Scale, Camera, UserMinus, RotateCcw, Sparkles, ShieldCheck } from 'lucide-react';
+import { Users, Pencil, Trash2, Palmtree, X, Save, AlertTriangle, Download, UserPlus, Briefcase, Calendar, Search, Filter, Eye, Edit, MoreVertical, LayoutDashboard, Network, Receipt, Star, Clock, CalendarDays, Scale, Camera, UserMinus, RotateCcw, Sparkles, ShieldCheck, FileText, GraduationCap, StickyNote, Wallet, Mail, Phone } from 'lucide-react';
 import { toast as sonnerToast } from 'sonner';
 import { Button } from '../../../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../../components/ui/card';
@@ -2507,6 +2507,7 @@ function HierarquiaSection({ data, funcs = [], onChanged }) {
   );
 }
 
+<<<<<<< Updated upstream
 // Gera/mostra o link do formulário público de dados pessoais pra mandar pro
 // colaborador (WhatsApp/copiar). O RH só cuida de salário/cargo.
 function OnboardingLinkButton({ funcId }) {
@@ -2541,6 +2542,47 @@ function OnboardingLinkButton({ funcId }) {
           </div>
         </div>
       )}
+=======
+// Tempo de casa a partir da data de admissão (ex.: "2a 3m", "5 meses").
+function tempoDeCasa(dateStr) {
+  if (!dateStr) return null;
+  const ini = new Date(dateStr);
+  if (isNaN(ini.getTime())) return null;
+  const now = new Date();
+  let meses = (now.getFullYear() - ini.getFullYear()) * 12 + (now.getMonth() - ini.getMonth());
+  if (now.getDate() < ini.getDate()) meses -= 1;
+  if (meses < 0) meses = 0;
+  const anos = Math.floor(meses / 12);
+  const m = meses % 12;
+  if (anos === 0) return `${m} ${m === 1 ? 'mês' : 'meses'}`;
+  if (m === 0) return `${anos} ${anos === 1 ? 'ano' : 'anos'}`;
+  return `${anos}a ${m}m`;
+}
+
+// Chip de estatística do hero (ícone + rótulo + valor).
+function HeroStat({ icon: Icon, label, value }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--cbrio-card)', border: `1px solid ${C.border}`, borderRadius: 10, padding: '8px 12px', minWidth: 0 }}>
+      <Icon style={{ width: 16, height: 16, color: C.primary, flexShrink: 0 }} />
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 10, color: C.text3, textTransform: 'uppercase', letterSpacing: 0.4, fontWeight: 700 }}>{label}</div>
+        <div style={{ fontSize: 13, fontWeight: 700, color: C.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{value || '—'}</div>
+      </div>
+    </div>
+  );
+}
+
+// Cabeçalho de seção padronizado (ícone + título + contagem/extra).
+function SecaoHeader({ icon: Icon, title, count, extra }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+      <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+        <Icon style={{ width: 15, height: 15, color: C.primary }} />
+        <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{title}</span>
+        {count != null && <span style={{ fontSize: 11, fontWeight: 700, color: C.text3, background: 'var(--cbrio-input-bg)', borderRadius: 999, padding: '1px 8px' }}>{count}</span>}
+      </div>
+      {extra}
+>>>>>>> Stashed changes
     </div>
   );
 }
@@ -2555,6 +2597,7 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = t
   const [editMode, setEditMode] = useState(false);
   const [editForm, setEditForm] = useState({});
   const [savingInline, setSavingInline] = useState(false);
+  const [aba, setAba] = useState('geral');
   const [uploadingFoto, setUploadingFoto] = useState(false);
   const fotoInputRef = useRef(null);
 
@@ -2581,7 +2624,7 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = t
   const [localModulos, setLocalModulos] = useState({}); // { moduloId: { leitura, escrita } }
   const [permDirty, setPermDirty] = useState(false);
 
-  useEffect(() => { if (data && open) { setShowPerms(false); setPermData(null); setPermDirty(false); setPermError(''); setPermSuccess(''); } }, [data, open]);
+  useEffect(() => { if (data && open) { setShowPerms(false); setPermData(null); setPermDirty(false); setPermError(''); setPermSuccess(''); setAba('geral'); setEditMode(false); } }, [data, open]);
 
   function initLocalPerms(perms, estru) {
     setLocalCargo(perms.usuario?.cargo_id ?? 2);
@@ -2685,7 +2728,7 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = t
       <div style={{ width: '55%', minWidth: 500, maxWidth: 800, background: 'var(--cbrio-modal-bg)', overflowY: 'auto', boxShadow: '-8px 0 30px rgba(0,0,0,0.3)', animation: 'slideInRight 0.25s ease-out' }}>
         {/* Header */}
         <div style={{ position: 'sticky', top: 0, zIndex: 10, background: 'var(--cbrio-modal-bg)', padding: '20px 28px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div style={{ fontSize: 20, fontWeight: 800, color: C.text }}>👤 {editMode ? 'Editando' : data.nome}</div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: C.text3, textTransform: 'uppercase', letterSpacing: 0.6 }}>{editMode ? 'Editando colaborador' : 'Perfil do colaborador'}</div>
           <div style={{ display: 'flex', gap: 8 }}>
             {editMode ? (
               <>
@@ -2704,6 +2747,7 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = t
             ) : (
               <Button variant="outline" size="sm" className="gap-1.5" onClick={() => {
                 setEditForm({ nome: data.nome, cargo: data.cargo, area: data.area || '', email: data.email || '', telefone: data.telefone || '', cpf: data.cpf || '', tipo_contrato: data.tipo_contrato, status: data.status, data_admissao: data.data_admissao || '', salario: data.salario || '', gestor_id: data.gestor_id || '' });
+                setAba('geral');
                 setEditMode(true);
               }}><Pencil className="h-3.5 w-3.5" />Editar</Button>
             )}
@@ -2731,13 +2775,13 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = t
           </div>
         </div>
       )}
-      {/* Avatar + Info principal */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 24 }}>
+      {/* Hero · avatar + identidade */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16, padding: 16, borderRadius: 14, border: `1px solid ${C.border}`, background: `linear-gradient(135deg, ${C.primaryBg} 0%, transparent 70%)`, marginBottom: 14 }}>
         <div style={{ position: 'relative', flexShrink: 0 }}>
           {data.foto_url ? (
-            <img data-foto-avatar="" src={data.foto_url} alt="" style={{ width: 72, height: 72, borderRadius: '50%', objectFit: 'cover', border: `3px solid ${C.primary}` }} />
+            <img data-foto-avatar="" src={data.foto_url} alt="" style={{ width: 80, height: 80, borderRadius: '50%', objectFit: 'cover', border: `3px solid ${C.primary}` }} />
           ) : (
-            <div style={{ width: 72, height: 72, borderRadius: '50%', background: C.primaryBg, color: C.primary, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28, fontWeight: 700 }}>
+            <div style={{ width: 80, height: 80, borderRadius: '50%', background: C.primaryBg, color: C.primary, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 30, fontWeight: 700 }}>
               {(data.nome || '?')[0].toUpperCase()}
             </div>
           )}
@@ -2750,21 +2794,34 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = t
           >
             <Camera className="h-3.5 w-3.5" />
           </button>
-          <input
-            ref={fotoInputRef}
-            type="file"
-            accept="image/*"
-            onChange={handleFotoChange}
-            style={{ display: 'none' }}
-          />
+          <input ref={fotoInputRef} type="file" accept="image/*" onChange={handleFotoChange} style={{ display: 'none' }} />
         </div>
-        <div>
-          <div style={{ fontSize: 18, fontWeight: 700, color: C.text }}>{data.nome}</div>
-          <div style={{ fontSize: 14, color: C.text2 }}>{data.cargo}{data.area ? ` · ${data.area}` : ''}</div>
-          <Badge status={data.status} map={STATUS_COLORS} />
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontSize: 20, fontWeight: 800, color: C.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{data.nome}</div>
+          <div style={{ fontSize: 14, color: C.text2, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{data.cargo}{data.area ? ` · ${data.area}` : ''}</div>
+          <div style={{ marginTop: 8 }}><Badge status={data.status} map={STATUS_COLORS} /></div>
           {uploadingFoto ? <div style={{ fontSize: 11, color: C.text2, marginTop: 4 }}>Enviando foto...</div> : null}
         </div>
       </div>
+
+      {/* Stats · resumo rápido */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 8, marginBottom: 20 }}>
+        <HeroStat icon={Clock} label="Tempo de casa" value={tempoDeCasa(data.data_admissao)} />
+        <HeroStat icon={Briefcase} label="Contrato" value={TIPO_CONTRATO[data.tipo_contrato]} />
+        <HeroStat icon={CalendarDays} label="Admissão" value={fmtDate(data.data_admissao)} />
+        <HeroStat icon={Users} label="Gestor" value={funcs.find(f => f.id === data.gestor_id)?.nome || 'Sem gestor'} />
+      </div>
+
+      {/* Abas */}
+      <Tabs value={aba} onValueChange={setAba}>
+        <TabsList className="w-full justify-start flex-wrap h-auto gap-1">
+          <TabsTrigger value="geral">Geral</TabsTrigger>
+          <TabsTrigger value="docs">Documentos</TabsTrigger>
+          <TabsTrigger value="dev">Férias &amp; treinos</TabsTrigger>
+          <TabsTrigger value="perm">Permissões</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="geral" className="mt-4">
       {editMode ? (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 16px', marginBottom: 20, background: 'var(--cbrio-input-bg)', borderRadius: 10, padding: 16 }}>
           {[
@@ -2806,16 +2863,14 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = t
           </div>
         </div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 16px', marginBottom: 20 }}>
-          <div><span style={{ fontSize: 11, color: C.text2 }}>Cargo:</span><div style={{ fontSize: 14, fontWeight: 600 }}>{data.cargo}</div></div>
-          <div><span style={{ fontSize: 11, color: C.text2 }}>Área:</span><div style={{ fontSize: 14 }}>{data.area || '—'}</div></div>
-          <div><span style={{ fontSize: 11, color: C.text2 }}>CPF:</span><div style={{ fontSize: 14 }}>{podeRemun ? (data.cpf || '—') : '•••'}</div></div>
-          <div><span style={{ fontSize: 11, color: C.text2 }}>Email:</span><div style={{ fontSize: 14 }}>{data.email || '—'}</div></div>
-          <div><span style={{ fontSize: 11, color: C.text2 }}>Telefone:</span><div style={{ fontSize: 14 }}>{data.telefone || '—'}</div></div>
-          <div><span style={{ fontSize: 11, color: C.text2 }}>Contrato:</span><div style={{ fontSize: 14 }}>{TIPO_CONTRATO[data.tipo_contrato]}</div></div>
-          <div><span style={{ fontSize: 11, color: C.text2 }}>Admissão:</span><div style={{ fontSize: 14 }}>{fmtDate(data.data_admissao)}</div></div>
-          <div><span style={{ fontSize: 11, color: C.text2 }}>Salário:</span><div style={{ fontSize: 14 }}>{podeRemun ? fmtMoney(data.salario) : '•••'}</div></div>
-          <div><span style={{ fontSize: 11, color: C.text2 }}>Status:</span><div><Badge status={data.status} map={STATUS_COLORS} /></div></div>
+        <div style={{ background: 'var(--cbrio-input-bg)', borderRadius: 12, padding: 16, marginBottom: 20 }}>
+          <SecaoHeader icon={Mail} title="Contato & contratação" />
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 16px' }}>
+            <div><div style={{ fontSize: 11, color: C.text3, textTransform: 'uppercase', letterSpacing: 0.4, fontWeight: 700 }}>Email</div><div style={{ fontSize: 14, color: C.text, marginTop: 1 }}>{data.email || '—'}</div></div>
+            <div><div style={{ fontSize: 11, color: C.text3, textTransform: 'uppercase', letterSpacing: 0.4, fontWeight: 700 }}>Telefone</div><div style={{ fontSize: 14, color: C.text, marginTop: 1 }}>{data.telefone || '—'}</div></div>
+            <div><div style={{ fontSize: 11, color: C.text3, textTransform: 'uppercase', letterSpacing: 0.4, fontWeight: 700 }}>CPF</div><div style={{ fontSize: 14, color: C.text, marginTop: 1 }}>{podeRemun ? (data.cpf || '—') : '•••'}</div></div>
+            <div><div style={{ fontSize: 11, color: C.text3, textTransform: 'uppercase', letterSpacing: 0.4, fontWeight: 700 }}>Salário</div><div style={{ fontSize: 14, color: C.text, marginTop: 1, fontWeight: 600 }}>{podeRemun ? fmtMoney(data.salario) : '•••'}</div></div>
+          </div>
         </div>
       )}
 
@@ -2852,13 +2907,17 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = t
       {podeRemun && <BeneficiosSection data={data} onSave={async (updated) => {
         try { await rh.funcionarios.update(data.id, updated); onClose(); } catch (e) { console.error(e); }
       }} />}
+        </TabsContent>
 
+        <TabsContent value="docs" className="mt-4">
       {/* Documentos com upload */}
       <DocumentosSection data={data} onNewDoc={onNewDoc} onDeleteDoc={onDeleteDoc} onRefresh={() => onClose()} />
+        </TabsContent>
 
+        <TabsContent value="dev" className="mt-4">
       {/* Treinamentos */}
       <div style={{ marginBottom: 16 }}>
-        <span style={{ fontSize: 12, fontWeight: 700, color: C.text2, textTransform: 'uppercase' }}>📚 Treinamentos ({(data.treinamentos || []).length})</span>
+        <SecaoHeader icon={GraduationCap} title="Treinamentos" count={(data.treinamentos || []).length} />
         {(data.treinamentos || []).map(t => (
           <div key={t.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: `1px solid ${C.border}` }}>
             <span style={{ fontSize: 13 }}>{t.rh_treinamentos?.titulo || '—'}</span>
@@ -2873,7 +2932,7 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = t
 
       {/* Férias */}
       <div style={{ marginBottom: 16 }}>
-        <span style={{ fontSize: 12, fontWeight: 700, color: C.text2, textTransform: 'uppercase', display: 'inline-flex', alignItems: 'center', gap: 6 }}><Palmtree style={{ width: 14, height: 14, color: '#00B39D' }} /> Férias/Licenças ({(data.ferias_licencas || []).length})</span>
+        <SecaoHeader icon={Palmtree} title="Férias / Licenças" count={(data.ferias_licencas || []).length} />
         {(data.ferias_licencas || []).map(f => (
           <div key={f.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: `1px solid ${C.border}` }}>
             <span style={{ fontSize: 13 }}>{TIPO_FERIAS[f.tipo]} • {fmtDate(f.data_inicio)} → {fmtDate(f.data_fim)}</span>
@@ -2882,12 +2941,12 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = t
         ))}
       </div>
 
+        </TabsContent>
+
+        <TabsContent value="perm" className="mt-4">
       {/* Permissões */}
-      <div style={{ marginBottom: 16, borderTop: `1px solid ${C.border}`, paddingTop: 12 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-          <span style={{ fontSize: 12, fontWeight: 700, color: C.text2, textTransform: 'uppercase' }}>🔐 Permissões do Sistema</span>
-          {!showPerms && <Button variant="outline" size="sm" onClick={loadPermissions}>Configurar</Button>}
-        </div>
+      <div style={{ marginBottom: 16 }}>
+        <SecaoHeader icon={ShieldCheck} title="Permissões do sistema" extra={!showPerms && <Button variant="outline" size="sm" onClick={loadPermissions}>Configurar</Button>} />
 
         {permError && <div style={{ color: '#ef4444', background: '#ef444418', border: '1px solid #ef444450', borderRadius: 8, padding: '8px 12px', marginBottom: 10, fontSize: 12 }}>{permError}</div>}
         {permSuccess && <div style={{ color: '#10b981', background: '#10b98118', border: '1px solid #10b98150', borderRadius: 8, padding: '8px 12px', marginBottom: 10, fontSize: 12 }}>{permSuccess}</div>}
@@ -3014,6 +3073,8 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = t
           </div>
         )}
       </div>
+        </TabsContent>
+      </Tabs>
 
       {/* Actions */}
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', paddingTop: 16, borderTop: `1px solid ${C.border}`, marginTop: 16 }}>
