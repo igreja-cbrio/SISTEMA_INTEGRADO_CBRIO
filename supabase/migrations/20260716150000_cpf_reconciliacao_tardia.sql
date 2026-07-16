@@ -123,12 +123,33 @@ CREATE TABLE IF NOT EXISTS public.identidade_pendencias (
   created_at          timestamptz NOT NULL DEFAULT now()
 );
 
+-- Upgrade in-place (ambientes onde a versão da rodada 1 desta migration JÁ
+-- foi aplicada): lá o CREATE TABLE IF NOT EXISTS acima vira no-op e a tabela
+-- fica com o CHECK antigo (sem 'cpf_para_confirmar' → check_violation
+-- derrubaria o cron do wifi) e o índice antigo (NULLS DISTINCT → pendências
+-- com conflito NULL nunca deduplicam). Troca explícita, idempotente — em
+-- ambiente novo o mesmo bloco só cria o estado final.
+DELETE FROM public.identidade_pendencias a
+ USING public.identidade_pendencias b
+ WHERE a.status = 'pendente' AND b.status = 'pendente'
+   AND a.tipo = b.tipo
+   AND a.membro_id IS NOT DISTINCT FROM b.membro_id
+   AND a.membro_conflito_id IS NOT DISTINCT FROM b.membro_conflito_id
+   AND (a.created_at, a.id) > (b.created_at, b.id);
+
+ALTER TABLE public.identidade_pendencias
+  DROP CONSTRAINT IF EXISTS identidade_pendencias_tipo_check;
+ALTER TABLE public.identidade_pendencias
+  ADD CONSTRAINT identidade_pendencias_tipo_check
+  CHECK (tipo IN ('cpf_conflito','cpf_divergente','vinculo_divergente','cpf_para_confirmar'));
+
 -- 1 pendência ABERTA por (tipo, par de membros) · reentradas são no-op (23505).
 -- NULLS NOT DISTINCT: sem isso, pendências com membro_conflito_id NULL (vários
 -- caminhos: vinculo_divergente por nascimento, cpf_conflito de CPF preso em
--- deletado, corridas) nunca deduplicariam — cada reedição da mesma linha
--- acumularia uma duplicata na fila humana.
-CREATE UNIQUE INDEX IF NOT EXISTS uniq_identidade_pendencia_aberta
+-- deletado, corridas, cpf_para_confirmar) nunca deduplicariam — cada reedição
+-- da mesma linha acumularia uma duplicata na fila humana.
+DROP INDEX IF EXISTS public.uniq_identidade_pendencia_aberta;
+CREATE UNIQUE INDEX uniq_identidade_pendencia_aberta
   ON public.identidade_pendencias (tipo, membro_id, membro_conflito_id)
   NULLS NOT DISTINCT
   WHERE status = 'pendente';
