@@ -246,6 +246,14 @@ async function coaprovadorIdsParaDiretor(diretorId) {
 // Presidente). Planejado (checkbox do solicitante) pula tudo.
 const SETOR_GESTAO = 'Gestao';
 
+// Compra de até R$ 1.000 vai DIRETO pra cotação (decisão do Matheus · 2026-07-15):
+// dispensa aprovação de origem, carimbo de Gestão e mérito, planejada ou não.
+// O controle acontece DEPOIS, sobre o valor REAL: a logística (Amaury) cota e o
+// financeiro (Yago) aprova sobre o valor cotado (registrar-cotacao/enviar-cotacoes).
+// Valor nulo/zero NÃO é elegível (fail-closed · segue o fluxo normal).
+const COMPRA_COTACAO_DIRETA_LIMITE = 1000;
+const COMPRA_COTACAO_DIRETA_MOTIVO = 'Compra de até R$ 1.000 · direto para cotação';
+
 // Override do 2º portão POR CATEGORIA (migration 20260708180000). Ex.: TI →
 // Diego + Matheus (substitui a Diretoria de Gestão). Best-effort: tabela
 // ausente/categoria sem linha → null (cai no padrão de Gestão).
@@ -1038,7 +1046,27 @@ router.post('/', async (req, res) => {
         motivo: 'Reserva de espaço vai direto para operações (Amaury)' };
     }
 
-    if (!planejado && categoria !== 'reserva_espaco') {
+    // Compra de até R$ 1.000 → direto pra cotação do Amaury, planejada ou não
+    // (decisão do Matheus · 2026-07-15). Sobrescreve a rota DEPOIS dos overrides
+    // de Criativo/reserva; o status 'pendente' vira 'em_cotacao' no trigger de
+    // SLA (compras no INSERT · migration 20260616160000). Number() explícito:
+    // valorEstimadoFinal pode chegar string/null — null/0/'' ficam de fora
+    // (fail-closed · sem valor conhecido, o pedido segue as aprovações normais).
+    const compraCotacaoDireta = categoria === 'compras'
+      && Number(valorEstimadoFinal) > 0
+      && Number(valorEstimadoFinal) <= COMPRA_COTACAO_DIRETA_LIMITE;
+    if (compraCotacaoDireta) {
+      rota = { diretor_id: null, aprovacao_status: 'dispensada', status: 'pendente',
+        motivo: COMPRA_COTACAO_DIRETA_MOTIVO };
+    }
+
+    if (compraCotacaoDireta && !planejado) {
+      // Carimbo de Gestão explicitamente dispensado (trilha de auditoria) —
+      // NÃO cair no bloco abaixo, que recomputaria 'pendente' e devolveria o
+      // pedido pra aguardando_aprovacao_origem.
+      gestaoStatus = 'dispensada';
+      gestaoMotivo = COMPRA_COTACAO_DIRETA_MOTIVO;
+    } else if (!planejado && categoria !== 'reserva_espaco') {
       // 2º carimbo · Gestão (ou aprovadores específicos da categoria · ex.: TI →
       // Diego/Matheus). Best-effort · lista vazia degrada.
       const temOverride = !!(await overrideGestaoPorCategoria(categoria));
@@ -1172,6 +1200,7 @@ router.post('/', async (req, res) => {
     // ele já nasce no julgamento de mérito (não-planejado com custo → Pastor
     // Presidente). Planejado nunca passa por aqui.
     if (!planejado
+        && !compraCotacaoDireta // compra ≤ R$ 1.000 também pula o mérito (2026-07-15)
         && data.aprovacao_origem_status === 'dispensada'
         && data.aprovacao_gestao_status === 'dispensada'
         && precisaMerito(data)) {
@@ -1237,6 +1266,30 @@ router.post('/', async (req, res) => {
       chaveDedup: `solicitacao_nova_${data.id}`,
       extraTargetIds: responsaveisDaArea,
     }).catch(err => console.error('[SOLICITACOES] notify error:', err.message));
+
+    // Compra ≤ R$ 1.000 nasceu direto em cotação → evento explícito na timeline
+    // + call-to-action "Cotar" pros responsáveis de compras (no fluxo normal esse
+    // aviso só sai no aprovar-origem, que aqui foi dispensado).
+    if (compraCotacaoDireta && data.status === 'em_cotacao') {
+      registrarEvento(data.id, {
+        statusAnterior: null,
+        statusNovo: 'em_cotacao',
+        atorId: userId,
+        observacao: COMPRA_COTACAO_DIRETA_MOTIVO,
+      });
+      if (responsaveisDaArea.length) {
+        notificar({
+          modulo,
+          tipo: 'solicitacao_status',
+          titulo: `Cotar: ${titulo}`,
+          mensagem: `Compra de até R$ ${COMPRA_COTACAO_DIRETA_LIMITE} entrou direto na cotação — registre a cotação (valor + fornecedor) pra seguir pra aprovação do financeiro.`,
+          link: '/solicitacoes',
+          severidade: 'info',
+          chaveDedup: `solicitacao_cotar_${data.id}`,
+          targetIds: responsaveisDaArea,
+        }).catch(err => console.error('[SOLICITACOES] notify cotar direto:', err.message));
+      }
+    }
 
     // Aprovação hierarquica · se trigger marcou aguardando_aprovacao_origem,
     // notifica o diretor de origem em vez do responsável da área alvo.
@@ -1596,6 +1649,20 @@ router.post('/:id/registrar-cotacao', async (req, res) => {
       .from('solicitacoes').update(updates).eq('id', req.params.id).select('*').single();
     if (error) throw error;
 
+    // A dispensa ≤ R$ 1.000 foi decidida sobre a ESTIMATIVA — se a cotação real
+    // estourou o limite, o financeiro precisa saber que o pedido pulou os
+    // carimbos (a aprovação segue com o Yago, sobre o valor cotado).
+    const dispensadaPorBaixoValor = atual.aprovacao_origem_motivo === COMPRA_COTACAO_DIRETA_MOTIVO;
+    const cotacaoAcimaDaDispensa = dispensadaPorBaixoValor && valor > COMPRA_COTACAO_DIRETA_LIMITE;
+    if (cotacaoAcimaDaDispensa) {
+      registrarEvento(data.id, {
+        statusAnterior: 'em_cotacao',
+        statusNovo: 'aguardando_aprovacao_financeira',
+        atorId: req.user.userId,
+        observacao: `Cotação de R$ ${valor.toFixed(2)} acima do limite de R$ ${COMPRA_COTACAO_DIRETA_LIMITE} que dispensou as aprovações no pedido`,
+      });
+    }
+
     // Notifica o financeiro (Yago) que ha cotacao pra aprovar
     resolverDestinatarios('financeiro').then(managers => {
       const alvo = [...new Set((managers || []).filter(Boolean))];
@@ -1604,9 +1671,9 @@ router.post('/:id/registrar-cotacao', async (req, res) => {
           modulo: 'financeiro',
           tipo: 'solicitacao_status',
           titulo: `Cotação pronta: ${data.titulo}`,
-          mensagem: `A logística cotou R$ ${valor.toFixed(2)}${fornecedor ? ` (${fornecedor})` : ''} · aguarda sua aprovação financeira.`,
+          mensagem: `A logística cotou R$ ${valor.toFixed(2)}${fornecedor ? ` (${fornecedor})` : ''} · aguarda sua aprovação financeira.${cotacaoAcimaDaDispensa ? ` Atenção: o pedido entrou sem aprovações por ter sido estimado em até R$ ${COMPRA_COTACAO_DIRETA_LIMITE}, mas a cotação veio acima disso.` : ''}`,
           link: '/solicitacoes',
-          severidade: 'info',
+          severidade: cotacaoAcimaDaDispensa ? 'alta' : 'info',
           chaveDedup: `solicitacao_cotacao_${data.id}`,
           targetIds: alvo,
         }).catch(err => console.error('[SOLICITACOES] notify cotacao:', err.message));
