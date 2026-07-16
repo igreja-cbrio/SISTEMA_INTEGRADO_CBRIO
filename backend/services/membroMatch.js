@@ -149,6 +149,22 @@ function nomesMesmaPessoa(a, b) {
   return _dice(x, y) >= 0.90;
 }
 
+// _consolidarCpfNoMatch · quando a pessoa entrou COM CPF mas ligou por sinal
+// fraco (e-mail/telefone+nome/nascimento+nome), consolida o CPF no membro
+// ligado — é o "CPF tardio" (pessoa converteu antes sem CPF, voltou com CPF).
+// Delegado ao cpfReconciliar: preenche se o membro não tem CPF; conflito
+// (CPF de outro membro / membro com CPF diferente) vira pendência humana,
+// nunca auto-funde. Best-effort: falha aqui não derruba o vínculo.
+async function _consolidarCpfNoMatch(membroId, cpf11, matchedBy) {
+  if (!cpf11) return;
+  try {
+    const { reconciliarCpfTardio } = require('./cpfReconciliar');
+    await reconciliarCpfTardio({ membroId, cpf: cpf11, origem: `matcher:${matchedBy}` });
+  } catch (e) {
+    console.error('[membroMatch] consolidar cpf pós-match:', e.message);
+  }
+}
+
 // acharOuCriarGuardado · "guardar na origem" (Marcos · 2026-06-16). Política:
 //   CPF exato → liga · e-mail exato + NOME batendo → liga · telefone + NOME
 //   batendo → liga · senão CRIA stub. NUNCA liga por telefone/e-mail sozinho
@@ -175,14 +191,20 @@ async function acharOuCriarGuardado({ cpf, email, telefone, nome, dataNascimento
     const { data } = await supabase.from('mem_membros')
       .select('id, nome').ilike('email', escapePostgrestValue(emailLc)).limit(5);
     const hit = (data || []).find((c) => !nome || nomesMesmaPessoa(c.nome, nome));
-    if (hit?.id) return { membro_id: hit.id, created: false, matched_by: 'email' };
+    if (hit?.id) {
+      await _consolidarCpfNoMatch(hit.id, cpf11, 'email');
+      return { membro_id: hit.id, created: false, matched_by: 'email' };
+    }
   }
   if (soChaveForte) {
     // pula direto pro CRIA (nenhum sinal deniável liga)
   } else if (tel && nome) {
     const cands = await buscarCandidatos({ telefone }, { limit: 8 });
     const hit = cands.find((c) => nomesMesmaPessoa(c.nome, nome));
-    if (hit) return { membro_id: hit.id, created: false, matched_by: 'telefone+nome' };
+    if (hit) {
+      await _consolidarCpfNoMatch(hit.id, cpf11, 'telefone+nome');
+      return { membro_id: hit.id, created: false, matched_by: 'telefone+nome' };
+    }
   }
   // nome + data de nascimento · forte pra quem não tem CPF/e-mail/telefone batendo
   // (ex.: pessoas importadas de grupos têm nome+nascimento). Conservador: mesma
@@ -191,7 +213,10 @@ async function acharOuCriarGuardado({ cpf, email, telefone, nome, dataNascimento
     const { data } = await supabase.from('mem_membros')
       .select('id, nome').eq('data_nascimento', nasc).is('deleted_at', null).limit(30);
     const hit = (data || []).find((c) => nomesMesmaPessoa(c.nome, nome));
-    if (hit) return { membro_id: hit.id, created: false, matched_by: 'nome+nascimento' };
+    if (hit) {
+      await _consolidarCpfNoMatch(hit.id, cpf11, 'nome+nascimento');
+      return { membro_id: hit.id, created: false, matched_by: 'nome+nascimento' };
+    }
   }
 
   const { data, error } = await supabase.from('mem_membros').insert({

@@ -6,6 +6,7 @@ const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const { coletarTodos } = require('../services/kpiAutoCollector');
 const { acharOuCriarGuardado } = require('../services/membroMatch');
+const { reconciliarCpfTardio, propagarCpfConvertido } = require('../services/cpfReconciliar');
 const painelCache = require('../services/painelCache');
 const { isAuthorizedCron } = require('../utils/cronAuth');
 
@@ -474,6 +475,25 @@ router.put('/decisoes-pessoas/:id', authorizeIntegracao, async (req, res) => {
     .from('cultos_decisoes_pessoas').update(update)
     .eq('id', req.params.id).select().single();
   if (error) return res.status(500).json({ error: error.message });
+
+  // Reconciliação de CPF tardio ("censo posterior" · auditoria CPF 2026-07-16):
+  // o trigger resolve_membro é BEFORE INSERT — editar a decisão preenchendo o
+  // CPF depois NÃO atualizava o membro-stub criado sem CPF. Agora o CPF que
+  // chega pela edição é consolidado no membro vinculado (ou vira pendência de
+  // identidade se conflitar) e espelhado no convertido. Fire-and-forget.
+  if (update.cpf && data?.membro_id && data.tipo_decisao !== 'kids') {
+    (async () => {
+      try {
+        await reconciliarCpfTardio({
+          membroId: data.membro_id, cpf: update.cpf,
+          origem: 'decisao_edicao', origemId: data.id,
+        });
+        await propagarCpfConvertido({ membroId: data.membro_id });
+      } catch (e) {
+        console.error('[kpis/decisoes-pessoas PUT] reconciliar cpf:', e.message);
+      }
+    })();
+  }
   res.json(data);
 });
 
@@ -955,6 +975,21 @@ router.post('/batismos/:id/checkin', authorizeBatismo, async (req, res) => {
     } catch (e) {
       console.error('[kpis/batismos/checkin] acharOuCriarGuardado:', e.message);
       // fail-open: segue sem vínculo (Entradas liga depois)
+    }
+  } else if (cpfClean && cpfClean.length === 11 && insc.membro_id) {
+    // Reconciliação de CPF tardio: a inscrição JÁ estava ligada a um membro
+    // (tipicamente um stub criado sem CPF na conversão) e o CPF chegou agora,
+    // na presença física. Antes o CPF ficava só na inscrição — o membro seguia
+    // sem CPF e a identidade global nunca consolidava. Conflito não sobrescreve
+    // nada: vira pendência de identidade (fila humana).
+    try {
+      await reconciliarCpfTardio({
+        membroId: insc.membro_id, cpf: cpfClean,
+        origem: 'batismo_checkin', origemId: insc.id,
+      });
+      await propagarCpfConvertido({ membroId: insc.membro_id });
+    } catch (e) {
+      console.error('[kpis/batismos/checkin] reconciliar cpf:', e.message);
     }
   }
 

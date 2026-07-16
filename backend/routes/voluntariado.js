@@ -1,7 +1,8 @@
 const router = require('express').Router();
 const { authenticate, authorizeModule, getEffectiveLevel, bustPermissionCaches } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
-const { acharOuCriarGuardado } = require('../services/membroMatch');
+const { acharOuCriarGuardado, acharMembroGuardado } = require('../services/membroMatch');
+const { reconciliarCpfTardio } = require('../services/cpfReconciliar');
 const { getPCCredentials, fetchWithRetry, PC_SERVICES_BASE, assignVolunteersToTeams, syncTeamMembersFromSchedules, fetchAllServiceTypes } = require('../services/planningCenter');
 const { enqueueSync } = require('../services/cerebroSync');
 const { resolverVoluntarioPorQr } = require('../services/volCheckinResolver');
@@ -3508,6 +3509,38 @@ router.patch('/inscricoes/:id/dados', async (req, res) => {
     const { data, error } = await supabase.from('vol_inscricoes')
       .update(patch).eq('id', req.params.id).select().single();
     if (error) throw error;
+
+    // Reconciliação de CPF tardio (auditoria CPF 2026-07-16): completar o CPF
+    // na ficha não refazia o match de membro — a inscrição ficava com CPF e o
+    // vínculo (ou a falta dele) congelado. Agora: se a inscrição já tem membro,
+    // consolida o CPF nele (conflito vira pendência de identidade); se não tem,
+    // tenta ligar pelo matcher canônico (CPF → email+nome → tel+nome → nasc+nome,
+    // read-only · não cria stub aqui). Fire-and-forget.
+    if (patch.cpf && data) {
+      (async () => {
+        try {
+          if (data.membro_id) {
+            await reconciliarCpfTardio({
+              membroId: data.membro_id, cpf: patch.cpf,
+              origem: 'vol_ficha', origemId: data.id,
+            });
+          } else {
+            const hit = await acharMembroGuardado({
+              cpf: patch.cpf, email: data.email, telefone: data.telefone,
+              nome: data.nome_completo || [data.nome, data.sobrenome].filter(Boolean).join(' '),
+              dataNascimento: data.data_nascimento || null,
+            });
+            if (hit?.membro_id) {
+              await supabase.from('vol_inscricoes')
+                .update({ membro_id: hit.membro_id, updated_at: new Date().toISOString() })
+                .eq('id', data.id).is('membro_id', null);
+            }
+          }
+        } catch (e2) {
+          console.error('[inscricao dados] reconciliar cpf:', e2.message);
+        }
+      })();
+    }
     res.json(data);
   } catch (e) {
     console.error('[inscricao dados]', e.message);

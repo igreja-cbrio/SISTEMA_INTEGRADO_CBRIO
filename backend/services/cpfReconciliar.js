@@ -1,0 +1,150 @@
+// ============================================================================
+// services/cpfReconciliar · reconciliação de CPF tardio
+//
+// O buraco que isto fecha (auditoria CPF · 2026-07-16): a pessoa entra sem CPF
+// (decisão de culto vira stub em mem_membros), e quando o CPF chega DEPOIS
+// (inscrição de batismo/Next, ficha de voluntário, censo, check-in) ele ficava
+// só na linha-satélite — o membro seguia sem CPF e a identidade global nunca
+// se consolidava.
+//
+// Política (mesma do membroMatch · NUNCA auto-funde):
+//   · membro sem CPF + CPF livre        → preenche o CPF no membro (enriquece)
+//   · CPF já pertence a OUTRO membro    → NÃO funde: abre pendência de
+//     identidade (fila humana · módulo Entradas/Duplicados resolve com
+//     merge_membros "somar, não substituir")
+//   · membro já tem CPF diferente       → pendência (cpf_divergente)
+//
+// A tabela identidade_pendencias é criada na migration 20260716150000. O
+// serviço tolera a tabela ausente (loga e segue) pra rodar antes da migration.
+// ============================================================================
+
+const { supabase } = require('../utils/supabase');
+const { normalizarCpf, cpfValido } = require('../utils/cpf');
+
+// Dono ativo do CPF (deleted_at IS NULL · dados vivos são digits-only).
+async function donoAtivoDoCpf(cpf11, { exceto } = {}) {
+  let q = supabase.from('mem_membros')
+    .select('id, nome, cpf')
+    .eq('cpf', cpf11)
+    .is('deleted_at', null)
+    .limit(2);
+  if (exceto) q = q.neq('id', exceto);
+  const { data, error } = await q;
+  if (error) throw error;
+  return (data && data[0]) || null;
+}
+
+async function registrarPendencia({ tipo, membroId, conflitoId, origem, origemId, detalhe }) {
+  try {
+    const { error } = await supabase.from('identidade_pendencias').insert({
+      tipo,
+      membro_id: membroId || null,
+      membro_conflito_id: conflitoId || null,
+      origem: origem || null,
+      origem_id: origemId != null ? String(origemId) : null,
+      detalhe: detalhe || null,
+    });
+    // 23505 = já existe pendência aberta pro mesmo par · idempotente
+    if (error && error.code !== '23505') throw error;
+    return !error;
+  } catch (e) {
+    console.error('[cpfReconciliar] pendência não registrada:', e.message);
+    return false;
+  }
+}
+
+async function logHistorico(membroId, acao, observacao) {
+  try {
+    await supabase.from('mem_historico').insert({
+      membro_id: membroId, acao, observacao, created_at: new Date().toISOString(),
+    });
+  } catch { /* histórico é best-effort */ }
+}
+
+// reconciliarCpfTardio · um CPF acabou de chegar pra um membro já existente.
+// Retorna { acao } ∈ ja_tinha | cpf_preenchido | conflito_pendencia |
+//                    divergente_pendencia | cpf_invalido | membro_nao_encontrado
+async function reconciliarCpfTardio({ membroId, cpf, origem, origemId } = {}) {
+  const cpf11 = normalizarCpf(cpf);
+  if (!membroId || !cpf11 || !cpfValido(cpf11)) return { acao: 'cpf_invalido' };
+
+  const { data: membro, error } = await supabase.from('mem_membros')
+    .select('id, nome, cpf, deleted_at')
+    .eq('id', membroId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!membro || membro.deleted_at) return { acao: 'membro_nao_encontrado' };
+
+  const cpfAtual = normalizarCpf(membro.cpf);
+  if (cpfAtual === cpf11) return { acao: 'ja_tinha' };
+
+  // Membro já tem OUTRO CPF → não sobrescreve identidade · fila humana decide
+  if (cpfAtual) {
+    const dono = await donoAtivoDoCpf(cpf11, { exceto: membroId });
+    await registrarPendencia({
+      tipo: 'cpf_divergente', membroId, conflitoId: dono?.id || null,
+      origem, origemId,
+      detalhe: `Membro já tem CPF; um CPF diferente chegou via ${origem || 'origem desconhecida'}.`,
+    });
+    return { acao: 'divergente_pendencia', conflito_id: dono?.id || null };
+  }
+
+  // CPF pertence a outro membro ativo → duplicata provável · fila humana funde
+  const dono = await donoAtivoDoCpf(cpf11, { exceto: membroId });
+  if (dono) {
+    await registrarPendencia({
+      tipo: 'cpf_conflito', membroId, conflitoId: dono.id,
+      origem, origemId,
+      detalhe: `CPF chegou pra um cadastro sem CPF, mas já pertence a outro membro ativo — provável mesma pessoa em 2 cadastros (fundir).`,
+    });
+    return { acao: 'conflito_pendencia', conflito_id: dono.id };
+  }
+
+  // Caminho feliz: enriquece o membro com o CPF
+  const { error: e2 } = await supabase.from('mem_membros')
+    .update({ cpf: cpf11, updated_at: new Date().toISOString() })
+    .eq('id', membroId)
+    .is('cpf', null);
+  if (e2) {
+    // 23505 = corrida com outro fluxo gravando o mesmo CPF · vira conflito
+    if (e2.code === '23505') {
+      const donoAgora = await donoAtivoDoCpf(cpf11, { exceto: membroId });
+      if (donoAgora) {
+        await registrarPendencia({
+          tipo: 'cpf_conflito', membroId, conflitoId: donoAgora.id, origem, origemId,
+          detalhe: 'Corrida: outro fluxo gravou o mesmo CPF primeiro.',
+        });
+        return { acao: 'conflito_pendencia', conflito_id: donoAgora.id };
+      }
+    }
+    throw e2;
+  }
+
+  await logHistorico(membroId, 'cpf_recebido',
+    `CPF recebido tardiamente via ${origem || 'fluxo'}${origemId ? ` (id ${origemId})` : ''} e consolidado no cadastro.`);
+  return { acao: 'cpf_preenchido' };
+}
+
+// propagarCpfConvertido · espelha o CPF do membro nas linhas de cui_convertidos
+// que nasceram sem CPF (a coorte BAT90/NEXT90 cruza por membro_id/cpf/nome —
+// quanto mais CPF, menos dependência do match por nome).
+async function propagarCpfConvertido({ membroId }) {
+  try {
+    const { data: m } = await supabase.from('mem_membros')
+      .select('cpf').eq('id', membroId).maybeSingle();
+    const cpf11 = normalizarCpf(m?.cpf);
+    if (!cpf11) return 0;
+    const { data, error } = await supabase.from('cui_convertidos')
+      .update({ cpf: cpf11 })
+      .eq('membro_id', membroId)
+      .is('cpf', null)
+      .select('id');
+    if (error) throw error;
+    return (data || []).length;
+  } catch (e) {
+    console.error('[cpfReconciliar] propagar cui_convertidos:', e.message);
+    return 0;
+  }
+}
+
+module.exports = { reconciliarCpfTardio, propagarCpfConvertido, donoAtivoDoCpf, registrarPendencia };
