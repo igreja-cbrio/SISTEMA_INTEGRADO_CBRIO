@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { publicVoluntariado } from '../../api';
 import AnimatedBackground from './AnimatedBackground';
 import { usePublicTheme, PublicThemeToggle, PublicPaletteCtx, usePublicPalette } from './publicTheme';
+import { BirthDatePicker } from '../../components/ui/birth-date-picker';
 
 // ── Helpers ──
 function soDigitos(v: string) { return (v || '').toString().replace(/\D+/g, ''); }
@@ -460,15 +461,12 @@ export default function InscricaoVoluntariado() {
                 <Field id="telefone" label="Telefone (WhatsApp)" value={form.telefone} onChange={set('telefone')} required placeholder="(00) 00000-0000" inputMode="tel" autoComplete="tel" />
                 <Field id="cpf" label={precisaDadosMenor ? 'CPF' : 'CPF (opcional)'} value={form.cpf} onChange={set('cpf')} required={precisaDadosMenor} placeholder="000.000.000-00" inputMode="numeric" autoComplete="off" />
               </Row>
-              <Field
-                id="data_nascimento"
-                label="Data de nascimento"
-                type="date"
-                value={form.data_nascimento}
-                onChange={set('data_nascimento')}
-                required
-                autoComplete="bday"
-              />
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ display: 'block', fontSize: 11, color: 'var(--cbrio-text3)', marginBottom: 6 }}>
+                  Data de nascimento <span style={{ color: '#ef4444' }}>*</span>
+                </label>
+                <BirthDatePicker value={form.data_nascimento} onChange={(v) => setForm(f => ({ ...f, data_nascimento: v }))} />
+              </div>
 
               <SectionTitle>Onde você quer servir</SectionTitle>
               <p style={{ fontSize: 12, color: C.text3, marginTop: -6, marginBottom: 14 }}>

@@ -17,6 +17,12 @@ function Calendar({ className, classNames, showOutsideDays = true, ...props }: C
         month: "space-y-4",
         caption: "flex justify-center pt-1 relative items-center",
         caption_label: "text-sm font-medium",
+        // Seletor de mês/ano (captionLayout="dropdown") — usado pelo BirthDatePicker.
+        caption_dropdowns: "flex justify-center gap-1",
+        vhidden: "sr-only",
+        dropdown_month: "relative inline-flex items-center rounded-md border border-input bg-transparent px-2 py-1 text-sm font-medium hover:bg-accent",
+        dropdown_year: "relative inline-flex items-center rounded-md border border-input bg-transparent px-2 py-1 text-sm font-medium hover:bg-accent",
+        dropdown: "absolute inset-0 h-full w-full cursor-pointer appearance-none opacity-0",
         nav: "space-x-1 flex items-center",
         nav_button: cn(
           buttonVariants({ variant: "outline" }),

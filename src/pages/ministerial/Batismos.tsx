@@ -4,6 +4,7 @@ import { kpis as kpisApi } from '../../api';
 import useConfirmarSaida from '../../hooks/useConfirmarSaida';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
+import { BirthDatePicker } from '../../components/ui/birth-date-picker';
 import { Label } from '../../components/ui/label';
 import { Textarea } from '../../components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../../components/ui/dialog';
@@ -1437,7 +1438,7 @@ function ModalNovaInscricao({ onClose, onCreated }: { onClose: () => void; onCre
             </div>
             <div>
               <Label htmlFor="bn-nasc" className="text-xs">Data de nascimento</Label>
-              <Input id="bn-nasc" type="date" value={form.data_nascimento} onChange={set('data_nascimento')} autoComplete="bday" />
+              <BirthDatePicker value={form.data_nascimento} onChange={v => setForm(f => ({ ...f, data_nascimento: v }))} />
             </div>
           </div>
 
