@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -171,8 +172,8 @@ export default function VolInscricoes() {
   const [selected, setSelected] = useState<InscricaoRow | null>(null);
   const [obs, setObs] = useState('');
   const [editando, setEditando] = useState(false);
-  const [form, setForm] = useState<{ cpf: string; data_nascimento: string; nome_mae: string; ministerios_interesse: string; area_direcionada: string[] }>({
-    cpf: '', data_nascimento: '', nome_mae: '', ministerios_interesse: '', area_direcionada: [],
+  const [form, setForm] = useState<{ cpf: string; data_nascimento: string; nome_mae: string; ministerios_interesse: string; area_direcionada: string[]; feedback: string }>({
+    cpf: '', data_nascimento: '', nome_mae: '', ministerios_interesse: '', area_direcionada: [], feedback: '',
   });
   const pageSize = 50;
   const queryClient = useQueryClient();
@@ -238,6 +239,7 @@ export default function VolInscricoes() {
       nome_mae: selected.nome_mae || '',
       ministerios_interesse: selected.ministerios_interesse || '',
       area_direcionada: Array.isArray(selected.area_direcionada) ? selected.area_direcionada : [],
+      feedback: selected.feedback || '',
     });
     setEditando(true);
   };
@@ -256,6 +258,7 @@ export default function VolInscricoes() {
       nome_mae: form.nome_mae,
       ministerios_interesse: form.ministerios_interesse,
       area_direcionada: form.area_direcionada,
+      feedback: form.feedback,
     }),
     onSuccess: (row: any) => {
       setSelected((prev) => (prev ? { ...prev, ...row } : prev));
@@ -795,6 +798,16 @@ export default function VolInscricoes() {
                           );
                         })}
                       </div>
+                    </div>
+                    <div>
+                      <label className="text-[11px] uppercase tracking-wide text-muted-foreground">Observações / feedback</label>
+                      <Textarea
+                        rows={3}
+                        value={form.feedback}
+                        onChange={(e) => setForm((f) => ({ ...f, feedback: e.target.value }))}
+                        placeholder="Ex.: feedback dia 07/05 · disse que tem se sentido bem servindo..."
+                        className="mt-1 resize-y"
+                      />
                     </div>
                     <div className="flex gap-2 pt-1">
                       <Button size="sm" disabled={salvarDados.isPending} onClick={() => salvarDados.mutate()}>

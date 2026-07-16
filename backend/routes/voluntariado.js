@@ -3475,7 +3475,7 @@ router.patch('/inscricoes/:id/dados', async (req, res) => {
       return res.status(403).json({ error: 'Sem permissão para editar a inscrição' });
     }
 
-    const { cpf, data_nascimento, nome_mae, ministerios_interesse, area_direcionada } = req.body || {};
+    const { cpf, data_nascimento, nome_mae, ministerios_interesse, area_direcionada, feedback } = req.body || {};
     const patch = { updated_at: new Date().toISOString() };
 
     if (cpf !== undefined) {
@@ -3499,6 +3499,9 @@ router.patch('/inscricoes/:id/dados', async (req, res) => {
         ? [...new Set(area_direcionada.map((s) => String(s).trim()).filter(Boolean))]
         : [];
       patch.area_direcionada = arr.length ? arr : null;
+    }
+    if (feedback !== undefined) {
+      patch.feedback = feedback ? String(feedback).trim() : null;
     }
 
     if (Object.keys(patch).length === 1) {
