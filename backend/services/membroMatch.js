@@ -170,11 +170,11 @@ function nomesMesmaPessoa(a, b) {
 // Delegado ao cpfReconciliar: preenche se o membro não tem CPF; conflito
 // (CPF de outro membro / membro com CPF diferente) vira pendência humana,
 // nunca auto-funde. Best-effort: falha aqui não derruba o vínculo.
-async function _consolidarCpfNoMatch(membroId, cpf11, matchedBy) {
+async function _consolidarCpfNoMatch(membroId, cpf11, matchedBy, dataNascimento) {
   if (!cpf11) return;
   try {
     const { reconciliarCpfTardio } = require('./cpfReconciliar');
-    await reconciliarCpfTardio({ membroId, cpf: cpf11, origem: `matcher:${matchedBy}` });
+    await reconciliarCpfTardio({ membroId, cpf: cpf11, origem: `matcher:${matchedBy}`, dataNascimento });
   } catch (e) {
     console.error('[membroMatch] consolidar cpf pós-match:', e.message);
   }
@@ -209,7 +209,7 @@ async function acharOuCriarGuardado({ cpf, email, telefone, nome, dataNascimento
       .is('deleted_at', null).limit(5);
     const hit = (data || []).find((c) => !nome || nomesMesmaPessoa(c.nome, nome));
     if (hit?.id) {
-      await _consolidarCpfNoMatch(hit.id, cpf11, 'email');
+      await _consolidarCpfNoMatch(hit.id, cpf11, 'email', nasc);
       return { membro_id: hit.id, created: false, matched_by: 'email' };
     }
   }
@@ -219,7 +219,7 @@ async function acharOuCriarGuardado({ cpf, email, telefone, nome, dataNascimento
     const cands = await buscarCandidatos({ telefone }, { limit: 8 });
     const hit = cands.find((c) => nomesMesmaPessoa(c.nome, nome));
     if (hit) {
-      await _consolidarCpfNoMatch(hit.id, cpf11, 'telefone+nome');
+      await _consolidarCpfNoMatch(hit.id, cpf11, 'telefone+nome', nasc);
       return { membro_id: hit.id, created: false, matched_by: 'telefone+nome' };
     }
   }
@@ -231,7 +231,7 @@ async function acharOuCriarGuardado({ cpf, email, telefone, nome, dataNascimento
       .select('id, nome').eq('data_nascimento', nasc).is('deleted_at', null).limit(30);
     const hit = (data || []).find((c) => nomesMesmaPessoa(c.nome, nome));
     if (hit) {
-      await _consolidarCpfNoMatch(hit.id, cpf11, 'nome+nascimento');
+      await _consolidarCpfNoMatch(hit.id, cpf11, 'nome+nascimento', nasc);
       return { membro_id: hit.id, created: false, matched_by: 'nome+nascimento' };
     }
   }
