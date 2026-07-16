@@ -126,6 +126,10 @@
       "schedule": "0 8 * * *"
     },
     {
+      "path": "/api/rh/cron/nao-pagos",
+      "schedule": "0 12 10 * *"
+    },
+    {
       "path": "/api/santander/cron/sync",
       "schedule": "0 5 * * *"
     },
