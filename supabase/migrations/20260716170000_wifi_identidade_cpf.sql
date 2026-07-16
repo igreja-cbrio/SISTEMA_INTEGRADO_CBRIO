@@ -380,8 +380,17 @@ END $$;
 -- ----------------------------------------------------------------------------
 -- Conferência:
 --   SELECT fn_cpf_dv_valido('11111111111');            -- false
---   SELECT count(*) FROM wifi_visitantes v JOIN mem_membros l ON l.id=v.membro_id
---    WHERE l.deleted_at IS NOT NULL;                    -- deve tender a 0
+--   -- Vínculos com membro deletado: a MAIORIA fica (CPF do wifi sem dono
+--   -- vivo = não há alvo seguro pra repoint · resíduo das fusões/podas).
+--   -- O que tende a 0 (ao longo dos crons) é o subconjunto COM dono vivo —
+--   -- inclusive os donos criados pelo passo 6 na mesma execução, que o 4b
+--   -- só alcança na execução SEGUINTE:
+--   SELECT count(*) FILTER (WHERE EXISTS (
+--            SELECT 1 FROM mem_membros d WHERE d.deleted_at IS NULL
+--             AND regexp_replace(COALESCE(d.cpf,''),'\D','','g') = v.cpf_norm)) AS com_dono_vivo,
+--          count(*) AS total
+--     FROM wifi_visitantes v JOIN mem_membros l ON l.id = v.membro_id
+--    WHERE l.deleted_at IS NOT NULL AND v.deleted_at IS NULL;
 --   SELECT count(*) FROM identidade_pendencias
 --    WHERE tipo = 'cpf_para_confirmar' AND origem = 'wifi';  -- fila de sementes
 --   SELECT count(*) FROM mem_membros WHERE cpf IS NOT NULL AND deleted_at IS NULL;
