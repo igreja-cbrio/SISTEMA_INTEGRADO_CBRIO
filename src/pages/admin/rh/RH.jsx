@@ -2507,7 +2507,6 @@ function HierarquiaSection({ data, funcs = [], onChanged }) {
   );
 }
 
-<<<<<<< Updated upstream
 // Gera/mostra o link do formulário público de dados pessoais pra mandar pro
 // colaborador (WhatsApp/copiar). O RH só cuida de salário/cargo.
 function OnboardingLinkButton({ funcId }) {
@@ -2542,7 +2541,10 @@ function OnboardingLinkButton({ funcId }) {
           </div>
         </div>
       )}
-=======
+    </div>
+  );
+}
+
 // Tempo de casa a partir da data de admissão (ex.: "2a 3m", "5 meses").
 function tempoDeCasa(dateStr) {
   if (!dateStr) return null;
@@ -2582,7 +2584,6 @@ function SecaoHeader({ icon: Icon, title, count, extra }) {
         {count != null && <span style={{ fontSize: 11, fontWeight: 700, color: C.text3, background: 'var(--cbrio-input-bg)', borderRadius: 999, padding: '1px 8px' }}>{count}</span>}
       </div>
       {extra}
->>>>>>> Stashed changes
     </div>
   );
 }
