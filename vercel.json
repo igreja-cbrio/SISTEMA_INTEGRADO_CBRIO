@@ -22,6 +22,10 @@
       "schedule": "0 5 * * *"
     },
     {
+      "path": "/api/totem-kids/cron/encerrar-vencidas",
+      "schedule": "0 6 * * *"
+    },
+    {
       "path": "/api/totem-kids/cron/resumo-pco",
       "schedule": "0 * * * *"
     },
