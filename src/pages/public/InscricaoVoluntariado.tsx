@@ -265,6 +265,7 @@ export default function InscricaoVoluntariado() {
   const [sent, setSent] = useState(false);
   // Consentimento LGPD pra consulta de antecedentes (obrigatório Kids/Bridge).
   const [consentAntecedentes, setConsentAntecedentes] = useState(false);
+  const [whatsappOptin, setWhatsappOptin] = useState(false);
   const { C } = usePublicTheme();
 
   // Opções vem do banco (gerenciadas no módulo de voluntariado). Fallback fica
@@ -350,6 +351,7 @@ export default function InscricaoVoluntariado() {
         dom_predominante: form.dom_predominante || null,
         ministerios_interesse: ministerios,
         consentimento_antecedentes: precisaDadosMenor ? consentAntecedentes : false,
+        whatsapp_optin: whatsappOptin,
         website: form.website,
       });
       setSent(true);
@@ -549,6 +551,25 @@ export default function InscricaoVoluntariado() {
                 onChange={set('dom_predominante') as any}
                 options={DONS.map(d => ({ value: d, label: d }))}
               />
+
+              <label style={{
+                display: 'flex', gap: 10, alignItems: 'flex-start',
+                background: C.isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
+                border: `1px solid ${C.inputBorder}`,
+                borderRadius: 12, padding: '14px 16px', margin: '4px 0 16px', cursor: 'pointer',
+              }}>
+                <input
+                  type="checkbox"
+                  checked={whatsappOptin}
+                  onChange={(e) => setWhatsappOptin(e.target.checked)}
+                  style={{ marginTop: 3, width: 18, height: 18, accentColor: '#00B39D', flexShrink: 0 }}
+                />
+                <span style={{ fontSize: 12.5, color: C.text3, lineHeight: 1.55 }}>
+                  Aceito receber mensagens da CBRio no <strong>WhatsApp</strong> (avisos, escalas,
+                  lembretes e felicitações). Você pode cancelar quando quiser. Seus dados são
+                  tratados conforme a LGPD.
+                </span>
+              </label>
 
               <button
                 type="submit"
