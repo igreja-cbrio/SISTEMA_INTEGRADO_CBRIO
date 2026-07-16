@@ -119,20 +119,42 @@ BEGIN
      AND regexp_replace(COALESCE(m.cpf,''),'\D','','g') = v.cpf_norm;
   GET DIAGNOSTICS v_vinc_membro = ROW_COUNT;
 
-  -- 4b) correção contínua: vínculo apontando pra membro DELETADO ou com CPF
-  --     DIFERENTE do cpf_norm → repoint pro dono ativo do CPF (resíduo das
-  --     fusões: o membro fundido morre e o CPF passa a pertencer ao sobrevivente)
+  -- 4b) correção contínua: vínculo apontando pra membro DELETADO → repoint
+  --     pro dono ativo do CPF (resíduo das fusões: o membro fundido morre e o
+  --     CPF passa a pertencer ao sobrevivente). Vínculo VIVO com CPF
+  --     divergente NÃO é re-apontado (o vínculo pode estar certo e o CPF do
+  --     portal errado — ex.: esposa digitou o CPF do marido) → vira pendência
+  --     humana (política: nunca auto-religar em cima de vínculo vivo).
   UPDATE public.wifi_visitantes v
      SET membro_id = dono.id, match_tipo = 'cpf', updated_at = now()
     FROM public.mem_membros lig, public.mem_membros dono
    WHERE lig.id = v.membro_id
+     AND lig.deleted_at IS NOT NULL
      AND v.deleted_at IS NULL
      AND v.cpf_norm ~ '^[0-9]{11}$'
      AND dono.deleted_at IS NULL
      AND regexp_replace(COALESCE(dono.cpf,''),'\D','','g') = v.cpf_norm
-     AND dono.id <> v.membro_id
-     AND (lig.deleted_at IS NOT NULL
-          OR (lig.cpf IS NOT NULL AND regexp_replace(lig.cpf,'\D','','g') <> v.cpf_norm));
+     AND dono.id <> v.membro_id;
+
+  -- 4c) pendência pros vínculos VIVOS divergentes (fila humana · módulo
+  --     Entradas · tabela da 20260716150000; se ainda não existir, pula)
+  BEGIN
+    INSERT INTO public.identidade_pendencias (tipo, membro_id, membro_conflito_id, origem, detalhe)
+    SELECT DISTINCT 'vinculo_divergente', lig.id, dono.id, 'wifi',
+           'wifi_visitantes ligado a um membro vivo cujo CPF difere do CPF do portal.'
+      FROM public.wifi_visitantes v
+      JOIN public.mem_membros lig ON lig.id = v.membro_id AND lig.deleted_at IS NULL
+      JOIN public.mem_membros dono
+        ON dono.deleted_at IS NULL
+       AND regexp_replace(COALESCE(dono.cpf,''),'\D','','g') = v.cpf_norm
+       AND dono.id <> lig.id
+     WHERE v.deleted_at IS NULL
+       AND v.cpf_norm ~ '^[0-9]{11}$'
+       AND lig.cpf IS NOT NULL
+       AND regexp_replace(lig.cpf,'\D','','g') <> v.cpf_norm
+    ON CONFLICT (tipo, membro_id, membro_conflito_id) WHERE status = 'pendente' DO NOTHING;
+  EXCEPTION WHEN undefined_table THEN NULL;
+  END;
 
   -- 5) match com membro · por telefone + NOME compatível (antes era telefone
   --    SOZINHO — família compartilha o número · política do membroMatch)
@@ -161,26 +183,59 @@ BEGIN
      AND public.fn_identidade_nomes_compativeis(m.nome, v.nome)
     WHERE m.deleted_at IS NULL
       AND m.cpf IS NULL
-  ), gated AS (
-    SELECT membro_id, cpf_norm FROM (
-      SELECT membro_id, cpf_norm,
-             count(DISTINCT cpf_norm)  OVER (PARTITION BY membro_id) AS n_cpfs,
-             count(DISTINCT membro_id) OVER (PARTITION BY cpf_norm)  AS n_membros
-      FROM cand
-    ) t
-    WHERE t.n_cpfs = 1 AND t.n_membros = 1
-      AND public.fn_cpf_dv_valido(t.cpf_norm)
+  ),
+  -- par inequívoco: 1 CPF distinto por membro E 1 membro por CPF
+  -- (count(DISTINCT) não existe em window function · GROUP BY resolve)
+  membro_unico AS (
+    SELECT membro_id FROM cand GROUP BY membro_id HAVING count(DISTINCT cpf_norm) = 1
+  ),
+  cpf_unico AS (
+    SELECT cpf_norm FROM cand GROUP BY cpf_norm HAVING count(DISTINCT membro_id) = 1
+  ),
+  gated AS (
+    SELECT c.membro_id, c.cpf_norm
+    FROM cand c
+    JOIN membro_unico mu ON mu.membro_id = c.membro_id
+    JOIN cpf_unico    cu ON cu.cpf_norm  = c.cpf_norm
+    WHERE public.fn_cpf_dv_valido(c.cpf_norm)
       AND NOT EXISTS (
         SELECT 1 FROM public.mem_membros x
          WHERE x.deleted_at IS NULL
-           AND regexp_replace(COALESCE(x.cpf,''),'\D','','g') = t.cpf_norm
+           AND regexp_replace(COALESCE(x.cpf,''),'\D','','g') = c.cpf_norm
       )
+  ),
+  semeados AS (
+    UPDATE public.mem_membros m
+       SET cpf = g.cpf_norm, updated_at = now()
+      FROM gated g
+     WHERE m.id = g.membro_id AND m.cpf IS NULL
+    RETURNING m.id
   )
-  UPDATE public.mem_membros m
-     SET cpf = g.cpf_norm, updated_at = now()
-    FROM gated g
-   WHERE m.id = g.membro_id AND m.cpf IS NULL;
+  -- rastro da semente (auditável · mesmo padrão do cpfReconciliar do backend)
+  INSERT INTO public.mem_historico (membro_id, acao, observacao, created_at)
+  SELECT se.id, 'cpf_recebido',
+         'CPF consolidado a partir do cadastro do portal WiFi (par telefone+nome inequívoco).', now()
+    FROM semeados se;
   GET DIAGNOSTICS v_semeados = ROW_COUNT;
+
+  -- 5c) conflito descartado vira pendência (não jogar evidência fora ·
+  --     política: conflito → fila humana)
+  BEGIN
+    INSERT INTO public.identidade_pendencias (tipo, membro_id, membro_conflito_id, origem, detalhe)
+    SELECT DISTINCT 'cpf_conflito', m.id, dono.id, 'wifi',
+           'Membro sem CPF vinculado a wifi cujo CPF já pertence a outro membro vivo — provável mesma pessoa em 2 cadastros (fundir).'
+      FROM public.mem_membros m
+      JOIN public.wifi_visitantes v
+        ON v.membro_id = m.id AND v.deleted_at IS NULL
+       AND v.cpf_norm ~ '^[0-9]{11}$'
+       AND public.fn_identidade_nomes_compativeis(m.nome, v.nome)
+      JOIN public.mem_membros dono
+        ON dono.deleted_at IS NULL AND dono.id <> m.id
+       AND regexp_replace(COALESCE(dono.cpf,''),'\D','','g') = v.cpf_norm
+     WHERE m.deleted_at IS NULL AND m.cpf IS NULL
+    ON CONFLICT (tipo, membro_id, membro_conflito_id) WHERE status = 'pendente' DO NOTHING;
+  EXCEPTION WHEN undefined_table THEN NULL;
+  END;
 
   -- 6) visitante automático · CPF DV-válido com ≥2 cultos distintos e sem membro
   WITH pessoas AS (
