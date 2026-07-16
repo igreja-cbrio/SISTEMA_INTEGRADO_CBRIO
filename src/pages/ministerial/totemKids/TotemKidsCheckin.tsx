@@ -510,6 +510,9 @@ export default function TotemKidsCheckin() {
       const r = await totemKids.checkin.lote(payload);
       const saidas = Array.isArray(r?.resultados) ? r.resultados : [];
       const porId = new Map(itens.map((it) => [it.crianca.id, it.crianca]));
+      // Família compartilha o código → o recibo do responsável (genérico, sem nome de
+      // criança) sai UMA vez só. Etiquetas de cada criança saem normalmente.
+      let reciboImpresso = false;
       for (const s of saidas) {
         if (s?.ok) {
           const cr = porId.get(s.crianca_id);
@@ -519,7 +522,7 @@ export default function TotemKidsCheckin() {
               respNome: s.responsavel.nome, codigo: s.codigo_seguranca, codigoBarras: s.codigo_barras,
               cultoNome: s.sessao.culto?.nome || null, cultoData: s.sessao.culto?.data || null,
             });
-            try { await imprimirEtiquetas(dados); } catch { /* impressão falhou · não derruba o resto */ }
+            try { await imprimirEtiquetas(dados, false, !reciboImpresso); reciboImpresso = true; } catch { /* impressão falhou · não derruba o resto */ }
           }
           ok++;
         } else if (s?.ja_aberto) jaTinha++;

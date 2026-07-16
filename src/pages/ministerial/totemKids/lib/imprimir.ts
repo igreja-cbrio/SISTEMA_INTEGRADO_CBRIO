@@ -454,7 +454,12 @@ export function gerarHtmlPreviewAniversario(d: DadosImpressao): string {
 
 // API pública · imprime TODAS as etiquetas em UM job (a Brother corta entre elas).
 // preview=true abre num popup ao inves de mandar pra impressora.
-export async function imprimirEtiquetas(d: DadosImpressao, preview = false): Promise<void> {
+// incluirRecibo (default true · preserva o comportamento individual): quando false,
+// imprime SÓ as 2 etiquetas da criança, sem o recibo do responsável. Usado no
+// check-in de família (mesmo responsável + mesmo código): o recibo é genérico
+// (responsável + código, sem nome de criança) → 1 só basta pra todos os filhos, e o
+// pai não fica com N recibos pra perder (Marcos 2026-07-16). Layout/texto inalterados.
+export async function imprimirEtiquetas(d: DadosImpressao, preview = false, incluirRecibo = true): Promise<void> {
   const [barcodeSvg] = await Promise.all([
     gerarBarcodeSvg(d.codigoBarras),
     preloadImg(d.crianca.salaLogoUrl),
@@ -464,7 +469,8 @@ export async function imprimirEtiquetas(d: DadosImpressao, preview = false): Pro
   // No CHECK-IN: 2 etiquetas da criança (uma na criança, outra na sacola/
   // pertences) + 1 do responsável (recibo) + 1 de aniversário (na semana).
   const fragCrianca = htmlEtiquetaCrianca(d, barcodeSvg);
-  const fragmentos = [fragCrianca, fragCrianca, htmlEtiquetaResponsavel(d, barcodeSvg)];
+  const fragmentos = [fragCrianca, fragCrianca];
+  if (incluirRecibo) fragmentos.push(htmlEtiquetaResponsavel(d, barcodeSvg));
   if (d.crianca.aniversarioSemana) fragmentos.push(htmlEtiquetaAniversario(d));
 
   await imprimirHtml(documento(fragmentos), preview);
@@ -485,13 +491,15 @@ export async function imprimirEtiquetas(d: DadosImpressao, preview = false): Pro
     },
     status: 'enviada',
   }).catch(() => {});
-  totemKids.etiquetas.log({
-    checkin_id: d.checkinId,
-    estacao_id: d.estacaoId,
-    tipo: 'responsavel',
-    conteudo: { crianca: d.crianca.nome, sala: d.crianca.salaNome, codigo: d.codigoSeguranca },
-    status: 'enviada',
-  }).catch(() => {});
+  if (incluirRecibo) {
+    totemKids.etiquetas.log({
+      checkin_id: d.checkinId,
+      estacao_id: d.estacaoId,
+      tipo: 'responsavel',
+      conteudo: { crianca: d.crianca.nome, sala: d.crianca.salaNome, codigo: d.codigoSeguranca },
+      status: 'enviada',
+    }).catch(() => {});
+  }
 }
 
 // Reimpressao (etiqueta rasgou ou impressora falhou) — 1 etiqueta, 1 job.
