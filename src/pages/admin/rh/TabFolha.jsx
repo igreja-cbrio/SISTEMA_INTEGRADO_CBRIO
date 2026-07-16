@@ -162,7 +162,32 @@ function ConciliacaoFolha() {
   async function vincular(txId) {
     const fid = sel[txId];
     if (!fid) return;
-    try { await rh.folha.vincular(txId, { funcionario_id: fid }); setItens(prev => prev.filter(i => i.id !== txId)); }
+    try {
+      await rh.folha.vincular(txId, { funcionario_id: fid });
+      let restantes = (itens || []).filter(i => i.id !== txId);
+      // Lançamentos embutidos (Caju/PJ+ genérico) costumam se repetir no mês
+      // com o mesmo texto e valor — oferece aplicar o vínculo aos idênticos.
+      const base = (itens || []).find(i => i.id === txId);
+      if (base) {
+        const mesDe = (d) => String(d || '').slice(0, 7);
+        const identicos = restantes.filter(i =>
+          mesDe(i.data_competencia) === mesDe(base.data_competencia) &&
+          Number(i.valor) === Number(base.valor) &&
+          (i.descricao || '').trim() === (base.descricao || '').trim());
+        if (identicos.length > 0) {
+          const nomeFunc = todosFuncs.find(f => String(f.id) === String(fid))?.nome || 'o colaborador';
+          const ok = window.confirm(`Há ${identicos.length} lançamento(s) idêntico(s) no mesmo mês (mesmo valor e descrição). Vincular também a ${nomeFunc}?`);
+          if (ok) {
+            for (const it of identicos) {
+              try { await rh.folha.vincular(it.id, { funcionario_id: fid }); restantes = restantes.filter(r => r.id !== it.id); }
+              catch { /* segue os demais */ }
+            }
+            setMsg(`Vínculo aplicado a ${identicos.length + 1} lançamento(s).`);
+          }
+        }
+      }
+      setItens(restantes);
+    }
     catch (e) { setMsg('Erro: ' + (e.message || '')); }
   }
   async function ignorar(txId) {
@@ -175,9 +200,9 @@ function ConciliacaoFolha() {
       <div style={s.cardHeader}>
         <div>
           <div style={s.cardTitle}>Conciliação de pagamentos</div>
-          <div style={{ fontSize: 12, color: C.text2, marginTop: 2 }}>Vincule os lançamentos de pessoal aos colaboradores pra o histórico ficar completo.</div>
+          <div style={{ fontSize: 12, color: C.text2, marginTop: 2 }}>Vincule os lançamentos de pessoal aos colaboradores pra o histórico ficar completo. O automático casa por nome, CPF, CNPJ e razão social (só matches inequívocos).</div>
         </div>
-        <Button onClick={autoVincular} disabled={rodando}>{rodando ? 'Vinculando…' : 'Vincular por nome'}</Button>
+        <Button onClick={autoVincular} disabled={rodando} title="Casa por nome completo, CPF, CNPJ e razão social — grava só quando bate com exatamente 1 colaborador">{rodando ? 'Vinculando…' : 'Vincular automaticamente'}</Button>
       </div>
       {msg && <div style={{ padding: '10px 20px', fontSize: 12, color: C.text2 }}>{msg}</div>}
       <div style={{ overflowX: 'auto' }}>

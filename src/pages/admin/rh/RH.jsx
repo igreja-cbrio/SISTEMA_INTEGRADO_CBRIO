@@ -2617,6 +2617,14 @@ function PagamentosSection({ funcId }) {
   return (
     <div>
       <SecaoHeader icon={Wallet} title="Folha / Pagamentos" count={estado === 'pronto' ? dados.meses.length : undefined} />
+      {estado === 'pronto' && dados.nao_pago_mes_corrente && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: `${C.amber}18`, border: `1px solid ${C.amber}55`, borderRadius: 10, padding: '10px 14px', marginBottom: 10 }}>
+          <span style={{ fontSize: 15 }}>⚠️</span>
+          <span style={{ fontSize: 12.5, color: C.text, fontWeight: 600 }}>
+            Ainda não recebeu em {mesLabel(dados.mes_corrente)} — nenhum pagamento atribuído no financeiro neste mês.
+          </span>
+        </div>
+      )}
       {estado === 'pronto' && dados.salario_previsto > 0 && (
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: C.primaryBg, borderRadius: 10, padding: '10px 14px', marginBottom: 10 }}>
           <span style={{ fontSize: 12, color: C.text2, fontWeight: 600 }}>Salário previsto (mensal)</span>
@@ -2624,7 +2632,7 @@ function PagamentosSection({ funcId }) {
         </div>
       )}
       <div style={{ fontSize: 11, color: C.text3, marginBottom: 12, lineHeight: 1.5, background: 'var(--cbrio-input-bg)', borderRadius: 8, padding: '8px 12px' }}>
-        Confirmados = lançamentos vinculados a este colaborador no financeiro. <b>Sugeridos</b> = casaram pelo nome mas ainda não confirmados (vincule na aba Folha → Conciliação). Pagamentos via cartão/PJ+ sem o nome só aparecem após vínculo manual.
+        Confirmados = lançamentos vinculados a este colaborador no financeiro. <b>Sugeridos</b> = casaram por nome, CPF, CNPJ ou razão social mas ainda não confirmados (vincule na aba Folha → Conciliação). Pagamentos via cartão/PJ+ sem nenhum identificador só aparecem após vínculo manual.
       </div>
       {estado === 'loading' && <div style={{ fontSize: 13, color: C.text2 }}>Carregando pagamentos…</div>}
       {estado === 'erro' && <div style={{ fontSize: 13, color: C.red }}>Erro ao carregar pagamentos.</div>}
