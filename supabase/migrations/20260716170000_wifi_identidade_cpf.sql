@@ -144,26 +144,39 @@ BEGIN
 
   -- 4b-2) vínculo morto cujo dono do CPF tem nome INCOMPATÍVEL → não decide
   --       sozinho: pendência humana (o repoint automático poderia mover um
-  --       vínculo certo pra pessoa errada)
+  --       vínculo certo pra pessoa errada). origem_id aponta a linha do wifi
+  --       (o humano localiza o caso concreto) e a pendência NÃO renasce
+  --       depois de triada (o cron roda recorrente — sem a guarda contra
+  --       não-pendentes, cada descarte viraria zumbi na fila).
   BEGIN
-    INSERT INTO public.identidade_pendencias (tipo, membro_id, membro_conflito_id, origem, detalhe)
-    SELECT DISTINCT 'vinculo_divergente', dono.id, NULL, 'wifi',
-           'wifi_visitantes ligado a membro deletado; o dono ativo do CPF tem nome incompatível com o portal — decidir o repoint manualmente.'
-      FROM public.wifi_visitantes v
-      JOIN public.mem_membros lig ON lig.id = v.membro_id AND lig.deleted_at IS NOT NULL
-      JOIN public.mem_membros dono
-        ON dono.deleted_at IS NULL
-       AND regexp_replace(COALESCE(dono.cpf,''),'\D','','g') = v.cpf_norm
-       AND dono.id <> v.membro_id
-     WHERE v.deleted_at IS NULL
-       AND v.cpf_norm ~ '^[0-9]{11}$'
-       AND NOT public.fn_identidade_nomes_compativeis(dono.nome, v.nome)
+    INSERT INTO public.identidade_pendencias (tipo, membro_id, membro_conflito_id, origem, origem_id, detalhe)
+    SELECT c.tipo, c.dono_id, NULL, 'wifi', c.origem_id, c.detalhe FROM (
+      SELECT 'vinculo_divergente' AS tipo, dono.id AS dono_id,
+             min(v.id::text) AS origem_id,
+             'wifi_visitantes ligado a membro deletado; o dono ativo do CPF tem nome incompatível com o portal — decidir o repoint manualmente.' AS detalhe
+        FROM public.wifi_visitantes v
+        JOIN public.mem_membros lig ON lig.id = v.membro_id AND lig.deleted_at IS NOT NULL
+        JOIN public.mem_membros dono
+          ON dono.deleted_at IS NULL
+         AND regexp_replace(COALESCE(dono.cpf,''),'\D','','g') = v.cpf_norm
+         AND dono.id <> v.membro_id
+       WHERE v.deleted_at IS NULL
+         AND v.cpf_norm ~ '^[0-9]{11}$'
+         AND NOT public.fn_identidade_nomes_compativeis(dono.nome, v.nome)
+       GROUP BY dono.id
+    ) c
+    WHERE NOT EXISTS (
+      SELECT 1 FROM public.identidade_pendencias p
+       WHERE p.tipo = 'vinculo_divergente' AND p.membro_id = c.dono_id
+         AND p.origem = 'wifi' AND p.status <> 'pendente'
+    )
     ON CONFLICT (tipo, membro_id, membro_conflito_id) WHERE status = 'pendente' DO NOTHING;
   EXCEPTION WHEN undefined_table THEN NULL;
   END;
 
   -- 4c) pendência pros vínculos VIVOS divergentes (fila humana · módulo
-  --     Entradas · tabela da 20260716150000; se ainda não existir, pula)
+  --     Entradas · tabela da 20260716150000; se ainda não existir, pula).
+  --     Não renasce depois de triada (guarda contra não-pendentes do par).
   BEGIN
     INSERT INTO public.identidade_pendencias (tipo, membro_id, membro_conflito_id, origem, detalhe)
     SELECT DISTINCT 'vinculo_divergente', lig.id, dono.id, 'wifi',
@@ -178,6 +191,11 @@ BEGIN
        AND v.cpf_norm ~ '^[0-9]{11}$'
        AND lig.cpf IS NOT NULL
        AND regexp_replace(lig.cpf,'\D','','g') <> v.cpf_norm
+       AND NOT EXISTS (
+         SELECT 1 FROM public.identidade_pendencias p
+          WHERE p.tipo = 'vinculo_divergente' AND p.membro_id = lig.id
+            AND p.membro_conflito_id = dono.id AND p.status <> 'pendente'
+       )
     ON CONFLICT (tipo, membro_id, membro_conflito_id) WHERE status = 'pendente' DO NOTHING;
   EXCEPTION WHEN undefined_table THEN NULL;
   END;
@@ -236,17 +254,33 @@ BEGIN
              AND regexp_replace(COALESCE(x.cpf,''),'\D','','g') = c.cpf_norm
         )
     )
-    INSERT INTO public.identidade_pendencias (tipo, membro_id, membro_conflito_id, origem, detalhe)
-    SELECT 'cpf_para_confirmar', g.membro_id, NULL, 'wifi',
+    INSERT INTO public.identidade_pendencias (tipo, membro_id, membro_conflito_id, origem, origem_id, detalhe)
+    SELECT 'cpf_para_confirmar', g.membro_id, NULL, 'wifi', g.cpf_norm,
            'CPF ' || g.cpf_norm || ' do portal cativo pra membro sem CPF (par telefone+nome inequívoco, DV ok) — confirmar antes de consolidar (o wifi não tem nascimento pra conferir ownership).'
       FROM gated g
+    -- não renasce depois de triada: o cron roda recorrente e um descarte
+    -- ('esse CPF não é dessa pessoa') não muda a condição-fonte — sem esta
+    -- guarda a MESMA pendência voltaria a cada execução. A chave inclui o
+    -- CPF (origem_id): um CPF candidato DIFERENTE pro mesmo membro ainda cria.
+    WHERE NOT EXISTS (
+      SELECT 1 FROM public.identidade_pendencias p
+       WHERE p.tipo = 'cpf_para_confirmar' AND p.membro_id = g.membro_id
+         AND p.origem = 'wifi' AND p.origem_id = g.cpf_norm
+         AND p.status <> 'pendente'
+    )
     ON CONFLICT (tipo, membro_id, membro_conflito_id) WHERE status = 'pendente' DO NOTHING;
     GET DIAGNOSTICS v_semeados = ROW_COUNT;
-  EXCEPTION WHEN undefined_table THEN v_semeados := 0;
+  EXCEPTION
+    WHEN undefined_table THEN v_semeados := 0;
+    WHEN check_violation THEN
+      -- CHECK antigo sem 'cpf_para_confirmar' (upgrade da 20260716150000 não
+      -- aplicado) — avisa em vez de derrubar o cron inteiro do wifi.
+      v_semeados := 0;
+      RAISE WARNING 'fn_wifi_processar_vinculos passo 5b: check_violation (%) — aplicar o bloco de upgrade da migration 20260716150000', SQLERRM;
   END;
 
   -- 5c) conflito descartado vira pendência (não jogar evidência fora ·
-  --     política: conflito → fila humana)
+  --     política: conflito → fila humana). Não renasce depois de triada.
   BEGIN
     INSERT INTO public.identidade_pendencias (tipo, membro_id, membro_conflito_id, origem, detalhe)
     SELECT DISTINCT 'cpf_conflito', m.id, dono.id, 'wifi',
@@ -260,6 +294,11 @@ BEGIN
         ON dono.deleted_at IS NULL AND dono.id <> m.id
        AND regexp_replace(COALESCE(dono.cpf,''),'\D','','g') = v.cpf_norm
      WHERE m.deleted_at IS NULL AND m.cpf IS NULL
+       AND NOT EXISTS (
+         SELECT 1 FROM public.identidade_pendencias p
+          WHERE p.tipo = 'cpf_conflito' AND p.membro_id = m.id
+            AND p.membro_conflito_id = dono.id AND p.status <> 'pendente'
+       )
     ON CONFLICT (tipo, membro_id, membro_conflito_id) WHERE status = 'pendente' DO NOTHING;
   EXCEPTION WHEN undefined_table THEN NULL;
   END;
