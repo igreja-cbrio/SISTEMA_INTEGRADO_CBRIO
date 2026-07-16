@@ -399,6 +399,7 @@ router.post('/inscrever-form', publicLimiter, async (req, res) => {
       nome, sobrenome, email, telefone, cpf, data_nascimento, nome_mae,
       area, participou_next, dom_predominante, ministerios_interesse,
       consentimento_antecedentes, // Kids/Bridge · autoriza consulta de antecedentes
+      whatsapp_optin, // consentimento p/ receber mensagens no WhatsApp (Marketing)
       website, // honeypot
     } = req.body || {};
 
@@ -491,6 +492,8 @@ router.post('/inscrever-form', publicLimiter, async (req, res) => {
         primeiro_contato_em: 'False',
         membro_id: membroId,
         origem: 'formulario_publico',
+        whatsapp_optin: !!whatsapp_optin,
+        whatsapp_optin_em: whatsapp_optin ? new Date().toISOString() : null,
       })
       .select('id')
       .single();
@@ -498,6 +501,20 @@ router.post('/inscrever-form', publicLimiter, async (req, res) => {
     if (insErr) {
       console.error('[PublicVol/inscrever-form] insert:', insErr.message);
       return res.status(500).json({ error: 'Erro ao registrar inscrição' });
+    }
+
+    // Opt-in de WhatsApp: se a pessoa consentiu E já casou com um membro,
+    // grava o consentimento direto no mem_membros (só liga, nunca desliga um
+    // consentimento existente). Se ficou órfã (membro_id null), o consentimento
+    // fica guardado na vol_inscricoes e é propagado quando o vínculo acontecer.
+    if (whatsapp_optin && membroId) {
+      try {
+        await supabase.from('mem_membros')
+          .update({ whatsapp_optin: true, whatsapp_optin_em: new Date().toISOString() })
+          .eq('id', membroId).is('deleted_at', null);
+      } catch (e) {
+        console.warn('[PublicVol/inscrever-form] optin membro:', e.message);
+      }
     }
 
     // Kids/Bridge · abre a triagem de antecedentes (pendente). A consulta
