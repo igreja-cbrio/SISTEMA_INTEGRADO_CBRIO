@@ -6,6 +6,7 @@
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { kpis as kpisApi } from '../api';
+import { BirthDatePicker } from './ui/birth-date-picker';
 
 const cultosApi = kpisApi.cultos;
 import { Calendar, CalendarClock, ChevronLeft, ChevronRight, CheckCircle2, AlertCircle, AlertTriangle, X, Save, Tv, Users, Sparkles, UserPlus, Trash2, Pencil, Search as SearchIcon, Link as LinkIcon, FileText } from 'lucide-react';
@@ -1466,12 +1467,7 @@ function DecisaoPessoaForm({ cultoId, pessoa, hasOnline, hasKids, onSaved, onCan
                 Data nascimento <span style={{ fontWeight: 400, fontStyle: 'italic' }}>(opcional)</span>
                 {idadeCalc !== null && <span style={{ fontWeight: 400, color: C.t3 }}> · {idadeCalc} anos</span>}
               </label>
-              <input
-                type="date" value={form.data_nascimento}
-                onChange={e => set('data_nascimento', e.target.value)}
-                style={{ ...inp, padding: '6px 10px', fontSize: 11 }}
-                max={new Date().toISOString().slice(0, 10)}
-              />
+              <BirthDatePicker value={form.data_nascimento} onChange={v => set('data_nascimento', v)} />
             </div>
             <div>
               <label style={{ fontSize: 10, fontWeight: 600, color: C.t3, display: 'block', marginBottom: 2 }}>E-mail</label>

@@ -20,6 +20,7 @@ import { toast } from 'sonner';
 import { Button } from '../../components/ui/button';
 import Paginacao, { usePaginacaoLocal } from '../../components/Paginacao';
 import { Input } from '../../components/ui/input';
+import { BirthDatePicker } from '../../components/ui/birth-date-picker';
 import { Label } from '../../components/ui/label';
 import { Textarea } from '../../components/ui/textarea';
 import {
@@ -493,7 +494,7 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
                 </div>
                 <div className="space-y-1.5">
                   <Label>Data de Nascimento *</Label>
-                  <Input type="date" value={form.data_nascimento} onChange={e => set('data_nascimento', e.target.value)} />
+                  <BirthDatePicker value={form.data_nascimento} onChange={v => set('data_nascimento', v)} />
                 </div>
                 <div className="space-y-1.5">
                   <Label>Email</Label>

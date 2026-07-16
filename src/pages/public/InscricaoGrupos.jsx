@@ -23,6 +23,7 @@ import { gruposPublic } from '../../api';
 import AnimatedBackground from './AnimatedBackground';
 import { usePublicTheme, PublicThemeToggle, PublicPaletteCtx, usePublicPalette } from './publicTheme';
 import GrupoSelector from '../../components/grupos/GrupoSelector';
+import { BirthDatePicker } from '../../components/ui/birth-date-picker';
 import { CheckCircle2, ArrowLeft, Users, Camera, X, HelpCircle } from 'lucide-react';
 
 const TEXTO_CONSENTIMENTO = `Ao enviar este formulário, você autoriza a CBRio a utilizar seus dados pessoais para fins de comunicacao com a igreja e participação em grupo de conexão, conforme a LGPD.`;
@@ -77,27 +78,8 @@ function mascaraTelefone(v) {
   if (d.length <= 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
   return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
 }
-// Nascimento digitado como texto DD/MM/AAAA (Marcos · 14/07): o date picker
-// nativo era ruim de usar — escolher o ano exigia rolar décadas.
-function mascaraDataBr(v) {
-  const d = soDigitos(v).slice(0, 8);
-  if (d.length <= 2) return d;
-  if (d.length <= 4) return `${d.slice(0, 2)}/${d.slice(2)}`;
-  return `${d.slice(0, 2)}/${d.slice(2, 4)}/${d.slice(4)}`;
-}
-// 'DD/MM/AAAA' → 'YYYY-MM-DD' · null se incompleta ou impossível (31/02 etc.)
-function brParaIso(v) {
-  const d = soDigitos(v);
-  if (d.length !== 8) return null;
-  const dia = +d.slice(0, 2), mes = +d.slice(2, 4), ano = +d.slice(4);
-  const data = new Date(ano, mes - 1, dia, 12);
-  if (data.getFullYear() !== ano || data.getMonth() !== mes - 1 || data.getDate() !== dia) return null;
-  return `${ano}-${String(mes).padStart(2, '0')}-${String(dia).padStart(2, '0')}`;
-}
-function isoParaBr(v) {
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v || ''));
-  return m ? `${m[3]}/${m[2]}/${m[1]}` : '';
-}
+// Nascimento agora é escolhido no calendário (BirthDatePicker · Matheus 2026-07-16):
+// o campo armazena ISO (YYYY-MM-DD) direto — sem máscara DD/MM/AAAA.
 
 export default function InscricaoGrupos() {
   const { C } = usePublicTheme();
@@ -156,8 +138,8 @@ export default function InscricaoGrupos() {
           nome: f.nome || p.nome || '',
           telefone: f.telefone || (p.telefone ? mascaraTelefone(p.telefone) : ''),
           email: f.email || p.email || '',
-          // O backend manda ISO; o campo agora é texto DD/MM/AAAA
-          data_nascimento: f.data_nascimento || isoParaBr(p.data_nascimento),
+          // O backend manda ISO; o campo agora armazena ISO (YYYY-MM-DD) direto.
+          data_nascimento: f.data_nascimento || (p.data_nascimento ? String(p.data_nascimento).slice(0, 10) : ''),
           genero: f.genero || p.genero || '',
         }));
         setPreenchidoViaLink(true);
@@ -262,14 +244,13 @@ export default function InscricaoGrupos() {
     if (tel.length < 10 || tel.length > 11) erros.telefone = 'Digite um celular válido com DDD.';
     if (!form.data_nascimento) {
       erros.data_nascimento = 'Informe a data de nascimento.';
+    } else if (!/^\d{4}-\d{2}-\d{2}$/.test(form.data_nascimento)) {
+      erros.data_nascimento = 'Selecione uma data válida.';
     } else {
-      const iso = brParaIso(form.data_nascimento);
-      if (!iso) erros.data_nascimento = 'Data inválida — digite dia, mês e ano completos.';
-      else {
-        const nasc = new Date(iso + 'T12:00:00');
-        if (nasc > new Date()) erros.data_nascimento = 'A data de nascimento não pode estar no futuro.';
-        else if (nasc.getFullYear() < 1900) erros.data_nascimento = 'Confira o ano de nascimento.';
-      }
+      const nasc = new Date(form.data_nascimento + 'T12:00:00');
+      if (Number.isNaN(nasc.getTime())) erros.data_nascimento = 'Selecione uma data válida.';
+      else if (nasc > new Date()) erros.data_nascimento = 'A data de nascimento não pode estar no futuro.';
+      else if (nasc.getFullYear() < 1900) erros.data_nascimento = 'Confira o ano de nascimento.';
     }
     if (form.genero !== 'masculino' && form.genero !== 'feminino') erros.genero = 'Marque masculino ou feminino.';
     const cpfDig = soDigitos(form.cpf);
@@ -298,7 +279,7 @@ export default function InscricaoGrupos() {
   // aviso — a pessoa segue se quiser e o líder decide na aprovação.
   const avisoFaixa = useMemo(() => {
     if (!grupoEscolhido) return null;
-    const idade = idadeDe(brParaIso(form.data_nascimento));
+    const idade = idadeDe(form.data_nascimento);
     const min = grupoEscolhido.idade_min;
     const max = grupoEscolhido.idade_max;
     if (idade != null && (min != null || max != null)) {
@@ -366,7 +347,7 @@ export default function InscricaoGrupos() {
         cpf: soDigitos(form.cpf), // obrigatório (Marcos · 2026-07-13) — validado acima
         email: form.email.trim() || null,
         telefone: form.telefone,
-        data_nascimento: brParaIso(form.data_nascimento), // DD/MM/AAAA → ISO (validado acima)
+        data_nascimento: form.data_nascimento || null, // já em ISO (validado acima)
         genero: form.genero || null,
         observacao: form.observacao || null,
         foto_url: form.foto_url || null,
@@ -508,7 +489,19 @@ export default function InscricaoGrupos() {
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(220px, 100%), 1fr))', gap: 12, marginBottom: 12 }}>
                 <Field campo="nome" error={errosCampos.nome} label="Nome completo *" value={form.nome} onChange={set('nome')} />
                 <Field campo="telefone" error={errosCampos.telefone} label="Celular / WhatsApp *" value={form.telefone} onChange={set('telefone', mascaraTelefone)} maxLength={16} inputMode="tel" />
-                <Field campo="data_nascimento" error={errosCampos.data_nascimento} label="Data de nascimento *" value={form.data_nascimento} onChange={set('data_nascimento', mascaraDataBr)} placeholder="dia/mês/ano" maxLength={10} inputMode="numeric" />
+                <div data-campo="data_nascimento">
+                  <label style={{ fontSize: 12, color: C.text3, display: 'block', marginBottom: 4 }}>Data de nascimento *</label>
+                  <BirthDatePicker
+                    value={form.data_nascimento}
+                    onChange={(v) => {
+                      setForm(f => ({ ...f, data_nascimento: v }));
+                      setErrosCampos(p => (p.data_nascimento ? { ...p, data_nascimento: '' } : p));
+                    }}
+                    placeholder="dia/mês/ano"
+                    aria-invalid={!!errosCampos.data_nascimento}
+                  />
+                  {errosCampos.data_nascimento && <p style={{ fontSize: 11.5, color: '#ef4444', margin: '4px 0 0' }}>{errosCampos.data_nascimento}</p>}
+                </div>
                 <div data-campo="genero">
                   <label style={{ fontSize: 12, color: C.text3, display: 'block', marginBottom: 4 }}>Sexo *</label>
                   <div style={{ display: 'flex', gap: 8 }}>

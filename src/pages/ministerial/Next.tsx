@@ -5,6 +5,7 @@ import ProcessosTarefas from '../../components/ProcessosTarefas';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/tabs';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
+import { BirthDatePicker } from '../../components/ui/birth-date-picker';
 import { Label } from '../../components/ui/label';
 import { Textarea } from '../../components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../../components/ui/dialog';
@@ -830,7 +831,7 @@ function ModalNovaInscricao({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
               <Label htmlFor="ni-nasc" className="text-xs">Data de nascimento (opcional)</Label>
-              <Input id="ni-nasc" type="date" value={form.data_nascimento} onChange={set('data_nascimento')} autoComplete="bday" />
+              <BirthDatePicker value={form.data_nascimento} onChange={v => setForm(f => ({ ...f, data_nascimento: v }))} />
             </div>
             <div>
               <Label className="text-xs">Origem da inscrição</Label>

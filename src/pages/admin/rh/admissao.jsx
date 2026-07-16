@@ -7,6 +7,7 @@
 // ═══════════════════════════════════════════════════════════
 import { useState, useRef } from 'react';
 import { Button } from '../../../components/ui/button';
+import { BirthDatePicker } from '../../../components/ui/birth-date-picker';
 import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
 
 const C = {
@@ -250,7 +251,10 @@ export function AdmissaoFormModal({ data, onClose, onSave, saving }) {
               <Input label="Email" type="email" value={f.email || ''} onChange={e => upd('email', e.target.value)} />
               <Input label="Telefone" value={f.telefone || ''} onChange={e => upd('telefone', e.target.value)} />
             </div>
-            <Input label="Data de Nascimento" type="date" value={f.data_nascimento || ''} onChange={e => upd('data_nascimento', e.target.value)} />
+            <div style={styles.formGroup}>
+              <label style={styles.label}>Data de Nascimento</label>
+              <BirthDatePicker value={f.data_nascimento || ''} onChange={v => upd('data_nascimento', v)} />
+            </div>
             <Input label="Endereço Completo" value={f.endereco || ''} onChange={e => upd('endereco', e.target.value)} />
           </div>
 

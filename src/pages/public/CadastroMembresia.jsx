@@ -4,6 +4,7 @@ import { useHomeScreenMeta } from '@/hooks/useHomeScreenMeta';
 import AnimatedBackground from './AnimatedBackground';
 import { usePublicTheme, PublicThemeToggle } from './publicTheme';
 import { MultistepFormShell } from '../../components/ui/multistep-form';
+import { BirthDatePicker } from '../../components/ui/birth-date-picker';
 import MemberWalletPass from '../../components/membresia/MemberWalletPass';
 import MemberWalletDialog from '../../components/membresia/MemberWalletDialog';
 import GrupoSelectorComponent from '../../components/grupos/GrupoSelector';
@@ -892,7 +893,12 @@ export default function CadastroMembresia() {
                 <div>
                   <SectionTitle>Informações</SectionTitle>
                   <Row>
-                    <Field id="data_nascimento" type="date" label="Data de nascimento" value={form.data_nascimento} onChange={set('data_nascimento')} required />
+                    <div style={{ marginBottom: 20, flex: 1 }}>
+                      <label style={{ display: 'block', fontSize: 11, color: 'var(--cbrio-text3)', marginBottom: 6 }}>
+                        Data de nascimento <span style={{ color: '#ef4444' }}>*</span>
+                      </label>
+                      <BirthDatePicker value={form.data_nascimento} onChange={(v) => setForm((f) => ({ ...f, data_nascimento: v }))} />
+                    </div>
                     <Field
                       id="email"
                       type="email"

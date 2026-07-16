@@ -6,6 +6,7 @@ import { StatisticsCard } from '../../components/ui/statistics-card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
 import { Badge } from '../../components/ui/badge';
 import { Input } from '../../components/ui/input';
+import { BirthDatePicker } from '../../components/ui/birth-date-picker';
 import { Button } from '../../components/ui/button';
 import {
   Heart, Sparkles, Loader2, BarChart3, Calendar, Users, Search, UserPlus,
@@ -855,7 +856,7 @@ function FormPessoa({ cultoId, onSaved, onCancel }: { cultoId: string; onSaved: 
             </div>
             <div>
               <label className="text-[10px] font-semibold uppercase text-muted-foreground">Nascimento <span className="text-muted-foreground/60 normal-case font-normal">(censo depois)</span></label>
-              <Input type="date" value={form.data_nascimento} onChange={e => setForm(f => ({ ...f, data_nascimento: e.target.value }))} placeholder="opcional" className="h-8 text-xs" />
+              <BirthDatePicker value={form.data_nascimento} onChange={v => setForm(f => ({ ...f, data_nascimento: v }))} />
             </div>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
