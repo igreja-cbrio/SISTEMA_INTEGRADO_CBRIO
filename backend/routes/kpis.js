@@ -465,10 +465,22 @@ router.put('/decisoes-pessoas/:id', authorizeIntegracao, async (req, res) => {
     'responsavel_nome', 'responsavel_telefone', 'responsavel_cpf',
   ];
   const update = {};
+  // CPFs já armazenados na decisão: idênticos ao payload passam SEM validar DV
+  // (grandfathering — o modal reenvia o cpf existente; sem isso um CPF legado
+  // DV-inválido travaria a edição de QUALQUER campo). DV só pra CPF novo/alterado.
+  let cpfsAtuais = null;
+  const precisaCpfAtual = ['cpf', 'responsavel_cpf'].some((k) => req.body?.[k]);
+  if (precisaCpfAtual) {
+    const { data: atual } = await supabase.from('cultos_decisoes_pessoas')
+      .select('cpf, responsavel_cpf').eq('id', req.params.id).maybeSingle();
+    cpfsAtuais = atual || {};
+  }
   for (const [k, v] of Object.entries(req.body || {})) {
     if (!allowed.includes(k)) continue;
     if ((k === 'cpf' || k === 'responsavel_cpf') && v) {
       const d = String(v).replace(/\D/g, '');
+      const atualNorm = String(cpfsAtuais?.[k] || '').replace(/\D/g, '');
+      if (d && atualNorm && d === atualNorm) { update[k] = d; continue; }
       if (d.length !== 11 || !cpfValido(d)) {
         return res.status(400).json({ error: 'CPF inválido — confira os dígitos' });
       }

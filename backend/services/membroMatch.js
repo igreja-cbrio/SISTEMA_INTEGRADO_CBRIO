@@ -170,11 +170,19 @@ function nomesMesmaPessoa(a, b) {
 // Delegado ao cpfReconciliar: preenche se o membro não tem CPF; conflito
 // (CPF de outro membro / membro com CPF diferente) vira pendência humana,
 // nunca auto-funde. Best-effort: falha aqui não derruba o vínculo.
+// Confiança: e-mail/telefone+nome são sinais que a FAMÍLIA compartilha —
+// homônimos exatos (pai/filho) fariam o CPF de um virar identidade do outro.
+// Por isso vão como 'fraca' (só consolida com nascimento conferível dos 2
+// lados; senão vira pendência cpf_para_confirmar). 'nome+nascimento' já
+// conferiu o nascimento por construção → 'forte'.
 async function _consolidarCpfNoMatch(membroId, cpf11, matchedBy, dataNascimento) {
   if (!cpf11) return;
   try {
     const { reconciliarCpfTardio } = require('./cpfReconciliar');
-    await reconciliarCpfTardio({ membroId, cpf: cpf11, origem: `matcher:${matchedBy}`, dataNascimento });
+    await reconciliarCpfTardio({
+      membroId, cpf: cpf11, origem: `matcher:${matchedBy}`, dataNascimento,
+      confianca: matchedBy === 'nome+nascimento' ? 'forte' : 'fraca',
+    });
   } catch (e) {
     console.error('[membroMatch] consolidar cpf pós-match:', e.message);
   }

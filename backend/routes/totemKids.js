@@ -755,14 +755,16 @@ router.post('/criancas', authorizeModule('kids', 2), async (req, res) => {
     if (vinc.length) await supabase.from('kids_responsaveis').insert(vinc);
 
     // Dispensa de CPF registrada (auditoria CPF 2026-07-16): fica rastreável
-    // QUEM entrou sem CPF por liberação do supervisor (a cobrança volta no
-    // próximo check-in). Best-effort — não trava o cadastro.
+    // QUEM entrou sem CPF pela válvula (a cobrança volta no próximo check-in).
+    // mem_historico só tem `descricao` (não existem colunas acao/observacao).
+    // O servidor NÃO valida o PIN do supervisor (fica no totem) — o registro
+    // aponta o OPERADOR autenticado que acionou a dispensa, não "o supervisor".
     if (permitir_sem_cpf) {
       for (const m of membros) {
         if (m.cpf) continue;
         supabase.from('mem_historico').insert({
-          membro_id: m.membro.id, acao: 'cpf_dispensado',
-          observacao: `Cadastro Kids liberado sem CPF pelo supervisor (criança ${criancaCriada.nome}).`,
+          membro_id: m.membro.id,
+          descricao: `[cpf_dispensado] Cadastro Kids liberado sem CPF via válvula do totem (criança ${criancaCriada.nome} · operador ${req.user?.userId || req.user?.id || 'desconhecido'}).`,
           created_at: new Date().toISOString(),
         }).then(({ error }) => { if (error) console.warn('[totemKids/criancas] historico dispensa:', error.message); });
       }
@@ -2197,11 +2199,13 @@ router.post('/criancas/:id/responsavel-rapido', authorizeModule('kids', 2), asyn
       await supabase.from('mem_membros').update({ familia_id: crianca.familia_id }).eq('id', membro.id);
     }
 
-    // Dispensa de CPF registrada (auditoria CPF 2026-07-16) · best-effort
+    // Dispensa de CPF registrada (auditoria CPF 2026-07-16) · best-effort.
+    // mem_historico só tem `descricao`; o registro aponta o OPERADOR (o PIN do
+    // supervisor não é validado no servidor).
     if (permitir_sem_cpf && !cpfNorm) {
       supabase.from('mem_historico').insert({
-        membro_id: membro.id, acao: 'cpf_dispensado',
-        observacao: `Responsável Kids liberado sem CPF pelo supervisor (criança ${crianca.nome}).`,
+        membro_id: membro.id,
+        descricao: `[cpf_dispensado] Responsável Kids liberado sem CPF via válvula do totem (criança ${crianca.nome} · operador ${req.user?.userId || req.user?.id || 'desconhecido'}).`,
         created_at: new Date().toISOString(),
       }).then(({ error }) => { if (error) console.warn('[totemKids/responsavel-rapido] historico dispensa:', error.message); });
     }
