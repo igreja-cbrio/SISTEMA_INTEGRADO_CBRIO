@@ -10,7 +10,7 @@
 //    grupos sem rede em destaque (âmbar). Fonte = mem_grupos.rede_id ·
 //    trocar é no cadastro do grupo (campo Rede).
 // ============================================================================
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { grupos as api } from '../../api';
 import { Eye, Star, AlertTriangle, ChevronRight, ChevronDown, Users, Share2 } from 'lucide-react';
 
@@ -52,13 +52,17 @@ export default function GruposOrganograma({ onOpenGrupo }) {
     return () => { alive = false; };
   }, []);
 
+  // Guard por REF, não por state: com redesLoading nas dependências, o
+  // próprio setRedesLoading(true) re-executava o efeito e o cleanup da
+  // execução anterior descartava a resposta (alive=false) — a tela ficava
+  // em "Carregando redes..." pra sempre (bug do 15/07).
+  const redesFetchRef = useRef(false);
   useEffect(() => {
-    if (view !== 'redes' || redesData || redesLoading) return;
-    let alive = true;
+    if (view !== 'redes' || redesFetchRef.current) return;
+    redesFetchRef.current = true;
     setRedesLoading(true);
     Promise.all([api.redes.list(), api.list()])
       .then(([redes, grupos]) => {
-        if (!alive) return;
         const ativos = (grupos || []).filter(g => g.ativo !== false);
         const porRede = {};
         const semRede = [];
@@ -72,10 +76,9 @@ export default function GruposOrganograma({ onOpenGrupo }) {
         ordena(semRede);
         setRedesData({ redes: redes || [], porRede, semRede, totalGrupos: ativos.length });
       })
-      .catch(() => { if (alive) setRedesData({ redes: [], porRede: {}, semRede: [], erro: true }); })
-      .finally(() => { if (alive) setRedesLoading(false); });
-    return () => { alive = false; };
-  }, [view, redesData, redesLoading]);
+      .catch(() => setRedesData({ redes: [], porRede: {}, semRede: [], totalGrupos: 0, erro: true }))
+      .finally(() => setRedesLoading(false));
+  }, [view]);
 
   if (loading) return <div style={{ padding: 40, textAlign: 'center', color: C.t3 }}>Carregando organograma...</div>;
   if (erro) return (
