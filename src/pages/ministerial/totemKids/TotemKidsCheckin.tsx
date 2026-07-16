@@ -487,35 +487,47 @@ export default function TotemKidsCheckin() {
     const cpfRes = await garantirCpfResponsavel(resp.manual ? null : (resp.cpfAtual || null), resp.nome || 'o responsável');
     if (cpfRes === null) return; // cancelou
     setImprimindo(true);
+    // UMA requisição pro lote todo (resolve o responsável 1× · menos round-trips na
+    // rede do totem · Marcos 2026-07-16). O front imprime a partir de `resultados`;
+    // cada criança sai com o SEU código. Erro numa não derruba as outras (backend).
+    const payload: Record<string, unknown> = {
+      sessao_id: sessaoIdFam,
+      itens: itens.map((it) => ({ crianca_id: it.crianca.id, sala_id: it.sala_id })),
+      cultos_extras: extrasFam, enviar_wpp: enviarWpp,
+    };
+    if (cpfRes.cpf) payload.responsavel_cpf = cpfRes.cpf;
+    if (cpfRes.dispensado) payload.permitir_sem_cpf = true;
+    if (resp.manual) {
+      payload.responsavel_nome_manual = resp.nome;
+      payload.responsavel_telefone_manual = resp.tel;
+      payload.responsavel_parentesco = 'outro';
+    } else {
+      payload.responsavel_id = resp.membroId;
+      payload.responsavel_parentesco = resp.parentesco || 'outro';
+    }
     let ok = 0, jaTinha = 0, falhou = 0;
-    for (const it of itens) {
-      try {
-        const payload: Record<string, unknown> = {
-          sessao_id: sessaoIdFam, crianca_id: it.crianca.id, sala_id: it.sala_id,
-          cultos_extras: extrasFam, enviar_wpp: enviarWpp,
-        };
-        if (cpfRes.cpf) payload.responsavel_cpf = cpfRes.cpf;
-        if (cpfRes.dispensado) payload.permitir_sem_cpf = true;
-        if (resp.manual) {
-          payload.responsavel_nome_manual = resp.nome;
-          payload.responsavel_telefone_manual = resp.tel;
-          payload.responsavel_parentesco = 'outro';
-        } else {
-          payload.responsavel_id = resp.membroId;
-          payload.responsavel_parentesco = resp.parentesco || 'outro';
-        }
-        const r = await totemKids.checkin.criar(payload);
-        const dados = montarDadosEtiqueta(it.crianca, {
-          checkinId: r.checkin.id, salaNome: r.sala.nome, salaCor: r.sala.cor, salaLogoUrl: r.sala.logo_url,
-          respNome: r.responsavel.nome, codigo: r.codigo_seguranca, codigoBarras: r.codigo_barras,
-          cultoNome: r.sessao.culto?.nome || null, cultoData: r.sessao.culto?.data || null,
-        });
-        await imprimirEtiquetas(dados);
-        ok++;
-      } catch (e: unknown) {
-        const msg = String((e as { message?: string })?.message || '');
-        if (msg.includes('já está') || msg.includes('já tinha')) jaTinha++; else falhou++;
+    try {
+      const r = await totemKids.checkin.lote(payload);
+      const saidas = Array.isArray(r?.resultados) ? r.resultados : [];
+      const porId = new Map(itens.map((it) => [it.crianca.id, it.crianca]));
+      for (const s of saidas) {
+        if (s?.ok) {
+          const cr = porId.get(s.crianca_id);
+          if (cr) {
+            const dados = montarDadosEtiqueta(cr, {
+              checkinId: s.checkin.id, salaNome: s.sala.nome, salaCor: s.sala.cor, salaLogoUrl: s.sala.logo_url,
+              respNome: s.responsavel.nome, codigo: s.codigo_seguranca, codigoBarras: s.codigo_barras,
+              cultoNome: s.sessao.culto?.nome || null, cultoData: s.sessao.culto?.data || null,
+            });
+            try { await imprimirEtiquetas(dados); } catch { /* impressão falhou · não derruba o resto */ }
+          }
+          ok++;
+        } else if (s?.ja_aberto) jaTinha++;
+        else falhou++;
       }
+    } catch (e: unknown) {
+      falhou = itens.length;
+      toast.error((e as { message?: string })?.message || 'Erro no check-in da família');
     }
     setImprimindo(false);
     if (ok > 0) dispararConfete();

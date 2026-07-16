@@ -1533,6 +1533,8 @@ export const totemKids = {
   },
   checkin: {
     criar: (data) => post('/totem-kids/checkin', data),
+    // Check-in de vários irmãos numa requisição só (resolve responsável 1×)
+    lote: (data) => post('/totem-kids/checkin/lote', data),
     // Check-in aberto da criança na sessão (pra reimprimir etiqueta perdida)
     aberto: (sessaoId, criancaId) => get(`/totem-kids/checkin/aberto?sessao_id=${encodeURIComponent(sessaoId)}&crianca_id=${encodeURIComponent(criancaId)}`),
     porCodigo: (codigo) => get(`/totem-kids/checkin/codigo/${encodeURIComponent(codigo)}`),
