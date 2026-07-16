@@ -61,9 +61,9 @@ async function main() {
   const conta = (k) => { resumo[k] = (resumo[k] || 0) + 1; };
 
   const SATELITES = [
-    { tabela: 'batismo_inscricoes', cols: 'id, cpf, membro_id, nome, sobrenome', temDeletedAt: true, origem: 'backfill_batismo' },
-    { tabela: 'vol_inscricoes', cols: 'id, cpf, membro_id, nome_completo', temDeletedAt: false, origem: 'backfill_vol' },
-    { tabela: 'next_matriculas', cols: 'id, cpf, membro_id, nome, sobrenome', temDeletedAt: true, origem: 'backfill_next' },
+    { tabela: 'batismo_inscricoes', cols: 'id, cpf, membro_id, nome, sobrenome, data_nascimento', temDeletedAt: true, origem: 'backfill_batismo' },
+    { tabela: 'vol_inscricoes', cols: 'id, cpf, membro_id, nome_completo, data_nascimento', temDeletedAt: false, origem: 'backfill_vol' },
+    { tabela: 'next_matriculas', cols: 'id, cpf, membro_id, nome, sobrenome, data_nascimento', temDeletedAt: true, origem: 'backfill_next' },
   ];
 
   for (const sat of SATELITES) {
@@ -131,8 +131,15 @@ async function main() {
         conta(dono ? `${sat.tabela}.conflito_pendencia (stub + dono do CPF separados)` : `${sat.tabela}.preencher_cpf_no_membro`);
         if (APPLY) {
           try {
+            // Confiança FRACA: o membro_id destas satélites pode ter nascido
+            // dos matchers fracos (telefone+nome / e-mail+nome) — é o único
+            // caminho de consolidação EM MASSA, então os guard-rails valem
+            // aqui mais que em qualquer lugar. Com nascimento conferível dos
+            // 2 lados consolida; sem, vira pendência cpf_para_confirmar.
             const res = await reconciliarCpfTardio({
               membroId: vinculado.id, cpf, origem: sat.origem, origemId: r.id,
+              dataNascimento: r.data_nascimento || null,
+              confianca: 'fraca',
             });
             if (res.acao === 'cpf_preenchido') {
               vinculado.cpf = cpf;               // mantém o mapa coerente

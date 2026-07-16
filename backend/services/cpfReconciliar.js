@@ -105,17 +105,6 @@ async function reconciliarCpfTardio({ membroId, cpf, origem, origemId, dataNasci
     return { acao: 'nascimento_divergente_pendencia' };
   }
 
-  // Match fraco sem nascimento conferível dos DOIS lados → não consolida
-  // (o membro pode ser um homônimo da família; o CPF viraria identidade
-  // permanente do cadastro errado e capturaria todas as portas). Fila humana.
-  if (confianca === 'fraca' && !(nascInput && nascMembro)) {
-    await registrarPendencia({
-      tipo: 'cpf_para_confirmar', membroId, conflitoId: null, origem, origemId,
-      detalhe: `CPF ${cpf11} chegou junto de um vínculo por sinal fraco (${origem || 'origem desconhecida'}) sem nascimento conferível dos dois lados — confirmar antes de consolidar no cadastro.`,
-    });
-    return { acao: 'cpf_para_confirmar_pendencia' };
-  }
-
   // Membro já tem OUTRO CPF → não sobrescreve identidade · fila humana decide
   if (cpfAtual) {
     const dono = await donoAtivoDoCpf(cpf11, { exceto: membroId });
@@ -136,6 +125,20 @@ async function reconciliarCpfTardio({ membroId, cpf, origem, origemId, dataNasci
       detalhe: `CPF chegou pra um cadastro sem CPF, mas já pertence a outro membro ativo — provável mesma pessoa em 2 cadastros (fundir).`,
     });
     return { acao: 'conflito_pendencia', conflito_id: dono.id };
+  }
+
+  // Match fraco sem nascimento conferível dos DOIS lados → não consolida
+  // (o membro pode ser um homônimo da família; o CPF viraria identidade
+  // permanente do cadastro errado e capturaria todas as portas). Fila humana.
+  // Roda DEPOIS dos checks de conflito de propósito: cpf_divergente e
+  // cpf_conflito carregam o conflito_id (informação de fusão) que este tipo
+  // genérico não tem — o gate só barra a GRAVAÇÃO do caminho feliz.
+  if (confianca === 'fraca' && !(nascInput && nascMembro)) {
+    await registrarPendencia({
+      tipo: 'cpf_para_confirmar', membroId, conflitoId: null, origem, origemId,
+      detalhe: `CPF ${cpf11} chegou junto de um vínculo por sinal fraco (${origem || 'origem desconhecida'}) sem nascimento conferível dos dois lados — confirmar antes de consolidar no cadastro.`,
+    });
+    return { acao: 'cpf_para_confirmar_pendencia' };
   }
 
   // Caminho feliz: enriquece o membro com o CPF
