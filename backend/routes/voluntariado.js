@@ -3,6 +3,7 @@ const { authenticate, authorizeModule, getEffectiveLevel, bustPermissionCaches }
 const { supabase } = require('../utils/supabase');
 const { acharOuCriarGuardado, acharMembroGuardado } = require('../services/membroMatch');
 const { reconciliarCpfTardio } = require('../services/cpfReconciliar');
+const { cpfValido } = require('../utils/cpf');
 const { getPCCredentials, fetchWithRetry, PC_SERVICES_BASE, assignVolunteersToTeams, syncTeamMembersFromSchedules, fetchAllServiceTypes } = require('../services/planningCenter');
 const { enqueueSync } = require('../services/cerebroSync');
 const { resolverVoluntarioPorQr } = require('../services/volCheckinResolver');
@@ -630,11 +631,11 @@ router.put('/me', async (req, res) => {
     // MEMBER_NOT_FOUND para que o frontend peca o cadastro obrigatório.
     let membroMatch = null;
     if (cpfChanged) {
-      if (cleanCpf.length !== 11) {
-        return res.status(400).json({ error: 'CPF invalido' });
+      if (cleanCpf.length !== 11 || !cpfValido(cleanCpf)) {
+        return res.status(400).json({ error: 'CPF inválido — confira os dígitos' });
       }
       const { data: membro } = await supabase.from('mem_membros')
-        .select('id, nome, telefone, email').eq('cpf', cleanCpf).maybeSingle();
+        .select('id, nome, telefone, email').eq('cpf', cleanCpf).is('deleted_at', null).maybeSingle();
       if (!membro) {
         return res.status(409).json({
           error: 'CPF não encontrado no cadastro de membros. Complete o cadastro para continuar.',
@@ -698,7 +699,7 @@ router.post('/me/register-member', async (req, res) => {
     if (!celular || !celular.trim()) return res.status(400).json({ error: 'Celular obrigatorio' });
 
     const cleanCpf = String(cpf).replace(/\D/g, '');
-    if (cleanCpf.length !== 11) return res.status(400).json({ error: 'CPF invalido' });
+    if (cleanCpf.length !== 11 || !cpfValido(cleanCpf)) return res.status(400).json({ error: 'CPF inválido — confira os dígitos' });
     const cleanPhone = String(celular).replace(/\D/g, '');
     if (cleanPhone.length < 10) return res.status(400).json({ error: 'Celular invalido' });
 
@@ -1156,6 +1157,9 @@ router.post('/profiles', async (req, res) => {
     const { full_name, email, phone, cpf } = req.body;
     if (!full_name || !full_name.trim()) return res.status(400).json({ error: 'Nome obrigatorio' });
     const cleanCpf = cpf ? cpf.replace(/\D/g, '') : null;
+    if (cleanCpf && (cleanCpf.length !== 11 || !cpfValido(cleanCpf))) {
+      return res.status(400).json({ error: 'CPF inválido — confira os dígitos' });
+    }
 
     // Membresia e fonte única: garantir mem_membros antes de criar vol_profile
     let membresiaId = null;
@@ -2125,7 +2129,7 @@ router.put('/profiles/:id/contact', async (req, res) => {
 
     if (cpf != null && String(cpf).trim() !== '') {
       const cleanCpf = String(cpf).replace(/\D/g, '');
-      if (cleanCpf.length !== 11) return res.status(400).json({ error: 'CPF invalido' });
+      if (cleanCpf.length !== 11 || !cpfValido(cleanCpf)) return res.status(400).json({ error: 'CPF inválido — confira os dígitos' });
       update.cpf = cleanCpf;
     }
     if (phone != null && String(phone).trim() !== '') {
@@ -3481,7 +3485,7 @@ router.patch('/inscricoes/:id/dados', async (req, res) => {
 
     if (cpf !== undefined) {
       const d = String(cpf || '').replace(/\D+/g, '');
-      if (d && d.length !== 11) return res.status(400).json({ error: 'CPF deve ter 11 dígitos' });
+      if (d && (d.length !== 11 || !cpfValido(d))) return res.status(400).json({ error: 'CPF inválido — confira os dígitos' });
       patch.cpf = d || null;
     }
     if (data_nascimento !== undefined) {

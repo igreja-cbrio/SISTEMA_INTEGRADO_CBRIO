@@ -59,6 +59,7 @@ async function buscarCandidatos({ cpf, email, telefone } = {}, { limit = 5 } = {
     .from('mem_membros')
     .select(COLS)
     .or(ors.join(','))
+    .is('deleted_at', null)
     .limit(Math.max(limit, 5) * 2);
   if (error) throw error;
 
@@ -84,12 +85,16 @@ async function acharOuCriar({ cpf, email, telefone, nome, status = 'visitante' }
   const emailLc = email ? String(email).trim().toLowerCase() : null;
   const telDigits = telefone ? String(telefone).replace(/\D/g, '') : null;
 
-  // 1) CPF exato (mais confiável)
+  // 1) CPF exato (mais confiável) · só cadastros vivos: o índice UNIQUE é
+  // parcial em deleted_at IS NULL — sem o filtro, um soft-deletado que ainda
+  // tem o CPF "rouba" o match (vínculo a cadastro morto) ou faz o maybeSingle
+  // ver 2 linhas e errar.
   if (cpf11) {
     const { data } = await supabase
       .from('mem_membros')
       .select('id')
       .eq('cpf', cpf11)
+      .is('deleted_at', null)
       .maybeSingle();
     if (data?.id) return { membro_id: data.id, created: false, matched_by: 'cpf' };
   }
@@ -100,6 +105,7 @@ async function acharOuCriar({ cpf, email, telefone, nome, status = 'visitante' }
       .from('mem_membros')
       .select('id')
       .ilike('email', escapePostgrestValue(emailLc))
+      .is('deleted_at', null)
       .limit(1);
     if (data && data[0]?.id) return { membro_id: data[0].id, created: false, matched_by: 'email' };
   }
@@ -117,7 +123,16 @@ async function acharOuCriar({ cpf, email, telefone, nome, status = 'visitante' }
     })
     .select('id')
     .single();
-  if (error) throw error;
+  if (error) {
+    // 23505 (uniq_mem_membros_cpf_ativo) = corrida: outro fluxo criou o mesmo
+    // CPF entre o lookup e o insert. Religa em vez de estourar 500.
+    if (error.code === '23505' && cpf11) {
+      const { data: d2 } = await supabase.from('mem_membros')
+        .select('id').eq('cpf', cpf11).is('deleted_at', null).maybeSingle();
+      if (d2?.id) return { membro_id: d2.id, created: false, matched_by: 'cpf' };
+    }
+    throw error;
+  }
   return { membro_id: data.id, created: true };
 }
 
@@ -181,7 +196,8 @@ async function acharOuCriarGuardado({ cpf, email, telefone, nome, dataNascimento
   const nasc = dataNascimento || extra.data_nascimento || null;
 
   if (cpf11) {
-    const { data } = await supabase.from('mem_membros').select('id').eq('cpf', cpf11).maybeSingle();
+    const { data } = await supabase.from('mem_membros').select('id')
+      .eq('cpf', cpf11).is('deleted_at', null).maybeSingle();
     if (data?.id) return { membro_id: data.id, created: false, matched_by: 'cpf' };
   }
   if (!soChaveForte && emailLc) {
@@ -189,7 +205,8 @@ async function acharOuCriarGuardado({ cpf, email, telefone, nome, dataNascimento
     // marido não pode ser ligada ao marido). Sem nome informado, mantém o
     // comportamento legado (e-mail sozinho).
     const { data } = await supabase.from('mem_membros')
-      .select('id, nome').ilike('email', escapePostgrestValue(emailLc)).limit(5);
+      .select('id, nome').ilike('email', escapePostgrestValue(emailLc))
+      .is('deleted_at', null).limit(5);
     const hit = (data || []).find((c) => !nome || nomesMesmaPessoa(c.nome, nome));
     if (hit?.id) {
       await _consolidarCpfNoMatch(hit.id, cpf11, 'email');
@@ -228,7 +245,16 @@ async function acharOuCriarGuardado({ cpf, email, telefone, nome, dataNascimento
     active: true,
     ...extra,
   }).select('id').single();
-  if (error) throw error;
+  if (error) {
+    // 23505 (uniq_mem_membros_cpf_ativo) = corrida: dois totens/fluxos com o
+    // mesmo CPF novo ao mesmo tempo. Religa no vencedor em vez de 500.
+    if (error.code === '23505' && cpf11) {
+      const { data: d2 } = await supabase.from('mem_membros')
+        .select('id').eq('cpf', cpf11).is('deleted_at', null).maybeSingle();
+      if (d2?.id) return { membro_id: d2.id, created: false, matched_by: 'cpf' };
+    }
+    throw error;
+  }
   return { membro_id: data.id, created: true, matched_by: null };
 }
 
@@ -249,7 +275,8 @@ async function acharMembroGuardado({ cpf, email, telefone, nome, dataNascimento 
   const nasc = dataNascimento || null;
 
   if (cpf11) {
-    const { data } = await supabase.from('mem_membros').select('id').eq('cpf', cpf11).maybeSingle();
+    const { data } = await supabase.from('mem_membros').select('id')
+      .eq('cpf', cpf11).is('deleted_at', null).maybeSingle();
     if (data?.id) return { membro_id: data.id, matched_by: 'cpf' };
   }
   if (soChaveForte) return null;
@@ -257,7 +284,8 @@ async function acharMembroGuardado({ cpf, email, telefone, nome, dataNascimento 
     // Mesma guarda do telefone: e-mail compartilhado pela família não pode
     // ligar sozinho — exige o nome batendo quando há nome.
     const { data } = await supabase.from('mem_membros')
-      .select('id, nome').ilike('email', escapePostgrestValue(emailLc)).limit(5);
+      .select('id, nome').ilike('email', escapePostgrestValue(emailLc))
+      .is('deleted_at', null).limit(5);
     const hit = (data || []).find((c) => !nome || nomesMesmaPessoa(c.nome, nome));
     if (hit?.id) return { membro_id: hit.id, matched_by: 'email' };
   }

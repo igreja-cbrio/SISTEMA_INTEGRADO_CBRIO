@@ -7,6 +7,7 @@ const { notificar } = require('../services/notificar');
 const { enqueueSync } = require('../services/cerebroSync');
 const { escapePostgrestValue } = require('../utils/sanitize');
 const { acharOuCriarGuardado } = require('../services/membroMatch');
+const { normalizarCpf: normCpf11, cpfValido } = require('../utils/cpf');
 
 const uploadMw = multer({
   storage: multer.memoryStorage(),
@@ -694,15 +695,38 @@ router.post('/promover-orfaos', authorize('admin', 'diretor'), async (_req, res)
   }
 });
 
+// Normaliza o CPF do payload admin (auditoria CPF 2026-07-16): o modal admin
+// enviava o CPF como digitado — '123.456.789-01' gravado cru fica invisível
+// pra todo o matching digits-only (a pessoa re-entra por qualquer porta e vira
+// stub duplicado). DV no servidor: CPF errado "ocupa a vaga" no índice UNIQUE.
+// Retorna mensagem de erro ou null se ok (muta o body).
+function normalizarCpfPayload(body) {
+  if (!body || body.cpf === undefined || body.cpf === null || body.cpf === '') {
+    if (body && (body.cpf === '' || body.cpf === null)) body.cpf = null;
+    return null;
+  }
+  const d = normCpf11(body.cpf);
+  if (!d || !cpfValido(d)) return 'CPF inválido — confira os dígitos';
+  body.cpf = d;
+  return null;
+}
+
 // POST /api/membresia/membros
 router.post('/membros', authorize('admin', 'diretor'), async (req, res) => {
   try {
+    const errCpf = normalizarCpfPayload(req.body);
+    if (errCpf) return res.status(400).json({ error: errCpf });
     const { data, error } = await supabase
       .from('mem_membros')
       .insert(req.body)
       .select()
       .single();
-    if (error) throw error;
+    if (error) {
+      if (error.code === '23505' && req.body?.cpf) {
+        return res.status(409).json({ error: 'Já existe um membro ativo com este CPF — funda os cadastros em vez de duplicar.', code: 'cpf_em_uso' });
+      }
+      throw error;
+    }
     enqueueSync('membro', data.id, 'upsert').catch(() => {});
     res.status(201).json(data);
   } catch (e) {
@@ -714,13 +738,20 @@ router.post('/membros', authorize('admin', 'diretor'), async (req, res) => {
 // PUT /api/membresia/membros/:id
 router.put('/membros/:id', authorize('admin', 'diretor'), async (req, res) => {
   try {
+    const errCpf = normalizarCpfPayload(req.body);
+    if (errCpf) return res.status(400).json({ error: errCpf });
     const { data, error } = await supabase
       .from('mem_membros')
       .update(req.body)
       .eq('id', req.params.id)
       .select()
       .single();
-    if (error) throw error;
+    if (error) {
+      if (error.code === '23505' && req.body?.cpf) {
+        return res.status(409).json({ error: 'Este CPF já pertence a outro membro ativo — funda os cadastros em vez de duplicar.', code: 'cpf_em_uso' });
+      }
+      throw error;
+    }
     enqueueSync('membro', req.params.id, 'upsert').catch(() => {});
     res.json(data);
   } catch (e) {
@@ -732,7 +763,16 @@ router.put('/membros/:id', authorize('admin', 'diretor'), async (req, res) => {
 // DELETE /api/membresia/membros/:id (soft delete)
 router.delete('/membros/:id', authorize('admin', 'diretor'), async (req, res) => {
   try {
+    // active=false sozinho NÃO libera o CPF: o índice UNIQUE é parcial em
+    // deleted_at IS NULL. app_soft_delete carimba deleted_at (reversível via
+    // app_restore) e mantém active=false pros filtros legados.
     await supabase.from('mem_membros').update({ active: false }).eq('id', req.params.id);
+    const { error } = await supabase.rpc('app_soft_delete', {
+      p_table_name: 'mem_membros',
+      p_row_id: req.params.id,
+      p_deleted_by: req.user?.id ?? null,
+    });
+    if (error) throw error;
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: 'Erro ao remover membro' });

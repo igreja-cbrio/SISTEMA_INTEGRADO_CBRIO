@@ -181,7 +181,7 @@ router.get('/inscricoes/:id', async (req, res) => {
 
 const { acharOuCriarGuardado } = require('../services/membroMatch');
 const { reconciliarCpfTardio } = require('../services/cpfReconciliar');
-const { normalizarCpf } = require('../utils/cpf');
+const { normalizarCpf, cpfValido } = require('../utils/cpf');
 
 router.post('/inscricoes', async (req, res) => {
   const { evento_id, nome, sobrenome, cpf, telefone, email, data_nascimento, observacoes, origem_lista } = req.body || {};
@@ -694,6 +694,9 @@ router.get('/matriculas', async (req, res) => {
 router.post('/matriculas', async (req, res) => {
   const b = req.body || {};
   if (!b.nome || !String(b.nome).trim()) return res.status(400).json({ error: 'nome obrigatório' });
+  if (b.cpf && String(b.cpf).replace(/\D/g, '') && !cpfValido(b.cpf)) {
+    return res.status(400).json({ error: 'CPF inválido — confira os dígitos' });
+  }
   // Porta guardada: sem membro_id explícito, resolve/cria via matcher forte
   // (cpf>email>tel+nome>nome+nasc · cria stub se não achar). Não deixa órfão —
   // toda matrícula fica ligada a um mem_membros e acessível em /membresia.
@@ -773,7 +776,12 @@ router.patch('/matriculas/:id', async (req, res) => {
   ['turma_id', 'nome', 'sobrenome', 'cpf', 'telefone', 'email', 'data_nascimento', 'observacoes', 'membro_id',
     'ja_batizado', 'ja_voluntario', 'ja_doador', 'indicou_batismo', 'indicou_servir', 'indicou_grupo', 'indicou_dizimo',
     'status'].forEach(k => { if (k in b) patch[k] = b[k]; });
-  if ('cpf' in patch) patch.cpf = normalizarCpf(patch.cpf); // digits-only sempre
+  if ('cpf' in patch) {
+    if (patch.cpf && String(patch.cpf).replace(/\D/g, '') && !cpfValido(patch.cpf)) {
+      return res.status(400).json({ error: 'CPF inválido — confira os dígitos' });
+    }
+    patch.cpf = normalizarCpf(patch.cpf); // digits-only sempre
+  }
   patch.updated_at = new Date().toISOString();
   const { data, error } = await supabase.from('next_matriculas').update(patch).eq('id', req.params.id).is('deleted_at', null).select().maybeSingle();
   if (error) return res.status(500).json({ error: error.message });

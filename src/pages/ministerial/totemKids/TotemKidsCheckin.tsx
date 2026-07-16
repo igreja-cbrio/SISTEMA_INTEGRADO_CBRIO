@@ -2545,7 +2545,7 @@ function ModalNovaCrianca(props: {
         // (e todas no modo "adicionar à família") herdam via amigo_de_crianca_id.
         const body = (props.referencia || primeiroCriado)
           ? { crianca: montarCrianca(c), amigo_de_crianca_id: primeiroId }
-          : { crianca: montarCrianca(c), responsaveis: validos.map(x => ({ nome: x.nome.trim(), telefone: x.telefone.trim(), cpf: x.cpf?.trim() || null, parentesco: x.parentesco, autorizado_buscar: x.autorizado_buscar })) };
+          : { crianca: montarCrianca(c), permitir_sem_cpf: dispensaCpf || undefined, responsaveis: validos.map(x => ({ nome: x.nome.trim(), telefone: x.telefone.trim(), cpf: x.cpf?.trim() || null, parentesco: x.parentesco, autorizado_buscar: x.autorizado_buscar })) };
         const r = await totemKids.criancas.create(body);
         const cid = r?.crianca?.id;
         if (cid && c.foto) { try { await totemKids.criancas.uploadFoto(cid, c.foto); } catch { /* noop */ } }
@@ -2754,6 +2754,7 @@ function ModalCadastrarResponsavel(props: {
         telefone: telefone.trim(),
         cpf: cpf.trim() || null,
         parentesco,
+        permitir_sem_cpf: dispensaCpf || undefined,
       });
       toast.success(`Responsável de ${props.criancaNome} cadastrado`);
       props.onCadastrado();

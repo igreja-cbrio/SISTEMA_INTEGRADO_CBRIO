@@ -7,6 +7,7 @@ const { notificar } = require('../services/notificar');
 const { coletarTodos } = require('../services/kpiAutoCollector');
 const { acharOuCriarGuardado } = require('../services/membroMatch');
 const { reconciliarCpfTardio, propagarCpfConvertido } = require('../services/cpfReconciliar');
+const { cpfValido } = require('../utils/cpf');
 const painelCache = require('../services/painelCache');
 const { isAuthorizedCron } = require('../utils/cronAuth');
 
@@ -380,8 +381,8 @@ router.post('/cultos/:id/decisoes-pessoas', authorizeIntegracao, async (req, res
     if (respTelLimpo.length !== 11) {
       return res.status(400).json({ error: 'Telefone do responsável deve ter 11 digitos pra decisão Kids' });
     }
-    if (respCpfLimpo && respCpfLimpo.length !== 11) {
-      return res.status(400).json({ error: 'CPF do responsável deve ter 11 digitos (ou deixe vazio)' });
+    if (respCpfLimpo && (respCpfLimpo.length !== 11 || !cpfValido(respCpfLimpo))) {
+      return res.status(400).json({ error: 'CPF do responsável inválido — confira os dígitos (ou deixe vazio)' });
     }
     // Criança não precisa de telefone próprio
     telLimpo = telLimpo || '';
@@ -393,8 +394,10 @@ router.post('/cultos/:id/decisoes-pessoas', authorizeIntegracao, async (req, res
     if (telLimpo.length !== 11) {
       return res.status(400).json({ error: 'Telefone deve ter 11 digitos (DDD + 9 + numero)' });
     }
-    if (cpfLimpo && cpfLimpo.length !== 11) {
-      return res.status(400).json({ error: 'CPF deve ter 11 digitos' });
+    if (cpfLimpo && (cpfLimpo.length !== 11 || !cpfValido(cpfLimpo))) {
+      // DV no servidor: com o CPF sob índice UNIQUE, um CPF digitado errado
+      // "ocupa a vaga" e bloqueia o dono verdadeiro em todas as portas.
+      return res.status(400).json({ error: 'CPF inválido — confira os dígitos' });
     }
   }
 
@@ -464,7 +467,13 @@ router.put('/decisoes-pessoas/:id', authorizeIntegracao, async (req, res) => {
   const update = {};
   for (const [k, v] of Object.entries(req.body || {})) {
     if (!allowed.includes(k)) continue;
-    if ((k === 'cpf' || k === 'responsavel_cpf') && v) update[k] = String(v).replace(/\D/g, '');
+    if ((k === 'cpf' || k === 'responsavel_cpf') && v) {
+      const d = String(v).replace(/\D/g, '');
+      if (d.length !== 11 || !cpfValido(d)) {
+        return res.status(400).json({ error: 'CPF inválido — confira os dígitos' });
+      }
+      update[k] = d;
+    }
     else if ((k === 'telefone' || k === 'responsavel_telefone') && v) update[k] = String(v).replace(/\D/g, '');
     else if (k === 'email' && v) update[k] = String(v).trim().toLowerCase();
     else if (k === 'idade') update[k] = v ? Number(v) : null;
@@ -822,6 +831,9 @@ router.post('/batismos', authorizeBatismo, async (req, res) => {
   const areaKpiValida = AREAS_OK.includes(area_kpi) ? area_kpi : 'sede';
 
   const cpfClean = cpf ? cpf.replace(/\D/g, '') : null;
+  if (cpfClean && (cpfClean.length !== 11 || !cpfValido(cpfClean))) {
+    return res.status(400).json({ error: 'CPF inválido — confira os dígitos' });
+  }
 
   // Guarda na origem (membroMatch · 2026-06-19): resolve-ou-cria UM membro
   // deduplicado em vez do match-só-por-CPF (que deixava órfão quem inscrevia sem
@@ -948,6 +960,9 @@ router.get('/batismos/checkin/do-dia', authorizeBatismo, async (req, res) => {
 router.post('/batismos/:id/checkin', authorizeBatismo, async (req, res) => {
   const { cpf, consentiu } = req.body || {};
   const cpfClean = cpf ? String(cpf).replace(/\D/g, '') : null;
+  if (cpfClean && (cpfClean.length !== 11 || !cpfValido(cpfClean))) {
+    return res.status(400).json({ error: 'CPF inválido — confira os dígitos' });
+  }
 
   const { data: insc, error: e0 } = await supabase
     .from('batismo_inscricoes')
