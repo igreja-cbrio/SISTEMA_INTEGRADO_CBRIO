@@ -2152,6 +2152,19 @@ router.post('/cadastros/:id/aprovar', authorize('admin', 'diretor'), async (req,
       }
     }
 
+    // Propaga o opt-in de WhatsApp do cadastro pendente pro membro (só liga,
+    // nunca desliga um consentimento existente). Cobre os cadastros vindos do
+    // form público de membresia E de inscrição em grupos.
+    if (cad.whatsapp_optin && membro?.id) {
+      try {
+        await supabase.from('mem_membros')
+          .update({ whatsapp_optin: true, whatsapp_optin_em: cad.whatsapp_optin_em || new Date().toISOString() })
+          .eq('id', membro.id).is('deleted_at', null);
+      } catch (e) {
+        console.warn('[CADASTROS] propagar opt-in:', e.message);
+      }
+    }
+
     // Marca cadastro como aprovado e liga ao membro criado/atualizado
     const { error: e3 } = await supabase
       .from('mem_cadastros_pendentes')

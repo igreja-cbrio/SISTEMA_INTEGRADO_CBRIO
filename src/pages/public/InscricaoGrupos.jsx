@@ -115,6 +115,7 @@ export default function InscricaoGrupos() {
   const [grupoEscolhido, setGrupoEscolhido] = useState(null);
   const [form, setForm] = useState(FORM_VAZIO);
   const [aceitaTermos, setAceitaTermos] = useState(false);
+  const [optinWhats, setOptinWhats] = useState(false);
   const [step, setStep] = useState(0); // 0=escolher grupo, 1=dados, 2=success
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -185,6 +186,7 @@ export default function InscricaoGrupos() {
   const resetForm = useCallback(() => {
     setForm(FORM_VAZIO);
     setAceitaTermos(false);
+    setOptinWhats(false);
     setError(''); setDup(null); setResultado(null); setFotoErro('');
     setErrosCampos({}); setBloqueio(null);
     // Deep-link com inscrições fechadas NÃO volta pro passo 1 (o grupo do
@@ -352,6 +354,7 @@ export default function InscricaoGrupos() {
         observacao: form.observacao || null,
         foto_url: form.foto_url || null,
         aceita_termos: aceitaTermos,
+        whatsapp_optin: optinWhats,
         consentimento_texto: TEXTO_CONSENTIMENTO,
         website: form.website,
         ...extra,
@@ -596,6 +599,13 @@ export default function InscricaoGrupos() {
                 </label>
                 {errosCampos.aceita_termos && <p style={{ fontSize: 11.5, color: '#ef4444', margin: '6px 0 0' }}>{errosCampos.aceita_termos}</p>}
               </div>
+
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer', background: C.isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)', border: `1px solid ${C.cardBorder}`, borderRadius: 10, padding: 12, marginBottom: 12 }}>
+                <input type="checkbox" checked={optinWhats} onChange={e => setOptinWhats(e.target.checked)} style={{ marginTop: 2, accentColor: '#00B39D', flexShrink: 0 }} />
+                <span style={{ fontSize: 11.5, color: C.text3, lineHeight: 1.5 }}>
+                  Aceito receber mensagens da CBRio no <strong>WhatsApp</strong> (avisos do grupo, lembretes e felicitações). Posso cancelar quando quiser.
+                </span>
+              </label>
 
               {error && (
                 <div style={{ padding: 10, marginBottom: 12, background: 'rgba(239,68,68,0.15)', border: '1px solid #ef4444', borderRadius: 8, color: '#fca5a5', fontSize: 12 }}>

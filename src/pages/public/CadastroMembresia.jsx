@@ -247,6 +247,7 @@ export default function CadastroMembresia() {
   });
   const [aceitaTermos, setAceitaTermos] = useState(false);
   const [aceitaContato, setAceitaContato] = useState(true);
+  const [optinWhats, setOptinWhats] = useState(false);
   const [estaEmGrupo, setEstaEmGrupo] = useState(null); // null | true | false
   const [grupoEscolhido, setGrupoEscolhido] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -483,6 +484,7 @@ export default function CadastroMembresia() {
         origem,
         aceita_termos: aceitaTermos,
         aceita_contato: aceitaContato,
+        whatsapp_optin: optinWhats,
         consentimento_texto: TEXTO_CONSENTIMENTO,
         familia_sugerida_id: familiaId || null,
         foto_url,
@@ -1073,6 +1075,12 @@ export default function CadastroMembresia() {
                       checked={aceitaContato}
                       onChange={setAceitaContato}
                       label="Autorizo o contato da equipe de acolhimento por e-mail, telefone ou WhatsApp."
+                    />
+                    <CheckboxField
+                      id="whatsapp_optin"
+                      checked={optinWhats}
+                      onChange={setOptinWhats}
+                      label="Aceito receber mensagens da CBRio no WhatsApp (avisos, lembretes e felicitações). Posso cancelar quando quiser."
                     />
                   </div>
                 </div>
