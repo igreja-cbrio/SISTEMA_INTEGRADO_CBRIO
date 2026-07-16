@@ -2615,7 +2615,7 @@ router.post('/checkin/lote', authorizeModule('kids', 2), async (req, res) => {
     // código compartilhado por toda a família (Marcos 2026-07-16) — o pai fica com
     // 1 código só (menos etiqueta pra perder). Cada criança ainda tem sua etiqueta;
     // o recibo do responsável é impresso 1× no front.
-    async function fazerCheckin(crianca_id, sala_id, codigoLote) {
+    async function fazerCheckin(crianca_id, sala_id, codigoLote, grupoFamilia) {
       const { data: existentes } = await supabase.from('kids_checkins')
         .select('id, checkout_at').eq('sessao_id', sessao_id).eq('crianca_id', crianca_id);
       if ((existentes || []).some((c) => !c.checkout_at)) return { crianca_id, ok: false, ja_aberto: true, error: 'já com check-in aberto' };
@@ -2628,7 +2628,10 @@ router.post('/checkin/lote', authorizeModule('kids', 2), async (req, res) => {
       await ligarResponsavel(crianca_id, respId, responsavel_parentesco);
 
       const codigoFinal = codigoLote;
-      const grupoId = cultosExtras.length ? require('crypto').randomUUID() : null;
+      // grupoFamilia (quando há irmãos no lote) faz o checkout/portão fecharem a
+      // FAMÍLIA toda de uma vez — 1 beep do leitor tira as N crianças (Marcos
+      // 2026-07-16). Sem irmãos, cai no grupo de multi-culto da própria criança.
+      const grupoId = grupoFamilia || (cultosExtras.length ? require('crypto').randomUUID() : null);
       const { data: checkin, error: errIns } = await supabase.from('kids_checkins').insert({
         sessao_id, crianca_id, sala_id, estacao_checkin_id: estacao_id || null,
         responsavel_checkin_id: respId, responsavel_checkin_nome: respNome, responsavel_checkin_telefone: respTel,
@@ -2676,11 +2679,14 @@ router.post('/checkin/lote', authorizeModule('kids', 2), async (req, res) => {
       };
     }
 
-    // 1 código pra família toda (compartilhado entre os irmãos deste lote).
+    // 1 código + 1 grupo pra família toda (compartilhados entre os irmãos do lote).
+    // Grupo só quando há >1 criança → o checkout/portão fecham todos de uma vez;
+    // 1 criança segue com grupo por multi-culto (comportamento individual).
     const codigoLote = await codigoNovo();
+    const grupoIdFamilia = itens.length > 1 ? require('crypto').randomUUID() : null;
     const resultados = [];
     for (const it of itens) {
-      try { resultados.push(await fazerCheckin(it.crianca_id, it.sala_id, codigoLote)); }
+      try { resultados.push(await fazerCheckin(it.crianca_id, it.sala_id, codigoLote, grupoIdFamilia)); }
       catch (e) { resultados.push({ crianca_id: it.crianca_id, ok: false, error: e.message }); }
     }
     res.status(201).json({ resultados, responsavel: { id: respId, nome: respNome, telefone: respTel } });
