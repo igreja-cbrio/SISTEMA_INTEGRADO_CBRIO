@@ -797,6 +797,7 @@ router.patch('/matriculas/:id', async (req, res) => {
           await reconciliarCpfTardio({
             membroId: data.membro_id, cpf: patch.cpf,
             origem: 'next_matricula_edicao', origemId: data.id,
+            dataNascimento: data.data_nascimento || null,
           });
         } else {
           const r = await acharOuCriarGuardado({
