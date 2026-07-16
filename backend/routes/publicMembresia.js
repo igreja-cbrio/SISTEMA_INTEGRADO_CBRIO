@@ -278,6 +278,7 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
       origem,
       aceita_termos,
       aceita_contato,
+      whatsapp_optin, // consentimento p/ mensagens no WhatsApp (Marketing · LGPD)
       consentimento_texto,
       familia_sugerida_id,
       foto_url,
@@ -432,6 +433,8 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
       origem: origemFinal,
       aceita_termos: !!aceita_termos,
       aceita_contato: !!aceita_contato,
+      whatsapp_optin: !!whatsapp_optin,
+      whatsapp_optin_em: whatsapp_optin ? new Date().toISOString() : null,
       consentimento_texto: consentimento_texto ? String(consentimento_texto).slice(0, 2000) : null,
       familia_sugerida_id: familia_sugerida_id || null,
       foto_url: foto_url || null,

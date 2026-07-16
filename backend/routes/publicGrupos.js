@@ -415,6 +415,7 @@ router.post('/inscrever', async (req, res) => {
       foto_url,
       aceita_termos,
       consentimento_texto,
+      whatsapp_optin, // consentimento p/ mensagens no WhatsApp (Marketing · LGPD)
       website,        // honeypot
       sou_eu,         // confirmação "é você?" → liga ao existente (não duplica)
       confirmar_novo, // confirmação "não sou eu" → cria mesmo assim
@@ -579,6 +580,19 @@ router.post('/inscrever', async (req, res) => {
       }
     }
 
+    // Opt-in de WhatsApp: se consentiu e já casou com um membro, grava direto
+    // (só liga). Sem membro, o consentimento vai no cadastro pendente abaixo e
+    // é propagado na aprovação.
+    if (whatsapp_optin && membroId) {
+      try {
+        await supabase.from('mem_membros')
+          .update({ whatsapp_optin: true, whatsapp_optin_em: new Date().toISOString() })
+          .eq('id', membroId).is('deleted_at', null);
+      } catch (e) {
+        console.warn('[public grupos inscrever] optin membro:', e.message);
+      }
+    }
+
     let cadastroPendenteId = null;
     if (!membroId) {
       // Cria cadastro pendente
@@ -595,6 +609,8 @@ router.post('/inscrever', async (req, res) => {
         origem: 'qr_code',
         aceita_termos: !!aceita_termos,
         aceita_contato: true,
+        whatsapp_optin: !!whatsapp_optin,
+        whatsapp_optin_em: whatsapp_optin ? new Date().toISOString() : null,
         consentimento_texto: consentimento_texto ? String(consentimento_texto).slice(0, 2000) : null,
         status: 'pendente',
         ip_origem: ip,
