@@ -130,6 +130,98 @@ function FolhaDetalheModal({ func, extras, onClose }) {
   );
 }
 
+// Conciliação · fila de vínculo dos lançamentos de pessoal a colaboradores.
+function ConciliacaoFolha() {
+  const [itens, setItens] = useState(null);
+  const [todosFuncs, setTodosFuncs] = useState([]);
+  const [sel, setSel] = useState({});
+  const [rodando, setRodando] = useState(false);
+  const [msg, setMsg] = useState('');
+
+  const load = useCallback(async () => {
+    try {
+      const [nv, fs] = await Promise.all([
+        rh.folha.naoVinculados(),
+        rh.funcionarios.list({}),
+      ]);
+      setItens(nv.itens || []);
+      setTodosFuncs((fs || []).slice().sort((a, b) => (a.nome || '').localeCompare(b.nome || '')));
+    } catch { setItens([]); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  async function autoVincular() {
+    setRodando(true); setMsg('');
+    try {
+      const r = await rh.folha.autoVincular();
+      setMsg(`${r.vinculados} lançamento(s) vinculados automaticamente (de ${r.analisados} analisados).`);
+      await load();
+    } catch (e) { setMsg('Erro: ' + (e.message || '')); }
+    setRodando(false);
+  }
+  async function vincular(txId) {
+    const fid = sel[txId];
+    if (!fid) return;
+    try { await rh.folha.vincular(txId, { funcionario_id: fid }); setItens(prev => prev.filter(i => i.id !== txId)); }
+    catch (e) { setMsg('Erro: ' + (e.message || '')); }
+  }
+  async function ignorar(txId) {
+    try { await rh.folha.vincular(txId, { ignorar: true }); setItens(prev => prev.filter(i => i.id !== txId)); }
+    catch (e) { setMsg('Erro: ' + (e.message || '')); }
+  }
+
+  return (
+    <div style={{ ...s.card, marginTop: 20 }}>
+      <div style={s.cardHeader}>
+        <div>
+          <div style={s.cardTitle}>Conciliação de pagamentos</div>
+          <div style={{ fontSize: 12, color: C.text2, marginTop: 2 }}>Vincule os lançamentos de pessoal aos colaboradores pra o histórico ficar completo.</div>
+        </div>
+        <Button onClick={autoVincular} disabled={rodando}>{rodando ? 'Vinculando…' : 'Vincular por nome'}</Button>
+      </div>
+      {msg && <div style={{ padding: '10px 20px', fontSize: 12, color: C.text2 }}>{msg}</div>}
+      <div style={{ overflowX: 'auto' }}>
+        <table style={s.table}>
+          <thead><tr>
+            <th style={s.th}>Data</th>
+            <th style={s.th}>Lançamento</th>
+            <th style={s.thR}>Valor</th>
+            <th style={s.th}>Vincular a</th>
+            <th style={s.th}></th>
+          </tr></thead>
+          <tbody>
+            {itens == null && <tr><td style={s.empty} colSpan={5}>Carregando…</td></tr>}
+            {itens && itens.length === 0 && <tr><td style={s.empty} colSpan={5}>Nenhum lançamento de pessoal pendente de vínculo 🎉</td></tr>}
+            {(itens || []).map(it => (
+              <tr key={it.id} className="cbrio-row">
+                <td style={s.td}>{fmtData(it.data_competencia)}</td>
+                <td style={s.td}>
+                  <div>{it.descricao || it.plano_nome || '—'}</div>
+                  <div style={{ fontSize: 11, color: C.text3 }}>{it.plano_codigo}</div>
+                </td>
+                <td style={s.tdR}>{fmtMoney(it.valor)}</td>
+                <td style={s.td}>
+                  <select value={sel[it.id] || ''} onChange={e => setSel(p => ({ ...p, [it.id]: e.target.value }))}
+                    style={{ maxWidth: 220, padding: '6px 8px', borderRadius: 8, border: `1px solid ${C.border}`, background: 'var(--cbrio-input-bg)', color: C.text, fontSize: 12 }}>
+                    <option value="">Selecionar…</option>
+                    {todosFuncs.map(f => <option key={f.id} value={f.id}>{f.nome}</option>)}
+                  </select>
+                </td>
+                <td style={s.td}>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <Button size="xs" disabled={!sel[it.id]} onClick={() => vincular(it.id)}>Vincular</Button>
+                    <Button size="xs" variant="ghost" onClick={() => ignorar(it.id)}>Ignorar</Button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 export default function TabFolha() {
   const [funcs, setFuncs] = useState([]);
   const [extras, setExtras] = useState([]);
@@ -347,6 +439,8 @@ export default function TabFolha() {
         </table>
       </div>
     </div>
+
+    <ConciliacaoFolha />
 
     {detalhe && <FolhaDetalheModal func={detalhe} extras={extras} onClose={() => setDetalhe(null)} />}
   </>);
