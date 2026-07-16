@@ -2040,6 +2040,19 @@ router.get('/cron/age-out', async (req, res) => {
   } catch (e) { console.error('[totemKids] age-out:', e.message); res.status(500).json({ error: 'Erro no age-out' }); }
 });
 
+// GET /cron/encerrar-vencidas · fecha sessões Kids de dias ANTERIORES + auto-checkout
+// (checkout_forcado) + consolida o culto. Garante o fechamento "SEMPRE no dia seguinte"
+// (Marcos 2026-07-16) — antes era só lazy no carregar do totem, que não bastava se
+// ninguém abrisse o app no dia seguinte. Cron diário de madrugada (BRT).
+router.get('/cron/encerrar-vencidas', async (req, res) => {
+  const isAdmin = ['admin', 'diretor'].includes(req.user?.role);
+  if (!isAuthorizedCron(req) && !isAdmin) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    const encerradas = await encerrarSessoesVencidas(null);
+    res.json({ ok: true, encerradas });
+  } catch (e) { console.error('[totemKids] cron/encerrar-vencidas:', e.message); res.status(500).json({ error: 'Erro ao encerrar vencidas' }); }
+});
+
 // POST /api/totem-kids/sync-pco · puxa a base de crianças do Planning Center
 // Check-Ins e faz upsert por planning_center_id (idempotente). Nível 3 no módulo.
 router.post('/sync-pco', authorizeModule('kids', 3), async (req, res) => {
