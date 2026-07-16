@@ -754,6 +754,20 @@ router.post('/criancas', authorizeModule('kids', 2), async (req, res) => {
     }
     if (vinc.length) await supabase.from('kids_responsaveis').insert(vinc);
 
+    // Dispensa de CPF registrada (auditoria CPF 2026-07-16): fica rastreável
+    // QUEM entrou sem CPF por liberação do supervisor (a cobrança volta no
+    // próximo check-in). Best-effort — não trava o cadastro.
+    if (permitir_sem_cpf) {
+      for (const m of membros) {
+        if (m.cpf) continue;
+        supabase.from('mem_historico').insert({
+          membro_id: m.membro.id, acao: 'cpf_dispensado',
+          observacao: `Cadastro Kids liberado sem CPF pelo supervisor (criança ${criancaCriada.nome}).`,
+          created_at: new Date().toISOString(),
+        }).then(({ error }) => { if (error) console.warn('[totemKids/criancas] historico dispensa:', error.message); });
+      }
+    }
+
     res.status(201).json({
       crianca: criancaCriada,
       responsavel: { id: membros[0].membro.id, nome: membros[0].membro.nome, telefone: membros[0].tel, cpf: membros[0].cpf },
@@ -2181,6 +2195,15 @@ router.post('/criancas/:id/responsavel-rapido', authorizeModule('kids', 2), asyn
     // Membro já existia sem família → herda a da criança
     if (!r.created && crianca.familia_id && !membro.familia_id) {
       await supabase.from('mem_membros').update({ familia_id: crianca.familia_id }).eq('id', membro.id);
+    }
+
+    // Dispensa de CPF registrada (auditoria CPF 2026-07-16) · best-effort
+    if (permitir_sem_cpf && !cpfNorm) {
+      supabase.from('mem_historico').insert({
+        membro_id: membro.id, acao: 'cpf_dispensado',
+        observacao: `Responsável Kids liberado sem CPF pelo supervisor (criança ${crianca.nome}).`,
+        created_at: new Date().toISOString(),
+      }).then(({ error }) => { if (error) console.warn('[totemKids/responsavel-rapido] historico dispensa:', error.message); });
     }
 
     // 4. Vincula kids_responsaveis (upsert · idempotente)
