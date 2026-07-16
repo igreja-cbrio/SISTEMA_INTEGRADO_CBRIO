@@ -54,11 +54,15 @@ async function registrarPendencia({ tipo, membroId, conflitoId, origem, origemId
 }
 
 async function logHistorico(membroId, acao, observacao) {
-  try {
-    await supabase.from('mem_historico').insert({
-      membro_id: membroId, acao, observacao, created_at: new Date().toISOString(),
-    });
-  } catch { /* histórico é best-effort */ }
+  // mem_historico só tem `descricao` (NOT NULL) — não existem colunas
+  // acao/observacao (auditoria adversarial 2026-07-16: o insert antigo falhava
+  // 100% das vezes em silêncio, porque o supabase-js não lança erro de API).
+  const { error } = await supabase.from('mem_historico').insert({
+    membro_id: membroId,
+    descricao: `[${acao}] ${observacao}`,
+    created_at: new Date().toISOString(),
+  });
+  if (error) console.warn('[cpfReconciliar] histórico não gravado:', error.message);
 }
 
 // reconciliarCpfTardio · um CPF acabou de chegar pra um membro já existente.
@@ -66,10 +70,16 @@ async function logHistorico(membroId, acao, observacao) {
 // divergir do nascimento do membro, o vínculo por sinal fraco provavelmente
 // ligou a pessoa ERRADA (mãe/filha homônimas com telefone compartilhado) →
 // não grava, vira pendência.
+// `confianca` ('forte' | 'fraca'): quando o vínculo que trouxe o CPF nasceu de
+// um match FRACO (telefone+nome / e-mail+nome — sinais que a família
+// compartilha), gravar o CPF direto contamina a identidade global se o match
+// errou (pai e filho homônimos com o telefone da casa). Com 'fraca', só
+// consolida se o nascimento confere DOS DOIS lados; sem nascimento conferível
+// vira pendência humana (cpf_para_confirmar).
 // Retorna { acao } ∈ ja_tinha | cpf_preenchido | conflito_pendencia |
-//   divergente_pendencia | nascimento_divergente_pendencia | cpf_invalido |
-//   membro_nao_encontrado
-async function reconciliarCpfTardio({ membroId, cpf, origem, origemId, dataNascimento } = {}) {
+//   divergente_pendencia | nascimento_divergente_pendencia |
+//   cpf_para_confirmar_pendencia | cpf_invalido | membro_nao_encontrado
+async function reconciliarCpfTardio({ membroId, cpf, origem, origemId, dataNascimento, confianca = 'forte' } = {}) {
   const cpf11 = normalizarCpf(cpf);
   if (!membroId || !cpf11 || !cpfValido(cpf11)) return { acao: 'cpf_invalido' };
 
@@ -93,6 +103,17 @@ async function reconciliarCpfTardio({ membroId, cpf, origem, origemId, dataNasci
       detalhe: 'CPF chegou com data de nascimento diferente da do membro vinculado — provável vínculo por sinal fraco na pessoa errada.',
     });
     return { acao: 'nascimento_divergente_pendencia' };
+  }
+
+  // Match fraco sem nascimento conferível dos DOIS lados → não consolida
+  // (o membro pode ser um homônimo da família; o CPF viraria identidade
+  // permanente do cadastro errado e capturaria todas as portas). Fila humana.
+  if (confianca === 'fraca' && !(nascInput && nascMembro)) {
+    await registrarPendencia({
+      tipo: 'cpf_para_confirmar', membroId, conflitoId: null, origem, origemId,
+      detalhe: `CPF ${cpf11} chegou junto de um vínculo por sinal fraco (${origem || 'origem desconhecida'}) sem nascimento conferível dos dois lados — confirmar antes de consolidar no cadastro.`,
+    });
+    return { acao: 'cpf_para_confirmar_pendencia' };
   }
 
   // Membro já tem OUTRO CPF → não sobrescreve identidade · fila humana decide
