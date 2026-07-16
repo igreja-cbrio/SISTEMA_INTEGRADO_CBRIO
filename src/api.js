@@ -1295,6 +1295,11 @@ export const rh = {
     atualizarInscricao: (id, data) => patch(`/rh/treinamentos-funcionarios/${id}`, data),
   },
   // (Materiais de treinamento removido por ora — não havia backend `/rh/materiais`.)
+  folha: {
+    autoVincular: () => post('/rh/folha/auto-vincular', {}),
+    naoVinculados: () => get('/rh/folha/nao-vinculados'),
+    vincular: (txId, body) => patch(`/rh/folha/vinculo/${txId}`, body),
+  },
   ferias: {
     list: (params) => get('/rh/ferias' + (params ? '?' + new URLSearchParams(params) : '')),
     create: (funcId, data) => post(`/rh/funcionarios/${funcId}/ferias`, data),

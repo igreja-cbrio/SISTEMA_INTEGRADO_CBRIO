@@ -301,62 +301,231 @@ router.get('/funcionarios/:id', async (req, res) => {
   }
 });
 
+// Normaliza texto pra casar nome (sem acento, minúsculo, espaço único).
+function _normFolha(s) {
+  return (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim();
+}
+
+// IDs dos planos de conta de pessoal (4.01%) — cache simples por processo.
+let _planoPessoalCache = null;
+async function planoPessoalIds() {
+  if (_planoPessoalCache) return _planoPessoalCache;
+  const { data } = await supabase.from('fin_plano_contas').select('id').like('codigo', '4.01%');
+  _planoPessoalCache = (data || []).map(p => p.id);
+  return _planoPessoalCache;
+}
+
+async function idsFolhaIgnorados() {
+  try {
+    const set = new Set();
+    let offset = 0;
+    for (;;) {
+      const { data, error } = await supabase.from('rh_folha_ignorados').select('transacao_id').range(offset, offset + 999);
+      if (error) return set; // tabela pode não existir ainda
+      (data || []).forEach(r => set.add(r.transacao_id));
+      if (!data || data.length < 1000) break;
+      offset += 1000;
+    }
+    return set;
+  } catch { return new Set(); }
+}
+
 // GET /api/rh/funcionarios/:id/pagamentos
-// Histórico de pagamentos do colaborador, cruzado do FINANCEIRO: lê os
-// lançamentos de despesa de pessoal (plano de contas 4.01%) cujo texto do
-// lançamento contém o nome do colaborador, agrupados por competência (mês).
-// Somente leitura (não altera nada). Só quem pode ver remuneração.
-// ⚠️ Limitação conhecida: pagamentos via cartão corporativo/PJ+ (ex.: "caju
-// lider pj+") e lançamentos sem o nome no texto NÃO são atribuídos.
+// Histórico de pagamentos do colaborador: (1) confirmados = fin_transacoes com
+// funcionario_id = :id (vínculo persistido); (2) sugeridos = lançamentos de
+// pessoal (4.01%) ainda sem vínculo cujo texto contém o nome. Agrupa por
+// competência e devolve o salário previsto pra conciliação previsto × pago.
 router.get('/funcionarios/:id/pagamentos', async (req, res) => {
   try {
     if (!podeEditarRemuneracao(req)) return res.status(403).json({ error: 'Sem permissão para ver pagamentos (exige RH nível ≥ 4).' });
 
-    let fq = supabase.from('rh_funcionarios').select('id, nome').eq('id', req.params.id);
+    let fq = supabase.from('rh_funcionarios').select('id, nome, salario, tipo_contrato').eq('id', req.params.id);
     fq = applyAccessFilter(fq, req, 'rh', { areaColumn: 'area', ownerColumn: 'email', ownerEmail: true });
     const { data: func, error: fErr } = await fq.maybeSingle();
     if (fErr || !func) return res.status(404).json({ error: 'Funcionário não encontrado' });
 
     const nome = (func.nome || '').trim();
-    if (nome.length < 4) return res.json({ nome, meses: [], total_encontrado: 0 });
+    const itensById = new Map();
 
-    // Escapa curingas do ILIKE (nomes normais não têm, mas por segurança)
-    const termo = nome.replace(/[%_]/g, '\\$&');
-    const { data: tx, error: tErr } = await supabase
-      .from('vw_fin_transacoes_completa')
-      .select('id, data_competencia, data_pagamento, valor, status, plano_contas_codigo, plano_contas_nome, descricao')
-      .like('plano_contas_codigo', '4.01%')
-      .eq('tipo', 'despesa')
+    // 1) Confirmados (vínculo persistido)
+    const { data: conf } = await supabase
+      .from('fin_transacoes')
+      .select('id, data_competencia, data_pagamento, valor, status, descricao, plano:fin_plano_contas(codigo, nome)')
+      .eq('funcionario_id', req.params.id)
       .neq('status', 'cancelado')
-      .ilike('descricao', `%${termo}%`)
       .order('data_competencia', { ascending: false })
-      .limit(2000);
-    if (tErr) return res.status(400).json({ error: tErr.message });
-
-    // Agrupa por competência (mês da data_competencia)
-    const mapa = new Map();
-    for (const t of tx || []) {
-      const d = t.data_competencia ? String(t.data_competencia).slice(0, 7) : 'sem-data';
-      if (!mapa.has(d)) mapa.set(d, { mes: d, total: 0, qtd: 0, itens: [] });
-      const g = mapa.get(d);
-      g.total += Number(t.valor || 0);
-      g.qtd += 1;
-      g.itens.push({
-        id: t.id,
-        data_competencia: t.data_competencia,
-        data_pagamento: t.data_pagamento,
-        valor: Number(t.valor || 0),
-        status: t.status,
-        plano_codigo: t.plano_contas_codigo,
-        plano_nome: t.plano_contas_nome,
-        descricao: t.descricao,
+      .limit(3000);
+    for (const t of conf || []) {
+      itensById.set(t.id, {
+        id: t.id, data_competencia: t.data_competencia, data_pagamento: t.data_pagamento,
+        valor: Number(t.valor || 0), status: t.status, descricao: t.descricao,
+        plano_codigo: t.plano?.codigo, plano_nome: t.plano?.nome, confirmado: true,
       });
     }
+
+    // 2) Sugeridos (nome bate, ainda sem vínculo e não ignorados)
+    if (nome.length >= 4) {
+      const ignor = await idsFolhaIgnorados();
+      const termo = nome.replace(/[%_]/g, '\\$&');
+      const { data: sug } = await supabase
+        .from('vw_fin_transacoes_completa')
+        .select('id, data_competencia, data_pagamento, valor, status, plano_contas_codigo, plano_contas_nome, descricao')
+        .like('plano_contas_codigo', '4.01%')
+        .eq('tipo', 'despesa')
+        .neq('status', 'cancelado')
+        .ilike('descricao', `%${termo}%`)
+        .order('data_competencia', { ascending: false })
+        .limit(2000);
+      for (const t of sug || []) {
+        if (itensById.has(t.id) || ignor.has(t.id)) continue;
+        itensById.set(t.id, {
+          id: t.id, data_competencia: t.data_competencia, data_pagamento: t.data_pagamento,
+          valor: Number(t.valor || 0), status: t.status, descricao: t.descricao,
+          plano_codigo: t.plano_contas_codigo, plano_nome: t.plano_contas_nome, confirmado: false,
+        });
+      }
+    }
+
+    // Agrupa por competência
+    const mapa = new Map();
+    for (const it of itensById.values()) {
+      const d = it.data_competencia ? String(it.data_competencia).slice(0, 7) : 'sem-data';
+      if (!mapa.has(d)) mapa.set(d, { mes: d, total: 0, total_confirmado: 0, qtd: 0, itens: [] });
+      const g = mapa.get(d);
+      g.total += it.valor;
+      if (it.confirmado) g.total_confirmado += it.valor;
+      g.qtd += 1;
+      g.itens.push(it);
+    }
     const meses = [...mapa.values()].sort((a, b) => (a.mes < b.mes ? 1 : -1));
-    res.json({ nome, meses, total_encontrado: (tx || []).length });
+    res.json({ nome, salario_previsto: Number(func.salario || 0), tipo_contrato: func.tipo_contrato, meses, total_encontrado: itensById.size });
   } catch (e) {
     console.error('[RH] Pagamentos do funcionário:', e.message);
     res.status(500).json({ error: 'Erro ao buscar pagamentos' });
+  }
+});
+
+// ── Conciliação da folha (vínculo lançamento ↔ colaborador) ──────────────
+// POST /api/rh/folha/auto-vincular · casa por nome (só matches inequívocos)
+router.post('/folha/auto-vincular', async (req, res) => {
+  try {
+    if (!podeEditarRemuneracao(req)) return res.status(403).json({ error: 'Sem permissão (exige RH nível ≥ 4).' });
+    const planoIds = await planoPessoalIds();
+    if (!planoIds.length) return res.json({ vinculados: 0, analisados: 0 });
+
+    const { data: funcs } = await supabase.from('rh_funcionarios').select('id, nome').is('deleted_at', null);
+    const alvos = (funcs || [])
+      .map(f => ({ id: f.id, norm: _normFolha(f.nome) }))
+      .filter(f => f.norm.length >= 6 && f.norm.split(' ').length >= 2);
+
+    const ignor = await idsFolhaIgnorados();
+    // Busca lançamentos de pessoal ainda sem vínculo (paginado)
+    const porFuncionario = new Map();
+    let analisados = 0, offset = 0;
+    for (;;) {
+      const { data, error } = await supabase
+        .from('fin_transacoes')
+        .select('id, descricao')
+        .in('plano_contas_id', planoIds)
+        .eq('tipo', 'despesa')
+        .neq('status', 'cancelado')
+        .is('funcionario_id', null)
+        .range(offset, offset + 999);
+      if (error) return res.status(400).json({ error: error.message });
+      for (const t of data || []) {
+        if (ignor.has(t.id)) continue;
+        analisados++;
+        const d = _normFolha(t.descricao);
+        if (!d) continue;
+        const matches = alvos.filter(a => d.includes(a.norm));
+        if (matches.length === 1) {
+          const fid = matches[0].id;
+          if (!porFuncionario.has(fid)) porFuncionario.set(fid, []);
+          porFuncionario.get(fid).push(t.id);
+        }
+      }
+      if (!data || data.length < 1000) break;
+      offset += 1000;
+    }
+
+    let vinculados = 0;
+    for (const [fid, txIds] of porFuncionario) {
+      for (let i = 0; i < txIds.length; i += 200) {
+        const chunk = txIds.slice(i, i + 200);
+        const { error } = await supabase.from('fin_transacoes').update({ funcionario_id: fid }).in('id', chunk);
+        if (!error) vinculados += chunk.length;
+      }
+    }
+    res.json({ vinculados, analisados });
+  } catch (e) {
+    console.error('[RH] auto-vincular folha:', e.message);
+    res.status(500).json({ error: 'Erro ao vincular pagamentos' });
+  }
+});
+
+// GET /api/rh/folha/nao-vinculados · fila de vínculo manual
+router.get('/folha/nao-vinculados', async (req, res) => {
+  try {
+    if (!podeEditarRemuneracao(req)) return res.status(403).json({ error: 'Sem permissão (exige RH nível ≥ 4).' });
+    const planoIds = await planoPessoalIds();
+    if (!planoIds.length) return res.json({ itens: [] });
+    const ignor = await idsFolhaIgnorados();
+    const { data, error } = await supabase
+      .from('vw_fin_transacoes_completa')
+      .select('id, data_competencia, valor, status, plano_contas_codigo, plano_contas_nome, descricao')
+      .like('plano_contas_codigo', '4.01%')
+      .eq('tipo', 'despesa')
+      .neq('status', 'cancelado')
+      .order('data_competencia', { ascending: false })
+      .limit(1000);
+    if (error) return res.status(400).json({ error: error.message });
+    // Filtra os que já têm vínculo: precisa checar funcionario_id (não está na view)
+    const ids = (data || []).map(t => t.id);
+    const vinculadosSet = new Set();
+    for (let i = 0; i < ids.length; i += 300) {
+      const chunk = ids.slice(i, i + 300);
+      const { data: vinc } = await supabase.from('fin_transacoes').select('id').in('id', chunk).not('funcionario_id', 'is', null);
+      (vinc || []).forEach(r => vinculadosSet.add(r.id));
+    }
+    const itens = (data || [])
+      .filter(t => !vinculadosSet.has(t.id) && !ignor.has(t.id))
+      .slice(0, 300)
+      .map(t => ({
+        id: t.id, data_competencia: t.data_competencia, valor: Number(t.valor || 0),
+        status: t.status, plano_codigo: t.plano_contas_codigo, plano_nome: t.plano_contas_nome, descricao: t.descricao,
+      }));
+    res.json({ itens });
+  } catch (e) {
+    console.error('[RH] nao-vinculados folha:', e.message);
+    res.status(500).json({ error: 'Erro ao listar lançamentos' });
+  }
+});
+
+// PATCH /api/rh/folha/vinculo/:transacaoId · vincular / desvincular / ignorar
+router.patch('/folha/vinculo/:transacaoId', async (req, res) => {
+  try {
+    if (!podeEditarRemuneracao(req)) return res.status(403).json({ error: 'Sem permissão (exige RH nível ≥ 4).' });
+    const { funcionario_id, ignorar, desvincular } = req.body || {};
+    const txId = req.params.transacaoId;
+
+    if (ignorar) {
+      await supabase.from('rh_folha_ignorados').upsert({ transacao_id: txId, ignorado_por: req.user?.id ?? null }, { onConflict: 'transacao_id' });
+      await supabase.from('fin_transacoes').update({ funcionario_id: null }).eq('id', txId);
+      return res.json({ ok: true, ignorado: true });
+    }
+    if (desvincular) {
+      await supabase.from('fin_transacoes').update({ funcionario_id: null }).eq('id', txId);
+      return res.json({ ok: true, desvinculado: true });
+    }
+    if (!funcionario_id) return res.status(400).json({ error: 'funcionario_id é obrigatório' });
+    // Remove de ignorados (caso estivesse) e vincula
+    await supabase.from('rh_folha_ignorados').delete().eq('transacao_id', txId);
+    const { error } = await supabase.from('fin_transacoes').update({ funcionario_id }).eq('id', txId);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[RH] vinculo folha:', e.message);
+    res.status(500).json({ error: 'Erro ao atualizar vínculo' });
   }
 });
 

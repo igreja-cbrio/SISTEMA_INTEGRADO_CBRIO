@@ -2617,8 +2617,14 @@ function PagamentosSection({ funcId }) {
   return (
     <div>
       <SecaoHeader icon={Wallet} title="Folha / Pagamentos" count={estado === 'pronto' ? dados.meses.length : undefined} />
+      {estado === 'pronto' && dados.salario_previsto > 0 && (
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: C.primaryBg, borderRadius: 10, padding: '10px 14px', marginBottom: 10 }}>
+          <span style={{ fontSize: 12, color: C.text2, fontWeight: 600 }}>Salário previsto (mensal)</span>
+          <span style={{ fontSize: 15, fontWeight: 800, color: C.primary }}>{fmtMoney(dados.salario_previsto)}</span>
+        </div>
+      )}
       <div style={{ fontSize: 11, color: C.text3, marginBottom: 12, lineHeight: 1.5, background: 'var(--cbrio-input-bg)', borderRadius: 8, padding: '8px 12px' }}>
-        Cruzado automaticamente do financeiro (despesas de pessoal) pelo nome do colaborador. Pagamentos via cartão corporativo/PJ+ ou sem o nome no lançamento podem não aparecer aqui.
+        Confirmados = lançamentos vinculados a este colaborador no financeiro. <b>Sugeridos</b> = casaram pelo nome mas ainda não confirmados (vincule na aba Folha → Conciliação). Pagamentos via cartão/PJ+ sem o nome só aparecem após vínculo manual.
       </div>
       {estado === 'loading' && <div style={{ fontSize: 13, color: C.text2 }}>Carregando pagamentos…</div>}
       {estado === 'erro' && <div style={{ fontSize: 13, color: C.red }}>Erro ao carregar pagamentos.</div>}
@@ -2643,6 +2649,7 @@ function PagamentosSection({ funcId }) {
                     <div style={{ fontSize: 11, color: C.text3 }}>{fmtDate(it.data_pagamento || it.data_competencia)}{it.plano_codigo ? ` · ${it.plano_codigo}` : ''}</div>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                    {!it.confirmado && <span style={{ fontSize: 10, fontWeight: 700, color: C.amber, background: `${C.amber}20`, borderRadius: 999, padding: '2px 8px' }}>sugerido</span>}
                     <span style={{ fontSize: 10, fontWeight: 700, color: si.c, background: si.bg, borderRadius: 999, padding: '2px 8px' }}>{si.label}</span>
                     <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{fmtMoney(it.valor)}</span>
                   </div>
