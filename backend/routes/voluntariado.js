@@ -3485,7 +3485,17 @@ router.patch('/inscricoes/:id/dados', async (req, res) => {
 
     if (cpf !== undefined) {
       const d = String(cpf || '').replace(/\D+/g, '');
-      if (d && (d.length !== 11 || !cpfValido(d))) return res.status(400).json({ error: 'CPF inválido — confira os dígitos' });
+      if (d && (d.length !== 11 || !cpfValido(d))) {
+        // Grandfathering do legado: CPF idêntico ao já armazenado passa sem
+        // DV (o modal da ficha sempre reenvia o cpf — sem isso, um CPF legado
+        // DV-inválido travaria a edição de QUALQUER campo). DV só pra novo/alterado.
+        const { data: atual } = await supabase.from('vol_inscricoes')
+          .select('cpf').eq('id', req.params.id).maybeSingle();
+        const atualNorm = String(atual?.cpf || '').replace(/\D+/g, '');
+        if (!atualNorm || d !== atualNorm) {
+          return res.status(400).json({ error: 'CPF inválido — confira os dígitos' });
+        }
+      }
       patch.cpf = d || null;
     }
     if (data_nascimento !== undefined) {
@@ -3524,10 +3534,14 @@ router.patch('/inscricoes/:id/dados', async (req, res) => {
       (async () => {
         try {
           if (data.membro_id) {
+            // Confiança FRACA: o vínculo pode ter nascido de match fraco
+            // (telefone/e-mail+nome) numa requisição anterior — sem nascimento
+            // conferível dos 2 lados, o CPF vira pendência, não identidade.
             await reconciliarCpfTardio({
               membroId: data.membro_id, cpf: patch.cpf,
               origem: 'vol_ficha', origemId: data.id,
               dataNascimento: data.data_nascimento || null,
+              confianca: 'fraca',
             });
           } else {
             const hit = await acharMembroGuardado({
