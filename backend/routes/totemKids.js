@@ -2611,8 +2611,11 @@ router.post('/checkin/lote', authorizeModule('kids', 2), async (req, res) => {
       return data || (() => { const a = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let c = ''; for (let i = 0; i < 4; i++) c += a[Math.floor(Math.random() * a.length)]; return c; })();
     };
 
-    // check-in de UMA criança (erro isolado · não derruba o lote)
-    async function fazerCheckin(crianca_id, sala_id) {
+    // check-in de UMA criança (erro isolado · não derruba o lote). `codigoLote`:
+    // código compartilhado por toda a família (Marcos 2026-07-16) — o pai fica com
+    // 1 código só (menos etiqueta pra perder). Cada criança ainda tem sua etiqueta;
+    // o recibo do responsável é impresso 1× no front.
+    async function fazerCheckin(crianca_id, sala_id, codigoLote) {
       const { data: existentes } = await supabase.from('kids_checkins')
         .select('id, checkout_at').eq('sessao_id', sessao_id).eq('crianca_id', crianca_id);
       if ((existentes || []).some((c) => !c.checkout_at)) return { crianca_id, ok: false, ja_aberto: true, error: 'já com check-in aberto' };
@@ -2624,7 +2627,7 @@ router.post('/checkin/lote', authorizeModule('kids', 2), async (req, res) => {
 
       await ligarResponsavel(crianca_id, respId, responsavel_parentesco);
 
-      const codigoFinal = await codigoNovo();
+      const codigoFinal = codigoLote;
       const grupoId = cultosExtras.length ? require('crypto').randomUUID() : null;
       const { data: checkin, error: errIns } = await supabase.from('kids_checkins').insert({
         sessao_id, crianca_id, sala_id, estacao_checkin_id: estacao_id || null,
@@ -2673,9 +2676,11 @@ router.post('/checkin/lote', authorizeModule('kids', 2), async (req, res) => {
       };
     }
 
+    // 1 código pra família toda (compartilhado entre os irmãos deste lote).
+    const codigoLote = await codigoNovo();
     const resultados = [];
     for (const it of itens) {
-      try { resultados.push(await fazerCheckin(it.crianca_id, it.sala_id)); }
+      try { resultados.push(await fazerCheckin(it.crianca_id, it.sala_id, codigoLote)); }
       catch (e) { resultados.push({ crianca_id: it.crianca_id, ok: false, error: e.message }); }
     }
     res.status(201).json({ resultados, responsavel: { id: respId, nome: respNome, telefone: respTel } });
