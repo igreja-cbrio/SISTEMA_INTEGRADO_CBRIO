@@ -111,7 +111,7 @@ UPDATE mem_membros m SET status = 'membro_ativo'
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.identidade_pendencias (
   id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  tipo                text NOT NULL CHECK (tipo IN ('cpf_conflito','cpf_divergente','vinculo_divergente')),
+  tipo                text NOT NULL CHECK (tipo IN ('cpf_conflito','cpf_divergente','vinculo_divergente','cpf_para_confirmar')),
   membro_id           uuid REFERENCES public.mem_membros(id) ON DELETE SET NULL,
   membro_conflito_id  uuid REFERENCES public.mem_membros(id) ON DELETE SET NULL,
   origem              text,          -- porta que revelou (decisao_edicao · batismo_checkin · vol_ficha · matcher:* · backfill)
@@ -123,9 +123,14 @@ CREATE TABLE IF NOT EXISTS public.identidade_pendencias (
   created_at          timestamptz NOT NULL DEFAULT now()
 );
 
--- 1 pendência ABERTA por (tipo, par de membros) · reentradas são no-op (23505)
+-- 1 pendência ABERTA por (tipo, par de membros) · reentradas são no-op (23505).
+-- NULLS NOT DISTINCT: sem isso, pendências com membro_conflito_id NULL (vários
+-- caminhos: vinculo_divergente por nascimento, cpf_conflito de CPF preso em
+-- deletado, corridas) nunca deduplicariam — cada reedição da mesma linha
+-- acumularia uma duplicata na fila humana.
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_identidade_pendencia_aberta
   ON public.identidade_pendencias (tipo, membro_id, membro_conflito_id)
+  NULLS NOT DISTINCT
   WHERE status = 'pendente';
 
 CREATE INDEX IF NOT EXISTS idx_identidade_pendencias_status
@@ -179,7 +184,7 @@ CREATE POLICY identidade_pendencias_service ON public.identidade_pendencias
   FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 COMMENT ON TABLE public.identidade_pendencias IS
-  'Fila humana de conflitos de identidade por CPF (nunca auto-fundir): cpf_conflito = CPF chegou pra cadastro sem CPF mas pertence a outro membro (provável duplicata → fundir via merge_membros) · cpf_divergente = membro já tinha outro CPF · vinculo_divergente = linha-satélite aponta pra membro diferente do dono do CPF. Alimentada por services/cpfReconciliar.js e pelo backfill. Consumidor: módulo Entradas (resolvedor de duplicatas).';
+  'Fila humana de conflitos de identidade por CPF (nunca auto-fundir): cpf_conflito = CPF chegou pra cadastro sem CPF mas pertence a outro membro (provável duplicata → fundir via merge_membros) · cpf_divergente = membro já tinha outro CPF · vinculo_divergente = linha-satélite aponta pra membro diferente do dono do CPF · cpf_para_confirmar = CPF chegou por vínculo de sinal fraco (telefone/e-mail da família ou portal wifi) sem nascimento conferível — confirmar antes de consolidar. Alimentada por services/cpfReconciliar.js, pelo backfill e pelo cron do wifi. Consumidor: módulo Entradas (resolvedor de duplicatas).';
 
 -- ----------------------------------------------------------------------------
 -- Conferência:
