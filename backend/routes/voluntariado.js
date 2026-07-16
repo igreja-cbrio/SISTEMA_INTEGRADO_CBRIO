@@ -3520,10 +3520,14 @@ router.patch('/inscricoes/:id/dados', async (req, res) => {
       (async () => {
         try {
           if (data.membro_id) {
+            // Confiança FRACA: o vínculo pode ter nascido de match fraco
+            // (telefone/e-mail+nome) numa requisição anterior — sem nascimento
+            // conferível dos 2 lados, o CPF vira pendência, não identidade.
             await reconciliarCpfTardio({
               membroId: data.membro_id, cpf: patch.cpf,
               origem: 'vol_ficha', origemId: data.id,
               dataNascimento: data.data_nascimento || null,
+              confianca: 'fraca',
             });
           } else {
             const hit = await acharMembroGuardado({
