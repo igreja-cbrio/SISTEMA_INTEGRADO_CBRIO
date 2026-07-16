@@ -19,6 +19,20 @@
 -- ============================================================================
 
 -- ----------------------------------------------------------------------------
+-- 0. ⚠️ Constraint UNIQUE TOTAL legada em mem_membros.cpf
+--
+-- Em prod existe a constraint antiga mem_membros_cpf_key (UNIQUE total na
+-- coluna, pré-histórica) ALÉM do índice parcial uniq_mem_membros_cpf_ativo
+-- (20260715120000). A total contradiz o design do índice parcial: o
+-- comentário da 20260715 diz "soft-delete libera o CPF pro cadastro vivo",
+-- mas a constraint total trava o CPF ATÉ de cadastros deletados — descoberto
+-- na prática pelo backfill (23505 em mem_membros_cpf_key com dono deletado).
+-- O DROP alinha prod à decisão de 15/07; a unicidade entre VIVOS continua
+-- garantida pelo índice parcial normalizado.
+-- ----------------------------------------------------------------------------
+ALTER TABLE public.mem_membros DROP CONSTRAINT IF EXISTS mem_membros_cpf_key;
+
+-- ----------------------------------------------------------------------------
 -- 1. Trigger de batismo realizado · dispara também no vínculo tardio
 -- ----------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION fn_batismo_realizado_to_trilha()

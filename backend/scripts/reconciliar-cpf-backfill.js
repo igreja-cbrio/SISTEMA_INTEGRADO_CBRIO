@@ -110,12 +110,19 @@ async function main() {
       if (!cpfMembro) {
         conta(dono ? `${sat.tabela}.conflito_pendencia (stub + dono do CPF separados)` : `${sat.tabela}.preencher_cpf_no_membro`);
         if (APPLY) {
-          const res = await reconciliarCpfTardio({
-            membroId: vinculado.id, cpf, origem: sat.origem, origemId: r.id,
-          });
-          if (res.acao === 'cpf_preenchido') {
-            vinculado.cpf = cpf;                 // mantém o mapa coerente
-            donoPorCpf.set(cpf, vinculado);
+          try {
+            const res = await reconciliarCpfTardio({
+              membroId: vinculado.id, cpf, origem: sat.origem, origemId: r.id,
+            });
+            if (res.acao === 'cpf_preenchido') {
+              vinculado.cpf = cpf;               // mantém o mapa coerente
+              donoPorCpf.set(cpf, vinculado);
+            } else if (res.acao !== 'ja_tinha') {
+              conta(`${sat.tabela}.reconciliar_${res.acao}`);
+            }
+          } catch (e) {
+            console.error(`  [ERRO reconciliar] ${sat.tabela} ${r.id}:`, e.message);
+            conta(`${sat.tabela}.erro_reconciliar`);
           }
         }
         continue;
