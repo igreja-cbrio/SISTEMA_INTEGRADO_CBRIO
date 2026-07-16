@@ -699,10 +699,20 @@ router.post('/promover-orfaos', authorize('admin', 'diretor'), async (_req, res)
 // enviava o CPF como digitado — '123.456.789-01' gravado cru fica invisível
 // pra todo o matching digits-only (a pessoa re-entra por qualquer porta e vira
 // stub duplicado). DV no servidor: CPF errado "ocupa a vaga" no índice UNIQUE.
+// `cpfAtual` (UPDATE): CPF idêntico ao já armazenado passa SEM validar DV —
+// grandfathering do legado (o modal sempre reenvia o cpf armazenado; sem isso,
+// um CPF legado DV-inválido travaria QUALQUER edição do cadastro). O DV só
+// vale pra CPF novo ou alterado.
 // Retorna mensagem de erro ou null se ok (muta o body).
-function normalizarCpfPayload(body) {
+function normalizarCpfPayload(body, cpfAtual) {
   if (!body || body.cpf === undefined || body.cpf === null || body.cpf === '') {
     if (body && (body.cpf === '' || body.cpf === null)) body.cpf = null;
+    return null;
+  }
+  const digitosPayload = String(body.cpf).replace(/\D/g, '');
+  const digitosAtual = String(cpfAtual || '').replace(/\D/g, '');
+  if (digitosPayload && digitosAtual && digitosPayload === digitosAtual) {
+    body.cpf = digitosPayload;
     return null;
   }
   const d = normCpf11(body.cpf);
@@ -738,7 +748,14 @@ router.post('/membros', authorize('admin', 'diretor'), async (req, res) => {
 // PUT /api/membresia/membros/:id
 router.put('/membros/:id', authorize('admin', 'diretor'), async (req, res) => {
   try {
-    const errCpf = normalizarCpfPayload(req.body);
+    // CPF atual do membro: idêntico ao payload passa sem DV (legado)
+    let cpfAtual = null;
+    if (req.body?.cpf) {
+      const { data: atual } = await supabase.from('mem_membros')
+        .select('cpf').eq('id', req.params.id).maybeSingle();
+      cpfAtual = atual?.cpf || null;
+    }
+    const errCpf = normalizarCpfPayload(req.body, cpfAtual);
     if (errCpf) return res.status(400).json({ error: errCpf });
     const { data, error } = await supabase
       .from('mem_membros')
