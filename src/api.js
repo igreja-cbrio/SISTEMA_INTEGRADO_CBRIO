@@ -1266,6 +1266,7 @@ export const rh = {
   funcionarios: {
     list: (params) => get('/rh/funcionarios' + (params ? '?' + new URLSearchParams(params) : '')),
     get: (id) => get(`/rh/funcionarios/${id}`),
+    pagamentos: (id) => get(`/rh/funcionarios/${id}/pagamentos`),
     create: (data) => post('/rh/funcionarios', data),
     update: (id, data) => put(`/rh/funcionarios/${id}`, data),
     remove: (id) => del(`/rh/funcionarios/${id}`),

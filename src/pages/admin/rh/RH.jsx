@@ -2588,6 +2588,74 @@ function SecaoHeader({ icon: Icon, title, count, extra }) {
   );
 }
 
+// Histórico de pagamentos do colaborador · cruzado do financeiro (despesas de
+// pessoal 4.01% cujo texto contém o nome), agrupado por mês. Somente leitura.
+function PagamentosSection({ funcId }) {
+  const [dados, setDados] = useState(null);
+  const [estado, setEstado] = useState('loading');
+  useEffect(() => {
+    let vivo = true;
+    setEstado('loading');
+    rh.funcionarios.pagamentos(funcId)
+      .then(d => { if (vivo) { setDados(d); setEstado('pronto'); } })
+      .catch(() => { if (vivo) setEstado('erro'); });
+    return () => { vivo = false; };
+  }, [funcId]);
+
+  const MESES = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+  const mesLabel = (m) => {
+    if (!m || m === 'sem-data') return 'Sem competência';
+    const [y, mm] = m.split('-');
+    return `${MESES[parseInt(mm, 10) - 1] || mm}/${y}`;
+  };
+  const statusInfo = (s) => {
+    if (['conciliado', 'pago', 'quitado'].includes(s)) return { label: 'Pago', c: C.green, bg: `${C.green}20` };
+    if (['pendente', 'a_pagar', 'previsto', 'agendado'].includes(s)) return { label: 'Pendente', c: C.amber, bg: `${C.amber}20` };
+    return { label: s || '—', c: C.text2, bg: 'var(--cbrio-input-bg)' };
+  };
+
+  return (
+    <div>
+      <SecaoHeader icon={Wallet} title="Folha / Pagamentos" count={estado === 'pronto' ? dados.meses.length : undefined} />
+      <div style={{ fontSize: 11, color: C.text3, marginBottom: 12, lineHeight: 1.5, background: 'var(--cbrio-input-bg)', borderRadius: 8, padding: '8px 12px' }}>
+        Cruzado automaticamente do financeiro (despesas de pessoal) pelo nome do colaborador. Pagamentos via cartão corporativo/PJ+ ou sem o nome no lançamento podem não aparecer aqui.
+      </div>
+      {estado === 'loading' && <div style={{ fontSize: 13, color: C.text2 }}>Carregando pagamentos…</div>}
+      {estado === 'erro' && <div style={{ fontSize: 13, color: C.red }}>Erro ao carregar pagamentos.</div>}
+      {estado === 'pronto' && dados.meses.length === 0 && (
+        <div style={{ fontSize: 13, color: C.text2, background: 'var(--cbrio-input-bg)', borderRadius: 10, padding: 16 }}>
+          Nenhum pagamento encontrado no financeiro com o nome deste colaborador.
+        </div>
+      )}
+      {estado === 'pronto' && dados.meses.map(mes => (
+        <div key={mes.mes} style={{ marginBottom: 10, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: 'var(--cbrio-input-bg)' }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{mesLabel(mes.mes)}</span>
+            <span style={{ fontSize: 14, fontWeight: 800, color: C.text }}>{fmtMoney(mes.total)}</span>
+          </div>
+          <div>
+            {mes.itens.map(it => {
+              const si = statusInfo(it.status);
+              return (
+                <div key={it.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, padding: '8px 14px', borderTop: `1px solid ${C.border}` }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 12, color: C.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{it.descricao || it.plano_nome || '—'}</div>
+                    <div style={{ fontSize: 11, color: C.text3 }}>{fmtDate(it.data_pagamento || it.data_competencia)}{it.plano_codigo ? ` · ${it.plano_codigo}` : ''}</div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: si.c, background: si.bg, borderRadius: 999, padding: '2px 8px' }}>{si.label}</span>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{fmtMoney(it.valor)}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = true, onEdit, onDelete, onReativar, onEditAdmissao, onContratoAdmissao, onConcluirAdmissao, onNewDoc, onDeleteDoc, onSaveInline, onChanged, onPhotoUpdated }) {
   const [showPerms, setShowPerms] = useState(false);
   const [permData, setPermData] = useState(null);
@@ -2819,6 +2887,7 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = t
           <TabsTrigger value="geral">Geral</TabsTrigger>
           <TabsTrigger value="docs">Documentos</TabsTrigger>
           <TabsTrigger value="dev">Férias &amp; treinos</TabsTrigger>
+          {podeRemun && <TabsTrigger value="pag">Pagamentos</TabsTrigger>}
           <TabsTrigger value="perm">Permissões</TabsTrigger>
         </TabsList>
 
@@ -2943,6 +3012,12 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = t
       </div>
 
         </TabsContent>
+
+        {podeRemun && (
+        <TabsContent value="pag" className="mt-4">
+          <PagamentosSection funcId={data.id} />
+        </TabsContent>
+        )}
 
         <TabsContent value="perm" className="mt-4">
       {/* Permissões */}
