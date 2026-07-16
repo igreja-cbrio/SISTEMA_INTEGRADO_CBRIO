@@ -2387,6 +2387,10 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
       }
     }
     if (!respNome) return res.status(400).json({ error: 'responsavel_id ou responsavel_nome_manual obrigatório' });
+    // PREVENÇÃO (Marcos 2026-07-16): sempre re-vincula a criança ao responsável
+    // usado (idempotente). Antes o ligar só rodava nos ramos dedup/manual → o filho
+    // ficava ligado a um cadastro e o CPF ia parar em outro ("CPF no gêmeo").
+    if (respId) await ligarResponsavel(respId, responsavel_parentesco);
 
     // Buscar dados da criança (pro snapshot na resposta)
     const { data: crianca } = await supabase
@@ -2525,6 +2529,159 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
   } catch (e) {
     console.error('[totemKids/checkin]', e.message);
     res.status(500).json({ error: 'Erro ao fazer check-in' });
+  }
+});
+
+// POST /api/totem-kids/checkin/lote · check-in de VÁRIAS crianças (família) numa
+// requisição só (Marcos 2026-07-16): resolve o responsável + CPF UMA vez e insere
+// cada criança. Menos round-trips (rede do totem) e o responsável é resolvido +
+// re-vinculado 1×. Erro numa criança NÃO derruba as outras (resultado por-criança);
+// o front imprime cada etiqueta a partir de `resultados`. Mesma regra do /checkin
+// (anti-duplicidade, multi-culto, reativação, código único por criança).
+router.post('/checkin/lote', authorizeModule('kids', 2), async (req, res) => {
+  try {
+    const {
+      sessao_id, itens, estacao_id,
+      responsavel_id, responsavel_nome_manual, responsavel_telefone_manual, responsavel_parentesco,
+      cultos_extras, enviar_wpp, responsavel_cpf, permitir_sem_cpf,
+    } = req.body;
+
+    if (!sessao_id) return res.status(400).json({ error: 'sessao_id obrigatorio' });
+    if (!Array.isArray(itens) || itens.length === 0) return res.status(400).json({ error: 'itens obrigatorio (crianca_id + sala_id)' });
+    if (itens.some((it) => !it?.crianca_id || !it?.sala_id)) return res.status(400).json({ error: 'cada item precisa de crianca_id e sala_id' });
+
+    // Sessão (validada UMA vez pro lote)
+    const { data: sessao } = await supabase.from('kids_sessoes')
+      .select('id, status, culto_id, culto:cultos(data, nome)').eq('id', sessao_id).maybeSingle();
+    if (!sessao) return res.status(404).json({ error: 'Sessão não encontrada' });
+    if (sessao.status !== 'aberta') return res.status(400).json({ error: 'Sessão não esta aberta', status: sessao.status });
+    if (sessao.culto?.data && String(sessao.culto.data).slice(0, 10) < _hojeBRT()) {
+      return res.status(409).json({ error: 'Essa sessão é de um culto de outro dia e já foi encerrada. Recarregue o totem.' });
+    }
+
+    // ── Responsável + CPF resolvidos UMA vez pro lote (mesma política do /checkin) ──
+    const cpfInformado = normalizarCpf(responsavel_cpf);
+    if (responsavel_cpf && !cpfValido(cpfInformado)) {
+      return res.status(400).json({ error: 'CPF inválido — confira os números.', precisa_cpf: true });
+    }
+    let respId = null, respNome = null, respTel = null;
+    if (responsavel_id) {
+      const { data: m } = await supabase.from('mem_membros').select('id, nome, telefone, cpf').eq('id', responsavel_id).maybeSingle();
+      if (!m) return res.status(404).json({ error: 'Responsável não encontrado' });
+      respId = m.id; respNome = m.nome; respTel = m.telefone;
+      const jaTemCpf = m.cpf && String(m.cpf).replace(/\D/g, '').length === 11;
+      if (!jaTemCpf) {
+        if (cpfInformado) {
+          const { data: outro } = await supabase.from('mem_membros').select('id, nome, telefone').eq('cpf', cpfInformado).neq('id', m.id).maybeSingle();
+          if (outro) { respId = outro.id; respNome = outro.nome; respTel = outro.telefone || respTel; }
+          else { await supabase.from('mem_membros').update({ cpf: cpfInformado }).eq('id', m.id); }
+        } else if (!permitir_sem_cpf) {
+          return res.status(422).json({ error: 'Precisamos do CPF do responsável.', precisa_cpf: true, responsavel_nome: m.nome });
+        } else { console.warn(`[totemKids/checkin-lote] CPF dispensado (supervisor) · resp ${m.id}`); }
+      }
+    } else if (responsavel_nome_manual) {
+      if (cpfInformado) {
+        const rr = await acharOuCriarGuardado({ cpf: cpfInformado, telefone: normalizarTelefone(responsavel_telefone_manual), nome: responsavel_nome_manual, status: 'visitante' });
+        const { data: m } = await supabase.from('mem_membros').select('id, nome, telefone').eq('id', rr.membro_id).single();
+        respId = m.id; respNome = m.nome; respTel = m.telefone || normalizarTelefone(responsavel_telefone_manual);
+      } else if (!permitir_sem_cpf) {
+        return res.status(422).json({ error: 'Precisamos do CPF do responsável.', precisa_cpf: true });
+      } else {
+        respNome = responsavel_nome_manual; respTel = normalizarTelefone(responsavel_telefone_manual);
+        console.warn('[totemKids/checkin-lote] CPF dispensado (supervisor · manual)');
+      }
+    }
+    if (!respNome) return res.status(400).json({ error: 'responsavel_id ou responsavel_nome_manual obrigatório' });
+
+    // vincula a criança ao responsável (idempotente · re-vincula sempre)
+    const ligarResponsavel = async (criancaId, membroId, parentesco) => {
+      if (!membroId) return;
+      const { data: link } = await supabase.from('kids_responsaveis')
+        .select('crianca_id').eq('crianca_id', criancaId).eq('membro_id', membroId).maybeSingle();
+      if (!link) {
+        await supabase.from('kids_responsaveis')
+          .insert({ crianca_id: criancaId, membro_id: membroId, parentesco: parentesco || 'responsavel', autorizado_buscar: true })
+          .then(() => {}, (e) => console.error('[totemKids/checkin-lote] ligar responsável:', e?.message));
+      }
+    };
+    const cultosExtras = Array.isArray(cultos_extras)
+      ? [...new Set(cultos_extras.map(String))].filter((cid) => cid && cid !== sessao.culto_id) : [];
+    const codigoNovo = async () => {
+      const { data } = await supabase.rpc('fn_kids_gerar_codigo_seguranca');
+      return data || (() => { const a = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let c = ''; for (let i = 0; i < 4; i++) c += a[Math.floor(Math.random() * a.length)]; return c; })();
+    };
+
+    // check-in de UMA criança (erro isolado · não derruba o lote)
+    async function fazerCheckin(crianca_id, sala_id) {
+      const { data: existentes } = await supabase.from('kids_checkins')
+        .select('id, checkout_at').eq('sessao_id', sessao_id).eq('crianca_id', crianca_id);
+      if ((existentes || []).some((c) => !c.checkout_at)) return { crianca_id, ok: false, ja_aberto: true, error: 'já com check-in aberto' };
+      const { data: crianca } = await supabase.from('kids_criancas')
+        .select('id, nome, data_nascimento, observacoes_medicas, necessidades_especiais').eq('id', crianca_id).maybeSingle();
+      if (!crianca) return { crianca_id, ok: false, error: 'criança não encontrada' };
+      const { data: sala } = await supabase.from('kids_salas').select('id, nome, cor, logo_url').eq('id', sala_id).maybeSingle();
+      if (!sala) return { crianca_id, ok: false, error: 'sala não encontrada' };
+
+      await ligarResponsavel(crianca_id, respId, responsavel_parentesco);
+
+      const codigoFinal = await codigoNovo();
+      const grupoId = cultosExtras.length ? require('crypto').randomUUID() : null;
+      const { data: checkin, error: errIns } = await supabase.from('kids_checkins').insert({
+        sessao_id, crianca_id, sala_id, estacao_checkin_id: estacao_id || null,
+        responsavel_checkin_id: respId, responsavel_checkin_nome: respNome, responsavel_checkin_telefone: respTel,
+        responsavel_checkin_parentesco: responsavel_parentesco || null,
+        codigo_seguranca: codigoFinal, codigo_barras: codigoFinal, checkin_por: req.user.userId, checkin_grupo_id: grupoId,
+      }).select('*').single();
+      if (errIns) {
+        if (errIns.code === '23505') return { crianca_id, ok: false, ja_aberto: true, error: 'já com check-in aberto' };
+        return { crianca_id, ok: false, error: errIns.message };
+      }
+      supabase.from('kids_criancas').update({ ativo: true, motivo_inativacao: null, inativado_em: null })
+        .eq('id', crianca_id).eq('ativo', false).then(() => {}, () => {});
+
+      const cultosDoGrupo = [{ id: sessao.culto_id, nome: sessao.culto?.nome || null }];
+      for (const cultoId of cultosExtras) {
+        try {
+          let { data: sx } = await supabase.from('kids_sessoes').select('id, culto:cultos(nome)').eq('culto_id', cultoId).maybeSingle();
+          if (!sx) { const { data: nova } = await supabase.from('kids_sessoes').insert({ culto_id: cultoId, status: 'aberta', abrir_em: new Date().toISOString() }).select('id, culto:cultos(nome)').single(); sx = nova; }
+          if (!sx) continue;
+          const { error: e2 } = await supabase.from('kids_checkins').insert({
+            sessao_id: sx.id, crianca_id, sala_id, estacao_checkin_id: estacao_id || null,
+            responsavel_checkin_id: respId, responsavel_checkin_nome: respNome, responsavel_checkin_telefone: respTel,
+            responsavel_checkin_parentesco: responsavel_parentesco || null,
+            codigo_seguranca: codigoFinal, codigo_barras: codigoFinal, checkin_por: req.user.userId, checkin_grupo_id: grupoId, labels_impressas: 0,
+          });
+          if (!e2 || e2.code === '23505') cultosDoGrupo.push({ id: cultoId, nome: sx.culto?.nome || null });
+        } catch (ex) { console.error('[totemKids/checkin-lote] culto extra:', ex.message); }
+      }
+
+      if (enviar_wpp && respTel) {
+        const template = process.env.WHATSAPP_TEMPLATE_KIDS_RETIRADA;
+        if (template) {
+          const primeiroNome = String(crianca?.nome || '').trim().split(/\s+/)[0] || 'sua criança';
+          const base = (process.env.FRONTEND_URL || '').replace(/\/$/, '');
+          const link = `${base}/kids/retirada/${codigoFinal}`;
+          const lang = process.env.WHATSAPP_TEMPLATE_KIDS_RETIRADA_LANG || 'pt_BR';
+          enviarTemplateWpp(respTel, template, lang, [primeiroNome, codigoFinal, link]).then(() => {}, () => {});
+        }
+      }
+      return {
+        crianca_id, ok: true, checkin, crianca, sala,
+        sessao: { id: sessao.id, culto: sessao.culto }, cultos: cultosDoGrupo,
+        responsavel: { id: respId, nome: respNome, telefone: respTel, parentesco: responsavel_parentesco },
+        codigo_seguranca: codigoFinal, codigo_barras: codigoFinal,
+      };
+    }
+
+    const resultados = [];
+    for (const it of itens) {
+      try { resultados.push(await fazerCheckin(it.crianca_id, it.sala_id)); }
+      catch (e) { resultados.push({ crianca_id: it.crianca_id, ok: false, error: e.message }); }
+    }
+    res.status(201).json({ resultados, responsavel: { id: respId, nome: respNome, telefone: respTel } });
+  } catch (e) {
+    console.error('[totemKids/checkin-lote]', e.message);
+    res.status(500).json({ error: 'Erro ao fazer check-in em lote' });
   }
 });
 
