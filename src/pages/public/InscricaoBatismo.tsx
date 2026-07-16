@@ -374,22 +374,49 @@ export default function InscricaoBatismo() {
                     { value: 'XGG', label: 'XGG' },
                   ]}
                 />
-                <SelectField
-                  id="horario_culto" label="Horário do batismo"
-                  value={form.horario_culto}
-                  onChange={set('horario_culto') as any}
-                  options={
-                    horarios.length
-                      ? horarios.map(h => ({
-                          value: h.horario,
-                          label: h.vagas_restantes != null
-                            ? `${h.label} · ${h.vagas_restantes} vaga${h.vagas_restantes === 1 ? '' : 's'}`
-                            : h.label,
-                        }))
-                      : [{ value: '', label: 'Nenhum horário disponível no momento' }]
-                  }
-                />
               </Row>
+
+              {/* Horário do batismo · opções (só os disponíveis · lotados já
+                  não vêm do backend). Antes era lista suspensa (Matheus · 16/07). */}
+              <div style={{ marginBottom: 20, marginTop: 4 }}>
+                <label style={{ display: 'block', fontSize: 12, color: 'var(--cbrio-text3)', marginBottom: 8 }}>
+                  Horário do batismo
+                </label>
+                {horarios.length ? (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10 }}>
+                    {horarios.map(h => {
+                      const on = form.horario_culto === h.horario;
+                      return (
+                        <button
+                          key={h.horario}
+                          type="button"
+                          onClick={() => setForm(f => ({ ...f, horario_culto: h.horario }))}
+                          style={{
+                            display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2,
+                            minHeight: 56, padding: '11px 14px', borderRadius: 12, cursor: 'pointer',
+                            textAlign: 'left',
+                            border: `1.5px solid ${on ? '#00B39D' : C.inputBorder}`,
+                            background: on ? 'rgba(0,179,157,0.12)' : (C.isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)'),
+                            color: on ? '#00B39D' : 'var(--cbrio-text)',
+                            fontFamily: 'inherit', transition: 'border-color 0.15s, background 0.15s',
+                          }}
+                        >
+                          <span style={{ fontSize: 15, fontWeight: on ? 700 : 600 }}>{h.label}</span>
+                          {h.vagas_restantes != null && (
+                            <span style={{ fontSize: 11.5, color: on ? '#00B39D' : 'var(--cbrio-text3)', opacity: on ? 0.9 : 1 }}>
+                              {h.vagas_restantes} vaga{h.vagas_restantes === 1 ? '' : 's'} restante{h.vagas_restantes === 1 ? '' : 's'}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p style={{ fontSize: 13, color: 'var(--cbrio-text3)', margin: '4px 0 0' }}>
+                    Nenhum horário disponível no momento.
+                  </p>
+                )}
+              </div>
               <SelectField
                 id="area_kpi" label="Você frequenta qual público? (opcional)"
                 value={form.area_kpi}
