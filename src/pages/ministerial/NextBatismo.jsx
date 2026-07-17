@@ -17,14 +17,14 @@
 
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { nextBatismo as api } from '../../api';
+import { nextBatismo as api, membresia as membresiaApi } from '../../api';
 import { useAuth } from '../../contexts/AuthContext';
 import { toast } from 'sonner';
 import {
   UserSearch, GitMerge, X, RefreshCw, Loader2, ArrowLeft, ArrowRight,
   Phone, Mail, Calendar, User as UserIcon, IdCard, Link2, UserPlus, Users,
   DoorOpen, Search, Heart, Droplets, Footprints, Eye, Network, HelpCircle,
-  Sparkles, MapPin, Home,
+  Sparkles, MapPin, Home, ShieldQuestion,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
@@ -34,6 +34,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
 } from '../../components/ui/dialog';
 import MembrosDuplicadosPanel from '../../components/MembrosDuplicadosPanel';
+import IdentidadePendenciasPanel from '../../components/IdentidadePendenciasPanel';
 
 const MOTIVO_LABELS = {
   cpf_igual:         { label: 'Mesmo CPF',          cor: '#DC2626' },
@@ -82,6 +83,13 @@ export default function Entradas() {
     queryFn: () => api.resumo(),
     staleTime: 30_000,
   });
+  // Contador da fila de identidade (mesma queryKey do painel · cache compartilhado)
+  const { data: identidade } = useQuery({
+    queryKey: ['identidade-pendencias', 'pendente', ''],
+    queryFn: () => membresiaApi.identidade.list({ status: 'pendente' }),
+    staleTime: 60_000,
+  });
+  const pendenciasIdentidade = Object.values(identidade?.resumo?.pendente || {}).reduce((a, b) => a + b, 0);
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-6 space-y-5">
@@ -105,6 +113,8 @@ export default function Entradas() {
           icon={GitMerge} label="Duplicatas possíveis" count={resumo?.duplicatas} />
         <TabBtn active={tab === 'sem_vinculo'} onClick={() => setTab('sem_vinculo')}
           icon={Link2} label="Sem vínculo" count={resumo?.sem_vinculo} />
+        <TabBtn active={tab === 'identidade'} onClick={() => setTab('identidade')}
+          icon={ShieldQuestion} label="Identidade (CPF)" count={pendenciasIdentidade} />
         <TabBtn active={tab === 'pessoa'} onClick={() => setTab('pessoa')}
           icon={Search} label="Buscar pessoa" />
         {isAdmin && (
@@ -115,6 +125,7 @@ export default function Entradas() {
 
       {tab === 'duplicatas' && <DuplicadosTab onVerFicha={setFichaId} />}
       {tab === 'sem_vinculo' && <SemVinculoTab onVerFicha={setFichaId} />}
+      {tab === 'identidade' && <IdentidadePendenciasPanel />}
       {tab === 'pessoa' && <PessoaTab onVerFicha={setFichaId} />}
       {tab === 'base' && isAdmin && <MembrosDuplicadosPanel />}
 

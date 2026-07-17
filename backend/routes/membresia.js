@@ -2611,4 +2611,172 @@ router.get('/merge-log', authorize('admin', 'diretor'), async (req, res) => {
   res.json(data || []);
 });
 
+// ══════════════════════════════════════════════════════════════
+// FILA DE IDENTIDADE · identidade_pendencias (20260716150000)
+// Conflitos de CPF que a reconciliação automática NÃO resolve sozinha
+// (política: nunca auto-fundir/auto-gravar por sinal fraco). Alimentada
+// por cpfReconciliar.js, pelo backfill e pelo cron do wifi. UI: aba
+// "Identidade" da Membresia.
+// ══════════════════════════════════════════════════════════════
+
+// Mesmos módulos da RLS de leitura da tabela (membresia/integracao/next/
+// cuidados). Ações exigem nível 3 (mesmo patamar do write da RLS).
+function nivelFilaIdentidade(req) {
+  if (['admin', 'diretor'].includes(req.user?.role)) return 5;
+  return Math.max(
+    getEffectiveLevel(req, 'membresia') || 0,
+    getEffectiveLevel(req, 'integracao') || 0,
+    getEffectiveLevel(req, 'next') || 0,
+    getEffectiveLevel(req, 'cuidados') || 0,
+  );
+}
+
+// Recupera o CPF em disputa de uma pendência cpf_para_confirmar:
+// 1) wifi (5b) grava o CPF direto em origem_id; 2) os writers do backend
+// gravam "CPF <11 dígitos>" no detalhe; 3) fallback: lê a linha-satélite
+// apontada por origem/origem_id.
+const PEND_ORIGEM_SATELITE = {
+  backfill_batismo: { tabela: 'batismo_inscricoes', col: 'cpf' },
+  batismo_checkin: { tabela: 'batismo_inscricoes', col: 'cpf' },
+  backfill_vol: { tabela: 'vol_inscricoes', col: 'cpf' },
+  vol_ficha: { tabela: 'vol_inscricoes', col: 'cpf' },
+  backfill_next: { tabela: 'next_matriculas', col: 'cpf' },
+  next_matricula: { tabela: 'next_matriculas', col: 'cpf' },
+  decisao_edicao: { tabela: 'cultos_decisoes_pessoas', col: 'cpf' },
+};
+
+function cpfDoTexto(p) {
+  const doOrigemId = String(p.origem_id || '').replace(/\D/g, '');
+  if (doOrigemId.length === 11) return doOrigemId;
+  const m = String(p.detalhe || '').match(/\b(\d{11})\b/);
+  return m ? m[1] : null;
+}
+
+async function cpfDaPendencia(p) {
+  const direto = cpfDoTexto(p);
+  if (direto) return direto;
+  const map = PEND_ORIGEM_SATELITE[p.origem];
+  if (!map || !p.origem_id) return null;
+  const { data } = await supabase.from(map.tabela)
+    .select(map.col).eq('id', p.origem_id).maybeSingle();
+  const d = String(data?.[map.col] || '').replace(/\D/g, '');
+  return d.length === 11 ? d : null;
+}
+
+// GET /api/membresia/identidade-pendencias?status=pendente&tipo=
+router.get('/identidade-pendencias', async (req, res) => {
+  try {
+    if (nivelFilaIdentidade(req) < 1) return res.status(403).json({ error: 'Sem permissão' });
+    const status = req.query.status || 'pendente';
+    let q = supabase.from('identidade_pendencias')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(500);
+    if (status !== 'todas') q = q.eq('status', status);
+    if (req.query.tipo) q = q.eq('tipo', req.query.tipo);
+    const { data: pend, error } = await q;
+    if (error) throw error;
+
+    // Junta os membros dos dois lados (lotes de <=200 · .in() com 400+ uuids
+    // falha silencioso no PostgREST)
+    const ids = [...new Set((pend || []).flatMap((p) => [p.membro_id, p.membro_conflito_id]).filter(Boolean))];
+    const porId = new Map();
+    for (let i = 0; i < ids.length; i += 200) {
+      const { data: ms, error: e2 } = await supabase.from('mem_membros')
+        .select('id, nome, cpf, telefone, email, status, data_nascimento, familia_id, deleted_at')
+        .in('id', ids.slice(i, i + 200));
+      if (e2) throw e2;
+      for (const m of ms || []) porId.set(m.id, m);
+    }
+
+    // Resumo geral (a tabela é pequena · contagem por tipo/status)
+    const { data: todas, error: e3 } = await supabase.from('identidade_pendencias').select('tipo, status');
+    if (e3) throw e3;
+    const resumo = {};
+    for (const p of todas || []) {
+      resumo[p.status] = resumo[p.status] || {};
+      resumo[p.status][p.tipo] = (resumo[p.status][p.tipo] || 0) + 1;
+    }
+
+    res.json({
+      items: (pend || []).map((p) => ({
+        ...p,
+        membro: porId.get(p.membro_id) || null,
+        conflito: porId.get(p.membro_conflito_id) || null,
+        cpf_proposto: p.tipo === 'cpf_para_confirmar' ? cpfDoTexto(p) : null,
+      })),
+      resumo,
+      pode_agir: nivelFilaIdentidade(req) >= 3,
+    });
+  } catch (e) {
+    console.error('[membresia/identidade-pendencias]', e.message);
+    res.status(500).json({ error: 'Erro ao listar pendências de identidade' });
+  }
+});
+
+// POST /api/membresia/identidade-pendencias/:id/confirmar-cpf
+// Só cpf_para_confirmar: o humano confirmou que o CPF é daquela pessoa →
+// consolida via reconciliarCpfTardio com confiança FORTE (se um conflito
+// tiver surgido nesse meio tempo, a própria reconciliação abre a pendência
+// certa e esta é encerrada).
+router.post('/identidade-pendencias/:id/confirmar-cpf', async (req, res) => {
+  try {
+    if (nivelFilaIdentidade(req) < 3) return res.status(403).json({ error: 'Sem permissão para agir na fila' });
+    const { data: p, error } = await supabase.from('identidade_pendencias')
+      .select('*').eq('id', req.params.id).maybeSingle();
+    if (error) throw error;
+    if (!p) return res.status(404).json({ error: 'Pendência não encontrada' });
+    if (p.status !== 'pendente') return res.status(409).json({ error: 'Pendência já triada' });
+    if (p.tipo !== 'cpf_para_confirmar') {
+      return res.status(422).json({ error: 'Só pendências de CPF a confirmar aceitam esta ação' });
+    }
+    if (!p.membro_id) return res.status(422).json({ error: 'Pendência sem membro vinculado' });
+
+    const cpf = await cpfDaPendencia(p);
+    if (!cpf) return res.status(422).json({ error: 'Não foi possível recuperar o CPF desta pendência — resolva pelo cadastro' });
+
+    const { reconciliarCpfTardio } = require('../services/cpfReconciliar');
+    const r = await reconciliarCpfTardio({
+      membroId: p.membro_id, cpf,
+      origem: 'fila_identidade', origemId: p.id,
+      confianca: 'forte',
+    });
+
+    await supabase.from('identidade_pendencias').update({
+      status: 'resolvida',
+      resolvida_por: req.user?.id || null,
+      resolvida_em: new Date().toISOString(),
+    }).eq('id', p.id).eq('status', 'pendente');
+
+    res.json({ ok: true, acao: r.acao, conflito_id: r.conflito_id || null });
+  } catch (e) {
+    console.error('[membresia/identidade-pendencias/confirmar]', e.message);
+    res.status(500).json({ error: 'Erro ao confirmar o CPF' });
+  }
+});
+
+// POST /api/membresia/identidade-pendencias/:id/status · resolvida|descartada
+// Descartada = "avaliado e rejeitado": o cron do wifi NÃO recria (guarda
+// anti-zumbi). Resolvida = tratado por fora (fusão, edição do cadastro…).
+router.post('/identidade-pendencias/:id/status', async (req, res) => {
+  try {
+    if (nivelFilaIdentidade(req) < 3) return res.status(403).json({ error: 'Sem permissão para agir na fila' });
+    const status = req.body?.status;
+    if (!['resolvida', 'descartada'].includes(status)) {
+      return res.status(400).json({ error: 'status deve ser resolvida ou descartada' });
+    }
+    const { data, error } = await supabase.from('identidade_pendencias').update({
+      status,
+      resolvida_por: req.user?.id || null,
+      resolvida_em: new Date().toISOString(),
+    }).eq('id', req.params.id).eq('status', 'pendente').select('id');
+    if (error) throw error;
+    if (!data || data.length === 0) return res.status(409).json({ error: 'Pendência já triada' });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[membresia/identidade-pendencias/status]', e.message);
+    res.status(500).json({ error: 'Erro ao atualizar a pendência' });
+  }
+});
+
 module.exports = router;

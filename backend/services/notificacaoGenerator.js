@@ -654,6 +654,28 @@ async function gerarNotificacoesMembresia() {
     });
   }
 
+  // 2. Fila de identidade (conflitos de CPF · identidade_pendencias) com itens
+  //    abertos → 1 resumo por dia enquanto a fila não zera. Tolera a tabela
+  //    ausente (migration 20260716150000 pode não ter sido aplicada ainda).
+  try {
+    const { count: abertas, error } = await supabase
+      .from('identidade_pendencias')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'pendente');
+    if (!error && (abertas || 0) > 0) {
+      const hoje = new Date().toISOString().slice(0, 10);
+      count += await notificar({
+        modulo: 'membresia',
+        tipo: 'identidade_pendencias',
+        titulo: `Fila de identidade — ${abertas} pendência${abertas > 1 ? 's' : ''} de CPF`,
+        mensagem: `Há ${abertas} conflito${abertas > 1 ? 's' : ''} de identidade aguardando triagem (CPF a confirmar, duplicatas prováveis, vínculos divergentes) em Entradas > Identidade.`,
+        link: '/next-batismo',
+        severidade: abertas >= 50 ? 'aviso' : 'info',
+        chaveDedup: `identidade_pendencias_${hoje}`,
+      });
+    }
+  } catch { /* tabela ausente · silencioso */ }
+
   return count;
 }
 
