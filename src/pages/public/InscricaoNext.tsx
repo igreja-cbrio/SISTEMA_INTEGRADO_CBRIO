@@ -219,7 +219,8 @@ export default function InscricaoNext() {
     if (!form.nome || form.nome.trim().length < 2) return setError('Informe seu nome');
     if (!form.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) return setError('Email inválido');
     if (!form.telefone || soDigitos(form.telefone).length < 10) return setError('Telefone inválido');
-    if (form.cpf && !cpfValido(form.cpf)) return setError('CPF inválido');
+    if (!form.cpf) return setError('Informe seu CPF');
+    if (!cpfValido(form.cpf)) return setError('CPF inválido — confira os dígitos');
     if (!form.motivo) return setError('Selecione por que você quer participar do NEXT');
 
     setLoading(true);
@@ -228,7 +229,7 @@ export default function InscricaoNext() {
         evento_id: form.evento_id || null,
         nome: form.nome.trim(),
         sobrenome: form.sobrenome.trim() || null,
-        cpf: form.cpf || null,
+        cpf: form.cpf,
         telefone: form.telefone,
         email: form.email,
         data_nascimento: form.data_nascimento || null,
@@ -341,7 +342,7 @@ export default function InscricaoNext() {
               <Field id="email" label="Email" type="email" value={form.email} onChange={set('email')} required autoComplete="email" inputMode="email" />
               <Row>
                 <Field id="telefone" label="Telefone" value={form.telefone} onChange={set('telefone')} required placeholder="(00) 00000-0000" inputMode="tel" autoComplete="tel" />
-                <Field id="cpf" label="CPF (opcional)" value={form.cpf} onChange={set('cpf')} placeholder="000.000.000-00" inputMode="numeric" autoComplete="off" />
+                <Field id="cpf" label="CPF" value={form.cpf} onChange={set('cpf')} required placeholder="000.000.000-00" inputMode="numeric" autoComplete="off" />
               </Row>
               <div style={{ marginBottom: 20 }}>
                 <label style={{ display: 'block', fontSize: 11, color: 'var(--cbrio-text3)', marginBottom: 6 }}>Data de nascimento (opcional)</label>

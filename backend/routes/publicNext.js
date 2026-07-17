@@ -92,11 +92,16 @@ router.post('/inscrever', async (req, res) => {
     if (!telefone || soDigitos(telefone).length < 10) {
       return res.status(400).json({ error: 'Telefone invalido' });
     }
-    if (cpf && !ehCpfValido(cpf)) {
-      return res.status(400).json({ error: 'CPF invalido' });
+    // CPF obrigatório no form público (decisão do Marcos · 2026-07-17): o Next
+    // é a porta do funil com menos CPF (6 de 1.630 matrículas) e o CPF é a
+    // chave da identidade global — sem ele, a matrícula depende de sinal fraco
+    // e vira candidata a duplicata. O walk-in do check-in continua sem exigir
+    // (política "nunca travar o atendimento na hora").
+    if (!cpf || !ehCpfValido(cpf)) {
+      return res.status(400).json({ error: 'CPF obrigatório — confira os dígitos' });
     }
 
-    const cleanCpf = cpf ? soDigitos(cpf) : null;
+    const cleanCpf = soDigitos(cpf);
     const cleanEmail = String(email).toLowerCase().trim();
 
     // Membresia e fonte única: garante que existe mem_membros (cria se não
