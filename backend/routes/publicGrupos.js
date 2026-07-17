@@ -705,6 +705,160 @@ router.post('/inscrever', async (req, res) => {
   }
 });
 
+// POST /api/public/grupos/inscrever-lider
+// Candidatura pública a NOVO LÍDER / ANFITRIÃO (form /inscricao-lideres ·
+// Marcos 17/07). Mesma fundação de identidade do /inscrever (matcher forte →
+// membro existente OU mem_cadastros_pendentes), mas SEM grupo (a equipe
+// decide na caixa de entrada) e SEM WhatsApp em nenhuma etapa — o processo é
+// assistido: a equipe sempre fala com a pessoa antes de qualquer decisão.
+router.post('/inscrever-lider', async (req, res) => {
+  try {
+    const {
+      nome, cpf, email, telefone, data_nascimento, genero,
+      quer_lider, quer_anfitriao, motivacao, bairro, endereco,
+      foto_url, aceita_termos, consentimento_texto,
+      website, // honeypot
+    } = req.body || {};
+
+    if (website && String(website).trim() !== '') return res.status(201).json({ ok: true });
+
+    if (!nome || nome.trim().length < 3) return res.status(400).json({ error: 'Digite o nome completo.', campo: 'nome' });
+    if (!telefone || soDigitos(telefone).length < 10) return res.status(400).json({ error: 'Digite um celular válido com DDD.', campo: 'telefone' });
+    if (!cpf || soDigitos(cpf).length !== 11) return res.status(400).json({ error: 'Informe o CPF completo.', campo: 'cpf' });
+    if (!cpfValido(cpf)) return res.status(400).json({ error: 'Este CPF não é válido — confira os números.', campo: 'cpf' });
+    if (email && !ehEmailValido(email)) return res.status(400).json({ error: 'E-mail inválido.', campo: 'email' });
+    if (!aceita_termos) return res.status(400).json({ error: 'É necessário aceitar os termos.', campo: 'aceita_termos' });
+    if (!data_nascimento || !/^\d{4}-\d{2}-\d{2}$/.test(String(data_nascimento))) {
+      return res.status(400).json({ error: 'Informe a data de nascimento.', campo: 'data_nascimento' });
+    }
+    const nascDate = new Date(String(data_nascimento) + 'T12:00:00');
+    if (Number.isNaN(nascDate.getTime())) return res.status(400).json({ error: 'Data de nascimento inválida.', campo: 'data_nascimento' });
+    if (nascDate > new Date()) return res.status(400).json({ error: 'A data de nascimento não pode estar no futuro.', campo: 'data_nascimento' });
+    if (nascDate.getFullYear() < 1900) return res.status(400).json({ error: 'Confira o ano de nascimento.', campo: 'data_nascimento' });
+    const generoLimpo = ['masculino', 'feminino'].includes(String(genero || '').toLowerCase())
+      ? String(genero).toLowerCase() : null;
+    if (!generoLimpo) return res.status(400).json({ error: 'Marque o sexo (masculino ou feminino).', campo: 'genero' });
+
+    const querLider = quer_lider === true;
+    const querAnfitriao = quer_anfitriao === true;
+    if (!querLider && !querAnfitriao) {
+      return res.status(400).json({ error: 'Marque pelo menos uma opção: líder e/ou anfitrião.', campo: 'papel' });
+    }
+    // Anfitrião = quem cede a casa · o endereço É o dado (Marcos 17/07).
+    if (querAnfitriao) {
+      if (!endereco || String(endereco).trim().length < 5) {
+        return res.status(400).json({ error: 'Como anfitrião, informe o endereço onde o grupo aconteceria.', campo: 'endereco' });
+      }
+      if (!bairro || String(bairro).trim().length < 2) {
+        return res.status(400).json({ error: 'Como anfitrião, informe o bairro.', campo: 'bairro' });
+      }
+    }
+
+    const cpfLimpo = soDigitos(cpf);
+    const emailLimpo = email ? email.trim().toLowerCase() : null;
+    const fotoUrl = fotoUrlValida(foto_url) ? String(foto_url).slice(0, 1000) : null;
+
+    // Identidade: matcher compartilhado (CPF/chaves fortes) liga ao membro
+    // existente; sem match, cria o cadastro pendente (Contrato de porta).
+    const achado = await acharMembroGuardado({
+      cpf: cpfLimpo, email: emailLimpo, telefone, nome: nome.trim(),
+      dataNascimento: data_nascimento || null,
+    });
+    const membroId = achado?.membro_id || null;
+
+    // Anti-duplicata da CANDIDATURA: uma aberta (pendente/aceito) por pessoa.
+    const telDig = soDigitos(telefone);
+    const { data: abertas } = await supabase.from('mem_lider_inscricoes')
+      .select('id, membro_id, telefone')
+      .in('status', ['pendente', 'aceito']).is('deleted_at', null).limit(1000);
+    const jaTem = (abertas || []).some(i =>
+      (membroId && i.membro_id === membroId) || (telDig && soDigitos(i.telefone) === telDig));
+    if (jaTem) {
+      return res.json({ ok: true, ja_inscrito: true, mensagem: 'Já recebemos a sua inscrição — a equipe de Grupos vai falar com você em breve.' });
+    }
+
+    // Enriquecimento só-onde-vazio do membro casado (mesma regra do /inscrever)
+    if (membroId && (fotoUrl || generoLimpo || data_nascimento)) {
+      const { data: mem } = await supabase.from('mem_membros').select('foto_url, genero, data_nascimento').eq('id', membroId).maybeSingle();
+      if (mem) {
+        const upd = {};
+        if (fotoUrl && !mem.foto_url) upd.foto_url = fotoUrl;
+        if (generoLimpo && !mem.genero) upd.genero = generoLimpo;
+        if (data_nascimento && !mem.data_nascimento) upd.data_nascimento = data_nascimento;
+        if (Object.keys(upd).length) await supabase.from('mem_membros').update(upd).eq('id', membroId);
+      }
+    }
+
+    let cadastroPendenteId = null;
+    if (!membroId) {
+      const ip = (req.headers['x-forwarded-for'] || '').toString().split(',')[0].trim() || req.ip || null;
+      const userAgent = (req.headers['user-agent'] || '').toString().slice(0, 500);
+      const { data: cad, error: eCad } = await supabase.from('mem_cadastros_pendentes').insert({
+        nome: nome.trim(),
+        cpf: cpfLimpo,
+        email: emailLimpo,
+        telefone: telefone || null,
+        data_nascimento: data_nascimento || null,
+        genero: generoLimpo,
+        foto_url: fotoUrl,
+        endereco: endereco ? String(endereco).trim().slice(0, 300) : null,
+        bairro: bairro ? String(bairro).trim().slice(0, 120) : null,
+        origem: 'lideres',
+        aceita_termos: !!aceita_termos,
+        aceita_contato: true,
+        consentimento_texto: consentimento_texto ? String(consentimento_texto).slice(0, 2000) : null,
+        status: 'pendente',
+        ip_origem: ip,
+        user_agent: userAgent,
+      }).select('id').single();
+      if (eCad) {
+        console.error('[public grupos inscrever-lider] cadastro pendente:', eCad.message);
+        return res.status(500).json({ error: 'Erro ao registrar cadastro.' });
+      }
+      cadastroPendenteId = cad.id;
+    }
+
+    const { data: insc, error: eInsc } = await supabase.from('mem_lider_inscricoes').insert({
+      membro_id: membroId,
+      cadastro_pendente_id: membroId ? null : cadastroPendenteId,
+      nome: nome.trim(),
+      telefone: telefone || null,
+      email: emailLimpo,
+      bairro: bairro ? String(bairro).trim().slice(0, 120) : null,
+      endereco: endereco ? String(endereco).trim().slice(0, 300) : null,
+      quer_lider: querLider,
+      quer_anfitriao: querAnfitriao,
+      motivacao: motivacao ? String(motivacao).trim().slice(0, 500) : null,
+      status: 'pendente',
+    }).select('id').single();
+    if (eInsc) {
+      console.error('[public grupos inscrever-lider] inscricao:', eInsc.message);
+      return res.status(500).json({ error: 'Erro ao registrar inscrição.' });
+    }
+
+    // Só notificação in-app pra equipe — SEM WhatsApp (processo assistido).
+    (async () => {
+      try {
+        const papel = [querLider && 'líder', querAnfitriao && 'anfitrião'].filter(Boolean).join(' e ');
+        await notificar({
+          modulo: 'grupos',
+          tipo: 'lider_inscricao',
+          titulo: 'Nova inscrição de líder/anfitrião',
+          mensagem: `${nome.trim()} se inscreveu como ${papel}.`,
+          link: '/grupos?tab=entrada',
+          severidade: 'aviso',
+          chaveDedup: `lider_inscricao_${insc.id}`,
+        });
+      } catch (err) { console.error('[public grupos inscrever-lider notify]', err.message); }
+    })();
+
+    res.status(201).json({ ok: true, inscricao_id: insc.id });
+  } catch (e) {
+    console.error('[public grupos inscrever-lider]', e.message);
+    res.status(500).json({ error: 'Erro ao processar inscrição.' });
+  }
+});
+
 // ─────────────────────────────────────────────────────────────
 // F3 · aprovação pelo líder via link do WhatsApp (sem login).
 // Token HMAC assinado (services/gruposWhatsapp) dá acesso a UM pedido e

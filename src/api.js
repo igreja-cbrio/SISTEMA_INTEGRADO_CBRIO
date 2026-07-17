@@ -541,6 +541,14 @@ export const grupos = {
   rejeitarPedido: (pedidoId, motivo) => post(`/grupos/pedidos/${pedidoId}/rejeitar`, { motivo }),
   sugerirPedido: (pedidoId, grupoSugeridoId, motivo) => post(`/grupos/pedidos/${pedidoId}/sugerir`, { grupo_sugerido_id: grupoSugeridoId, motivo: motivo || null }),
   pedidoEventos: (pedidoId) => get(`/grupos/pedidos/${pedidoId}/eventos`),
+  // Inscrições de novos líderes/anfitriões (form público /inscricao-lideres)
+  liderInscricoes: {
+    list: (params) => get('/grupos/lideres-inscricoes/list' + (params ? '?' + new URLSearchParams(params) : '')),
+    aceitar: (id) => post(`/grupos/lideres-inscricoes/${id}/aceitar`, {}),
+    recusar: (id, motivo) => post(`/grupos/lideres-inscricoes/${id}/recusar`, { motivo: motivo || null }),
+    promover: (id) => post(`/grupos/lideres-inscricoes/${id}/promover`, {}),
+    vincular: (id, grupoId, funcao) => post(`/grupos/lideres-inscricoes/${id}/vincular`, { grupo_id: grupoId, funcao }),
+  },
   setAceitandoInscricoes: (grupoId, aceitando) => patch(`/grupos/${grupoId}/aceitando`, { aceitando }),
   geocodeBatch: (data) => post('/grupos/geocode-batch', data || {}),
   // Supervisao
@@ -1995,6 +2003,19 @@ export const gruposPublic = {
     const r = await fetch(`${API}/public/grupos/lideres/${liderId}/grupos${qs}`);
     if (!r.ok) return [];
     return r.json();
+  },
+  inscreverLider: async (data) => {
+    const r = await fetch(`${API}/public/grupos/inscrever-lider`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      const error = new Error(j.error || `HTTP ${r.status}`);
+      Object.assign(error, j);
+      throw error;
+    }
+    return j;
   },
   inscrever: async (data) => {
     const r = await fetch(`${API}/public/grupos/inscrever`, {

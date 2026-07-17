@@ -218,6 +218,13 @@ export default function Grupos() {
   const tabAtiva = pageTab;
   const [pedidosCount, setPedidosCount] = useState(0);
   const [encPendentes, setEncPendentes] = useState(0);
+  const [lideresPendentes, setLideresPendentes] = useState(0);
+  // Fluxo "criar grupo novo pra um candidato a líder" (caixa de entrada):
+  // guarda a inscrição enquanto o modal de grupo está aberto; salvar o grupo
+  // fecha o ciclo vinculando a pessoa como líder. reloadKey força a caixa a
+  // recarregar depois do vínculo.
+  const [liderVinculoPendente, setLiderVinculoPendente] = useState(null);
+  const [entradaReloadKey, setEntradaReloadKey] = useState(0);
   const [historicoMembros, setHistoricoMembros] = useState([]);
   const [materiais, setMateriais] = useState([]);
   const [materiaisFilter, setMateriaisFilter] = useState('all');
@@ -262,6 +269,7 @@ export default function Grupos() {
     try {
       const r = await api.contarPedidos();
       setPedidosCount(r?.pendentes || 0);
+      setLideresPendentes(r?.lideres_pendentes || 0);
     } catch {}
   }, []);
   useEffect(() => { loadPedidosCount(); }, [loadPedidosCount, pageTab]);
@@ -407,14 +415,45 @@ export default function Grupos() {
         await api.update(form.id, form);
         toast.success('Grupo atualizado');
       } else {
-        await api.create(form);
-        toast.success('Grupo criado');
+        const novo = await api.create(form);
+        // Grupo criado a partir de uma candidatura de líder (caixa de
+        // entrada): fecha o ciclo marcando a inscrição como vinculada.
+        if (liderVinculoPendente && novo?.id) {
+          try {
+            await api.liderInscricoes.vincular(liderVinculoPendente.id, novo.id, 'lider');
+            toast.success(`Grupo criado com ${liderVinculoPendente.nome} de líder`);
+          } catch (e) {
+            toast.warning(`Grupo criado, mas o vínculo da inscrição falhou: ${e.message || 'erro'} — vincule pela caixa de entrada.`);
+          }
+          setLiderVinculoPendente(null);
+          setEntradaReloadKey(k => k + 1);
+          loadPedidosCount();
+        } else {
+          toast.success('Grupo criado');
+        }
       }
       setModalOpen(false);
       await loadList();
       if (form.id) loadDetail(form.id);
     } catch (e) { toast.error(e.message || 'Erro ao salvar'); }
     finally { setSaving(false); }
+  };
+
+  // "Criar novo grupo" pra um candidato a líder: promove a pessoa a membro
+  // (o form de grupo precisa do lider_id) e abre o modal já preenchido com
+  // líder + endereço/bairro declarados (caso anfitrião, a casa é o endereço).
+  const iniciarGrupoParaLider = async (insc) => {
+    try {
+      const r = await api.liderInscricoes.promover(insc.id);
+      setLiderVinculoPendente({ id: insc.id, nome: r?.nome || insc.nome });
+      setEditData({
+        lider_id: r.membro_id,
+        lider: { nome: r?.nome || insc.nome },
+        endereco: insc.endereco || '',
+        bairro: insc.bairro || '',
+      });
+      setModalOpen(true);
+    } catch (e) { toast.error(e.message || 'Erro ao preparar o novo grupo'); }
   };
 
   const handleDelete = async () => {
@@ -1142,7 +1181,7 @@ export default function Grupos() {
         </Dialog>
 
         {/* Modal editar grupo */}
-        <GrupoFormModal open={modalOpen} onClose={() => setModalOpen(false)} data={editData} onSave={handleSave} saving={saving} gruposForSelect={gruposForSelect} allMembros={allMembros} loadMembros={loadMembros} temporadas={temporadas} bairrosUnicos={bairrosUnicos} />
+        <GrupoFormModal open={modalOpen} onClose={() => { setModalOpen(false); setLiderVinculoPendente(null); }} data={editData} onSave={handleSave} saving={saving} gruposForSelect={gruposForSelect} allMembros={allMembros} loadMembros={loadMembros} temporadas={temporadas} bairrosUnicos={bairrosUnicos} />
 
         {/* Modal QR code do grupo */}
         <GrupoQRModal
@@ -1188,7 +1227,7 @@ export default function Grupos() {
           { key: 'grupos', label: 'Grupos', icon: Users },
           { key: 'pessoas', label: 'Pessoas', icon: UserCog },
           { key: 'relatorios', label: 'Relatórios', icon: BarChart3 },
-          { key: 'entrada', label: 'Caixa de entrada', icon: Inbox, badge: pedidosCount + encPendentes },
+          { key: 'entrada', label: 'Caixa de entrada', icon: Inbox, badge: pedidosCount + encPendentes + lideresPendentes },
           { key: 'materiais', label: 'Materiais', icon: FileText },
           { key: 'visitas', label: 'Visitas', icon: CalendarCheck },
           { key: 'qrcode', label: 'Inscrições', icon: QrCode },
@@ -1212,11 +1251,13 @@ export default function Grupos() {
         ))}
       </div>
 
-      {/* ═══ TAB CAIXA DE ENTRADA · lista única: pedidos de inscrição + direcionados do Next ═══ */}
+      {/* ═══ TAB CAIXA DE ENTRADA · lista única: pedidos de inscrição + direcionados do Next + novos líderes ═══ */}
       {tabAtiva === 'entrada' && (
         <GruposEntrada
           podeEditar={podeEditarGrupos}
           onMudou={() => { loadPedidosCount(); loadEncPendentes(); }}
+          onCriarGrupoParaLider={podeEditarGrupos ? iniciarGrupoParaLider : undefined}
+          reloadKey={entradaReloadKey}
         />
       )}
 
@@ -1703,7 +1744,7 @@ export default function Grupos() {
 
       </>}
 
-      <GrupoFormModal open={modalOpen} onClose={() => setModalOpen(false)} data={editData} onSave={handleSave} saving={saving} gruposForSelect={gruposForSelect} allMembros={allMembros} loadMembros={loadMembros} temporadas={temporadas} bairrosUnicos={bairrosUnicos} />
+      <GrupoFormModal open={modalOpen} onClose={() => { setModalOpen(false); setLiderVinculoPendente(null); }} data={editData} onSave={handleSave} saving={saving} gruposForSelect={gruposForSelect} allMembros={allMembros} loadMembros={loadMembros} temporadas={temporadas} bairrosUnicos={bairrosUnicos} />
       {importLideresOpen && <ImportLideresModal onClose={() => setImportLideresOpen(false)} onDone={() => { setImportLideresOpen(false); load(); }} />}
     </div>
   );
@@ -1956,14 +1997,15 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
     if (open) {
       api.redes.list().then(setRedesList).catch(() => setRedesList([]));
       const temporadaAtiva = (temporadas || []).find(t => t.ativa)?.id || '';
-      setForm(data ? { modo_inscricao: 'temporada', ...data } : {
+      const defaults = {
         nome: '', categoria: '', area: 'sede', lider_id: '', local: '', endereco: '', complemento: '',
         dia_semana: '', horario: '', recorrencia: 'semanal', tema: '',
         faixa_etaria: '', idade_min: '', idade_max: '', capacidade: '', aceitando_inscricoes: true, rede_id: '',
         modo_inscricao: 'temporada',
         foto_url: '', observacoes: '', grupo_origem_id: '', descricao: '',
         bairro: '', status_temporada: 'novo', temporada: temporadaAtiva,
-      });
+      };
+      setForm(data ? { ...defaults, ...data } : defaults);
       setLiderSearch(data?.lider?.nome || '');
       liderEscolhaRef.current = data?.lider?.nome || '';
       setLiderNomeSel(data?.lider?.nome || '');
