@@ -54,11 +54,14 @@ async function registrarPendencia({ tipo, membroId, conflitoId, origem, origemId
 }
 
 async function logHistorico(membroId, acao, observacao) {
-  // mem_historico só tem `descricao` (NOT NULL) — não existem colunas
-  // acao/observacao (auditoria adversarial 2026-07-16: o insert antigo falhava
-  // 100% das vezes em silêncio, porque o supabase-js não lança erro de API).
+  // Schema VIVO de mem_historico (sondado em prod 2026-07-17 · drift git↔prod):
+  // (id, membro_id, tipo NOT NULL + CHECK, descricao NOT NULL, data,
+  // registrado_por, created_at, deleted_at). O CHECK de `tipo` aceita 'outro';
+  // a ação vai no prefixo da descrição. Sem o `tipo`, TODO writer falhava em
+  // silêncio — a tabela estava vazia em prod.
   const { error } = await supabase.from('mem_historico').insert({
     membro_id: membroId,
+    tipo: 'outro',
     descricao: `[${acao}] ${observacao}`,
     created_at: new Date().toISOString(),
   });
