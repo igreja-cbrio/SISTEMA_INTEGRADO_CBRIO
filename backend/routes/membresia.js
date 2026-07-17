@@ -2634,6 +2634,13 @@ function nivelFilaIdentidade(req) {
   );
 }
 
+async function registrarResolucaoEntrada(payload) {
+  const { error } = await supabase.from('entradas_resolucoes').insert(payload);
+  if (error && !/entradas_resolucoes|schema cache|does not exist/i.test(error.message || '')) {
+    console.warn('[membresia/identidade] resolução não registrada:', error.message);
+  }
+}
+
 // Recupera o CPF em disputa de uma pendência cpf_para_confirmar:
 // 1) wifi (5b) grava o CPF direto em origem_id; 2) os writers do backend
 // gravam "CPF <11 dígitos>" no detalhe; 3) fallback: lê a linha-satélite
@@ -2751,6 +2758,14 @@ router.post('/identidade-pendencias/:id/confirmar-cpf', async (req, res) => {
       resolvida_em: new Date().toISOString(),
     }).eq('id', p.id).eq('status', 'pendente');
 
+    await registrarResolucaoEntrada({
+      tipo: 'identidade', acao: 'cpf_confirmado',
+      membro_principal_id: p.membro_id, membro_secundario_id: p.membro_conflito_id || null,
+      origem: 'identidade_pendencias', origem_id: String(p.id),
+      detalhe: { tipo_pendencia: p.tipo, cpf_resultado: r.acao },
+      resolvido_por: req.user?.id || null,
+    });
+
     res.json({ ok: true, acao: r.acao, conflito_id: r.conflito_id || null });
   } catch (e) {
     console.error('[membresia/identidade-pendencias/confirmar]', e.message);
@@ -2772,9 +2787,17 @@ router.post('/identidade-pendencias/:id/status', async (req, res) => {
       status,
       resolvida_por: req.user?.id || null,
       resolvida_em: new Date().toISOString(),
-    }).eq('id', req.params.id).eq('status', 'pendente').select('id');
+    }).eq('id', req.params.id).eq('status', 'pendente')
+      .select('id, tipo, membro_id, membro_conflito_id');
     if (error) throw error;
     if (!data || data.length === 0) return res.status(409).json({ error: 'Pendência já triada' });
+    const p = data[0];
+    await registrarResolucaoEntrada({
+      tipo: 'identidade', acao: status === 'descartada' ? 'descartado' : 'resolvido',
+      membro_principal_id: p.membro_id || null, membro_secundario_id: p.membro_conflito_id || null,
+      origem: 'identidade_pendencias', origem_id: String(p.id),
+      detalhe: { tipo_pendencia: p.tipo }, resolvido_por: req.user?.id || null,
+    });
     res.json({ ok: true });
   } catch (e) {
     console.error('[membresia/identidade-pendencias/status]', e.message);

@@ -69,9 +69,10 @@ function MembroBox({ titulo, m }) {
   );
 }
 
-export default function IdentidadePendenciasPanel() {
+export default function IdentidadePendenciasPanel({ statusFixo = null, ocultarFiltros = false }) {
   const qc = useQueryClient();
-  const [status, setStatus] = useState('pendente');
+  const [statusLocal, setStatus] = useState('pendente');
+  const status = statusFixo || statusLocal;
   const [tipo, setTipo] = useState('');
   const [busyId, setBusyId] = useState(null);
   const [confirmar, setConfirmar] = useState(null); // pendência do dialog "Confirmar CPF"
@@ -143,8 +144,8 @@ export default function IdentidadePendenciasPanel() {
 
   return (
     <div>
-      {/* Filtros */}
-      <div className="flex flex-wrap items-center gap-2 mb-4">
+      {/* Filtros · a fila unificada controla status/tipo externamente */}
+      {!ocultarFiltros && <div className="flex flex-wrap items-center gap-2 mb-4">
         <div className="flex items-center gap-1">
           {[['pendente', 'Pendentes'], ['resolvida', 'Resolvidas'], ['descartada', 'Descartadas']].map(([k, l]) => (
             <Button key={k} size="sm" variant={status === k ? 'default' : 'outline'} className="h-8 text-xs" onClick={() => setStatus(k)}>
@@ -165,7 +166,7 @@ export default function IdentidadePendenciasPanel() {
           {isFetching ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
           <span className="ml-1.5">Atualizar</span>
         </Button>
-      </div>
+      </div>}
 
       {!podeAgir && !isLoading && (
         <div className="text-xs text-muted-foreground mb-3 flex items-center gap-1.5">

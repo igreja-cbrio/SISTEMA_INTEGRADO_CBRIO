@@ -17,6 +17,7 @@ const router = require('express').Router();
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { buscarCandidatos, acharOuCriar, acharOuCriarGuardado } = require('../services/membroMatch');
+const { avaliarPossivelDuplicidade } = require('../services/duplicidadePolicy');
 
 router.use(authenticate);
 
@@ -29,18 +30,98 @@ function reshapeDuplicados(data) {
     membro_a_id: d.membro_a_id,
     membro_b_id: d.membro_b_id,
     motivos: d.motivos || [],
+    // `confianca` segue apenas para ordenação retrocompatível. A UI não o
+    // apresenta como probabilidade: estas são regras, não um modelo calibrado.
     confianca: d.confianca,
+    prioridade: (d.motivos || []).includes('cpf_igual') || (d.motivos || []).includes('nome_e_nascimento')
+      ? 'alta' : 'media',
+    evidencias: (d.motivos || []).map((m) => ({
+      cpf_igual: 'CPF igual',
+      nome_e_nascimento: 'Nome e nascimento compatíveis',
+      telefone_e_nome: 'Telefone e nome compatíveis',
+      email_e_nome: 'E-mail e nome compatíveis',
+      nome_muito_parecido: 'Nomes muito parecidos',
+    }[m] || m)),
+    contradicoes: [
+      d.a_cpf && d.b_cpf && String(d.a_cpf).replace(/\D/g, '').length === 11
+        && String(d.b_cpf).replace(/\D/g, '').length === 11
+        && String(d.a_cpf).replace(/\D/g, '') !== String(d.b_cpf).replace(/\D/g, '') ? 'CPFs diferentes' : null,
+      d.a_nascimento && d.b_nascimento && d.a_nascimento !== d.b_nascimento ? 'Nascimentos diferentes' : null,
+      d.a_genero && d.b_genero && d.a_genero !== d.b_genero ? 'Gêneros diferentes' : null,
+      d.a_email && d.b_email && String(d.a_email).trim().toLowerCase() !== String(d.b_email).trim().toLowerCase() ? 'E-mails diferentes' : null,
+    ].filter(Boolean),
     membro_a: {
       id: d.membro_a_id, nome: d.a_nome, email: d.a_email, telefone: d.a_telefone,
       cpf: d.a_cpf, data_nascimento: d.a_nascimento, status: d.a_status,
-      foto_url: d.a_foto_url, criado_em: d.a_criado_em,
+      foto_url: d.a_foto_url, criado_em: d.a_criado_em, genero: d.a_genero,
     },
     membro_b: {
       id: d.membro_b_id, nome: d.b_nome, email: d.b_email, telefone: d.b_telefone,
       cpf: d.b_cpf, data_nascimento: d.b_nascimento, status: d.b_status,
-      foto_url: d.b_foto_url, criado_em: d.b_criado_em,
+      foto_url: d.b_foto_url, criado_em: d.b_criado_em, genero: d.b_genero,
     },
+  })).filter((item) => {
+    const avaliacao = avaliarPossivelDuplicidade(item.membro_a, item.membro_b);
+    item.prioridade = avaliacao.prioridade;
+    item.evidencias = avaliacao.evidencias;
+    item.contradicoes = avaliacao.contradicoes;
+    return avaliacao.incluir;
+  });
+}
+
+// Vínculos comprovados da pessoa em cada módulo. Não atribui proveniência a um
+// campo específico (o legado não guarda isso); informa onde a equipe pode
+// conferir a identidade com responsáveis e histórico operacional.
+async function enriquecerOrigensDuplicados(items) {
+  const ids = [...new Set((items || []).flatMap((p) => [p.membro_a_id, p.membro_b_id]).filter(Boolean))];
+  if (!ids.length) return items;
+  const porMembro = new Map(ids.map((id) => [id, []]));
+  const adicionar = (id, origem) => {
+    const lista = porMembro.get(id);
+    if (!lista || lista.some((x) => x.tipo === origem.tipo && x.detalhe === origem.detalhe)) return;
+    lista.push(origem);
+  };
+  const consultas = await Promise.all([
+    supabase.from('cui_convertidos').select('membro_id, area, data_culto').in('membro_id', ids).is('deleted_at', null),
+    supabase.from('mem_grupo_membros').select('membro_id, mem_grupos(nome)').in('membro_id', ids).is('saiu_em', null).is('deleted_at', null),
+    supabase.from('next_inscricoes').select('membro_id, created_at').in('membro_id', ids),
+    supabase.from('batismo_inscricoes').select('membro_id, status').in('membro_id', ids).is('deleted_at', null),
+    supabase.from('cui_visitas').select('membro_id, tipo').in('membro_id', ids).is('deleted_at', null),
+    supabase.from('mem_voluntarios').select('membro_id, mem_ministerios(nome)').in('membro_id', ids).is('ate', null),
+  ]);
+  const [convertidos, grupos, next, batismos, visitas, voluntarios] = consultas.map((r) => r.error ? [] : (r.data || []));
+  convertidos.forEach((r) => adicionar(r.membro_id, {
+    tipo: 'conversao', label: 'Conversão', detalhe: r.area ? String(r.area).toUpperCase() : null, rota: '/ministerial/cuidados',
   }));
+  grupos.forEach((r) => adicionar(r.membro_id, {
+    tipo: 'grupos', label: 'Grupos', detalhe: r.mem_grupos?.nome || null, rota: '/grupos',
+  }));
+  next.forEach((r) => adicionar(r.membro_id, {
+    tipo: 'next', label: 'Next', detalhe: null, rota: '/ministerial/next',
+  }));
+  batismos.forEach((r) => adicionar(r.membro_id, {
+    tipo: 'batismo', label: 'Batismo', detalhe: r.status || null, rota: '/batismo',
+  }));
+  visitas.forEach((r) => adicionar(r.membro_id, {
+    tipo: 'visitas', label: 'Visitas', detalhe: r.tipo || null, rota: '/ministerial/cuidados',
+  }));
+  voluntarios.forEach((r) => adicionar(r.membro_id, {
+    tipo: 'voluntariado', label: 'Voluntariado', detalhe: r.mem_ministerios?.nome || null, rota: '/ministerial/voluntariado',
+  }));
+  return items.map((p) => ({
+    ...p,
+    membro_a: { ...p.membro_a, origens: porMembro.get(p.membro_a_id) || [] },
+    membro_b: { ...p.membro_b, origens: porMembro.get(p.membro_b_id) || [] },
+  }));
+}
+
+// Auditoria da fila não pode derrubar a ação principal durante uma janela de
+// deploy em que o backend novo suba antes da migration.
+async function registrarResolucao(payload) {
+  const { error } = await supabase.from('entradas_resolucoes').insert(payload);
+  if (error && !/entradas_resolucoes|schema cache|does not exist/i.test(error.message || '')) {
+    console.warn('[next-batismo] resolução não registrada:', error.message);
+  }
 }
 
 // ── Similaridade de nome (Dice por bigramas) · só pra ranquear sugestões ──
@@ -141,11 +222,44 @@ router.get('/duplicados', authorizeModule('next-batismo', 1), async (req, res) =
       .order('confianca', { ascending: false })
       .limit(limit);
     if (error) throw error;
-    const items = reshapeDuplicados(data);
+    const items = await enriquecerOrigensDuplicados(reshapeDuplicados(data));
     res.json({ total: items.length, items });
   } catch (e) {
     console.error('[next-batismo/duplicados]', e.message);
     res.status(500).json({ error: e.message || 'Erro ao buscar duplicados' });
+  }
+});
+
+// ── GET /resolucoes · histórico auditável da fila única ─────────────────────
+router.get('/resolucoes', authorizeModule('next-batismo', 1), async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit) || 200, 500);
+    let q = supabase.from('entradas_resolucoes').select('*')
+      .order('resolvido_em', { ascending: false }).limit(limit);
+    if (req.query.tipo) q = q.eq('tipo', req.query.tipo);
+    if (req.query.acao) q = q.eq('acao', req.query.acao);
+    const { data, error } = await q;
+    if (error) throw error;
+
+    const ids = [...new Set((data || []).flatMap((r) => [r.membro_principal_id, r.membro_secundario_id]).filter(Boolean))];
+    const porId = new Map();
+    for (let i = 0; i < ids.length; i += 200) {
+      const { data: membros, error: membrosErr } = await supabase.from('mem_membros')
+        .select('id, nome, cpf, telefone, email, status, deleted_at').in('id', ids.slice(i, i + 200));
+      if (membrosErr) throw membrosErr;
+      for (const m of membros || []) porId.set(m.id, m);
+    }
+    res.json({
+      total: (data || []).length,
+      items: (data || []).map((r) => ({
+        ...r,
+        membro_principal: porId.get(r.membro_principal_id) || null,
+        membro_secundario: porId.get(r.membro_secundario_id) || null,
+      })),
+    });
+  } catch (e) {
+    console.error('[next-batismo/resolucoes]', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao buscar resoluções' });
   }
 });
 
@@ -324,6 +438,15 @@ router.post('/ligar', authorizeModule('next-batismo', 2), async (req, res) => {
       throw upErr;
     }
     if (tipo === 'next') await vincularMatriculaNext(alvoMembroId, row);
+    await registrarResolucao({
+      tipo: 'sem_vinculo',
+      acao: criado ? 'cadastro_criado' : 'vinculado',
+      membro_principal_id: alvoMembroId,
+      origem: tipo,
+      origem_id: String(id),
+      detalhe: { nome: row.nome || null, familia_ligada: familiaLigada },
+      resolvido_por: req.user?.id || null,
+    });
     res.json({ ok: true, membro_id: alvoMembroId, criado, familia_ligada: familiaLigada });
   } catch (e) {
     console.error('[next-batismo/ligar]', e.message);
@@ -343,6 +466,13 @@ router.post('/ignorar-duplicata', authorizeModule('next-batismo', 2), async (req
         { onConflict: 'membro_a_id,membro_b_id' })
       .select().single();
     if (error) throw error;
+    await registrarResolucao({
+      tipo: 'duplicidade', acao: 'pessoas_distintas',
+      membro_principal_id: a, membro_secundario_id: b,
+      origem: 'mem_duplicados_ignorados', origem_id: data?.id ? String(data.id) : null,
+      detalhe: { motivo: motivo || 'Marcado como pessoas distintas' },
+      resolvido_por: req.user?.id || null,
+    });
     res.json({ ok: true, registro: data });
   } catch (e) {
     console.error('[next-batismo/ignorar-duplicata]', e.message);

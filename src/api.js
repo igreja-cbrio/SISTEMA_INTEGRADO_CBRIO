@@ -1851,6 +1851,10 @@ export const nextBatismo = {
   ligar: (data) => post('/next-batismo/ligar', data),
   ignorarDuplicata: (data) => post('/next-batismo/ignorar-duplicata', data),
   fundir: (data) => post('/next-batismo/fundir', data),
+  resolucoes: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return get('/next-batismo/resolucoes' + (qs ? '?' + qs : ''));
+  },
   pessoa: (id) => get('/next-batismo/pessoa/' + encodeURIComponent(id)),
 };
 

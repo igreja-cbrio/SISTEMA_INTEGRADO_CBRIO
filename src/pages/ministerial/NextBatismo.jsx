@@ -17,14 +17,14 @@
 
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { Link as RouterLink } from 'react-router-dom';
 import { nextBatismo as api, membresia as membresiaApi } from '../../api';
-import { useAuth } from '../../contexts/AuthContext';
 import { toast } from 'sonner';
 import {
   UserSearch, GitMerge, X, RefreshCw, Loader2, ArrowLeft, ArrowRight,
   Phone, Mail, Calendar, User as UserIcon, IdCard, Link2, UserPlus, Users,
   DoorOpen, Search, Heart, Droplets, Footprints, Eye, Network, HelpCircle,
-  Sparkles, MapPin, Home, ShieldQuestion,
+  Sparkles, MapPin, Home, ShieldQuestion, CheckCircle2, History,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
@@ -33,16 +33,14 @@ import { Input } from '../../components/ui/input';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
 } from '../../components/ui/dialog';
-import MembrosDuplicadosPanel from '../../components/MembrosDuplicadosPanel';
 import IdentidadePendenciasPanel from '../../components/IdentidadePendenciasPanel';
 
 const MOTIVO_LABELS = {
   cpf_igual:         { label: 'Mesmo CPF',          cor: '#DC2626' },
   nome_e_nascimento: { label: 'Nome + nascimento',  cor: '#7C3AED' },
-  telefone_igual:    { label: 'Mesmo telefone',     cor: '#EA580C' },
-  email_igual:       { label: 'Mesmo e-mail',       cor: '#0EA5E9' },
-  nome_similar:      { label: 'Nome similar',       cor: '#A16207' },
-  nome_parecido:     { label: 'Nome parecido',      cor: '#CA8A04' },
+  telefone_e_nome:   { label: 'Telefone + nome',    cor: '#EA580C' },
+  email_e_nome:      { label: 'E-mail + nome',      cor: '#0EA5E9' },
+  nome_muito_parecido: { label: 'Nomes muito parecidos', cor: '#CA8A04' },
   nome:              { label: 'Nome',               cor: '#CA8A04' },
 };
 
@@ -75,8 +73,8 @@ function fmtData(iso) {
 
 // ============================================================================
 export default function Entradas() {
-  const { isAdmin } = useAuth();
-  const [tab, setTab] = useState('duplicatas');
+  const [visao, setVisao] = useState('pendentes');
+  const [filtro, setFiltro] = useState('todos');
   const [fichaId, setFichaId] = useState(null); // membro_id da Ficha de Entrada aberta
   const { data: resumo } = useQuery({
     queryKey: ['next-batismo', 'resumo'],
@@ -90,6 +88,12 @@ export default function Entradas() {
     staleTime: 60_000,
   });
   const pendenciasIdentidade = Object.values(identidade?.resumo?.pendente || {}).reduce((a, b) => a + b, 0);
+  const totalPendentes = (resumo?.duplicatas || 0) + (resumo?.sem_vinculo || 0) + pendenciasIdentidade;
+
+  const escolherFiltro = (valor) => {
+    setVisao('pendentes');
+    setFiltro(valor);
+  };
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-6 space-y-5">
@@ -115,12 +119,12 @@ export default function Entradas() {
             <div className="text-2xl font-bold text-foreground">{resumo.saude.pct_cpf}%</div>
             <div className="text-xs text-muted-foreground">{resumo.saude.com_cpf} de {resumo.saude.pessoas} pessoas vivas</div>
           </div>
-          <button className="rounded-xl border p-3 text-left hover:border-primary transition-colors" onClick={() => setTab('identidade')}>
+          <button className="rounded-xl border p-3 text-left hover:border-primary transition-colors" onClick={() => escolherFiltro('identidade')}>
             <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Fila de identidade</div>
             <div className="text-2xl font-bold text-foreground">{pendenciasIdentidade}</div>
             <div className="text-xs text-muted-foreground">conflitos de CPF aguardando triagem</div>
           </button>
-          <button className="rounded-xl border p-3 text-left hover:border-primary transition-colors" onClick={() => setTab('duplicatas')}>
+          <button className="rounded-xl border p-3 text-left hover:border-primary transition-colors" onClick={() => escolherFiltro('duplicidade')}>
             <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Duplicatas possíveis</div>
             <div className="text-2xl font-bold text-foreground">{resumo.duplicatas ?? '—'}</div>
             <div className="text-xs text-muted-foreground">pares do funil pra revisão humana</div>
@@ -128,29 +132,146 @@ export default function Entradas() {
         </div>
       )}
 
-      {/* Tabs */}
+      {/* Fluxo operacional · só há trabalho pendente e histórico resolvido */}
       <div className="flex gap-2 border-b overflow-x-auto">
-        <TabBtn active={tab === 'duplicatas'} onClick={() => setTab('duplicatas')}
-          icon={GitMerge} label="Duplicatas possíveis" count={resumo?.duplicatas} />
-        <TabBtn active={tab === 'sem_vinculo'} onClick={() => setTab('sem_vinculo')}
-          icon={Link2} label="Sem vínculo" count={resumo?.sem_vinculo} />
-        <TabBtn active={tab === 'identidade'} onClick={() => setTab('identidade')}
-          icon={ShieldQuestion} label="Identidade (CPF)" count={pendenciasIdentidade} />
-        <TabBtn active={tab === 'pessoa'} onClick={() => setTab('pessoa')}
-          icon={Search} label="Buscar pessoa" />
-        {isAdmin && (
-          <TabBtn active={tab === 'base'} onClick={() => setTab('base')}
-            icon={Users} label="Base inteira" />
-        )}
+        <TabBtn active={visao === 'pendentes'} onClick={() => setVisao('pendentes')}
+          icon={DoorOpen} label="Pendentes" count={totalPendentes} />
+        <TabBtn active={visao === 'resolvidos'} onClick={() => setVisao('resolvidos')}
+          icon={CheckCircle2} label="Resolvidos" />
       </div>
 
-      {tab === 'duplicatas' && <DuplicadosTab onVerFicha={setFichaId} />}
-      {tab === 'sem_vinculo' && <SemVinculoTab onVerFicha={setFichaId} />}
-      {tab === 'identidade' && <IdentidadePendenciasPanel />}
-      {tab === 'pessoa' && <PessoaTab onVerFicha={setFichaId} />}
-      {tab === 'base' && isAdmin && <MembrosDuplicadosPanel />}
+      <FiltrosFila visao={visao} filtro={filtro} onChange={setFiltro}
+        contagens={{ duplicidade: resumo?.duplicatas || 0, sem_vinculo: resumo?.sem_vinculo || 0, identidade: pendenciasIdentidade }} />
+
+      {visao === 'pendentes' ? (
+        <div className="space-y-7">
+          {(filtro === 'todos' || filtro === 'duplicidade') && (
+            <SecaoFila titulo="Possíveis duplicidades" descricao="Cadastros com evidências combinadas de que podem representar a mesma pessoa.">
+              <DuplicadosTab onVerFicha={setFichaId} />
+            </SecaoFila>
+          )}
+          {(filtro === 'todos' || filtro === 'sem_vinculo') && (
+            <SecaoFila titulo="Registros sem vínculo" descricao="Formulários e passos da jornada que ainda não apontam para uma pessoa da base.">
+              <SemVinculoTab onVerFicha={setFichaId} />
+            </SecaoFila>
+          )}
+          {(filtro === 'todos' || filtro === 'identidade') && (
+            <SecaoFila titulo="Conflitos de CPF" descricao="Situações em que o CPF precisa de confirmação humana antes de virar identidade.">
+              <IdentidadePendenciasPanel statusFixo="pendente" ocultarFiltros />
+            </SecaoFila>
+          )}
+        </div>
+      ) : <ResolvidosTab filtro={filtro} onVerFicha={setFichaId} />}
 
       <FichaEntrada id={fichaId} onClose={() => setFichaId(null)} onVerFicha={setFichaId} />
+    </div>
+  );
+}
+
+const FILTROS_FILA = [
+  ['todos', 'Todos'],
+  ['duplicidade', 'Possíveis duplicidades'],
+  ['sem_vinculo', 'Sem vínculo'],
+  ['identidade', 'Conflitos de CPF'],
+];
+
+function FiltrosFila({ visao, filtro, onChange, contagens }) {
+  return (
+    <div className="flex items-center gap-2 overflow-x-auto pb-1" aria-label={`Filtros de ${visao}`}>
+      {FILTROS_FILA.map(([key, label]) => {
+        const count = visao === 'pendentes' && key !== 'todos' ? contagens[key] : null;
+        return (
+          <Button key={key} size="sm" variant={filtro === key ? 'secondary' : 'ghost'}
+            className="h-8 shrink-0 text-xs" onClick={() => onChange(key)}>
+            {label}{count ? ` (${count})` : ''}
+          </Button>
+        );
+      })}
+    </div>
+  );
+}
+
+function SecaoFila({ titulo, descricao, children }) {
+  return (
+    <section className="space-y-3">
+      <div className="border-b pb-2">
+        <h2 className="text-sm font-semibold text-foreground">{titulo}</h2>
+        <p className="text-xs text-muted-foreground mt-0.5">{descricao}</p>
+      </div>
+      {children}
+    </section>
+  );
+}
+
+const ACAO_RESOLVIDA = {
+  fundido: 'Cadastros fundidos',
+  pessoas_distintas: 'Pessoas distintas',
+  vinculado: 'Registro vinculado',
+  cadastro_criado: 'Cadastro criado',
+  cpf_confirmado: 'CPF confirmado',
+  resolvido: 'Conflito resolvido',
+  descartado: 'Conflito descartado',
+};
+
+function ResolvidosTab({ filtro, onVerFicha }) {
+  const tipo = filtro === 'todos' ? '' : filtro;
+  const { data, isLoading, isFetching, refetch } = useQuery({
+    queryKey: ['next-batismo', 'resolucoes', tipo],
+    queryFn: () => api.resolucoes(tipo ? { tipo } : {}),
+    staleTime: 30_000,
+  });
+  const items = data?.items || [];
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-semibold text-foreground">Histórico de resoluções</h2>
+          <p className="text-xs text-muted-foreground mt-0.5">O que foi fundido, vinculado, criado ou descartado pela equipe.</p>
+        </div>
+        <Button size="sm" variant="outline" className="h-8 text-xs gap-1.5" onClick={() => refetch()} disabled={isFetching}>
+          <RefreshCw className={`size-3.5 ${isFetching ? 'animate-spin' : ''}`} /> Atualizar
+        </Button>
+      </div>
+
+      {isLoading ? <Centro><Loader2 className="size-5 animate-spin mr-2" /> Carregando histórico...</Centro> : null}
+      {!isLoading && items.length === 0 ? (
+        <Vazio icon={History} titulo="Nenhuma resolução neste filtro"
+          texto="As decisões tomadas na fila aparecerão aqui para consulta e auditoria." />
+      ) : null}
+
+      {items.map((r) => {
+        const principal = r.membro_principal;
+        const secundario = r.membro_secundario;
+        const nomeDetalhe = r.detalhe?.nome || r.detalhe?.nome_principal;
+        return (
+          <Card key={r.id}>
+            <CardContent className="p-4 flex items-start gap-3">
+              <div className="size-9 rounded-full bg-emerald-500/10 text-emerald-600 flex items-center justify-center shrink-0">
+                <CheckCircle2 className="size-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-semibold text-sm text-foreground">{ACAO_RESOLVIDA[r.acao] || r.acao}</span>
+                  <Badge variant="outline" className="text-[10px]">
+                    {r.tipo === 'duplicidade' ? 'Duplicidade' : r.tipo === 'sem_vinculo' ? 'Sem vínculo' : 'CPF'}
+                  </Badge>
+                  <span className="text-[11px] text-muted-foreground ml-auto">{fmtData(r.resolvido_em)}</span>
+                </div>
+                <div className="text-xs text-muted-foreground mt-1 flex flex-wrap items-center gap-x-2">
+                  {principal ? (
+                    <button type="button" className="hover:text-primary hover:underline" onClick={() => onVerFicha?.(principal.id)}>
+                      {principal.nome}
+                    </button>
+                  ) : nomeDetalhe ? <span>{nomeDetalhe}</span> : <span>Registro de origem</span>}
+                  {secundario && <><span>·</span><span>{secundario.nome}</span></>}
+                  {r.origem && <><span>·</span><span>origem: {r.origem}</span></>}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        );
+      })}
     </div>
   );
 }
@@ -211,9 +332,8 @@ function DuplicadosTab({ onVerFicha }) {
     <div className="space-y-4">
       <div className="flex items-start justify-between gap-2 flex-wrap">
         <p className="text-xs text-muted-foreground max-w-2xl">
-          Pares que parecem a <strong>mesma pessoa</strong> dentro do funil novo. Inclui convertido
-          recém-chegado com nome parecido (sem CPF/nascimento) — por isso, <strong>confira antes de fundir</strong>:
-          dois nomes parecidos podem ser pessoas diferentes.
+          O sistema combina sinais antes de trazer um par. Telefone ou e-mail isolados não bastam,
+          e CPFs diferentes eliminam a sugestão. <strong>Confira as evidências e os módulos onde cada pessoa aparece antes de fundir.</strong>
         </p>
         <Button onClick={() => refetch()} disabled={isFetching} variant="outline" size="sm" className="gap-1.5">
           <RefreshCw className={`size-3.5 ${isFetching ? 'animate-spin' : ''}`} /> Recarregar
@@ -292,7 +412,7 @@ function ParCard({ par, onMerge, onIgnorar, ignorando, onVerFicha }) {
       <CardHeader className="py-2 px-3 flex flex-row items-center justify-between gap-2 space-y-0" style={{ borderLeft: `3px solid ${corPrincipal}`, background: 'var(--cbrio-input-bg)' }}>
         <div className="flex items-center gap-2 flex-wrap">
           <Badge variant="outline" className="text-[10px] font-bold" style={{ borderColor: corPrincipal, color: corPrincipal }}>
-            {par.confianca}% provável
+            {par.prioridade === 'alta' ? 'Evidência forte' : 'Revisar evidências'}
           </Badge>
           {motivos.map((m) => {
             const def = MOTIVO_LABELS[m] || { label: m, cor: '#6B7280' };
@@ -304,6 +424,12 @@ function ParCard({ par, onMerge, onIgnorar, ignorando, onVerFicha }) {
         </Button>
       </CardHeader>
       <CardContent className="p-0">
+        {par.contradicoes?.length > 0 && (
+          <div className="px-3 py-2 border-b bg-amber-500/5 text-[11px] text-amber-700 dark:text-amber-300 flex items-center gap-1.5 flex-wrap">
+            <ShieldQuestion className="size-3.5" />
+            Atenção: {par.contradicoes.join(' · ')}
+          </div>
+        )}
         <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x">
           <MembroLado membro={par.membro_a} lado="A" onMerge={() => onMerge(par.membro_a_id)} onVerFicha={onVerFicha} />
           <MembroLado membro={par.membro_b} lado="B" onMerge={() => onMerge(par.membro_b_id)} onVerFicha={onVerFicha} />
@@ -339,6 +465,24 @@ function MembroLado({ membro, lado, onMerge, onVerFicha }) {
         {membro.telefone && <Linha icon={Phone}>{maskTelefone(membro.telefone)}</Linha>}
         {membro.email && <Linha icon={Mail}><span className="truncate">{membro.email}</span></Linha>}
         {membro.data_nascimento && <Linha icon={Calendar}>{fmtData(membro.data_nascimento)}</Linha>}
+        {membro.genero && <Linha icon={UserIcon}>Gênero: {membro.genero}</Linha>}
+      </div>
+      <div className="pl-10 pt-1">
+        <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">Encontrada em</div>
+        {membro.origens?.length ? (
+          <div className="flex flex-wrap gap-1.5">
+            {membro.origens.map((origem) => (
+              <RouterLink key={`${origem.tipo}_${origem.detalhe || ''}`} to={origem.rota}
+                className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-[10px] text-muted-foreground transition-colors hover:border-primary hover:text-primary"
+                title={`Abrir ${origem.label} para conferir este vínculo`}>
+                <MapPin className="size-3" />
+                {origem.label}{origem.detalhe ? ` · ${origem.detalhe}` : ''}
+              </RouterLink>
+            ))}
+          </div>
+        ) : (
+          <span className="text-[10px] text-muted-foreground">Nenhum vínculo operacional encontrado</span>
+        )}
       </div>
     </div>
   );
@@ -355,8 +499,10 @@ function SemVinculoTab({ onVerFicha }) {
     staleTime: 30_000,
   });
   const [ligarRow, setLigarRow] = useState(null);
+  const [origemFiltro, setOrigemFiltro] = useState('todos');
 
   const itens = data?.itens || [];
+  const itensFiltrados = origemFiltro === 'todos' ? itens : itens.filter((r) => r.tipo === origemFiltro);
 
   return (
     <div className="space-y-4">
@@ -370,15 +516,30 @@ function SemVinculoTab({ onVerFicha }) {
         </Button>
       </div>
 
+      {!isLoading && itens.length > 0 && (
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+          <Button size="sm" variant={origemFiltro === 'todos' ? 'secondary' : 'ghost'} className="h-7 text-xs shrink-0"
+            onClick={() => setOrigemFiltro('todos')}>Todas as origens ({itens.length})</Button>
+          {Object.entries(ORIGEM_META).map(([key, meta]) => {
+            const count = data?.por_origem?.[key] || 0;
+            if (!count) return null;
+            return <Button key={key} size="sm" variant={origemFiltro === key ? 'secondary' : 'ghost'} className="h-7 text-xs shrink-0"
+              onClick={() => setOrigemFiltro(key)}>{meta.label} ({count})</Button>;
+          })}
+        </div>
+      )}
+
       {isLoading ? (
         <Centro><Loader2 className="size-5 animate-spin mr-2" /> Buscando pendências...</Centro>
-      ) : itens.length === 0 ? (
+      ) : itensFiltrados.length === 0 ? (
         <Vazio icon={Link2} titulo="Tudo ligado por aqui"
-          texto="Toda inscrição e decisão do funil está vinculada a um cadastro. Bom trabalho!" />
+          texto={itens.length === 0
+            ? 'Toda inscrição e decisão do funil está vinculada a um cadastro. Bom trabalho!'
+            : 'Não há pendências desta origem.'} />
       ) : (
         <div className="space-y-2">
-          <div className="text-xs text-muted-foreground">{itens.length} pendência(s)</div>
-          {itens.map((r) => <SemVinculoRow key={`${r.tipo}_${r.id}`} row={r} onLigar={() => setLigarRow(r)} />)}
+          <div className="text-xs text-muted-foreground">{itensFiltrados.length} pendência(s)</div>
+          {itensFiltrados.map((r) => <SemVinculoRow key={`${r.tipo}_${r.id}`} row={r} onLigar={() => setLigarRow(r)} />)}
         </div>
       )}
 
