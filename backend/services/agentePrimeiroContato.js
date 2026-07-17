@@ -11,7 +11,10 @@ const Anthropic = require('@anthropic-ai/sdk');
 const { supabase } = require('../utils/supabase');
 
 // Mesma régua do cuidados.js: contato feito = status real OU primeiro_contato_em.
-const CONTATO_FEITO_STATUS = new Set(['respondeu', 'atendido_respondido', 'nao_respondeu', 'nao_compareceu', 'nao_atendido']);
+// numero_errado conta como feito (a equipe mandou a mensagem; o número é que estava
+// errado · Marcos 2026-07-01) — senão o agente re-enfileiraria número errado pra sempre.
+const CONTATO_FEITO_STATUS = new Set(['respondeu', 'atendido_respondido', 'nao_respondeu', 'nao_compareceu', 'nao_atendido', 'numero_errado']);
+const contatoFoiFeito = (c) => !!c.primeiro_contato_em || CONTATO_FEITO_STATUS.has(c.primeiro_contato_status);
 const AGENTE_VERSAO = 'primeiro-contato-v1';
 const DIA = 86400000;
 
