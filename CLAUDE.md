@@ -21,6 +21,35 @@ decisões/time-lapse do sistema). Regras de manutenção:
   vivo (lição `cui_atendimentos`: achado de auditoria baseado em arquivo de
   migration que nunca foi aplicado em prod).
 
+## ⚠️ LEI · Contrato de porta — toda entrada de PESSOA no sistema (2026-07-17)
+
+Decisão do Marcos: dados de pessoa entram IGUAIS em todas as portas (Kids,
+batismo, Next, voluntários, decisões, grupos, wifi, censo, formulários novos).
+O formulário de cada porta continua MÍNIMO (pede só o que precisa); quem é
+padronizado é o FUNIL pós-submit. Toda porta nova/alterada DEVE:
+
+1. **Normalizar** antes de gravar: CPF/telefone digits-only, e-mail lower/trim,
+   DV de CPF no servidor (com grandfathering: valor idêntico ao já armazenado
+   passa sem DV — legado não pode travar edição).
+2. **Passar pelo matcher canônico** (`backend/services/membroMatch.js` no JS ·
+   `fn_link_or_create_membro`/`tg_cultos_dec_pessoas_resolve_membro` no SQL):
+   CPF → e-mail+NOME → telefone+NOME → nascimento+NOME. NUNCA ligar por sinal
+   fraco sozinho (família compartilha telefone/e-mail).
+3. **Acumular contato divergente** em `mem_contatos` (migration 20260717120000 ·
+   `fn_registrar_contato`): telefone/e-mail diferente do principal NÃO é
+   conflito nem sobrescreve — vira contato secundário com fonte+data. O
+   principal (`mem_membros.telefone/email`) só muda por ação humana. O matcher
+   busca candidatos também nos secundários (anti-duplicata).
+4. **CPF que chega depois** → `reconciliarCpfTardio` (consolida no membro;
+   `confianca: 'fraca'` quando o vínculo veio de match fraco).
+5. **Conflito de identidade** (CPF divergente/em uso, nascimento divergente) →
+   `identidade_pendencias` (fila humana em Entradas > Identidade). NUNCA
+   auto-fundir nem auto-decidir.
+
+Uma pessoa = um cadastro (`mem_membros`) = fonte única que todos os módulos
+leem. Módulo NÃO tem "base local de pessoas" — linha-satélite aponta pro
+membro via `membro_id`.
+
 ## ⚠️ Conselho deliberativo (skill `llm-council`) · acionar SEMPRE antes de responder (2026-06-28)
 
 Pedido do usuário (gestao@cbrio.com.br · 2026-06-28): **antes de dar qualquer

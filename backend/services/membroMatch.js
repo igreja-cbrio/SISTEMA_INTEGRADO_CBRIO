@@ -41,9 +41,57 @@ function normalizarEmail(email) {
   return e.length > 3 && e.includes('@') ? e : null;
 }
 
+// _registrarContatoNoMatch · quando a pessoa ligou num membro EXISTENTE
+// trazendo contato diferente do principal (telefone do trabalho × pessoal),
+// ACUMULA em mem_contatos via fn_registrar_contato (nunca sobrescreve o
+// principal · decisão do Marcos 2026-07-17). Best-effort: falha não derruba
+// a porta. Tolera a migration 20260717120000 ausente.
+function _registrarContatoNoMatch(membroId, { telefone, email } = {}, fonte) {
+  if (!membroId || (!telefone && !email)) return;
+  supabase.rpc('fn_registrar_contato', {
+    p_membro_id: membroId,
+    p_telefone: telefone || null,
+    p_email: email || null,
+    p_fonte: fonte || 'porta',
+  }).then(({ error }) => {
+    if (error && !/fn_registrar_contato/.test(error.message || '')) {
+      console.warn('[membroMatch] contato não registrado:', error.message);
+    }
+  });
+}
+
+// _candidatosPorContatoSecundario · complementa a busca no mem_membros com os
+// contatos ACUMULADOS (mem_contatos): a pessoa que usou o telefone do trabalho
+// numa porta e o pessoal na outra é encontrada pelos dois. Tolera a tabela
+// ausente. Retorna Map membro_id -> Set(motivos).
+async function _candidatosPorContatoSecundario({ email, telefone } = {}) {
+  const em = normalizarEmail(email);
+  const tel = normalizarTelefone(telefone);
+  const hits = new Map();
+  if (!em && !tel) return hits;
+  try {
+    const ors = [];
+    if (tel) ors.push(`and(tipo.eq.telefone,valor.eq.${tel})`);
+    if (em) ors.push(`and(tipo.eq.email,valor.eq.${escapePostgrestValue(em)})`);
+    const { data, error } = await supabase
+      .from('mem_contatos')
+      .select('membro_id, tipo')
+      .or(ors.join(','))
+      .is('deleted_at', null)
+      .limit(30);
+    if (error) return hits;
+    for (const c of data || []) {
+      if (!hits.has(c.membro_id)) hits.set(c.membro_id, new Set());
+      hits.get(c.membro_id).add(c.tipo);
+    }
+  } catch { /* tabela ausente · segue só com o principal */ }
+  return hits;
+}
+
 // buscarCandidatos · membros que batem por chave forte, ranqueados por
 // confiança. Cada candidato sai com { ...membro, motivos: [...], score }.
 // Usado pelo GET /lookup e (fase 1) pela fila de reconciliação.
+// Desde 2026-07-17 também acha pelos contatos SECUNDÁRIOS (mem_contatos).
 async function buscarCandidatos({ cpf, email, telefone } = {}, { limit = 5 } = {}) {
   const c = normalizarCpf(cpf);
   const em = normalizarEmail(email);
@@ -55,20 +103,36 @@ async function buscarCandidatos({ cpf, email, telefone } = {}, { limit = 5 } = {
   if (tel) ors.push(`telefone.ilike.%${tel}%`);
   if (ors.length === 0) return [];
 
-  const { data, error } = await supabase
-    .from('mem_membros')
-    .select(COLS)
-    .or(ors.join(','))
-    .is('deleted_at', null)
-    .limit(Math.max(limit, 5) * 2);
+  const [{ data, error }, secundarios] = await Promise.all([
+    supabase
+      .from('mem_membros')
+      .select(COLS)
+      .or(ors.join(','))
+      .is('deleted_at', null)
+      .limit(Math.max(limit, 5) * 2),
+    _candidatosPorContatoSecundario({ email, telefone }),
+  ]);
   if (error) throw error;
 
-  return (data || [])
+  let rows = data || [];
+  const jaTem = new Set(rows.map((m) => m.id));
+  const idsExtras = [...secundarios.keys()].filter((id) => !jaTem.has(id));
+  if (idsExtras.length) {
+    const { data: extras } = await supabase
+      .from('mem_membros')
+      .select(COLS)
+      .in('id', idsExtras.slice(0, 20))
+      .is('deleted_at', null);
+    rows = rows.concat(extras || []);
+  }
+
+  return rows
     .map((m) => {
       const motivos = [];
+      const sec = secundarios.get(m.id);
       if (c && normalizarCpf(m.cpf) === c) motivos.push('cpf');
-      if (tel && normalizarTelefone(m.telefone) === tel) motivos.push('telefone');
-      if (em && normalizarEmail(m.email) === em) motivos.push('email');
+      if (tel && (normalizarTelefone(m.telefone) === tel || sec?.has('telefone'))) motivos.push('telefone');
+      if (em && (normalizarEmail(m.email) === em || sec?.has('email'))) motivos.push('email');
       const score = motivos.reduce((s, k) => Math.max(s, PESO[k] || 0), 0);
       return { ...m, motivos, score };
     })
@@ -206,18 +270,21 @@ async function acharOuCriarGuardado({ cpf, email, telefone, nome, dataNascimento
   if (cpf11) {
     const { data } = await supabase.from('mem_membros').select('id')
       .eq('cpf', cpf11).is('deleted_at', null).maybeSingle();
-    if (data?.id) return { membro_id: data.id, created: false, matched_by: 'cpf' };
+    if (data?.id) {
+      _registrarContatoNoMatch(data.id, { telefone: tel, email: emailLc }, 'porta');
+      return { membro_id: data.id, created: false, matched_by: 'cpf' };
+    }
   }
   if (!soChaveForte && emailLc) {
     // E-mail exige o NOME batendo quando há nome (esposa que usa o e-mail do
     // marido não pode ser ligada ao marido). Sem nome informado, mantém o
-    // comportamento legado (e-mail sozinho).
-    const { data } = await supabase.from('mem_membros')
-      .select('id, nome').ilike('email', escapePostgrestValue(emailLc))
-      .is('deleted_at', null).limit(5);
-    const hit = (data || []).find((c) => !nome || nomesMesmaPessoa(c.nome, nome));
+    // comportamento legado (e-mail sozinho). buscarCandidatos cobre também o
+    // e-mail SECUNDÁRIO (mem_contatos · usado em outra porta).
+    const cands = await buscarCandidatos({ email: emailLc }, { limit: 8 });
+    const hit = cands.find((c) => !nome || nomesMesmaPessoa(c.nome, nome));
     if (hit?.id) {
       await _consolidarCpfNoMatch(hit.id, cpf11, 'email', nasc);
+      _registrarContatoNoMatch(hit.id, { telefone: tel, email: emailLc }, 'porta');
       return { membro_id: hit.id, created: false, matched_by: 'email' };
     }
   }
@@ -228,6 +295,7 @@ async function acharOuCriarGuardado({ cpf, email, telefone, nome, dataNascimento
     const hit = cands.find((c) => nomesMesmaPessoa(c.nome, nome));
     if (hit) {
       await _consolidarCpfNoMatch(hit.id, cpf11, 'telefone+nome', nasc);
+      _registrarContatoNoMatch(hit.id, { telefone: tel, email: emailLc }, 'porta');
       return { membro_id: hit.id, created: false, matched_by: 'telefone+nome' };
     }
   }
@@ -240,6 +308,7 @@ async function acharOuCriarGuardado({ cpf, email, telefone, nome, dataNascimento
     const hit = (data || []).find((c) => nomesMesmaPessoa(c.nome, nome));
     if (hit) {
       await _consolidarCpfNoMatch(hit.id, cpf11, 'nome+nascimento', nasc);
+      _registrarContatoNoMatch(hit.id, { telefone: tel, email: emailLc }, 'porta');
       return { membro_id: hit.id, created: false, matched_by: 'nome+nascimento' };
     }
   }
@@ -290,11 +359,10 @@ async function acharMembroGuardado({ cpf, email, telefone, nome, dataNascimento 
   if (soChaveForte) return null;
   if (emailLc) {
     // Mesma guarda do telefone: e-mail compartilhado pela família não pode
-    // ligar sozinho — exige o nome batendo quando há nome.
-    const { data } = await supabase.from('mem_membros')
-      .select('id, nome').ilike('email', escapePostgrestValue(emailLc))
-      .is('deleted_at', null).limit(5);
-    const hit = (data || []).find((c) => !nome || nomesMesmaPessoa(c.nome, nome));
+    // ligar sozinho — exige o nome batendo quando há nome. buscarCandidatos
+    // cobre também o e-mail SECUNDÁRIO (mem_contatos).
+    const cands = await buscarCandidatos({ email: emailLc }, { limit: 8 });
+    const hit = cands.find((c) => !nome || nomesMesmaPessoa(c.nome, nome));
     if (hit?.id) return { membro_id: hit.id, matched_by: 'email' };
   }
   if (tel && nome) {
