@@ -1847,6 +1847,15 @@ export const membresia = {
   cpfLookup: (cpf) => get(`/membresia/cpf-lookup/${encodeURIComponent(String(cpf).replace(/\D/g, ''))}`),
   orfaosStats: () => get('/membresia/orfaos-stats'),
   promoverOrfaos: () => post('/membresia/promover-orfaos', {}),
+  // Fila de identidade (conflitos de CPF · identidade_pendencias)
+  identidade: {
+    list: (params = {}) => {
+      const qs = new URLSearchParams(params).toString();
+      return get('/membresia/identidade-pendencias' + (qs ? '?' + qs : ''));
+    },
+    confirmarCpf: (id) => post(`/membresia/identidade-pendencias/${id}/confirmar-cpf`, {}),
+    setStatus: (id, status) => post(`/membresia/identidade-pendencias/${id}/status`, { status }),
+  },
   // Detecção e merge de duplicados
   duplicados: {
     list: (params = {}) => {
