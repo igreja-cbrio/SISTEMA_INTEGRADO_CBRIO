@@ -84,9 +84,13 @@ export default function TotemKidsCheckout({ embutido = false }: { embutido?: boo
     setResponsavelPickup('');
   }
 
-  async function confirmarCheckout(metodo: 'codigo_digitado' | 'responsavel_autorizado') {
+  async function confirmarCheckout(
+    metodo: 'codigo_digitado' | 'responsavel_autorizado',
+    responsavelId?: string,
+  ) {
     if (!checkin) return;
-    if (metodo === 'responsavel_autorizado' && !responsavelPickup) {
+    const pickupId = responsavelId || responsavelPickup;
+    if (metodo === 'responsavel_autorizado' && !pickupId) {
       toast.error('Selecione qual responsável está buscando');
       return;
     }
@@ -94,13 +98,14 @@ export default function TotemKidsCheckout({ embutido = false }: { embutido?: boo
     try {
       const payload: Record<string, unknown> = { checkin_id: checkin.id, metodo };
       if (metodo === 'responsavel_autorizado') {
-        const r = checkin.responsaveis.find(x => x.membro?.id === responsavelPickup);
-        payload.responsavel_id = responsavelPickup;
+        const r = checkin.responsaveis.find(x => x.membro?.id === pickupId);
+        payload.responsavel_id = pickupId;
         payload.responsavel_nome = r?.membro?.nome;
       } else {
         // codigo_digitado · usa o nome do responsável do checkin
         payload.responsavel_id = null;
         payload.responsavel_nome = checkin.responsavel_checkin_nome;
+        payload.codigo_seguranca = checkin.codigo_seguranca;
       }
       await totemKids.checkout.realizar(payload);
       toast.success(`${checkin.crianca.nome} saiu · obrigado!`);
@@ -263,7 +268,9 @@ export default function TotemKidsCheckout({ embutido = false }: { embutido?: boo
                       key={r.id}
                       onClick={() => {
                         setResponsavelPickup(r.membro!.id);
-                        confirmarCheckout('responsavel_autorizado');
+                        // Não depende do setState (assíncrono): envia o id tocado
+                        // diretamente e evita a falha no primeiro toque.
+                        confirmarCheckout('responsavel_autorizado', r.membro!.id);
                       }}
                       disabled={confirmandoCheckout}
                       className="w-full text-left flex items-center gap-3 p-3 rounded-lg border hover:bg-muted transition"

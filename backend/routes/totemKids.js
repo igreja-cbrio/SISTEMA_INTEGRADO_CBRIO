@@ -160,7 +160,10 @@ async function isLiderKidsDoDia(authUserId) {
 // SESSÕES
 // ═══════════════════════════════════════════════════════════════════════════
 
-// GET /api/totem-kids/sessoes/atual · retorna a sessão aberta agora (se houver)
+// GET /api/totem-kids/sessoes/atual · retorna somente uma sessão de HOJE.
+// Nunca adota uma sessão futura/antiga só porque ela foi aberta por último.
+// Quando há vários horários no dia, usa a mesma janela do totem: o culto vale
+// até o início do próximo; o último vale por 3h.
 router.get('/sessoes/atual', authorizeModule('kids', 1), async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -171,11 +174,38 @@ router.get('/sessoes/atual', authorizeModule('kids', 1), async (req, res) => {
                      service_type:vol_service_types(id, name, color, has_kids, recurrence_time))
       `)
       .eq('status', 'aberta')
-      .order('abrir_em', { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .order('abrir_em', { ascending: false });
     if (error) throw error;
-    res.json(data || null);
+
+    const hoje = _hojeBRT();
+    const agoraPartes = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', hour12: false,
+    }).formatToParts(new Date());
+    const hora = Number(agoraPartes.find((p) => p.type === 'hour')?.value || 0);
+    const minuto = Number(agoraPartes.find((p) => p.type === 'minute')?.value || 0);
+    const agoraMin = hora * 60 + minuto;
+    const minutosDe = (s) => {
+      const raw = String(s?.culto?.service_type?.recurrence_time || '');
+      const [h, m] = raw.split(':').map(Number);
+      return Number.isFinite(h) ? h * 60 + (Number.isFinite(m) ? m : 0) : null;
+    };
+    const hojeAbertas = (data || [])
+      .filter((s) => String(s.culto?.data || '').slice(0, 10) === hoje)
+      .sort((a, b) => (minutosDe(a) ?? 9999) - (minutosDe(b) ?? 9999));
+
+    if (!hojeAbertas.length) return res.json(null);
+    const comHorario = hojeAbertas.filter((s) => minutosDe(s) != null);
+    if (!comHorario.length) return res.json(hojeAbertas[0]);
+    const atual = comHorario.find((s, i) => {
+      const inicio = minutosDe(s);
+      const fim = i < comHorario.length - 1 ? minutosDe(comHorario[i + 1]) : inicio + 180;
+      return agoraMin >= inicio && agoraMin < fim;
+    });
+    // Antes do primeiro culto, devolve o primeiro de hoje; depois da janela do
+    // último, não finge que ainda há sessão atual.
+    if (atual) return res.json(atual);
+    if (agoraMin < minutosDe(comHorario[0])) return res.json(comHorario[0]);
+    return res.json(null);
   } catch (e) {
     console.error('[totemKids/sessoes/atual]', e.message);
     res.status(500).json({ error: 'Erro ao buscar sessão atual' });
@@ -2459,6 +2489,13 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
       .eq('id', crianca_id)
       .maybeSingle();
     if (!crianca) return res.status(404).json({ error: 'Criança não encontrada' });
+    if (!crianca.data_nascimento) {
+      return res.status(422).json({
+        error: 'Informe a data de nascimento da criança antes do check-in.',
+        precisa_data_nascimento: true,
+        crianca_id,
+      });
+    }
 
     // Buscar sala
     const { data: sala } = await supabase
@@ -2468,23 +2505,6 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
       .maybeSingle();
     if (!sala) return res.status(404).json({ error: 'Sala não encontrada' });
 
-    // Gera código via função do banco
-    const { data: codigoRow, error: errCod } = await supabase.rpc('fn_kids_gerar_codigo_seguranca');
-    const codigo = codigoRow || (errCod ? null : null);
-    if (!codigo) {
-      // fallback js
-      const alfa = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-      let c = '';
-      for (let i = 0; i < 4; i++) c += alfa[Math.floor(Math.random() * alfa.length)];
-      // tenta
-    }
-    const codigoFinal = codigo || (() => {
-      const alfa = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-      let c = '';
-      for (let i = 0; i < 4; i++) c += alfa[Math.floor(Math.random() * alfa.length)];
-      return c;
-    })();
-
     // Multi-culto: se a criança fica em mais de um culto, todas as linhas
     // (uma por culto) compartilham o mesmo código + checkin_grupo_id. A retirada
     // fecha o grupo; cada culto conta a presença (consolidação por sessao_id).
@@ -2493,10 +2513,25 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
       : [];
     const grupoId = cultosExtras.length ? require('crypto').randomUUID() : null;
 
-    // INSERT (primário · culto atual)
-    const { data: checkin, error: errIns } = await supabase
-      .from('kids_checkins')
-      .insert({
+    const gerarCodigo = async () => {
+      const { data } = await supabase.rpc('fn_kids_gerar_codigo_seguranca');
+      if (data) return data;
+      const alfa = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+      let c = '';
+      for (let i = 0; i < 4; i++) c += alfa[Math.floor(Math.random() * alfa.length)];
+      return c;
+    };
+    const colisaoCodigo = (erro) => erro?.code === '23505'
+      && /c[oó]digo de seguran[cç]a ativo|kids_codigo_seguranca_ativo_grupo/i.test(`${erro.message || ''} ${erro.details || ''} ${erro.constraint || ''}`);
+
+    // INSERT primário. Se dois totens sortearem o mesmo código no mesmo instante,
+    // o trigger do banco rejeita um deles e aqui geramos outro automaticamente.
+    let codigoFinal = null;
+    let checkin = null;
+    let errIns = null;
+    for (let tentativa = 0; tentativa < 5; tentativa++) {
+      codigoFinal = await gerarCodigo();
+      const insercao = await supabase.from('kids_checkins').insert({
         sessao_id,
         crianca_id,
         sala_id,
@@ -2509,9 +2544,14 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
         codigo_barras: codigoFinal,                      // mesmo código
         checkin_por: req.user.userId,
         checkin_grupo_id: grupoId,
-      })
-      .select('*')
-      .single();
+      }).select('*').single();
+      checkin = insercao.data;
+      errIns = insercao.error;
+      if (!colisaoCodigo(errIns)) break;
+    }
+    if (colisaoCodigo(errIns)) {
+      return res.status(503).json({ error: 'Não foi possível reservar um código livre. Tente novamente.', pode_tentar_novamente: true });
+    }
     // 23505 = índice único (check-in aberto) — corrida entre 2 totens ou
     // migration 20260707220000 ainda não aplicada (UNIQUE antiga no lugar).
     if (errIns && errIns.code === '23505') {
@@ -2619,6 +2659,24 @@ router.post('/checkin/lote', authorizeModule('kids', 2), async (req, res) => {
       return res.status(409).json({ error: 'Essa sessão é de um culto de outro dia e já foi encerrada. Recarregue o totem.' });
     }
 
+    // Valida o lote inteiro antes de resolver/vincular responsável ou inserir a
+    // primeira linha. Assim uma idade ausente não produz operação parcial.
+    const idsCriancas = [...new Set(itens.map((it) => String(it.crianca_id)))];
+    const { data: criancasLote, error: errCriancasLote } = await supabase.from('kids_criancas')
+      .select('id, nome, data_nascimento').in('id', idsCriancas).is('deleted_at', null);
+    if (errCriancasLote) throw errCriancasLote;
+    const encontradas = new Set((criancasLote || []).map((c) => c.id));
+    const inexistentes = idsCriancas.filter((id) => !encontradas.has(id));
+    if (inexistentes.length) return res.status(404).json({ error: 'Uma ou mais crianças não foram encontradas.', criancas_ids: inexistentes });
+    const semNascimento = (criancasLote || []).filter((c) => !c.data_nascimento);
+    if (semNascimento.length) {
+      return res.status(422).json({
+        error: 'Informe a data de nascimento de todas as crianças antes do check-in.',
+        precisa_data_nascimento: true,
+        criancas: semNascimento.map((c) => ({ id: c.id, nome: c.nome })),
+      });
+    }
+
     // ── Responsável + CPF resolvidos UMA vez pro lote (mesma política do /checkin) ──
     const cpfInformado = normalizarCpf(responsavel_cpf);
     if (responsavel_cpf && !cpfValido(cpfInformado)) {
@@ -2670,6 +2728,8 @@ router.post('/checkin/lote', authorizeModule('kids', 2), async (req, res) => {
       const { data } = await supabase.rpc('fn_kids_gerar_codigo_seguranca');
       return data || (() => { const a = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let c = ''; for (let i = 0; i < 4; i++) c += a[Math.floor(Math.random() * a.length)]; return c; })();
     };
+    const colisaoCodigo = (erro) => erro?.code === '23505'
+      && /c[oó]digo de seguran[cç]a ativo|kids_codigo_seguranca_ativo_grupo/i.test(`${erro.message || ''} ${erro.details || ''} ${erro.constraint || ''}`);
 
     // check-in de UMA criança (erro isolado · não derruba o lote). `codigoLote`:
     // código compartilhado por toda a família (Marcos 2026-07-16) — o pai fica com
@@ -2699,6 +2759,7 @@ router.post('/checkin/lote', authorizeModule('kids', 2), async (req, res) => {
         codigo_seguranca: codigoFinal, codigo_barras: codigoFinal, checkin_por: req.user.userId, checkin_grupo_id: grupoId,
       }).select('*').single();
       if (errIns) {
+        if (colisaoCodigo(errIns)) return { crianca_id, ok: false, colisao_codigo: true, error: 'colisão temporária de código' };
         if (errIns.code === '23505') return { crianca_id, ok: false, ja_aberto: true, error: 'já com check-in aberto' };
         return { crianca_id, ok: false, error: errIns.message };
       }
@@ -2742,10 +2803,22 @@ router.post('/checkin/lote', authorizeModule('kids', 2), async (req, res) => {
     // 1 código + 1 grupo pra família toda (compartilhados entre os irmãos do lote).
     // Grupo só quando há >1 criança → o checkout/portão fecham todos de uma vez;
     // 1 criança segue com grupo por multi-culto (comportamento individual).
-    const codigoLote = await codigoNovo();
     const grupoIdFamilia = itens.length > 1 ? require('crypto').randomUUID() : null;
     const resultados = [];
-    for (const it of itens) {
+    // A primeira inserção reserva o código/grupo. Colisão só pode ocorrer nela;
+    // depois, irmãos do mesmo grupo compartilham o código intencionalmente.
+    let codigoLote = null;
+    let primeiro = null;
+    for (let tentativa = 0; tentativa < 5; tentativa++) {
+      codigoLote = await codigoNovo();
+      primeiro = await fazerCheckin(itens[0].crianca_id, itens[0].sala_id, codigoLote, grupoIdFamilia);
+      if (!primeiro?.colisao_codigo) break;
+    }
+    if (primeiro?.colisao_codigo) {
+      return res.status(503).json({ error: 'Não foi possível reservar um código livre. Tente novamente.', pode_tentar_novamente: true });
+    }
+    resultados.push(primeiro);
+    for (const it of itens.slice(1)) {
       try { resultados.push(await fazerCheckin(it.crianca_id, it.sala_id, codigoLote, grupoIdFamilia)); }
       catch (e) { resultados.push({ crianca_id: it.crianca_id, ok: false, error: e.message }); }
     }
@@ -2806,7 +2879,7 @@ router.get('/checkin/codigo/:codigo', authorizeModule('kids', 2), async (req, re
 // Body: { checkin_id, responsavel_id?, responsavel_nome?, método, override_motivo? }
 router.post('/checkout', authorizeModule('kids', 2), async (req, res) => {
   try {
-    const { checkin_id, responsavel_id, responsavel_nome, metodo, override_motivo } = req.body;
+    const { checkin_id, responsavel_id, responsavel_nome, metodo, override_motivo, codigo_seguranca } = req.body;
     if (!checkin_id) return res.status(400).json({ error: 'checkin_id obrigatorio' });
     if (!metodo) return res.status(400).json({ error: 'metodo obrigatorio' });
 
@@ -2831,20 +2904,46 @@ router.post('/checkout', authorizeModule('kids', 2), async (req, res) => {
       }
     }
 
-    // Buscar nome do responsável (snapshot) · dispensado no método 'painel'
+    // Multi-culto: se o check-in faz parte de um grupo (criança ficou em mais de
+    // um culto), a retirada fecha TODAS as linhas ativas do grupo de uma vez.
+    const { data: alvo } = await supabase.from('kids_checkins')
+      .select('id, crianca_id, checkin_grupo_id, checkout_at, codigo_seguranca, responsavel_checkin_id, responsavel_checkin_nome')
+      .eq('id', checkin_id).maybeSingle();
+    if (!alvo) return res.status(404).json({ error: 'Check-in não encontrado' });
+    if (alvo.checkout_at) return res.status(409).json({ error: 'Check-in já foi feito checkout' });
+
+    // Métodos baseados na etiqueta precisam provar que o código lido pertence
+    // exatamente ao check-in alvo. O frontend não é fronteira de segurança.
+    if (metodo === 'codigo_digitado' || metodo === 'barcode_escaneado') {
+      const codigo = String(codigo_seguranca || '').toUpperCase().trim();
+      if (!codigo || codigo !== String(alvo.codigo_seguranca || '').toUpperCase()) {
+        return res.status(400).json({ error: 'Código de segurança não confere com este check-in' });
+      }
+    }
+
+    // Outro responsável só pode retirar se o vínculo autorizado existir no
+    // banco para esta criança. O nome do snapshot vem do cadastro confirmado.
     let respNome = responsavel_nome;
-    if (responsavel_id && !respNome) {
+    if (metodo === 'responsavel_autorizado') {
+      if (!responsavel_id) return res.status(400).json({ error: 'Selecione o responsável autorizado' });
+      const { data: vinculo } = await supabase.from('kids_responsaveis')
+        .select('membro:mem_membros(id, nome)')
+        .eq('crianca_id', alvo.crianca_id)
+        .eq('membro_id', responsavel_id)
+        .eq('autorizado_buscar', true)
+        .maybeSingle();
+      if (!vinculo?.membro) {
+        return res.status(403).json({ error: 'Essa pessoa não está autorizada a buscar a criança' });
+      }
+      respNome = vinculo.membro.nome;
+    } else if (metodo === 'codigo_digitado' || metodo === 'barcode_escaneado') {
+      // Código correto confirma a retirada; preserva quem entregou no snapshot.
+      respNome = alvo.responsavel_checkin_nome;
+    } else if (responsavel_id && !respNome) {
       const { data: m } = await supabase.from('mem_membros').select('nome').eq('id', responsavel_id).maybeSingle();
       respNome = m?.nome;
     }
     if (!respNome && metodo !== 'painel') return res.status(400).json({ error: 'responsavel_nome obrigatorio (snapshot)' });
-
-    // Multi-culto: se o check-in faz parte de um grupo (criança ficou em mais de
-    // um culto), a retirada fecha TODAS as linhas ativas do grupo de uma vez.
-    const { data: alvo } = await supabase.from('kids_checkins')
-      .select('id, checkin_grupo_id, checkout_at').eq('id', checkin_id).maybeSingle();
-    if (!alvo) return res.status(404).json({ error: 'Check-in não encontrado' });
-    if (alvo.checkout_at) return res.status(409).json({ error: 'Check-in já foi feito checkout' });
 
     const patch = {
       checkout_at: new Date().toISOString(),

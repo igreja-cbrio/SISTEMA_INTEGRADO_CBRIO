@@ -383,7 +383,9 @@ function escapeHtml(s: string): string {
   } as Record<string, string>)[c]);
 }
 
-function imprimirHtml(html: string, preview = false): Promise<void> {
+type ResultadoImpressao = { status: 'enviada' | 'sucesso' };
+
+function imprimirHtml(html: string, preview = false): Promise<ResultadoImpressao> {
   if (preview) {
     // Modo preview · abre popup visível pro usuário conferir layout antes de
     // ir pra impressora. Útil pra teste/debug. Janela um pouco maior que
@@ -391,17 +393,15 @@ function imprimirHtml(html: string, preview = false): Promise<void> {
     return new Promise((resolve) => {
       const win = window.open('', '_blank', 'width=480,height=200,scrollbars=yes');
       if (!win) {
-        console.warn('[totemKids/imprimir] popup bloqueado · libere popups do site');
-        resolve();
-        return;
+        throw new Error('Popup bloqueado · libere popups do sistema para visualizar a etiqueta');
       }
       win.document.open();
       win.document.write(html);
       win.document.close();
-      resolve();
+      resolve({ status: 'sucesso' });
     });
   }
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const iframe = document.createElement('iframe');
     // Renderiza com tamanho real MAS fora da tela. Evita bugs de iframe 0x0
     // em Chrome/Edge que ignoram print() quando o iframe não tem dimensão.
@@ -417,7 +417,7 @@ function imprimirHtml(html: string, preview = false): Promise<void> {
     const doc = iframe.contentDocument || iframe.contentWindow?.document;
     if (!doc) {
       document.body.removeChild(iframe);
-      resolve();
+      reject(new Error('O navegador não conseguiu preparar a impressão'));
       return;
     }
     doc.open();
@@ -426,17 +426,29 @@ function imprimirHtml(html: string, preview = false): Promise<void> {
 
     // Delay pra fontes + barcode SVG renderizarem
     setTimeout(() => {
+      let finalizado = false;
+      const concluir = (status: ResultadoImpressao['status']) => {
+        if (finalizado) return;
+        finalizado = true;
+        try { document.body.removeChild(iframe); } catch { /* já removido */ }
+        resolve({ status });
+      };
       try {
+        // `afterprint` é a melhor confirmação disponível no navegador: indica
+        // que o job saiu do diálogo/kiosk e foi aceito pelo fluxo de impressão.
+        // A Brother física ainda deve ser conferida pelo operador.
+        iframe.contentWindow?.addEventListener('afterprint', () => concluir('sucesso'), { once: true });
         iframe.contentWindow?.focus();
         iframe.contentWindow?.print();
       } catch (e) {
         console.error('[totemKids/imprimir] erro print:', e);
+        try { document.body.removeChild(iframe); } catch { /* já removido */ }
+        reject(new Error(`Falha ao enviar para a impressora: ${e instanceof Error ? e.message : String(e)}`));
+        return;
       }
-      // Remove após 3s (tempo do spool + confirmação do dialogo)
-      setTimeout(() => {
-        try { document.body.removeChild(iframe); } catch { /* iframe já removido */ }
-        resolve();
-      }, 3000);
+      // Alguns modos kiosk não disparam afterprint. Nesse caso registramos só
+      // "enviada", sem afirmar sucesso que o browser não confirmou.
+      setTimeout(() => concluir('enviada'), 4000);
     }, 400);
   });
 }
@@ -473,7 +485,7 @@ export async function imprimirEtiquetas(d: DadosImpressao, preview = false, incl
   if (incluirRecibo) fragmentos.push(htmlEtiquetaResponsavel(d, barcodeSvg));
   if (d.crianca.aniversarioSemana) fragmentos.push(htmlEtiquetaAniversario(d));
 
-  await imprimirHtml(documento(fragmentos), preview);
+  const resultado = await imprimirHtml(documento(fragmentos), preview);
   if (preview) return;  // não loga impressão em modo preview
 
   totemKids.etiquetas.log({
@@ -489,7 +501,7 @@ export async function imprimirEtiquetas(d: DadosImpressao, preview = false, incl
       copias: 2,
       aniversario: !!d.crianca.aniversarioSemana,
     },
-    status: 'enviada',
+    status: resultado.status,
   }).catch(() => {});
   if (incluirRecibo) {
     totemKids.etiquetas.log({
@@ -497,7 +509,7 @@ export async function imprimirEtiquetas(d: DadosImpressao, preview = false, incl
       estacao_id: d.estacaoId,
       tipo: 'responsavel',
       conteudo: { crianca: d.crianca.nome, sala: d.crianca.salaNome, codigo: d.codigoSeguranca },
-      status: 'enviada',
+      status: resultado.status,
     }).catch(() => {});
   }
 }
@@ -506,7 +518,7 @@ export async function imprimirEtiquetas(d: DadosImpressao, preview = false, incl
 export async function reimprimirEtiqueta(d: DadosImpressao, tipo: 'crianca' | 'responsavel', motivo: string): Promise<void> {
   const [barcodeSvg] = await Promise.all([gerarBarcodeSvg(d.codigoBarras), preloadImg(d.crianca.salaLogoUrl)]);
   const frag = tipo === 'crianca' ? htmlEtiquetaCrianca(d, barcodeSvg) : htmlEtiquetaResponsavel(d, barcodeSvg);
-  await imprimirHtml(documento([frag]));
+  const resultado = await imprimirHtml(documento([frag]));
   totemKids.etiquetas.log({
     checkin_id: d.checkinId,
     estacao_id: d.estacaoId,
@@ -514,6 +526,41 @@ export async function reimprimirEtiqueta(d: DadosImpressao, tipo: 'crianca' | 'r
     conteudo: { nome: d.crianca.nome, codigo: d.codigoSeguranca },
     reimpressao: true,
     motivo_reimpressao: motivo,
-    status: 'enviada',
+    status: resultado.status,
   }).catch(() => {});
+}
+
+// Reimpressão COMPLETA: repete exatamente o conjunto operacional do check-in
+// (2 etiquetas da criança + recibo do responsável + aniversário, se houver),
+// preservando o mesmo código de segurança e sem criar novo check-in.
+export async function reimprimirEtiquetasCompletas(d: DadosImpressao, motivo: string): Promise<void> {
+  const [barcodeSvg] = await Promise.all([
+    gerarBarcodeSvg(d.codigoBarras),
+    preloadImg(d.crianca.salaLogoUrl),
+    d.crianca.aniversarioSemana ? preloadImg(d.logoAniversarioUrl) : Promise.resolve(),
+  ]);
+  const fragCrianca = htmlEtiquetaCrianca(d, barcodeSvg);
+  const fragmentos = [fragCrianca, fragCrianca, htmlEtiquetaResponsavel(d, barcodeSvg)];
+  if (d.crianca.aniversarioSemana) fragmentos.push(htmlEtiquetaAniversario(d));
+  const resultado = await imprimirHtml(documento(fragmentos));
+  await Promise.all([
+    totemKids.etiquetas.log({
+      checkin_id: d.checkinId,
+      estacao_id: d.estacaoId,
+      tipo: 'crianca',
+      conteudo: { nome: d.crianca.nome, codigo: d.codigoSeguranca, copias: 2, completa: true },
+      reimpressao: true,
+      motivo_reimpressao: motivo,
+      status: resultado.status,
+    }),
+    totemKids.etiquetas.log({
+      checkin_id: d.checkinId,
+      estacao_id: d.estacaoId,
+      tipo: 'responsavel',
+      conteudo: { nome: d.responsavel.nome, codigo: d.codigoSeguranca, completa: true },
+      reimpressao: true,
+      motivo_reimpressao: motivo,
+      status: resultado.status,
+    }),
+  ]).catch(() => {});
 }

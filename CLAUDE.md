@@ -2207,6 +2207,34 @@ via `window.print` na Brother QL-820NWB default do Windows).
   pré-check-in por código (foto_url legada do sistema segue inalterada).
   ⚠️ As views de checkout-por-código e roster de sala ainda leem foto_url
   legado (não mostram foto do app · não é o ponto de identificação na entrada).
+- **Confiabilidade operacional para o 3º teste (2026-07-17)**: a sessão atual
+  agora é escolhida somente entre cultos de **hoje em BRT**, respeitando a janela
+  de horário (não reutiliza sessão antiga/futura aberta por engano). O checkout
+  valida no servidor o código digitado e o responsável autorizado; o front passa
+  o ID clicado diretamente, eliminando a corrida de `setState`. Check-in individual
+  e em lote exigem `data_nascimento` antes de qualquer INSERT; o totem abre modal
+  obrigatório para completar a idade de cada criança da família. Os botões antigos
+  de reimpressão rápida continuam imprimindo só a etiqueta infantil; foi adicionada
+  a opção **Reimprimir completo** (2 etiquetas da criança + recibo/QR do responsável,
+  mesmo código). A impressão registra `sucesso` quando recebe `afterprint` e
+  `enviada` apenas como fallback de quiosque. Códigos de segurança têm retry
+  automático (5 tentativas) e trava transacional por código/grupo na migration
+  `20260717160000_kids_codigo_seguranca_integridade.sql` (**aplicada em produção
+  manualmente em 2026-07-17**); irmãos/multi-culto do mesmo `checkin_grupo_id`
+  podem compartilhar o código, famílias diferentes não.
+- **Saneamento da base Kids (2026-07-17 · `scripts/kids_integridade_auto.cjs
+  --auto`)**: executado com backup JSON antes das mutações. Foram fundidos 2
+  responsáveis realmente duplicados (mesmo telefone + grafia quase idêntica),
+  corrigidos 71 vínculos legados excedentes de `mae`/`pai` para `outro` sem remover
+  pessoas autorizadas, consolidadas 15 crianças na família evidenciada pelo mesmo
+  pai/mãe, diferenciadas 551 famílias homônimas por sobrenomes e recuperados 116
+  vínculos de crianças sem responsável a partir dos responsáveis já autorizados
+  dos irmãos da mesma família. Resultado auditado: zero criança com mais de uma
+  `mae` ou mais de um `pai`, zero CPF duplicado; quatro telefones compartilhados
+  por pessoas de nomes diferentes foram preservados. Nenhuma criança atingiu com
+  segurança o critério de soft-delete (sem idade + sem responsável + sem atividade
+  há mais de 1 ano), portanto nenhuma foi apagada. O script é conservador e deve
+  sempre rodar primeiro sem `--auto` para diagnóstico.
 - **Pendências operacionais**: aplicar migration
   `20260522300000_totem_kids_chamadas_display.sql`; Brother no Windows do totem
   (docs/totem-kids-setup-brother.md); comprar/parear 6 Fire TV Sticks;

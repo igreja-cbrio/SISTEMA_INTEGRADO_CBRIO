@@ -19,8 +19,8 @@ import { totemKids } from '@/api';
 import { TotemKidsConfigTabs } from '@/pages/admin/totemKids/TotemKidsAdmin';
 import TotemKidsCheckout from './TotemKidsCheckout';
 import QrScanner from '@/pages/ministerial/voluntariado/components/checkin/QrScanner';
-import { formatIdade, formatIdadeShort } from './lib/idade';
-import { imprimirEtiquetas, reimprimirEtiqueta } from './lib/imprimir';
+import { calcIdadeMeses, formatIdade, formatIdadeShort } from './lib/idade';
+import { imprimirEtiquetas, reimprimirEtiqueta, reimprimirEtiquetasCompletas } from './lib/imprimir';
 import DataNascimentoPicker from './DataNascimentoPicker';
 import useConfirmarSaida from '@/hooks/useConfirmarSaida';
 import confetti from 'canvas-confetti';
@@ -355,6 +355,7 @@ export default function TotemKidsCheckin() {
   // reimprimir (mesmo código); novo check-in só depois do check-out.
   const [checkinAberto, setCheckinAberto] = useState<any>(null);
   const [reimprimindoAberto, setReimprimindoAberto] = useState(false);
+  const [reimprimindoCompletoId, setReimprimindoCompletoId] = useState<string | null>(null);
   // Check-ins abertos em OUTRAS sessões (culto anterior sem check-out) — não
   // impedem o novo check-in; o totem avisa e oferece regularizar.
   const [abertosAnteriores, setAbertosAnteriores] = useState<any[]>([]);
@@ -584,6 +585,25 @@ export default function TotemKidsCheckin() {
     } catch (e: unknown) {
       toast.error((e as { message?: string })?.message || 'Erro ao reimprimir');
     }
+  }
+
+  // Opção adicional: mantém a reimpressão rápida acima e permite refazer o kit
+  // completo (duas etiquetas da criança + recibo/QR do responsável).
+  async function reimprimirCompleto(ck: any, cr: Crianca) {
+    if (!ck?.id || reimprimindoCompletoId) return;
+    setReimprimindoCompletoId(ck.id);
+    try {
+      const dados = montarDadosEtiqueta(cr, {
+        checkinId: ck.id, salaNome: ck.sala?.nome || '', salaCor: ck.sala?.cor || null,
+        salaLogoUrl: ck.sala?.logo_url || null, respNome: ck.responsavel_checkin_nome || '',
+        codigo: ck.codigo_seguranca, codigoBarras: ck.codigo_barras,
+        cultoNome: ck.sessao?.culto?.nome || null, cultoData: ck.sessao?.culto?.data || null,
+      });
+      await reimprimirEtiquetasCompletas(dados, 'Kit completo perdido — reimpressão pelo totem');
+      toast.success(`Kit completo de ${cr.nome.split(' ')[0]} reimpresso · código ${ck.codigo_seguranca}`);
+    } catch (e: unknown) {
+      toast.error((e as { message?: string })?.message || 'Erro ao reimprimir o kit completo');
+    } finally { setReimprimindoCompletoId(null); }
   }
 
   // Regulariza o culto anterior: faz o check-out esquecido (método 'painel').
@@ -1221,6 +1241,8 @@ export default function TotemKidsCheckin() {
             onConfirmar={confirmarCheckinFamilia}
             abertos={abertosFamilia}
             onReimprimirMembro={reimprimirMembroFamilia}
+            onReimprimirCompleto={reimprimirCompleto}
+            reimprimindoCompletoId={reimprimindoCompletoId}
             onAdicionarFilho={() => { setNovoContexto(crianca); setModalNovo(true); }}
             onAtualizarMembro={atualizarMembro}
             onResponsavelCadastrado={async () => {
@@ -1254,7 +1276,9 @@ export default function TotemKidsCheckin() {
             imprimindo={imprimindo}
             checkinAberto={checkinAberto}
             onReimprimirEtiqueta={reimprimirCheckinAberto}
+            onReimprimirCompleto={() => reimprimirCompleto(checkinAberto, crianca)}
             reimprimindoEtiqueta={reimprimindoAberto}
+            reimprimindoCompleto={reimprimindoCompletoId === checkinAberto?.id}
             abertosAnteriores={abertosAnteriores}
             onCheckoutAnterior={checkoutCultoAnterior}
             checkoutAnteriorId={checkoutAnteriorId}
@@ -1352,6 +1376,45 @@ export default function TotemKidsCheckin() {
 // padrão), cada um vai pra sala da idade (editável), UM responsável vale pra
 // todos, e dá pra adicionar um filho novo na hora. O loop de check-in acontece
 // no pai (confirmarCheckinFamilia), reusando o POST /checkin.
+function ModalNascimentoObrigatorio({ crianca, onSalvo }: {
+  crianca: Crianca;
+  onSalvo: (patch: Partial<Crianca>) => void;
+}) {
+  const [data, setData] = useState('');
+  const [salvando, setSalvando] = useState(false);
+
+  useEffect(() => setData(''), [crianca.id]);
+
+  async function salvar() {
+    if (!data) { toast.error('Informe dia, mês e ano de nascimento'); return; }
+    setSalvando(true);
+    try {
+      await totemKids.criancas.update(crianca.id, { data_nascimento: data });
+      onSalvo({ data_nascimento: data, idade_meses: calcIdadeMeses(data) });
+      toast.success(`Idade de ${crianca.nome.split(' ')[0]} atualizada`);
+    } catch (e: unknown) {
+      toast.error((e as { message?: string })?.message || 'Erro ao salvar a data de nascimento');
+    } finally { setSalvando(false); }
+  }
+
+  return (
+    <Dialog open onOpenChange={() => {}}>
+      <DialogContent onPointerDownOutside={(e) => e.preventDefault()} onEscapeKeyDown={(e) => e.preventDefault()}>
+        <DialogHeader>
+          <DialogTitle>Complete a idade de {crianca.nome.split(' ')[0]}</DialogTitle>
+          <DialogDescription>
+            A data de nascimento é necessária para indicar a sala correta e concluir o check-in com segurança.
+          </DialogDescription>
+        </DialogHeader>
+        <DataNascimentoPicker value={data} onChange={setData} />
+        <Button onClick={salvar} disabled={!data || salvando} className="bg-pink-600 hover:bg-pink-700 text-white">
+          {salvando && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Salvar e continuar
+        </Button>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function PainelFamilia(props: {
   primaria: Crianca;
   irmaos: Crianca[];
@@ -1373,11 +1436,14 @@ function PainelFamilia(props: {
   onResponsavelCadastrado: () => void;
   abertos: Record<string, any>;
   onReimprimirMembro: (checkin: any, crianca: Crianca) => void;
+  onReimprimirCompleto: (checkin: any, crianca: Crianca) => void;
+  reimprimindoCompletoId: string | null;
 }) {
   const { primaria, irmaos, salas, sessoesAbertas, cultoAtualId, cultosSel, setCultosSel,
     enviarWpp, setEnviarWpp, imprimindo, onCancelar, onConfirmar, onAdicionarFilho, onAtualizarMembro, onResponsavelCadastrado,
-    abertos, onReimprimirMembro } = props;
+    abertos, onReimprimirMembro, onReimprimirCompleto, reimprimindoCompletoId } = props;
   const membros = [primaria, ...irmaos];
+  const semNascimento = membros.find(m => !m.data_nascimento) || null;
   const jaEntrou = (id: string) => !!abertos[id];
   const salaPorIdade = (c: Crianca) =>
     salas.find(s => c.idade_meses != null
@@ -1543,6 +1609,12 @@ function PainelFamilia(props: {
                       onClick={() => onReimprimirMembro(entrou, m)}>
                       <Printer className="h-3.5 w-3.5 mr-1" /> Reimprimir etiqueta
                     </Button>
+                    <Button type="button" size="sm" variant="outline" className="h-7 ml-2 text-xs border-pink-400 text-pink-700 dark:text-pink-300"
+                      disabled={reimprimindoCompletoId === entrou.id}
+                      onClick={() => onReimprimirCompleto(entrou, m)}>
+                      {reimprimindoCompletoId === entrou.id ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Printer className="h-3.5 w-3.5 mr-1" />}
+                      Reimprimir completo
+                    </Button>
                   </div>
                 )}
                 {on && (
@@ -1632,6 +1704,12 @@ function PainelFamilia(props: {
         criancaNome={primaria.nome}
         onCadastrado={() => { setModalCadResp(false); onResponsavelCadastrado(); }}
       />
+      {semNascimento && (
+        <ModalNascimentoObrigatorio
+          crianca={semNascimento}
+          onSalvo={(patch) => onAtualizarMembro(semNascimento.id, patch)}
+        />
+      )}
     </Card>
   );
 }
@@ -2076,7 +2154,9 @@ function CheckinSelecao(props: {
   imprimindo: boolean;
   checkinAberto: any;
   onReimprimirEtiqueta: () => void;
+  onReimprimirCompleto: () => void;
   reimprimindoEtiqueta: boolean;
+  reimprimindoCompleto: boolean;
   abertosAnteriores: any[];
   onCheckoutAnterior: (checkinId: string) => void;
   checkoutAnteriorId: string | null;
@@ -2093,7 +2173,7 @@ function CheckinSelecao(props: {
     respManualNome, setRespManualNome, respManualTel, setRespManualTel,
     atualizarCrianca,
     onCancelar, onConfirmar, imprimindo,
-    checkinAberto, onReimprimirEtiqueta, reimprimindoEtiqueta,
+    checkinAberto, onReimprimirEtiqueta, onReimprimirCompleto, reimprimindoEtiqueta, reimprimindoCompleto,
     abertosAnteriores, onCheckoutAnterior, checkoutAnteriorId,
     onResponsavelCadastrado, onAdicionarIrmao, enviarWpp, setEnviarWpp } = props;
 
@@ -2420,6 +2500,11 @@ function CheckinSelecao(props: {
               {reimprimindoEtiqueta ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Printer className="h-4 w-4 mr-1" />}
               Imprimir etiqueta de novo
             </Button>
+            <Button onClick={onReimprimirCompleto} disabled={reimprimindoCompleto} variant="outline"
+              className="w-full border-pink-400 text-pink-700 dark:text-pink-300">
+              {reimprimindoCompleto ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Printer className="h-4 w-4 mr-1" />}
+              Reimprimir completo (criança + responsável)
+            </Button>
           </div>
         )}
 
@@ -2479,6 +2564,9 @@ function CheckinSelecao(props: {
           onResponsavelCadastrado();
         }}
       />
+      {!crianca.data_nascimento && (
+        <ModalNascimentoObrigatorio crianca={crianca} onSalvo={atualizarCrianca} />
+      )}
     </Card>
   );
 }
@@ -2543,6 +2631,7 @@ function ModalNovaCrianca(props: {
   async function salvar() {
     const validasCri = criancas.filter(c => c.nome.trim());
     if (!validasCri.length) { toast.error('Informe o nome de ao menos uma criança'); return; }
+    if (validasCri.some(c => !c.nasc)) { toast.error('Informe a data de nascimento de todas as crianças'); return; }
     const validos = props.referencia ? [] : resps.filter(r => r.nome.trim() && r.telefone.trim());
     if (!props.referencia && !validos.length) { toast.error('Informe ao menos um responsável (nome e telefone)'); return; }
     // CPF do responsável obrigatório (Marcos 2026-07-15) · supervisor dispensa via PIN.
