@@ -94,7 +94,10 @@ export default function ChatIAFloating() {
 
     let respostaFinal = '';
     try {
-      const res = await agents.chat({ message: texto, module: 'supervisor', sessionId });
+      // Usa /ask (Messages API estável + tools read-only c/ dados ao vivo) em vez
+      // de /chat (Sessions API beta "managed-agents", que a conta não tem acesso →
+      // devolvia "Authentication failed"). Mesmo contrato SSE (session/delta/error).
+      const res = await agents.ask({ message: texto, sessionId });
       const reader = res.body!.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
