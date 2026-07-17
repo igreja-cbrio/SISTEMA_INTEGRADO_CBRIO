@@ -806,7 +806,11 @@ router.post('/inscrever-lider', async (req, res) => {
         foto_url: fotoUrl,
         endereco: endereco ? String(endereco).trim().slice(0, 300) : null,
         bairro: bairro ? String(bairro).trim().slice(0, 120) : null,
-        origem: 'lideres',
+        // CHECK mem_cadastros_pendentes_origem_check só aceita
+        // site|qr_code|evento|importacao — a distinção "veio da inscrição de
+        // líder" vive em mem_lider_inscricoes, não aqui (mesmo 'qr_code' do
+        // /inscrever de grupos).
+        origem: 'qr_code',
         aceita_termos: !!aceita_termos,
         aceita_contato: true,
         consentimento_texto: consentimento_texto ? String(consentimento_texto).slice(0, 2000) : null,
