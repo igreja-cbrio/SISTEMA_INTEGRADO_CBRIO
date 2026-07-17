@@ -570,6 +570,25 @@ router.get('/kpis/relatorio', async (req, res) => {
   }
 });
 
+// GET /api/grupos/kpis/temporada-metricas?temporada=X — conjunto COMPLETO de
+// indicadores de UMA temporada, AO VIVO, pela MESMA função que a consolidação
+// congela (fn_temporada_metricas). Garante que o relatório filtrado por
+// temporada bate exatamente com o que vai pro histórico ao consolidar (Marcos
+// 17/07: "indicadores completos · certeza de que coleta certo"). Nível 1.
+router.get('/kpis/temporada-metricas', async (req, res) => {
+  try {
+    const { temporada } = req.query;
+    if (!temporada) return res.status(400).json({ error: 'Informe a temporada' });
+    const { data, error } = await supabase.rpc('fn_temporada_metricas', { p_temporada: temporada });
+    if (error) throw error;
+    // fn_temporada_metricas RETURNS TABLE → array com 1 linha.
+    res.json((Array.isArray(data) ? data[0] : data) || {});
+  } catch (e) {
+    console.error('[Grupos temporada-metricas]', e.message);
+    res.status(500).json({ error: 'Erro ao buscar as métricas da temporada' });
+  }
+});
+
 // GET /api/grupos/kpis/sem-relato · grupos ativos com o último encontro
 // registrado (qualquer via: sistema ou WhatsApp aplicado) e há quantos dias.
 // Alimenta o bloco "Grupos sem relatório" da aba Relatórios (visão do Pr.

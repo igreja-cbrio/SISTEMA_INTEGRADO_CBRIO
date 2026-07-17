@@ -508,6 +508,8 @@ export const grupos = {
   // Consolidação de temporada (fechamento) + comparativo entre temporadas
   temporadasConsolidado: () => get('/grupos/temporadas/consolidado'),
   consolidarTemporada: (id, forcar = false) => post(`/grupos/temporadas/${id}/consolidar${forcar ? '?forcar=1' : ''}`, {}),
+  // Métricas COMPLETAS de uma temporada ao vivo (mesma fonte da consolidação)
+  temporadaMetricas: (temporada) => get('/grupos/kpis/temporada-metricas?temporada=' + encodeURIComponent(temporada)),
   redes: {
     list: () => get('/grupos/redes'),
     create: (data) => post('/grupos/redes', data),
