@@ -83,6 +83,10 @@ function verificarToken(token, tipoEsperado) {
 
 // ── Formatação compartilhada ─────────────────────────────────────────────
 function formatarQuando(grupo) {
+  // Grupo diário acontece todos os dias — sem dia da semana fixo (Marcos · 17/07).
+  if ((grupo?.recorrencia || '').toLowerCase().trim() === 'diario') {
+    return grupo.horario ? `Todos os dias às ${String(grupo.horario).slice(0, 5)}` : 'Todos os dias';
+  }
   if (grupo?.dia_semana == null) return 'a combinar';
   const dia = DIAS_SEMANA[grupo.dia_semana] || 'a combinar';
   return grupo.horario ? `${dia} às ${String(grupo.horario).slice(0, 5)}` : dia;

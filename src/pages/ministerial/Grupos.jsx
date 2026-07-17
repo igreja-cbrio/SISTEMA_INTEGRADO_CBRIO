@@ -38,6 +38,9 @@ const C = {
 };
 
 const DIAS = ['Domingo', 'Segunda', 'Terca', 'Quarta', 'Quinta', 'Sexta', 'Sabado'];
+// Grupo diário acontece TODOS os dias (Marcos · 17/07): sem dia da semana fixo,
+// aparece em qualquer filtro de dia e mostra "Diário" no lugar do dia.
+const ehDiario = (g) => (g?.recorrencia || '').toLowerCase().trim() === 'diario';
 
 const STATUS_TEMPORADA = {
   ativo: { label: 'Ativo', cor: '#10b981', bg: '#10b98120' },
@@ -47,6 +50,7 @@ const STATUS_TEMPORADA = {
   encerrado: { label: 'Encerrado', cor: '#ef4444', bg: '#ef444420' },
 };
 const RECORRENCIAS = [
+  { value: 'diario', label: 'Diário' },
   { value: 'semanal', label: 'Semanal' },
   { value: 'quinzenal', label: 'Quinzenal' },
   { value: 'mensal', label: 'Mensal' },
@@ -95,7 +99,8 @@ function camposFaltantes(g) {
   const faltas = [];
   if (!g.lider_id) faltas.push('Líder');
   else if (!(g.lider?.telefone ?? g.lider_telefone)) faltas.push('Telefone do líder');
-  if (g.dia_semana == null) faltas.push('Dia da semana');
+  // Grupo diário não tem dia da semana de propósito — não é campo faltante.
+  if (g.dia_semana == null && !ehDiario(g)) faltas.push('Dia da semana');
   if (!g.horario) faltas.push('Horário');
   if (!g.endereco) faltas.push('Endereço');
   if (!g.bairro) faltas.push('Bairro');
@@ -641,7 +646,8 @@ export default function Grupos() {
       if (!(g.codigo?.toLowerCase().includes(s) || g.nome?.toLowerCase().includes(s) || g.lider_nome?.toLowerCase().includes(s) || g.local?.toLowerCase().includes(s) || g.bairro?.toLowerCase().includes(s))) return false;
     }
     if (filterTipo !== 'all' && g.categoria !== filterTipo) return false;
-    if (filterDia !== 'all' && String(g.dia_semana) !== filterDia) return false;
+    // Diário casa com qualquer dia filtrado (acontece todos os dias).
+    if (filterDia !== 'all' && !ehDiario(g) && String(g.dia_semana) !== filterDia) return false;
     if (filterBairro !== 'all' && g.bairro !== filterBairro) return false;
     if (filterStatusTemp !== 'all' && g.status_temporada !== filterStatusTemp) return false;
     if (filterRede !== 'all') {
@@ -707,7 +713,9 @@ export default function Grupos() {
                   {g.complemento ? ` — ${g.complemento}` : ''}
                 </AbrirRotaMenu>
               )}
-              {g.dia_semana != null && <span style={{ fontSize: 13, color: C.t2, display: 'flex', alignItems: 'center', gap: 4 }}><Clock size={12} /> {DIAS[g.dia_semana]} {g.horario?.slice(0, 5)}</span>}
+              {ehDiario(g)
+                ? <span style={{ fontSize: 13, color: C.t2, display: 'flex', alignItems: 'center', gap: 4 }}><Clock size={12} /> Diário {g.horario?.slice(0, 5)}</span>
+                : g.dia_semana != null && <span style={{ fontSize: 13, color: C.t2, display: 'flex', alignItems: 'center', gap: 4 }}><Clock size={12} /> {DIAS[g.dia_semana]} {g.horario?.slice(0, 5)}</span>}
               {g.status_temporada && STATUS_TEMPORADA[g.status_temporada] ? (
                 <span style={{ fontSize: 12, padding: '2px 8px', borderRadius: 99, background: STATUS_TEMPORADA[g.status_temporada].bg, color: STATUS_TEMPORADA[g.status_temporada].cor, fontWeight: 600 }}>
                   {STATUS_TEMPORADA[g.status_temporada].label}
@@ -1710,7 +1718,11 @@ export default function Grupos() {
                   </div>
                   {g.lider_nome && <div style={{ fontSize: 12, color: C.t2, marginBottom: 2 }}>Lider: {g.lider_nome}</div>}
                   <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 4 }}>
-                    {g.dia_semana != null && (
+                    {ehDiario(g) ? (
+                      <span style={{ fontSize: 11, color: C.t3, display: 'flex', alignItems: 'center', gap: 3 }}>
+                        <Clock size={11} /> Diário {g.horario?.slice(0, 5)}
+                      </span>
+                    ) : g.dia_semana != null && (
                       <span style={{ fontSize: 11, color: C.t3, display: 'flex', alignItems: 'center', gap: 3 }}>
                         <Clock size={11} /> {DIAS[g.dia_semana]} {g.horario?.slice(0, 5)}
                       </span>
@@ -2058,9 +2070,12 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
     const iMax = form.idade_max === '' || form.idade_max == null ? null : Number(form.idade_max);
     if (iMin != null && iMax != null && iMin > iMax) { toast.error('Idade mínima maior que a máxima'); return; }
     const { _geocoding, ...rest } = form;
+    // Diário = todos os dias → sem dia da semana fixo (a UI já bloqueia o
+    // campo, mas força null aqui pra um valor antigo não escapar no salvar).
+    const diaSemana = ehDiario(rest) ? null : (rest.dia_semana === '' ? null : Number(rest.dia_semana));
     onSave({
       ...rest,
-      dia_semana: rest.dia_semana === '' ? null : Number(rest.dia_semana),
+      dia_semana: diaSemana,
       lider_id: rest.lider_id || null,
       grupo_origem_id: rest.grupo_origem_id || null,
       lat: rest.lat || null,
@@ -2106,7 +2121,15 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
             </div>
             <div>
               <Label>Recorrencia</Label>
-              <ShadSelect value={form.recorrencia || 'semanal'} onValueChange={v => set('recorrencia', v)}>
+              <ShadSelect
+                value={form.recorrencia || 'semanal'}
+                onValueChange={v => setForm(f => ({
+                  ...f,
+                  recorrencia: v,
+                  // Diário não tem dia fixo — limpa o dia ao escolher diário.
+                  ...(v === 'diario' ? { dia_semana: '' } : {}),
+                }))}
+              >
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {RECORRENCIAS.map(r => <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>)}
@@ -2179,12 +2202,22 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <div>
               <Label>Dia da semana</Label>
-              <ShadSelect value={form.dia_semana?.toString() ?? ''} onValueChange={v => set('dia_semana', v)}>
-                <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
-                <SelectContent>
-                  {DIAS.map((d, i) => <SelectItem key={i} value={String(i)}>{d}</SelectItem>)}
-                </SelectContent>
-              </ShadSelect>
+              {ehDiario(form) ? (
+                // Diário acontece todos os dias — sem dia fixo (campo travado).
+                <div style={{
+                  padding: '8px 12px', borderRadius: 8, border: '1px solid var(--cbrio-border)',
+                  background: 'var(--cbrio-input-bg)', color: 'var(--cbrio-text3)', fontSize: 13,
+                }}>
+                  Diário — todos os dias
+                </div>
+              ) : (
+                <ShadSelect value={form.dia_semana?.toString() ?? ''} onValueChange={v => set('dia_semana', v)}>
+                  <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
+                  <SelectContent>
+                    {DIAS.map((d, i) => <SelectItem key={i} value={String(i)}>{d}</SelectItem>)}
+                  </SelectContent>
+                </ShadSelect>
+              )}
             </div>
             <div>
               <Label>Horario</Label>
@@ -2712,7 +2745,7 @@ function RelatorioGrupos({ temporada }) {
                               <span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{g.nome}</span>
                               <span style={{ fontSize: 11, color: C.t3, marginLeft: 8 }}>
                                 {g.lider_nome ? `Líder: ${g.lider_nome}` : 'Sem líder'}
-                                {g.dia_semana != null ? ` · ${DIAS[g.dia_semana]}` : ''}
+                                {ehDiario(g) ? ' · Diário' : g.dia_semana != null ? ` · ${DIAS[g.dia_semana]}` : ''}
                               </span>
                             </div>
                             <span style={{ fontSize: 10, padding: '3px 10px', borderRadius: 99, background: `${cor}20`, color: cor, fontWeight: 700, flexShrink: 0 }}>
