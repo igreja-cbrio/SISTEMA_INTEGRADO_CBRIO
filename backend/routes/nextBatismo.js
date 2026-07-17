@@ -109,14 +109,22 @@ function rowVisita(r) {
 router.get('/resumo', authorizeModule('next-batismo', 1), async (req, res) => {
   try {
     const cnt = async (q) => { const { count } = await q; return count || 0; };
-    const [dup, semNext, semBat, semConv, semVis] = await Promise.all([
+    const [dup, semNext, semBat, semConv, semVis, vivos, comCpf] = await Promise.all([
       cnt(supabase.from('vw_nb_duplicados_suspeitos').select('*', { count: 'exact', head: true })),
       cnt(supabase.from('next_inscricoes').select('id', { count: 'exact', head: true }).is('membro_id', null)),
       cnt(supabase.from('batismo_inscricoes').select('id', { count: 'exact', head: true }).is('membro_id', null).is('deleted_at', null).neq('status', 'cancelado')),
       cnt(supabase.from('cui_convertidos').select('id', { count: 'exact', head: true }).is('membro_id', null).is('deleted_at', null)),
       cnt(supabase.from('cui_visitas').select('id', { count: 'exact', head: true }).is('membro_id', null).is('deleted_at', null)),
+      cnt(supabase.from('mem_membros').select('id', { count: 'exact', head: true }).is('deleted_at', null)),
+      cnt(supabase.from('mem_membros').select('id', { count: 'exact', head: true }).is('deleted_at', null).not('cpf', 'is', null)),
     ]);
-    res.json({ duplicatas: dup, sem_vinculo: semNext + semBat + semConv + semVis, por_origem: { next: semNext, batismo: semBat, convertido: semConv, visita: semVis } });
+    res.json({
+      duplicatas: dup,
+      sem_vinculo: semNext + semBat + semConv + semVis,
+      por_origem: { next: semNext, batismo: semBat, convertido: semConv, visita: semVis },
+      // Saúde da identidade (corrida do CPF · faixa do topo da tela)
+      saude: { pessoas: vivos, com_cpf: comCpf, pct_cpf: vivos > 0 ? Math.round((comCpf / vivos) * 100) : 0 },
+    });
   } catch (e) {
     console.error('[next-batismo/resumo]', e.message);
     res.status(500).json({ error: e.message || 'Erro ao montar resumo' });
