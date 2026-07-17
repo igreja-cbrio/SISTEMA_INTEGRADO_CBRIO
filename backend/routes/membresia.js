@@ -2235,15 +2235,18 @@ router.post('/cadastros/:id/aprovar', authorize('admin', 'diretor'), async (req,
       .eq('id', id);
     if (e3) console.error('[CADASTROS] erro ao atualizar cadastro:', e3.message);
 
-    // Registra no histórico do membro
+    // Registra no histórico do membro. `tipo` é NOT NULL no schema vivo
+    // (CHECK aceita 'outro') — sem ele o insert falhava em silêncio.
     try {
-      await supabase.from('mem_historico').insert({
+      const { error: eHist } = await supabase.from('mem_historico').insert({
         membro_id: membro.id,
+        tipo: 'outro',
         descricao: foiAtualizacao
           ? `Atualização cadastral a partir do formulário público (origem: ${cad.origem}).`
           : `Aprovado a partir do formulário público (origem: ${cad.origem}).`,
         registrado_por: req.user.userId,
       });
+      if (eHist) console.warn('[CADASTROS] histórico não gravado:', eHist.message);
     } catch (_) { /* histórico é opcional */ }
 
     notificar({

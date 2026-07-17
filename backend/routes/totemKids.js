@@ -756,7 +756,7 @@ router.post('/criancas', authorizeModule('kids', 2), async (req, res) => {
 
     // Dispensa de CPF registrada (auditoria CPF 2026-07-16): fica rastreável
     // QUEM entrou sem CPF pela válvula (a cobrança volta no próximo check-in).
-    // mem_historico só tem `descricao` (não existem colunas acao/observacao).
+    // Schema vivo de mem_historico exige `tipo` (CHECK aceita 'outro').
     // O servidor NÃO valida o PIN do supervisor (fica no totem) — o registro
     // aponta o OPERADOR autenticado que acionou a dispensa, não "o supervisor".
     if (permitir_sem_cpf) {
@@ -764,6 +764,7 @@ router.post('/criancas', authorizeModule('kids', 2), async (req, res) => {
         if (m.cpf) continue;
         supabase.from('mem_historico').insert({
           membro_id: m.membro.id,
+          tipo: 'outro',
           descricao: `[cpf_dispensado] Cadastro Kids liberado sem CPF via válvula do totem (criança ${criancaCriada.nome} · operador ${req.user?.userId || req.user?.id || 'desconhecido'}).`,
           created_at: new Date().toISOString(),
         }).then(({ error }) => { if (error) console.warn('[totemKids/criancas] historico dispensa:', error.message); });
@@ -2200,11 +2201,12 @@ router.post('/criancas/:id/responsavel-rapido', authorizeModule('kids', 2), asyn
     }
 
     // Dispensa de CPF registrada (auditoria CPF 2026-07-16) · best-effort.
-    // mem_historico só tem `descricao`; o registro aponta o OPERADOR (o PIN do
-    // supervisor não é validado no servidor).
+    // Schema vivo de mem_historico exige `tipo` (CHECK aceita 'outro'); o
+    // registro aponta o OPERADOR (o PIN do supervisor não é validado no servidor).
     if (permitir_sem_cpf && !cpfNorm) {
       supabase.from('mem_historico').insert({
         membro_id: membro.id,
+        tipo: 'outro',
         descricao: `[cpf_dispensado] Responsável Kids liberado sem CPF via válvula do totem (criança ${crianca.nome} · operador ${req.user?.userId || req.user?.id || 'desconhecido'}).`,
         created_at: new Date().toISOString(),
       }).then(({ error }) => { if (error) console.warn('[totemKids/responsavel-rapido] historico dispensa:', error.message); });
