@@ -1583,7 +1583,7 @@ async function aprovarPedidoCore(pedidoId, user) {
     (async () => {
       try {
         const { data: grupo } = await supabase.from('mem_grupos')
-          .select('id, nome, codigo, dia_semana, horario, local, endereco, complemento, bairro, lider_id')
+          .select('id, nome, codigo, dia_semana, horario, recorrencia, local, endereco, complemento, bairro, lider_id')
           .eq('id', pedido.grupo_id).single();
         if (!grupo) return;
         let liderNome = null;

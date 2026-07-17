@@ -37,6 +37,9 @@ const DIAS_CURTO = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 const RECORRENCIA_LABEL = { diario: 'Diário', semanal: 'Semanal', quinzenal: 'Quinzenal', mensal: 'Mensal' };
 const RECORRENCIA_ORDEM = ['diario', 'semanal', 'quinzenal', 'mensal'];
 const recorrenciaLabel = (r) => RECORRENCIA_LABEL[r] || (r ? r.charAt(0).toUpperCase() + r.slice(1) : '');
+// Grupo diário acontece TODOS os dias — não tem dia da semana fixo (Marcos ·
+// 17/07). Aparece em qualquer filtro de dia e mostra "Diário" no lugar do dia.
+const ehDiario = (g) => (g?.recorrencia || '').toLowerCase().trim() === 'diario';
 
 // As temporadas de grupos abrem em março e agosto (cadência institucional ·
 // Marcos 15/07) — a frase do aviso aponta a PRÓXIMA abertura a partir de hoje.
@@ -161,7 +164,8 @@ export default function GrupoSelector({ onSelect, selectedGrupoId, mode = 'full'
       if (fCategoria && g.categoria !== fCategoria) return false;
       if (fFaixa && g.faixa_etaria !== fFaixa) return false;
       if (fBairro && g.bairro !== fBairro) return false;
-      if (fDia !== '' && String(g.dia_semana) !== fDia) return false;
+      // Diário casa com QUALQUER dia escolhido (acontece todos os dias).
+      if (fDia !== '' && !ehDiario(g) && String(g.dia_semana) !== fDia) return false;
       if (fRecorrencia && (g.recorrencia || '').toLowerCase().trim() !== fRecorrencia) return false;
       if (s) {
         if (searchMode === 'lider') {
@@ -366,8 +370,12 @@ function ResultsList({ grupos, loading, selectedGrupoId, onSelect, isMobile = fa
                 return nomes.length ? <span><UserIcon size={10} style={{ display: 'inline', marginRight: 2 }} /> {nomes.join(' · ')}</span> : null;
               })()}
               {g.bairro && <span><MapPin size={10} style={{ display: 'inline', marginRight: 2 }} /> {g.bairro}</span>}
-              {g.dia_semana != null && <span><Clock size={10} style={{ display: 'inline', marginRight: 2 }} /> {DIAS_CURTO[g.dia_semana]}{g.horario ? ` ${g.horario.slice(0, 5)}` : ''}</span>}
-              {g.recorrencia && g.recorrencia.toLowerCase().trim() !== 'semanal' && <span>· {recorrenciaLabel(g.recorrencia.toLowerCase().trim())}</span>}
+              {ehDiario(g)
+                ? <span><Clock size={10} style={{ display: 'inline', marginRight: 2 }} /> Diário{g.horario ? ` ${g.horario.slice(0, 5)}` : ''}</span>
+                : <>
+                    {g.dia_semana != null && <span><Clock size={10} style={{ display: 'inline', marginRight: 2 }} /> {DIAS_CURTO[g.dia_semana]}{g.horario ? ` ${g.horario.slice(0, 5)}` : ''}</span>}
+                    {g.recorrencia && g.recorrencia.toLowerCase().trim() !== 'semanal' && <span>· {recorrenciaLabel(g.recorrencia.toLowerCase().trim())}</span>}
+                  </>}
               {g.dist_km != null && <span style={{ color: C.primary, fontWeight: 600 }}>{g.dist_km < 1 ? `${Math.round(g.dist_km * 1000)}m` : `${g.dist_km.toFixed(1)}km`}</span>}
               {g.categoria && <span>· {g.categoria}</span>}
               {(() => {

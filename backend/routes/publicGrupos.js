@@ -461,7 +461,7 @@ router.post('/inscrever', async (req, res) => {
 
     // Verifica se grupo existe e esta ativo
     const { data: grupo } = await supabase.from('mem_grupos')
-      .select('id, nome, ativo, aceitando_inscricoes, modo_inscricao, status_temporada, temporada, lider_id, categoria, idade_min, idade_max').eq('id', grupo_id).is('deleted_at', null).single();
+      .select('id, nome, ativo, aceitando_inscricoes, modo_inscricao, status_temporada, temporada, lider_id, categoria, idade_min, idade_max, dia_semana, horario, recorrencia, local, endereco, complemento, bairro').eq('id', grupo_id).is('deleted_at', null).single();
     if (!grupo || !grupo.ativo) {
       return res.status(404).json({ error: 'Grupo não encontrado ou inativo.' });
     }
@@ -882,7 +882,7 @@ router.get('/pedido/por-token', async (req, res) => {
     if (!payload) return res.status(401).json({ error: 'Link inválido ou expirado. Você ainda pode aprovar pelo sistema em /grupos.' });
 
     const { data: pedido, error: ePed } = await supabase.from('mem_grupo_pedidos')
-      .select('id, nome, telefone, email, observacao, status, created_at, motivo_rejeicao, grupo_id, mem_grupos(id, nome, codigo, bairro, dia_semana, horario, local, endereco, complemento, capacidade, lider_id)')
+      .select('id, nome, telefone, email, observacao, status, created_at, motivo_rejeicao, grupo_id, mem_grupos(id, nome, codigo, bairro, dia_semana, horario, recorrencia, local, endereco, complemento, capacidade, lider_id)')
       .eq('id', payload.p).is('deleted_at', null).maybeSingle();
     if (ePed) throw ePed; // falha de infra é 500, não "não encontrado" terminal
     if (!pedido) return res.status(404).json({ error: 'Pedido não encontrado.' });
@@ -1031,7 +1031,7 @@ router.get('/pedido/sugestao', async (req, res) => {
     if (!pedido) return res.status(404).json({ error: 'Pedido não encontrado.' });
 
     const { data: sugerido } = await supabase.from('mem_grupos')
-      .select('id, nome, codigo, bairro, dia_semana, horario, local, endereco, complemento, capacidade, ativo, aceitando_inscricoes')
+      .select('id, nome, codigo, bairro, dia_semana, horario, recorrencia, local, endereco, complemento, capacidade, ativo, aceitando_inscricoes')
       .eq('id', payload.g).is('deleted_at', null).maybeSingle();
     if (!sugerido || !sugerido.ativo) {
       return res.status(410).json({ error: 'O grupo sugerido não está mais disponível. Seu pedido original continua valendo.' });

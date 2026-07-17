@@ -29,6 +29,10 @@ const DIAS_MAP: Record<number, string> = {
   6: "Sábado",
 };
 
+// Grupo diário acontece todos os dias — mostra "Diário" no lugar do dia.
+const ehDiario = (g: { recorrencia?: string | null }) =>
+  (g?.recorrencia || "").toLowerCase().trim() === "diario";
+
 export interface MapGroup {
   id: string;
   nome: string;
@@ -37,6 +41,7 @@ export interface MapGroup {
   lng?: number | null;
   local?: string | null;
   dia_semana?: number | null;
+  recorrencia?: string | null;
   horario?: string | null;
   lider?: { nome?: string } | null;
   lider_nome?: string | null;
@@ -374,7 +379,13 @@ export function GruposMapView({
                           </p>
                         )}
                         <div className={cn("flex flex-wrap gap-x-2 gap-y-0.5 mt-1 text-[11px]", subtleText)}>
-                          {g.dia_semana != null && (
+                          {ehDiario(g) ? (
+                            <span className="flex items-center gap-1">
+                              <Clock className="h-3 w-3" />
+                              Diário
+                              {g.horario ? ` • ${String(g.horario).slice(0, 5)}` : ""}
+                            </span>
+                          ) : g.dia_semana != null && (
                             <span className="flex items-center gap-1">
                               <Clock className="h-3 w-3" />
                               {DIAS_MAP[g.dia_semana]}
@@ -603,7 +614,13 @@ function GrupoInfo({
         </p>
       )}
       <div className="flex flex-wrap gap-x-2 gap-y-1 text-xs text-muted-foreground">
-        {g.dia_semana != null && (
+        {ehDiario(g) ? (
+          <span className="flex items-center gap-1">
+            <Clock className="h-3 w-3" />
+            Diário
+            {g.horario ? ` • ${String(g.horario).slice(0, 5)}` : ""}
+          </span>
+        ) : g.dia_semana != null && (
           <span className="flex items-center gap-1">
             <Clock className="h-3 w-3" />
             {DIAS_MAP[g.dia_semana]}
