@@ -2609,6 +2609,7 @@ function RelatorioGrupos({ temporada }) {
   const [vista, setVista] = useState('atual'); // 'atual' (detalhe) | 'comparativo' (entre temporadas)
   const [meses, setMeses] = useState(12);
   const [data, setData] = useState(null);
+  const [metricas, setMetricas] = useState(null); // conjunto COMPLETO, ao vivo, da temporada (== consolidação)
   const [treino, setTreino] = useState([]);
   const [semRelato, setSemRelato] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -2623,15 +2624,22 @@ function RelatorioGrupos({ temporada }) {
       api.relatorioKpis(params),
       api.lideresTreinamento(treinoParams).catch(() => []),
       api.semRelato().catch(() => null),
+      // Métricas completas da temporada, ao vivo, pela MESMA função que a
+      // consolidação congela — só quando há uma temporada selecionada (a função
+      // precisa da janela de data da temporada). Sem temporada, cai no relatório.
+      temporada ? api.temporadaMetricas(temporada).catch(() => null) : Promise.resolve(null),
     ])
-      .then(([d, t, sr]) => { if (alive) { setData(d); setTreino(Array.isArray(t) ? t : []); setSemRelato(sr); } })
-      .catch(() => { if (alive) { setData(null); setTreino([]); } })
+      .then(([d, t, sr, m]) => { if (alive) { setData(d); setTreino(Array.isArray(t) ? t : []); setSemRelato(sr); setMetricas(m && Object.keys(m).length ? m : null); } })
+      .catch(() => { if (alive) { setData(null); setTreino([]); setMetricas(null); } })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, [meses, temporada]);
 
   const serie = (data?.frequencia?.serie || []).map(s => ({ ...s, mes: relLabelMes(s.ym) }));
-  const nps = data?.satisfacao_lideres;
+  // NPS: prioriza o da temporada (métricas completas); cai no do relatório.
+  const nps = metricas
+    ? (metricas.satisfacao_lideres != null ? { valor: metricas.satisfacao_lideres, data: metricas.satisfacao_lideres_data } : null)
+    : data?.satisfacao_lideres;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -2672,11 +2680,29 @@ function RelatorioGrupos({ temporada }) {
         <div style={{ padding: 40, textAlign: 'center', color: C.t3, fontSize: 13 }}>Não foi possível carregar o relatório.</div>
       ) : (
         <>
-          {/* KPIs principais */}
-          <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-            <StatisticsCard title="Grupos ativos" value={data.total_grupos ?? 0} icon={Users} iconColor={C.primary} />
-            <StatisticsCard title="Líderes" value={data.total_lideres ?? 0} icon={UserCog} iconColor={C.blue} subtitle="líderes de grupo" />
-            <StatisticsCard title="Em treinamento" value={data.lideres_treinamento ?? 0} icon={GraduationCap} iconColor="#8b5cf6" subtitle="líderes em formação" />
+          {/* KPIs principais — conjunto COMPLETO (mesmos indicadores que a
+              consolidação congela) quando há temporada selecionada; sem
+              temporada, cai nos números do relatório (janela móvel). */}
+          {metricas && (
+            <div style={{ fontSize: 11.5, color: C.t3, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Activity size={12} style={{ color: C.primary }} />
+              Indicadores ao vivo desta temporada — são exatamente os que ficam congelados ao consolidar.
+            </div>
+          )}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <StatisticsCard title="Grupos" value={(metricas ? metricas.num_grupos : data.total_grupos) ?? 0} icon={Users} iconColor={C.primary} subtitle="grupos ativos" />
+            <StatisticsCard title="Inscrições" value={(metricas ? metricas.num_inscricoes : null) ?? '—'} icon={UserPlus} iconColor={C.green} subtitle={metricas ? 'pedidos na temporada' : 'selecione a temporada'} />
+            <StatisticsCard title="Membros" value={(metricas ? metricas.num_membros : null) ?? '—'} icon={Users} iconColor={C.blue} subtitle={metricas ? 'no roster dos grupos' : 'selecione a temporada'} />
+            <StatisticsCard title="Líderes" value={(metricas ? metricas.num_lideres : data.total_lideres) ?? 0} icon={UserCog} iconColor={C.blue} subtitle="líderes de grupo" />
+            <StatisticsCard title="Em treinamento" value={(metricas ? metricas.num_lideres_treinamento : data.lideres_treinamento) ?? 0} icon={GraduationCap} iconColor="#8b5cf6" subtitle="líderes em formação" />
+            <StatisticsCard title="Frequência média" value={(metricas ? metricas.frequencia_media : data.frequencia?.media_por_encontro) ?? 0} icon={Activity} iconColor={C.primary} subtitle="presenças / encontro" />
+            <StatisticsCard
+              title="Encontros"
+              value={(metricas ? metricas.total_encontros : data.frequencia?.total_encontros) ?? 0}
+              icon={CalendarCheck}
+              iconColor={C.t2}
+              subtitle="no período"
+            />
             <StatisticsCard
               title="Satisfação líderes"
               value={nps ? Number(nps.valor).toLocaleString('pt-BR') : '—'}
@@ -2684,7 +2710,6 @@ function RelatorioGrupos({ temporada }) {
               iconColor={C.amber}
               subtitle={nps ? `NPS · ${fmtDate(nps.data)}` : 'Sem NPS registrado'}
             />
-            <StatisticsCard title="Frequência média" value={data.frequencia?.media_por_encontro ?? 0} icon={Activity} iconColor={C.primary} subtitle="presenças / encontro" />
           </div>
 
           {/* Frequência por mês */}
