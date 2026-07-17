@@ -505,6 +505,9 @@ export const grupos = {
   lideresTreinamento: (params) => get('/grupos/kpis/lideres-treinamento' + (params ? '?' + new URLSearchParams(params) : '')),
   temporadas: () => get('/grupos/temporadas/list'),
   atualizarTemporada: (id, data) => patch(`/grupos/temporadas/${id}`, data),
+  // Consolidação de temporada (fechamento) + comparativo entre temporadas
+  temporadasConsolidado: () => get('/grupos/temporadas/consolidado'),
+  consolidarTemporada: (id, forcar = false) => post(`/grupos/temporadas/${id}/consolidar${forcar ? '?forcar=1' : ''}`, {}),
   redes: {
     list: () => get('/grupos/redes'),
     create: (data) => post('/grupos/redes', data),
