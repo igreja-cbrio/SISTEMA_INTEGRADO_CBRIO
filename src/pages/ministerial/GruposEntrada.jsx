@@ -4,7 +4,12 @@
 // Uma lista corrida com TUDO que quer entrar em grupo, ordenada por data:
 //  · pedido de inscrição — a pessoa escolheu um grupo no form/QR (sem label);
 //  · pessoa direcionada pelo NEXT — ainda sem grupo definido (label "Next";
-//    precisa de contato + devolutiva; "engajou" matricula direto no grupo).
+//    precisa de contato + devolutiva; "engajou" matricula direto no grupo);
+//  · NOVO LÍDER/ANFITRIÃO — candidatura do form público /inscricao-lideres
+//    (Marcos 17/07). Fluxo assistido, SEM WhatsApp: aceitar/recusar e, no
+//    aceite, vincular a um grupo existente (como MAIS UM líder/anfitrião/
+//    líder em treinamento — nunca substitui o líder principal) ou criar um
+//    grupo novo já com a pessoa de líder (abre o form de grupo pré-preenchido).
 // Sem sub-abas nem botões de status: coluna de Status + filtros discretos
 // (origem · status · período · busca) e ações na própria linha expandida.
 //
@@ -46,6 +51,11 @@ const STATUS_ROW = {
   enc_em_duvida: { label: 'Em dúvida', cor: C.amber, bg: C.amberBg },
   enc_engajou: { label: 'Engajou', cor: C.green, bg: C.greenBg },
   enc_sem_interesse: { label: 'Sem interesse', cor: C.t3, bg: C.bg },
+  // Candidaturas de líder/anfitrião (form /inscricao-lideres)
+  lid_pendente: { label: 'Novo · a conversar', cor: C.amber, bg: C.amberBg },
+  lid_aceito: { label: 'Aceito · a vincular', cor: C.blue, bg: C.blueBg },
+  lid_vinculado: { label: 'Vinculado', cor: C.green, bg: C.greenBg },
+  lid_recusado: { label: 'Recusado', cor: C.red, bg: C.redBg },
 };
 
 // Filtro de status agrupa os dois ciclos num vocabulário só. Rótulo curto na
@@ -56,8 +66,18 @@ const FILTRO_STATUS = [
   { key: 'devolvido', label: 'Recusados (na triagem)', casa: ['devolvido'] },
   { key: 'encaminhado', label: 'Encaminhados', casa: ['encaminhado'] },
   { key: 'a_contatar', label: 'Next · a contatar', casa: ['enc_pendente', 'enc_nao_respondeu', 'enc_em_duvida'] },
-  { key: 'aprovado', label: 'Aprovados / engajaram', casa: ['aprovado', 'resolvido', 'enc_engajou'] },
-  { key: 'rejeitado', label: 'Rejeitados / sem interesse', casa: ['rejeitado', 'cancelado', 'enc_sem_interesse'] },
+  { key: 'lideres_decidir', label: 'Novos líderes · a decidir', casa: ['lid_pendente', 'lid_aceito'] },
+  { key: 'aprovado', label: 'Aprovados / engajaram', casa: ['aprovado', 'resolvido', 'enc_engajou', 'lid_vinculado'] },
+  { key: 'rejeitado', label: 'Rejeitados / sem interesse', casa: ['rejeitado', 'cancelado', 'enc_sem_interesse', 'lid_recusado'] },
+];
+
+// Funções possíveis do vínculo do novo líder num grupo EXISTENTE — entra como
+// MAIS UM no roster; o líder principal (quem recebe o WhatsApp de aprovação)
+// só muda se a equipe trocar na tela do grupo (Marcos · 17/07).
+const FUNCOES_VINCULO = [
+  { key: 'lider', label: 'Líder (mais um líder do grupo)' },
+  { key: 'anfitriao', label: 'Anfitrião (cede a casa)' },
+  { key: 'lider_treinamento', label: 'Líder em treinamento' },
 ];
 
 const FILTRO_PERIODO = [
@@ -93,9 +113,10 @@ const selStyle = {
 
 const fmtData = (d) => { try { return new Date(d).toLocaleDateString('pt-BR'); } catch { return ''; } };
 
-export default function GruposEntrada({ podeEditar = false, onMudou }) {
+export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrupoParaLider, reloadKey = 0 }) {
   const [pedidos, setPedidos] = useState([]);
   const [encs, setEncs] = useState([]);
+  const [lideresInsc, setLideresInsc] = useState([]);
   const [loading, setLoading] = useState(true);
 
   const [busca, setBusca] = useState('');
@@ -119,6 +140,13 @@ export default function GruposEntrada({ podeEditar = false, onMudou }) {
   const [devObs, setDevObs] = useState('');
   const [devGrupoId, setDevGrupoId] = useState('');
   const [salvandoDev, setSalvandoDev] = useState(false);
+  // Sub-painéis da linha de NOVO LÍDER/ANFITRIÃO
+  const [lidRecusandoId, setLidRecusandoId] = useState(null);
+  const [lidMotivoRec, setLidMotivoRec] = useState('');
+  const [lidVinculandoId, setLidVinculandoId] = useState(null);
+  const [lidVincGrupoId, setLidVincGrupoId] = useState('');
+  const [lidVincFuncao, setLidVincFuncao] = useState('lider');
+  const [lidAcaoLoading, setLidAcaoLoading] = useState(false);
   // Aprovação em lote (renovações chegam em bloco)
   const [selected, setSelected] = useState(() => new Set());
   const [batchLoading, setBatchLoading] = useState(false);
@@ -144,12 +172,16 @@ export default function GruposEntrada({ podeEditar = false, onMudou }) {
     setLoading(true);
     try {
       const desde = new Date(Date.now() - fPeriodo * 86400000).toISOString();
-      const [peds, encRows] = await Promise.all([
+      const [peds, encRows, lidRows] = await Promise.all([
         api.listarPedidos({ desde }),
         encApi.list({ destino: 'grupos' }).catch(() => []),
+        // Terceira origem: candidaturas de líder/anfitrião (falha silenciosa
+        // enquanto a migration não estiver aplicada — a caixa segue de pé).
+        api.liderInscricoes.list({ desde }).catch(() => []),
       ]);
       setPedidos(Array.isArray(peds) ? peds : []);
       setEncs(Array.isArray(encRows) ? encRows : []);
+      setLideresInsc(Array.isArray(lidRows) ? lidRows : []);
       setSelected(new Set());
     } catch {
       toast.error('Erro ao carregar a caixa de entrada');
@@ -158,7 +190,7 @@ export default function GruposEntrada({ podeEditar = false, onMudou }) {
     }
   }, [fPeriodo]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(); }, [load, reloadKey]);
 
   const depois = () => { setEventosCache({}); load(); onMudou?.(); };
 
@@ -193,12 +225,24 @@ export default function GruposEntrada({ podeEditar = false, onMudou }) {
         raw: e,
       });
     }
+    for (const l of lideresInsc) {
+      lista.push({
+        tipo: 'lider', key: `l_${l.id}`, data: l.created_at,
+        nome: l.nome, telefone: l.telefone, email: l.email,
+        statusKey: `lid_${l.status || 'pendente'}`,
+        veioNext: false,
+        // Vinculado mostra o grupo em que a pessoa entrou
+        grupoNome: l.mem_grupos?.nome || null, grupoCodigo: l.mem_grupos?.codigo || null,
+        raw: l,
+      });
+    }
 
     const s = busca.trim().toLowerCase();
     return lista
       .filter(r => {
         if (fOrigem === 'next' && !r.veioNext) return false;
         if (fOrigem === 'inscricao' && (r.tipo !== 'pedido' || r.veioNext)) return false;
+        if (fOrigem === 'lideres' && r.tipo !== 'lider') return false;
         if (s) {
           const alvo = [r.nome, r.telefone, r.email, r.grupoNome, r.grupoCodigo].filter(Boolean).join(' ').toLowerCase();
           if (!alvo.includes(s)) return false;
@@ -206,7 +250,7 @@ export default function GruposEntrada({ podeEditar = false, onMudou }) {
         return true;
       })
       .sort((a, b) => new Date(b.data) - new Date(a.data));
-  }, [pedidos, encs, busca, fOrigem, fPeriodo]);
+  }, [pedidos, encs, lideresInsc, busca, fOrigem, fPeriodo]);
 
   const rows = useMemo(() => {
     const bucket = FILTRO_STATUS.find(f => f.key === fStatus)?.casa || null;
@@ -256,7 +300,7 @@ export default function GruposEntrada({ podeEditar = false, onMudou }) {
   };
 
   // Envelhecimento das linhas que precisam de ação
-  const PRECISA_ACAO = ['pendente', 'devolvido', 'enc_pendente', 'enc_nao_respondeu', 'enc_em_duvida'];
+  const PRECISA_ACAO = ['pendente', 'devolvido', 'enc_pendente', 'enc_nao_respondeu', 'enc_em_duvida', 'lid_pendente', 'lid_aceito'];
   const idadeDe = (r) => {
     if (!PRECISA_ACAO.includes(r.statusKey)) return null;
     const horas = (Date.now() - new Date(r.data)) / 36e5;
@@ -352,6 +396,48 @@ export default function GruposEntrada({ podeEditar = false, onMudou }) {
     finally { setSalvandoDev(false); }
   };
 
+  // ── Ações · NOVO LÍDER/ANFITRIÃO (fluxo assistido · sem WhatsApp) ──
+  const aceitarLider = async (insc) => {
+    if (!confirm(`Aceitar a inscrição de ${insc.nome}? (Nada é enviado à pessoa — o contato é seu.)`)) return;
+    setLidAcaoLoading(true);
+    try {
+      await api.liderInscricoes.aceitar(insc.id);
+      toast.success('Inscrição aceita — agora vincule a pessoa a um grupo');
+      depois();
+    } catch (e) { toast.error(e.message || 'Erro ao aceitar'); }
+    finally { setLidAcaoLoading(false); }
+  };
+
+  const recusarLider = async (insc) => {
+    setLidAcaoLoading(true);
+    try {
+      await api.liderInscricoes.recusar(insc.id, lidMotivoRec.trim() || null);
+      toast.success('Inscrição recusada (registro interno — a pessoa não é notificada)');
+      setLidRecusandoId(null); setLidMotivoRec('');
+      depois();
+    } catch (e) { toast.error(e.message || 'Erro ao recusar'); }
+    finally { setLidAcaoLoading(false); }
+  };
+
+  const abrirVinculoLider = (insc) => {
+    setLidVinculandoId(insc.id); setLidRecusandoId(null);
+    setLidVincGrupoId('');
+    setLidVincFuncao(insc.quer_lider ? 'lider' : 'anfitriao');
+    carregarGrupos();
+  };
+
+  const vincularLider = async (insc) => {
+    if (!lidVincGrupoId) return;
+    setLidAcaoLoading(true);
+    try {
+      const r = await api.liderInscricoes.vincular(insc.id, lidVincGrupoId, lidVincFuncao);
+      toast.success(`${insc.nome} vinculado ao grupo ${r?.grupo?.nome || ''}`);
+      setLidVinculandoId(null); setLidVincGrupoId('');
+      depois();
+    } catch (e) { toast.error(e.message || 'Erro ao vincular'); }
+    finally { setLidAcaoLoading(false); }
+  };
+
   // ── Aprovação em lote (só pedidos pendentes) ──
   const pendentesVisiveis = rows.filter(r => r.tipo === 'pedido' && r.statusKey === 'pendente');
   const todosSelecionados = pendentesVisiveis.length > 0 && pendentesVisiveis.every(r => selected.has(r.raw.id));
@@ -390,8 +476,10 @@ export default function GruposEntrada({ podeEditar = false, onMudou }) {
     const abrir = expandedId !== r.key;
     setExpandedId(abrir ? r.key : null);
     setRejectingId(null); setSugerindoId(null);
+    setLidRecusandoId(null); setLidVinculandoId(null);
     if (abrir && r.tipo === 'enc') abrirDevolutiva(r);
     if (abrir && r.tipo === 'pedido') { carregarGrupos(); carregarEventos(r.raw.id); }
+    if (abrir && r.tipo === 'lider') carregarGrupos();
   };
 
   return (
@@ -433,8 +521,9 @@ export default function GruposEntrada({ podeEditar = false, onMudou }) {
         </div>
         <select value={fOrigem} onChange={e => setFOrigem(e.target.value)} style={selStyle}>
           <option value="todas">Origem</option>
-          <option value="inscricao">Inscrição</option>
+          <option value="inscricao">Inscrição de grupos</option>
           <option value="next">Next</option>
+          <option value="lideres">Novos líderes/anfitriões</option>
         </select>
         <select value={fStatus} onChange={e => setFStatus(e.target.value)} style={selStyle}>
           {FILTRO_STATUS.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
@@ -537,7 +626,11 @@ export default function GruposEntrada({ podeEditar = false, onMudou }) {
                           </div>
                         </td>
                         <td style={{ padding: '10px 8px' }}>
-                          {r.veioNext ? (
+                          {r.tipo === 'lider' ? (
+                            <span style={{ fontSize: 10.5, padding: '2px 9px', borderRadius: 99, background: C.primaryBg, color: C.primary, fontWeight: 700 }}>
+                              {[r.raw.quer_lider && 'Líder', r.raw.quer_anfitriao && 'Anfitrião'].filter(Boolean).join(' + ')}
+                            </span>
+                          ) : r.veioNext ? (
                             <span style={{ fontSize: 10.5, padding: '2px 9px', borderRadius: 99, background: C.violetBg, color: C.violet, fontWeight: 700 }}>Next</span>
                           ) : r.tipo === 'enc' ? (
                             <span style={{ fontSize: 10.5, padding: '2px 9px', borderRadius: 99, background: C.bg, color: C.t3, fontWeight: 600 }}>{r.origemLabel}</span>
@@ -586,6 +679,21 @@ export default function GruposEntrada({ podeEditar = false, onMudou }) {
                                   aprovar={aprovar} rejeitar={rejeitar} sugerir={sugerir}
                                   pausarInscricoes={pausarInscricoes}
                                   fecharSugestao={() => { setSugerindoId(null); setGrupoSugestao(''); setMotivoSel(''); setMotivoLivre(''); }}
+                                />
+                              : r.tipo === 'lider'
+                              ? <PainelLider
+                                  insc={r.raw}
+                                  podeEditar={podeEditar}
+                                  gruposAtivos={gruposAtivos}
+                                  acaoLoading={lidAcaoLoading}
+                                  recusandoId={lidRecusandoId} setRecusandoId={setLidRecusandoId}
+                                  motivoRec={lidMotivoRec} setMotivoRec={setLidMotivoRec}
+                                  vinculandoId={lidVinculandoId} abrirVinculo={abrirVinculoLider}
+                                  fecharVinculo={() => { setLidVinculandoId(null); setLidVincGrupoId(''); }}
+                                  vincGrupoId={lidVincGrupoId} setVincGrupoId={setLidVincGrupoId}
+                                  vincFuncao={lidVincFuncao} setVincFuncao={setLidVincFuncao}
+                                  aceitar={aceitarLider} recusar={recusarLider} vincular={vincularLider}
+                                  onCriarGrupo={onCriarGrupoParaLider}
                                 />
                               : <PainelNext
                                   e={r.raw}
@@ -857,6 +965,142 @@ function Timeline({ eventos }) {
           );
         })}
       </div>
+    </div>
+  );
+}
+
+// ── Painel expandido de um NOVO LÍDER/ANFITRIÃO (aceitar · recusar · vincular) ──
+function PainelLider({
+  insc, podeEditar, gruposAtivos, acaoLoading,
+  recusandoId, setRecusandoId, motivoRec, setMotivoRec,
+  vinculandoId, abrirVinculo, fecharVinculo, vincGrupoId, setVincGrupoId,
+  vincFuncao, setVincFuncao, aceitar, recusar, vincular, onCriarGrupo,
+}) {
+  const isRecusando = recusandoId === insc.id;
+  const isVinculando = vinculandoId === insc.id;
+  const papeis = [insc.quer_lider && 'líder', insc.quer_anfitriao && 'anfitrião'].filter(Boolean).join(' e ');
+  const podeDecidir = ['pendente', 'aceito'].includes(insc.status);
+
+  return (
+    <div style={{ background: C.bg, borderRadius: 10, padding: 12 }}>
+      <p style={{ fontSize: 12, color: C.t2, margin: '0 0 8px', lineHeight: 1.55 }}>
+        Quer servir como <strong>{papeis}</strong> — inscrição do formulário público de líderes.
+        Converse com a pessoa antes de decidir: <strong>nada é enviado automaticamente</strong> (nem no aceite, nem na recusa).
+      </p>
+
+      <div style={{ fontSize: 12, color: C.t2, display: 'flex', gap: 14, flexWrap: 'wrap', marginBottom: 8 }}>
+        {insc.bairro && <span>Bairro: <strong style={{ color: C.text }}>{insc.bairro}</strong></span>}
+        {insc.endereco && <span>Endereço: {insc.endereco}</span>}
+      </div>
+
+      {insc.motivacao && (
+        <div style={{ fontSize: 12, color: C.t2, marginBottom: 10, padding: '8px 10px', background: C.primaryBg, borderRadius: 6, lineHeight: 1.5 }}>
+          <strong style={{ color: C.text }}>O que motivou a decisão:</strong> "{insc.motivacao}"
+        </div>
+      )}
+
+      {insc.status === 'vinculado' && (
+        <div style={{ fontSize: 11.5, color: C.t2, marginBottom: 10, padding: '6px 10px', background: C.greenBg, borderRadius: 6 }}>
+          Vinculado ao grupo <strong>{insc.mem_grupos?.nome || '—'}</strong> como{' '}
+          {FUNCOES_VINCULO.find(f => f.key === insc.vinculo_funcao)?.label || insc.vinculo_funcao}
+          {insc.vinculado_em ? ` em ${fmtData(insc.vinculado_em)}` : ''}.
+        </div>
+      )}
+      {insc.status === 'recusado' && (
+        <div style={{ fontSize: 11.5, color: C.t2, marginBottom: 10, padding: '6px 10px', background: C.redBg, borderRadius: 6 }}>
+          Recusado{insc.motivo_recusa ? <> — motivo interno: <em>{insc.motivo_recusa}</em></> : ''}. A pessoa não foi
+          notificada — a devolutiva é da equipe.
+        </div>
+      )}
+      {insc.decidido_por_nome && insc.decidido_em && (
+        <div style={{ fontSize: 10.5, color: C.t3, marginBottom: 10 }}>
+          {insc.status === 'aceito' ? 'Aceito' : 'Decidido'} por {insc.decidido_por_nome} em {fmtData(insc.decidido_em)}
+        </div>
+      )}
+
+      {podeEditar && podeDecidir && !isRecusando && !isVinculando && (
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', alignItems: 'center', flexWrap: 'wrap' }}>
+          <Button size="sm" variant="outline" onClick={() => { setRecusandoId(insc.id); setMotivoRec(''); }}>
+            <X size={14} style={{ marginRight: 4 }} /> Recusar
+          </Button>
+          {insc.status === 'pendente' && (
+            <Button size="sm" onClick={() => aceitar(insc)} disabled={acaoLoading}>
+              <Check size={14} style={{ marginRight: 4 }} /> Aceitar
+            </Button>
+          )}
+          {insc.status === 'aceito' && (
+            <>
+              <Button size="sm" variant="outline" onClick={() => abrirVinculo(insc)}>
+                Vincular a grupo existente
+              </Button>
+              {onCriarGrupo && (
+                <Button size="sm" onClick={() => onCriarGrupo(insc)} disabled={acaoLoading}>
+                  Criar novo grupo
+                </Button>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {isVinculando && (
+        <div style={{ background: C.card, borderRadius: 8, padding: 10, marginTop: 8, border: `1px solid ${C.border}` }}>
+          <div style={{ fontSize: 12, color: C.t2, marginBottom: 8, lineHeight: 1.5 }}>
+            Vincular <strong>{insc.nome}</strong> a um grupo existente — a pessoa entra como <strong>mais um</strong> na
+            equipe do grupo. O líder principal (quem recebe as aprovações no WhatsApp) <strong>não muda</strong>; se
+            precisar trocar, é no cadastro do grupo.
+          </div>
+          {gruposAtivos === null ? (
+            <div style={{ fontSize: 12, color: C.t3, padding: '6px 0' }}>Carregando grupos...</div>
+          ) : (
+            <select
+              value={vincGrupoId}
+              onChange={e => setVincGrupoId(e.target.value)}
+              style={{ width: '100%', padding: '8px 10px', borderRadius: 8, fontSize: 13, border: `1px solid ${C.border}`, background: C.card, color: C.text }}
+            >
+              <option value="">Escolha o grupo...</option>
+              {gruposAtivos.map(g => (
+                <option key={g.id} value={g.id}>{g.nome}{g.bairro ? ` · ${g.bairro}` : ''}</option>
+              ))}
+            </select>
+          )}
+          <div style={{ marginTop: 8 }}>
+            <label style={{ fontSize: 11, color: C.t3, display: 'block', marginBottom: 4 }}>Entra como</label>
+            <select
+              value={vincFuncao}
+              onChange={e => setVincFuncao(e.target.value)}
+              style={{ width: '100%', padding: '8px 10px', borderRadius: 8, fontSize: 13, border: `1px solid ${C.border}`, background: C.card, color: C.text }}
+            >
+              {FUNCOES_VINCULO.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
+            </select>
+          </div>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
+            <Button size="sm" variant="outline" onClick={fecharVinculo}>Cancelar</Button>
+            <Button size="sm" disabled={!vincGrupoId || acaoLoading} onClick={() => vincular(insc)}>
+              {acaoLoading ? 'Vinculando...' : 'Vincular'}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {isRecusando && (
+        <div style={{ background: C.card, borderRadius: 8, padding: 10, marginTop: 8, border: `1px solid ${C.border}` }}>
+          <p style={{ fontSize: 12, color: C.t2, margin: '0 0 8px', lineHeight: 1.5 }}>
+            <strong>Recusa silenciosa</strong> — a pessoa não recebe nada do sistema; a devolutiva é sua, no contato
+            pessoal. O motivo abaixo fica só no registro interno.
+          </p>
+          <Input
+            placeholder="Motivo (registro interno · opcional)..."
+            value={motivoRec}
+            onChange={e => setMotivoRec(e.target.value)}
+            autoFocus
+          />
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
+            <Button size="sm" variant="outline" onClick={() => { setRecusandoId(null); setMotivoRec(''); }}>Cancelar</Button>
+            <Button size="sm" variant="destructive" disabled={acaoLoading} onClick={() => recusar(insc)}>Recusar</Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

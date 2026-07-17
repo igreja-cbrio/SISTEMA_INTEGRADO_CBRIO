@@ -283,6 +283,7 @@ const InscricaoBatismo = lazyWithRetry(() => import('./pages/public/InscricaoBat
 const BatismoAcesso = lazyWithRetry(() => import('./pages/public/BatismoAcesso'));
 const ApresentacaoCriancasPublica = lazyWithRetry(() => import('./pages/public/ApresentacaoCriancas'));
 const InscricaoGrupos = lazyWithRetry(() => import('./pages/public/InscricaoGrupos'));
+const InscricaoLideres = lazyWithRetry(() => import('./pages/public/InscricaoLideres'));
 const GrupoAprovarPedido = lazyWithRetry(() => import('./pages/public/GrupoAprovarPedido'));
 const GrupoSugestaoAceite = lazyWithRetry(() => import('./pages/public/GrupoSugestaoAceite'));
 const GrupoFrequenciaMes = lazyWithRetry(() => import('./pages/public/GrupoFrequenciaMes'));
@@ -525,6 +526,7 @@ function AppRoutes() {
       <Route path="/apresentacao-criancas" element={<Suspense fallback={<Loading />}><ApresentacaoCriancasPublica /></Suspense>} />
       <Route path="/evento/:slug" element={<Suspense fallback={<Loading />}><EventoExterno /></Suspense>} />
       <Route path="/inscricao-grupos" element={<Suspense fallback={<Loading />}><InscricaoGrupos /></Suspense>} />
+      <Route path="/inscricao-lideres" element={<Suspense fallback={<Loading />}><InscricaoLideres /></Suspense>} />
       {/* Líder aprova pedido de grupo pelo link do WhatsApp · token = credencial · sem login */}
       <Route path="/g/a/:token" element={<Suspense fallback={<Loading />}><GrupoAprovarPedido /></Suspense>} />
       {/* Pessoa aceita a sugestão de outro grupo pelo link do WhatsApp · sem login */}

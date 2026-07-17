@@ -1068,10 +1068,216 @@ router.get('/pedidos/count', async (req, res) => {
         .select('id', { count: 'exact', head: true }).eq('status', 'pendente');
       total = count || 0;
     }
-    res.json({ pendentes: isAdmin ? total : mine, mine, total });
+    // Candidaturas de líder/anfitrião aguardando a triagem (badge da caixa)
+    let lideresPendentes = 0;
+    try {
+      const { count } = await supabase.from('mem_lider_inscricoes')
+        .select('id', { count: 'exact', head: true }).eq('status', 'pendente').is('deleted_at', null);
+      lideresPendentes = count || 0;
+    } catch { /* migration ainda não aplicada → badge segue sem essa parcela */ }
+    res.json({ pendentes: isAdmin ? total : mine, mine, total, lideres_pendentes: lideresPendentes });
   } catch (e) {
     console.error('[Pedidos count]', e.message);
     res.status(500).json({ error: 'Erro ao contar pedidos' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// Inscrições de NOVOS LÍDERES/ANFITRIÕES (form público /inscricao-lideres ·
+// Marcos 17/07). Terceira origem da caixa de entrada. Fluxo assistido, SEM
+// WhatsApp: aceitar/recusar registram a decisão; vincular coloca a pessoa num
+// grupo existente como MAIS UM líder / anfitrião / líder em treinamento no
+// roster — NUNCA mexe no lider_id principal (só a equipe, na tela do grupo).
+// Pra "criar grupo novo já com a pessoa de líder", o front promove primeiro
+// (POST /:id/promover → membro_id), cria o grupo pelo POST /api/grupos normal
+// com lider_id e fecha com POST /:id/vincular.
+// ─────────────────────────────────────────────────────────────
+
+// GET /api/grupos/lideres-inscricoes/list?desde=
+router.get('/lideres-inscricoes/list', async (req, res) => {
+  try {
+    const { desde } = req.query;
+    let q = supabase.from('mem_lider_inscricoes')
+      .select('*, mem_grupos:vinculado_grupo_id(id, nome, codigo)')
+      .is('deleted_at', null)
+      .order('created_at', { ascending: false })
+      .limit(1000);
+    if (desde) q = q.gte('created_at', desde);
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) {
+    console.error('[Lideres inscricoes list]', e.message);
+    res.status(500).json({ error: 'Erro ao listar inscrições de líderes' });
+  }
+});
+
+// Carrega a inscrição viva ou responde 404/409 — usada pelas 4 ações abaixo.
+async function carregarInscricaoLider(id, statusPermitidos) {
+  const { data: insc, error } = await supabase.from('mem_lider_inscricoes')
+    .select('*').eq('id', id).is('deleted_at', null).maybeSingle();
+  if (error) throw error;
+  if (!insc) return { erro: { code: 404, msg: 'Inscrição não encontrada' } };
+  if (statusPermitidos && !statusPermitidos.includes(insc.status)) {
+    return { erro: { code: 409, msg: `Esta inscrição já está "${insc.status}"` } };
+  }
+  return { insc };
+}
+
+// Promove o cadastro pendente da inscrição a membro (idempotente) e devolve o
+// membro_id. Mesmo núcleo de identidade da aprovação de pedidos: duplicado
+// detectado na origem liga ao existente; senão passa pelo matcher guardado.
+async function promoverInscricaoLider(insc) {
+  if (insc.membro_id) return insc.membro_id;
+  if (!insc.cadastro_pendente_id) throw new Error('Inscrição sem cadastro nem membro');
+  const { data: cad } = await supabase.from('mem_cadastros_pendentes')
+    .select('*').eq('id', insc.cadastro_pendente_id).single();
+  if (!cad) throw new Error('Cadastro pendente não encontrado');
+
+  let membroId = cad.duplicado_de_id || null;
+  if (!membroId) {
+    const r = await acharOuCriarGuardado({
+      cpf: cad.cpf, email: cad.email, telefone: cad.telefone, nome: cad.nome,
+      extra: { data_nascimento: cad.data_nascimento || null, foto_url: cad.foto_url || null, genero: cad.genero || null },
+    }, { soChaveForte: cad.nao_vincular_fraco === true });
+    membroId = r.membro_id;
+  }
+  // Enriquecimento só-onde-vazio (foto/sexo/nascimento declarados no form)
+  if ((cad.foto_url || cad.genero || cad.data_nascimento) && membroId) {
+    const { data: mem } = await supabase.from('mem_membros').select('foto_url, genero, data_nascimento').eq('id', membroId).maybeSingle();
+    if (mem) {
+      const upd = {};
+      if (cad.foto_url && !mem.foto_url) upd.foto_url = cad.foto_url;
+      if (cad.genero && !mem.genero) upd.genero = cad.genero;
+      if (cad.data_nascimento && !mem.data_nascimento) upd.data_nascimento = cad.data_nascimento;
+      if (Object.keys(upd).length) await supabase.from('mem_membros').update(upd).eq('id', membroId);
+    }
+  }
+  await supabase.from('mem_cadastros_pendentes').update({ status: 'aprovado' }).eq('id', insc.cadastro_pendente_id);
+  await supabase.from('mem_lider_inscricoes')
+    .update({ membro_id: membroId, cadastro_pendente_id: null, updated_at: new Date().toISOString() })
+    .eq('id', insc.id);
+  return membroId;
+}
+
+// POST /api/grupos/lideres-inscricoes/:id/aceitar
+router.post('/lideres-inscricoes/:id/aceitar', authorizeModule('grupos', 3), async (req, res) => {
+  try {
+    const { insc, erro } = await carregarInscricaoLider(req.params.id, ['pendente']);
+    if (erro) return res.status(erro.code).json({ error: erro.msg });
+    const { error } = await supabase.from('mem_lider_inscricoes').update({
+      status: 'aceito',
+      decidido_por: req.user.userId || null,
+      decidido_por_nome: req.user.name || null,
+      decidido_em: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }).eq('id', insc.id).eq('status', 'pendente');
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[Lideres inscricoes aceitar]', e.message);
+    res.status(500).json({ error: 'Erro ao aceitar inscrição' });
+  }
+});
+
+// POST /api/grupos/lideres-inscricoes/:id/recusar — recusa SILENCIOSA (a
+// equipe devolve o contato pessoalmente; nada é enviado à pessoa).
+router.post('/lideres-inscricoes/:id/recusar', authorizeModule('grupos', 3), async (req, res) => {
+  try {
+    const { insc, erro } = await carregarInscricaoLider(req.params.id, ['pendente', 'aceito']);
+    if (erro) return res.status(erro.code).json({ error: erro.msg });
+    const motivo = req.body?.motivo ? String(req.body.motivo).trim().slice(0, 500) : null;
+    const { error } = await supabase.from('mem_lider_inscricoes').update({
+      status: 'recusado',
+      motivo_recusa: motivo,
+      decidido_por: req.user.userId || null,
+      decidido_por_nome: req.user.name || null,
+      decidido_em: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }).eq('id', insc.id).in('status', ['pendente', 'aceito']);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[Lideres inscricoes recusar]', e.message);
+    res.status(500).json({ error: 'Erro ao recusar inscrição' });
+  }
+});
+
+// POST /api/grupos/lideres-inscricoes/:id/promover — resolve/cria o membro
+// (pro fluxo "criar grupo novo": o form de grupo precisa do lider_id antes).
+router.post('/lideres-inscricoes/:id/promover', authorizeModule('grupos', 3), async (req, res) => {
+  try {
+    const { insc, erro } = await carregarInscricaoLider(req.params.id, ['pendente', 'aceito']);
+    if (erro) return res.status(erro.code).json({ error: erro.msg });
+    const membroId = await promoverInscricaoLider(insc);
+    const { data: mem } = await supabase.from('mem_membros').select('id, nome, telefone').eq('id', membroId).maybeSingle();
+    res.json({ ok: true, membro_id: membroId, nome: mem?.nome || insc.nome });
+  } catch (e) {
+    console.error('[Lideres inscricoes promover]', e.message);
+    res.status(500).json({ error: 'Erro ao preparar a pessoa para o vínculo' });
+  }
+});
+
+// POST /api/grupos/lideres-inscricoes/:id/vincular
+// body { grupo_id, funcao: 'lider' | 'anfitriao' | 'lider_treinamento' }
+// Entra como MAIS UM no roster do grupo — nunca substitui o lider_id
+// principal (decisão do Marcos 17/07: troca de líder principal é só na tela
+// do grupo, pela equipe). Aceita pendente (vincular implica aceite).
+router.post('/lideres-inscricoes/:id/vincular', authorizeModule('grupos', 3), async (req, res) => {
+  try {
+    const { grupo_id, funcao } = req.body || {};
+    if (!grupo_id) return res.status(400).json({ error: 'Informe o grupo' });
+    if (!['lider', 'anfitriao', 'lider_treinamento'].includes(funcao)) {
+      return res.status(400).json({ error: 'Função inválida (lider · anfitriao · lider_treinamento)' });
+    }
+    const { insc, erro } = await carregarInscricaoLider(req.params.id, ['pendente', 'aceito']);
+    if (erro) return res.status(erro.code).json({ error: erro.msg });
+
+    const { data: grupo } = await supabase.from('mem_grupos')
+      .select('id, nome, lider_id, ativo').eq('id', grupo_id).is('deleted_at', null).maybeSingle();
+    if (!grupo) return res.status(404).json({ error: 'Grupo não encontrado' });
+
+    const membroId = await promoverInscricaoLider(insc);
+
+    // Roster idempotente: se já há vínculo ativo, só ajusta a função; o líder
+    // principal do grupo (lider_id === membroId) não precisa de linha extra.
+    if (!(funcao === 'lider' && grupo.lider_id === membroId)) {
+      const { data: jaAtivo } = await supabase.from('mem_grupo_membros')
+        .select('id, funcao').eq('grupo_id', grupo_id).eq('membro_id', membroId)
+        .is('saiu_em', null).is('deleted_at', null).limit(1);
+      if (jaAtivo && jaAtivo.length) {
+        if (jaAtivo[0].funcao !== funcao) {
+          await supabase.from('mem_grupo_membros').update({ funcao }).eq('id', jaAtivo[0].id);
+        }
+      } else {
+        const { error: eVinc } = await supabase.from('mem_grupo_membros').insert({
+          grupo_id, membro_id: membroId, funcao,
+          entrou_em: new Date().toISOString().slice(0, 10),
+        });
+        if (eVinc) throw eVinc;
+      }
+    }
+
+    const { error: eUpd } = await supabase.from('mem_lider_inscricoes').update({
+      status: 'vinculado',
+      vinculado_grupo_id: grupo_id,
+      vinculo_funcao: funcao,
+      vinculado_em: new Date().toISOString(),
+      decidido_por: insc.decidido_por || req.user.userId || null,
+      decidido_por_nome: insc.decidido_por_nome || req.user.name || null,
+      decidido_em: insc.decidido_em || new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }).eq('id', insc.id).in('status', ['pendente', 'aceito']);
+    if (eUpd) throw eUpd;
+
+    // Novo líder no roster reflete no bot do WhatsApp pelo sync diário; o
+    // fire-and-forget aqui só antecipa (não é parte do fluxo da inscrição).
+    if (funcao === 'lider') syncWhatsappLideres();
+
+    res.json({ ok: true, grupo: { id: grupo.id, nome: grupo.nome }, membro_id: membroId, funcao });
+  } catch (e) {
+    console.error('[Lideres inscricoes vincular]', e.message);
+    res.status(500).json({ error: 'Erro ao vincular ao grupo' });
   }
 });
 
