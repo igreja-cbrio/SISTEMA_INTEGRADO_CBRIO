@@ -1230,7 +1230,7 @@ router.get('/:id/historico-membros', async (req, res) => {
 // { ok: false, code, error }.
 async function aprovarPedidoCore(pedidoId, user) {
     const { data: pedido, error: ePedido } = await supabase.from('mem_grupo_pedidos')
-      .select('*').eq('id', pedidoId).maybeSingle();
+      .select('*').eq('id', pedidoId).is('deleted_at', null).maybeSingle();
     if (ePedido) throw ePedido; // erro de infra → 500 no chamador (não é "não encontrado")
     if (!pedido) return { ok: false, code: 404, error: 'Pedido não encontrado' };
     if (pedido.status !== 'pendente') {
