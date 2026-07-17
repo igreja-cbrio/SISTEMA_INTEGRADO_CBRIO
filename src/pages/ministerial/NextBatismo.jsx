@@ -107,6 +107,27 @@ export default function Entradas() {
         </div>
       </div>
 
+      {/* Saúde da identidade · a régua da corrida contra duplicatas */}
+      {resumo?.saude && (
+        <div className="grid grid-cols-3 gap-3">
+          <div className="rounded-xl border p-3">
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Base com CPF</div>
+            <div className="text-2xl font-bold text-foreground">{resumo.saude.pct_cpf}%</div>
+            <div className="text-xs text-muted-foreground">{resumo.saude.com_cpf} de {resumo.saude.pessoas} pessoas vivas</div>
+          </div>
+          <button className="rounded-xl border p-3 text-left hover:border-primary transition-colors" onClick={() => setTab('identidade')}>
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Fila de identidade</div>
+            <div className="text-2xl font-bold text-foreground">{pendenciasIdentidade}</div>
+            <div className="text-xs text-muted-foreground">conflitos de CPF aguardando triagem</div>
+          </button>
+          <button className="rounded-xl border p-3 text-left hover:border-primary transition-colors" onClick={() => setTab('duplicatas')}>
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Duplicatas possíveis</div>
+            <div className="text-2xl font-bold text-foreground">{resumo.duplicatas ?? '—'}</div>
+            <div className="text-xs text-muted-foreground">pares do funil pra revisão humana</div>
+          </button>
+        </div>
+      )}
+
       {/* Tabs */}
       <div className="flex gap-2 border-b overflow-x-auto">
         <TabBtn active={tab === 'duplicatas'} onClick={() => setTab('duplicatas')}
