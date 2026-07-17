@@ -2606,6 +2606,7 @@ const relLabelMes = (ym) => {
 };
 
 function RelatorioGrupos({ temporada }) {
+  const [vista, setVista] = useState('atual'); // 'atual' (detalhe) | 'comparativo' (entre temporadas)
   const [meses, setMeses] = useState(12);
   const [data, setData] = useState(null);
   const [treino, setTreino] = useState([]);
@@ -2634,6 +2635,21 @@ function RelatorioGrupos({ temporada }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* Alterna entre o detalhe da temporada atual e o comparativo histórico */}
+      <div style={{ display: 'inline-flex', gap: 2, padding: 2, borderRadius: 12, border: `1px solid ${C.border}`, background: C.bg, alignSelf: 'flex-start' }}>
+        {[['atual', 'Temporada atual'], ['comparativo', 'Comparativo entre temporadas']].map(([v, label]) => (
+          <button key={v} onClick={() => setVista(v)} style={{
+            padding: '6px 14px', fontSize: 12, fontWeight: 600, borderRadius: 10, border: 'none', cursor: 'pointer',
+            background: vista === v ? C.primary : 'transparent',
+            color: vista === v ? '#fff' : C.t3, transition: 'all 0.15s',
+          }}>{label}</button>
+        ))}
+      </div>
+
+      {vista === 'comparativo' ? (
+        <ComparativoTemporadas />
+      ) : (
+      <>
       {/* Seletor de período */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <div style={{ display: 'inline-flex', gap: 2, padding: 2, borderRadius: 12, border: `1px solid ${C.border}`, background: C.bg }}>
@@ -2800,6 +2816,151 @@ function RelatorioGrupos({ temporada }) {
           </div>
         </>
       )}
+      </>
+      )}
+    </div>
+  );
+}
+
+// ── Comparativo entre temporadas (dados congelados no fechamento) ────────────
+// Lê mem_temporada_consolidado + a parcial ao vivo da temporada atual. É a
+// visão "como a igreja evoluiu de uma temporada pra outra" (Marcos · 17/07).
+const COMP_METRICAS = [
+  { key: 'num_grupos', label: 'Grupos', icon: Users },
+  { key: 'num_inscricoes', label: 'Inscrições', icon: UserPlus },
+  { key: 'num_membros', label: 'Membros', icon: Users },
+  { key: 'num_lideres', label: 'Líderes', icon: UserCog },
+  { key: 'num_lideres_treinamento', label: 'Em treino', icon: GraduationCap },
+  { key: 'frequencia_media', label: 'Freq. média', icon: Activity },
+  { key: 'satisfacao_lideres', label: 'NPS líderes', icon: Star },
+];
+
+function ComparativoTemporadas() {
+  const [linhas, setLinhas] = useState(null);
+  const [metricaGrafico, setMetricaGrafico] = useState('num_grupos');
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    api.temporadasConsolidado()
+      .then(r => {
+        if (!alive) return;
+        const cong = (r?.consolidados || []).map(c => ({ ...c, parcial: false }));
+        const arr = [...cong];
+        // A temporada atual entra como linha "parcial" (ao vivo) se ainda não congelada.
+        if (r?.atual) arr.push({ ...r.atual, parcial: true });
+        setLinhas(arr);
+      })
+      .catch(() => { if (alive) setLinhas([]); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, []);
+
+  if (loading) return <div style={{ padding: 40, textAlign: 'center', color: C.t3 }}>Carregando comparativo...</div>;
+  if (!linhas || linhas.length === 0) {
+    return (
+      <div style={{ padding: 40, textAlign: 'center', background: C.card, borderRadius: 16, border: '1px dashed var(--hairline)', color: C.t3, fontSize: 13, lineHeight: 1.6 }}>
+        Nenhuma temporada consolidada ainda.<br />
+        Ao final de uma temporada, use <strong>Inscrições → Administração → Temporadas → Consolidar</strong> para
+        congelar os números dela. Eles aparecem aqui para comparar a evolução de uma temporada para outra.
+      </div>
+    );
+  }
+
+  const fmtVal = (key, v) => {
+    if (v == null) return '—';
+    if (key === 'frequencia_media') return Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 1 });
+    if (key === 'satisfacao_lideres') return Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 1 });
+    return Number(v).toLocaleString('pt-BR');
+  };
+  const dadosGrafico = linhas.map(l => ({
+    nome: (l.temporada_label || l.temporada || '').replace(/\s*20\d\d$/, ''),
+    valor: Number(l[metricaGrafico] ?? 0),
+    parcial: l.parcial,
+  }));
+  const metricaAtual = COMP_METRICAS.find(m => m.key === metricaGrafico);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* Tabela: uma coluna por temporada, uma linha por métrica */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium flex items-center gap-2">
+            <BarChart3 className="h-4 w-4 text-muted-foreground" />
+            Comparativo entre temporadas
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', minWidth: 420, borderCollapse: 'collapse', fontSize: 13 }}>
+              <thead>
+                <tr style={{ borderBottom: `1px solid ${C.border}` }}>
+                  <th style={{ textAlign: 'left', padding: '8px 10px', fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4, color: C.t3 }}>Métrica</th>
+                  {linhas.map(l => (
+                    <th key={l.temporada} style={{ textAlign: 'right', padding: '8px 10px', color: l.parcial ? C.t3 : C.text, fontWeight: 700, whiteSpace: 'nowrap' }}>
+                      {l.temporada_label || l.temporada}
+                      {l.parcial && <div style={{ fontSize: 9.5, fontWeight: 600, color: C.amber }}>parcial · em andamento</div>}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {COMP_METRICAS.map(m => (
+                  <tr key={m.key} style={{ borderBottom: `1px solid ${C.border}` }}>
+                    <td style={{ padding: '8px 10px', color: C.t2, display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <m.icon size={13} style={{ color: C.t3 }} /> {m.label}
+                    </td>
+                    {linhas.map(l => (
+                      <td key={l.temporada} style={{ textAlign: 'right', padding: '8px 10px', color: l.parcial ? C.t3 : C.text, fontVariantNumeric: 'tabular-nums' }}>
+                        {fmtVal(m.key, l[m.key])}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Gráfico de barras de uma métrica ao longo das temporadas */}
+      <Card>
+        <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0">
+          <CardTitle className="text-sm font-medium flex items-center gap-2">
+            <TrendingUp className="h-4 w-4 text-muted-foreground" />
+            Evolução — {metricaAtual?.label}
+          </CardTitle>
+          <select
+            value={metricaGrafico}
+            onChange={e => setMetricaGrafico(e.target.value)}
+            style={{ padding: '5px 8px', borderRadius: 8, border: `1px solid ${C.border}`, background: 'var(--cbrio-input-bg)', color: C.text, fontSize: 12 }}
+          >
+            {COMP_METRICAS.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
+          </select>
+        </CardHeader>
+        <CardContent>
+          <div className="h-[260px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={dadosGrafico} margin={{ top: 6, right: 8, left: -16, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
+                <XAxis dataKey="nome" tick={{ fontSize: 11 }} />
+                <YAxis tick={{ fontSize: 11 }} allowDecimals={metricaGrafico === 'frequencia_media' || metricaGrafico === 'satisfacao_lideres'} />
+                <Tooltip
+                  cursor={{ fill: 'rgba(0,179,157,0.08)' }}
+                  contentStyle={{ borderRadius: 8, fontSize: 12 }}
+                  formatter={(v) => [Number(v).toLocaleString('pt-BR'), metricaAtual?.label]}
+                />
+                <Bar dataKey="valor" name={metricaAtual?.label} fill={C.primary} radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </CardContent>
+      </Card>
+
+      <div style={{ fontSize: 11, color: C.t3, lineHeight: 1.6 }}>
+        Os números das temporadas fechadas ficam <strong>congelados</strong> (não mudam mais, mesmo quando os grupos passam pra temporada seguinte). A temporada em andamento aparece como <strong>parcial</strong> até ser consolidada em Inscrições → Administração → Temporadas.
+      </div>
     </div>
   );
 }

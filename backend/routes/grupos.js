@@ -2611,6 +2611,58 @@ router.get('/temporadas/list', async (req, res) => {
   } catch (e) { console.error('[Grupos temporadas]', e.message); res.status(500).json({ error: 'Erro ao buscar temporadas' }); }
 });
 
+// GET /api/grupos/temporadas/consolidado — comparativo entre temporadas.
+// Devolve as temporadas JÁ congeladas (mem_temporada_consolidado) + as
+// métricas AO VIVO da temporada ativa quando ela ainda não foi consolidada
+// (linha "parcial · em andamento"). Rota estática ANTES de /temporadas/:id.
+router.get('/temporadas/consolidado', async (req, res) => {
+  try {
+    const { data: congelados, error } = await supabase.from('mem_temporada_consolidado')
+      .select('*').order('data_inicio', { ascending: true });
+    if (error) throw error;
+
+    // Temporada ativa (a "atual") — se ainda não congelada, calcula parcial.
+    let atual = null;
+    const { data: temps } = await supabase.from('mem_temporadas')
+      .select('id, label, data_inicio, data_fim, ativa').eq('ativa', true).limit(1);
+    const ativa = (temps || [])[0];
+    if (ativa && !(congelados || []).some(c => c.temporada === ativa.id)) {
+      const { data: m, error: eM } = await supabase.rpc('fn_temporada_metricas', { p_temporada: ativa.id });
+      if (!eM && Array.isArray(m) && m[0]) {
+        atual = {
+          temporada: ativa.id, temporada_label: ativa.label,
+          data_inicio: ativa.data_inicio, data_fim: ativa.data_fim,
+          parcial: true, ...m[0],
+        };
+      }
+    }
+    res.json({ consolidados: congelados || [], atual });
+  } catch (e) {
+    console.error('[Grupos consolidado]', e.message);
+    res.status(500).json({ error: 'Erro ao buscar o comparativo de temporadas' });
+  }
+});
+
+// POST /api/grupos/temporadas/:id/consolidar — congela os KPIs da temporada
+// (fechamento). Idempotente-seguro: só recalcula/sobrescreve com ?forcar=1.
+router.post('/temporadas/:id/consolidar', authorizeModule('grupos', 5), async (req, res) => {
+  try {
+    const forcar = req.query.forcar === '1' || req.query.forcar === 'true' || req.body?.forcar === true;
+    const { data, error } = await supabase.rpc('fn_consolidar_temporada', {
+      p_temporada: req.params.id,
+      p_por: req.user.userId || null,
+      p_por_nome: req.user.name || null,
+      p_forcar: forcar,
+    });
+    if (error) throw error;
+    // A função RETURNS a linha (objeto único no supabase-js).
+    res.json(Array.isArray(data) ? data[0] : data);
+  } catch (e) {
+    console.error('[Grupos consolidar temporada]', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao consolidar a temporada' });
+  }
+});
+
 // PATCH /api/grupos/temporadas/:id — admin/diretor altera inscricoes_abertas (e outros campos)
 router.patch('/temporadas/:id', authorizeModule('grupos', 5), async (req, res) => {
   try {

@@ -9,7 +9,9 @@ import { useEffect, useState } from 'react';
 import { grupos as api } from '../../api';
 import { Button } from '../../components/ui/button';
 import { toast } from 'sonner';
-import { Calendar, Lock, Unlock, CheckCircle2 } from 'lucide-react';
+import { Calendar, Lock, Unlock, CheckCircle2, Archive } from 'lucide-react';
+
+const fmtDT = (d) => { try { return new Date(d).toLocaleDateString('pt-BR'); } catch { return ''; } };
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
@@ -19,14 +21,22 @@ const C = {
 
 export default function TemporadasGrupos() {
   const [temporadas, setTemporadas] = useState([]);
+  const [consolidados, setConsolidados] = useState({}); // temporada -> linha congelada
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState({});
+  const [consolidando, setConsolidando] = useState({});
 
   async function load() {
     setLoading(true);
     try {
-      const data = await api.temporadas();
-      setTemporadas(data || []);
+      const [temps, comp] = await Promise.all([
+        api.temporadas(),
+        api.temporadasConsolidado().catch(() => ({ consolidados: [] })),
+      ]);
+      setTemporadas(temps || []);
+      const map = {};
+      for (const c of (comp?.consolidados || [])) map[c.temporada] = c;
+      setConsolidados(map);
     } catch (e) { toast.error(e.message || 'Erro ao carregar temporadas'); }
     finally { setLoading(false); }
   }
@@ -35,10 +45,20 @@ export default function TemporadasGrupos() {
 
   async function toggleInscricoes(t) {
     const novo = !t.inscricoes_abertas;
-    if (!confirm(novo
-      ? `Abrir inscrições para ${t.label}? O formulário público vai aceitar novos pedidos.`
-      : `Fechar inscrições para ${t.label}? O formulário público vai bloquear novos pedidos.`
-    )) return;
+    // Aviso na virada: se está ABRINDO uma temporada e existe OUTRA temporada
+    // (que já começou) ainda NÃO consolidada, lembra de fechar os livros antes —
+    // senão os números dela se perdem quando os grupos virarem.
+    if (novo) {
+      const hoje = new Date().toISOString().slice(0, 10);
+      const pendente = temporadas.find(o => o.id !== t.id && !consolidados[o.id]
+        && o.data_inicio && o.data_inicio <= hoje);
+      const aviso = pendente
+        ? `\n\n⚠️ A temporada "${pendente.label}" ainda não foi consolidada. Consolide-a antes de virar, senão os números dela (grupos, frequência, líderes...) se perdem. Abrir mesmo assim?`
+        : '';
+      if (!confirm(`Abrir inscrições para ${t.label}? O formulário público vai aceitar novos pedidos.${aviso}`)) return;
+    } else {
+      if (!confirm(`Fechar inscrições para ${t.label}? O formulário público vai bloquear novos pedidos.`)) return;
+    }
     setSaving(s => ({ ...s, [t.id]: true }));
     try {
       await api.atualizarTemporada(t.id, { inscricoes_abertas: novo });
@@ -46,6 +66,21 @@ export default function TemporadasGrupos() {
       load();
     } catch (e) { toast.error(e.message || 'Erro ao atualizar'); }
     finally { setSaving(s => ({ ...s, [t.id]: false })); }
+  }
+
+  async function consolidar(t) {
+    const jaFeito = consolidados[t.id];
+    const msg = jaFeito
+      ? `Reconsolidar "${t.label}"? Isso RECALCULA os números com os dados de AGORA e sobrescreve o que foi congelado em ${fmtDT(jaFeito.consolidado_em)}. Só faça se ainda não virou pra próxima temporada (senão as contagens ficam erradas).`
+      : `Consolidar "${t.label}"? Isso congela os números atuais (grupos, inscrições, líderes, líderes em treinamento, frequência, satisfação) no histórico do Comparativo. Faça isso ao final da temporada, antes de virar pra próxima.`;
+    if (!confirm(msg)) return;
+    setConsolidando(s => ({ ...s, [t.id]: true }));
+    try {
+      const r = await api.consolidarTemporada(t.id, !!jaFeito);
+      toast.success(`Temporada consolidada · ${r?.num_grupos ?? 0} grupos, ${r?.num_membros ?? 0} membros`);
+      load();
+    } catch (e) { toast.error(e.message || 'Erro ao consolidar'); }
+    finally { setConsolidando(s => ({ ...s, [t.id]: false })); }
   }
 
   return (
@@ -96,6 +131,17 @@ export default function TemporadasGrupos() {
                   {aberta ? <><Unlock size={13} /> Inscrições abertas</> : <><Lock size={13} /> Fechadas</>}
                 </span>
 
+                {/* Estado de consolidação (fechamento dos livros da temporada) */}
+                {consolidados[t.id] ? (
+                  <span style={{
+                    display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5,
+                    padding: '4px 10px', borderRadius: 99, fontWeight: 600,
+                    background: C.primary + '15', color: C.primary,
+                  }} title={`Congelada em ${fmtDT(consolidados[t.id].consolidado_em)}`}>
+                    <CheckCircle2 size={13} /> Consolidada
+                  </span>
+                ) : null}
+
                 <Button
                   size="sm"
                   variant={aberta ? 'outline' : 'default'}
@@ -103,6 +149,17 @@ export default function TemporadasGrupos() {
                   onClick={() => toggleInscricoes(t)}
                 >
                   {saving[t.id] ? 'Salvando...' : (aberta ? 'Fechar inscrições' : 'Abrir inscrições')}
+                </Button>
+
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={consolidando[t.id]}
+                  onClick={() => consolidar(t)}
+                  title="Congela os números desta temporada no histórico (Comparativo em Relatórios)"
+                >
+                  <Archive size={14} style={{ marginRight: 4 }} />
+                  {consolidando[t.id] ? 'Consolidando...' : (consolidados[t.id] ? 'Reconsolidar' : 'Consolidar')}
                 </Button>
               </div>
             );
@@ -119,6 +176,7 @@ export default function TemporadasGrupos() {
           <li><strong>Inscrições abertas</strong>: o QR code (<code>/inscricao-grupos</code>) e o clique no mapa permitem que a pessoa se inscreva em um grupo e o líder receba notificação.</li>
           <li><strong>Inscrições fechadas</strong>: o formulário retorna mensagem "inscrições fechadas no momento, aguarde a próxima abertura". Botão "Inscrever-se" no mapa fica desabilitado.</li>
           <li>Os pedidos pendentes que já existem <strong>não são afetados</strong> — só novos pedidos são bloqueados.</li>
+          <li><strong>Consolidar</strong>: ao final de uma temporada, antes de virar pra próxima, aperte "Consolidar" pra congelar os números dela (grupos, inscrições, líderes, frequência, satisfação). Eles ficam salvos no <strong>Comparativo entre temporadas</strong> (aba Relatórios) pra sempre — mesmo depois que os grupos passarem pra temporada seguinte.</li>
         </ul>
       </div>
     </div>
