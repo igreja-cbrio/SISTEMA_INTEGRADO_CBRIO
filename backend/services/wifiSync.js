@@ -118,6 +118,14 @@ async function runWifiSync() {
     const vinculosMembro = vinc?.vinculos_membro ?? 0;
     const visitantesCriados = vinc?.visitantes_criados ?? 0;
 
+    // 3b) contatos do portal ACUMULAM no cadastro (mem_contatos · telefone/
+    //     e-mail que diferem do principal). Best-effort — tolera a migration
+    //     20260717120000 ausente.
+    const { error: ctErr } = await supabase.rpc('fn_wifi_coletar_contatos');
+    if (ctErr && !/fn_wifi_coletar_contatos/.test(ctErr.message || '')) {
+      console.warn('[wifiSync] coletar contatos:', ctErr.message);
+    }
+
     await supabase.from('wifi_sync_log').update({
       finalizado_em: new Date().toISOString(),
       status: 'ok',

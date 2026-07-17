@@ -617,6 +617,17 @@ function FichaEntrada({ id, onClose, onVerFicha }) {
                     {p.cpf && <span className="font-mono">{maskCpf(p.cpf)}</span>}
                     {p.telefone && <span>{maskTelefone(p.telefone)}</span>}
                   </div>
+                  {(data?.contatos || []).length > 0 && (
+                    <div className="text-[11px] text-muted-foreground mt-1 flex flex-wrap gap-x-2 gap-y-0.5">
+                      <span className="font-medium">Outros contatos:</span>
+                      {(data.contatos || []).map((c, i) => (
+                        <span key={i} title={`Visto em ${c.fonte || 'porta'}`}>
+                          {c.tipo === 'telefone' ? maskTelefone(c.valor) : c.valor}
+                          {c.fonte ? ` (${c.fonte})` : ''}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             </DialogHeader>

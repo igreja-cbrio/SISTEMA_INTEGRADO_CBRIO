@@ -485,9 +485,19 @@ router.get('/pessoa/:id', authorizeModule('next-batismo', 1), async (req, res) =
       });
     });
 
+    // Contatos ACUMULADOS (mem_contatos · telefones/e-mails de outras portas)
+    let contatos = [];
+    await safe('contatos', async () => {
+      const { data } = await supabase.from('mem_contatos')
+        .select('tipo, valor, fonte, ultimo_visto')
+        .eq('membro_id', id).is('deleted_at', null)
+        .order('ultimo_visto', { ascending: false }).limit(20);
+      contatos = data || [];
+    });
+
     res.json({
       pessoa: { ...pessoa, criado_em: pessoa.created_at },
-      primeiro_toque, toques, conexoes, quem_perguntar: quemPerguntar,
+      primeiro_toque, toques, conexoes, quem_perguntar: quemPerguntar, contatos,
     });
   } catch (e) {
     console.error('[next-batismo/pessoa]', e.message);
