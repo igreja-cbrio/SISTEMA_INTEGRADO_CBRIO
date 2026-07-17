@@ -77,6 +77,7 @@ router.get('/buscar', async (req, res) => {
     let query = supabase.from('mem_grupos')
       .select('id, codigo, nome, categoria, faixa_etaria, idade_min, idade_max, dia_semana, horario, recorrencia, local, descricao, bairro, lat, lng, lider_id, status_temporada, temporada, foto_url, modo_inscricao')
       .eq('ativo', true)
+      .is('deleted_at', null) // soft-deletado some do form (a temporada aberta não o esconde)
       .eq('aceitando_inscricoes', true) // líder pode ter parado de receber pedidos
       .neq('modo_inscricao', 'fechado'); // por convite do líder — nunca aparece
     // Por padrão mostra so grupos com status que aceitam novos (ativo + novo + a_confirmar)
@@ -185,7 +186,7 @@ router.get('/lideres/buscar', async (req, res) => {
     const term = String(q || '').trim().toLowerCase();
     if (term.length < 2) return res.json([]);
 
-    let query = supabase.from('mem_grupos').select('lider_id').eq('ativo', true).not('lider_id', 'is', null);
+    let query = supabase.from('mem_grupos').select('lider_id').eq('ativo', true).is('deleted_at', null).not('lider_id', 'is', null);
     if (temporada) query = query.eq('temporada', temporada);
     const { data: grupos } = await query;
     const liderIds = [...new Set((grupos || []).map(g => g.lider_id))];
@@ -211,6 +212,7 @@ router.get('/:id', async (req, res) => {
       .from('mem_grupos')
       .select('id, codigo, nome, categoria, faixa_etaria, idade_min, idade_max, dia_semana, horario, recorrencia, local, descricao, bairro, lat, lng, lider_id, status_temporada, temporada, foto_url, complemento, ativo, aceitando_inscricoes, modo_inscricao')
       .eq('id', req.params.id)
+      .is('deleted_at', null)
       .maybeSingle();
     if (error) throw error;
     if (!grupo || !grupo.ativo) return res.status(404).json({ error: 'Grupo não encontrado' });
@@ -236,6 +238,7 @@ router.get('/lideres/:liderId/grupos', async (req, res) => {
     let query = supabase.from('mem_grupos')
       .select('id, codigo, nome, categoria, faixa_etaria, idade_min, idade_max, dia_semana, horario, recorrencia, local, descricao, bairro, lat, lng, lider_id, status_temporada, temporada, modo_inscricao')
       .eq('lider_id', req.params.liderId).eq('ativo', true)
+      .is('deleted_at', null)
       .eq('aceitando_inscricoes', true)
       .neq('modo_inscricao', 'fechado')
       .in('status_temporada', ['ativo', 'novo', 'a_confirmar']);
@@ -322,7 +325,7 @@ function matchInfo(inc, cand) {
 async function checarDuplicataInscricao(grupoId, inc) {
   // 1) roster ativo do grupo (com dados do membro pra comparar por chave)
   const links = await fetchAllRange('mem_grupo_membros', 'membro_id',
-    [['eq', 'grupo_id', grupoId], ['is', 'saiu_em', null]]);
+    [['eq', 'grupo_id', grupoId], ['is', 'saiu_em', null], ['is', 'deleted_at', null]]);
   const ids = [...new Set(links.map(l => l.membro_id).filter(Boolean))];
   for (let i = 0; i < ids.length; i += 200) {
     const { data: membros } = await supabase.from('mem_membros')
@@ -334,7 +337,7 @@ async function checarDuplicataInscricao(grupoId, inc) {
   // 2) pedidos pendentes do grupo (snapshot nome/tel/email; CPF vem do vínculo)
   const peds = await fetchAllRange('mem_grupo_pedidos',
     'id, nome, email, telefone, membro_id, cadastro_pendente_id',
-    [['eq', 'grupo_id', grupoId], ['eq', 'status', 'pendente']]);
+    [['eq', 'grupo_id', grupoId], ['eq', 'status', 'pendente'], ['is', 'deleted_at', null]]);
   for (const p of peds) {
     let cand = { nome: p.nome, email: p.email, telefone: p.telefone, cpf: null };
     if (p.membro_id) {
@@ -458,7 +461,7 @@ router.post('/inscrever', async (req, res) => {
 
     // Verifica se grupo existe e esta ativo
     const { data: grupo } = await supabase.from('mem_grupos')
-      .select('id, nome, ativo, aceitando_inscricoes, modo_inscricao, status_temporada, temporada, lider_id, categoria, idade_min, idade_max').eq('id', grupo_id).single();
+      .select('id, nome, ativo, aceitando_inscricoes, modo_inscricao, status_temporada, temporada, lider_id, categoria, idade_min, idade_max').eq('id', grupo_id).is('deleted_at', null).single();
     if (!grupo || !grupo.ativo) {
       return res.status(404).json({ error: 'Grupo não encontrado ou inativo.' });
     }
@@ -536,11 +539,11 @@ router.post('/inscrever', async (req, res) => {
     let dup = null;
     if (membroId) {
       const { data: ativo } = await supabase.from('mem_grupo_membros')
-        .select('id').eq('grupo_id', grupo_id).eq('membro_id', membroId).is('saiu_em', null).limit(1);
+        .select('id').eq('grupo_id', grupo_id).eq('membro_id', membroId).is('saiu_em', null).is('deleted_at', null).limit(1);
       if (ativo && ativo.length) dup = { tipo: 'membro_ativo' };
       else {
         const { data: ped } = await supabase.from('mem_grupo_pedidos')
-          .select('id').eq('grupo_id', grupo_id).eq('membro_id', membroId).eq('status', 'pendente').limit(1);
+          .select('id').eq('grupo_id', grupo_id).eq('membro_id', membroId).eq('status', 'pendente').is('deleted_at', null).limit(1);
         if (ped && ped.length) dup = { tipo: 'pedido_pendente' };
       }
     }
@@ -722,7 +725,7 @@ router.get('/pedido/por-token', async (req, res) => {
 
     const { data: pedido, error: ePed } = await supabase.from('mem_grupo_pedidos')
       .select('id, nome, telefone, email, observacao, status, created_at, motivo_rejeicao, grupo_id, mem_grupos(id, nome, codigo, bairro, dia_semana, horario, local, endereco, complemento, capacidade, lider_id)')
-      .eq('id', payload.p).maybeSingle();
+      .eq('id', payload.p).is('deleted_at', null).maybeSingle();
     if (ePed) throw ePed; // falha de infra é 500, não "não encontrado" terminal
     if (!pedido) return res.status(404).json({ error: 'Pedido não encontrado.' });
 
@@ -768,7 +771,7 @@ router.post('/aprovar', async (req, res) => {
     if (!['aprovar', 'rejeitar'].includes(acao)) return res.status(400).json({ error: 'Ação inválida.' });
 
     const { data: pedido, error: ePed } = await supabase.from('mem_grupo_pedidos')
-      .select('id, status, grupo_id, membro_id, nome').eq('id', payload.p).maybeSingle();
+      .select('id, status, grupo_id, membro_id, nome').eq('id', payload.p).is('deleted_at', null).maybeSingle();
     if (ePed) throw ePed; // falha de infra é 500, não "não encontrado" terminal
     if (!pedido) return res.status(404).json({ error: 'Pedido não encontrado.' });
     if (pedido.status !== 'pendente') {
@@ -788,7 +791,7 @@ router.post('/aprovar', async (req, res) => {
     // link antigo deixa de valer.
     let liderNome = 'Líder do grupo';
     const { data: grupo } = await supabase.from('mem_grupos')
-      .select('id, nome, lider_id').eq('id', pedido.grupo_id).maybeSingle();
+      .select('id, nome, lider_id').eq('id', pedido.grupo_id).is('deleted_at', null).maybeSingle();
     if (!payload.l || !grupo || grupo.lider_id !== payload.l) {
       return res.status(403).json({ error: 'A liderança deste grupo mudou — este link não vale mais. O novo líder decide pelo sistema em /grupos.' });
     }
@@ -866,7 +869,7 @@ router.get('/pedido/sugestao', async (req, res) => {
 
     const { data: pedido } = await supabase.from('mem_grupo_pedidos')
       .select('*, mem_grupos(nome)')
-      .eq('id', payload.p).maybeSingle();
+      .eq('id', payload.p).is('deleted_at', null).maybeSingle();
     if (!pedido) return res.status(404).json({ error: 'Pedido não encontrado.' });
 
     const { data: sugerido } = await supabase.from('mem_grupos')
@@ -919,7 +922,7 @@ router.post('/sugestao/aceitar', async (req, res) => {
     if (!payload) return res.status(401).json({ error: 'Link inválido ou expirado.' });
 
     const { data: pedido } = await supabase.from('mem_grupo_pedidos')
-      .select('id, status, grupo_id, nome').eq('id', payload.p).maybeSingle();
+      .select('id, status, grupo_id, nome').eq('id', payload.p).is('deleted_at', null).maybeSingle();
     if (!pedido) return res.status(404).json({ error: 'Pedido não encontrado.' });
     // 'devolvido' (recusado pelo líder) e 'encaminhado' (sugestão enviada)
     // também aceitam — o aceite reativa o pedido como pendente no grupo sugerido.
