@@ -1400,4 +1400,7 @@ async function gerarNotificacoesKids() {
   return count;
 }
 
-module.exports = { gerarTodasNotificacoes };
+// gerarNotificacoesOnline também é consumida direto pelo cron de blindagem do
+// Online (routes/online.js /cron/verificar) — sem o export, aquele cron caía
+// com "gerarNotificacoesOnline is not a function" todo dia desde 04/07.
+module.exports = { gerarTodasNotificacoes, gerarNotificacoesOnline };
