@@ -589,6 +589,22 @@ router.get('/kpis/temporada-metricas', async (req, res) => {
   }
 });
 
+// GET /api/grupos/kpis/temporada-series?temporada=X — séries mensais
+// (frequência, inscrições, membresia) + tamanho/média dos grupos, escopadas
+// pela janela de data da temporada (fn_temporada_series · cap-safe em SQL).
+router.get('/kpis/temporada-series', async (req, res) => {
+  try {
+    const { temporada } = req.query;
+    if (!temporada) return res.status(400).json({ error: 'Informe a temporada' });
+    const { data, error } = await supabase.rpc('fn_temporada_series', { p_temporada: temporada });
+    if (error) throw error;
+    res.json(data || { serie: [], tamanho: null });
+  } catch (e) {
+    console.error('[Grupos temporada-series]', e.message);
+    res.status(500).json({ error: 'Erro ao buscar as séries da temporada' });
+  }
+});
+
 // GET /api/grupos/kpis/sem-relato · grupos ativos com o último encontro
 // registrado (qualquer via: sistema ou WhatsApp aplicado) e há quantos dias.
 // Alimenta o bloco "Grupos sem relatório" da aba Relatórios (visão do Pr.

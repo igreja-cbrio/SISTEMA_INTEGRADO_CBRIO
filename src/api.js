@@ -510,6 +510,8 @@ export const grupos = {
   consolidarTemporada: (id, forcar = false) => post(`/grupos/temporadas/${id}/consolidar${forcar ? '?forcar=1' : ''}`, {}),
   // Métricas COMPLETAS de uma temporada ao vivo (mesma fonte da consolidação)
   temporadaMetricas: (temporada) => get('/grupos/kpis/temporada-metricas?temporada=' + encodeURIComponent(temporada)),
+  // Séries mensais (frequência/inscrições/membresia) + tamanho dos grupos
+  temporadaSeries: (temporada) => get('/grupos/kpis/temporada-series?temporada=' + encodeURIComponent(temporada)),
   redes: {
     list: () => get('/grupos/redes'),
     create: (data) => post('/grupos/redes', data),

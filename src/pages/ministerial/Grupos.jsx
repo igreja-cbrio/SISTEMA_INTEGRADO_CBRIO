@@ -28,7 +28,7 @@ import GruposDuplicatas from './GruposDuplicatas';
 // inteira de erro de chunk (não regredir pra lazy sem revalidar em prod).
 import { GruposMapView } from '@/components/grupos/GruposMapView';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LabelList, PieChart, Pie, Cell } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LabelList, PieChart, Pie, Cell, LineChart, Line } from 'recharts';
 import { useTheme } from '../../contexts/ThemeContext';
 
 const C = {
@@ -44,6 +44,7 @@ const C = {
 const chartCores = (isDark) => ({
   teal: isDark ? '#0d9488' : '#00B39D',
   violet: '#8b5cf6',
+  amber: isDark ? '#d97706' : '#f59e0b',
   grid: isDark ? '#ffffff22' : '#00000014',
   eixo: 'var(--cbrio-text3)',
 });
@@ -2603,12 +2604,6 @@ function MetricaCard({ label, valor, sufixo, cor }) {
 // KPI + gráfico de frequência por mês + lista de líderes em treinamento. Os
 // números vêm da RPC agregada (fn_grupos_kpis_relatorio); a lista nominal de
 // líderes em treinamento, do endpoint /kpis/lideres-treinamento.
-const REL_RANGES = [
-  { value: 3, label: '3 meses' },
-  { value: 6, label: '6 meses' },
-  { value: 12, label: '12 meses' },
-  { value: 24, label: '2 anos' },
-];
 const REL_MESES_PT = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
 const relLabelMes = (ym) => {
   if (!ym) return '';
@@ -2620,9 +2615,9 @@ function RelatorioGrupos({ temporada }) {
   const { isDark } = useTheme();
   const cores = chartCores(isDark);
   const [vista, setVista] = useState('atual'); // 'atual' (detalhe) | 'comparativo' (entre temporadas)
-  const [meses, setMeses] = useState(12);
   const [data, setData] = useState(null);
   const [metricas, setMetricas] = useState(null); // conjunto COMPLETO, ao vivo, da temporada (== consolidação)
+  const [series, setSeries] = useState(null);     // séries mensais + tamanho dos grupos
   const [treino, setTreino] = useState([]);
   const [semRelato, setSemRelato] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -2630,25 +2625,26 @@ function RelatorioGrupos({ temporada }) {
   useEffect(() => {
     let alive = true;
     setLoading(true);
-    const params = { meses };
+    // Filtro de meses aposentado (Marcos · 18/07): o escopo agora é a própria
+    // temporada (a aba mostra 1 temporada · o comparativo mostra todas). funcoes
+    // (papéis) e a lista de treino saem do relatório; scalars e séries saem das
+    // funções escopadas pela temporada.
+    const params = {};
     if (temporada) params.temporada = temporada;
     const treinoParams = temporada ? { temporada } : undefined;
     Promise.all([
       api.relatorioKpis(params),
       api.lideresTreinamento(treinoParams).catch(() => []),
       api.semRelato().catch(() => null),
-      // Métricas completas da temporada, ao vivo, pela MESMA função que a
-      // consolidação congela — só quando há uma temporada selecionada (a função
-      // precisa da janela de data da temporada). Sem temporada, cai no relatório.
       temporada ? api.temporadaMetricas(temporada).catch(() => null) : Promise.resolve(null),
+      temporada ? api.temporadaSeries(temporada).catch(() => null) : Promise.resolve(null),
     ])
-      .then(([d, t, sr, m]) => { if (alive) { setData(d); setTreino(Array.isArray(t) ? t : []); setSemRelato(sr); setMetricas(m && Object.keys(m).length ? m : null); } })
-      .catch(() => { if (alive) { setData(null); setTreino([]); setMetricas(null); } })
+      .then(([d, t, sr, m, s]) => { if (alive) { setData(d); setTreino(Array.isArray(t) ? t : []); setSemRelato(sr); setMetricas(m && Object.keys(m).length ? m : null); setSeries(s || null); } })
+      .catch(() => { if (alive) { setData(null); setTreino([]); setMetricas(null); setSeries(null); } })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [meses, temporada]);
+  }, [temporada]);
 
-  const serie = (data?.frequencia?.serie || []).map(s => ({ ...s, mes: relLabelMes(s.ym) }));
   // NPS: prioriza o da temporada (métricas completas); cai no do relatório.
   const nps = metricas
     ? (metricas.satisfacao_lideres != null ? { valor: metricas.satisfacao_lideres, data: metricas.satisfacao_lideres_data } : null)
@@ -2671,22 +2667,6 @@ function RelatorioGrupos({ temporada }) {
         <ComparativoTemporadas />
       ) : (
       <>
-      {/* Seletor de período */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-        <div style={{ display: 'inline-flex', gap: 2, padding: 2, borderRadius: 12, border: `1px solid ${C.border}`, background: C.bg }}>
-          {REL_RANGES.map(r => (
-            <button key={r.value} onClick={() => setMeses(r.value)} style={{
-              padding: '6px 14px', fontSize: 12, fontWeight: 600, borderRadius: 10, border: 'none', cursor: 'pointer',
-              background: meses === r.value ? C.primary : 'transparent',
-              color: meses === r.value ? '#fff' : C.t3, transition: 'all 0.15s',
-            }}>{r.label}</button>
-          ))}
-        </div>
-        <span style={{ fontSize: 12, color: C.t3 }}>
-          {data?.frequencia?.total_encontros ?? 0} encontro(s) no período
-        </span>
-      </div>
-
       {loading ? (
         <div style={{ padding: 40, textAlign: 'center', color: C.t3 }}>Carregando relatório...</div>
       ) : !data ? (
@@ -2732,48 +2712,19 @@ function RelatorioGrupos({ temporada }) {
               treino={(metricas ? metricas.num_lideres_treinamento : data.lideres_treinamento) ?? 0}
               cores={cores}
             />
-            <PapeisBarras funcoes={data.funcoes} cores={cores} />
+            <PapeisBarras
+              funcoes={data.funcoes}
+              lideres={(metricas ? metricas.num_lideres : data.total_lideres) ?? 0}
+              treino={(metricas ? metricas.num_lideres_treinamento : data.lideres_treinamento) ?? 0}
+              cores={cores}
+            />
           </div>
 
-          {/* Frequência por mês */}
-          <Card>
-            <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0">
-              <CardTitle className="text-sm font-medium flex items-center gap-2">
-                <BarChart3 className="h-4 w-4 text-muted-foreground" />
-                Frequência por mês
-              </CardTitle>
-              <span className="text-xs text-muted-foreground">
-                {(data.frequencia?.total_presencas ?? 0).toLocaleString('pt-BR')} presenças no período
-              </span>
-            </CardHeader>
-            <CardContent>
-              {serie.length === 0 ? (
-                <div style={{ padding: 32, textAlign: 'center', color: C.t3, fontSize: 13 }}>
-                  Nenhum encontro registrado no período. A frequência aparece aqui conforme os líderes registram as chamadas dos encontros.
-                </div>
-              ) : (
-                <div className="h-[260px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={serie} margin={{ top: 6, right: 8, left: -16, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke={cores.grid} vertical={false} />
-                      <XAxis dataKey="mes" tick={{ fontSize: 11, fill: cores.eixo }} axisLine={false} tickLine={false} />
-                      <YAxis tick={{ fontSize: 11, fill: cores.eixo }} allowDecimals={false} axisLine={false} tickLine={false} />
-                      <Tooltip
-                        cursor={{ fill: cores.teal + '14' }}
-                        contentStyle={{ borderRadius: 8, fontSize: 12, border: `1px solid ${C.border}`, background: C.card, color: C.text }}
-                        formatter={(v) => [Number(v).toLocaleString('pt-BR'), 'Presenças']}
-                        labelFormatter={(l, payload) => {
-                          const p = payload?.[0]?.payload;
-                          return p ? `${l} · ${p.encontros} encontro(s) · média ${p.media}` : l;
-                        }}
-                      />
-                      <Bar dataKey="presencas" name="Presenças" fill={cores.teal} radius={[4, 4, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          {/* Série mensal: frequência / inscrições / membresia (com filtro) */}
+          <SerieTempo serie={series?.serie} cores={cores} />
+
+          {/* Tamanho dos grupos: média + distribuição */}
+          <TamanhoGrupos tamanho={series?.tamanho} cores={cores} />
 
           {/* Grupos sem relatório de encontro · visão de cobrança (Pr. Nélio) */}
           {semRelato && (() => {
@@ -2874,11 +2825,6 @@ function RelatorioGrupos({ temporada }) {
 // Lê mem_temporada_consolidado + a parcial ao vivo da temporada atual. É a
 // visão "como a igreja evoluiu de uma temporada pra outra" (Marcos · 17/07).
 // Rótulos e ordem canônica dos papéis no roster (para o gráfico de composição).
-const PAPEL_LABEL = {
-  lider: 'Líder', co_lider: 'Co-líder', lider_treinamento: 'Em treino',
-  frequentador: 'Frequentador', visitante: 'Visitante',
-};
-const PAPEL_ORDEM = ['lider', 'co_lider', 'lider_treinamento', 'frequentador', 'visitante'];
 
 // Pizza (donut) da liderança: líderes formados × em treinamento. 2 categorias
 // (teal × violeta · validado CVD-safe); identidade também por legenda + rótulo,
@@ -2936,12 +2882,21 @@ function LiderancaPizza({ lideres, treino, cores }) {
   );
 }
 
-// Barras horizontais da composição do grupo (papéis no roster). Série única →
+// Barras horizontais da composição do grupo (pessoas por papel). Série única →
 // hue único (teal); rótulo direto no fim de cada barra (dispensa eixo X).
-function PapeisBarras({ funcoes, cores }) {
-  const dados = PAPEL_ORDEM
-    .map(k => ({ papel: PAPEL_LABEL[k], valor: Number(funcoes?.[k] ?? 0) }))
-    .filter(d => d.valor > 0);
+// ⚠️ Líder no CBRio = responsável do grupo (mem_grupos.lider_id), NÃO uma função
+// no roster (funcao='lider' é ~sempre 0). Por isso a barra "Líder" usa o
+// num_lideres (contagem real), não funcoes.lider — senão mostra 1 (Marcos · 18/07).
+function PapeisBarras({ funcoes, lideres = 0, treino = 0, cores }) {
+  const dados = [
+    { papel: 'Líder', valor: Number(lideres || 0) },
+    { papel: 'Em treino', valor: Number(treino || funcoes?.lider_treinamento || 0) },
+    { papel: 'Co-líder', valor: Number(funcoes?.co_lider || 0) },
+    { papel: 'Frequentador', valor: Number(funcoes?.frequentador || 0) },
+    { papel: 'Visitante', valor: Number(funcoes?.visitante || 0) },
+  ]
+    .filter(d => d.valor > 0)
+    .sort((a, b) => b.valor - a.valor);
   return (
     <Card>
       <CardHeader className="pb-1">
@@ -2971,6 +2926,142 @@ function PapeisBarras({ funcoes, cores }) {
             </ResponsiveContainer>
           </div>
         )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// Gráfico de linhas com as 3 séries do funil (frequência/inscrições/membresia)
+// e um filtro embaixo pra ligar/desligar cada uma (Marcos · 18/07: comparar
+// "quem só se inscreveu × quem entrou no grupo × quem participa"). Multi-série →
+// paleta categórica validada (teal/violeta/âmbar) + legenda; nunca só cor.
+const SERIE_DEFS = [
+  { key: 'inscricoes', label: 'Inscrições', corKey: 'violet', desc: 'pediram pra entrar' },
+  { key: 'membros', label: 'Membresia', corKey: 'amber', desc: 'entraram no grupo' },
+  { key: 'presencas', label: 'Frequência', corKey: 'teal', desc: 'participaram (presenças)' },
+];
+
+function SerieTempo({ serie, cores }) {
+  const [ativos, setAtivos] = useState({ inscricoes: true, membros: true, presencas: true });
+  const dados = (serie || []).map(s => ({ ...s, mes: relLabelMes(s.ym) }));
+  const defs = SERIE_DEFS.map(d => ({ ...d, cor: cores[d.corKey] }));
+  const algumDado = dados.some(d => (d.inscricoes || 0) + (d.membros || 0) + (d.presencas || 0) > 0);
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-medium flex items-center gap-2">
+          <TrendingUp className="h-4 w-4 text-muted-foreground" />
+          Funil ao longo dos meses
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {dados.length === 0 || !algumDado ? (
+          <div style={{ padding: 32, textAlign: 'center', color: C.t3, fontSize: 13, lineHeight: 1.6 }}>
+            Ainda sem movimento nesta temporada. Conforme as pessoas se inscrevem, entram nos grupos e os
+            líderes registram as chamadas, as três linhas aparecem aqui.
+          </div>
+        ) : (
+          <>
+            <div className="h-[280px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={dados} margin={{ top: 6, right: 12, left: -12, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={cores.grid} vertical={false} />
+                  <XAxis dataKey="mes" tick={{ fontSize: 11, fill: cores.eixo }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fontSize: 11, fill: cores.eixo }} allowDecimals={false} axisLine={false} tickLine={false} />
+                  <Tooltip
+                    contentStyle={{ borderRadius: 8, fontSize: 12, border: `1px solid ${C.border}`, background: C.card, color: C.text }}
+                    formatter={(v, n) => [Number(v).toLocaleString('pt-BR'), n]}
+                  />
+                  {defs.filter(d => ativos[d.key]).map(d => (
+                    <Line key={d.key} type="monotone" dataKey={d.key} name={d.label} stroke={d.cor}
+                      strokeWidth={2} dot={{ r: 3, fill: d.cor }} activeDot={{ r: 5 }} isAnimationActive={false} />
+                  ))}
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+            {/* Filtro: liga/desliga cada série */}
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
+              {defs.map(d => {
+                const on = ativos[d.key];
+                return (
+                  <button
+                    key={d.key}
+                    onClick={() => setAtivos(a => ({ ...a, [d.key]: !a[d.key] }))}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 7, padding: '6px 12px', borderRadius: 99, cursor: 'pointer',
+                      fontSize: 12, fontWeight: 600,
+                      border: `1px solid ${on ? d.cor : C.border}`,
+                      background: on ? d.cor + '18' : 'transparent',
+                      color: on ? C.text : C.t3,
+                    }}
+                    title={d.desc}
+                  >
+                    <span style={{ width: 12, height: 12, borderRadius: 3, background: on ? d.cor : C.t3, opacity: on ? 1 : 0.4 }} />
+                    {d.label}
+                    <span style={{ fontSize: 10.5, color: C.t3, fontWeight: 500 }}>· {d.desc}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// Média e distribuição de tamanho dos grupos (Marcos · 18/07). Hero com a média
+// + histograma por faixa de tamanho (revela a assimetria — poucos grupos gigantes
+// puxam a média pra cima; a mediana mostra o grupo "típico").
+function TamanhoGrupos({ tamanho, cores }) {
+  if (!tamanho) return null;
+  const dist = tamanho.distribuicao || [];
+  const vazios = (tamanho.total_grupos || 0) - (tamanho.com_membros || 0);
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-medium flex items-center gap-2">
+          <Users className="h-4 w-4 text-muted-foreground" />
+          Tamanho dos grupos
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'center' }}>
+          <div style={{ minWidth: 150 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+              <span style={{ fontSize: 34, fontWeight: 800, color: cores.teal, lineHeight: 1 }}>
+                {Number(tamanho.media ?? 0).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}
+              </span>
+              <span style={{ fontSize: 12, color: C.t3 }}>pessoas / grupo</span>
+            </div>
+            <div style={{ fontSize: 11.5, color: C.t3, marginTop: 8, lineHeight: 1.7 }}>
+              Mediana: <strong style={{ color: C.t2 }}>{Number(tamanho.mediana ?? 0).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}</strong> (o grupo típico)<br />
+              {tamanho.com_membros ?? 0} grupos com gente{vazios > 0 ? ` · ${vazios} ainda vazios` : ''}
+            </div>
+          </div>
+          <div style={{ flex: 1, minWidth: 240, height: 200 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={dist} margin={{ top: 18, right: 8, left: -16, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke={cores.grid} vertical={false} />
+                <XAxis dataKey="faixa" tick={{ fontSize: 11, fill: cores.eixo }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 11, fill: cores.eixo }} allowDecimals={false} axisLine={false} tickLine={false} />
+                <Tooltip
+                  cursor={{ fill: cores.teal + '14' }}
+                  contentStyle={{ borderRadius: 8, fontSize: 12, border: `1px solid ${C.border}`, background: C.card, color: C.text }}
+                  formatter={(v) => [Number(v).toLocaleString('pt-BR'), 'Grupos']}
+                  labelFormatter={(l) => `${l} pessoas`}
+                />
+                <Bar dataKey="n" name="Grupos" fill={cores.teal} radius={[4, 4, 0, 0]} maxBarSize={54} isAnimationActive={false}>
+                  <LabelList dataKey="n" position="top" style={{ fill: C.text, fontSize: 11, fontWeight: 700 }} />
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+        <div style={{ fontSize: 10.5, color: C.t3, marginTop: 6 }}>
+          Cada barra = quantos grupos têm aquele número de pessoas. A média é puxada pra cima por poucos grupos grandes — a mediana reflete melhor o grupo comum.
+        </div>
       </CardContent>
     </Card>
   );
@@ -3053,6 +3144,7 @@ function ComparativoTemporadas() {
   const { isDark } = useTheme();
   const cores = chartCores(isDark);
   const [linhas, setLinhas] = useState(null);
+  const [ocultas, setOcultas] = useState(() => new Set()); // temporadas escondidas do comparativo
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -3083,6 +3175,17 @@ function ComparativoTemporadas() {
     );
   }
 
+  // Filtro de temporadas: mostra só as selecionadas (Marcos · 18/07). Guarda-se
+  // pelo menos 1 visível pros gráficos não ficarem vazios.
+  const visiveis = linhas.filter(l => !ocultas.has(l.temporada));
+  const linhasMostradas = visiveis.length ? visiveis : linhas;
+  const toggleTemp = (id) => setOcultas(prev => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id);
+    else if (linhas.length - next.size > 1) next.add(id); // nunca esconde a última
+    return next;
+  });
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div style={{ fontSize: 12.5, color: C.t2, display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -3090,10 +3193,30 @@ function ComparativoTemporadas() {
         Cada gráfico mostra a evolução de um indicador entre as temporadas — quanto a igreja cresceu de uma para a outra.
       </div>
 
+      {/* Filtro de temporadas (aparece quando há mais de uma) */}
+      {linhas.length > 1 && (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <span style={{ fontSize: 11.5, color: C.t3 }}>Temporadas:</span>
+          {linhas.map(l => {
+            const on = !ocultas.has(l.temporada);
+            return (
+              <button key={l.temporada} onClick={() => toggleTemp(l.temporada)} style={{
+                padding: '5px 11px', borderRadius: 99, cursor: 'pointer', fontSize: 12, fontWeight: 600,
+                border: `1px solid ${on ? cores.teal : C.border}`,
+                background: on ? cores.teal + '18' : 'transparent',
+                color: on ? C.text : C.t3,
+              }}>
+                {l.temporada_label || l.temporada}{l.parcial ? ' · parcial' : ''}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {/* Small-multiples: um mini-gráfico de barras por indicador */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 }}>
         {COMP_METRICAS.map(m => (
-          <MiniBarTemporadas key={m.key} metrica={m} linhas={linhas} cores={cores} />
+          <MiniBarTemporadas key={m.key} metrica={m} linhas={linhasMostradas} cores={cores} />
         ))}
       </div>
 
@@ -3110,7 +3233,7 @@ function ComparativoTemporadas() {
               <thead>
                 <tr style={{ borderBottom: `1px solid ${C.border}` }}>
                   <th style={{ textAlign: 'left', padding: '8px 10px', fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4, color: C.t3 }}>Métrica</th>
-                  {linhas.map(l => (
+                  {linhasMostradas.map(l => (
                     <th key={l.temporada} style={{ textAlign: 'right', padding: '8px 10px', color: l.parcial ? C.t3 : C.text, fontWeight: 700, whiteSpace: 'nowrap' }}>
                       {l.temporada_label || l.temporada}
                       {l.parcial && <div style={{ fontSize: 9.5, fontWeight: 600, color: C.amber }}>parcial · em andamento</div>}
@@ -3124,7 +3247,7 @@ function ComparativoTemporadas() {
                     <td style={{ padding: '8px 10px', color: C.t2, display: 'flex', alignItems: 'center', gap: 6 }}>
                       <m.icon size={13} style={{ color: C.t3 }} /> {m.label}
                     </td>
-                    {linhas.map(l => (
+                    {linhasMostradas.map(l => (
                       <td key={l.temporada} style={{ textAlign: 'right', padding: '8px 10px', color: l.parcial ? C.t3 : C.text, fontVariantNumeric: 'tabular-nums' }}>
                         {fmtComp(m.key, l[m.key])}
                       </td>
