@@ -258,11 +258,11 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
   const [saindo, setSaindo] = useState({});
   const sairDoGrupo = async (g) => {
     if (!g.participacao_id || !selected) return;
-    if (!window.confirm(`Remover ${selected.nome} do grupo "${g.nome}"? A pessoa sai do grupo (reversível). Faça só se confirmou que ela realmente não participa mais.`)) return;
+    if (!window.confirm(`Retirar ${selected.nome} do grupo "${g.nome}"? A pessoa é retirada do grupo (reversível). Faça só se confirmou que ela realmente não participa mais.`)) return;
     setSaindo(s => ({ ...s, [g.participacao_id]: true }));
     try {
       await api.sairMembro(g.participacao_id, { motivo: 'Sem frequência — revisão na aba Pessoas' });
-      toast.success(`${selected.nome} saiu de "${g.nome}"`);
+      toast.success(`${selected.nome} não está mais em "${g.nome}"`);
       setSelected(s => s ? { ...s, grupos: (s.grupos || []).filter(x => x.participacao_id !== g.participacao_id) } : s);
       carregar();
     } catch (e) {
@@ -673,15 +673,15 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
                           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10, padding: '2px 9px', borderRadius: 99, background: `${fp.cor}18`, color: fp.cor, fontWeight: 700, whiteSpace: 'nowrap' }}>
                             <fp.Icon size={10} /> {fp.label}
                           </span>
-                          {/* Sair do grupo · só membro do roster (não líder/supervisor) e com nível ≥3 */}
+                          {/* Retirar do grupo · só membro do roster (não líder/supervisor) e com nível ≥3 */}
                           {podeEditar && g.participacao_id && !g.supervisiona && (g.funcao === 'frequentador' || g.funcao === 'visitante') && (
                             <button
                               onClick={() => sairDoGrupo(g)}
                               disabled={!!saindo[g.participacao_id]}
-                              title="Remover do grupo (reversível)"
+                              title="Retirar do grupo (reversível)"
                               style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: 'none', border: `1px solid ${C.border}`, borderRadius: 8, padding: '5px 9px', fontSize: 11, fontWeight: 600, color: saindo[g.participacao_id] ? C.t3 : C.red, cursor: saindo[g.participacao_id] ? 'wait' : 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
                             >
-                              <UserMinus size={12} /> {saindo[g.participacao_id] ? 'Saindo…' : 'Sair'}
+                              <UserMinus size={12} /> {saindo[g.participacao_id] ? 'Retirando…' : 'Retirar do grupo'}
                             </button>
                           )}
                         </div>
