@@ -7,7 +7,7 @@ const { supabase } = require('../utils/supabase');
 const { uploadModuleFile, SHAREPOINT_CONFIGURED } = require('../services/storageService');
 const {
   normalizarCpf, normalizarTelefone, normalizarEmail, nomesMesmaPessoa,
-  acharMembroGuardado,
+  acharMembroGuardado, acharOuCriarGuardado,
 } = require('../services/membroMatch');
 const {
   verificarToken, notificarLiderNovoPedido, formatarQuando, formatarOnde,
@@ -1290,6 +1290,49 @@ router.post('/grupo/frequencia', async (req, res) => {
   } catch (e) {
     console.error('[public grupos frequencia post]', e.message);
     res.status(500).json({ error: 'Erro ao salvar a frequência.' });
+  }
+});
+
+// POST /api/public/grupos/grupo/frequencia/visitante — body { token, nome, telefone }
+// Líder adiciona um visitante que apareceu no encontro (Marcos · 18/07): captura
+// quem nunca preencheu formulário. Roteia pelo matcher (Contrato de porta · não
+// duplica) e entra no roster como visitante (entrou_em=hoje) → aparece na chamada
+// pra marcar presente, no funil (membresia) e destacado como "novo". Idempotente:
+// se já está ativo no grupo, só devolve o membro.
+router.post('/grupo/frequencia/visitante', async (req, res) => {
+  try {
+    const { token, nome, telefone } = req.body || {};
+    const ctx = await contextoFrequencia(token);
+    if (ctx.erro) return res.status(ctx.erro.status).json({ error: ctx.erro.msg });
+    const { grupo } = ctx;
+
+    if (!nome || nome.trim().length < 3) return res.status(400).json({ error: 'Digite o nome do visitante.', campo: 'nome' });
+    if (!telefone || soDigitos(telefone).length < 10) return res.status(400).json({ error: 'Digite um celular válido com DDD.', campo: 'telefone' });
+
+    // Matcher: liga a quem já existe (chave forte) ou cria stub visitante. Sem
+    // CPF, telefone é chave fraca → pode criar novo (a Naná deduplica depois).
+    const r = await acharOuCriarGuardado({ nome: nome.trim(), telefone, status: 'visitante' });
+    const membroId = r?.membro_id;
+    if (!membroId) return res.status(500).json({ error: 'Não foi possível registrar o visitante.' });
+
+    // Já ativo no grupo? Só devolve (idempotente · não duplica vínculo).
+    const { data: jaAtivo } = await supabase.from('mem_grupo_membros')
+      .select('id').eq('grupo_id', grupo.id).eq('membro_id', membroId)
+      .is('saiu_em', null).is('deleted_at', null).limit(1);
+    if (!jaAtivo || !jaAtivo.length) {
+      const { error: eVinc } = await supabase.from('mem_grupo_membros').insert({
+        grupo_id: grupo.id, membro_id: membroId, funcao: 'visitante',
+        entrou_em: new Date().toISOString().slice(0, 10),
+      });
+      if (eVinc) throw eVinc;
+    }
+
+    const { data: mem } = await supabase.from('mem_membros')
+      .select('id, nome, foto_url').eq('id', membroId).maybeSingle();
+    res.json({ ok: true, membro: { id: membroId, nome: mem?.nome || nome.trim(), foto_url: mem?.foto_url || null } });
+  } catch (e) {
+    console.error('[public grupos frequencia visitante]', e.message);
+    res.status(500).json({ error: 'Erro ao adicionar o visitante.' });
   }
 });
 

@@ -2102,6 +2102,15 @@ export const gruposPublic = {
     if (!r.ok) throw new Error(j.error || 'Erro ao salvar a frequência');
     return j; // { ok, marcados, total }
   },
+  adicionarVisitanteFrequencia: async (token, { nome, telefone }) => {
+    const r = await fetch(`${API}/public/grupos/grupo/frequencia/visitante`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, nome, telefone }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { const e = new Error(j.error || 'Erro ao adicionar visitante'); Object.assign(e, j); throw e; }
+    return j; // { ok, membro: { id, nome, foto_url } }
+  },
 };
 
 export const apresentacaoCriancasPublico = {
