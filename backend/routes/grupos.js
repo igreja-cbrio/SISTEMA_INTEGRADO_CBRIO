@@ -618,6 +618,23 @@ router.get('/kpis/temporada-series', async (req, res) => {
   }
 });
 
+// GET /api/grupos/kpis/sem-presenca?temporada=X — revisão de fim de temporada:
+// membros (só participantes · nunca liderança) sem NENHUMA presença na temporada,
+// agrupados por grupo · SÓ grupos que registraram encontro (fn_temporada_sem_presenca).
+// Nível 3 (expõe lista de pessoas pra ação de remoção · gate humano na UI).
+router.get('/kpis/sem-presenca', authorizeModule('grupos', 3), async (req, res) => {
+  try {
+    const { temporada } = req.query;
+    if (!temporada) return res.status(400).json({ error: 'Informe a temporada' });
+    const { data, error } = await supabase.rpc('fn_temporada_sem_presenca', { p_temporada: temporada });
+    if (error) throw error;
+    res.json(Array.isArray(data) ? data : (data || []));
+  } catch (e) {
+    console.error('[Grupos sem-presenca]', e.message);
+    res.status(500).json({ error: 'Erro ao buscar a revisão de frequência' });
+  }
+});
+
 // GET /api/grupos/kpis/sem-relato · grupos ativos com o último encontro
 // registrado (qualquer via: sistema ou WhatsApp aplicado) e há quantos dias.
 // Alimenta o bloco "Grupos sem relatório" da aba Relatórios (visão do Pr.

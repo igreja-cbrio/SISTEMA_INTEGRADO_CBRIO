@@ -9,7 +9,7 @@ import { useEffect, useState } from 'react';
 import { grupos as api } from '../../api';
 import { Button } from '../../components/ui/button';
 import { toast } from 'sonner';
-import { Calendar, Lock, Unlock, CheckCircle2, Archive } from 'lucide-react';
+import { Calendar, Lock, Unlock, CheckCircle2, Archive, UserMinus, ClipboardX } from 'lucide-react';
 
 const fmtDT = (d) => { try { return new Date(d).toLocaleDateString('pt-BR'); } catch { return ''; } };
 
@@ -178,6 +178,114 @@ export default function TemporadasGrupos() {
           <li>Os pedidos pendentes que já existem <strong>não são afetados</strong> — só novos pedidos são bloqueados.</li>
           <li><strong>Consolidar</strong>: ao final de uma temporada, antes de virar pra próxima, aperte "Consolidar" pra congelar os números dela (grupos, inscrições, líderes, frequência, satisfação). Eles ficam salvos no <strong>Comparativo entre temporadas</strong> (aba Relatórios) pra sempre — mesmo depois que os grupos passarem pra temporada seguinte.</li>
         </ul>
+      </div>
+
+      {!loading && temporadas.length > 0 && <RevisaoFimTemporada temporadas={temporadas} />}
+    </div>
+  );
+}
+
+// Revisão de fim de temporada (Marcos · 18/07): lista quem nunca teve presença
+// na temporada — candidatos a sair. ASSISTIDA (a equipe confirma a remoção) e só
+// para grupos que registraram encontro (ausência de chamada ≠ ausência da pessoa).
+function RevisaoFimTemporada({ temporadas }) {
+  const [temporada, setTemporada] = useState(() => (temporadas.find(t => t.ativa)?.id || temporadas[0]?.id || ''));
+  const [grupos, setGrupos] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [removendo, setRemovendo] = useState({});
+
+  async function load(temp) {
+    if (!temp) return;
+    setLoading(true);
+    try {
+      const data = await api.semPresenca(temp);
+      setGrupos(Array.isArray(data) ? data : []);
+    } catch (e) { toast.error(e.message || 'Erro ao carregar a revisão'); setGrupos([]); }
+    finally { setLoading(false); }
+  }
+  useEffect(() => { load(temporada); /* eslint-disable-next-line */ }, [temporada]);
+
+  async function remover(grupoId, m, grupoNome) {
+    if (!confirm(`Remover ${m.nome} do grupo "${grupoNome}"? Ele sai do grupo (reversível). Faça só se confirmou que a pessoa realmente não participa mais.`)) return;
+    setRemovendo(s => ({ ...s, [m.participacao_id]: true }));
+    try {
+      await api.sairMembro(m.participacao_id, { motivo_saida: 'Sem presença na temporada (revisão de fim de temporada)' });
+      toast.success(`${m.nome} saiu do grupo`);
+      setGrupos(gs => gs.map(g => g.grupo_id === grupoId
+        ? { ...g, membros: g.membros.filter(x => x.participacao_id !== m.participacao_id) }
+        : g).filter(g => g.membros.length > 0));
+    } catch (e) { toast.error(e.message || 'Erro ao remover'); }
+    finally { setRemovendo(s => ({ ...s, [m.participacao_id]: false })); }
+  }
+
+  const totalPessoas = (grupos || []).reduce((acc, g) => acc + (g.membros?.length || 0), 0);
+
+  return (
+    <div style={{ marginTop: 22, background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, overflow: 'hidden' }}>
+      <div style={{ padding: '14px 16px', borderBottom: `1px solid ${C.border}` }}>
+        <h2 style={{ fontSize: 15, fontWeight: 700, color: C.text, margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <ClipboardX size={17} style={{ color: C.amber }} /> Revisão de fim de temporada — sem presença
+        </h2>
+        <p style={{ fontSize: 12, color: C.t3, margin: '6px 0 0', lineHeight: 1.6 }}>
+          Pessoas que nunca apareceram em nenhuma chamada da temporada — candidatas a sair. Só aparecem grupos que
+          registraram encontro (se o líder não fez chamada, ninguém é listado). <strong>Nada sai sozinho</strong>:
+          você confirma cada remoção. Líderes não entram na lista.
+        </p>
+        <select
+          value={temporada}
+          onChange={e => setTemporada(e.target.value)}
+          style={{ marginTop: 10, padding: '7px 10px', borderRadius: 8, border: `1px solid ${C.border}`, background: 'var(--cbrio-input-bg)', color: C.text, fontSize: 13 }}
+        >
+          {temporadas.map(t => <option key={t.id} value={t.id}>{t.label}{t.ativa ? ' (atual)' : ''}</option>)}
+        </select>
+      </div>
+
+      <div style={{ padding: 16 }}>
+        {loading ? (
+          <div style={{ padding: 24, textAlign: 'center', color: C.t3, fontSize: 13 }}>Carregando...</div>
+        ) : !grupos || grupos.length === 0 ? (
+          <div style={{ padding: 24, textAlign: 'center', color: C.t3, fontSize: 13, lineHeight: 1.6 }}>
+            <CheckCircle2 size={26} style={{ margin: '0 auto 8px', display: 'block', color: C.green, opacity: 0.7 }} />
+            Ninguém a revisar nesta temporada — ou todos os grupos com chamada têm todo mundo com presença,
+            ou ainda não há encontros registrados.
+          </div>
+        ) : (
+          <>
+            <div style={{ fontSize: 12.5, color: C.t2, marginBottom: 12 }}>
+              <strong style={{ color: C.text }}>{totalPessoas}</strong> pessoa(s) sem presença em <strong style={{ color: C.text }}>{grupos.length}</strong> grupo(s) com chamada registrada.
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              {grupos.map(g => (
+                <div key={g.grupo_id} style={{ border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden' }}>
+                  <div style={{ padding: '8px 12px', background: C.bg, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{g.grupo_nome}</span>
+                    {g.grupo_codigo && <code style={{ fontSize: 10.5, color: C.t3 }}>{g.grupo_codigo}</code>}
+                    <span style={{ fontSize: 11, color: C.t3, marginLeft: 'auto' }}>
+                      {g.total_encontros} encontro(s) · {g.membros.length} sem presença
+                    </span>
+                  </div>
+                  <div>
+                    {g.membros.map(m => (
+                      <div key={m.participacao_id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderTop: `1px solid ${C.border}` }}>
+                        <div style={{ width: 28, height: 28, borderRadius: '50%', background: m.foto_url ? `url(${m.foto_url}) center/cover` : `${C.primary}18`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: 11, fontWeight: 700, color: C.primary }}>
+                          {!m.foto_url && (m.nome?.charAt(0) || '?')}
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{m.nome}</div>
+                          {m.telefone && <div style={{ fontSize: 11, color: C.t3 }}>{m.telefone}</div>}
+                        </div>
+                        {m.entrou_em && <span style={{ fontSize: 11, color: C.t3 }}>entrou {fmtDT(m.entrou_em)}</span>}
+                        <Button size="sm" variant="outline" disabled={removendo[m.participacao_id]} onClick={() => remover(g.grupo_id, m, g.grupo_nome)}>
+                          <UserMinus size={13} style={{ marginRight: 4 }} /> {removendo[m.participacao_id] ? 'Removendo...' : 'Remover'}
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

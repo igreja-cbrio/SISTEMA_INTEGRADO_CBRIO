@@ -512,6 +512,8 @@ export const grupos = {
   temporadaMetricas: (temporada) => get('/grupos/kpis/temporada-metricas?temporada=' + encodeURIComponent(temporada)),
   // Séries mensais (frequência/inscrições/membresia) + tamanho dos grupos
   temporadaSeries: (temporada) => get('/grupos/kpis/temporada-series?temporada=' + encodeURIComponent(temporada)),
+  // Revisão de fim de temporada: membros sem presença (por grupo)
+  semPresenca: (temporada) => get('/grupos/kpis/sem-presenca?temporada=' + encodeURIComponent(temporada)),
   redes: {
     list: () => get('/grupos/redes'),
     create: (data) => post('/grupos/redes', data),
