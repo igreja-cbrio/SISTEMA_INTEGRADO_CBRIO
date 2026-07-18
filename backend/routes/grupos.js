@@ -1204,6 +1204,7 @@ async function promoverInscricaoLider(insc) {
     const r = await acharOuCriarGuardado({
       cpf: cad.cpf, email: cad.email, telefone: cad.telefone, nome: cad.nome,
       extra: { data_nascimento: cad.data_nascimento || null, foto_url: cad.foto_url || null, genero: cad.genero || null },
+      origem: 'grupos_aprovacao', origemId: cad.id,
     }, { soChaveForte: cad.nao_vincular_fraco === true });
     membroId = r.membro_id;
   }
@@ -1527,6 +1528,7 @@ async function aprovarPedidoCore(pedidoId, user) {
           const r = await acharOuCriarGuardado({
             cpf: cad.cpf, email: cad.email, telefone: cad.telefone, nome: cad.nome,
             extra: { data_nascimento: cad.data_nascimento || null, foto_url: cad.foto_url || null, genero: cad.genero || null },
+            origem: 'grupos_aprovacao', origemId: cad.id,
           }, { soChaveForte: cad.nao_vincular_fraco === true });
           membroId = r.membro_id;
         }

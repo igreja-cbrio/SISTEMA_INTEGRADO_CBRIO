@@ -91,7 +91,11 @@ export default function IdentidadePendenciasPanel({ statusFixo = null, ocultarFi
   const { data, isLoading, isFetching, refetch } = useQuery({
     queryKey: ['identidade-pendencias', status, tipo],
     queryFn: () => membresiaApi.identidade.list({ status, ...(tipo ? { tipo } : {}) }),
-    staleTime: 60_000,
+    staleTime: Infinity,
+    gcTime: Infinity,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 
   const items = data?.items || [];

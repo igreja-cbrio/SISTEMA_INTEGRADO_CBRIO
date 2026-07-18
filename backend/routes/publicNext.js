@@ -12,6 +12,7 @@ const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const { verifyDirecionarToken, direcionarMatricula } = require('../services/nextDirecionar');
 const { acharOuCriarGuardado } = require('../services/membroMatch');
+const { registrarObservacaoSegura } = require('../services/identidadeProgressiva');
 
 // Janela do dia de HOJE em BRT (UTC-3, sem horário de verão) → intervalo em UTC.
 // 00:00 BRT = 03:00 UTC do mesmo dia. Usado pra "quem fez check-in hoje".
@@ -118,6 +119,7 @@ router.post('/inscrever', async (req, res) => {
         nome: [nome, sobrenome].filter(Boolean).join(' '),
         dataNascimento: data_nascimento || null,
         status: 'visitante',
+        origem: 'next_formulario',
       });
       membroId = r.membro_id;
     } catch (e) {
@@ -186,6 +188,11 @@ router.post('/inscrever', async (req, res) => {
       if (matErr.code === '23505') return res.status(200).json({ ok: true, ja_inscrito: true });
       return res.status(500).json({ error: matErr.message });
     }
+    await registrarObservacaoSegura({
+      membroId, origem: 'next_formulario', origemId: mat.id,
+      nome: [nome, sobrenome].filter(Boolean).join(' '), cpf: cleanCpf,
+      telefone, email: cleanEmail, dataNascimento: data_nascimento || null,
+    });
 
     // Notificação para responsáveis do NEXT
     try {
@@ -332,6 +339,7 @@ router.post('/checkin/:token/walkin', async (req, res) => {
       const r = await acharOuCriarGuardado({
         cpf: cleanCpf, email: cleanEmail, telefone: cleanTel,
         nome: nomeCompleto, dataNascimento: data_nascimento || null, status: 'visitante',
+        origem: 'next_checkin',
       });
       membroId = r?.membro_id || null;
     } catch (e) { console.error('[next walkin] acharOuCriarGuardado:', e.message); }
@@ -360,6 +368,11 @@ router.post('/checkin/:token/walkin', async (req, res) => {
       if (matErr.code === '23505') return res.json({ ok: true, ja_inscrito: true });
       return res.status(500).json({ error: matErr.message });
     }
+    await registrarObservacaoSegura({
+      membroId, origem: 'next_checkin', origemId: mat.id,
+      nome: nomeCompleto, cpf: cleanCpf, telefone: cleanTel,
+      email: cleanEmail, dataNascimento: data_nascimento || null,
+    });
     res.json({ ok: true, id: mat.id });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

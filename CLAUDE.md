@@ -82,8 +82,8 @@ outra tela de busca/cópia da Membresia. Estado publicado em produção no commi
   Ferreira × Ana Carolina Vieira). A ação mantém os cadastros separados e os
   agrupa na mesma família. **Não vincular** persiste `sem_vinculo/descartado` em
   `entradas_resolucoes`, remove o par da fila e impede que volte no recálculo.
-  Cache backend: 60 s. Snapshot da
-  implantação: 107 sugestões (26 para família existente, 81 para nova; todas
+  Cache backend: 10 min, compartilhado entre resumo/duplicidades/famílias e
+  invalidado pelas ações de resolução. Snapshot da implantação anterior: 107 sugestões (26 para família existente, 81 para nova; todas
   por telefone — endereço não acrescentou pares naquele momento).
 - Vocabulário do produto e do código é sempre **Família**. O termo técnico
   legado em inglês foi removido de UI, comentários, documentação e scripts sem
@@ -116,8 +116,24 @@ CPF responde `400 {"error":"CPF obrigatório"}` e não grava inscrição.
 **Contagem da Membresia:** o número operacional verdadeiro na auditoria era
 **3.665** pessoas `active=true AND deleted_at IS NULL`. Os **4.239** mostrados
 antes incluíam 574 registros soft-deletados porque `GET /membresia/membros` não
-filtrava `deleted_at`; o endpoint agora filtra. Snapshot também confirmou zero
-pares após o pré-filtro de duplicidades — aba vazia não era falha de carga.
+filtrava `deleted_at`; o endpoint agora filtra.
+
+**Correção da fila vazia (2026-07-18 · ainda não publicada):** a rota combinava
+`vw_nb_duplicados_suspeitos` com a triagem nova usando `Promise.all`; a view
+legada excedia o `statement_timeout` e descartava junto o resultado válido da
+triagem. O frontend convertia o erro em `items=[]`, exibindo falsamente “nenhuma
+duplicata”. A rota não consulta mais a view: pagina a base viva, forma candidatos
+por CPF, telefone, e-mail, nascimento e blocos de nome, aplica
+`duplicidadePolicy` como filtro final, exclui decisões de
+`mem_duplicados_ignorados` e devolve **todos** os pares. Diagnóstico real após o
+fix: 525 pares em ~10 s; Ana Carolina Pereira Vieira Ferreira × Ana Carolina
+Vieira presente com “Telefone e nome compatíveis”; resumo quente em 235 ms.
+Origens são enriquecidas em lotes de 100 UUIDs para não estourar a URL do
+PostgREST. No frontend, as filas usam cache de sessão (`staleTime/gcTime =
+Infinity`, sem refetch em mount/foco/reconexão): trocar de aba ou sair/voltar ao
+módulo não recarrega. Recarregamento explícito força recálculo; resoluções
+invalidam backend e React Query. Erros agora têm estado próprio e nunca parecem
+fila vazia. Sem migration.
 
 ## ⚠️ Conselho deliberativo (skill `llm-council`) · acionar SEMPRE antes de responder (2026-06-28)
 
@@ -3247,3 +3263,39 @@ thumbnail_url, publicado_em, duration_seconds, serie), 20 séries
 default CBRio>/live`). **Somente leitura** (a coleta do YouTube continua no cron
 do `/online`); sem migration, sem env nova. App: tela `videos.tsx` (`/videos` ·
 atalho na Home + "Pregações" no Menu) abre os vídeos no YouTube via Linking.
+
+## Entradas · identidade progressiva e fusão segura (2026-07-18)
+
+Prioridade zero definida pelo Marcos: **todo cadastro novo precisa aumentar a
+confiabilidade futura da identidade**, mesmo quando hoje não há dados suficientes
+para afirmar que dois registros são a mesma pessoa. Migration
+`20260718190000_identidade_progressiva_merge_seguro.sql` (NÃO aplicada):
+- `mem_identidade_observacoes`: histórico acumulativo por porta de nome, CPF,
+  telefone, e-mail e nascimento. A base viva é semeada como `base_legada`; um
+  trigger captura também inserts/updates SQL que contornem o backend.
+- `mem_identidade_pares`: fila materializada e incremental com score, prioridade
+  (`quase_confirmado/alta/media/descoberta`), evidências, contradições, fontes e
+  data da última corroboração.
+- `identidadeProgressiva.js`: ao receber uma observação, procura os membros
+  conectados e recalcula o par imediatamente. Exemplo-alvo: um cadastro A com
+  CPF, B com telefone+nome e um terceiro formulário com CPF+telefone+nome cria
+  uma ponte e promove A×B para **quase confirmada**. Nunca auto-funde.
+- CPF agora só é chave se o dígito verificador for válido. Se chega CPF novo e
+  o único vínculo é telefone/e-mail compartilhável, o matcher exige também
+  nascimento compatível; sem isso cria separado e abre sugestão forte.
+- Todos os criadores diretos encontrados (app visitante, face, Cuidados,
+  membresia manual, importador de grupos e CPF financeiro) passaram pelo matcher
+  canônico. Formulários de Next, batismo, grupos, voluntariado, Kids e membresia
+  registram origem. **Decisões de culto permanecem como primeiro contato fraco**.
+- Batismo público passou a exigir CPF válido; o cadastro interno continua sendo
+  a exceção operacional da equipe.
+- `merge_membros` agora atualiza filhos linha a linha: colisão UNIQUE/CHECK apaga
+  apenas a linha realmente redundante, não a tabela inteira daquele membro.
+  `mem_merge_log.related_snapshot` preserva todos os filhos pré-fusão.
+- Entradas combina a fila progressiva com a descoberta legada, prioriza “quase
+  confirmadas”, mostra fontes, tem busca/filtros e pagina 100 cards por vez. A
+  ficha da pessoa mostra quando e por qual porta os dados foram corroborados.
+
+Validações: `node backend/services/identidadeProgressiva.test.js`, políticas de
+duplicidade/família, `npm test -- --run` e `npm run build` aprovados. Aplicar a
+migration **antes** do backend; não fazer commit/push/deploy sem autorização.

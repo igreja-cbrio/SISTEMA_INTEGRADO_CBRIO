@@ -1,8 +1,8 @@
 const assert = require('node:assert/strict');
 const { avaliarPossivelDuplicidade, nomesPodemSerMesmaPessoa } = require('./duplicidadePolicy');
 
-const davi = { nome: 'Davi Lucas Bernardo Conceição', telefone: '21999999999', cpf: '11111111111', email: 'davi@teste.com', genero: 'masculino' };
-const bianca = { nome: 'Bianca Silva Bernardo', telefone: '21999999999', cpf: '22222222222', email: 'bianca@teste.com', genero: 'feminino' };
+const davi = { nome: 'Davi Lucas Bernardo Conceição', telefone: '21999999999', cpf: '52998224725', email: 'davi@teste.com', genero: 'masculino' };
+const bianca = { nome: 'Bianca Silva Bernardo', telefone: '21999999999', cpf: '11144477735', email: 'bianca@teste.com', genero: 'feminino' };
 assert.equal(avaliarPossivelDuplicidade(davi, bianca).incluir, false, 'telefone compartilhado com identidade divergente não pode entrar');
 
 assert.equal(avaliarPossivelDuplicidade(
@@ -11,8 +11,8 @@ assert.equal(avaliarPossivelDuplicidade(
 ).incluir, true, 'telefone + nome compatível deve ir para revisão');
 
 assert.equal(avaliarPossivelDuplicidade(
-  { nome: 'Maria Souza', cpf: '33333333333' },
-  { nome: 'M. Souza', cpf: '333.333.333-33' },
+  { nome: 'Maria Souza', cpf: '52998224725' },
+  { nome: 'M. Souza', cpf: '529.982.247-25' },
 ).prioridade, 'alta', 'CPF igual deve ser evidência forte');
 
 assert.equal(avaliarPossivelDuplicidade(

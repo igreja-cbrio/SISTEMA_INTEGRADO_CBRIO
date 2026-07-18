@@ -5,6 +5,8 @@ const rateLimit = require('express-rate-limit');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const { uploadModuleFile, SHAREPOINT_CONFIGURED } = require('../services/storageService');
+const { acharMembroGuardado } = require('../services/membroMatch');
+const { registrarObservacaoSegura } = require('../services/identidadeProgressiva');
 
 const uploadMw = multer({
   storage: multer.memoryStorage(),
@@ -355,59 +357,12 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
       }
     }
 
-    if (!duplicadoDeId && cpfLimpo) {
-      const { data: porCpf } = await supabase
-        .from('mem_membros')
-        .select('id')
-        .eq('active', true)
-        .eq('cpf', cpfLimpo)
-        .limit(1)
-        .maybeSingle();
-      if (porCpf) duplicadoDeId = porCpf.id;
-    }
-
-    if (!duplicadoDeId && emailLimpo) {
-      const { data: porEmail } = await supabase
-        .from('mem_membros')
-        .select('id')
-        .eq('active', true)
-        .ilike('email', emailLimpo)
-        .limit(1)
-        .maybeSingle();
-      if (porEmail) duplicadoDeId = porEmail.id;
-    }
-
-    if (!duplicadoDeId && telefoneLimpo && telefoneLimpo.length >= 10) {
-      // Busca por nome parcial + telefone (só dígitos)
-      const primeiroNome = nome.trim().split(/\s+/)[0];
-      if (primeiroNome) {
-        const { data: candidatos } = await supabase
-          .from('mem_membros')
-          .select('id, telefone')
-          .eq('active', true)
-          .ilike('nome', `%${primeiroNome}%`)
-          .limit(20);
-        const match = (candidatos || []).find(
-          (c) => soDigitos(c.telefone) === telefoneLimpo,
-        );
-        if (match) duplicadoDeId = match.id;
-      }
-    }
-
-    // Nome + data de nascimento · pega quem já existe sem CPF/e-mail/telefone
-    // batendo (ex.: importados de grupos com nome+nascimento). Conservador:
-    // mesma data de nascimento E nome igual (normalizado).
-    if (!duplicadoDeId && data_nascimento) {
-      const normNome = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
-      const alvo = normNome(nome);
-      const { data: cands } = await supabase
-        .from('mem_membros')
-        .select('id, nome')
-        .eq('active', true)
-        .eq('data_nascimento', data_nascimento)
-        .limit(30);
-      const match = (cands || []).find((c) => normNome(c.nome) === alvo);
-      if (match) duplicadoDeId = match.id;
+    if (!duplicadoDeId) {
+      const match = await acharMembroGuardado({
+        cpf: cpfLimpo, email: emailLimpo, telefone: telefoneLimpo,
+        nome: nome.trim(), dataNascimento: data_nascimento,
+      });
+      duplicadoDeId = match?.membro_id || null;
     }
 
     // ── Monta payload de inserção ──
@@ -454,6 +409,14 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
       console.error('[PUBLIC CADASTRO] insert error:', error.message);
       return res.status(500).json({ error: 'Não foi possível registrar seu cadastro.' });
     }
+
+    await registrarObservacaoSegura({
+      membroId: duplicadoDeId,
+      origem: 'membresia_formulario', origemId: data.id,
+      nome: nome.trim(), cpf: cpfLimpo, email: emailLimpo,
+      telefone: telefoneLimpo, dataNascimento: data_nascimento,
+      dados: { status: data.status },
+    });
 
     // Notifica responsáveis pela integração (assíncrono, não bloqueia resposta)
     notificar({

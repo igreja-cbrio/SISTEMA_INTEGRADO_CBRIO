@@ -3,6 +3,7 @@ const rateLimit = require('express-rate-limit');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const { acharOuCriarGuardado } = require('../services/membroMatch');
+const { registrarObservacaoSegura } = require('../services/identidadeProgressiva');
 
 // Rate limit: 10 inscrições por IP a cada 15 min
 const limiter = rateLimit({
@@ -156,8 +157,8 @@ router.post('/', limiter, async (req, res) => {
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email).trim())) {
       return res.status(400).json({ error: 'Informe um email valido.' });
     }
-    if (cpf && !cpfValido(cpf)) {
-      return res.status(400).json({ error: 'CPF invalido.' });
+    if (!cpf || !cpfValido(cpf)) {
+      return res.status(400).json({ error: 'CPF é obrigatório e precisa ser válido.' });
     }
 
     const cpfNorm = cpf ? soDigitos(cpf) : null;
@@ -179,6 +180,7 @@ router.post('/', limiter, async (req, res) => {
         nome: `${nomeT} ${sobrenomeT}`.trim(),
         dataNascimento: data_nascimento || null,
         status: 'visitante',
+        origem: 'batismo_formulario',
       });
       membroId = r.membro_id;
     } catch (e) {
@@ -307,6 +309,11 @@ router.post('/', limiter, async (req, res) => {
       console.error('[publicBatismo] insert error:', error.message);
       return res.status(500).json({ error: 'Não foi possível registrar sua inscrição.' });
     }
+    await registrarObservacaoSegura({
+      membroId, origem: 'batismo_formulario', origemId: data.id,
+      nome: `${nomeT} ${sobrenomeT}`.trim(), cpf: cpfNorm,
+      telefone: telNorm, email: emailNorm, dataNascimento: data_nascimento || null,
+    });
 
     // Notifica responsáveis pela integração (assincrono)
     notificar({

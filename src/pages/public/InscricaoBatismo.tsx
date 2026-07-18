@@ -220,7 +220,7 @@ export default function InscricaoBatismo() {
     if (!form.sobrenome.trim()) return setError('Informe seu sobrenome.');
     if (!form.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) return setError('E-mail inválido.');
     if (!form.telefone || soDigitos(form.telefone).length < 10) return setError('Telefone inválido.');
-    if (form.cpf && !cpfValido(form.cpf)) return setError('CPF inválido.');
+    if (!form.cpf || !cpfValido(form.cpf)) return setError('Informe um CPF válido.');
 
     setLoading(true);
     try {
@@ -348,7 +348,7 @@ export default function InscricaoBatismo() {
               <Field id="email" label="E-mail" type="email" value={form.email} onChange={set('email')} required autoComplete="email" inputMode="email" />
               <Row>
                 <Field id="telefone" label="Telefone" value={form.telefone} onChange={set('telefone')} required placeholder="(00) 00000-0000" inputMode="tel" autoComplete="tel" />
-                <Field id="cpf" label="CPF (opcional)" value={form.cpf} onChange={set('cpf')} placeholder="000.000.000-00" inputMode="numeric" autoComplete="off" />
+                <Field id="cpf" label="CPF" value={form.cpf} onChange={set('cpf')} placeholder="000.000.000-00" inputMode="numeric" autoComplete="off" required />
               </Row>
               <div style={{ marginBottom: 20 }}>
                 <label style={{ display: 'block', fontSize: 11, color: 'var(--cbrio-text3)', marginBottom: 6 }}>Data de nascimento (opcional)</label>

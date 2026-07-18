@@ -41,6 +41,16 @@ const MOTIVO_LABELS = {
   nome:              { label: 'Nome',               cor: '#CA8A04' },
 };
 
+// As filas operacionais permanecem na memória durante toda a sessão. Elas só
+// são atualizadas por ação explícita ou depois de uma resolução da própria fila.
+const FILA_CACHE = {
+  staleTime: Infinity,
+  gcTime: Infinity,
+  refetchOnMount: false,
+  refetchOnWindowFocus: false,
+  refetchOnReconnect: false,
+};
+
 function maskCpf(v) {
   if (!v) return '';
   const d = String(v).replace(/\D/g, '');
@@ -69,13 +79,13 @@ export default function Entradas() {
   const { data: resumo } = useQuery({
     queryKey: ['next-batismo', 'resumo'],
     queryFn: () => api.resumo(),
-    staleTime: 30_000,
+    ...FILA_CACHE,
   });
   // Contador da fila de identidade (mesma queryKey do painel · cache compartilhado)
   const { data: identidade } = useQuery({
     queryKey: ['identidade-pendencias', 'pendente', ''],
     queryFn: () => membresiaApi.identidade.list({ status: 'pendente' }),
-    staleTime: 60_000,
+    ...FILA_CACHE,
   });
   const pendenciasIdentidade = Object.values(identidade?.resumo?.pendente || {}).reduce((a, b) => a + b, 0);
   const totalPendentes = (resumo?.duplicatas || 0) + (resumo?.familias_pendentes || 0) + pendenciasIdentidade;
@@ -207,7 +217,7 @@ function ResolvidosTab({ filtro, onVerFicha }) {
   const { data, isLoading, isFetching, refetch } = useQuery({
     queryKey: ['next-batismo', 'resolucoes', tipo],
     queryFn: () => api.resolucoes(tipo ? { tipo } : {}),
-    staleTime: 30_000,
+    ...FILA_CACHE,
   });
   const items = data?.items || [];
 
@@ -289,12 +299,24 @@ function TabBtn({ active, onClick, icon: Icon, label, count }) {
 // ----------------------------------------------------------------------------
 function DuplicadosTab({ onVerFicha }) {
   const qc = useQueryClient();
-  const { data, isLoading, refetch, isFetching } = useQuery({
+  const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ['next-batismo', 'duplicados'],
-    queryFn: () => api.duplicados({ limit: 200 }),
-    staleTime: 30_000,
+    queryFn: () => api.duplicados(),
+    ...FILA_CACHE,
   });
   const [mergeDialog, setMergeDialog] = useState(null); // { par, keep_id }
+  const [busca, setBusca] = useState('');
+  const [prioridade, setPrioridade] = useState('todas');
+  const [limiteVisivel, setLimiteVisivel] = useState(100);
+
+  const recarregarMut = useMutation({
+    mutationFn: () => api.duplicados({ refresh: 1 }),
+    onSuccess: (resultado) => {
+      qc.setQueryData(['next-batismo', 'duplicados'], resultado);
+      qc.invalidateQueries({ queryKey: ['next-batismo', 'resumo'] });
+    },
+    onError: (e) => toast.error(e?.message || 'Erro ao recarregar possíveis duplicidades'),
+  });
 
   const invalida = () => {
     qc.invalidateQueries({ queryKey: ['next-batismo', 'duplicados'] });
@@ -316,6 +338,17 @@ function DuplicadosTab({ onVerFicha }) {
   });
 
   const items = data?.items || [];
+  const termo = busca.trim().toLowerCase();
+  const filtrados = items.filter((par) => {
+    if (prioridade !== 'todas' && par.prioridade !== prioridade) return false;
+    if (!termo) return true;
+    const texto = [par.membro_a?.nome, par.membro_a?.cpf, par.membro_a?.telefone,
+      par.membro_b?.nome, par.membro_b?.cpf, par.membro_b?.telefone,
+      ...(par.evidencias || []), ...(par.fontes_evidencia || [])].filter(Boolean).join(' ').toLowerCase();
+    const digitosBusca = termo.replace(/\D/g, '');
+    return texto.includes(termo) || (digitosBusca.length >= 3 && texto.replace(/\D/g, '').includes(digitosBusca));
+  });
+  const visiveis = filtrados.slice(0, limiteVisivel);
 
   return (
     <div className="space-y-4">
@@ -324,24 +357,60 @@ function DuplicadosTab({ onVerFicha }) {
           O sistema combina sinais antes de trazer um par. Telefone ou e-mail isolados não bastam,
           e CPFs diferentes eliminam a sugestão. <strong>Confira as evidências e os módulos onde cada pessoa aparece antes de fundir.</strong>
         </p>
-        <Button onClick={() => refetch()} disabled={isFetching} variant="outline" size="sm" className="gap-1.5">
-          <RefreshCw className={`size-3.5 ${isFetching ? 'animate-spin' : ''}`} /> Recarregar
+        <Button onClick={() => recarregarMut.mutate()} disabled={isFetching || recarregarMut.isPending} variant="outline" size="sm" className="gap-1.5">
+          <RefreshCw className={`size-3.5 ${isFetching || recarregarMut.isPending ? 'animate-spin' : ''}`} /> Recarregar
         </Button>
+      </div>
+
+      <div className="flex flex-col md:flex-row gap-2 md:items-center">
+        <div className="relative flex-1 max-w-xl">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+          <Input value={busca} onChange={(e) => { setBusca(e.target.value); setLimiteVisivel(100); }}
+            placeholder="Buscar nome, CPF, telefone, evidência ou origem..." className="pl-9" />
+        </div>
+        <div className="flex gap-1.5 flex-wrap">
+          {[
+            ['todas', 'Todas'], ['quase_confirmado', 'Quase confirmadas'],
+            ['alta', 'Alta'], ['media', 'Média'], ['descoberta', 'Descoberta'],
+          ].map(([valor, label]) => (
+            <Button key={valor} type="button" size="sm" variant={prioridade === valor ? 'default' : 'outline'}
+              className="h-8 text-xs" onClick={() => { setPrioridade(valor); setLimiteVisivel(100); }}>
+              {label}
+            </Button>
+          ))}
+        </div>
       </div>
 
       {isLoading ? (
         <Centro><Loader2 className="size-5 animate-spin mr-2" /> Procurando duplicatas...</Centro>
+      ) : isError ? (
+        <div className="space-y-3">
+          <Vazio icon={ShieldQuestion} titulo="Não foi possível carregar as possíveis duplicidades"
+            texto={error?.message || 'A verificação da base falhou. Nenhuma fila vazia será exibida enquanto houver erro.'} />
+          <div className="flex justify-center">
+            <Button variant="outline" size="sm" onClick={() => refetch()} className="gap-1.5">
+              <RefreshCw className="size-3.5" /> Tentar novamente
+            </Button>
+          </div>
+        </div>
       ) : items.length === 0 ? (
         <Vazio icon={GitMerge} titulo="Nenhuma possível duplicata encontrada"
           texto="A base foi verificada e, com as regras atuais, não existe nenhum par com evidências suficientes para revisão. Telefone isolado não gera duplicata." />
       ) : (
         <div className="space-y-3">
-          <div className="text-xs text-muted-foreground">{items.length} par(es) pra revisar</div>
-          {items.map((par) => (
+          <div className="text-xs text-muted-foreground">{filtrados.length} de {items.length} par(es) · exibindo {visiveis.length}</div>
+          {visiveis.map((par) => (
             <ParCard key={par.par_id} par={par} onVerFicha={onVerFicha}
               onMerge={(keep_id) => setMergeDialog({ par, keep_id })}
               onIgnorar={() => ignorarMut.mutate(par)} ignorando={ignorarMut.isPending} />
           ))}
+          {limiteVisivel < filtrados.length && (
+            <div className="flex justify-center pt-2">
+              <Button variant="outline" onClick={() => setLimiteVisivel((n) => n + 100)}>
+                Mostrar mais {Math.min(100, filtrados.length - limiteVisivel)}
+              </Button>
+            </div>
+          )}
         </div>
       )}
 
@@ -395,18 +464,29 @@ function DuplicadosTab({ onVerFicha }) {
 
 function ParCard({ par, onMerge, onIgnorar, ignorando, onVerFicha }) {
   const motivos = par.motivos || [];
-  const corPrincipal = MOTIVO_LABELS[motivos[0]]?.cor || '#6B7280';
+  const corPrincipal = par.prioridade === 'quase_confirmado' ? '#059669'
+    : par.prioridade === 'alta' ? '#7C3AED' : MOTIVO_LABELS[motivos[0]]?.cor || '#6B7280';
+  const prioridadeLabel = {
+    quase_confirmado: 'Quase confirmada', alta: 'Evidência forte',
+    media: 'Revisar evidências', descoberta: 'Descoberta por nome',
+  }[par.prioridade] || 'Revisar evidências';
   return (
     <Card className="overflow-hidden">
       <CardHeader className="py-2 px-3 flex flex-row items-center justify-between gap-2 space-y-0" style={{ borderLeft: `3px solid ${corPrincipal}`, background: 'var(--cbrio-input-bg)' }}>
         <div className="flex items-center gap-2 flex-wrap">
           <Badge variant="outline" className="text-[10px] font-bold" style={{ borderColor: corPrincipal, color: corPrincipal }}>
-            {par.prioridade === 'alta' ? 'Evidência forte' : 'Revisar evidências'}
+            {prioridadeLabel}
           </Badge>
           {motivos.map((m) => {
             const def = MOTIVO_LABELS[m] || { label: m, cor: '#6B7280' };
             return <Badge key={m} variant="outline" className="text-[10px]" style={{ borderColor: def.cor, color: def.cor }}>{def.label}</Badge>;
           })}
+          {par.identidade_progressiva && (par.evidencias || []).map((e) => (
+            <Badge key={e} variant="outline" className="text-[10px]" style={{ borderColor: corPrincipal, color: corPrincipal }}>{e}</Badge>
+          ))}
+          {par.fontes_evidencia?.length > 0 && (
+            <span className="text-[10px] text-muted-foreground">Fontes: {par.fontes_evidencia.join(' · ')}</span>
+          )}
         </div>
         <Button variant="ghost" size="sm" onClick={onIgnorar} disabled={ignorando} className="h-7 text-xs gap-1">
           <X className="size-3" /> Não é a mesma pessoa
@@ -483,10 +563,18 @@ function MembroLado({ membro, lado, onMerge, onVerFicha }) {
 function FamiliasPendentesTab({ onVerFicha }) {
   const qc = useQueryClient();
   const [decisao, setDecisao] = useState(null);
-  const { data, isLoading, isFetching, refetch } = useQuery({
+  const { data, isLoading, isError, error, isFetching, refetch } = useQuery({
     queryKey: ['next-batismo', 'familias-pendentes'],
     queryFn: () => api.familiasPendentes(),
-    staleTime: 30_000,
+    ...FILA_CACHE,
+  });
+  const recarregarMut = useMutation({
+    mutationFn: () => api.familiasPendentes({ refresh: 1 }),
+    onSuccess: (resultado) => {
+      qc.setQueryData(['next-batismo', 'familias-pendentes'], resultado);
+      qc.invalidateQueries({ queryKey: ['next-batismo', 'resumo'] });
+    },
+    onError: (e) => toast.error(e?.message || 'Erro ao recarregar vínculos familiares'),
   });
   const vincular = useMutation({
     mutationFn: (item) => api.vincularFamilia({ membro_id: item.pessoa.id, relativo_id: item.referencia.id }),
@@ -521,13 +609,23 @@ function FamiliasPendentesTab({ onVerFicha }) {
           Telefone compartilhado exige também sobrenome em comum; endereço completo + CEP pode sugerir famílias com sobrenomes diferentes.
           <strong> Nomes abreviados ou muito semelhantes vão para Possíveis duplicidades.</strong>
         </p>
-        <Button onClick={() => refetch()} disabled={isFetching} variant="outline" size="sm" className="gap-1.5">
-          <RefreshCw className={`size-3.5 ${isFetching ? 'animate-spin' : ''}`} /> Recarregar
+        <Button onClick={() => recarregarMut.mutate()} disabled={isFetching || recarregarMut.isPending} variant="outline" size="sm" className="gap-1.5">
+          <RefreshCw className={`size-3.5 ${isFetching || recarregarMut.isPending ? 'animate-spin' : ''}`} /> Recarregar
         </Button>
       </div>
 
       {isLoading ? (
         <Centro><Loader2 className="size-5 animate-spin mr-2" /> Procurando vínculos familiares...</Centro>
+      ) : isError ? (
+        <div className="space-y-3">
+          <Vazio icon={ShieldQuestion} titulo="Não foi possível carregar os vínculos familiares"
+            texto={error?.message || 'A verificação da base falhou. Tente novamente.'} />
+          <div className="flex justify-center">
+            <Button variant="outline" size="sm" onClick={() => refetch()} className="gap-1.5">
+              <RefreshCw className="size-3.5" /> Tentar novamente
+            </Button>
+          </div>
+        </div>
       ) : itens.length === 0 ? (
         <Vazio icon={Home} titulo="Nenhum vínculo familiar sugerido"
           texto="Não há pessoa sem família com evidência suficiente de parentesco ou convivência com outro cadastro." />
@@ -893,6 +991,7 @@ const TOQUE_META = {
   batizado: { icon: Droplets,   cor: '#1D4ED8', label: 'Batizado' },
   grupo:    { icon: Users,      cor: '#16A34A', label: 'Grupo' },
   trilha:   { icon: Footprints, cor: '#7C3AED', label: 'Trilha' },
+  identidade: { icon: Network,  cor: '#059669', label: 'Identidade' },
   cadastro: { icon: UserPlus,   cor: '#6B7280', label: 'Cadastro' },
 };
 
