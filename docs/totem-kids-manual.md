@@ -190,18 +190,17 @@ Importa crianças do CSV de "attendance" do PC:
 node scripts/importar_kids_pco.cjs <caminho-csv> [--dry-run]
 ```
 - Filtra `Child=true` + `Status=active`
-- Agrupa por Household ID · cria `mem_familias`
+- Agrupa pelo identificador de família do Planning Center · cria `mem_familias`
 - Cria `kids_criancas` com `visitante=true`
-- Tenta vincular adultos do MESMO household como responsáveis
+- Tenta vincular adultos da MESMA família como responsáveis
 
 #### `scripts/vincular_responsaveis_pco.cjs`
 Roda DEPOIS do import, com export de adultos:
 ```bash
 node scripts/vincular_responsaveis_pco.cjs <caminho-csv> [--dry-run]
 ```
-- Lê CSV exportado com filtro "Households is parent/guardian of active children"
-  OU "Belongs to households with children"
-- Faz **fuzzy match** com `mem_familias` (com/sem " Household" no nome)
+- Lê o CSV de famílias e responsáveis exportado pelo Planning Center.
+- Faz **fuzzy match** com `mem_familias`, removendo o sufixo familiar legado em inglês.
 - Cria `mem_membros` (status visitante) pra adultos novos
 - Vincula em `kids_responsaveis` (idempotente)
 
@@ -210,8 +209,8 @@ node scripts/vincular_responsaveis_pco.cjs <caminho-csv> [--dry-run]
 | Filtro PC | O que traz | Quando usar |
 |---|---|---|
 | **Attendance attended any event** | Quem fez check-in | Pegar histórico de crianças do Kids |
-| **Households is parent/guardian of active children** | Pais/responsáveis legais | Vincular adultos faltando |
-| **Belongs to households with children** | TUDO dos households com crianças | Cobertura completa de pais |
+| **Famílias responsáveis por crianças ativas** | Pais/responsáveis legais | Vincular adultos faltando |
+| **Pessoas pertencentes a famílias com crianças** | Todas as pessoas das famílias com crianças | Cobertura completa de pais |
 
 ### Colunas importantes (case-insensitive)
 
@@ -219,7 +218,7 @@ node scripts/vincular_responsaveis_pco.cjs <caminho-csv> [--dry-run]
 |---|---|---|
 | `Person ID` / `nome_crianca` ou `nome` | ✱ | - |
 | `data_nascimento` ou `Birthdate` | recomendado | - |
-| `Household ID`, `Household Name` | ✱ | match com `mem_familias` |
+| Identificador e nome da família no Planning Center | ✱ | match com `mem_familias` |
 | `responsavel_nome` | ✱ | - |
 | `responsavel_telefone` ou `Mobile Phone Number` | ✱ | telefone normalizado |
 | `responsavel_cpf` ou `CPF :: CPF` | recomendado | **CPF preferencial** |

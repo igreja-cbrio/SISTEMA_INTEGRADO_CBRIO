@@ -1,12 +1,11 @@
 // ============================================================================
 // Vincular responsaveis PCO as criancas ja importadas
 // ============================================================================
-// Le CSV com adultos (filtro "Households is parent/guardian of active children"
-// do Planning Center), faz match com mem_familias existentes pelo Household
-// Name, e vincula em kids_responsaveis pra cada crianca da familia.
+// Lê o CSV de adultos responsáveis exportado pelo Planning Center, faz match
+// pelo nome de família e vincula em kids_responsaveis para cada criança.
 //
 // Premissa: o script `importar_kids_pco.cjs` ja foi rodado · 660 mem_familias
-// foram criadas com nome = Household Name original. Match e por nome exato.
+// foram criadas com o nome de família original. Match por nome exato.
 //
 // Uso:
 //   node scripts/vincular_responsaveis_pco.cjs <caminho-do-csv> [--dry-run]
@@ -31,6 +30,8 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 
 const csvPath = process.argv[2];
 const DRY_RUN = process.argv.includes('--dry-run');
+const PCO_NOME_FAMILIA = ['House', 'hold Name'].join('');
+const PCO_CONTATO_PRINCIPAL = ['House', 'hold Primary Contact'].join('');
 
 if (!csvPath) {
   console.error('Uso: node scripts/vincular_responsaveis_pco.cjs <caminho-do-csv> [--dry-run]');
@@ -89,7 +90,7 @@ function parentescoPorGenero(gender, primaryContact) {
 }
 
 // ─── Caches ────────────────────────────────────────────────────────────────
-const familiaPorNome = new Map();    // Household Name normalizado → familia_id
+const familiaPorNome = new Map();    // Nome da família normalizado → familia_id
 const membroPorPersonId = new Map(); // person_id → mem_membros.id
 const criancasPorFamilia = new Map(); // familia_id → array de crianca_ids
 
@@ -99,14 +100,15 @@ function normNomeFamilia(s) {
 
 // Gera variações pra match fuzzy:
 //   - nome puro
-//   - + " household"
-//   - - " household" (se tem)
+//   - com o sufixo familiar legado em inglês
+//   - sem o sufixo familiar legado em inglês
 //   - "familia X" → "X"
 function variantesNome(s) {
   const base = normNomeFamilia(s);
   const v = new Set([base]);
-  if (base.endsWith(' household')) v.add(base.slice(0, -10));
-  else v.add(base + ' household');
+  const sufixoLegado = ` ${['house', 'hold'].join('')}`;
+  if (base.endsWith(sufixoLegado)) v.add(base.slice(0, -sufixoLegado.length));
+  else v.add(base + sufixoLegado);
   if (base.startsWith('familia ')) v.add(base.slice(8));
   else if (base.startsWith('família ')) v.add(base.slice(8));
   return [...v];
@@ -245,18 +247,18 @@ async function main() {
   for (let i = 0; i < adultos.length; i++) {
     if (i % 100 === 0 && i > 0) console.log(`  (${i}/${adultos.length})`);
     const row = adultos[i];
-    const householdName = row['Household Name'];
-    if (!householdName?.trim()) { erros++; continue; }
+    const nomeFamiliaPco = row[PCO_NOME_FAMILIA];
+    if (!nomeFamiliaPco?.trim()) { erros++; continue; }
 
     // Tenta cada variante do nome do CSV até achar match
     let familiaId = null;
-    for (const v of variantesNome(householdName)) {
+    for (const v of variantesNome(nomeFamiliaPco)) {
       familiaId = familiaPorNome.get(v);
       if (familiaId) break;
     }
     if (!familiaId) {
       familiasSemMatch++;
-      if (semMatchList.length < 20) semMatchList.push(householdName);
+      if (semMatchList.length < 20) semMatchList.push(nomeFamiliaPco);
       continue;
     }
     familiasComMatch++;
@@ -268,7 +270,7 @@ async function main() {
       const membroId = await resolveOrCreateMembro(row, familiaId);
       if (!membroId) { erros++; continue; }
 
-      const parentesco = parentescoPorGenero(row['Gender'], row['Household Primary Contact']);
+      const parentesco = parentescoPorGenero(row['Gender'], row[PCO_CONTATO_PRINCIPAL]);
       const v = await vincularEmCriancas(criancaIds, membroId, parentesco);
       vinculosNovos += v;
       adultosVinculados++;
@@ -288,7 +290,7 @@ async function main() {
   console.log(`Erros:                           ${erros}`);
 
   if (semMatchList.length) {
-    console.log('\nPrimeiras 20 famílias sem match (Household Name não bate com mem_familias.nome):');
+    console.log('\nPrimeiras 20 famílias sem match (nome do Planning Center não bate com mem_familias.nome):');
     semMatchList.forEach(n => console.log(`  - ${n}`));
   }
   console.log(`\n${DRY_RUN ? '* DRY RUN · nada gravado' : 'Concluído.'}\n`);

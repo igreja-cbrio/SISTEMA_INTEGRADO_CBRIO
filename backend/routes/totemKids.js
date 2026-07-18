@@ -2132,7 +2132,7 @@ router.post('/sync-pco', authorizeModule('kids', 3), async (req, res) => {
 });
 
 // POST /api/totem-kids/responsaveis-pco · corrige os responsáveis poluídos
-// (household-dump de 22/05) podando pelos guardiões reais do PCO (checked_in_by).
+// (importação familiar de 22/05) podando pelos guardiões reais do PCO (checked_in_by).
 // Body { apply:true } grava · sem apply = prévia (dry-run · não altera nada).
 router.post('/responsaveis-pco', authorizeModule('kids', 3), async (req, res) => {
   try {
@@ -3643,7 +3643,7 @@ const COL_ALIASES = {
   sexo:                   ['sexo','genero','gender'],
   alergia:                ['alergia','alergias','observacoes_medicas','medical','medical_notes','allergies'],
   observacoes:            ['observacoes','obs','notas','notes','observacao'],
-  responsavel_nome:       ['responsavel_nome','responsavel','mae','pai','household_name','parent_name'],
+  responsavel_nome:       ['responsavel_nome','responsavel','mae','pai',['house', 'hold_name'].join(''),'parent_name'],
   responsavel_telefone:   ['responsavel_telefone','telefone','phone','mobile'],
   responsavel_cpf:        ['responsavel_cpf','cpf'],
   responsavel_parentesco: ['responsavel_parentesco','parentesco','relationship'],

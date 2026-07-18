@@ -301,7 +301,7 @@ async function sincronizarPresencasKidsPCO({ dias = 90, datas = null } = {}) {
 }
 
 // ============================================================================
-// Corrige os RESPONSÁVEIS poluídos (import de 22/05 jogou a household inteira).
+// Corrige os RESPONSÁVEIS poluídos (import de 22/05 jogou a família inteira).
 // Sinal de guardião REAL da criança = união de dois históricos de check-in:
 //   (a) PCO · quem FEZ o check-in dela (relationship `checked_in_by`);
 //   (b) NOSSO banco · quem já fez o check-in real dela no totem

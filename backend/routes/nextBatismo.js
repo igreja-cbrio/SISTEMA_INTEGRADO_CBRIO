@@ -18,6 +18,7 @@ const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { buscarCandidatos, acharOuCriar, acharOuCriarGuardado } = require('../services/membroMatch');
 const { avaliarPossivelDuplicidade } = require('../services/duplicidadePolicy');
+const { avaliarRelacaoFamiliar } = require('../services/familiaPolicy');
 
 router.use(authenticate);
 
@@ -119,9 +120,11 @@ async function enriquecerOrigensDuplicados(items) {
 // deploy em que o backend novo suba antes da migration.
 async function registrarResolucao(payload) {
   const { error } = await supabase.from('entradas_resolucoes').insert(payload);
-  if (error && !/entradas_resolucoes|schema cache|does not exist/i.test(error.message || '')) {
+  if (!error || error.code === '23505') return true;
+  if (!/entradas_resolucoes|schema cache|does not exist/i.test(error.message || '')) {
     console.warn('[next-batismo] resolução não registrada:', error.message);
   }
+  return false;
 }
 
 // ── Similaridade de nome (Dice por bigramas) · só pra ranquear sugestões ──
@@ -158,24 +161,29 @@ function chaveEndereco(membro) {
   return `${cep}|${endereco}`;
 }
 
-function identidadeDistinta(a, b) {
-  const cpfA = digitos(a?.cpf);
-  const cpfB = digitos(b?.cpf);
-  if (cpfA.length === 11 && cpfB.length === 11) return cpfA !== cpfB;
-  // Nomes muito próximos continuam na lente de duplicidade, não na familiar.
-  return diceNome(a?.nome, b?.nome) < 0.82;
+function linhaDuplicidadeContato(a, b, evidencia) {
+  return {
+    membro_a_id: a.id, membro_b_id: b.id,
+    motivos: [evidencia], confianca: 85,
+    a_nome: a.nome, a_email: a.email, a_telefone: a.telefone, a_cpf: a.cpf,
+    a_nascimento: a.data_nascimento, a_status: a.status, a_foto_url: a.foto_url,
+    a_criado_em: a.created_at, a_genero: a.genero,
+    b_nome: b.nome, b_email: b.email, b_telefone: b.telefone, b_cpf: b.cpf,
+    b_nascimento: b.data_nascimento, b_status: b.status, b_foto_url: b.foto_url,
+    b_criado_em: b.created_at, b_genero: b.genero,
+  };
 }
 
-let familiasPendentesCache = { ate: 0, itens: null };
+let triagemFamiliasCache = { ate: 0, familias: null, duplicatas: null };
 
-async function carregarFamiliasPendentes() {
-  if (familiasPendentesCache.itens && familiasPendentesCache.ate > Date.now()) {
-    return familiasPendentesCache.itens;
+async function carregarTriagemFamilias() {
+  if (triagemFamiliasCache.familias && triagemFamiliasCache.ate > Date.now()) {
+    return triagemFamiliasCache;
   }
   const membros = [];
   for (let from = 0; ; from += 1000) {
     const { data, error } = await supabase.from('mem_membros')
-      .select('id, nome, telefone, cpf, endereco, cep, bairro, cidade, familia_id, created_at, foto_url, status, familia:mem_familias(id, nome)')
+      .select('id, nome, telefone, email, cpf, data_nascimento, genero, endereco, cep, bairro, cidade, familia_id, created_at, foto_url, status, familia:mem_familias(id, nome)')
       .eq('active', true).is('deleted_at', null).range(from, from + 999);
     if (error) throw error;
     membros.push(...(data || []));
@@ -195,26 +203,56 @@ async function carregarFamiliasPendentes() {
     adicionar(porEndereco, chaveEndereco(membro), membro);
   }
 
-  const pares = new Map();
+  const paresFamilia = new Map();
+  const paresDuplicidade = new Map();
   const considerarGrupo = (grupo, evidencia) => {
     if (!grupo || grupo.length < 2 || grupo.length > 12) return;
     for (let i = 0; i < grupo.length; i += 1) {
       for (let j = i + 1; j < grupo.length; j += 1) {
         const a = grupo[i];
         const b = grupo[j];
-        if ((a.familia_id && b.familia_id) || !identidadeDistinta(a, b)) continue;
         const ids = [a.id, b.id].sort();
         const chave = `${ids[0]}_${ids[1]}`;
-        const atual = pares.get(chave) || { a, b, evidencias: [] };
+        // Nome abreviado/contido ou CPF igual é assunto de identidade. Nunca
+        // oferecemos criar família para um par que ainda pode ser uma pessoa só.
+        const relacao = avaliarRelacaoFamiliar(a, b, {
+          mesmoTelefone: evidencia === 'Mesmo telefone',
+          mesmoEndereco: evidencia === 'Mesmo endereço e CEP',
+        });
+        if (relacao.destino === 'duplicidade') {
+          if (evidencia === 'Mesmo telefone') {
+            paresDuplicidade.set(chave, linhaDuplicidadeContato(a, b, 'telefone_e_nome'));
+          }
+          continue;
+        }
+        if (a.familia_id && b.familia_id) continue;
+        if (relacao.destino !== 'familia') continue;
+        const atual = paresFamilia.get(chave) || { a, b, evidencias: [] };
         if (!atual.evidencias.includes(evidencia)) atual.evidencias.push(evidencia);
-        pares.set(chave, atual);
+        if (relacao.sobrenomes.length && !atual.evidencias.some((e) => e.startsWith('Sobrenome em comum:'))) {
+          atual.evidencias.push(`Sobrenome em comum: ${relacao.sobrenomes.join(', ')}`);
+        }
+        paresFamilia.set(chave, atual);
       }
     }
   };
   for (const grupo of porTelefone.values()) considerarGrupo(grupo, 'Mesmo telefone');
   for (const grupo of porEndereco.values()) considerarGrupo(grupo, 'Mesmo endereço e CEP');
 
-  const itens = [...pares.entries()].map(([parId, par]) => {
+  const [{ data: descartados, error: descartadosErr }, { data: duplicatasIgnoradas, error: ignoradasErr }] = await Promise.all([
+    supabase.from('entradas_resolucoes').select('origem_id')
+      .eq('tipo', 'sem_vinculo').eq('acao', 'descartado').eq('origem', 'familia').limit(5000),
+    supabase.from('mem_duplicados_ignorados').select('membro_a_id, membro_b_id').limit(5000),
+  ]);
+  if (descartadosErr && !/entradas_resolucoes|schema cache|does not exist/i.test(descartadosErr.message || '')) {
+    throw descartadosErr;
+  }
+  if (ignoradasErr) throw ignoradasErr;
+  const paresDescartados = new Set((descartados || []).map((r) => r.origem_id).filter(Boolean));
+  const paresDuplicidadeIgnorados = new Set((duplicatasIgnoradas || [])
+    .map((r) => [r.membro_a_id, r.membro_b_id].sort().join('_')));
+
+  const familias = [...paresFamilia.entries()].filter(([parId]) => !paresDescartados.has(parId)).map(([parId, par]) => {
     let pessoa = par.a;
     let referencia = par.b;
     if (par.a.familia_id && !par.b.familia_id) {
@@ -236,8 +274,32 @@ async function carregarFamiliasPendentes() {
     if (a.destino.tipo !== b.destino.tipo) return a.destino.tipo === 'existente' ? -1 : 1;
     return String(a.pessoa.nome).localeCompare(String(b.pessoa.nome), 'pt-BR');
   });
-  familiasPendentesCache = { ate: Date.now() + 60_000, itens };
-  return itens;
+  const duplicatas = [...paresDuplicidade.entries()]
+    .filter(([parId]) => !paresDuplicidadeIgnorados.has(parId))
+    .map(([, linha]) => linha);
+  triagemFamiliasCache = { ate: Date.now() + 60_000, familias, duplicatas };
+  return triagemFamiliasCache;
+}
+
+async function carregarFamiliasPendentes() {
+  return (await carregarTriagemFamilias()).familias;
+}
+
+async function carregarDuplicadosPendentes(limit = 500) {
+  const [{ data, error }, triagem] = await Promise.all([
+    supabase.from('vw_nb_duplicados_suspeitos').select('*')
+      .order('confianca', { ascending: false }).limit(limit),
+    carregarTriagemFamilias(),
+  ]);
+  if (error) throw error;
+  const porPar = new Map();
+  // Complementos por nome abreviado entram primeiro para não serem cortados
+  // quando a view SQL já tiver atingido o limite solicitado.
+  for (const linha of [...(triagem.duplicatas || []), ...(data || [])]) {
+    const chave = [linha.membro_a_id, linha.membro_b_id].sort().join('_');
+    if (!porPar.has(chave)) porPar.set(chave, linha);
+  }
+  return reshapeDuplicados([...porPar.values()]).slice(0, limit);
 }
 
 // ── Normaliza uma linha do funil sem vínculo pra forma uniforme ──
@@ -283,14 +345,14 @@ function rowVisita(r) {
 router.get('/resumo', authorizeModule('next-batismo', 1), async (req, res) => {
   try {
     const cnt = async (q) => { const { count } = await q; return count || 0; };
-    const [dup, familiasPendentes, vivos, comCpf] = await Promise.all([
-      cnt(supabase.from('vw_nb_duplicados_suspeitos').select('*', { count: 'exact', head: true })),
+    const [duplicados, familiasPendentes, vivos, comCpf] = await Promise.all([
+      carregarDuplicadosPendentes(),
       carregarFamiliasPendentes(),
       cnt(supabase.from('mem_membros').select('id', { count: 'exact', head: true }).is('deleted_at', null)),
       cnt(supabase.from('mem_membros').select('id', { count: 'exact', head: true }).is('deleted_at', null).not('cpf', 'is', null)),
     ]);
     res.json({
-      duplicatas: dup,
+      duplicatas: duplicados.length,
       familias_pendentes: familiasPendentes.length,
       // Saúde da identidade (corrida do CPF · faixa do topo da tela)
       saude: { pessoas: vivos, com_cpf: comCpf, pct_cpf: vivos > 0 ? Math.round((comCpf / vivos) * 100) : 0 },
@@ -316,13 +378,7 @@ router.get('/familias-pendentes', authorizeModule('next-batismo', 1), async (req
 router.get('/duplicados', authorizeModule('next-batismo', 1), async (req, res) => {
   try {
     const limit = Math.min(Number(req.query.limit) || 200, 500);
-    const { data, error } = await supabase
-      .from('vw_nb_duplicados_suspeitos')
-      .select('*')
-      .order('confianca', { ascending: false })
-      .limit(limit);
-    if (error) throw error;
-    const items = await enriquecerOrigensDuplicados(reshapeDuplicados(data));
+    const items = await enriquecerOrigensDuplicados(await carregarDuplicadosPendentes(limit));
     res.json({ total: items.length, items });
   } catch (e) {
     console.error('[next-batismo/duplicados]', e.message);
@@ -494,7 +550,7 @@ router.post('/vincular-familia', authorizeModule('next-batismo', 2), async (req,
     }
     const familiaId = await ligarMesmaFamilia(membro_id, relativo_id, req.user?.id);
     if (!familiaId) return res.status(404).json({ error: 'Pessoa de referência não encontrada' });
-    familiasPendentesCache = { ate: 0, itens: null };
+    triagemFamiliasCache = { ate: 0, familias: null, duplicatas: null };
     await registrarResolucao({
       tipo: 'sem_vinculo', acao: 'vinculado',
       membro_principal_id: membro_id, membro_secundario_id: relativo_id,
@@ -505,6 +561,31 @@ router.post('/vincular-familia', authorizeModule('next-batismo', 2), async (req,
   } catch (e) {
     console.error('[next-batismo/vincular-familia]', e.message);
     res.status(500).json({ error: e.message || 'Erro ao vincular família' });
+  }
+});
+
+// Resolve uma sugestão familiar como falso positivo. A decisão é persistida
+// pelo par canônico para ele não reaparecer a cada recálculo da fila.
+router.post('/ignorar-familia', authorizeModule('next-batismo', 2), async (req, res) => {
+  try {
+    const { membro_id, relativo_id } = req.body || {};
+    if (!membro_id || !relativo_id || membro_id === relativo_id) {
+      return res.status(400).json({ error: 'Informe duas pessoas diferentes' });
+    }
+    const [a, b] = [membro_id, relativo_id].sort();
+    const registrada = await registrarResolucao({
+      tipo: 'sem_vinculo', acao: 'descartado',
+      membro_principal_id: a, membro_secundario_id: b,
+      origem: 'familia', origem_id: `${a}_${b}`,
+      detalhe: { motivo: 'Não pertencem à mesma família' },
+      resolvido_por: req.user?.id || null,
+    });
+    if (!registrada) throw new Error('Não foi possível persistir a decisão');
+    triagemFamiliasCache = { ate: 0, familias: null, duplicatas: null };
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[next-batismo/ignorar-familia]', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao resolver sugestão familiar' });
   }
 });
 

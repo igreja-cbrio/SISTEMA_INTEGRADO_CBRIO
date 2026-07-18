@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { avaliarPossivelDuplicidade } = require('./duplicidadePolicy');
+const { avaliarPossivelDuplicidade, nomesPodemSerMesmaPessoa } = require('./duplicidadePolicy');
 
 const davi = { nome: 'Davi Lucas Bernardo Conceição', telefone: '21999999999', cpf: '11111111111', email: 'davi@teste.com', genero: 'masculino' };
 const bianca = { nome: 'Bianca Silva Bernardo', telefone: '21999999999', cpf: '22222222222', email: 'bianca@teste.com', genero: 'feminino' };
@@ -20,5 +20,20 @@ assert.equal(avaliarPossivelDuplicidade(
   { nome: 'Carlos Pereira', telefone: '21977776666' },
 ).incluir, false, 'telefone sozinho nunca basta');
 
-console.log('duplicidadePolicy: 4 cenários aprovados');
+assert.equal(nomesPodemSerMesmaPessoa(
+  'Ana Carolina Pereira Vieira Ferreira',
+  'Ana Carolina Vieira',
+), true, 'nome abreviado contido no nome completo deve ser tratado como possível duplicidade');
+
+assert.equal(avaliarPossivelDuplicidade(
+  { nome: 'Ana Carolina Pereira Vieira Ferreira', telefone: '21966665555' },
+  { nome: 'Ana Carolina Vieira', telefone: '21966665555' },
+).incluir, true, 'nome abreviado + mesmo telefone deve ir para duplicidades');
+
+assert.equal(nomesPodemSerMesmaPessoa(
+  'Carlos Eduardo Vieira',
+  'Mariana Lopes Vieira',
+), false, 'pessoas com primeiro nome diferente e sobrenome familiar igual continuam distintas');
+
+console.log('duplicidadePolicy: 7 cenários aprovados');
 

@@ -1540,7 +1540,7 @@ export const totemKids = {
     // Timeout de 5 min (a função serverless tem maxDuration 300s) pra a UI não
     // abortar em 30s achando que deu erro (a sync continua e conclui no servidor).
     syncPco: (data = {}) => post('/totem-kids/sync-pco', data, { timeout: 300_000 }),
-    // Corrige responsáveis poluídos (household-dump) podando pelos guardiões
+    // Corrige responsáveis poluídos pela importação familiar, mantendo os guardiões
     // reais (quem fez o check-in da criança no PCO OU no nosso totem).
     // apply=false = prévia (dry-run · não altera nada). Longo → timeout de 5 min.
     corrigirResponsaveisPco: (apply = false) => post('/totem-kids/responsaveis-pco', { apply }, { timeout: 300_000 }),
@@ -1848,6 +1848,7 @@ export const nextBatismo = {
   semVinculo: () => get('/next-batismo/sem-vinculo'),
   familiasPendentes: () => get('/next-batismo/familias-pendentes'),
   vincularFamilia: (data) => post('/next-batismo/vincular-familia', data),
+  ignorarFamilia: (data) => post('/next-batismo/ignorar-familia', data),
   candidatos: (params = {}) => {
     const qs = new URLSearchParams(params).toString();
     return get('/next-batismo/candidatos' + (qs ? '?' + qs : ''));

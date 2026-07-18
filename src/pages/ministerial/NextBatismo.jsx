@@ -482,7 +482,7 @@ function MembroLado({ membro, lado, onMerge, onVerFicha }) {
 // ----------------------------------------------------------------------------
 function FamiliasPendentesTab({ onVerFicha }) {
   const qc = useQueryClient();
-  const [confirmar, setConfirmar] = useState(null);
+  const [decisao, setDecisao] = useState(null);
   const { data, isLoading, isFetching, refetch } = useQuery({
     queryKey: ['next-batismo', 'familias-pendentes'],
     queryFn: () => api.familiasPendentes(),
@@ -491,13 +491,25 @@ function FamiliasPendentesTab({ onVerFicha }) {
   const vincular = useMutation({
     mutationFn: (item) => api.vincularFamilia({ membro_id: item.pessoa.id, relativo_id: item.referencia.id }),
     onSuccess: () => {
-      toast.success('Pessoas vinculadas à mesma família');
-      setConfirmar(null);
+      toast.success('Famílias vinculadas; os cadastros continuam separados');
+      setDecisao(null);
       qc.invalidateQueries({ queryKey: ['next-batismo', 'familias-pendentes'] });
+      qc.invalidateQueries({ queryKey: ['next-batismo', 'duplicados'] });
       qc.invalidateQueries({ queryKey: ['next-batismo', 'resumo'] });
       qc.invalidateQueries({ queryKey: ['next-batismo', 'resolucoes'] });
     },
     onError: (e) => toast.error(e?.message || 'Erro ao vincular família'),
+  });
+  const naoVincular = useMutation({
+    mutationFn: (item) => api.ignorarFamilia({ membro_id: item.pessoa.id, relativo_id: item.referencia.id }),
+    onSuccess: () => {
+      toast.success('Sugestão resolvida como famílias diferentes');
+      setDecisao(null);
+      qc.invalidateQueries({ queryKey: ['next-batismo', 'familias-pendentes'] });
+      qc.invalidateQueries({ queryKey: ['next-batismo', 'resumo'] });
+      qc.invalidateQueries({ queryKey: ['next-batismo', 'resolucoes'] });
+    },
+    onError: (e) => toast.error(e?.message || 'Erro ao resolver sugestão familiar'),
   });
   const itens = data?.itens || [];
 
@@ -505,8 +517,9 @@ function FamiliasPendentesTab({ onVerFicha }) {
     <div className="space-y-4">
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <p className="text-xs text-muted-foreground max-w-2xl">
-          Só aparecem pessoas sem família quando o sistema encontra outro cadastro com o mesmo telefone
-          ou com o mesmo endereço completo e CEP. <strong>Sobrenome sozinho não gera sugestão.</strong>
+          Esta fila mantém os cadastros separados e apenas organiza as pessoas na mesma família.
+          Telefone compartilhado exige também sobrenome em comum; endereço completo + CEP pode sugerir famílias com sobrenomes diferentes.
+          <strong> Nomes abreviados ou muito semelhantes vão para Possíveis duplicidades.</strong>
         </p>
         <Button onClick={() => refetch()} disabled={isFetching} variant="outline" size="sm" className="gap-1.5">
           <RefreshCw className={`size-3.5 ${isFetching ? 'animate-spin' : ''}`} /> Recarregar
@@ -541,10 +554,15 @@ function FamiliasPendentesTab({ onVerFicha }) {
                     rotulo={item.destino.tipo === 'existente' ? item.destino.nome : 'Referência para nova família'}
                     onVerFicha={onVerFicha} />
                 </div>
-                <div className="flex justify-end">
-                  <Button size="sm" className="h-8 text-xs gap-1.5" onClick={() => setConfirmar(item)}>
+                <div className="flex justify-end gap-2 flex-wrap">
+                  <Button size="sm" variant="outline" className="h-8 text-xs gap-1.5"
+                    onClick={() => setDecisao({ tipo: 'nao_vincular', item })}>
+                    <X className="size-3.5" /> Não vincular
+                  </Button>
+                  <Button size="sm" className="h-8 text-xs gap-1.5"
+                    onClick={() => setDecisao({ tipo: 'vincular', item })}>
                     <Home className="size-3.5" />
-                    {item.destino.tipo === 'existente' ? 'Adicionar à família' : 'Criar família com os dois'}
+                    {item.destino.tipo === 'existente' ? 'Vincular à família' : 'Vincular famílias'}
                   </Button>
                 </div>
               </CardContent>
@@ -553,23 +571,28 @@ function FamiliasPendentesTab({ onVerFicha }) {
         </div>
       )}
 
-      <Dialog open={!!confirmar} onOpenChange={(open) => !open && setConfirmar(null)}>
+      <Dialog open={!!decisao} onOpenChange={(open) => !open && setDecisao(null)}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Confirmar vínculo familiar</DialogTitle>
+            <DialogTitle>{decisao?.tipo === 'vincular' ? 'Confirmar vínculo entre famílias' : 'Confirmar que não são da mesma família'}</DialogTitle>
             <DialogDescription>
-              {confirmar?.destino.tipo === 'existente'
-                ? `${confirmar?.pessoa.nome} será adicionado(a) a ${confirmar?.destino.nome}.`
-                : `Uma nova família será criada para ${confirmar?.pessoa.nome} e ${confirmar?.referencia.nome}.`}
+              {decisao?.tipo === 'vincular'
+                ? (decisao?.item.destino.tipo === 'existente'
+                  ? `${decisao?.item.pessoa.nome} será incluído(a) em ${decisao?.item.destino.nome}, sem fundir os cadastros.`
+                  : `Uma família será criada para agrupar ${decisao?.item.pessoa.nome} e ${decisao?.item.referencia.nome}, sem fundir os cadastros.`)
+                : `${decisao?.item.pessoa.nome} e ${decisao?.item.referencia.nome} sairão desta fila e continuarão em famílias separadas.`}
             </DialogDescription>
           </DialogHeader>
           <p className="text-xs text-muted-foreground">
-            Evidência encontrada: {confirmar?.evidencias.join(' e ')}. Confirme apenas se as pessoas realmente pertencem à mesma família.
+            Evidência encontrada: {decisao?.item.evidencias.join(' e ')}.
           </p>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setConfirmar(null)} disabled={vincular.isPending}>Cancelar</Button>
-            <Button onClick={() => vincular.mutate(confirmar)} disabled={vincular.isPending} className="gap-1.5">
-              {vincular.isPending && <Loader2 className="size-3.5 animate-spin" />} Confirmar vínculo
+            <Button variant="outline" onClick={() => setDecisao(null)} disabled={vincular.isPending || naoVincular.isPending}>Cancelar</Button>
+            <Button variant={decisao?.tipo === 'vincular' ? 'default' : 'destructive'}
+              onClick={() => decisao?.tipo === 'vincular' ? vincular.mutate(decisao.item) : naoVincular.mutate(decisao.item)}
+              disabled={vincular.isPending || naoVincular.isPending} className="gap-1.5">
+              {(vincular.isPending || naoVincular.isPending) && <Loader2 className="size-3.5 animate-spin" />}
+              {decisao?.tipo === 'vincular' ? 'Vincular famílias' : 'Não vincular'}
             </Button>
           </DialogFooter>
         </DialogContent>

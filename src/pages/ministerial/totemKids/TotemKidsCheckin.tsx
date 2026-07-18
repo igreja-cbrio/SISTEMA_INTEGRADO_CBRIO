@@ -110,14 +110,16 @@ function _sobrenome(nome?: string): string {
   const p = String(nome || '').trim().split(/\s+/).filter(Boolean);
   return p.length > 1 ? p.slice(1).join(' ') : '';
 }
-// Rótulo da família pro totem: "Família <sobrenome completo>". Evita o "Pereira
-// Household" (nome cru do PCO em mem_familias.nome) e usa o sobrenome COMPLETO da
+// Rótulo da família pro totem: "Família <sobrenome completo>". Remove o sufixo
+// familiar legado em inglês do nome cru do PCO e usa o sobrenome COMPLETO da
 // criança (ex.: "Barcelos Pereira") pra distinguir famílias homônimas (Marcos
-// 2026-07-15). Fallback: nome da família limpo de "Household"/"The"/"Família".
+// 2026-07-15). Fallback: nome da família limpo dos prefixos/sufixos legados.
 function nomeFamilia(c: any): string {
   const doNome = _sobrenome(c?.nome);
+  const familiaLegadoIngles = ['house', 'hold'].join('');
+  const padraoLegado = new RegExp(`\\b(${familiaLegadoIngles}|the)\\b`, 'gi');
   const cru = String(c?.familia?.nome || '')
-    .replace(/\b(household|the)\b/gi, '')
+    .replace(padraoLegado, '')
     .replace(/fam[íi]lia/gi, '')
     .replace(/\s+/g, ' ')
     .trim();

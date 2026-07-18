@@ -25,6 +25,27 @@ function similaridadeNome(a, b) {
   return tx + ty ? (2 * inter) / (tx + ty) : 0;
 }
 
+const PARTICULAS_NOME = new Set(['da', 'das', 'de', 'do', 'dos', 'e']);
+function tokensNome(v) {
+  return norm(v).split(' ').filter((t) => t && !PARTICULAS_NOME.has(t));
+}
+
+// Nomes de uma mesma pessoa frequentemente chegam com quantidades diferentes
+// de sobrenomes. Dice global pune "Ana Carolina Vieira" quando comparado ao
+// nome civil completo, então reconhecemos também a versão curta contida na
+// longa. Primeiro nome igual + pelo menos 75% dos tokens do nome menor evita
+// confundir parentes que apenas compartilham um sobrenome.
+function nomesPodemSerMesmaPessoa(a, b) {
+  if (similaridadeNome(a, b) >= 0.90) return true;
+  const ta = tokensNome(a);
+  const tb = tokensNome(b);
+  if (ta.length < 2 || tb.length < 2 || ta[0] !== tb[0]) return false;
+  const menor = ta.length <= tb.length ? ta : tb;
+  const maior = new Set(ta.length <= tb.length ? tb : ta);
+  const comuns = menor.filter((t) => maior.has(t)).length;
+  return comuns >= 2 && comuns / menor.length >= 0.75;
+}
+
 function avaliarPossivelDuplicidade(a = {}, b = {}) {
   const cpfA = digits(a.cpf); const cpfB = digits(b.cpf);
   const telA = digits(a.telefone); const telB = digits(b.telefone);
@@ -34,7 +55,7 @@ function avaliarPossivelDuplicidade(a = {}, b = {}) {
   const cpfConflitante = cpfA.length === 11 && cpfB.length === 11 && cpfA !== cpfB;
   const nascimentoConflitante = !!a.data_nascimento && !!b.data_nascimento && a.data_nascimento !== b.data_nascimento;
   const generoConflitante = !!a.genero && !!b.genero && a.genero !== b.genero;
-  const nomeCompativel = similaridadeNome(a.nome, b.nome) >= 0.90;
+  const nomeCompativel = nomesPodemSerMesmaPessoa(a.nome, b.nome);
 
   if (cpfIgual) return { incluir: true, prioridade: 'alta', evidencias: ['CPF igual'], contradicoes: [] };
   if (cpfConflitante || nascimentoConflitante || generoConflitante) {
@@ -54,5 +75,5 @@ function avaliarPossivelDuplicidade(a = {}, b = {}) {
   return { incluir: true, prioridade: evidencias[0].includes('nascimento') ? 'alta' : 'media', evidencias, contradicoes: [] };
 }
 
-module.exports = { avaliarPossivelDuplicidade, similaridadeNome };
+module.exports = { avaliarPossivelDuplicidade, similaridadeNome, nomesPodemSerMesmaPessoa, tokensNome };
 

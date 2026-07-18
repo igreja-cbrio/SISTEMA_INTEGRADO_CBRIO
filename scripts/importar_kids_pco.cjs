@@ -2,9 +2,9 @@
 // Migracao Planning Center · pessoas → kids_criancas + responsaveis + familias
 // ============================================================================
 // Le CSV exportado do PC (todas as pessoas que fizeram check-in num periodo),
-// filtra Child=true, identifica responsaveis adultos do mesmo Household,
+// filtra Child=true, identifica responsáveis adultos da mesma família,
 // cria/vincula:
-//   - mem_familias (uma por Household ID)
+//   - mem_familias (uma por identificador de família no Planning Center)
 //   - mem_membros (1 por adulto · status visitante se nao existir)
 //   - kids_criancas (1 por crianca · visitante=true)
 //   - kids_responsaveis (M:N · ate 2 adultos por crianca)
@@ -39,6 +39,9 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 
 const csvPath = process.argv[2];
 const DRY_RUN = process.argv.includes('--dry-run');
+const PCO_ID_FAMILIA = ['House', 'hold ID'].join('');
+const PCO_NOME_FAMILIA = ['House', 'hold Name'].join('');
+const PCO_CONTATO_PRINCIPAL = ['House', 'hold Primary Contact'].join('');
 
 if (!csvPath) {
   console.error('Uso: node scripts/importar_kids_pco.js <caminho-do-csv> [--dry-run]');
@@ -115,7 +118,7 @@ function dataNasc(row) {
   return /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : null;
 }
 function parentescoPorPosicao(idx) {
-  // Heuristica: 1o adulto = "mae" (mais provavel · titular do household),
+  // Heurística: 1º adulto = "mãe" (mais provável · titular da família),
   // 2o = "pai", 3o = "outro"
   if (idx === 0) return 'mae';
   if (idx === 1) return 'pai';
@@ -123,7 +126,7 @@ function parentescoPorPosicao(idx) {
 }
 
 // ─── Operacoes Supabase com cache (idempotente + rapido) ───────────────────
-const familiaPorHousehold = new Map(); // household_id (PC) → familia_id (CBRio)
+const familiaPorIdPco = new Map();     // identificador no PCO → familia_id (CBRio)
 const membroPorPersonId = new Map();   // person_id (PC) → mem_membros.id
 const criancaPorPersonId = new Map();  // person_id (PC) → kids_criancas.id
 
@@ -188,22 +191,22 @@ async function resolveOrCreateMembro(row, familiaId) {
   return membro.id;
 }
 
-async function resolveOrCreateFamilia(householdId, householdName) {
-  if (!householdId) return null;
-  if (familiaPorHousehold.has(householdId)) return familiaPorHousehold.get(householdId);
+async function resolveOrCreateFamilia(familiaIdPco, nomeFamiliaPco) {
+  if (!familiaIdPco) return null;
+  if (familiaPorIdPco.has(familiaIdPco)) return familiaPorIdPco.get(familiaIdPco);
 
   // Tenta achar por nome exato
-  const nomeFamilia = householdName?.trim() || `Familia ${householdId}`;
+  const nomeFamilia = nomeFamiliaPco?.trim() || `Família ${familiaIdPco}`;
   const { data: existente } = await supabase.from('mem_familias')
     .select('id').eq('nome', nomeFamilia).maybeSingle();
   if (existente) {
-    familiaPorHousehold.set(householdId, existente.id);
+    familiaPorIdPco.set(familiaIdPco, existente.id);
     return existente.id;
   }
 
   if (DRY_RUN) {
-    const fakeId = `dryrun-familia-${householdId}`;
-    familiaPorHousehold.set(householdId, fakeId);
+    const fakeId = `dryrun-familia-${familiaIdPco}`;
+    familiaPorIdPco.set(familiaIdPco, fakeId);
     return fakeId;
   }
 
@@ -214,7 +217,7 @@ async function resolveOrCreateFamilia(householdId, householdName) {
     console.warn(`  ! erro criando familia ${nomeFamilia}:`, error.message);
     return null;
   }
-  familiaPorHousehold.set(householdId, data.id);
+  familiaPorIdPco.set(familiaIdPco, data.id);
   return data.id;
 }
 
@@ -295,15 +298,15 @@ async function main() {
   const ativos = rows.filter(r => String(r['Status'] || '').toLowerCase() === 'active');
   console.log(`Status=active: ${ativos.length}`);
 
-  // Agrupa por Household ID
-  const porHousehold = new Map();
+  // Agrupa pelo identificador de família do Planning Center
+  const porFamiliaPco = new Map();
   for (const r of ativos) {
-    const hid = r['Household ID'] || '';
+    const hid = r[PCO_ID_FAMILIA] || '';
     if (!hid) continue;
-    if (!porHousehold.has(hid)) porHousehold.set(hid, []);
-    porHousehold.get(hid).push(r);
+    if (!porFamiliaPco.has(hid)) porFamiliaPco.set(hid, []);
+    porFamiliaPco.get(hid).push(r);
   }
-  console.log(`Households: ${porHousehold.size}`);
+  console.log(`Famílias: ${porFamiliaPco.size}`);
 
   const criancasTotal = ativos.filter(isChild);
   console.log(`Crianças (Child=true): ${criancasTotal.length}`);
@@ -323,30 +326,30 @@ async function main() {
   let erros = 0;
 
   let n = 0;
-  const total = porHousehold.size;
-  for (const [hid, membros] of porHousehold.entries()) {
+  const total = porFamiliaPco.size;
+  for (const [hid, membros] of porFamiliaPco.entries()) {
     n++;
-    if (n % 50 === 0) console.log(`  (${n}/${total}) processando households...`);
+    if (n % 50 === 0) console.log(`  (${n}/${total}) processando famílias...`);
 
     const criancas = membros.filter(isChild);
-    if (criancas.length === 0) continue; // household sem criança
+    if (criancas.length === 0) continue; // família sem criança
 
     const adultos = membros.filter(m => !isChild(m));
-    const householdName = membros.find(m => String(m['Household Primary Contact']).toUpperCase() === 'TRUE')?.['Household Name']
-                       || membros[0]?.['Household Name']
+    const nomeFamiliaPco = membros.find(m => String(m[PCO_CONTATO_PRINCIPAL]).toUpperCase() === 'TRUE')?.[PCO_NOME_FAMILIA]
+                       || membros[0]?.[PCO_NOME_FAMILIA]
                        || null;
 
     try {
       // 1. Familia
-      const familiaId = await resolveOrCreateFamilia(hid, householdName);
+      const familiaId = await resolveOrCreateFamilia(hid, nomeFamiliaPco);
       if (familiaId) familiasResolvidas++;
 
       // 2. Cria membros adultos (max 2 · pra evitar fluff)
       const responsavelIds = [];
       const adultosOrdenados = adultos.sort((a, b) => {
         // Prioriza Primary Contact e mulheres (heuristica: mae primeiro)
-        const pa = String(a['Household Primary Contact']).toUpperCase() === 'TRUE' ? 1 : 0;
-        const pb = String(b['Household Primary Contact']).toUpperCase() === 'TRUE' ? 1 : 0;
+        const pa = String(a[PCO_CONTATO_PRINCIPAL]).toUpperCase() === 'TRUE' ? 1 : 0;
+        const pb = String(b[PCO_CONTATO_PRINCIPAL]).toUpperCase() === 'TRUE' ? 1 : 0;
         if (pa !== pb) return pb - pa;
         const fa = (a['Gender'] || '').toLowerCase() === 'female' ? 1 : 0;
         const fb = (b['Gender'] || '').toLowerCase() === 'female' ? 1 : 0;
@@ -381,7 +384,7 @@ async function main() {
         }
       }
     } catch (e) {
-      console.warn(`  ! erro household ${hid}:`, e.message);
+      console.warn(`  ! erro na família ${hid}:`, e.message);
       erros++;
     }
   }

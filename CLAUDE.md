@@ -62,8 +62,10 @@ outra tela de busca/cópia da Membresia. Estado publicado em produção no commi
 - **Possíveis duplicidades** é pré-filtrada no backend pela política canônica
   `backend/services/duplicidadePolicy.js`: CPF igual entra com prioridade alta;
   CPF, nascimento ou gênero conflitante exclui o par; sem CPF, nome precisa ter
-  similaridade Dice >= 0,90 e telefone/e-mail só contam junto com nome
-  compatível. Telefone sozinho NUNCA significa duplicata (caso que motivou a
+  similaridade Dice >= 0,90 **ou ser uma versão abreviada/contida do outro nome**
+  (mesmo primeiro nome + >=75% dos tokens do nome menor); telefone/e-mail só
+  contam junto com nome compatível. Telefone sozinho NUNCA significa duplicata
+  (caso que motivou a
   correção: Davi Lucas Bernardo Conceição × Bianca Silva Bernardo, mesmo
   telefone e identidades diferentes, recebia 90%). A UI mostra estado vazio
   explícito quando toda a base foi analisada e não há candidato.
@@ -72,13 +74,24 @@ outra tela de busca/cópia da Membresia. Estado publicado em produção no commi
   quando disponível. O legado não guarda proveniência por campo; portanto o
   selo diz onde o cadastro pode ser conferido com a equipe, não afirma de qual
   módulo veio cada valor individual.
-- **Vincular famílias** sugere somente pessoas vivas/ativas que compartilham
-  telefone (>=10 dígitos) ou endereço+CEP exatos, têm identidade distinta e
-  ainda não estão ambas em famílias. CPF igual ou nome muito parecido fica na
-  lente de duplicidade, não na familiar. A ação reutiliza a família existente
-  ou cria uma nova e vincula as duas pessoas. Cache backend: 60 s. Snapshot da
+- **Vincular famílias** sugere somente pessoas vivas/ativas com identidade
+  distinta. Telefone compartilhado exige também sobrenome significativo em
+  comum; endereço+CEP exatos podem sugerir famílias com sobrenomes diferentes.
+  CPF igual, nome muito parecido ou nome curto contido no completo fica na lente
+  de duplicidade, não na familiar (caso-regressão: Ana Carolina Pereira Vieira
+  Ferreira × Ana Carolina Vieira). A ação mantém os cadastros separados e os
+  agrupa na mesma família. **Não vincular** persiste `sem_vinculo/descartado` em
+  `entradas_resolucoes`, remove o par da fila e impede que volte no recálculo.
+  Cache backend: 60 s. Snapshot da
   implantação: 107 sugestões (26 para família existente, 81 para nova; todas
   por telefone — endereço não acrescentou pares naquele momento).
+- Vocabulário do produto e do código é sempre **Família**. O termo técnico
+  legado em inglês foi removido de UI, comentários, documentação e scripts sem
+  quebrar a leitura das colunas antigas do Planning Center (chaves montadas por
+  compatibilidade). Auditoria de 2026-07-18 encontrou 529 nomes antigos em
+  `mem_familias`; migration
+  `20260718170000_familias_vocabulario_portugues.sql` aplicada em produção por
+  Marcos em 2026-07-18 normaliza para `Família <nome>`.
 - **Conflitos de CPF** mantém os 254 casos legados para resolução manual, com a
   origem legível (`vol_ficha` = **Ficha de Voluntariado**, `wifi` = **Portal
   Wi-Fi**). Conflitos concretos (`cpf_conflito`, `cpf_divergente`,

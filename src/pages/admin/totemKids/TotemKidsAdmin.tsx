@@ -929,7 +929,7 @@ function AbaAuditoria() {
 }
 
 // ─── Aba Responsáveis · Faxina de vínculos poluídos ──────────────────────────
-// O import de 22/05 jogou a household inteira como responsável de cada criança
+// O import de 22/05 jogou a família inteira como responsável de cada criança
 // (ex.: criança com 18 responsáveis, 13 marcados como "mae"). Esta faxina PODA
 // os vínculos que NÃO casam com nenhum guardião real (quem de fato fez o check-in
 // da criança no PCO ou no nosso totem), sempre preservando contato de emergência
