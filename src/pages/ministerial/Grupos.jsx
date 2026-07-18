@@ -27,15 +27,26 @@ import GruposDuplicatas from './GruposDuplicatas';
 // pago onde mais importa; aqui é página de staff. Estático elimina a classe
 // inteira de erro de chunk (não regredir pra lazy sem revalidar em prod).
 import { GruposMapView } from '@/components/grupos/GruposMapView';
-import { StatisticsCard } from '../../components/ui/statistics-card';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LabelList, PieChart, Pie, Cell } from 'recharts';
+import { useTheme } from '../../contexts/ThemeContext';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
   text: 'var(--cbrio-text)', t2: 'var(--cbrio-text2)', t3: 'var(--cbrio-text3)',
   border: 'var(--cbrio-border)', green: '#10b981', red: '#ef4444', amber: '#f59e0b', blue: '#3b82f6',
 };
+
+// Paleta dos gráficos por tema (validada com o script de dataviz · CVD-safe).
+// Claro: teal da marca #00B39D. Escuro: teal-600 #0d9488 (fica na banda de
+// luminosidade do fundo escuro). Violeta #8b5cf6 passa nos dois (separação
+// enorme do teal p/ daltônicos). Cinza recessivo p/ "outros".
+const chartCores = (isDark) => ({
+  teal: isDark ? '#0d9488' : '#00B39D',
+  violet: '#8b5cf6',
+  grid: isDark ? '#ffffff22' : '#00000014',
+  eixo: 'var(--cbrio-text3)',
+});
 
 const DIAS = ['Domingo', 'Segunda', 'Terca', 'Quarta', 'Quinta', 'Sexta', 'Sabado'];
 // Grupo diário acontece TODOS os dias (Marcos · 17/07): sem dia da semana fixo,
@@ -2606,6 +2617,8 @@ const relLabelMes = (ym) => {
 };
 
 function RelatorioGrupos({ temporada }) {
+  const { isDark } = useTheme();
+  const cores = chartCores(isDark);
   const [vista, setVista] = useState('atual'); // 'atual' (detalhe) | 'comparativo' (entre temporadas)
   const [meses, setMeses] = useState(12);
   const [data, setData] = useState(null);
@@ -2680,36 +2693,46 @@ function RelatorioGrupos({ temporada }) {
         <div style={{ padding: 40, textAlign: 'center', color: C.t3, fontSize: 13 }}>Não foi possível carregar o relatório.</div>
       ) : (
         <>
-          {/* KPIs principais — conjunto COMPLETO (mesmos indicadores que a
-              consolidação congela) quando há temporada selecionada; sem
-              temporada, cai nos números do relatório (janela móvel). */}
           {metricas && (
             <div style={{ fontSize: 11.5, color: C.t3, display: 'flex', alignItems: 'center', gap: 6 }}>
-              <Activity size={12} style={{ color: C.primary }} />
+              <Activity size={12} style={{ color: cores.teal }} />
               Indicadores ao vivo desta temporada — são exatamente os que ficam congelados ao consolidar.
             </div>
           )}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <StatisticsCard title="Grupos" value={(metricas ? metricas.num_grupos : data.total_grupos) ?? 0} icon={Users} iconColor={C.primary} subtitle="grupos ativos" />
-            <StatisticsCard title="Inscrições" value={(metricas ? metricas.num_inscricoes : null) ?? '—'} icon={UserPlus} iconColor={C.green} subtitle={metricas ? 'pedidos na temporada' : 'selecione a temporada'} />
-            <StatisticsCard title="Membros" value={(metricas ? metricas.num_membros : null) ?? '—'} icon={Users} iconColor={C.blue} subtitle={metricas ? 'no roster dos grupos' : 'selecione a temporada'} />
-            <StatisticsCard title="Líderes" value={(metricas ? metricas.num_lideres : data.total_lideres) ?? 0} icon={UserCog} iconColor={C.blue} subtitle="líderes de grupo" />
-            <StatisticsCard title="Em treinamento" value={(metricas ? metricas.num_lideres_treinamento : data.lideres_treinamento) ?? 0} icon={GraduationCap} iconColor="#8b5cf6" subtitle="líderes em formação" />
-            <StatisticsCard title="Frequência média" value={(metricas ? metricas.frequencia_media : data.frequencia?.media_por_encontro) ?? 0} icon={Activity} iconColor={C.primary} subtitle="presenças / encontro" />
-            <StatisticsCard
-              title="Encontros"
-              value={(metricas ? metricas.total_encontros : data.frequencia?.total_encontros) ?? 0}
-              icon={CalendarCheck}
-              iconColor={C.t2}
-              subtitle="no período"
+
+          {/* Faixa enxuta com os totais da temporada (número legível · não é card) */}
+          <div style={{
+            display: 'flex', flexWrap: 'wrap', gap: 20, padding: '12px 16px',
+            background: C.card, borderRadius: 14, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)',
+          }}>
+            {[
+              { icon: Users, label: 'Grupos', valor: (metricas ? metricas.num_grupos : data.total_grupos) ?? 0 },
+              { icon: UserPlus, label: 'Inscrições', valor: metricas ? metricas.num_inscricoes : null },
+              { icon: Users, label: 'Membros', valor: metricas ? metricas.num_membros : null },
+              { icon: CalendarCheck, label: 'Encontros', valor: (metricas ? metricas.total_encontros : data.frequencia?.total_encontros) ?? 0 },
+              { icon: Activity, label: 'Freq. média', valor: (metricas ? metricas.frequencia_media : data.frequencia?.media_por_encontro) ?? 0, dec: true },
+              { icon: Star, label: 'NPS líderes', valor: nps ? Number(nps.valor) : null, dec: true },
+            ].map((s, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 92 }}>
+                <s.icon size={18} style={{ color: cores.teal, flexShrink: 0 }} />
+                <div>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: C.text, lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>
+                    {s.valor == null ? '—' : Number(s.valor).toLocaleString('pt-BR', { maximumFractionDigits: s.dec ? 1 : 0 })}
+                  </div>
+                  <div style={{ fontSize: 11, color: C.t3, marginTop: 3 }}>{s.label}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Dois gráficos de composição lado a lado: liderança (pizza) + papéis (barras) */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
+            <LiderancaPizza
+              lideres={(metricas ? metricas.num_lideres : data.total_lideres) ?? 0}
+              treino={(metricas ? metricas.num_lideres_treinamento : data.lideres_treinamento) ?? 0}
+              cores={cores}
             />
-            <StatisticsCard
-              title="Satisfação líderes"
-              value={nps ? Number(nps.valor).toLocaleString('pt-BR') : '—'}
-              icon={Star}
-              iconColor={C.amber}
-              subtitle={nps ? `NPS · ${fmtDate(nps.data)}` : 'Sem NPS registrado'}
-            />
+            <PapeisBarras funcoes={data.funcoes} cores={cores} />
           </div>
 
           {/* Frequência por mês */}
@@ -2732,19 +2755,19 @@ function RelatorioGrupos({ temporada }) {
                 <div className="h-[260px]">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={serie} margin={{ top: 6, right: 8, left: -16, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
-                      <XAxis dataKey="mes" tick={{ fontSize: 11 }} />
-                      <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                      <CartesianGrid strokeDasharray="3 3" stroke={cores.grid} vertical={false} />
+                      <XAxis dataKey="mes" tick={{ fontSize: 11, fill: cores.eixo }} axisLine={false} tickLine={false} />
+                      <YAxis tick={{ fontSize: 11, fill: cores.eixo }} allowDecimals={false} axisLine={false} tickLine={false} />
                       <Tooltip
-                        cursor={{ fill: 'rgba(0,179,157,0.08)' }}
-                        contentStyle={{ borderRadius: 8, fontSize: 12 }}
+                        cursor={{ fill: cores.teal + '14' }}
+                        contentStyle={{ borderRadius: 8, fontSize: 12, border: `1px solid ${C.border}`, background: C.card, color: C.text }}
                         formatter={(v) => [Number(v).toLocaleString('pt-BR'), 'Presenças']}
                         labelFormatter={(l, payload) => {
                           const p = payload?.[0]?.payload;
                           return p ? `${l} · ${p.encontros} encontro(s) · média ${p.media}` : l;
                         }}
                       />
-                      <Bar dataKey="presencas" name="Presenças" fill={C.primary} radius={[4, 4, 0, 0]} />
+                      <Bar dataKey="presencas" name="Presenças" fill={cores.teal} radius={[4, 4, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -2850,6 +2873,109 @@ function RelatorioGrupos({ temporada }) {
 // ── Comparativo entre temporadas (dados congelados no fechamento) ────────────
 // Lê mem_temporada_consolidado + a parcial ao vivo da temporada atual. É a
 // visão "como a igreja evoluiu de uma temporada pra outra" (Marcos · 17/07).
+// Rótulos e ordem canônica dos papéis no roster (para o gráfico de composição).
+const PAPEL_LABEL = {
+  lider: 'Líder', co_lider: 'Co-líder', lider_treinamento: 'Em treino',
+  frequentador: 'Frequentador', visitante: 'Visitante',
+};
+const PAPEL_ORDEM = ['lider', 'co_lider', 'lider_treinamento', 'frequentador', 'visitante'];
+
+// Pizza (donut) da liderança: líderes formados × em treinamento. 2 categorias
+// (teal × violeta · validado CVD-safe); identidade também por legenda + rótulo,
+// nunca só cor. Centro mostra o total.
+function LiderancaPizza({ lideres, treino, cores }) {
+  const total = (lideres || 0) + (treino || 0);
+  const dados = [
+    { name: 'Líderes', value: lideres || 0, cor: cores.teal },
+    { name: 'Em treinamento', value: treino || 0, cor: cores.violet },
+  ];
+  return (
+    <Card>
+      <CardHeader className="pb-1">
+        <CardTitle className="text-sm font-medium flex items-center gap-2">
+          <UserCog className="h-4 w-4" style={{ color: cores.teal }} /> Liderança
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {total === 0 ? (
+          <div style={{ padding: 40, textAlign: 'center', color: C.t3, fontSize: 13 }}>Sem líderes registrados nesta temporada.</div>
+        ) : (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <div style={{ position: 'relative', width: 168, height: 168, flexShrink: 0 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie data={dados} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={52} outerRadius={78} paddingAngle={2} startAngle={90} endAngle={-270} isAnimationActive={false} stroke="none">
+                    {dados.map((d, i) => <Cell key={i} fill={d.cor} />)}
+                  </Pie>
+                  <Tooltip
+                    contentStyle={{ borderRadius: 8, fontSize: 12, border: `1px solid ${C.border}`, background: C.card, color: C.text }}
+                    formatter={(v, n) => [`${Number(v).toLocaleString('pt-BR')} (${total ? Math.round(v / total * 100) : 0}%)`, n]}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+              <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
+                <span style={{ fontSize: 24, fontWeight: 800, color: C.text, lineHeight: 1 }}>{total}</span>
+                <span style={{ fontSize: 10.5, color: C.t3, marginTop: 2 }}>no total</span>
+              </div>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 130 }}>
+              {dados.map(d => (
+                <div key={d.name} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ width: 11, height: 11, borderRadius: 3, background: d.cor, flexShrink: 0 }} />
+                  <span style={{ fontSize: 12.5, color: C.t2, flex: 1 }}>{d.name}</span>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: C.text, fontVariantNumeric: 'tabular-nums' }}>
+                    {d.value}<span style={{ fontSize: 11, color: C.t3, fontWeight: 500 }}> · {total ? Math.round(d.value / total * 100) : 0}%</span>
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// Barras horizontais da composição do grupo (papéis no roster). Série única →
+// hue único (teal); rótulo direto no fim de cada barra (dispensa eixo X).
+function PapeisBarras({ funcoes, cores }) {
+  const dados = PAPEL_ORDEM
+    .map(k => ({ papel: PAPEL_LABEL[k], valor: Number(funcoes?.[k] ?? 0) }))
+    .filter(d => d.valor > 0);
+  return (
+    <Card>
+      <CardHeader className="pb-1">
+        <CardTitle className="text-sm font-medium flex items-center gap-2">
+          <Users className="h-4 w-4" style={{ color: cores.teal }} /> Composição do grupo
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {dados.length === 0 ? (
+          <div style={{ padding: 40, textAlign: 'center', color: C.t3, fontSize: 13 }}>Sem membros no roster desta temporada.</div>
+        ) : (
+          <div style={{ height: Math.max(dados.length * 46, 120) }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={dados} layout="vertical" margin={{ top: 4, right: 40, left: 8, bottom: 4 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke={cores.grid} horizontal={false} />
+                <XAxis type="number" hide domain={[0, 'dataMax']} />
+                <YAxis type="category" dataKey="papel" width={92} tick={{ fontSize: 12, fill: cores.eixo }} axisLine={false} tickLine={false} />
+                <Tooltip
+                  cursor={{ fill: cores.teal + '14' }}
+                  contentStyle={{ borderRadius: 8, fontSize: 12, border: `1px solid ${C.border}`, background: C.card, color: C.text }}
+                  formatter={(v) => [Number(v).toLocaleString('pt-BR'), 'Pessoas']}
+                />
+                <Bar dataKey="valor" name="Pessoas" fill={cores.teal} radius={[0, 4, 4, 0]} maxBarSize={26} isAnimationActive={false}>
+                  <LabelList dataKey="valor" position="right" style={{ fill: C.text, fontSize: 11.5, fontWeight: 700 }} formatter={(v) => Number(v).toLocaleString('pt-BR')} />
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 const COMP_METRICAS = [
   { key: 'num_grupos', label: 'Grupos', icon: Users },
   { key: 'num_inscricoes', label: 'Inscrições', icon: UserPlus },
@@ -2860,9 +2986,73 @@ const COMP_METRICAS = [
   { key: 'satisfacao_lideres', label: 'NPS líderes', icon: Star },
 ];
 
+const fmtComp = (key, v) => {
+  if (v == null) return '—';
+  const dec = (key === 'frequencia_media' || key === 'satisfacao_lideres');
+  return Number(v).toLocaleString('pt-BR', { maximumFractionDigits: dec ? 1 : 0 });
+};
+
+// Mini gráfico de barras de UMA métrica ao longo das temporadas (small-multiple).
+// Série única → hue único (teal); a temporada parcial (em andamento) fica com
+// fill mais claro + borda tracejada (encoding secundário, não só cor). Rótulo
+// direto em cada barra (poucas temporadas) dispensa eixo Y.
+function MiniBarTemporadas({ metrica, linhas, cores }) {
+  const dados = linhas.map(l => ({
+    nome: (l.temporada_label || l.temporada || '').replace(/\s*20\d\d$/, '').trim() || l.temporada,
+    valor: Number(l[metrica.key] ?? 0),
+    parcial: !!l.parcial,
+  }));
+  const temParcial = dados.some(d => d.parcial);
+  return (
+    <Card>
+      <CardHeader className="pb-1">
+        <CardTitle className="text-sm font-medium flex items-center gap-2">
+          <metrica.icon className="h-4 w-4" style={{ color: cores.teal }} /> {metrica.label}
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="h-[180px]">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={dados} margin={{ top: 18, right: 8, left: 8, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke={cores.grid} vertical={false} />
+              <XAxis dataKey="nome" tick={{ fontSize: 11, fill: cores.eixo }} axisLine={false} tickLine={false} />
+              <YAxis hide domain={[0, 'dataMax']} />
+              <Tooltip
+                cursor={{ fill: cores.teal + '14' }}
+                contentStyle={{ borderRadius: 8, fontSize: 12, border: `1px solid ${C.border}`, background: C.card, color: C.text }}
+                formatter={(v) => [fmtComp(metrica.key, v), metrica.label]}
+                labelFormatter={(l, p) => p?.[0]?.payload?.parcial ? `${l} · parcial` : l}
+              />
+              <Bar dataKey="valor" name={metrica.label} radius={[4, 4, 0, 0]} maxBarSize={64} isAnimationActive={false}>
+                {dados.map((d, i) => (
+                  <Cell
+                    key={i}
+                    fill={d.parcial ? cores.teal + '55' : cores.teal}
+                    stroke={d.parcial ? cores.teal : undefined}
+                    strokeDasharray={d.parcial ? '4 3' : undefined}
+                    strokeWidth={d.parcial ? 1.5 : 0}
+                  />
+                ))}
+                <LabelList dataKey="valor" position="top" style={{ fill: C.text, fontSize: 11, fontWeight: 700 }} formatter={(v) => fmtComp(metrica.key, v)} />
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+        {temParcial && (
+          <div style={{ fontSize: 10.5, color: C.t3, marginTop: 2, display: 'flex', alignItems: 'center', gap: 5 }}>
+            <span style={{ width: 10, height: 10, borderRadius: 2, background: cores.teal + '55', border: `1.5px dashed ${cores.teal}`, display: 'inline-block' }} />
+            barra tracejada = temporada em andamento (parcial · ainda não consolidada)
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function ComparativoTemporadas() {
+  const { isDark } = useTheme();
+  const cores = chartCores(isDark);
   const [linhas, setLinhas] = useState(null);
-  const [metricaGrafico, setMetricaGrafico] = useState('num_grupos');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -2873,7 +3063,7 @@ function ComparativoTemporadas() {
         if (!alive) return;
         const cong = (r?.consolidados || []).map(c => ({ ...c, parcial: false }));
         const arr = [...cong];
-        // A temporada atual entra como linha "parcial" (ao vivo) se ainda não congelada.
+        // A temporada atual entra como barra "parcial" (ao vivo) se ainda não congelada.
         if (r?.atual) arr.push({ ...r.atual, parcial: true });
         setLinhas(arr);
       })
@@ -2893,27 +3083,25 @@ function ComparativoTemporadas() {
     );
   }
 
-  const fmtVal = (key, v) => {
-    if (v == null) return '—';
-    if (key === 'frequencia_media') return Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 1 });
-    if (key === 'satisfacao_lideres') return Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 1 });
-    return Number(v).toLocaleString('pt-BR');
-  };
-  const dadosGrafico = linhas.map(l => ({
-    nome: (l.temporada_label || l.temporada || '').replace(/\s*20\d\d$/, ''),
-    valor: Number(l[metricaGrafico] ?? 0),
-    parcial: l.parcial,
-  }));
-  const metricaAtual = COMP_METRICAS.find(m => m.key === metricaGrafico);
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      {/* Tabela: uma coluna por temporada, uma linha por métrica */}
+      <div style={{ fontSize: 12.5, color: C.t2, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <BarChart3 size={15} style={{ color: cores.teal }} />
+        Cada gráfico mostra a evolução de um indicador entre as temporadas — quanto a igreja cresceu de uma para a outra.
+      </div>
+
+      {/* Small-multiples: um mini-gráfico de barras por indicador */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 }}>
+        {COMP_METRICAS.map(m => (
+          <MiniBarTemporadas key={m.key} metrica={m} linhas={linhas} cores={cores} />
+        ))}
+      </div>
+
+      {/* Tabela de números exatos (também é a "table view" de acessibilidade) */}
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-sm font-medium flex items-center gap-2">
-            <BarChart3 className="h-4 w-4 text-muted-foreground" />
-            Comparativo entre temporadas
+            <FileText className="h-4 w-4 text-muted-foreground" /> Números exatos
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -2938,47 +3126,13 @@ function ComparativoTemporadas() {
                     </td>
                     {linhas.map(l => (
                       <td key={l.temporada} style={{ textAlign: 'right', padding: '8px 10px', color: l.parcial ? C.t3 : C.text, fontVariantNumeric: 'tabular-nums' }}>
-                        {fmtVal(m.key, l[m.key])}
+                        {fmtComp(m.key, l[m.key])}
                       </td>
                     ))}
                   </tr>
                 ))}
               </tbody>
             </table>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Gráfico de barras de uma métrica ao longo das temporadas */}
-      <Card>
-        <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0">
-          <CardTitle className="text-sm font-medium flex items-center gap-2">
-            <TrendingUp className="h-4 w-4 text-muted-foreground" />
-            Evolução — {metricaAtual?.label}
-          </CardTitle>
-          <select
-            value={metricaGrafico}
-            onChange={e => setMetricaGrafico(e.target.value)}
-            style={{ padding: '5px 8px', borderRadius: 8, border: `1px solid ${C.border}`, background: 'var(--cbrio-input-bg)', color: C.text, fontSize: 12 }}
-          >
-            {COMP_METRICAS.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
-          </select>
-        </CardHeader>
-        <CardContent>
-          <div className="h-[260px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={dadosGrafico} margin={{ top: 6, right: 8, left: -16, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
-                <XAxis dataKey="nome" tick={{ fontSize: 11 }} />
-                <YAxis tick={{ fontSize: 11 }} allowDecimals={metricaGrafico === 'frequencia_media' || metricaGrafico === 'satisfacao_lideres'} />
-                <Tooltip
-                  cursor={{ fill: 'rgba(0,179,157,0.08)' }}
-                  contentStyle={{ borderRadius: 8, fontSize: 12 }}
-                  formatter={(v) => [Number(v).toLocaleString('pt-BR'), metricaAtual?.label]}
-                />
-                <Bar dataKey="valor" name={metricaAtual?.label} fill={C.primary} radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
           </div>
         </CardContent>
       </Card>
