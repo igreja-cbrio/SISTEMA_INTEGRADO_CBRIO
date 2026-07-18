@@ -184,6 +184,7 @@ export default function Grupos() {
   const [filterDia, setFilterDia] = useState('all');
   const [filterBairro, setFilterBairro] = useState('all');
   const [filterStatusTemp, setFilterStatusTemp] = useState('all');
+  const [sortBy, setSortBy] = useState('nome'); // nome | mais_pessoas | menos_pessoas
   // Filtro por rede (Marcos · 15/07: a visualização por redes vive AQUI, na
   // lista interna — não no formulário público). 'sem' = grupos sem rede.
   const [filterRede, setFilterRede] = useState('all');
@@ -668,6 +669,16 @@ export default function Grupos() {
     if (filterIncompleto && camposFaltantes(g).length === 0) return false;
     return true;
   });
+
+  // Ordenação (Marcos · 18/07): achar outliers de tamanho (grupo gigante /
+  // grupo vazio). Por pessoas usa membros_count (contagem paginada do backend).
+  if (sortBy === 'nome') {
+    filtered.sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt-BR'));
+  } else if (sortBy === 'mais_pessoas') {
+    filtered.sort((a, b) => (b.membros_count ?? 0) - (a.membros_count ?? 0));
+  } else if (sortBy === 'menos_pessoas') {
+    filtered.sort((a, b) => (a.membros_count ?? 0) - (b.membros_count ?? 0));
+  }
 
   const incompletosCount = gruposList.filter(g => camposFaltantes(g).length > 0).length;
 
@@ -1621,6 +1632,15 @@ export default function Grupos() {
             </SelectContent>
           </ShadSelect>
         )}
+
+        <ShadSelect value={sortBy} onValueChange={setSortBy}>
+          <SelectTrigger className="w-[170px] h-8 text-xs"><SelectValue placeholder="Ordenar" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="nome">Ordem alfabética</SelectItem>
+            <SelectItem value="mais_pessoas">Mais pessoas primeiro</SelectItem>
+            <SelectItem value="menos_pessoas">Menos pessoas primeiro</SelectItem>
+          </SelectContent>
+        </ShadSelect>
 
         <button onClick={() => setFilterIncompleto(v => !v)} title="Grupos com dados de cadastro faltando" style={{
           fontSize: 11, padding: '4px 10px', borderRadius: 99, cursor: 'pointer', fontWeight: 600,

@@ -107,9 +107,22 @@ router.get('/', async (req, res) => {
     const { data: grupos, error } = await q;
     if (error) throw error;
 
-    // Buscar contagem de membros ativos por grupo
-    const { data: participacoes } = await supabase.from('mem_grupo_membros')
-      .select('grupo_id, membro_id').is('saiu_em', null);
+    // Buscar contagem de membros ativos por grupo · PAGINADO (o roster passa de
+    // 1000 linhas · sem paginar, o cap do PostgREST subcontava os grupos e
+    // quebrava a ordenação por tamanho). Filtra soft-deletados.
+    const participacoes = [];
+    {
+      let from = 0; const size = 1000;
+      for (;;) {
+        const { data: page, error: eP } = await supabase.from('mem_grupo_membros')
+          .select('grupo_id').is('saiu_em', null).is('deleted_at', null)
+          .range(from, from + size - 1);
+        if (eP) throw eP;
+        participacoes.push(...(page || []));
+        if (!page || page.length < size) break;
+        from += size;
+      }
+    }
 
     // Buscar dados dos líderes
     const liderIds = [...new Set((grupos || []).map(g => g.lider_id).filter(Boolean))];
