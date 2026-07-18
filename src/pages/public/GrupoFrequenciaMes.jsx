@@ -12,10 +12,18 @@ import { useParams } from 'react-router-dom';
 import { gruposPublic } from '../../api';
 import AnimatedBackground from './AnimatedBackground';
 import { usePublicTheme, PublicThemeToggle } from './publicTheme';
-import { CheckCircle2, AlertTriangle, Users, Check } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, Users, Check, UserPlus, X } from 'lucide-react';
 
 const VERDE = '#00B39D';
 const AMBAR = '#f59e0b';
+
+function mascaraTel(v) {
+  const d = (v || '').replace(/\D/g, '').slice(0, 11);
+  if (d.length <= 2) return d.length ? `(${d}` : '';
+  if (d.length <= 7) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
+  if (d.length <= 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+  return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+}
 
 export default function GrupoFrequenciaMes() {
   const { token } = useParams();
@@ -25,6 +33,12 @@ export default function GrupoFrequenciaMes() {
   const [dados, setDados] = useState(null);
   const [marcados, setMarcados] = useState(() => new Set());
   const [resultado, setResultado] = useState(null);
+  // Adicionar visitante que apareceu no encontro (Marcos · 18/07)
+  const [addVis, setAddVis] = useState(false);
+  const [visNome, setVisNome] = useState('');
+  const [visTel, setVisTel] = useState('');
+  const [addingVis, setAddingVis] = useState(false);
+  const [addErro, setAddErro] = useState('');
 
   useEffect(() => {
     if (!token) { setEstado('erro'); setErroMsg('Link inválido.'); return; }
@@ -65,6 +79,26 @@ export default function GrupoFrequenciaMes() {
       setEstado('pronto');
       setErroMsg(e?.message || 'Erro ao salvar. Tente de novo.');
     }
+  };
+
+  const addVisitante = async () => {
+    if (visNome.trim().length < 3 || visTel.replace(/\D/g, '').length < 10) {
+      setErroMsg('Informe o nome e o celular do visitante.');
+      return;
+    }
+    setAddingVis(true); setAddErro('');
+    try {
+      const r = await gruposPublic.adicionarVisitanteFrequencia(token, { nome: visNome.trim(), telefone: visTel });
+      const novo = r.membro;
+      setDados(d => {
+        const jaTem = (d.membros || []).some(m => m.id === novo.id);
+        return jaTem ? d : { ...d, membros: [...(d.membros || []), { ...novo, presente: true }] };
+      });
+      setMarcados(prev => { const n = new Set(prev); n.add(novo.id); return n; });
+      setVisNome(''); setVisTel(''); setAddVis(false);
+    } catch (e) {
+      setAddErro(e?.message || 'Erro ao adicionar o visitante.');
+    } finally { setAddingVis(false); }
   };
 
   const membros = dados?.membros || [];
@@ -127,8 +161,8 @@ export default function GrupoFrequenciaMes() {
             </p>
 
             {membros.length === 0 ? (
-              <p style={{ fontSize: 14, color: C.text3, padding: '18px 0', textAlign: 'center' }}>
-                Este grupo ainda não tem participantes cadastrados.
+              <p style={{ fontSize: 14, color: C.text3, padding: '18px 0 8px', textAlign: 'center' }}>
+                Este grupo ainda não tem participantes cadastrados. Se apareceu alguém novo, adicione abaixo.
               </p>
             ) : (
               <>
@@ -207,6 +241,56 @@ export default function GrupoFrequenciaMes() {
                 </p>
               </>
             )}
+
+            {/* Adicionar visitante que apareceu no encontro (Marcos · 18/07) */}
+            <div style={{ marginTop: 14, borderTop: `1px solid ${C.cardBorder}`, paddingTop: 12 }}>
+              {!addVis ? (
+                <button
+                  type="button"
+                  onClick={() => { setAddVis(true); setAddErro(''); }}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 8, width: '100%', justifyContent: 'center',
+                    padding: '11px', borderRadius: 10, fontSize: 13.5, fontWeight: 700, cursor: 'pointer',
+                    border: `1px dashed ${VERDE}`, background: 'transparent', color: VERDE,
+                  }}
+                >
+                  <UserPlus size={16} /> Adicionar visitante
+                </button>
+              ) : (
+                <div style={{ background: C.isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)', border: `1px solid ${C.inputBorder}`, borderRadius: 12, padding: 12 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Novo visitante</span>
+                    <button type="button" onClick={() => { setAddVis(false); setAddErro(''); }} style={{ background: 'none', border: 'none', color: C.text3, cursor: 'pointer', display: 'flex' }}><X size={16} /></button>
+                  </div>
+                  <input
+                    value={visNome}
+                    onChange={e => setVisNome(e.target.value)}
+                    placeholder="Nome do visitante"
+                    style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: `1px solid ${C.inputBorder}`, background: C.isDark ? 'rgba(255,255,255,0.04)' : '#fff', color: C.text, fontSize: 16, boxSizing: 'border-box', marginBottom: 8 }}
+                  />
+                  <input
+                    value={visTel}
+                    onChange={e => setVisTel(mascaraTel(e.target.value))}
+                    placeholder="Celular com DDD"
+                    inputMode="tel"
+                    maxLength={16}
+                    style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: `1px solid ${C.inputBorder}`, background: C.isDark ? 'rgba(255,255,255,0.04)' : '#fff', color: C.text, fontSize: 16, boxSizing: 'border-box' }}
+                  />
+                  {addErro && <p style={{ fontSize: 12.5, color: '#ef4444', margin: '8px 0 0' }}>{addErro}</p>}
+                  <button
+                    type="button"
+                    onClick={addVisitante}
+                    disabled={addingVis}
+                    style={{ width: '100%', marginTop: 10, padding: '12px', borderRadius: 10, fontSize: 14, fontWeight: 700, border: 'none', background: VERDE, color: '#fff', cursor: 'pointer', opacity: addingVis ? 0.6 : 1 }}
+                  >
+                    {addingVis ? 'Adicionando...' : 'Adicionar e marcar presente'}
+                  </button>
+                  <p style={{ fontSize: 11, color: C.textDim, margin: '8px 0 0', lineHeight: 1.5, textAlign: 'center' }}>
+                    Ele entra no grupo como visitante e já fica marcado presente. A equipe confere depois.
+                  </p>
+                </div>
+              )}
+            </div>
           </>
         )}
       </div>
