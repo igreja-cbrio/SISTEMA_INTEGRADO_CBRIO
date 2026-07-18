@@ -727,17 +727,21 @@ router.post('/membros', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const errCpf = normalizarCpfPayload(req.body);
     if (errCpf) return res.status(400).json({ error: errCpf });
-    const { data, error } = await supabase
-      .from('mem_membros')
-      .insert(req.body)
-      .select()
-      .single();
-    if (error) {
-      if (error.code === '23505' && req.body?.cpf) {
-        return res.status(409).json({ error: 'Já existe um membro ativo com este CPF — funda os cadastros em vez de duplicar.', code: 'cpf_em_uso' });
-      }
-      throw error;
+    const resultado = await acharOuCriarGuardado({
+      nome: req.body?.nome, cpf: req.body?.cpf, telefone: req.body?.telefone,
+      email: req.body?.email, dataNascimento: req.body?.data_nascimento,
+      status: req.body?.status || 'membro_ativo', extra: req.body || {},
+      origem: 'membresia_manual',
+    });
+    if (!resultado.created) {
+      return res.status(409).json({
+        error: 'Já existe uma pessoa compatível. Abra o cadastro encontrado ou resolva a duplicidade antes de criar outro.',
+        code: 'pessoa_compativel', membro_id: resultado.membro_id,
+      });
     }
+    const { data, error } = await supabase.from('mem_membros')
+      .select().eq('id', resultado.membro_id).single();
+    if (error) throw error;
     enqueueSync('membro', data.id, 'upsert').catch(() => {});
     res.status(201).json(data);
   } catch (e) {
@@ -1395,6 +1399,7 @@ router.post('/totem/next/inscrever', async (req, res) => {
           cpf: cleanCpf, email: cleanEmail, telefone: cleanTel,
           nome: [nome, sobrenome].filter(Boolean).join(' '),
           dataNascimento: data_nascimento || null, status: 'visitante',
+          origem: 'membresia_totem_next',
         });
         membroId = r.membro_id;
       } catch (e) { console.error('[TOTEM] next matcher:', e.message); }
@@ -2185,29 +2190,16 @@ router.post('/cadastros/:id/aprovar', authorize('admin', 'diretor'), async (req,
       if (parentesco) membroPayload.parentesco = parentesco;
       if (obsAuto) membroPayload.observacoes = obsAuto;
 
-      // Tenta até 3x, removendo colunas ausentes a cada tentativa
-      for (let attempt = 0; attempt < 3; attempt++) {
-        const { data: novo, error: e2 } = await supabase
-          .from('mem_membros')
-          .insert(membroPayload)
-          .select()
-          .single();
-        if (!e2 && novo) {
-          membro = novo;
-          break;
-        }
-        const bad = missingCol(e2);
-        if (bad) {
-          console.warn(`[CADASTROS] coluna '${bad}' não existe em mem_membros, removendo do payload`);
-          delete membroPayload[bad];
-          continue;
-        }
-        console.error('[CADASTROS] erro ao criar membro:', e2.message, e2.code);
-        return res.status(500).json({ error: `Erro ao criar membro: ${e2.message}` });
-      }
-      if (!membro) {
-        return res.status(500).json({ error: 'Não foi possível criar: muitas colunas ausentes.' });
-      }
+      const resultado = await acharOuCriarGuardado({
+        nome: cad.nome, cpf: cad.cpf, email: cad.email, telefone: cad.telefone,
+        dataNascimento: cad.data_nascimento, status: 'membro_ativo',
+        extra: membroPayload, origem: 'membresia_aprovacao', origemId: cad.id,
+      });
+      const { data: encontrado, error: e2 } = await supabase.from('mem_membros')
+        .select().eq('id', resultado.membro_id).single();
+      if (e2) return res.status(500).json({ error: `Erro ao criar ou localizar membro: ${e2.message}` });
+      membro = encontrado;
+      foiAtualizacao = !resultado.created;
     }
 
     // Propaga o opt-in de WhatsApp do cadastro pendente pro membro (só liga,

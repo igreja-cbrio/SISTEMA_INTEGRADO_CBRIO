@@ -1616,13 +1616,14 @@ router.post('/criar-membro', async (req, res) => {
   try {
     const { nome, cpf, telefone, email, status = 'visitante' } = req.body;
     if (!nome) return res.status(400).json({ error: 'Nome é obrigatório' });
-    const { data, error } = await supabase
-      .from('mem_membros')
-      .insert({ nome, telefone, email, status })
-      .select()
-      .single();
+    const resultado = await acharOuCriarGuardado({
+      nome, cpf, telefone, email, status,
+      origem: 'cuidados_criar_membro',
+    });
+    const { data, error } = await supabase.from('mem_membros')
+      .select().eq('id', resultado.membro_id).single();
     if (error) throw error;
-    res.status(201).json(data);
+    res.status(resultado.created ? 201 : 200).json({ ...data, criado: resultado.created });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

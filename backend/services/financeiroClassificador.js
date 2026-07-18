@@ -10,6 +10,7 @@
 // pra obter hora real e identificar culto.
 
 const { supabase } = require('../utils/supabase');
+const { acharOuCriarGuardado } = require('./membroMatch');
 
 /**
  * Extrai centavo (2 digitos após virgula) do valor
@@ -213,7 +214,15 @@ async function resolverMembroPorDocumento(documento, nome) {
     return { membro_id: existente.id, criado_novo: false };
   }
 
-  // Cria contribuinte avulso
+  if (cleanDoc.length === 11) {
+    const resultado = await acharOuCriarGuardado({
+      cpf: cleanDoc, nome: nome || `Contribuinte ${cleanDoc.substring(0, 6)}...`,
+      status: 'contribuinte_avulso', origem: 'financeiro_documento',
+    });
+    return { membro_id: resultado.membro_id, criado_novo: !!resultado.created };
+  }
+
+  // CNPJ representa organização, não identidade individual.
   const insertPayload = {
     nome: nome || `Contribuinte ${cleanDoc.substring(0, 6)}...`,
     status: 'contribuinte_avulso',

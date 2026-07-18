@@ -748,7 +748,7 @@ router.post('/criancas', authorizeModule('kids', 2), async (req, res) => {
       const tel = normalizarTelefone(resp.telefone);
       const cpf = normalizarCpf(resp.cpf);
       const rr = await acharOuCriarGuardado({
-        cpf, email: resp.email || null, telefone: tel, nome: resp.nome, status: 'visitante',
+        cpf, email: resp.email || null, telefone: tel, nome: resp.nome, status: 'visitante', origem: 'kids_responsavel',
       });
       const { data: membro } = await supabase.from('mem_membros')
         .select('id, nome, familia_id').eq('id', rr.membro_id).single();
@@ -2222,6 +2222,7 @@ router.post('/criancas/:id/responsavel-rapido', authorizeModule('kids', 2), asyn
     const r = await acharOuCriarGuardado({
       cpf: cpfNorm, telefone: tel, nome: nome.trim(), status: 'visitante',
       extra: { familia_id: crianca.familia_id || null },
+      origem: 'kids_responsavel',
     });
     const { data: membro } = await supabase.from('mem_membros')
       .select('id, nome, familia_id').eq('id', r.membro_id).single();
@@ -2463,7 +2464,7 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
       if (cpfInformado) {
         const rr = await acharOuCriarGuardado({
           cpf: cpfInformado, telefone: normalizarTelefone(responsavel_telefone_manual),
-          nome: responsavel_nome_manual, status: 'visitante',
+          nome: responsavel_nome_manual, status: 'visitante', origem: 'kids_responsavel_manual',
         });
         const { data: m } = await supabase.from('mem_membros').select('id, nome, telefone').eq('id', rr.membro_id).single();
         respId = m.id; respNome = m.nome; respTel = m.telefone || normalizarTelefone(responsavel_telefone_manual);
@@ -2699,7 +2700,7 @@ router.post('/checkin/lote', authorizeModule('kids', 2), async (req, res) => {
       }
     } else if (responsavel_nome_manual) {
       if (cpfInformado) {
-        const rr = await acharOuCriarGuardado({ cpf: cpfInformado, telefone: normalizarTelefone(responsavel_telefone_manual), nome: responsavel_nome_manual, status: 'visitante' });
+        const rr = await acharOuCriarGuardado({ cpf: cpfInformado, telefone: normalizarTelefone(responsavel_telefone_manual), nome: responsavel_nome_manual, status: 'visitante', origem: 'kids_responsavel_manual' });
         const { data: m } = await supabase.from('mem_membros').select('id, nome, telefone').eq('id', rr.membro_id).single();
         respId = m.id; respNome = m.nome; respTel = m.telefone || normalizarTelefone(responsavel_telefone_manual);
       } else if (!permitir_sem_cpf) {
@@ -3734,6 +3735,7 @@ async function resolveOrCreateMembro({ nome, telefone, cpf, parentesco }) {
   const r = await acharOuCriarGuardado({
     cpf, telefone, nome, status: 'visitante',
     extra: { parentesco: parentesco === 'mae' || parentesco === 'pai' ? 'responsavel' : null },
+    origem: 'kids_responsavel',
   });
   const { data: membro } = await supabase.from('mem_membros')
     .select('id, nome, familia_id, parentesco').eq('id', r.membro_id).single();

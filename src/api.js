@@ -1848,7 +1848,10 @@ export const nextBatismo = {
     return get('/next-batismo/duplicados' + (qs ? '?' + qs : ''));
   },
   semVinculo: () => get('/next-batismo/sem-vinculo'),
-  familiasPendentes: () => get('/next-batismo/familias-pendentes'),
+  familiasPendentes: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return get('/next-batismo/familias-pendentes' + (qs ? '?' + qs : ''));
+  },
   vincularFamilia: (data) => post('/next-batismo/vincular-familia', data),
   ignorarFamilia: (data) => post('/next-batismo/ignorar-familia', data),
   candidatos: (params = {}) => {

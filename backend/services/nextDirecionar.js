@@ -103,7 +103,7 @@ async function direcionarMatricula({ matriculaId, destinos = [], areas = [], use
   async function garantirMembro() {
     if (membroId) return membroId;
     try {
-      const r = await acharOuCriarGuardado({ cpf: m.cpf || null, telefone: m.telefone || null, nome: nomeCompleto, dataNascimento: m.data_nascimento || null, status: 'visitante' });
+      const r = await acharOuCriarGuardado({ cpf: m.cpf || null, telefone: m.telefone || null, nome: nomeCompleto, dataNascimento: m.data_nascimento || null, status: 'visitante', origem: 'next_direcionamento', origemId: m.id });
       membroId = r?.membro_id || null;
       if (membroId) await supabase.from('next_matriculas').update({ membro_id: membroId }).eq('id', m.id);
     } catch (e) { console.error('[nextDirecionar] acharOuCriarGuardado:', e.message); }

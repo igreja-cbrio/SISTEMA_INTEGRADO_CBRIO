@@ -859,6 +859,7 @@ router.post('/batismos', authorizeBatismo, async (req, res) => {
       nome: `${nome} ${sobrenome}`.trim(),
       dataNascimento: data_nascimento || null,
       status: 'visitante',
+      origem: 'batismo_cadastro_interno',
     });
     membro_id = r.membro_id;
   } catch (e) {
@@ -998,6 +999,7 @@ router.post('/batismos/:id/checkin', authorizeBatismo, async (req, res) => {
         nome: `${insc.nome} ${insc.sobrenome || ''}`.trim(),
         dataNascimento: insc.data_nascimento || null,
         status: 'visitante',
+        origem: 'batismo_checkin', origemId: insc.id,
       });
       membro_id = r.membro_id || membro_id;
     } catch (e) {

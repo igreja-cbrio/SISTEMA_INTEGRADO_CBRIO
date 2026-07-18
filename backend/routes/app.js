@@ -9,6 +9,7 @@ const { notificar } = require('../services/notificar');
 const { dispararAuto } = require('../services/whatsappAuto');
 const wpp = require('../services/whatsappService');
 const { analisarOracao } = require('../services/oracaoAnalise');
+const { acharOuCriarGuardado } = require('../services/membroMatch');
 // Reuso: núcleo de aprovação de pedidos de grupo (claim atômico + vínculo +
 // notificação) já validado no módulo web de grupos.
 const { aprovarPedidoCore } = require('./grupos');
@@ -61,20 +62,18 @@ router.post('/visitante', limiterStrict, async (req, res) => {
     if (!nome?.trim() || !telefone?.trim()) {
       return res.status(400).json({ error: 'Nome e telefone são obrigatórios' });
     }
-    const { data, error } = await supabase
-      .from('mem_membros')
-      .insert({
-        nome: nome.trim(),
-        telefone,
-        email: email?.trim() || null,
+    const resultado = await acharOuCriarGuardado({
+      nome: nome.trim(), telefone, email: email?.trim() || null,
+      status: 'visitante', origem: 'app_visitante',
+      extra: {
         como_conheceu: como_conheceu || null,
-        situacao: 'visitante',
-        origem_cadastro: 'app',
-      })
-      .select('id, nome')
-      .single();
+        situacao: 'visitante', origem_cadastro: 'app',
+      },
+    });
+    const { data, error } = await supabase.from('mem_membros')
+      .select('id, nome').eq('id', resultado.membro_id).single();
     if (error) throw error;
-    res.status(201).json(data);
+    res.status(resultado.created ? 201 : 200).json({ ...data, criado: resultado.created });
   } catch (e) {
     console.error('[APP] visitante:', e.message);
     res.status(500).json({ error: 'Erro ao registrar visitante' });

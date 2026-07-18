@@ -20,25 +20,34 @@
 
 const { supabase } = require('../utils/supabase');
 const { escapePostgrestValue } = require('../utils/sanitize');
+const {
+  normalizarCpf, normalizarTelefone, normalizarEmail, nomeNormalizado: normalizarNome,
+  registrarObservacaoIdentidade,
+} = require('./identidadeProgressiva');
 
-const COLS = 'id, nome, email, telefone, cpf, status, foto_url, familia_id';
+const COLS = 'id, nome, email, telefone, cpf, data_nascimento, status, foto_url, familia_id';
 
 // Confiança por chave · mesma escala da vw_membros_duplicados (consistência)
 const PESO = { cpf: 100, telefone: 90, email: 85 };
 
-function normalizarCpf(cpf) {
-  const d = String(cpf || '').replace(/\D/g, '');
-  return d.length === 11 ? d : null;
-}
-
-function normalizarTelefone(tel) {
-  const d = String(tel || '').replace(/\D/g, '');
-  return d.length >= 10 ? d : null;
-}
-
-function normalizarEmail(email) {
-  const e = String(email || '').trim().toLowerCase();
-  return e.length > 3 && e.includes('@') ? e : null;
+async function _observar(membroId, entrada, matchedBy, created) {
+  try {
+    await registrarObservacaoIdentidade({
+      membroId,
+      origem: entrada.origem || 'matcher',
+      origemId: entrada.origemId || null,
+      nome: entrada.nome,
+      cpf: entrada.cpf,
+      telefone: entrada.telefone,
+      email: entrada.email,
+      dataNascimento: entrada.dataNascimento || entrada.extra?.data_nascimento || null,
+      dados: { matched_by: matchedBy || null, created: !!created },
+    });
+  } catch (error) {
+    // A observação é crítica para o diagnóstico, mas não pode derrubar um
+    // formulário durante a janela entre backend e migration.
+    console.error('[membroMatch] evidência de identidade não registrada:', error.message);
+  }
 }
 
 // _registrarContatoNoMatch · quando a pessoa ligou num membro EXISTENTE
@@ -144,67 +153,13 @@ async function buscarCandidatos({ cpf, email, telefone } = {}, { limit = 5 } = {
 // acharOuCriar · acha por chave confiável (cpf -> email) ou cria mem_membros
 // novo. Comportamento idêntico ao antigo findOrCreateMembro. NÃO auto-liga por
 // telefone (risco de fundir pessoas distintas que compartilham número).
-async function acharOuCriar({ cpf, email, telefone, nome, status = 'visitante' } = {}) {
-  const cpf11 = normalizarCpf(cpf);
-  const emailLc = email ? String(email).trim().toLowerCase() : null;
-  const telDigits = telefone ? String(telefone).replace(/\D/g, '') : null;
-
-  // 1) CPF exato (mais confiável) · só cadastros vivos: o índice UNIQUE é
-  // parcial em deleted_at IS NULL — sem o filtro, um soft-deletado que ainda
-  // tem o CPF "rouba" o match (vínculo a cadastro morto) ou faz o maybeSingle
-  // ver 2 linhas e errar.
-  if (cpf11) {
-    const { data } = await supabase
-      .from('mem_membros')
-      .select('id')
-      .eq('cpf', cpf11)
-      .is('deleted_at', null)
-      .maybeSingle();
-    if (data?.id) return { membro_id: data.id, created: false, matched_by: 'cpf' };
-  }
-
-  // 2) E-mail exato
-  if (emailLc) {
-    const { data } = await supabase
-      .from('mem_membros')
-      .select('id')
-      .ilike('email', escapePostgrestValue(emailLc))
-      .is('deleted_at', null)
-      .limit(1);
-    if (data && data[0]?.id) return { membro_id: data[0].id, created: false, matched_by: 'email' };
-  }
-
-  // 3) Cria novo (status='visitante' por padrão)
-  const { data, error } = await supabase
-    .from('mem_membros')
-    .insert({
-      nome: nome || 'Sem nome',
-      email: emailLc || null,
-      telefone: telDigits || null,
-      cpf: cpf11,
-      status,
-      active: true,
-    })
-    .select('id')
-    .single();
-  if (error) {
-    // 23505 (uniq_mem_membros_cpf_ativo) = corrida: outro fluxo criou o mesmo
-    // CPF entre o lookup e o insert. Religa em vez de estourar 500.
-    if (error.code === '23505' && cpf11) {
-      const { data: d2 } = await supabase.from('mem_membros')
-        .select('id').eq('cpf', cpf11).is('deleted_at', null).maybeSingle();
-      if (d2?.id) return { membro_id: d2.id, created: false, matched_by: 'cpf' };
-    }
-    throw error;
-  }
-  return { membro_id: data.id, created: true };
+async function acharOuCriar(entrada = {}) {
+  // Compatibilidade para consumidores antigos, agora sob a mesma política
+  // conservadora. E-mail sozinho nunca mais identifica uma pessoa.
+  return acharOuCriarGuardado(entrada);
 }
 
 // ── Nome: comparação conservadora pra AUTO-link ──────────────────────────────
-function normalizarNome(s) {
-  return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
-    .replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
-}
 function _bigrams(s) {
   const m = new Map();
   for (let i = 0; i < s.length - 1; i++) { const g = s.slice(i, i + 2); m.set(g, (m.get(g) || 0) + 1); }
@@ -262,17 +217,24 @@ async function _consolidarCpfNoMatch(membroId, cpf11, matchedBy, dataNascimento)
 // `extra` = campos extras pro insert (ex.: data_nascimento, familia_id).
 // `soChaveForte`: liga SÓ por CPF (a pessoa afirmou "não sou eu" no dedup —
 //   nenhum sinal deniável pode religá-la a outro cadastro).
-async function acharOuCriarGuardado({ cpf, email, telefone, nome, dataNascimento, status = 'visitante', extra = {} } = {}, { soChaveForte = false } = {}) {
+async function acharOuCriarGuardado({ cpf, email, telefone, nome, dataNascimento, status = 'visitante', extra = {}, origem = 'matcher', origemId = null } = {}, { soChaveForte = false } = {}) {
+  const entrada = { cpf, email, telefone, nome, dataNascimento, status, extra, origem, origemId };
   const cpf11 = normalizarCpf(cpf);
   const emailLc = normalizarEmail(email);
   const tel = normalizarTelefone(telefone);
   const nasc = dataNascimento || extra.data_nascimento || null;
+  // Se chegou um CPF novo, contato compartilhável não pode absorvê-lo em um
+  // cadastro antigo sem confirmar também o nascimento. Nesse caso criamos um
+  // novo registro e a observação-ponte eleva o par para revisão humana.
+  const candidatoCompativel = (c) => nomesMesmaPessoa(c.nome, nome)
+    && (!cpf11 || (!!nasc && !!c.data_nascimento && nasc === c.data_nascimento));
 
   if (cpf11) {
     const { data } = await supabase.from('mem_membros').select('id')
       .eq('cpf', cpf11).is('deleted_at', null).maybeSingle();
     if (data?.id) {
       _registrarContatoNoMatch(data.id, { telefone: tel, email: emailLc }, 'porta');
+      await _observar(data.id, entrada, 'cpf', false);
       return { membro_id: data.id, created: false, matched_by: 'cpf' };
     }
   }
@@ -282,10 +244,11 @@ async function acharOuCriarGuardado({ cpf, email, telefone, nome, dataNascimento
     // comportamento legado (e-mail sozinho). buscarCandidatos cobre também o
     // e-mail SECUNDÁRIO (mem_contatos · usado em outra porta).
     const cands = await buscarCandidatos({ email: emailLc }, { limit: 8 });
-    const hit = cands.find((c) => !nome || nomesMesmaPessoa(c.nome, nome));
+    const hit = cands.find((c) => !nome ? !cpf11 : candidatoCompativel(c));
     if (hit?.id) {
       await _consolidarCpfNoMatch(hit.id, cpf11, 'email', nasc);
       _registrarContatoNoMatch(hit.id, { telefone: tel, email: emailLc }, 'porta');
+      await _observar(hit.id, entrada, 'email+nome', false);
       return { membro_id: hit.id, created: false, matched_by: 'email' };
     }
   }
@@ -293,10 +256,11 @@ async function acharOuCriarGuardado({ cpf, email, telefone, nome, dataNascimento
     // pula direto pro CRIA (nenhum sinal deniável liga)
   } else if (tel && nome) {
     const cands = await buscarCandidatos({ telefone }, { limit: 8 });
-    const hit = cands.find((c) => nomesMesmaPessoa(c.nome, nome));
+    const hit = cands.find(candidatoCompativel);
     if (hit) {
       await _consolidarCpfNoMatch(hit.id, cpf11, 'telefone+nome', nasc);
       _registrarContatoNoMatch(hit.id, { telefone: tel, email: emailLc }, 'porta');
+      await _observar(hit.id, entrada, 'telefone+nome', false);
       return { membro_id: hit.id, created: false, matched_by: 'telefone+nome' };
     }
   }
@@ -310,18 +274,19 @@ async function acharOuCriarGuardado({ cpf, email, telefone, nome, dataNascimento
     if (hit) {
       await _consolidarCpfNoMatch(hit.id, cpf11, 'nome+nascimento', nasc);
       _registrarContatoNoMatch(hit.id, { telefone: tel, email: emailLc }, 'porta');
+      await _observar(hit.id, entrada, 'nome+nascimento', false);
       return { membro_id: hit.id, created: false, matched_by: 'nome+nascimento' };
     }
   }
 
   const { data, error } = await supabase.from('mem_membros').insert({
+    ...extra,
     nome: nome || 'Sem nome',
     email: emailLc || null,
     telefone: tel || null,
     cpf: cpf11,
     status,
     active: true,
-    ...extra,
   }).select('id').single();
   if (error) {
     // 23505 (uniq_mem_membros_cpf_ativo) = corrida: dois totens/fluxos com o
@@ -329,10 +294,14 @@ async function acharOuCriarGuardado({ cpf, email, telefone, nome, dataNascimento
     if (error.code === '23505' && cpf11) {
       const { data: d2 } = await supabase.from('mem_membros')
         .select('id').eq('cpf', cpf11).is('deleted_at', null).maybeSingle();
-      if (d2?.id) return { membro_id: d2.id, created: false, matched_by: 'cpf' };
+      if (d2?.id) {
+        await _observar(d2.id, entrada, 'cpf', false);
+        return { membro_id: d2.id, created: false, matched_by: 'cpf' };
+      }
     }
     throw error;
   }
+  await _observar(data.id, entrada, null, true);
   return { membro_id: data.id, created: true, matched_by: null };
 }
 
@@ -351,6 +320,8 @@ async function acharMembroGuardado({ cpf, email, telefone, nome, dataNascimento 
   const emailLc = normalizarEmail(email);
   const tel = normalizarTelefone(telefone);
   const nasc = dataNascimento || null;
+  const candidatoCompativel = (c) => nomesMesmaPessoa(c.nome, nome)
+    && (!cpf11 || (!!nasc && !!c.data_nascimento && nasc === c.data_nascimento));
 
   if (cpf11) {
     const { data } = await supabase.from('mem_membros').select('id')
@@ -363,12 +334,12 @@ async function acharMembroGuardado({ cpf, email, telefone, nome, dataNascimento 
     // ligar sozinho — exige o nome batendo quando há nome. buscarCandidatos
     // cobre também o e-mail SECUNDÁRIO (mem_contatos).
     const cands = await buscarCandidatos({ email: emailLc }, { limit: 8 });
-    const hit = cands.find((c) => !nome || nomesMesmaPessoa(c.nome, nome));
+    const hit = cands.find((c) => !nome ? !cpf11 : candidatoCompativel(c));
     if (hit?.id) return { membro_id: hit.id, matched_by: 'email' };
   }
   if (tel && nome) {
     const cands = await buscarCandidatos({ telefone }, { limit: 8 });
-    const hit = cands.find((c) => nomesMesmaPessoa(c.nome, nome));
+    const hit = cands.find(candidatoCompativel);
     if (hit) return { membro_id: hit.id, matched_by: 'telefone+nome' };
   }
   if (nasc && nome) {

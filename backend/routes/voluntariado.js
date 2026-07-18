@@ -711,6 +711,7 @@ router.post('/me/register-member', async (req, res) => {
     try {
       const r = await acharOuCriarGuardado({
         cpf: cleanCpf, telefone: cleanPhone, nome: fullName, status: 'visitante',
+        origem: 'voluntariado_ficha',
       });
       const { data } = await supabase.from('mem_membros')
         .select('id, nome, telefone, email').eq('id', r.membro_id).single();
@@ -1167,7 +1168,7 @@ router.post('/profiles', async (req, res) => {
       const { findOrCreateMembro } = require('./pessoas');
       const r = await findOrCreateMembro({
         cpf: cleanCpf, email, telefone: phone, nome: full_name.trim(),
-        status: 'visitante',
+        status: 'visitante', origem: 'voluntariado_perfil',
       });
       membresiaId = r.membro_id;
     } catch (e) {

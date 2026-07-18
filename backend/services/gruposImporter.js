@@ -19,6 +19,7 @@
 
 const XLSX = require('xlsx');
 const { supabase } = require('../utils/supabase');
+const { acharOuCriarGuardado, acharMembroGuardado } = require('./membroMatch');
 
 const onlyDigits = (s) => String(s || '').replace(/\D/g, '');
 const cpf11 = (s) => { const d = onlyDigits(s); return d.length === 11 ? d : null; };
@@ -70,18 +71,6 @@ function parsePlanilha(buffer) {
 async function importarParticipantes(buffer, { dryRun = true, reconciliar = false } = {}) {
   const pessoas = parsePlanilha(buffer);
 
-  // ── Base atual em memória (rápido + sem N+1) ──
-  const membros = await carregarTodos('mem_membros', 'id, nome, cpf, telefone, deleted_at');
-  const byCpf = new Map();
-  const byNome = new Map(); // normNome -> [membros]
-  for (const m of membros) {
-    if (m.deleted_at) continue;
-    const c = cpf11(m.cpf);
-    if (c) byCpf.set(c, m);
-    const nn = normNome(m.nome);
-    if (nn) { if (!byNome.has(nn)) byNome.set(nn, []); byNome.get(nn).push(m); }
-  }
-
   const grupos = await carregarTodos('mem_grupos', 'id, nome, ativo');
   const byGrupo = new Map(); // normNome -> grupo
   for (const g of grupos) { const nn = normNome(g.nome); if (nn && !byGrupo.has(nn)) byGrupo.set(nn, g); }
@@ -115,67 +104,27 @@ async function importarParticipantes(buffer, { dryRun = true, reconciliar = fals
     }
   }
 
-  // ── 2. Resolve pessoas (match cpf → nome) e prepara criações/atualizações ──
+  // ── 2. Resolve pessoas pela política canônica ──
   // Cada item: { p, membroId|null, acao }
   const resolvidos = [];
-  const aCriar = []; // pessoas novas (insert em lote)
   for (const p of pessoas) {
-    let m = p.cpf ? byCpf.get(p.cpf) : null;
-    if (!m) {
-      const cand = byNome.get(normNome(p.nome)) || [];
-      if (cand.length === 1) m = cand[0];
-      else if (cand.length > 1) {
-        rep.ambiguos++;
-        if (rep.exemplos.ambiguos.length < 15) rep.exemplos.ambiguos.push(p.nome);
-        // Não cria (evita duplicar) e não funde (evita merge errado). Fica de fora.
-        resolvidos.push({ p, membroId: null, acao: 'ambiguo' });
-        continue;
-      }
-    }
-    if (m) {
-      // Existe → ignora, mas atualiza se faltava CPF/telefone e a planilha tem.
-      const patch = {};
-      if (p.cpf && !cpf11(m.cpf)) patch.cpf = p.cpf;
-      if (p.telefone && !tel10(m.telefone)) patch.telefone = p.telefone;
-      if (Object.keys(patch).length) {
-        rep.atualizar++;
-        if (rep.exemplos.atualizar.length < 15) rep.exemplos.atualizar.push(p.nome);
-        if (!dryRun) await supabase.from('mem_membros').update(patch).eq('id', m.id);
+    const entrada = { cpf: p.cpf, telefone: p.telefone, nome: p.nome, status: 'visitante', origem: 'grupos_importacao' };
+    const resultado = dryRun
+      ? await acharMembroGuardado(entrada)
+      : await acharOuCriarGuardado(entrada);
+    if (resultado?.membro_id) {
+      const criado = !!resultado.created;
+      if (criado) {
+        rep.criar++;
+        if (rep.exemplos.criar.length < 15) rep.exemplos.criar.push(p.nome);
       } else {
         rep.ignorar++;
       }
-      resolvidos.push({ p, membroId: m.id, acao: 'existe' });
+      resolvidos.push({ p, membroId: resultado.membro_id, acao: criado ? 'criar' : 'existe' });
     } else {
       rep.criar++;
       if (rep.exemplos.criar.length < 15) rep.exemplos.criar.push(p.nome);
-      aCriar.push(p);
       resolvidos.push({ p, membroId: null, acao: 'criar' });
-    }
-  }
-
-  // Cria os novos em lote e casa o id de volta pelo nome normalizado.
-  if (!dryRun && aCriar.length) {
-    for (const lote of chunk(aCriar, 500)) {
-      const payload = lote.map((p) => ({
-        nome: p.nome,
-        cpf: p.cpf || null,
-        telefone: p.telefone || null,
-        status: 'visitante',
-      }));
-      const { data, error } = await supabase.from('mem_membros').insert(payload).select('id, nome');
-      if (error) throw new Error('criar membros: ' + error.message);
-      (data || []).forEach((m) => {
-        const nn = normNome(m.nome);
-        if (!byNome.has(nn)) byNome.set(nn, []);
-        byNome.get(nn).push(m);
-      });
-    }
-    // re-resolve os ids dos criados
-    for (const r of resolvidos) {
-      if (r.acao === 'criar' && !r.membroId) {
-        const cand = byNome.get(normNome(r.p.nome)) || [];
-        if (cand.length) r.membroId = cand[cand.length - 1].id;
-      }
     }
   }
 

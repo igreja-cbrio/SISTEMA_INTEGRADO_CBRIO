@@ -5,6 +5,17 @@
 // backend protege o produto mesmo durante a janela entre deploy e migration.
 
 function digits(v) { return String(v || '').replace(/\D/g, ''); }
+function cpfValido(v) {
+  const d = digits(v);
+  if (d.length !== 11 || /^(\d)\1{10}$/.test(d)) return false;
+  const calcular = (tamanho, peso) => {
+    let soma = 0;
+    for (let i = 0; i < tamanho; i += 1) soma += Number(d[i]) * (peso - i);
+    const resto = (soma * 10) % 11;
+    return resto === 10 ? 0 : resto;
+  };
+  return calcular(9, 10) === Number(d[9]) && calcular(10, 11) === Number(d[10]);
+}
 function norm(v) {
   return String(v || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -51,8 +62,8 @@ function avaliarPossivelDuplicidade(a = {}, b = {}) {
   const telA = digits(a.telefone); const telB = digits(b.telefone);
   const emailA = String(a.email || '').trim().toLowerCase();
   const emailB = String(b.email || '').trim().toLowerCase();
-  const cpfIgual = cpfA.length === 11 && cpfA === cpfB;
-  const cpfConflitante = cpfA.length === 11 && cpfB.length === 11 && cpfA !== cpfB;
+  const cpfIgual = cpfValido(cpfA) && cpfA === cpfB;
+  const cpfConflitante = cpfValido(cpfA) && cpfValido(cpfB) && cpfA !== cpfB;
   const nascimentoConflitante = !!a.data_nascimento && !!b.data_nascimento && a.data_nascimento !== b.data_nascimento;
   const generoConflitante = !!a.genero && !!b.genero && a.genero !== b.genero;
   const nomeCompativel = nomesPodemSerMesmaPessoa(a.nome, b.nome);

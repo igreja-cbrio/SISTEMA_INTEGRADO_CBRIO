@@ -338,6 +338,7 @@ router.post('/register', publicLimiter, async (req, res) => {
       const { findOrCreateMembro } = require('./pessoas');
       const r = await findOrCreateMembro({
         cpf: cleanCpf, email, telefone: phone, nome: full_name, status: 'visitante',
+        origem: 'voluntariado_autoatendimento',
       });
       membresiaId = r.membro_id;
     } catch (e) {

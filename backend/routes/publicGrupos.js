@@ -15,6 +15,7 @@ const {
 } = require('../services/gruposWhatsapp');
 const { processarFila } = require('../services/whatsappFila');
 const { registrarEventoPedido } = require('../services/grupoPedidoEventos');
+const { registrarObservacaoSegura } = require('../services/identidadeProgressiva');
 const { requireCron } = require('../utils/cronAuth');
 
 // ── Rate limit dedicado do totem de inscrição de grupos ──
@@ -629,6 +630,12 @@ router.post('/inscrever', async (req, res) => {
       cadastroPendenteId = cad.id;
     }
 
+    await registrarObservacaoSegura({
+      membroId, origem: 'grupos_formulario', origemId: cadastroPendenteId,
+      nome: nome.trim(), cpf: cpfLimpo, email: emailLimpo,
+      telefone, dataNascimento: data_nascimento || null,
+    });
+
     // Cria pedido pendente. Quando a pessoa afirmou "não sou eu" no dedup, o
     // pedido chega marcado pra triagem humana (a caixa de entrada mostra o
     // aviso — são os casos em que a duplicata é difícil de resolver sozinho).
@@ -824,6 +831,12 @@ router.post('/inscrever-lider', async (req, res) => {
       }
       cadastroPendenteId = cad.id;
     }
+
+    await registrarObservacaoSegura({
+      membroId, origem: 'grupos_lider_formulario', origemId: cadastroPendenteId,
+      nome: nome.trim(), cpf: cpfLimpo, email: emailLimpo,
+      telefone, dataNascimento: data_nascimento || null,
+    });
 
     const { data: insc, error: eInsc } = await supabase.from('mem_lider_inscricoes').insert({
       membro_id: membroId,

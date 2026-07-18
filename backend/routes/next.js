@@ -199,6 +199,7 @@ router.post('/inscricoes', async (req, res) => {
       nome: [nome, sobrenome].filter(Boolean).join(' '),
       dataNascimento: data_nascimento || null,
       status: 'visitante',
+      origem: 'next_inscricao_interna',
     });
     membro_id = r.membro_id;
   } catch (e) {
@@ -707,6 +708,7 @@ router.post('/matriculas', async (req, res) => {
         cpf: b.cpf, email: b.email, telefone: b.telefone,
         nome: [b.nome, b.sobrenome].filter(Boolean).join(' '),
         dataNascimento: b.data_nascimento || null, status: 'visitante',
+        origem: 'next_matricula', origemId: b.id,
       });
       membro_id = r.membro_id;
     } catch (e) { console.error('[next/matriculas] matcher:', e.message); /* segue sem — não perde a matrícula */ }
@@ -753,6 +755,7 @@ router.post('/matriculas/backfill-membros', async (req, res) => {
           cpf: m.cpf, email: m.email, telefone: m.telefone,
           nome: [m.nome, m.sobrenome].filter(Boolean).join(' '),
           dataNascimento: m.data_nascimento || null, status: 'visitante',
+          origem: 'next_reconciliacao', origemId: m.id,
         });
         if (!r?.membro_id) { falhas += 1; continue; }
         const { error } = await supabase.from('next_matriculas')
@@ -804,6 +807,7 @@ router.patch('/matriculas/:id', async (req, res) => {
             cpf: data.cpf, email: data.email, telefone: data.telefone,
             nome: [data.nome, data.sobrenome].filter(Boolean).join(' '),
             dataNascimento: data.data_nascimento || null, status: 'visitante',
+            origem: 'next_matricula_edicao', origemId: data.id,
           });
           if (r?.membro_id) {
             await supabase.from('next_matriculas')

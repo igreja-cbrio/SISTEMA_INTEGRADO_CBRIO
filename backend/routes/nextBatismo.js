@@ -4,7 +4,7 @@
 // Console de RESOLUÇÃO DE IDENTIDADE (Marcos · 2026-06-15). NÃO faz CRUD nem
 // presença — Integração confirma presença e consome as identidades limpas.
 // Duas lentes:
-//   1. Duplicatas suspeitas (vw_nb_duplicados_suspeitos) → fundir (merge_membros)
+//   1. Duplicatas suspeitas (pré-filtro em memória) → fundir (merge_membros)
 //      ou marcar "não é duplicata" (mem_duplicados_ignorados).
 //   2. Inscrição/convertido SEM vínculo de membro (membro_id NULL) → ligar ao
 //      membro certo (buscarCandidatos) ou criar o cadastro (acharOuCriar).
@@ -17,7 +17,7 @@ const router = require('express').Router();
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { buscarCandidatos, acharOuCriar, acharOuCriarGuardado } = require('../services/membroMatch');
-const { avaliarPossivelDuplicidade } = require('../services/duplicidadePolicy');
+const { avaliarPossivelDuplicidade, nomesPodemSerMesmaPessoa, tokensNome } = require('../services/duplicidadePolicy');
 const { avaliarRelacaoFamiliar } = require('../services/familiaPolicy');
 
 router.use(authenticate);
@@ -82,15 +82,24 @@ async function enriquecerOrigensDuplicados(items) {
     if (!lista || lista.some((x) => x.tipo === origem.tipo && x.detalhe === origem.detalhe)) return;
     lista.push(origem);
   };
-  const consultas = await Promise.all([
-    supabase.from('cui_convertidos').select('membro_id, area, data_culto').in('membro_id', ids).is('deleted_at', null),
-    supabase.from('mem_grupo_membros').select('membro_id, mem_grupos(nome)').in('membro_id', ids).is('saiu_em', null).is('deleted_at', null),
-    supabase.from('next_inscricoes').select('membro_id, created_at').in('membro_id', ids),
-    supabase.from('batismo_inscricoes').select('membro_id, status').in('membro_id', ids).is('deleted_at', null),
-    supabase.from('cui_visitas').select('membro_id, tipo').in('membro_id', ids).is('deleted_at', null),
-    supabase.from('mem_voluntarios').select('membro_id, mem_ministerios(nome)').in('membro_id', ids).is('ate', null),
-  ]);
-  const [convertidos, grupos, next, batismos, visitas, voluntarios] = consultas.map((r) => r.error ? [] : (r.data || []));
+  const origens = [[], [], [], [], [], []];
+  // Muitos pares podem envolver centenas de pessoas. Dividir os UUIDs evita
+  // estourar o tamanho da URL do PostgREST sem cortar a fila nem suas origens.
+  for (let i = 0; i < ids.length; i += 100) {
+    const lote = ids.slice(i, i + 100);
+    const consultas = await Promise.all([
+      supabase.from('cui_convertidos').select('membro_id, area, data_culto').in('membro_id', lote).is('deleted_at', null),
+      supabase.from('mem_grupo_membros').select('membro_id, mem_grupos(nome)').in('membro_id', lote).is('saiu_em', null).is('deleted_at', null),
+      supabase.from('next_inscricoes').select('membro_id, created_at').in('membro_id', lote),
+      supabase.from('batismo_inscricoes').select('membro_id, status').in('membro_id', lote).is('deleted_at', null),
+      supabase.from('cui_visitas').select('membro_id, tipo').in('membro_id', lote).is('deleted_at', null),
+      supabase.from('mem_voluntarios').select('membro_id, mem_ministerios(nome)').in('membro_id', lote).is('ate', null),
+    ]);
+    consultas.forEach((resultado, indice) => {
+      if (!resultado.error) origens[indice].push(...(resultado.data || []));
+    });
+  }
+  const [convertidos, grupos, next, batismos, visitas, voluntarios] = origens;
   convertidos.forEach((r) => adicionar(r.membro_id, {
     tipo: 'conversao', label: 'Conversão', detalhe: r.area ? String(r.area).toUpperCase() : null, rota: '/ministerial/cuidados',
   }));
@@ -161,10 +170,19 @@ function chaveEndereco(membro) {
   return `${cep}|${endereco}`;
 }
 
-function linhaDuplicidadeContato(a, b, evidencia) {
+const MOTIVO_POR_EVIDENCIA = {
+  'CPF igual': 'cpf_igual',
+  'Nome e nascimento compatíveis': 'nome_e_nascimento',
+  'Telefone e nome compatíveis': 'telefone_e_nome',
+  'E-mail e nome compatíveis': 'email_e_nome',
+  'Nomes muito parecidos': 'nome_muito_parecido',
+};
+
+function linhaDuplicidade(a, b, avaliacao) {
   return {
     membro_a_id: a.id, membro_b_id: b.id,
-    motivos: [evidencia], confianca: 85,
+    motivos: avaliacao.evidencias.map((e) => MOTIVO_POR_EVIDENCIA[e]).filter(Boolean),
+    confianca: avaliacao.prioridade === 'alta' ? 95 : 80,
     a_nome: a.nome, a_email: a.email, a_telefone: a.telefone, a_cpf: a.cpf,
     a_nascimento: a.data_nascimento, a_status: a.status, a_foto_url: a.foto_url,
     a_criado_em: a.created_at, a_genero: a.genero,
@@ -174,24 +192,63 @@ function linhaDuplicidadeContato(a, b, evidencia) {
   };
 }
 
-let triagemFamiliasCache = { ate: 0, familias: null, duplicatas: null };
+let triagemFamiliasCache = { ate: 0, familias: null, duplicatas: null, promessa: null };
+
+function invalidarTriagemPessoas() {
+  triagemFamiliasCache = { ate: 0, familias: null, duplicatas: null, promessa: null };
+}
 
 async function carregarTriagemFamilias() {
   if (triagemFamiliasCache.familias && triagemFamiliasCache.ate > Date.now()) {
     return triagemFamiliasCache;
   }
+  if (triagemFamiliasCache.promessa) return triagemFamiliasCache.promessa;
+
+  const carregar = async () => {
   const membros = [];
-  for (let from = 0; ; from += 1000) {
-    const { data, error } = await supabase.from('mem_membros')
-      .select('id, nome, telefone, email, cpf, data_nascimento, genero, endereco, cep, bairro, cidade, familia_id, created_at, foto_url, status, familia:mem_familias(id, nome)')
-      .eq('active', true).is('deleted_at', null).range(from, from + 999);
-    if (error) throw error;
-    membros.push(...(data || []));
-    if (!data || data.length < 1000) break;
+  for (const estadoAtivo of [true, false, null]) {
+    const tamanhoPagina = 1000;
+    for (let from = 0; ; from += tamanhoPagina) {
+      let resultado;
+      try {
+        let query = supabase.from('mem_membros')
+          .select('id, nome, telefone, email, cpf, data_nascimento, genero, endereco, cep, bairro, cidade, familia_id, created_at, foto_url, status, active')
+          .is('deleted_at', null).range(from, from + tamanhoPagina - 1);
+        query = estadoAtivo === null ? query.is('active', null) : query.eq('active', estadoAtivo);
+        resultado = await query;
+      } catch (error) {
+        throw new Error(`Falha ao carregar pessoas (${String(estadoAtivo)}, ${from}-${from + tamanhoPagina - 1}): ${error.message}`);
+      }
+      const { data, error } = resultado;
+      if (error) throw new Error(`Falha ao carregar pessoas (${String(estadoAtivo)}, ${from}-${from + tamanhoPagina - 1}): ${error.message}`);
+      membros.push(...(data || []));
+      if (!data || data.length < tamanhoPagina) break;
+    }
   }
+
+  const familiasPorId = new Map();
+  const familiaIds = [...new Set(membros.map((m) => m.familia_id).filter(Boolean))];
+  for (let i = 0; i < familiaIds.length; i += 100) {
+    let resultado;
+    try {
+      resultado = await supabase.from('mem_familias').select('id, nome')
+        .in('id', familiaIds.slice(i, i + 100));
+    } catch (error) {
+      throw new Error(`Falha ao carregar famílias (${i}-${i + 99}): ${error.message}`);
+    }
+    const { data, error } = resultado;
+    if (error) throw new Error(`Falha ao carregar famílias (${i}-${i + 99}): ${error.message}`);
+    for (const familia of data || []) familiasPorId.set(familia.id, familia);
+  }
+  for (const membro of membros) membro.familia = familiasPorId.get(membro.familia_id) || null;
 
   const porTelefone = new Map();
   const porEndereco = new Map();
+  const porCpf = new Map();
+  const porEmail = new Map();
+  const porNascimento = new Map();
+  const porPrimeiroNome = new Map();
+  const porInicial = new Map();
   const adicionar = (mapa, chave, membro) => {
     if (!chave) return;
     if (!mapa.has(chave)) mapa.set(chave, []);
@@ -200,11 +257,37 @@ async function carregarTriagemFamilias() {
   for (const membro of membros) {
     const telefone = digitos(membro.telefone);
     adicionar(porTelefone, telefone.length >= 10 ? telefone : null, membro);
-    adicionar(porEndereco, chaveEndereco(membro), membro);
+    adicionar(porCpf, digitos(membro.cpf).length === 11 ? digitos(membro.cpf) : null, membro);
+    adicionar(porEmail, String(membro.email || '').trim().toLowerCase().length > 3
+      ? String(membro.email).trim().toLowerCase() : null, membro);
+    adicionar(porNascimento, membro.data_nascimento || null, membro);
+    const nomeNormalizado = normNome(membro.nome);
+    const primeiroNome = tokensNome(membro.nome)[0];
+    adicionar(porPrimeiroNome, primeiroNome || null, membro);
+    adicionar(porInicial, nomeNormalizado[0] || null, membro);
+    if (membro.active !== false) adicionar(porEndereco, chaveEndereco(membro), membro);
   }
 
   const paresFamilia = new Map();
   const paresDuplicidade = new Map();
+  const paresAvaliados = new Set();
+  const considerarDuplicidade = (a, b) => {
+    if (!a || !b || a.id === b.id) return;
+    const ids = [a.id, b.id].sort();
+    const chave = `${ids[0]}_${ids[1]}`;
+    if (paresAvaliados.has(chave)) return;
+    paresAvaliados.add(chave);
+    const avaliacao = avaliarPossivelDuplicidade(a, b);
+    if (avaliacao.incluir) paresDuplicidade.set(chave, linhaDuplicidade(a, b, avaliacao));
+  };
+  const compararGrupoDuplicidade = (grupo, filtro = null) => {
+    if (!grupo || grupo.length < 2) return;
+    for (let i = 0; i < grupo.length; i += 1) {
+      for (let j = i + 1; j < grupo.length; j += 1) {
+        if (!filtro || filtro(grupo[i], grupo[j])) considerarDuplicidade(grupo[i], grupo[j]);
+      }
+    }
+  };
   const considerarGrupo = (grupo, evidencia) => {
     if (!grupo || grupo.length < 2 || grupo.length > 12) return;
     for (let i = 0; i < grupo.length; i += 1) {
@@ -220,9 +303,7 @@ async function carregarTriagemFamilias() {
           mesmoEndereco: evidencia === 'Mesmo endereço e CEP',
         });
         if (relacao.destino === 'duplicidade') {
-          if (evidencia === 'Mesmo telefone') {
-            paresDuplicidade.set(chave, linhaDuplicidadeContato(a, b, 'telefone_e_nome'));
-          }
+          considerarDuplicidade(a, b);
           continue;
         }
         if (a.familia_id && b.familia_id) continue;
@@ -236,18 +317,41 @@ async function carregarTriagemFamilias() {
       }
     }
   };
-  for (const grupo of porTelefone.values()) considerarGrupo(grupo, 'Mesmo telefone');
+  // Identidade: sinais exatos encontram inclusive nomes digitados de formas
+  // diferentes; os blocos de nome encontram abreviações e erros leves sem
+  // fazer uma comparação quadrática da base inteira.
+  for (const grupo of porCpf.values()) compararGrupoDuplicidade(grupo);
+  for (const grupo of porTelefone.values()) compararGrupoDuplicidade(grupo);
+  for (const grupo of porEmail.values()) compararGrupoDuplicidade(grupo);
+  for (const grupo of porNascimento.values()) compararGrupoDuplicidade(grupo);
+  for (const grupo of porPrimeiroNome.values()) compararGrupoDuplicidade(grupo,
+    (a, b) => nomesPodemSerMesmaPessoa(a.nome, b.nome));
+  for (const grupo of porInicial.values()) compararGrupoDuplicidade(grupo, (a, b) => {
+    const na = normNome(a.nome); const nb = normNome(b.nome);
+    const maior = Math.max(na.length, nb.length);
+    return Math.abs(na.length - nb.length) <= Math.max(3, Math.ceil(maior * 0.18))
+      && nomesPodemSerMesmaPessoa(a.nome, b.nome);
+  });
+
+  // Família: somente cadastros ativos entram na fila operacional.
+  for (const grupo of porTelefone.values()) considerarGrupo(grupo.filter((m) => m.active !== false), 'Mesmo telefone');
   for (const grupo of porEndereco.values()) considerarGrupo(grupo, 'Mesmo endereço e CEP');
 
-  const [{ data: descartados, error: descartadosErr }, { data: duplicatasIgnoradas, error: ignoradasErr }] = await Promise.all([
-    supabase.from('entradas_resolucoes').select('origem_id')
-      .eq('tipo', 'sem_vinculo').eq('acao', 'descartado').eq('origem', 'familia').limit(5000),
-    supabase.from('mem_duplicados_ignorados').select('membro_a_id, membro_b_id').limit(5000),
-  ]);
-  if (descartadosErr && !/entradas_resolucoes|schema cache|does not exist/i.test(descartadosErr.message || '')) {
-    throw descartadosErr;
+  let decisoes;
+  try {
+    decisoes = await Promise.all([
+      supabase.from('entradas_resolucoes').select('origem_id')
+        .eq('tipo', 'sem_vinculo').eq('acao', 'descartado').eq('origem', 'familia').limit(5000),
+      supabase.from('mem_duplicados_ignorados').select('membro_a_id, membro_b_id').limit(5000),
+    ]);
+  } catch (error) {
+    throw new Error(`Falha ao carregar decisões anteriores: ${error.message}`);
   }
-  if (ignoradasErr) throw ignoradasErr;
+  const [{ data: descartados, error: descartadosErr }, { data: duplicatasIgnoradas, error: ignoradasErr }] = decisoes;
+  if (descartadosErr && !/entradas_resolucoes|schema cache|does not exist/i.test(descartadosErr.message || '')) {
+    throw new Error(`Falha ao carregar decisões familiares: ${descartadosErr.message}`);
+  }
+  if (ignoradasErr) throw new Error(`Falha ao carregar duplicidades ignoradas: ${ignoradasErr.message}`);
   const paresDescartados = new Set((descartados || []).map((r) => r.origem_id).filter(Boolean));
   const paresDuplicidadeIgnorados = new Set((duplicatasIgnoradas || [])
     .map((r) => [r.membro_a_id, r.membro_b_id].sort().join('_')));
@@ -277,29 +381,70 @@ async function carregarTriagemFamilias() {
   const duplicatas = [...paresDuplicidade.entries()]
     .filter(([parId]) => !paresDuplicidadeIgnorados.has(parId))
     .map(([, linha]) => linha);
-  triagemFamiliasCache = { ate: Date.now() + 60_000, familias, duplicatas };
+  triagemFamiliasCache = { ate: Date.now() + 10 * 60_000, familias, duplicatas, promessa: null };
   return triagemFamiliasCache;
+  };
+
+  const promessa = carregar().catch((error) => {
+    invalidarTriagemPessoas();
+    throw error;
+  });
+  triagemFamiliasCache.promessa = promessa;
+  return promessa;
 }
 
 async function carregarFamiliasPendentes() {
   return (await carregarTriagemFamilias()).familias;
 }
 
-async function carregarDuplicadosPendentes(limit = 500) {
-  const [{ data, error }, triagem] = await Promise.all([
-    supabase.from('vw_nb_duplicados_suspeitos').select('*')
-      .order('confianca', { ascending: false }).limit(limit),
-    carregarTriagemFamilias(),
-  ]);
-  if (error) throw error;
-  const porPar = new Map();
-  // Complementos por nome abreviado entram primeiro para não serem cortados
-  // quando a view SQL já tiver atingido o limite solicitado.
-  for (const linha of [...(triagem.duplicatas || []), ...(data || [])]) {
-    const chave = [linha.membro_a_id, linha.membro_b_id].sort().join('_');
-    if (!porPar.has(chave)) porPar.set(chave, linha);
+async function carregarDuplicadosProgressivos() {
+  const { data: pares, error } = await supabase.from('mem_identidade_pares')
+    .select('*').order('score', { ascending: false }).limit(1500);
+  if (error) {
+    if (/mem_identidade_pares|schema cache|does not exist/i.test(error.message || '')) return [];
+    throw error;
   }
-  return reshapeDuplicados([...porPar.values()]).slice(0, limit);
+  if (!pares?.length) return [];
+  const ids = [...new Set(pares.flatMap((p) => [p.membro_a_id, p.membro_b_id]))];
+  const porId = new Map();
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data: membros, error: eMembros } = await supabase.from('mem_membros')
+      .select('id,nome,email,telefone,cpf,data_nascimento,status,foto_url,created_at,genero')
+      .in('id', ids.slice(i, i + 200)).is('deleted_at', null);
+    if (eMembros) throw eMembros;
+    for (const m of membros || []) porId.set(m.id, { ...m, criado_em: m.created_at });
+  }
+  const { data: ignorados } = await supabase.from('mem_duplicados_ignorados')
+    .select('membro_a_id,membro_b_id').limit(5000);
+  const ignoradosSet = new Set((ignorados || []).map((p) => [p.membro_a_id, p.membro_b_id].sort().join('_')));
+  return pares.filter((p) => !ignoradosSet.has([p.membro_a_id, p.membro_b_id].sort().join('_')))
+    .map((p) => ({
+      par_id: `${p.membro_a_id}_${p.membro_b_id}`,
+      membro_a_id: p.membro_a_id, membro_b_id: p.membro_b_id,
+      confianca: p.score, prioridade: p.prioridade,
+      evidencias: Array.isArray(p.evidencias) ? p.evidencias : [],
+      contradicoes: Array.isArray(p.contradicoes) ? p.contradicoes : [],
+      fontes_evidencia: Array.isArray(p.fontes) ? p.fontes : [],
+      ultima_evidencia_em: p.ultima_evidencia_em,
+      identidade_progressiva: true,
+      membro_a: porId.get(p.membro_a_id), membro_b: porId.get(p.membro_b_id),
+    })).filter((p) => p.membro_a && p.membro_b);
+}
+
+async function carregarDuplicadosPendentes() {
+  const [triagem, progressivos] = await Promise.all([
+    carregarTriagemFamilias(), carregarDuplicadosProgressivos(),
+  ]);
+  const porPar = new Map(reshapeDuplicados(triagem.duplicatas || []).map((p) => [p.par_id, p]));
+  // A identidade progressiva conhece várias portas e prevalece sobre o retrato
+  // atual de mem_membros para o mesmo par.
+  for (const p of progressivos) porPar.set(p.par_id, p);
+  const ordem = { quase_confirmado: 0, alta: 1, media: 2, descoberta: 3 };
+  return [...porPar.values()].sort((a, b) => {
+    if (a.prioridade !== b.prioridade) return (ordem[a.prioridade] ?? 9) - (ordem[b.prioridade] ?? 9);
+    if ((a.confianca || 0) !== (b.confianca || 0)) return (b.confianca || 0) - (a.confianca || 0);
+    return String(a.membro_a?.nome || '').localeCompare(String(b.membro_a?.nome || ''), 'pt-BR');
+  });
 }
 
 // ── Normaliza uma linha do funil sem vínculo pra forma uniforme ──
@@ -366,6 +511,7 @@ router.get('/resumo', authorizeModule('next-batismo', 1), async (req, res) => {
 // ── GET /familias-pendentes · somente pares com evidência de convivência ─────
 router.get('/familias-pendentes', authorizeModule('next-batismo', 1), async (req, res) => {
   try {
+    if (req.query.refresh === '1') invalidarTriagemPessoas();
     const itens = await carregarFamiliasPendentes();
     res.json({ total: itens.length, itens: itens.slice(0, 300) });
   } catch (e) {
@@ -377,8 +523,19 @@ router.get('/familias-pendentes', authorizeModule('next-batismo', 1), async (req
 // ── GET /duplicados · pares suspeitos do funil novo ──────────────────────────
 router.get('/duplicados', authorizeModule('next-batismo', 1), async (req, res) => {
   try {
-    const limit = Math.min(Number(req.query.limit) || 200, 500);
-    const items = await enriquecerOrigensDuplicados(await carregarDuplicadosPendentes(limit));
+    if (req.query.refresh === '1') invalidarTriagemPessoas();
+    let pendentes;
+    try {
+      pendentes = await carregarDuplicadosPendentes();
+    } catch (error) {
+      throw new Error(`Falha ao gerar possíveis duplicidades: ${error.message}`);
+    }
+    let items;
+    try {
+      items = await enriquecerOrigensDuplicados(pendentes);
+    } catch (error) {
+      throw new Error(`Falha ao carregar origens das pessoas: ${error.message}`);
+    }
     res.json({ total: items.length, items });
   } catch (e) {
     console.error('[next-batismo/duplicados]', e.message);
@@ -550,7 +707,7 @@ router.post('/vincular-familia', authorizeModule('next-batismo', 2), async (req,
     }
     const familiaId = await ligarMesmaFamilia(membro_id, relativo_id, req.user?.id);
     if (!familiaId) return res.status(404).json({ error: 'Pessoa de referência não encontrada' });
-    triagemFamiliasCache = { ate: 0, familias: null, duplicatas: null };
+    invalidarTriagemPessoas();
     await registrarResolucao({
       tipo: 'sem_vinculo', acao: 'vinculado',
       membro_principal_id: membro_id, membro_secundario_id: relativo_id,
@@ -581,7 +738,7 @@ router.post('/ignorar-familia', authorizeModule('next-batismo', 2), async (req, 
       resolvido_por: req.user?.id || null,
     });
     if (!registrada) throw new Error('Não foi possível persistir a decisão');
-    triagemFamiliasCache = { ate: 0, familias: null, duplicatas: null };
+    invalidarTriagemPessoas();
     res.json({ ok: true });
   } catch (e) {
     console.error('[next-batismo/ignorar-familia]', e.message);
@@ -611,6 +768,7 @@ router.post('/ligar', authorizeModule('next-batismo', 2), async (req, res) => {
       const r = await acharOuCriarGuardado({
         cpf: row.cpf, email: row.email, telefone: row.telefone, nome,
         dataNascimento: row.data_nascimento, status: 'visitante',
+        origem: `entradas_${tipo}`, origemId: id,
       });
       alvoMembroId = r.membro_id;
       criado = !!r.created;
@@ -624,6 +782,7 @@ router.post('/ligar', authorizeModule('next-batismo', 2), async (req, res) => {
       const r = await acharOuCriarGuardado({
         cpf: row.cpf, email: row.email, telefone: row.telefone, nome,
         dataNascimento: row.data_nascimento, status: 'visitante',
+        origem: `entradas_${tipo}`, origemId: id,
       });
       alvoMembroId = r.membro_id;
       criado = !!r.created;
@@ -676,6 +835,7 @@ router.post('/ignorar-duplicata', authorizeModule('next-batismo', 2), async (req
       detalhe: { motivo: motivo || 'Marcado como pessoas distintas' },
       resolvido_por: req.user?.id || null,
     });
+    invalidarTriagemPessoas();
     res.json({ ok: true, registro: data });
   } catch (e) {
     console.error('[next-batismo/ignorar-duplicata]', e.message);
@@ -773,6 +933,24 @@ router.get('/pessoa/:id', authorizeModule('next-batismo', 1), async (req, res) =
       });
     });
 
+    // Evidências acumuladas pelas portas novas. Mostra quando e de onde CPF,
+    // telefone, e-mail, nome ou nascimento foram corroborados.
+    await safe('identidade-progressiva', async () => {
+      const { data } = await supabase.from('mem_identidade_observacoes')
+        .select('origem,nome,cpf,telefone,email,data_nascimento,observado_em')
+        .eq('membro_id', id).neq('origem', 'base_legada')
+        .order('observado_em', { ascending: true }).limit(100);
+      (data || []).forEach((r) => {
+        const campos = [r.nome && 'nome', r.cpf && 'CPF', r.telefone && 'telefone',
+          r.email && 'e-mail', r.data_nascimento && 'nascimento'].filter(Boolean);
+        toques.push({
+          tipo: 'identidade', titulo: 'Dados corroborados',
+          contexto: `${String(r.origem || 'formulário').replace(/_/g, ' ')} · ${campos.join(', ')}`,
+          quando: r.observado_em,
+        });
+      });
+    });
+
     // Ordena cronológico (toques sem data caem ao fim)
     toques.sort((a, b) => {
       if (!a.quando) return 1; if (!b.quando) return -1;
@@ -859,6 +1037,7 @@ router.post('/fundir', authorizeModule('next-batismo', 3), async (req, res) => {
       p_observacao: observacao || 'Fusão via Next-Batismo (check de pessoas)',
     });
     if (error) throw error;
+    invalidarTriagemPessoas();
     res.json(data);
   } catch (e) {
     console.error('[next-batismo/fundir]', e.message);
