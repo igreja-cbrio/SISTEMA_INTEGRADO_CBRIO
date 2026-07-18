@@ -696,6 +696,13 @@ export default function Grupos() {
     const regulares = membrosAtivos.filter(m => m.funcao !== 'visitante');
     const totalMembros = isOptimistic ? (g.membros_count ?? null) : membrosAtivos.length;
 
+    // "Novo nesta temporada" (Marcos · 18/07): entrou_em dentro da janela da
+    // temporada do grupo = entrou agora; antes = veio das temporadas anteriores.
+    // A data de início vem da temporada do grupo (temporadas já carregadas).
+    const inicioTemporada = temporadas.find(t => t.id === g.temporada)?.data_inicio || null;
+    const ehNovoNaTemporada = (m) => !!(inicioTemporada && m.entrou_em && String(m.entrou_em) >= String(inicioTemporada));
+    const novosCount = membrosAtivos.filter(ehNovoNaTemporada).length;
+
     return (
       <div key={selectedGrupo} className="cbrio-grupos-page" style={{ padding: '24px 20px', maxWidth: 1240, margin: '0 auto', animation: 'cbrio-stagger-in 0.18s ease-out' }}>
         <button onClick={() => { setSelectedGrupo(null); setDetailData(null); }} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', color: C.primary, cursor: 'pointer', fontSize: 13, fontWeight: 600, marginBottom: 16 }}>
@@ -888,8 +895,14 @@ export default function Grupos() {
         {/* Membros */}
         <div style={{ background: C.card, borderRadius: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', overflow: 'hidden' }}>
           <div style={{ padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: `1px solid ${C.border}`, gap: 8, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>
+            <span style={{ fontSize: 14, fontWeight: 700, color: C.text, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
               Membros ({isOptimistic ? (g.membros_count ?? '...') : membrosAtivos.length})
+              {!isOptimistic && novosCount > 0 && (
+                <span title="Entraram dentro da temporada atual" style={{ fontSize: 11, fontWeight: 600, padding: '2px 9px', borderRadius: 99, background: `${C.green}1c`, color: C.green, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: '50%', border: `2px solid ${C.green}` }} />
+                  {novosCount} {novosCount === 1 ? 'novo nesta temporada' : 'novos nesta temporada'}
+                </span>
+              )}
             </span>
             <div style={{ display: 'flex', gap: 8 }}>
               {podeEditarGrupos && (
@@ -935,7 +948,7 @@ export default function Grupos() {
                 {membrosAtivos.map(m => (
                   <tr key={m.participacao_id} style={{ borderBottom: `1px solid ${C.border}` }}>
                     <td style={{ padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <div style={{ width: 32, height: 32, borderRadius: '50%', background: m.foto_url ? `url(${m.foto_url}) center/cover` : C.primaryBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: 12, fontWeight: 700, color: C.primary }}>
+                      <div title={ehNovoNaTemporada(m) ? 'Entrou nesta temporada' : undefined} style={{ width: 32, height: 32, borderRadius: '50%', background: m.foto_url ? `url(${m.foto_url}) center/cover` : C.primaryBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: 12, fontWeight: 700, color: C.primary, boxShadow: ehNovoNaTemporada(m) ? `0 0 0 2px var(--cbrio-card), 0 0 0 4px ${C.green}` : 'none' }}>
                         {!m.foto_url && (m.nome?.charAt(0) || '?')}
                       </div>
                       {m.id ? (
@@ -953,7 +966,12 @@ export default function Grupos() {
                       )}
                     </td>
                     <td style={{ padding: '10px 16px', fontSize: 13, color: C.t2 }}>{m.telefone || '-'}</td>
-                    <td style={{ padding: '10px 16px', fontSize: 13, color: C.t2 }}>{fmtDate(m.entrou_em)}</td>
+                    <td style={{ padding: '10px 16px', fontSize: 13, color: C.t2, whiteSpace: 'nowrap' }}>
+                      {fmtDate(m.entrou_em)}
+                      {ehNovoNaTemporada(m) && (
+                        <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 99, background: `${C.green}1c`, color: C.green }}>Novo</span>
+                      )}
+                    </td>
                     <td style={{ padding: '10px 16px', fontSize: 13, color: C.t2, textAlign: 'center' }}>{m.presencas}</td>
                     <td style={{ padding: '10px 16px', textAlign: 'center' }}>
                       {(() => { const t = TIPO_PAPEL[m.funcao] || TIPO_PAPEL.frequentador; return (
