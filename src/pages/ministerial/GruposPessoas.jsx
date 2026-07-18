@@ -20,7 +20,7 @@ import { Input } from '../../components/ui/input';
 import { BirthDatePicker } from '../../components/ui/birth-date-picker';
 import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { toast } from 'sonner';
-import { Search, Users, GraduationCap, Star, Crown, Eye } from 'lucide-react';
+import { Search, Users, GraduationCap, Star, Crown, Eye, UserMinus } from 'lucide-react';
 import Paginacao, { usePaginacaoLocal } from '../../components/Paginacao';
 
 const C = {
@@ -102,6 +102,7 @@ function gruposDetalhados(p) {
   (p.grupos || []).forEach(g => map.set(g.grupo_id, {
     id: g.grupo_id, nome: g.grupo_nome || 'Grupo', funcao: g.funcao || 'frequentador',
     presencas: g.presencas || 0, entrou_em: g.entrou_em || null, supervisiona: false,
+    participacao_id: g.participacao_id || null,
   }));
   (p.lidera || []).forEach(g => {
     const e = map.get(g.id);
@@ -119,7 +120,7 @@ function gruposDetalhados(p) {
 // ============================================================================
 // Aba Pessoas
 // ============================================================================
-export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDuplicatas, podeEditarDados = false }) {
+export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDuplicatas, podeEditarDados = false, podeEditar = false }) {
   const [dados, setDados] = useState(null);
   const [loading, setLoading] = useState(true);
   // Etiqueta "possível duplicata" (Marcos · 14/07): ids que caíram em algum
@@ -247,6 +248,28 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
       carregar();
     } catch (e) { toast.error(e.message || 'Erro ao fundir'); }
     finally { setFichaSalvando(false); }
+  };
+
+  // Remover a pessoa de UM grupo direto do modal (Marcos · 18/07): resolver os
+  // casos de baixa/nenhuma frequência sem sair da aba Pessoas. Reversível
+  // (saiu_em · não apaga histórico), com confirmação, e SÓ pra membro do roster
+  // (frequentador/visitante) — líderes/supervisores ficam de fora (regra da
+  // "revisão de fim de temporada"). O backend exige grupos nível ≥3 (podeEditar).
+  const [saindo, setSaindo] = useState({});
+  const sairDoGrupo = async (g) => {
+    if (!g.participacao_id || !selected) return;
+    if (!window.confirm(`Remover ${selected.nome} do grupo "${g.nome}"? A pessoa sai do grupo (reversível). Faça só se confirmou que ela realmente não participa mais.`)) return;
+    setSaindo(s => ({ ...s, [g.participacao_id]: true }));
+    try {
+      await api.sairMembro(g.participacao_id, { motivo: 'Sem frequência — revisão na aba Pessoas' });
+      toast.success(`${selected.nome} saiu de "${g.nome}"`);
+      setSelected(s => s ? { ...s, grupos: (s.grupos || []).filter(x => x.participacao_id !== g.participacao_id) } : s);
+      carregar();
+    } catch (e) {
+      toast.error(e?.message || 'Erro ao remover do grupo');
+    } finally {
+      setSaindo(s => { const n = { ...s }; delete n[g.participacao_id]; return n; });
+    }
   };
 
   const pessoas = dados?.pessoas || [];
@@ -520,6 +543,17 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
                   <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: pap.cor, fontWeight: 700 }}>
                     <pap.Icon size={11} /> {pap.label}
                   </div>
+                  {/* Contexto pra decidir a remoção: status de frequência + última presença */}
+                  {(() => { const st = STATUS[statusDe(selected)]; return (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginTop: 5, flexWrap: 'wrap' }}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10, padding: '2px 9px', borderRadius: 99, background: `${st.cor}18`, color: st.cor, fontWeight: 700, whiteSpace: 'nowrap' }}>
+                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: st.cor }} /> {st.label}
+                      </span>
+                      <span style={{ fontSize: 11, color: C.t3 }}>
+                        {selected.ultima_frequencia ? `última presença ${fmtData(selected.ultima_frequencia)}` : 'sem presença registrada'}
+                      </span>
+                    </div>
+                  ); })()}
                 </div>
                 <button onClick={() => setSelected(null)} style={{ background: 'none', border: 'none', fontSize: 22, lineHeight: 1, color: C.t3, cursor: 'pointer' }}>×</button>
               </div>
@@ -639,6 +673,17 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
                           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10, padding: '2px 9px', borderRadius: 99, background: `${fp.cor}18`, color: fp.cor, fontWeight: 700, whiteSpace: 'nowrap' }}>
                             <fp.Icon size={10} /> {fp.label}
                           </span>
+                          {/* Sair do grupo · só membro do roster (não líder/supervisor) e com nível ≥3 */}
+                          {podeEditar && g.participacao_id && !g.supervisiona && (g.funcao === 'frequentador' || g.funcao === 'visitante') && (
+                            <button
+                              onClick={() => sairDoGrupo(g)}
+                              disabled={!!saindo[g.participacao_id]}
+                              title="Remover do grupo (reversível)"
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: 'none', border: `1px solid ${C.border}`, borderRadius: 8, padding: '5px 9px', fontSize: 11, fontWeight: 600, color: saindo[g.participacao_id] ? C.t3 : C.red, cursor: saindo[g.participacao_id] ? 'wait' : 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
+                            >
+                              <UserMinus size={12} /> {saindo[g.participacao_id] ? 'Saindo…' : 'Sair'}
+                            </button>
+                          )}
                         </div>
                       );
                     })}

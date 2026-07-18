@@ -209,7 +209,7 @@ function RevisaoFimTemporada({ temporadas }) {
     if (!confirm(`Remover ${m.nome} do grupo "${grupoNome}"? Ele sai do grupo (reversível). Faça só se confirmou que a pessoa realmente não participa mais.`)) return;
     setRemovendo(s => ({ ...s, [m.participacao_id]: true }));
     try {
-      await api.sairMembro(m.participacao_id, { motivo_saida: 'Sem presença na temporada (revisão de fim de temporada)' });
+      await api.sairMembro(m.participacao_id, { motivo: 'Sem presença na temporada (revisão de fim de temporada)' });
       toast.success(`${m.nome} saiu do grupo`);
       setGrupos(gs => gs.map(g => g.grupo_id === grupoId
         ? { ...g, membros: g.membros.filter(x => x.participacao_id !== m.participacao_id) }
