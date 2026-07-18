@@ -50,6 +50,62 @@ Uma pessoa = um cadastro (`mem_membros`) = fonte única que todos os módulos
 leem. Módulo NÃO tem "base local de pessoas" — linha-satélite aponta pro
 membro via `membro_id`.
 
+## Entradas · fluxo operacional de saneamento (2026-07-18)
+
+Marcos definiu Entradas como uma **fila de exceções acionáveis**, não como
+outra tela de busca/cópia da Membresia. Estado publicado em produção no commit
+`81c3c35b` (migration aplicada manualmente antes do deploy):
+
+- Navegação visível ficou somente com **Possíveis duplicidades**, **Vincular
+  famílias** e **Conflitos de CPF**. Foram removidos `Todos`/`Base inteira`,
+  `Buscar pessoas` e a antiga apresentação genérica `Sem vínculo`.
+- **Possíveis duplicidades** é pré-filtrada no backend pela política canônica
+  `backend/services/duplicidadePolicy.js`: CPF igual entra com prioridade alta;
+  CPF, nascimento ou gênero conflitante exclui o par; sem CPF, nome precisa ter
+  similaridade Dice >= 0,90 e telefone/e-mail só contam junto com nome
+  compatível. Telefone sozinho NUNCA significa duplicata (caso que motivou a
+  correção: Davi Lucas Bernardo Conceição × Bianca Silva Bernardo, mesmo
+  telefone e identidades diferentes, recebia 90%). A UI mostra estado vazio
+  explícito quando toda a base foi analisada e não há candidato.
+- Cada lado do comparador mostra suas **origens operacionais comprovadas**
+  (Conversão, Grupos, Next, Batismo, Visitas e Voluntariado), com detalhe/rota
+  quando disponível. O legado não guarda proveniência por campo; portanto o
+  selo diz onde o cadastro pode ser conferido com a equipe, não afirma de qual
+  módulo veio cada valor individual.
+- **Vincular famílias** sugere somente pessoas vivas/ativas que compartilham
+  telefone (>=10 dígitos) ou endereço+CEP exatos, têm identidade distinta e
+  ainda não estão ambas em famílias. CPF igual ou nome muito parecido fica na
+  lente de duplicidade, não na familiar. A ação reutiliza a família existente
+  ou cria uma nova e vincula as duas pessoas. Cache backend: 60 s. Snapshot da
+  implantação: 107 sugestões (26 para família existente, 81 para nova; todas
+  por telefone — endereço não acrescentou pares naquele momento).
+- **Conflitos de CPF** mantém os 254 casos legados para resolução manual, com a
+  origem legível (`vol_ficha` = **Ficha de Voluntariado**, `wifi` = **Portal
+  Wi-Fi**). Conflitos concretos (`cpf_conflito`, `cpf_divergente`,
+  `vinculo_divergente`) continuam entrando; sinal fraco genérico não entra mais.
+
+**Guarda de novas pendências fracas:** migration
+`20260718120000_entradas_bloqueia_cpf_sinal_fraco.sql` cria trigger `BEFORE
+INSERT` em `identidade_pendencias` que descarta somente
+`tipo='cpf_para_confirmar'`. A evidência permanece na tabela de origem até uma
+identidade forte aparecer. `reconciliarCpfTardio({confianca:'fraca'})` também
+retorna `sinal_fraco_ignorado` quando os dois nascimentos não podem ser
+conferidos; não contamina `mem_membros` e não cria trabalho humano. Não remover
+essa guarda nem transformar telefone/e-mail isolado em identidade.
+
+**Ficha pública de voluntariado corrigida na fonte:**
+`InscricaoVoluntariado.tsx` e `POST /api/public/voluntariado/inscrever-form`
+exigem, nos dois lados, nome completo sem abreviação, e-mail válido, telefone,
+CPF com DV válido e data de nascimento válida. Nome da mãe + consentimento para
+antecedentes continuam exclusivos de Kids/Bridge. Em produção, requisição sem
+CPF responde `400 {"error":"CPF obrigatório"}` e não grava inscrição.
+
+**Contagem da Membresia:** o número operacional verdadeiro na auditoria era
+**3.665** pessoas `active=true AND deleted_at IS NULL`. Os **4.239** mostrados
+antes incluíam 574 registros soft-deletados porque `GET /membresia/membros` não
+filtrava `deleted_at`; o endpoint agora filtra. Snapshot também confirmou zero
+pares após o pré-filtro de duplicidades — aba vazia não era falha de carga.
+
 ## ⚠️ Conselho deliberativo (skill `llm-council`) · acionar SEMPRE antes de responder (2026-06-28)
 
 Pedido do usuário (gestao@cbrio.com.br · 2026-06-28): **antes de dar qualquer
