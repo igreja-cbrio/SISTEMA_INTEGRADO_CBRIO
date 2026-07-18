@@ -135,7 +135,7 @@ async function main() {
             // dos matchers fracos (telefone+nome / e-mail+nome) — é o único
             // caminho de consolidação EM MASSA, então os guard-rails valem
             // aqui mais que em qualquer lugar. Com nascimento conferível dos
-            // 2 lados consolida; sem, vira pendência cpf_para_confirmar.
+            // 2 lados consolida; sem, mantém o CPF somente na origem.
             const res = await reconciliarCpfTardio({
               membroId: vinculado.id, cpf, origem: sat.origem, origemId: r.id,
               dataNascimento: r.data_nascimento || null,

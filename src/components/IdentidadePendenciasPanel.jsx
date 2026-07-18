@@ -36,6 +36,16 @@ const TIPOS = {
   vinculo_divergente: { label: 'Vínculo divergente', cor: '#7C3AED', hint: 'Uma inscrição/linha aponta pra um membro diferente do dono do CPF — corrigir o vínculo manualmente.' },
 };
 
+const ORIGENS = {
+  wifi: 'Portal Wi-Fi',
+  vol_ficha: 'Ficha de Voluntariado',
+  backfill_vol: 'Importação do Voluntariado',
+  backfill_batismo: 'Importação do Batismo',
+  batismo_checkin: 'Check-in do Batismo',
+  next_matricula: 'Matrícula do Next',
+  decisao_edicao: 'Edição de decisão',
+};
+
 const digits = (v) => String(v || '').replace(/\D/g, '');
 function maskCpf(v) {
   const d = digits(v);
@@ -192,8 +202,8 @@ export default function IdentidadePendenciasPanel({ statusFixo = null, ocultarFi
               <CardContent className="p-4">
                 <div className="flex items-center gap-2 flex-wrap mb-2">
                   <Badge style={{ background: `${t.cor}18`, color: t.cor, border: `1px solid ${t.cor}40` }}>{t.label}</Badge>
-                  {p.origem === 'wifi' && <Badge variant="outline" className="text-[10px]"><Wifi className="size-3 mr-1" />portal wifi</Badge>}
-                  {p.origem && p.origem !== 'wifi' && <Badge variant="outline" className="text-[10px]">{p.origem}</Badge>}
+                  {p.origem === 'wifi' && <Badge variant="outline" className="text-[10px]"><Wifi className="size-3 mr-1" />{ORIGENS.wifi}</Badge>}
+                  {p.origem && p.origem !== 'wifi' && <Badge variant="outline" className="text-[10px]">{ORIGENS[p.origem] || p.origem}</Badge>}
                   <span className="text-xs text-muted-foreground ml-auto">{fmtDataHora(p.created_at)}</span>
                 </div>
 

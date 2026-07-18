@@ -341,6 +341,7 @@ router.get('/membros', authorizeModule('membros', 1), async (req, res) => {
         .from('mem_membros')
         .select('*, familia:mem_familias(id, nome)')
         .eq('active', true)
+        .is('deleted_at', null)
         .order('nome');
 
       if (status) query = query.eq('status', status);

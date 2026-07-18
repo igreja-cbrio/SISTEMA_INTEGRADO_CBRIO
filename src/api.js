@@ -1844,6 +1844,8 @@ export const nextBatismo = {
     return get('/next-batismo/duplicados' + (qs ? '?' + qs : ''));
   },
   semVinculo: () => get('/next-batismo/sem-vinculo'),
+  familiasPendentes: () => get('/next-batismo/familias-pendentes'),
+  vincularFamilia: (data) => post('/next-batismo/vincular-familia', data),
   candidatos: (params = {}) => {
     const qs = new URLSearchParams(params).toString();
     return get('/next-batismo/candidatos' + (qs ? '?' + qs : ''));

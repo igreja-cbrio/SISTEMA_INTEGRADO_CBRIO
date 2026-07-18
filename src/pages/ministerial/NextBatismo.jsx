@@ -7,12 +7,9 @@
 //   1. Duplicatas possíveis · funde (mantém um, absorve o outro) ou marca
 //      "não é a mesma pessoa". Detecta convertido recém-chegado (nome parecido
 //      sem CPF/nascimento · revisão humana · NUNCA auto-funde).
-//   2. Sem vínculo · inscrição (Next/Batismo) ou decisão sem membro vinculado →
-//      liga ao membro certo (sugestões por CPF/telefone/e-mail/nome) ou cria.
-//   3. Buscar pessoa · abre a FICHA DE ENTRADA (por onde entrou · linha do tempo
-//      de toques · conexões · quem perguntar) — a vitrine pra decidir com contexto.
-//   4. Base inteira (só admin) · reusa o painel de duplicados do Membresia (a
-//      revisão da base toda mora aqui agora · a aba do Membresia virou ponteiro).
+//   2. Vincular famílias · só mostra pessoas sem família quando existe evidência
+//      de convivência com outro cadastro (telefone ou endereço completo iguais).
+//   3. Conflitos de CPF · fila temporária de identidade para revisão humana.
 // ============================================================================
 
 import { useState } from 'react';
@@ -44,13 +41,6 @@ const MOTIVO_LABELS = {
   nome:              { label: 'Nome',               cor: '#CA8A04' },
 };
 
-const ORIGEM_META = {
-  next:       { label: 'Next',      cor: '#0EA5E9' },
-  batismo:    { label: 'Batismo',   cor: '#2563EB' },
-  convertido: { label: 'Decisão',   cor: '#DB2777' },
-  visita:     { label: 'Visita',    cor: '#0D9488' },
-};
-
 function maskCpf(v) {
   if (!v) return '';
   const d = String(v).replace(/\D/g, '');
@@ -74,7 +64,7 @@ function fmtData(iso) {
 // ============================================================================
 export default function Entradas() {
   const [visao, setVisao] = useState('pendentes');
-  const [filtro, setFiltro] = useState('todos');
+  const [filtro, setFiltro] = useState('duplicidade');
   const [fichaId, setFichaId] = useState(null); // membro_id da Ficha de Entrada aberta
   const { data: resumo } = useQuery({
     queryKey: ['next-batismo', 'resumo'],
@@ -88,7 +78,7 @@ export default function Entradas() {
     staleTime: 60_000,
   });
   const pendenciasIdentidade = Object.values(identidade?.resumo?.pendente || {}).reduce((a, b) => a + b, 0);
-  const totalPendentes = (resumo?.duplicatas || 0) + (resumo?.sem_vinculo || 0) + pendenciasIdentidade;
+  const totalPendentes = (resumo?.duplicatas || 0) + (resumo?.familias_pendentes || 0) + pendenciasIdentidade;
 
   const escolherFiltro = (valor) => {
     setVisao('pendentes');
@@ -141,21 +131,21 @@ export default function Entradas() {
       </div>
 
       <FiltrosFila visao={visao} filtro={filtro} onChange={setFiltro}
-        contagens={{ duplicidade: resumo?.duplicatas || 0, sem_vinculo: resumo?.sem_vinculo || 0, identidade: pendenciasIdentidade }} />
+        contagens={{ duplicidade: resumo?.duplicatas || 0, sem_vinculo: resumo?.familias_pendentes || 0, identidade: pendenciasIdentidade }} />
 
       {visao === 'pendentes' ? (
         <div className="space-y-7">
-          {(filtro === 'todos' || filtro === 'duplicidade') && (
+          {filtro === 'duplicidade' && (
             <SecaoFila titulo="Possíveis duplicidades" descricao="Cadastros com evidências combinadas de que podem representar a mesma pessoa.">
               <DuplicadosTab onVerFicha={setFichaId} />
             </SecaoFila>
           )}
-          {(filtro === 'todos' || filtro === 'sem_vinculo') && (
-            <SecaoFila titulo="Registros sem vínculo" descricao="Formulários e passos da jornada que ainda não apontam para uma pessoa da base.">
-              <SemVinculoTab onVerFicha={setFichaId} />
+          {filtro === 'sem_vinculo' && (
+            <SecaoFila titulo="Vincular famílias" descricao="Pessoas distintas com evidência de convivência que ainda precisam entrar na mesma família.">
+              <FamiliasPendentesTab onVerFicha={setFichaId} />
             </SecaoFila>
           )}
-          {(filtro === 'todos' || filtro === 'identidade') && (
+          {filtro === 'identidade' && (
             <SecaoFila titulo="Conflitos de CPF" descricao="Situações em que o CPF precisa de confirmação humana antes de virar identidade.">
               <IdentidadePendenciasPanel statusFixo="pendente" ocultarFiltros />
             </SecaoFila>
@@ -169,9 +159,8 @@ export default function Entradas() {
 }
 
 const FILTROS_FILA = [
-  ['todos', 'Todos'],
   ['duplicidade', 'Possíveis duplicidades'],
-  ['sem_vinculo', 'Sem vínculo'],
+  ['sem_vinculo', 'Vincular famílias'],
   ['identidade', 'Conflitos de CPF'],
 ];
 
@@ -214,7 +203,7 @@ const ACAO_RESOLVIDA = {
 };
 
 function ResolvidosTab({ filtro, onVerFicha }) {
-  const tipo = filtro === 'todos' ? '' : filtro;
+  const tipo = filtro;
   const { data, isLoading, isFetching, refetch } = useQuery({
     queryKey: ['next-batismo', 'resolucoes', tipo],
     queryFn: () => api.resolucoes(tipo ? { tipo } : {}),
@@ -254,7 +243,7 @@ function ResolvidosTab({ filtro, onVerFicha }) {
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="font-semibold text-sm text-foreground">{ACAO_RESOLVIDA[r.acao] || r.acao}</span>
                   <Badge variant="outline" className="text-[10px]">
-                    {r.tipo === 'duplicidade' ? 'Duplicidade' : r.tipo === 'sem_vinculo' ? 'Sem vínculo' : 'CPF'}
+                    {r.tipo === 'duplicidade' ? 'Duplicidade' : r.tipo === 'sem_vinculo' ? 'Família' : 'CPF'}
                   </Badge>
                   <span className="text-[11px] text-muted-foreground ml-auto">{fmtData(r.resolvido_em)}</span>
                 </div>
@@ -343,8 +332,8 @@ function DuplicadosTab({ onVerFicha }) {
       {isLoading ? (
         <Centro><Loader2 className="size-5 animate-spin mr-2" /> Procurando duplicatas...</Centro>
       ) : items.length === 0 ? (
-        <Vazio icon={GitMerge} titulo="Nenhuma duplicata pendente"
-          texto="Quando dois cadastros do funil parecerem a mesma pessoa, eles aparecem aqui pra você juntar." />
+        <Vazio icon={GitMerge} titulo="Nenhuma possível duplicata encontrada"
+          texto="A base foi verificada e, com as regras atuais, não existe nenhum par com evidências suficientes para revisão. Telefone isolado não gera duplicata." />
       ) : (
         <div className="space-y-3">
           <div className="text-xs text-muted-foreground">{items.length} par(es) pra revisar</div>
@@ -489,8 +478,128 @@ function MembroLado({ membro, lado, onMerge, onVerFicha }) {
 }
 
 // ----------------------------------------------------------------------------
-// LENTE 2 · Sem vínculo
+// LENTE 2 · Vínculos familiares sugeridos
 // ----------------------------------------------------------------------------
+function FamiliasPendentesTab({ onVerFicha }) {
+  const qc = useQueryClient();
+  const [confirmar, setConfirmar] = useState(null);
+  const { data, isLoading, isFetching, refetch } = useQuery({
+    queryKey: ['next-batismo', 'familias-pendentes'],
+    queryFn: () => api.familiasPendentes(),
+    staleTime: 30_000,
+  });
+  const vincular = useMutation({
+    mutationFn: (item) => api.vincularFamilia({ membro_id: item.pessoa.id, relativo_id: item.referencia.id }),
+    onSuccess: () => {
+      toast.success('Pessoas vinculadas à mesma família');
+      setConfirmar(null);
+      qc.invalidateQueries({ queryKey: ['next-batismo', 'familias-pendentes'] });
+      qc.invalidateQueries({ queryKey: ['next-batismo', 'resumo'] });
+      qc.invalidateQueries({ queryKey: ['next-batismo', 'resolucoes'] });
+    },
+    onError: (e) => toast.error(e?.message || 'Erro ao vincular família'),
+  });
+  const itens = data?.itens || [];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <p className="text-xs text-muted-foreground max-w-2xl">
+          Só aparecem pessoas sem família quando o sistema encontra outro cadastro com o mesmo telefone
+          ou com o mesmo endereço completo e CEP. <strong>Sobrenome sozinho não gera sugestão.</strong>
+        </p>
+        <Button onClick={() => refetch()} disabled={isFetching} variant="outline" size="sm" className="gap-1.5">
+          <RefreshCw className={`size-3.5 ${isFetching ? 'animate-spin' : ''}`} /> Recarregar
+        </Button>
+      </div>
+
+      {isLoading ? (
+        <Centro><Loader2 className="size-5 animate-spin mr-2" /> Procurando vínculos familiares...</Centro>
+      ) : itens.length === 0 ? (
+        <Vazio icon={Home} titulo="Nenhum vínculo familiar sugerido"
+          texto="Não há pessoa sem família com evidência suficiente de parentesco ou convivência com outro cadastro." />
+      ) : (
+        <div className="space-y-2">
+          <div className="text-xs text-muted-foreground">{data.total} sugestão(ões) para revisar</div>
+          {itens.map((item) => (
+            <Card key={item.par_id}>
+              <CardContent className="p-4 space-y-3">
+                <div className="flex items-center gap-2 flex-wrap">
+                  {item.evidencias.map((evidencia) => (
+                    <Badge key={evidencia} variant="outline" className="text-[10px] border-amber-400 text-amber-700 dark:text-amber-300">
+                      {evidencia}
+                    </Badge>
+                  ))}
+                  <span className="text-[11px] text-muted-foreground ml-auto">
+                    {item.destino.tipo === 'existente' ? item.destino.nome : 'Nova família'}
+                  </span>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-[1fr_auto_1fr] sm:items-center">
+                  <PessoaFamilia pessoa={item.pessoa} rotulo="Sem família" onVerFicha={onVerFicha} />
+                  <ArrowRight className="size-4 text-muted-foreground mx-auto rotate-90 sm:rotate-0" />
+                  <PessoaFamilia pessoa={item.referencia}
+                    rotulo={item.destino.tipo === 'existente' ? item.destino.nome : 'Referência para nova família'}
+                    onVerFicha={onVerFicha} />
+                </div>
+                <div className="flex justify-end">
+                  <Button size="sm" className="h-8 text-xs gap-1.5" onClick={() => setConfirmar(item)}>
+                    <Home className="size-3.5" />
+                    {item.destino.tipo === 'existente' ? 'Adicionar à família' : 'Criar família com os dois'}
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      <Dialog open={!!confirmar} onOpenChange={(open) => !open && setConfirmar(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Confirmar vínculo familiar</DialogTitle>
+            <DialogDescription>
+              {confirmar?.destino.tipo === 'existente'
+                ? `${confirmar?.pessoa.nome} será adicionado(a) a ${confirmar?.destino.nome}.`
+                : `Uma nova família será criada para ${confirmar?.pessoa.nome} e ${confirmar?.referencia.nome}.`}
+            </DialogDescription>
+          </DialogHeader>
+          <p className="text-xs text-muted-foreground">
+            Evidência encontrada: {confirmar?.evidencias.join(' e ')}. Confirme apenas se as pessoas realmente pertencem à mesma família.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmar(null)} disabled={vincular.isPending}>Cancelar</Button>
+            <Button onClick={() => vincular.mutate(confirmar)} disabled={vincular.isPending} className="gap-1.5">
+              {vincular.isPending && <Loader2 className="size-3.5 animate-spin" />} Confirmar vínculo
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function PessoaFamilia({ pessoa, rotulo, onVerFicha }) {
+  return (
+    <button type="button" onClick={() => onVerFicha?.(pessoa.id)}
+      className="rounded-lg border bg-muted/15 p-3 text-left hover:border-primary transition-colors min-w-0">
+      <div className="flex items-center gap-2 min-w-0">
+        {pessoa.foto_url
+          ? <img src={pessoa.foto_url} alt="" className="size-8 rounded-full object-cover shrink-0" />
+          : <div className="size-8 rounded-full bg-muted flex items-center justify-center shrink-0"><UserIcon className="size-4 text-muted-foreground" /></div>}
+        <div className="min-w-0">
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground truncate">{rotulo}</div>
+          <div className="text-sm font-medium text-foreground truncate">{pessoa.nome}</div>
+          <div className="text-[10px] text-muted-foreground truncate">
+            {pessoa.telefone ? maskTelefone(pessoa.telefone) : pessoa.endereco || pessoa.status}
+          </div>
+        </div>
+      </div>
+    </button>
+  );
+}
+
+// Fluxo legado de registros sem membro: mantido fora da navegação enquanto as
+// origens são tratadas nos módulos responsáveis.
 function SemVinculoTab({ onVerFicha }) {
   const qc = useQueryClient();
   const { data, isLoading, refetch, isFetching } = useQuery({

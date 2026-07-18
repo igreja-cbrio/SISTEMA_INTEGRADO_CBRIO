@@ -420,28 +420,36 @@ router.post('/inscrever-form', publicLimiter, async (req, res) => {
 
     const cleanEmail = email ? String(email).toLowerCase().trim() : null;
     if (!cleanEmail || !ehEmailValido(cleanEmail)) {
-      return res.status(400).json({ error: 'Email invalido' });
+      return res.status(400).json({ error: 'E-mail inválido' });
     }
     const cleanTelefone = soDigitos(telefone);
     if (cleanTelefone.length < 10 || cleanTelefone.length > 11) {
-      return res.status(400).json({ error: 'Telefone invalido' });
+      return res.status(400).json({ error: 'Telefone inválido' });
     }
-    const cleanCpf = cpf ? soDigitos(cpf) : null;
-    if (cleanCpf && !cpfValido(cleanCpf)) {
-      return res.status(400).json({ error: 'CPF invalido' });
+    const cleanCpf = soDigitos(cpf);
+    if (!cleanCpf) {
+      return res.status(400).json({ error: 'CPF obrigatório' });
+    }
+    if (!cpfValido(cleanCpf)) {
+      return res.status(400).json({ error: 'CPF inválido' });
+    }
+    const cleanDataNascimento = data_nascimento ? String(data_nascimento).slice(0, 10) : '';
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(cleanDataNascimento)) {
+      return res.status(400).json({ error: 'Data de nascimento obrigatória' });
+    }
+    const nascimento = new Date(`${cleanDataNascimento}T12:00:00Z`);
+    if (Number.isNaN(nascimento.getTime()) || nascimento.toISOString().slice(0, 10) !== cleanDataNascimento || nascimento > new Date()) {
+      return res.status(400).json({ error: 'Data de nascimento inválida' });
     }
     if (!area || !AREAS_VALIDAS.has(String(area).toLowerCase())) {
       return res.status(400).json({ error: 'Selecione uma área' });
     }
 
-    // Kids/Bridge (menores · LGPD) exigem data de nascimento e nome da mae
+    // Kids/Bridge (menores · LGPD) exigem também nome da mãe e consentimento.
     const areaLower = String(area).toLowerCase();
     const exigeDadosMenor = areaLower === 'kids' || areaLower === 'bridge';
-    if (exigeDadosMenor && !data_nascimento) {
-      return res.status(400).json({ error: 'Data de nascimento obrigatória para Kids/Bridge' });
-    }
     if (exigeDadosMenor && (!nome_mae || String(nome_mae).trim().length < 2)) {
-      return res.status(400).json({ error: 'Nome da mae obrigatório para Kids/Bridge' });
+      return res.status(400).json({ error: 'Nome da mãe obrigatório para Kids/Bridge' });
     }
     // Kids/Bridge exigem consentimento explícito pra consulta de antecedentes (LGPD · dado sensível).
     if (exigeDadosMenor && !consentimento_antecedentes) {
@@ -481,7 +489,7 @@ router.post('/inscrever-form', publicLimiter, async (req, res) => {
         cpf: cleanCpf,
         email: cleanEmail,
         telefone: cleanTelefone,
-        data_nascimento: data_nascimento || null,
+        data_nascimento: cleanDataNascimento,
         nome_mae: nome_mae ? String(nome_mae).trim() : null,
         data_inscricao: new Date().toISOString(),
         participou_next: participou_next ? String(participou_next).trim() : null,
@@ -530,7 +538,7 @@ router.post('/inscrever-form', publicLimiter, async (req, res) => {
           nome_completo: nomeCompleto,
           cpf: cleanCpf,
           nome_mae: nome_mae ? String(nome_mae).trim() : null,
-          data_nascimento: data_nascimento || null,
+          data_nascimento: cleanDataNascimento,
         }, { consentimento: true, origem: 'formulario_publico' });
       } catch (e) {
         console.error('[PublicVol/inscrever-form] antecedentes:', e.message);

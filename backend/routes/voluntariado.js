@@ -3539,7 +3539,8 @@ router.patch('/inscricoes/:id/dados', async (req, res) => {
           if (data.membro_id) {
             // Confiança FRACA: o vínculo pode ter nascido de match fraco
             // (telefone/e-mail+nome) numa requisição anterior — sem nascimento
-            // conferível dos 2 lados, o CPF vira pendência, não identidade.
+            // conferível dos 2 lados, o CPF fica somente na ficha e não cria
+            // identidade nem pendência humana.
             await reconciliarCpfTardio({
               membroId: data.membro_id, cpf: patch.cpf,
               origem: 'vol_ficha', origemId: data.id,
@@ -3558,8 +3559,8 @@ router.patch('/inscricoes/:id/dados', async (req, res) => {
                 .eq('id', data.id).is('membro_id', null);
               // Vínculo nasceu de match fraco (não-CPF) → consolida o CPF no
               // membro achado (senão o CPF fica preso na inscrição e o membro
-              // segue sem CPF — o buraco que esta porta fecha). Confiança
-              // 'fraca': sem nascimento conferível dos 2 lados vira pendência.
+              // segue sem CPF. Confiança 'fraca': sem nascimento conferível
+              // dos 2 lados, mantém o CPF só na inscrição.
               if (hit.matched_by !== 'cpf') {
                 await reconciliarCpfTardio({
                   membroId: hit.membro_id, cpf: patch.cpf,

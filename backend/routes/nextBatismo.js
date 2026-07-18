@@ -147,6 +147,99 @@ function diceNome(a, b) {
   return totX + totY === 0 ? 0 : (2 * inter) / (totX + totY);
 }
 
+function digitos(valor) {
+  return String(valor || '').replace(/\D/g, '');
+}
+
+function chaveEndereco(membro) {
+  const cep = digitos(membro?.cep);
+  const endereco = normNome(membro?.endereco).replace(/[^a-z0-9 ]/g, '').trim();
+  if (cep.length !== 8 || endereco.length < 8) return null;
+  return `${cep}|${endereco}`;
+}
+
+function identidadeDistinta(a, b) {
+  const cpfA = digitos(a?.cpf);
+  const cpfB = digitos(b?.cpf);
+  if (cpfA.length === 11 && cpfB.length === 11) return cpfA !== cpfB;
+  // Nomes muito próximos continuam na lente de duplicidade, não na familiar.
+  return diceNome(a?.nome, b?.nome) < 0.82;
+}
+
+let familiasPendentesCache = { ate: 0, itens: null };
+
+async function carregarFamiliasPendentes() {
+  if (familiasPendentesCache.itens && familiasPendentesCache.ate > Date.now()) {
+    return familiasPendentesCache.itens;
+  }
+  const membros = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase.from('mem_membros')
+      .select('id, nome, telefone, cpf, endereco, cep, bairro, cidade, familia_id, created_at, foto_url, status, familia:mem_familias(id, nome)')
+      .eq('active', true).is('deleted_at', null).range(from, from + 999);
+    if (error) throw error;
+    membros.push(...(data || []));
+    if (!data || data.length < 1000) break;
+  }
+
+  const porTelefone = new Map();
+  const porEndereco = new Map();
+  const adicionar = (mapa, chave, membro) => {
+    if (!chave) return;
+    if (!mapa.has(chave)) mapa.set(chave, []);
+    mapa.get(chave).push(membro);
+  };
+  for (const membro of membros) {
+    const telefone = digitos(membro.telefone);
+    adicionar(porTelefone, telefone.length >= 10 ? telefone : null, membro);
+    adicionar(porEndereco, chaveEndereco(membro), membro);
+  }
+
+  const pares = new Map();
+  const considerarGrupo = (grupo, evidencia) => {
+    if (!grupo || grupo.length < 2 || grupo.length > 12) return;
+    for (let i = 0; i < grupo.length; i += 1) {
+      for (let j = i + 1; j < grupo.length; j += 1) {
+        const a = grupo[i];
+        const b = grupo[j];
+        if ((a.familia_id && b.familia_id) || !identidadeDistinta(a, b)) continue;
+        const ids = [a.id, b.id].sort();
+        const chave = `${ids[0]}_${ids[1]}`;
+        const atual = pares.get(chave) || { a, b, evidencias: [] };
+        if (!atual.evidencias.includes(evidencia)) atual.evidencias.push(evidencia);
+        pares.set(chave, atual);
+      }
+    }
+  };
+  for (const grupo of porTelefone.values()) considerarGrupo(grupo, 'Mesmo telefone');
+  for (const grupo of porEndereco.values()) considerarGrupo(grupo, 'Mesmo endereço e CEP');
+
+  const itens = [...pares.entries()].map(([parId, par]) => {
+    let pessoa = par.a;
+    let referencia = par.b;
+    if (par.a.familia_id && !par.b.familia_id) {
+      pessoa = par.b; referencia = par.a;
+    } else if (!par.a.familia_id && !par.b.familia_id
+      && new Date(par.a.created_at || 0) < new Date(par.b.created_at || 0)) {
+      pessoa = par.b; referencia = par.a;
+    }
+    return {
+      par_id: parId,
+      evidencias: par.evidencias,
+      pessoa,
+      referencia,
+      destino: referencia.familia_id
+        ? { tipo: 'existente', id: referencia.familia_id, nome: referencia.familia?.nome || 'Família existente' }
+        : { tipo: 'nova', id: null, nome: null },
+    };
+  }).sort((a, b) => {
+    if (a.destino.tipo !== b.destino.tipo) return a.destino.tipo === 'existente' ? -1 : 1;
+    return String(a.pessoa.nome).localeCompare(String(b.pessoa.nome), 'pt-BR');
+  });
+  familiasPendentesCache = { ate: Date.now() + 60_000, itens };
+  return itens;
+}
+
 // ── Normaliza uma linha do funil sem vínculo pra forma uniforme ──
 function rowNext(r) {
   return {
@@ -190,25 +283,32 @@ function rowVisita(r) {
 router.get('/resumo', authorizeModule('next-batismo', 1), async (req, res) => {
   try {
     const cnt = async (q) => { const { count } = await q; return count || 0; };
-    const [dup, semNext, semBat, semConv, semVis, vivos, comCpf] = await Promise.all([
+    const [dup, familiasPendentes, vivos, comCpf] = await Promise.all([
       cnt(supabase.from('vw_nb_duplicados_suspeitos').select('*', { count: 'exact', head: true })),
-      cnt(supabase.from('next_inscricoes').select('id', { count: 'exact', head: true }).is('membro_id', null)),
-      cnt(supabase.from('batismo_inscricoes').select('id', { count: 'exact', head: true }).is('membro_id', null).is('deleted_at', null).neq('status', 'cancelado')),
-      cnt(supabase.from('cui_convertidos').select('id', { count: 'exact', head: true }).is('membro_id', null).is('deleted_at', null)),
-      cnt(supabase.from('cui_visitas').select('id', { count: 'exact', head: true }).is('membro_id', null).is('deleted_at', null)),
+      carregarFamiliasPendentes(),
       cnt(supabase.from('mem_membros').select('id', { count: 'exact', head: true }).is('deleted_at', null)),
       cnt(supabase.from('mem_membros').select('id', { count: 'exact', head: true }).is('deleted_at', null).not('cpf', 'is', null)),
     ]);
     res.json({
       duplicatas: dup,
-      sem_vinculo: semNext + semBat + semConv + semVis,
-      por_origem: { next: semNext, batismo: semBat, convertido: semConv, visita: semVis },
+      familias_pendentes: familiasPendentes.length,
       // Saúde da identidade (corrida do CPF · faixa do topo da tela)
       saude: { pessoas: vivos, com_cpf: comCpf, pct_cpf: vivos > 0 ? Math.round((comCpf / vivos) * 100) : 0 },
     });
   } catch (e) {
     console.error('[next-batismo/resumo]', e.message);
     res.status(500).json({ error: e.message || 'Erro ao montar resumo' });
+  }
+});
+
+// ── GET /familias-pendentes · somente pares com evidência de convivência ─────
+router.get('/familias-pendentes', authorizeModule('next-batismo', 1), async (req, res) => {
+  try {
+    const itens = await carregarFamiliasPendentes();
+    res.json({ total: itens.length, itens: itens.slice(0, 300) });
+  } catch (e) {
+    console.error('[next-batismo/familias-pendentes]', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao buscar vínculos familiares' });
   }
 });
 
@@ -385,6 +485,28 @@ async function ligarMesmaFamilia(novoMembroId, candidatoId, feitoPor) {
     { onConflict: 'membro_a_id,membro_b_id' });
   return familiaId;
 }
+
+router.post('/vincular-familia', authorizeModule('next-batismo', 2), async (req, res) => {
+  try {
+    const { membro_id, relativo_id } = req.body || {};
+    if (!membro_id || !relativo_id || membro_id === relativo_id) {
+      return res.status(400).json({ error: 'Informe duas pessoas diferentes' });
+    }
+    const familiaId = await ligarMesmaFamilia(membro_id, relativo_id, req.user?.id);
+    if (!familiaId) return res.status(404).json({ error: 'Pessoa de referência não encontrada' });
+    familiasPendentesCache = { ate: 0, itens: null };
+    await registrarResolucao({
+      tipo: 'sem_vinculo', acao: 'vinculado',
+      membro_principal_id: membro_id, membro_secundario_id: relativo_id,
+      origem: 'familia', origem_id: `${membro_id}_${relativo_id}`,
+      detalhe: { familia_id: familiaId }, resolvido_por: req.user?.id || null,
+    });
+    res.json({ ok: true, familia_id: familiaId });
+  } catch (e) {
+    console.error('[next-batismo/vincular-familia]', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao vincular família' });
+  }
+});
 
 // ── POST /ligar · carimba membro_id na linha do funil (ligar OU criar) ────────
 router.post('/ligar', authorizeModule('next-batismo', 2), async (req, res) => {

@@ -328,8 +328,8 @@ export default function InscricaoVoluntariado() {
     }
     if (!form.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) return setError('E-mail inválido');
     if (!form.telefone || soDigitos(form.telefone).length < 10) return setError('Telefone inválido');
-    if (precisaDadosMenor && !form.cpf) return setError('Informe seu CPF');
-    if (form.cpf && !cpfValido(form.cpf)) return setError('CPF inválido');
+    if (!form.cpf) return setError('Informe seu CPF');
+    if (!cpfValido(form.cpf)) return setError('CPF inválido');
     if (!form.data_nascimento) return setError('Informe sua data de nascimento');
     if (ministerios.length === 0) return setError('Escolha ao menos uma área pra servir');
     if (!form.participou_next) return setError('Conta pra gente se você já participou do NEXT');
@@ -461,7 +461,7 @@ export default function InscricaoVoluntariado() {
               <Field id="email" label="E-mail" type="email" value={form.email} onChange={set('email')} required autoComplete="email" inputMode="email" />
               <Row>
                 <Field id="telefone" label="Telefone (WhatsApp)" value={form.telefone} onChange={set('telefone')} required placeholder="(00) 00000-0000" inputMode="tel" autoComplete="tel" />
-                <Field id="cpf" label={precisaDadosMenor ? 'CPF' : 'CPF (opcional)'} value={form.cpf} onChange={set('cpf')} required={precisaDadosMenor} placeholder="000.000.000-00" inputMode="numeric" autoComplete="off" />
+                <Field id="cpf" label="CPF" value={form.cpf} onChange={set('cpf')} required placeholder="000.000.000-00" inputMode="numeric" autoComplete="off" />
               </Row>
               <div style={{ marginBottom: 20 }}>
                 <label style={{ display: 'block', fontSize: 11, color: 'var(--cbrio-text3)', marginBottom: 6 }}>

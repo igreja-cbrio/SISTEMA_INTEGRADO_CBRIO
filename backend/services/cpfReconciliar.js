@@ -78,10 +78,10 @@ async function logHistorico(membroId, acao, observacao) {
 // compartilha), gravar o CPF direto contamina a identidade global se o match
 // errou (pai e filho homônimos com o telefone da casa). Com 'fraca', só
 // consolida se o nascimento confere DOS DOIS lados; sem nascimento conferível
-// vira pendência humana (cpf_para_confirmar).
+// permanece somente na origem, sem contaminar a identidade nem criar fila.
 // Retorna { acao } ∈ ja_tinha | cpf_preenchido | conflito_pendencia |
 //   divergente_pendencia | nascimento_divergente_pendencia |
-//   cpf_para_confirmar_pendencia | cpf_invalido | membro_nao_encontrado
+//   sinal_fraco_ignorado | cpf_invalido | membro_nao_encontrado
 async function reconciliarCpfTardio({ membroId, cpf, origem, origemId, dataNascimento, confianca = 'forte' } = {}) {
   const cpf11 = normalizarCpf(cpf);
   if (!membroId || !cpf11 || !cpfValido(cpf11)) return { acao: 'cpf_invalido' };
@@ -132,16 +132,13 @@ async function reconciliarCpfTardio({ membroId, cpf, origem, origemId, dataNasci
 
   // Match fraco sem nascimento conferível dos DOIS lados → não consolida
   // (o membro pode ser um homônimo da família; o CPF viraria identidade
-  // permanente do cadastro errado e capturaria todas as portas). Fila humana.
+  // permanente do cadastro errado e capturaria todas as portas). O sinal fica
+  // somente na origem até chegar uma identidade forte; não cria trabalho humano.
   // Roda DEPOIS dos checks de conflito de propósito: cpf_divergente e
   // cpf_conflito carregam o conflito_id (informação de fusão) que este tipo
   // genérico não tem — o gate só barra a GRAVAÇÃO do caminho feliz.
   if (confianca === 'fraca' && !(nascInput && nascMembro)) {
-    await registrarPendencia({
-      tipo: 'cpf_para_confirmar', membroId, conflitoId: null, origem, origemId,
-      detalhe: `CPF ${cpf11} chegou junto de um vínculo por sinal fraco (${origem || 'origem desconhecida'}) sem nascimento conferível dos dois lados — confirmar antes de consolidar no cadastro.`,
-    });
-    return { acao: 'cpf_para_confirmar_pendencia' };
+    return { acao: 'sinal_fraco_ignorado' };
   }
 
   // Caminho feliz: enriquece o membro com o CPF

@@ -237,7 +237,8 @@ function nomesMesmaPessoa(a, b) {
 // Confiança: e-mail/telefone+nome são sinais que a FAMÍLIA compartilha —
 // homônimos exatos (pai/filho) fariam o CPF de um virar identidade do outro.
 // Por isso vão como 'fraca' (só consolida com nascimento conferível dos 2
-// lados; senão vira pendência cpf_para_confirmar). 'nome+nascimento' já
+// lados; senão mantém o CPF somente na origem, sem abrir pendência).
+// 'nome+nascimento' já
 // conferiu o nascimento por construção → 'forte'.
 async function _consolidarCpfNoMatch(membroId, cpf11, matchedBy, dataNascimento) {
   if (!cpf11) return;
