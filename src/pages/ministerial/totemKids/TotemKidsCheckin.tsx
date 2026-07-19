@@ -68,29 +68,28 @@ function dispararConfete() {
 
 import { KidsZoneShell, KidsZoneRelogio, KidsZoneToggle } from './KidsZoneShell';
 
-// Escolhe o culto de AGORA pelo relógio (BRT) e esconde os que já acabaram.
-// fim de cada culto = início do próximo (ou +3h no último culto do dia).
+// Culto de AGORA pelo relógio (BRT) COM ANTECEDÊNCIA (Marcos 2026-07-19): o
+// check-in nos minutos ANTES de um culto já conta pra ele. Abre 30 min antes
+// (60 no ÚLTIMO do dia · filho de voluntário chega cedo) e fecha quando o culto
+// acaba (~60 min) ou quando o próximo abre. Fora de qualquer janela (ex.: tarde
+// de domingo, entre 12:30 e 18:00) NÃO há culto de agora → sem sessão.
 function _horaMin(h: string) { const [hh, mm] = String(h || '').split(':').map(Number); return (hh || 0) * 60 + (mm || 0); }
 function escolherCultoPorRelogio(cultos: any[]): { atual: any | null; visiveis: any[] } {
   const lista = (cultos || []).filter((c) => c.hora).sort((a, b) => _horaMin(a.hora) - _horaMin(b.hora));
   if (!lista.length) return { atual: null, visiveis: [] };
-  const comFim = lista.map((c, i) => ({ ...c, _fim: i < lista.length - 1 ? _horaMin(lista[i + 1].hora) : _horaMin(c.hora) + 180 }));
+  const ultimoI = lista.length - 1;
+  const comFim = lista.map((c, i) => {
+    const ini = _horaMin(c.hora), ult = i === ultimoI;
+    return { ...c, _abre: ini - (ult ? 60 : 30), _fim: ini + (ult ? 180 : 60) };
+  });
+  // a janela fecha, no máximo, quando o PRÓXIMO culto abre (sem sobreposição)
+  for (let i = 0; i < ultimoI; i++) comFim[i]._fim = Math.min(comFim[i]._fim, comFim[i + 1]._abre);
   const agoraStr = new Date().toLocaleTimeString('en-GB', { timeZone: 'America/Sao_Paulo', hour12: false, hour: '2-digit', minute: '2-digit' });
   const agora = _horaMin(agoraStr);
   const visiveis = comFim.filter((c) => agora < c._fim);                          // esconde os que já acabaram
-  const atual = visiveis.find((c) => agora >= _horaMin(c.hora) && agora < c._fim) || visiveis[0] || null;
+  let atual = visiveis.find((c) => agora >= c._abre && agora < c._fim) || null;
+  if (!atual && comFim.length && agora < comFim[0]._abre) atual = comFim[0]; // antes de tudo → 1º culto (early birds)
   return { atual, visiveis };
-}
-
-// Entre os cultos com sessão ABERTA, escolhe o de AGORA (relógio); se nenhum
-// está acontecendo, o 1º do período (mais cedo) — nunca a última aberta.
-function escolherAtualEntreAbertos(cultos: any[]): any | null {
-  const lista = (cultos || []).filter((c) => c.hora).sort((a, b) => _horaMin(a.hora) - _horaMin(b.hora));
-  if (!lista.length) return (cultos && cultos[0]) || null;
-  const comFim = lista.map((c, i) => ({ ...c, _fim: i < lista.length - 1 ? _horaMin(lista[i + 1].hora) : _horaMin(c.hora) + 180 }));
-  const agoraStr = new Date().toLocaleTimeString('en-GB', { timeZone: 'America/Sao_Paulo', hour12: false, hour: '2-digit', minute: '2-digit' });
-  const agora = _horaMin(agoraStr);
-  return comFim.find((c) => agora >= _horaMin(c.hora) && agora < c._fim) || lista[0];
 }
 // Período do dia (manhã/tarde/noite) a partir do horário (HH:MM).
 function _periodoDia(hora?: string): string {
@@ -647,32 +646,28 @@ export default function TotemKidsCheckin() {
       // KPI do culto antigo (R1). Baixa quem ficou aberto nelas. Best-effort.
       try { await totemKids.sessoes.encerrarVencidas(); } catch { /* segue */ }
       const hoje = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+      // Culto de AGORA pelo relógio, COM ANTECEDÊNCIA (Marcos 2026-07-19): o
+      // totem abre/troca de culto SOZINHO na virada da janela (ex.: às 09:30 já
+      // vale o 10:00) — sem depender de alguém clicar "Encerrar" (foi o que fez
+      // 152 check-ins caírem no 08:30 no teste). Garante a sessão do culto de
+      // agora (abre se ainda não existe). O timer periódico re-avalia sozinho.
+      const doDia: any[] = await totemKids.cultosDoDia(hoje);
+      const { atual } = escolherCultoPorRelogio(doDia || []);
+      let sessaoAtual: any = null;
+      if (atual) {
+        try { sessaoAtual = await totemKids.sessoes.garantir(atual.id); } catch { /* rede · segue */ }
+      }
+      // Todas as sessões abertas de HOJE alimentam o seletor (o operador ainda
+      // pode escolher outro culto na mão — ex.: um culto que atrasou). Nunca
+      // adota sessão de outro dia (backstop com encerrar-vencidas + o POST).
       const abertas: any[] = await totemKids.sessoes.list({ status: 'aberta', limit: 30 });
-      // Só sessões de HOJE (BRT) entram no seletor · nunca adota sessão de outro
-      // dia (defesa em profundidade com o encerrar-vencidas + backstop do POST).
       const cultos = (abertas || []).filter((s: any) => s.culto && String(s.culto?.data).slice(0, 10) === hoje).map((s: any) => ({
         culto_id: s.culto_id, sessao_id: s.id, nome: s.culto?.nome, data: s.culto?.data,
         hora: String(s.culto?.service_type?.recurrence_time || '').slice(0, 5), sessao: s,
       })).sort((a: any, b: any) => String(a.hora).localeCompare(String(b.hora)));
-      if (cultos.length) {
-        // cultoAtualId = só a DICA "agora" (relógio) na lista · não pré-marca.
-        // sessao = fallback pra consultas (ex.: checar check-in aberto).
-        const agora = escolherAtualEntreAbertos(cultos);
-        setSessoesAbertas(cultos);
-        setCultoAtualId(agora?.culto_id || null);
-        setSessao(agora?.sessao || null);
-        return;
-      }
-      const doDia: any[] = await totemKids.cultosDoDia(hoje);
-      const { atual } = escolherCultoPorRelogio(doDia || []);
-      if (atual) {
-        const s: any = await totemKids.sessoes.garantir(atual.id);
-        setSessao(s);
-        setSessoesAbertas([{ culto_id: atual.id, sessao_id: s.id, nome: s.culto?.nome, data: s.culto?.data, hora: atual.hora, sessao: s }]);
-        setCultoAtualId(atual.id);
-      } else {
-        setSessao(null); setSessoesAbertas([]); setCultoAtualId(null);
-      }
+      setSessoesAbertas(cultos);
+      setCultoAtualId(atual?.id || null);
+      setSessao(sessaoAtual || cultos.find((c: any) => c.culto_id === atual?.id)?.sessao || null);
     } catch { /* mantém o estado atual */ }
   }
   // Da seleção (cultosSel) resolve o culto PRIMÁRIO (a sessão do check-in) + os
@@ -793,6 +788,16 @@ export default function TotemKidsCheckin() {
     if (responsavelSelecionado && !valido) setResponsavelSelecionado('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [crianca?.id]);
+
+  // Pré-marca o culto de AGORA (relógio · Marcos 2026-07-19) sempre que ele muda
+  // ou ao trocar de criança — o check-in sai sem o operador precisar escolher o
+  // culto, e na virada da janela (ex.: 09:30) já pré-marca o próximo. No buraco
+  // da tarde (sem culto de agora) zera a marcação. O operador pode trocar/marcar
+  // mais de um culto (criança que fica em 2 celebrações).
+  useEffect(() => {
+    setCultosSel(cultoAtualId ? new Set([cultoAtualId]) : new Set());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cultoAtualId, crianca?.id]);
 
   // Em modo pré-check-in: pré-seleciona o responsável que preparou no app
   // (só se ele constar como autorizado a buscar a criança · segurança).
