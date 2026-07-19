@@ -1862,6 +1862,7 @@ export const nextBatismo = {
   ignorarDuplicata: (data) => post('/next-batismo/ignorar-duplicata', data),
   adiarDuplicata: (data) => post('/next-batismo/adiar-duplicata', data),
   reativarDuplicata: (data) => post('/next-batismo/reativar-duplicata', data),
+  adiarEmLote: (data = { criterio: 'nome_apenas' }) => post('/next-batismo/adiar-em-lote', data),
   duplicadosAdiados: (params = {}) => {
     const qs = new URLSearchParams(params).toString();
     return get('/next-batismo/duplicados/adiados' + (qs ? '?' + qs : ''));
