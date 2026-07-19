@@ -309,6 +309,7 @@ function DuplicadosTab({ onVerFicha }) {
   const [prioridade, setPrioridade] = useState('todas');
   const [limiteVisivel, setLimiteVisivel] = useState(100);
   const [vista, setVista] = useState('fila'); // 'fila' | 'adiados'
+  const [loteDialog, setLoteDialog] = useState(false);
   const adiadosQ = useQuery({
     queryKey: ['next-batismo', 'duplicados-adiados'],
     queryFn: () => api.duplicadosAdiados(),
@@ -346,6 +347,11 @@ function DuplicadosTab({ onVerFicha }) {
     onSuccess: () => { toast.success('De volta pra fila'); invalida(); },
     onError: (e) => toast.error(e?.message || 'Erro ao trazer de volta'),
   });
+  const adiarLoteMut = useMutation({
+    mutationFn: () => api.adiarEmLote({ criterio: 'nome_apenas' }),
+    onSuccess: (r) => { toast.success(`${r?.total || 0} par(es) adiados · voltam quando um cadastro completo confirmar`); setLoteDialog(false); invalida(); },
+    onError: (e) => toast.error(e?.message || 'Erro ao adiar em lote'),
+  });
   const mergeMut = useMutation({
     mutationFn: ({ keep_id, merge_ids }) => api.fundir({ keep_id, merge_ids }),
     onSuccess: (res) => {
@@ -361,6 +367,18 @@ function DuplicadosTab({ onVerFicha }) {
   const erro = emAdiados ? adiadosQ.error : error;
   const recarregando = (emAdiados ? adiadosQ.isFetching : isFetching) || recarregarMut.isPending;
   const items = (emAdiados ? adiadosQ.data : data)?.items || [];
+  // "Só bate pelo nome" = nenhum dado verificável em comum → adiável em lote.
+  const soNome = (par) => {
+    const a = par.membro_a || {}, b = par.membro_b || {};
+    const d = (v) => String(v || '').replace(/\D/g, '');
+    if (d(a.cpf).length === 11 && d(a.cpf) === d(b.cpf)) return false;
+    if (d(a.telefone).length >= 10 && d(a.telefone) === d(b.telefone)) return false;
+    const ea = String(a.email || '').trim().toLowerCase(), eb = String(b.email || '').trim().toLowerCase();
+    if (ea.length > 3 && ea === eb) return false;
+    if (a.data_nascimento && b.data_nascimento && a.data_nascimento === b.data_nascimento) return false;
+    return true;
+  };
+  const nomeApenasCount = emAdiados ? 0 : items.filter(soNome).length;
   const termo = busca.trim().toLowerCase();
   const filtrados = items.filter((par) => {
     if (prioridade !== 'todas' && par.prioridade !== prioridade) return false;
@@ -391,6 +409,36 @@ function DuplicadosTab({ onVerFicha }) {
           ? 'Pares que você marcou como "não tenho certeza". Voltam sozinhos pra fila quando um cadastro completo (CPF + nascimento) confirmar a identidade — ou você traz de volta na mão.'
           : (<>O sistema combina sinais antes de trazer um par. Telefone ou e-mail isolados não bastam, e CPFs diferentes eliminam a sugestão. <strong>Confira as evidências e os módulos onde cada pessoa aparece antes de fundir.</strong></>)}
       </p>
+
+      {!emAdiados && nomeApenasCount > 0 && (
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-300 dark:border-amber-800/60 bg-amber-500/5 px-3 py-2">
+          <p className="text-xs text-amber-800 dark:text-amber-300 max-w-2xl">
+            <strong>{nomeApenasCount}</strong> par(es) batem <strong>só pelo nome</strong> — sem CPF, telefone, e-mail ou nascimento em comum. Fundir seria chute.
+          </p>
+          <Button size="sm" variant="outline" className="h-8 text-xs shrink-0 border-amber-400 text-amber-700 dark:text-amber-300"
+            onClick={() => setLoteDialog(true)} disabled={adiarLoteMut.isPending}>
+            Adiar todos
+          </Button>
+        </div>
+      )}
+
+      <Dialog open={loteDialog} onOpenChange={(o) => !o && setLoteDialog(false)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Adiar os que só batem pelo nome</DialogTitle>
+            <DialogDescription>
+              {nomeApenasCount} par(es) sem nenhum dado verificável em comum (CPF, telefone, e-mail ou nascimento) vão pra "Não tenho certeza".
+              Eles voltam sozinhos pra fila quando um cadastro completo confirmar a identidade. Nada é fundido.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setLoteDialog(false)} disabled={adiarLoteMut.isPending}>Cancelar</Button>
+            <Button onClick={() => adiarLoteMut.mutate()} disabled={adiarLoteMut.isPending} className="gap-1.5">
+              {adiarLoteMut.isPending ? <><Loader2 className="size-3.5 animate-spin" /> Adiando...</> : 'Adiar todos'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <div className="flex flex-col md:flex-row gap-2 md:items-center">
         <div className="relative flex-1 max-w-xl">

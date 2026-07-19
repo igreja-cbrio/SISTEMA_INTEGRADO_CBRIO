@@ -508,6 +508,23 @@ async function carregarDuplicadosAdiados() {
   return (await montarDuplicados()).adiados;
 }
 
+// "Só bate pelo nome": os dois lados NÃO têm nenhum dado verificável em comum
+// (CPF, telefone, e-mail ou nascimento). Qualquer fusão aqui seria chute — o par
+// pode ser adiado em lote e volta sozinho quando um cadastro completo corroborar
+// (decisão do Marcos · 2026-07-19). Ex.: A={nome,tel,email} × B={nome,cpf}.
+function soBateNome(par) {
+  const a = par.membro_a || {}; const b = par.membro_b || {};
+  const cpfA = digitos(a.cpf); const cpfB = digitos(b.cpf);
+  const telA = digitos(a.telefone); const telB = digitos(b.telefone);
+  const emA = String(a.email || '').trim().toLowerCase(); const emB = String(b.email || '').trim().toLowerCase();
+  const nascA = a.data_nascimento || null; const nascB = b.data_nascimento || null;
+  if (cpfA.length === 11 && cpfA === cpfB) return false;
+  if (telA.length >= 10 && telA === telB) return false;
+  if (emA.length > 3 && emA === emB) return false;
+  if (nascA && nascB && nascA === nascB) return false;
+  return true;
+}
+
 // ── Normaliza uma linha do funil sem vínculo pra forma uniforme ──
 function rowNext(r) {
   return {
@@ -972,6 +989,50 @@ router.post('/reativar-duplicata', authorizeModule('next-batismo', 2), async (re
   } catch (e) {
     console.error('[next-batismo/reativar-duplicata]', e.message);
     res.status(500).json({ error: e.message || 'Erro ao reativar' });
+  }
+});
+
+// ── POST /adiar-em-lote · adia de uma vez os pares que SÓ batem pelo nome ─────
+// Sem CPF/telefone/e-mail/nascimento em comum, qualquer fusão é chute. Adia
+// todos ("não tenho certeza") pra zerar a fila; cada um volta sozinho quando um
+// cadastro completo corroborar. Idempotente (upsert por par_key).
+router.post('/adiar-em-lote', authorizeModule('next-batismo', 2), async (req, res) => {
+  try {
+    const criterio = req.body?.criterio || 'nome_apenas';
+    if (criterio !== 'nome_apenas') return res.status(400).json({ error: 'Critério inválido' });
+    const { ativos } = await montarDuplicados();
+    const alvo = ativos.filter(soBateNome);
+    if (!alvo.length) return res.json({ ok: true, total: 0 });
+    const agora = new Date().toISOString();
+    const rows = alvo.map((par) => {
+      const [a, b] = [par.membro_a_id, par.membro_b_id].sort();
+      return {
+        par_key: `${a}_${b}`, membro_a_id: a, membro_b_id: b,
+        confianca_no_adiamento: Number.isFinite(Number(par.confianca)) ? Number(par.confianca) : 0,
+        prioridade_no_adiamento: par.prioridade || null,
+        adiado_por: req.user?.id || null, adiado_em: agora,
+        reativado_em: null, reativado_motivo: null,
+      };
+    });
+    for (let i = 0; i < rows.length; i += 500) {
+      const { error } = await supabase.from('entradas_pares_adiados')
+        .upsert(rows.slice(i, i + 500), { onConflict: 'par_key' });
+      if (error) {
+        if (tabelaAdiadosAusente(error.message)) return res.status(503).json({ error: 'Recurso indisponível: aplique a migration entradas_pares_adiados.' });
+        throw error;
+      }
+    }
+    await registrarResolucao({
+      tipo: 'duplicidade', acao: 'adiado',
+      origem: 'entradas_pares_adiados', origem_id: `lote:${agora}`,
+      detalhe: { criterio: 'nome_apenas', total: rows.length },
+      resolvido_por: req.user?.id || null,
+    });
+    invalidarTriagemPessoas();
+    res.json({ ok: true, total: rows.length });
+  } catch (e) {
+    console.error('[next-batismo/adiar-em-lote]', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao adiar em lote' });
   }
 });
 
