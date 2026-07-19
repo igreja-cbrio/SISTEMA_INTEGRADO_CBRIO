@@ -5,6 +5,7 @@ const router = require('express').Router();
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { acharOuCriarGuardado, normalizarNome, normalizarCpf, normalizarTelefone, normalizarEmail } = require('../services/membroMatch');
+const { avaliarPossivelDuplicidade } = require('../services/duplicidadePolicy');
 const multer = require('multer');
 const { uploadModuleFile, SHAREPOINT_CONFIGURED } = require('../services/storageService');
 const { notificar } = require('../services/notificar');
@@ -2223,8 +2224,11 @@ let _dupCache = { ts: 0, payload: null };
 const DUP_CACHE_MS = 5 * 60 * 1000;
 
 // GET /api/grupos/duplicatas — clusters de possíveis duplicatas no universo
-// de grupos. Critérios: mesmo CPF / telefone / e-mail / nome+nascimento
-// (chaves exatas) + nome muito parecido (sugestão pra revisão humana).
+// de grupos. Candidatos por mesmo CPF / telefone / e-mail / nome+nascimento
+// (chaves exatas) + nome muito parecido, e cada par é validado pela política
+// canônica do Entradas (duplicidadePolicy · avaliarPossivelDuplicidade) antes
+// de unir — os mesmos candidatos que o Entradas mostra. A fusão continua na
+// mesma RPC merge_membros; só a DETECÇÃO foi alinhada.
 router.get('/duplicatas', authorizeModule('grupos', 3), async (req, res) => {
   try {
     if (_dupCache.payload && Date.now() - _dupCache.ts < DUP_CACHE_MS && req.query.fresh !== '1') {
@@ -2278,6 +2282,12 @@ router.get('/duplicatas', authorizeModule('grupos', 3), async (req, res) => {
       // nome parecido / telefone de família não passam por cima.
       if (motivo !== 'mesmo CPF' && a._cpf && b._cpf && a._cpf !== b._cpf) return;
       if (parIgnorado(a.id, b.id)) return;
+      // Alinhamento com a política canônica do Entradas
+      // (backend/services/duplicidadePolicy.js): mesma régua de candidato das 3
+      // telas de dedup. Nascimento conflitante exclui, e telefone/e-mail/nome
+      // parecido só valem com nome compatível (Dice>=0,90 ou nome contido) —
+      // Dice>=0,88 sozinho não basta. CPF exato é chave forte e não passa aqui.
+      if (motivo !== 'mesmo CPF' && !avaliarPossivelDuplicidade(a, b).incluir) return;
       const [x, y] = [a.id, b.id].sort();
       const k = `${x}|${y}`;
       if (!motivosPar.has(k)) motivosPar.set(k, new Set());

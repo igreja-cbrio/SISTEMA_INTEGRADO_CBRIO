@@ -7,6 +7,7 @@ const { notificar } = require('../services/notificar');
 const { enqueueSync } = require('../services/cerebroSync');
 const { escapePostgrestValue } = require('../utils/sanitize');
 const { acharOuCriarGuardado } = require('../services/membroMatch');
+const { avaliarPossivelDuplicidade } = require('../services/duplicidadePolicy');
 const { normalizarCpf: normCpf11, cpfValido } = require('../utils/cpf');
 
 const uploadMw = multer({
@@ -2434,14 +2435,21 @@ router.get('/duplicados', authorizeModule('membresia', 2), async (req, res) => {
         criado_em: d.b_criado_em,
       },
     }));
-    res.json({ total: items.length, items });
+    // Alinhamento com a política canônica do Entradas: a view legada
+    // vw_membros_duplicados casa par por telefone OU e-mail SOZINHOS (contra a
+    // LEI "Contrato de porta" — família compartilha telefone/e-mail). Filtra os
+    // pares pela mesma régua do Entradas (duplicidadePolicy): telefone/e-mail só
+    // valem com nome compatível; nascimento/CPF conflitante exclui. Evita fundir
+    // pessoas distintas pela aba Duplicados.
+    const filtrados = items.filter((it) => avaliarPossivelDuplicidade(it.membro_a, it.membro_b).incluir);
+    res.json({ total: filtrados.length, items: filtrados });
   } catch (e) {
     console.error('[membresia/duplicados]', e.message);
     res.status(500).json({ error: e.message || 'Erro ao buscar duplicados' });
   }
 });
 
-router.post('/duplicados/ignorar', authorize('admin', 'diretor'), async (req, res) => {
+router.post('/duplicados/ignorar', authorizeModule('membresia', 2), async (req, res) => {
   const { membro_a_id, membro_b_id, motivo } = req.body || {};
   if (!membro_a_id || !membro_b_id) {
     return res.status(400).json({ error: 'membro_a_id e membro_b_id obrigatórios' });
@@ -2575,7 +2583,7 @@ router.delete('/vinculos/:id', authorize('admin', 'diretor'), async (req, res) =
   }
 });
 
-router.post('/membros/merge', authorize('admin', 'diretor'), async (req, res) => {
+router.post('/membros/merge', authorizeModule('membresia', 3), async (req, res) => {
   const { keep_id, merge_ids, observacao } = req.body || {};
   if (!keep_id) return res.status(400).json({ error: 'keep_id obrigatorio' });
   if (!Array.isArray(merge_ids) || merge_ids.length === 0) {
