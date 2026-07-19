@@ -1841,38 +1841,41 @@ export const producao = {
 };
 
 // "Check de pessoas" do funil Next/Batismo/convertido (resolução de identidade)
+// Endpoint renomeado /next-batismo → /entradas (2026-07-19 · nome atual do módulo;
+// o backend mantém /api/next-batismo como alias legado). Slug de permissão segue
+// 'next-batismo'.
 export const nextBatismo = {
-  resumo: () => get('/next-batismo/resumo'),
+  resumo: () => get('/entradas/resumo'),
   duplicados: (params = {}) => {
     const qs = new URLSearchParams(params).toString();
-    return get('/next-batismo/duplicados' + (qs ? '?' + qs : ''));
+    return get('/entradas/duplicados' + (qs ? '?' + qs : ''));
   },
-  semVinculo: () => get('/next-batismo/sem-vinculo'),
+  semVinculo: () => get('/entradas/sem-vinculo'),
   familiasPendentes: (params = {}) => {
     const qs = new URLSearchParams(params).toString();
-    return get('/next-batismo/familias-pendentes' + (qs ? '?' + qs : ''));
+    return get('/entradas/familias-pendentes' + (qs ? '?' + qs : ''));
   },
-  vincularFamilia: (data) => post('/next-batismo/vincular-familia', data),
-  ignorarFamilia: (data) => post('/next-batismo/ignorar-familia', data),
+  vincularFamilia: (data) => post('/entradas/vincular-familia', data),
+  ignorarFamilia: (data) => post('/entradas/ignorar-familia', data),
   candidatos: (params = {}) => {
     const qs = new URLSearchParams(params).toString();
-    return get('/next-batismo/candidatos' + (qs ? '?' + qs : ''));
+    return get('/entradas/candidatos' + (qs ? '?' + qs : ''));
   },
-  ligar: (data) => post('/next-batismo/ligar', data),
-  ignorarDuplicata: (data) => post('/next-batismo/ignorar-duplicata', data),
-  adiarDuplicata: (data) => post('/next-batismo/adiar-duplicata', data),
-  reativarDuplicata: (data) => post('/next-batismo/reativar-duplicata', data),
-  adiarEmLote: (data = { criterio: 'nome_apenas' }) => post('/next-batismo/adiar-em-lote', data),
+  ligar: (data) => post('/entradas/ligar', data),
+  ignorarDuplicata: (data) => post('/entradas/ignorar-duplicata', data),
+  adiarDuplicata: (data) => post('/entradas/adiar-duplicata', data),
+  reativarDuplicata: (data) => post('/entradas/reativar-duplicata', data),
+  adiarEmLote: (data = { criterio: 'nome_apenas' }) => post('/entradas/adiar-em-lote', data),
   duplicadosAdiados: (params = {}) => {
     const qs = new URLSearchParams(params).toString();
-    return get('/next-batismo/duplicados/adiados' + (qs ? '?' + qs : ''));
+    return get('/entradas/duplicados/adiados' + (qs ? '?' + qs : ''));
   },
-  fundir: (data) => post('/next-batismo/fundir', data),
+  fundir: (data) => post('/entradas/fundir', data),
   resolucoes: (params = {}) => {
     const qs = new URLSearchParams(params).toString();
-    return get('/next-batismo/resolucoes' + (qs ? '?' + qs : ''));
+    return get('/entradas/resolucoes' + (qs ? '?' + qs : ''));
   },
-  pessoa: (id) => get('/next-batismo/pessoa/' + encodeURIComponent(id)),
+  pessoa: (id) => get('/entradas/pessoa/' + encodeURIComponent(id)),
 };
 
 export const membresia = {

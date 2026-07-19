@@ -1227,22 +1227,55 @@ router.get('/pessoa/:id', authorizeModule('next-batismo', 1), async (req, res) =
 });
 
 // ── POST /fundir · merge_membros (sensível · nível 3) ─────────────────────────
+// Fusão "melhor de cada": o merge_membros mantém um cadastro e só preenche os
+// campos VAZIOS a partir do absorvido. Quando os dois lados têm valores que
+// DIVERGEM (ex.: um tem o nome completo, o outro tem o CPF), o operador escolhe
+// no comparador qual valor vence e manda em `campos`; aqui fixamos esses campos
+// no mantido DEPOIS da fusão (os absorvidos já foram removidos, então não há
+// colisão de UNIQUE). Normaliza no padrão da casa (Contrato de porta).
+const CAMPOS_FUSAO_PERMITIDOS = ['nome', 'telefone', 'email', 'cpf', 'data_nascimento', 'genero'];
+function montarPatchFusao(campos) {
+  const patch = {};
+  if (!campos || typeof campos !== 'object') return patch;
+  for (const k of CAMPOS_FUSAO_PERMITIDOS) {
+    if (!(k in campos)) continue;
+    let v = campos[k];
+    if (v === null || v === undefined) continue;
+    v = String(v).trim();
+    if (!v) continue;
+    if (k === 'cpf' || k === 'telefone') v = v.replace(/\D/g, '');
+    else if (k === 'email') v = v.toLowerCase();
+    patch[k] = v;
+  }
+  return patch;
+}
 router.post('/fundir', authorizeModule('next-batismo', 3), async (req, res) => {
   try {
-    const { keep_id, merge_ids, observacao } = req.body || {};
+    const { keep_id, merge_ids, observacao, campos } = req.body || {};
     if (!keep_id) return res.status(400).json({ error: 'keep_id obrigatório' });
     if (!Array.isArray(merge_ids) || merge_ids.length === 0) return res.status(400).json({ error: 'merge_ids obrigatório (array de uuids)' });
     const { data, error } = await supabase.rpc('merge_membros', {
       p_keep_id: keep_id,
       p_merge_ids: merge_ids,
       p_feito_por: req.user?.id || null,
-      p_observacao: observacao || 'Fusão via Next-Batismo (check de pessoas)',
+      p_observacao: observacao || 'Fusão via Entradas (resolução de identidade)',
     });
     if (error) throw error;
+    // Melhor de cada: aplica os campos escolhidos no cadastro mantido.
+    const patch = montarPatchFusao(campos);
+    let camposAplicados = [];
+    if (Object.keys(patch).length) {
+      const { error: upErr } = await supabase.from('mem_membros')
+        .update(patch).eq('id', keep_id).is('deleted_at', null);
+      if (upErr) console.error('[entradas/fundir campos]', upErr.message);
+      else camposAplicados = Object.keys(patch);
+    }
     invalidarTriagemPessoas();
-    res.json(data);
+    const resposta = (data && typeof data === 'object' && !Array.isArray(data)) ? { ...data } : { resultado: data };
+    resposta.campos_aplicados = camposAplicados;
+    res.json(resposta);
   } catch (e) {
-    console.error('[next-batismo/fundir]', e.message);
+    console.error('[entradas/fundir]', e.message);
     res.status(500).json({ error: e.message || 'Erro ao fundir membros' });
   }
 });

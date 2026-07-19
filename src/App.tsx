@@ -647,12 +647,12 @@ function AppRoutes() {
         <Route path="/integracao/coleta" element={<ModuleGuard moduleSlug="integracao" nivelMinimo={2}><Suspense fallback={<Loading />}><ColetaCulto /></Suspense></ModuleGuard>} />
         <Route path="/integracao" element={<Navigate to="/ministerial/integracao" replace />} />
         <Route path="/producao" element={<ModuleGuard moduleSlug="producao" nivelMinimo={1}><Suspense fallback={<Loading />}><Producao /></Suspense></ModuleGuard>} />
-        <Route path="/next-batismo" element={<ModuleGuard moduleSlug="next-batismo" nivelMinimo={1}><Suspense fallback={<Loading />}><NextBatismo /></Suspense></ModuleGuard>} />
+        <Route path="/entradas" element={<ModuleGuard moduleSlug="next-batismo" nivelMinimo={1}><Suspense fallback={<Loading />}><NextBatismo /></Suspense></ModuleGuard>} />
         <Route path="/eventos-externos" element={<ModuleGuard moduleSlug="eventos-externos" nivelMinimo={1}><Suspense fallback={<Loading />}><EventosExternos /></Suspense></ModuleGuard>} />
         <Route path="/eventos-externos/:id" element={<ModuleGuard moduleSlug="eventos-externos" nivelMinimo={1}><Suspense fallback={<Loading />}><EventoExternoDetalhe /></Suspense></ModuleGuard>} />
         <Route path="/governanca" element={<ModuleGuard moduleSlug="governanca" nivelMinimo={1}><Suspense fallback={<Loading />}><Governanca /></Suspense></ModuleGuard>} />
         <Route path="/governanca/:sigla" element={<ModuleGuard moduleSlug="governanca" nivelMinimo={1}><Suspense fallback={<Loading />}><GovernancaRitual /></Suspense></ModuleGuard>} />
-        <Route path="/entradas" element={<Navigate to="/next-batismo" replace />} />
+        <Route path="/next-batismo" element={<Navigate to="/entradas" replace />} />
         {/* Cultos · rotas na raiz (sem prefixo /ministerial) · 2026-05-21 */}
         <Route path="/online" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><Online /></Suspense></ModuleGuard>} />
         <Route path="/kids" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><PainelKids /></Suspense></ModuleGuard>} />
