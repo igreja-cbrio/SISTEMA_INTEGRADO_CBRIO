@@ -434,7 +434,6 @@ async function carregarDuplicadosProgressivos() {
 // "Não tenho certeza": reativa quando fica DECISIVO (quase_confirmado — em geral
 // CPF de um formulário completo) ou quando a confiança sobe materialmente acima
 // do momento do adiamento. Formulário completo (CPF+nascimento) empurra o par.
-const LIMIAR_QUASE = 90;
 const MARGEM_REATIVA = 10;
 const ORDEM_PRIORIDADE = { quase_confirmado: 0, alta: 1, media: 2, descoberta: 3 };
 function parKey(a, b) { return [a, b].sort().join('_'); }
@@ -443,8 +442,13 @@ function ordenarPares(a, b) {
   if ((a.confianca || 0) !== (b.confianca || 0)) return (b.confianca || 0) - (a.confianca || 0);
   return String(a.membro_a?.nome || '').localeCompare(String(b.membro_a?.nome || ''), 'pt-BR');
 }
+// Volta pra fila quando: chegou ao topo (quase_confirmado · em geral um CPF novo
+// pelo motor progressivo) OU a confiança subiu materialmente acima do momento do
+// adiamento (marca-d'água). SEM piso absoluto de propósito: um par adiado já em
+// "alta" (95) não pode reaparecer sozinho — só se um sinal novo o empurrar a
+// quase_confirmado ou acima da marca-d'água. Senão a fila se "deszerava" sozinha.
 function evidenciaDecisiva(par, adiado) {
-  if (par.prioridade === 'quase_confirmado' || (par.confianca || 0) >= LIMIAR_QUASE) return true;
+  if (par.prioridade === 'quase_confirmado') return true;
   return (par.confianca || 0) >= (adiado.confianca_no_adiamento || 0) + MARGEM_REATIVA;
 }
 const tabelaAdiadosAusente = (msg) => /entradas_pares_adiados|schema cache|does not exist/i.test(msg || '');
