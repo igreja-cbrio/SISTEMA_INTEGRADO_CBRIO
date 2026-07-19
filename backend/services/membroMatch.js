@@ -238,13 +238,14 @@ async function acharOuCriarGuardado({ cpf, email, telefone, nome, dataNascimento
       return { membro_id: data.id, created: false, matched_by: 'cpf' };
     }
   }
-  if (!soChaveForte && emailLc) {
-    // E-mail exige o NOME batendo quando há nome (esposa que usa o e-mail do
-    // marido não pode ser ligada ao marido). Sem nome informado, mantém o
-    // comportamento legado (e-mail sozinho). buscarCandidatos cobre também o
-    // e-mail SECUNDÁRIO (mem_contatos · usado em outra porta).
+  if (!soChaveForte && emailLc && nome) {
+    // E-mail SEMPRE exige o NOME batendo (esposa que usa o e-mail do marido não
+    // pode ser ligada ao marido). Sem nome, e-mail sozinho NÃO liga — cai no
+    // CRIA/stub (a família compartilha a caixa · alinha ao contrato de
+    // acharOuCriar: "e-mail sozinho nunca mais identifica uma pessoa").
+    // buscarCandidatos cobre também o e-mail SECUNDÁRIO (mem_contatos).
     const cands = await buscarCandidatos({ email: emailLc }, { limit: 8 });
-    const hit = cands.find((c) => !nome ? !cpf11 : candidatoCompativel(c));
+    const hit = cands.find(candidatoCompativel);
     if (hit?.id) {
       await _consolidarCpfNoMatch(hit.id, cpf11, 'email', nasc);
       _registrarContatoNoMatch(hit.id, { telefone: tel, email: emailLc }, 'porta');
@@ -329,12 +330,12 @@ async function acharMembroGuardado({ cpf, email, telefone, nome, dataNascimento 
     if (data?.id) return { membro_id: data.id, matched_by: 'cpf' };
   }
   if (soChaveForte) return null;
-  if (emailLc) {
-    // Mesma guarda do telefone: e-mail compartilhado pela família não pode
-    // ligar sozinho — exige o nome batendo quando há nome. buscarCandidatos
-    // cobre também o e-mail SECUNDÁRIO (mem_contatos).
+  if (emailLc && nome) {
+    // E-mail compartilhado pela família não liga sozinho: exige o NOME batendo.
+    // Sem nome, não roteia por e-mail (cai pra telefone+nome / nascimento+nome /
+    // null). buscarCandidatos cobre também o e-mail SECUNDÁRIO (mem_contatos).
     const cands = await buscarCandidatos({ email: emailLc }, { limit: 8 });
-    const hit = cands.find((c) => !nome ? !cpf11 : candidatoCompativel(c));
+    const hit = cands.find(candidatoCompativel);
     if (hit?.id) return { membro_id: hit.id, matched_by: 'email' };
   }
   if (tel && nome) {

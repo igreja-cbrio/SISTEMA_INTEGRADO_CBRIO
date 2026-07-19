@@ -118,7 +118,7 @@ CPF responde `400 {"error":"CPF obrigatório"}` e não grava inscrição.
 antes incluíam 574 registros soft-deletados porque `GET /membresia/membros` não
 filtrava `deleted_at`; o endpoint agora filtra.
 
-**Correção da fila vazia (2026-07-18 · ainda não publicada):** a rota combinava
+**Correção da fila vazia (2026-07-18 · publicada):** a rota combinava
 `vw_nb_duplicados_suspeitos` com a triagem nova usando `Promise.all`; a view
 legada excedia o `statement_timeout` e descartava junto o resultado válido da
 triagem. O frontend convertia o erro em `items=[]`, exibindo falsamente “nenhuma
@@ -3269,7 +3269,7 @@ atalho na Home + "Pregações" no Menu) abre os vídeos no YouTube via Linking.
 Prioridade zero definida pelo Marcos: **todo cadastro novo precisa aumentar a
 confiabilidade futura da identidade**, mesmo quando hoje não há dados suficientes
 para afirmar que dois registros são a mesma pessoa. Migration
-`20260718190000_identidade_progressiva_merge_seguro.sql` (NÃO aplicada):
+`20260718190000_identidade_progressiva_merge_seguro.sql` (aplicada em produção 2026-07-18):
 - `mem_identidade_observacoes`: histórico acumulativo por porta de nome, CPF,
   telefone, e-mail e nascimento. A base viva é semeada como `base_legada`; um
   trigger captura também inserts/updates SQL que contornem o backend.
@@ -3297,5 +3297,22 @@ para afirmar que dois registros são a mesma pessoa. Migration
   ficha da pessoa mostra quando e por qual porta os dados foram corroborados.
 
 Validações: `node backend/services/identidadeProgressiva.test.js`, políticas de
-duplicidade/família, `npm test -- --run` e `npm run build` aprovados. Aplicar a
-migration **antes** do backend; não fazer commit/push/deploy sem autorização.
+duplicidade/família, `npm test -- --run` e `npm run build` aprovados. Migration + backend **aplicados e no ar** em produção (Marcos aplicou a migration
+manualmente · deploy Vercel automático da main · confirmado no banco 2026-07-18:
+`mem_identidade_observacoes`/`mem_identidade_pares` presentes, seed `base_legada` =
+3667, `merge_membros` seguro é a única versão viva).
+
+**Follow-up (2026-07-18 · auditoria + correções · PR `claude/entradas-followups-email-doc-limpeza`):**
+auditoria multi-agente confirmou a entrega contra o banco vivo (o resumo do ChatGPT
+procedia; o CLAUDE.md é que tinha ficado com "NÃO aplicada" desatualizado). Corrigidos:
+(1) `membroMatch` (acharOuCriarGuardado/acharMembroGuardado) NÃO liga mais por e-mail
+sozinho quando o chamador não passa nome — alinha ao contrato "e-mail sozinho nunca
+identifica"; (2) `publicVoluntariado /inscrever-form` roteia pelo matcher canônico
+(`acharMembroGuardado`) em vez de lookup por e-mail solto e registra observação de
+identidade (Contrato de porta); (3) removido código morto do Entradas
+(`PessoaTab`/`SemVinculoTab`/`LigarDialog`/`buildBuscaParams`). ⚠️ Follow-ups deliberados
+(NÃO nesta PR): `merge_membros` não faz snapshot de netos de linha filha apagada por
+colisão UNIQUE (edge case raro · exige nova migration CREATE OR REPLACE); 2ª impl. de
+`normalizarCpf` em `utils/cpf` não valida DV (armadilha p/ código futuro); colisão de
+número das migrations `20260717170000`/`20260718120000`/`20260718190000` (cada uma tem
+gêmea de grupos/crons no mesmo número — ao aplicar manualmente, rodar as DUAS de cada par).
