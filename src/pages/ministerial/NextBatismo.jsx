@@ -603,7 +603,44 @@ function ParCard({ par, onMerge, onIgnorar, ignorando, onVerFicha, emAdiados, on
   );
 }
 
+// Porta pela qual o CADASTRO nasceu (import de grupos, Next, wifi, ficha de
+// voluntariado...). Quando a pessoa não tem NENHUM vínculo operacional, essa
+// origem é a pista pra descobrir quem ela é — ex.: veio do import de grupos, o
+// Pr. Nélio ou a Natasha talvez reconheçam (pedido do Marcos · 2026-07-19).
+const ORIGEM_CADASTRO_ROTULOS = {
+  import_next_historico_2025_2026: 'Import · Next (histórico)',
+  grupos_import_2026: 'Import · Grupos',
+  grupos_importacao: 'Import · Grupos',
+  pco_import_2026: 'Import · Planning Center',
+  import_ekklesia_2026: 'Import · Ekklesia',
+  wifi: 'Portal Wi-Fi',
+  voluntariado: 'Ficha de voluntariado',
+  voluntariado_form: 'Ficha de voluntariado',
+  auth: 'Cadastro pelo login',
+  app: 'Cadastro pelo app',
+  next_formulario: 'Inscrição no Next',
+  next_checkin: 'Check-in do Next',
+  batismo_formulario: 'Inscrição de batismo',
+  grupos_formulario: 'Inscrição de grupo',
+  membresia_formulario: 'Cadastro de membresia',
+  membresia_manual: 'Cadastro manual (Membresia)',
+  face: 'Reconhecimento facial',
+};
+
+function rotuloOrigemCadastro(origem) {
+  if (!origem) return null;
+  const chave = String(origem).trim().toLowerCase();
+  if (!chave) return null;
+  if (ORIGEM_CADASTRO_ROTULOS[chave]) return ORIGEM_CADASTRO_ROTULOS[chave];
+  // Slug desconhecido: tira o ano, troca _ por espaço e capitaliza; prefixa
+  // "Import ·" quando o slug indica importação.
+  const limpo = chave.replace(/_20\d{2}$/, '').replace(/_/g, ' ').trim();
+  const humano = limpo.charAt(0).toUpperCase() + limpo.slice(1);
+  return chave.includes('import') ? `Import · ${humano.replace(/^import\s*/i, '')}` : humano;
+}
+
 function MembroLado({ membro, lado, onMerge, onVerFicha }) {
+  const rotuloCadastro = rotuloOrigemCadastro(membro.origem_cadastro);
   return (
     <div className="p-3 space-y-2">
       <div className="flex items-start justify-between gap-2">
@@ -631,21 +668,33 @@ function MembroLado({ membro, lado, onMerge, onVerFicha }) {
         {membro.data_nascimento && <Linha icon={Calendar}>{fmtData(membro.data_nascimento)}</Linha>}
         {membro.genero && <Linha icon={UserIcon}>Gênero: {membro.genero}</Linha>}
       </div>
-      <div className="pl-10 pt-1">
-        <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">Encontrada em</div>
+      <div className="pl-10 pt-1 space-y-1.5">
+        <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Encontrada em</div>
         {membro.origens?.length ? (
-          <div className="flex flex-wrap gap-1.5">
-            {membro.origens.map((origem) => (
-              <RouterLink key={`${origem.tipo}_${origem.detalhe || ''}`} to={origem.rota}
-                className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-[10px] text-muted-foreground transition-colors hover:border-primary hover:text-primary"
-                title={`Abrir ${origem.label} para conferir este vínculo`}>
-                <MapPin className="size-3" />
-                {origem.label}{origem.detalhe ? ` · ${origem.detalhe}` : ''}
-              </RouterLink>
-            ))}
-          </div>
+          <>
+            <div className="flex flex-wrap gap-1.5">
+              {membro.origens.map((origem) => (
+                <RouterLink key={`${origem.tipo}_${origem.detalhe || ''}`} to={origem.rota}
+                  className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-[10px] text-muted-foreground transition-colors hover:border-primary hover:text-primary"
+                  title={`Abrir ${origem.label} para conferir este vínculo`}>
+                  <MapPin className="size-3" />
+                  {origem.label}{origem.detalhe ? ` · ${origem.detalhe}` : ''}
+                </RouterLink>
+              ))}
+            </div>
+            {rotuloCadastro && (
+              <div className="text-[10px] text-muted-foreground">Cadastro: {rotuloCadastro}</div>
+            )}
+          </>
         ) : (
-          <span className="text-[10px] text-muted-foreground">Nenhum vínculo operacional encontrado</span>
+          <div className="flex items-start gap-1.5 rounded-md border border-dashed bg-muted/40 px-2 py-1 text-[10px] text-muted-foreground"
+            title="Sem vínculo operacional. A porta do cadastro pode ajudar a identificar quem é a pessoa.">
+            <Sparkles className="size-3 shrink-0 mt-px opacity-70" />
+            <span>
+              Sem vínculo operacional ·{' '}
+              <span className="font-medium text-foreground">{rotuloCadastro || 'origem do cadastro não registrada'}</span>
+            </span>
+          </div>
         )}
       </div>
     </div>
