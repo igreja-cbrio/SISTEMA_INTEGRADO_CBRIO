@@ -349,7 +349,7 @@ function DuplicadosTab({ onVerFicha }) {
   });
   const adiarLoteMut = useMutation({
     mutationFn: () => api.adiarEmLote({ criterio: 'nome_apenas' }),
-    onSuccess: (r) => { toast.success(`${r?.total || 0} par(es) adiados · voltam quando um cadastro completo confirmar`); setLoteDialog(false); invalida(); },
+    onSuccess: (r) => { toast.success(`${r?.total || 0} par(es) adiados · voltam quando um cadastro completo confirmar`); setLoteDialog(false); setVista('adiados'); setPrioridade('todas'); setBusca(''); setLimiteVisivel(100); invalida(); },
     onError: (e) => toast.error(e?.message || 'Erro ao adiar em lote'),
   });
   const mergeMut = useMutation({
@@ -396,9 +396,9 @@ function DuplicadosTab({ onVerFicha }) {
       <div className="flex items-start justify-between gap-2 flex-wrap">
         <div className="flex gap-1.5">
           <Button size="sm" variant={vista === 'fila' ? 'default' : 'outline'} className="h-8 text-xs"
-            onClick={() => { setVista('fila'); setLimiteVisivel(100); }}>Fila</Button>
+            onClick={() => { setVista('fila'); setPrioridade('todas'); setBusca(''); setLimiteVisivel(100); }}>Fila</Button>
           <Button size="sm" variant={vista === 'adiados' ? 'default' : 'outline'} className="h-8 text-xs"
-            onClick={() => { setVista('adiados'); setLimiteVisivel(100); }}>Não tenho certeza</Button>
+            onClick={() => { setVista('adiados'); setPrioridade('todas'); setBusca(''); setLimiteVisivel(100); }}>Não tenho certeza</Button>
         </div>
         <Button onClick={() => recarregarMut.mutate()} disabled={recarregando} variant="outline" size="sm" className="gap-1.5">
           <RefreshCw className={`size-3.5 ${recarregando ? 'animate-spin' : ''}`} /> Recarregar
