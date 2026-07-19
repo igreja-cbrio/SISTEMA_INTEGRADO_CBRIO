@@ -83,6 +83,11 @@ async function enriquecerOrigensDuplicados(items) {
     lista.push(origem);
   };
   const origens = [[], [], [], [], [], []];
+  // De onde o CADASTRO em si nasceu (import de grupos, Next, wifi, ficha de
+  // voluntariado...). Diferente das origens operacionais: quando uma pessoa não
+  // tem NENHUM vínculo, saber a porta do cadastro ajuda a equipe a identificar
+  // quem ela é (ex.: veio do import de grupos → o líder pode reconhecer).
+  const origemCadastro = new Map();
   // Muitos pares podem envolver centenas de pessoas. Dividir os UUIDs evita
   // estourar o tamanho da URL do PostgREST sem cortar a fila nem suas origens.
   for (let i = 0; i < ids.length; i += 100) {
@@ -98,6 +103,10 @@ async function enriquecerOrigensDuplicados(items) {
     consultas.forEach((resultado, indice) => {
       if (!resultado.error) origens[indice].push(...(resultado.data || []));
     });
+    const cadastros = await supabase.from('mem_membros').select('id, origem_cadastro').in('id', lote);
+    if (!cadastros.error) {
+      for (const m of cadastros.data || []) origemCadastro.set(m.id, m.origem_cadastro || null);
+    }
   }
   const [convertidos, grupos, next, batismos, visitas, voluntarios] = origens;
   convertidos.forEach((r) => adicionar(r.membro_id, {
@@ -120,8 +129,8 @@ async function enriquecerOrigensDuplicados(items) {
   }));
   return items.map((p) => ({
     ...p,
-    membro_a: { ...p.membro_a, origens: porMembro.get(p.membro_a_id) || [] },
-    membro_b: { ...p.membro_b, origens: porMembro.get(p.membro_b_id) || [] },
+    membro_a: { ...p.membro_a, origens: porMembro.get(p.membro_a_id) || [], origem_cadastro: origemCadastro.get(p.membro_a_id) || null },
+    membro_b: { ...p.membro_b, origens: porMembro.get(p.membro_b_id) || [], origem_cadastro: origemCadastro.get(p.membro_b_id) || null },
   }));
 }
 
