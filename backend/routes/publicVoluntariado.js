@@ -18,6 +18,8 @@
 const router = require('express').Router();
 const rateLimit = require('express-rate-limit');
 const { supabase } = require('../utils/supabase');
+const { acharMembroGuardado } = require('../services/membroMatch');
+const { registrarObservacaoSegura } = require('../services/identidadeProgressiva');
 
 const publicLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -462,21 +464,18 @@ router.post('/inscrever-form', publicLimiter, async (req, res) => {
       ? ministerios_interesse.filter(Boolean).join(', ')
       : (ministerios_interesse ? String(ministerios_interesse).trim() : null);
 
-    // Tenta vincular a mem_membros existente (por CPF · fallback email)
+    // Roteia pro membro existente pela política canônica (Contrato de porta):
+    // CPF → e-mail+NOME → telefone+NOME → nascimento+NOME. NUNCA por e-mail
+    // sozinho (a família compartilha a caixa · vincular por e-mail solto junta
+    // pessoas distintas). Read-only: sem match, a inscrição fica sem membro_id
+    // (lead) e a fila do Entradas reconcilia depois.
     let membroId = null;
     try {
-      if (cleanCpf) {
-        const { data: m } = await supabase
-          .from('mem_membros').select('id').eq('cpf', cleanCpf)
-          .is('deleted_at', null).maybeSingle();
-        membroId = m?.id || null;
-      }
-      if (!membroId && cleanEmail) {
-        const { data: m } = await supabase
-          .from('mem_membros').select('id').ilike('email', cleanEmail)
-          .is('deleted_at', null).maybeSingle();
-        membroId = m?.id || null;
-      }
+      const achado = await acharMembroGuardado({
+        cpf: cleanCpf, email: cleanEmail, telefone: cleanTelefone,
+        nome: nomeCompleto, dataNascimento: cleanDataNascimento || null,
+      });
+      membroId = achado?.membro_id || null;
     } catch (e) {
       console.warn('[PublicVol/inscrever-form] match membro:', e.message);
     }
@@ -511,6 +510,14 @@ router.post('/inscrever-form', publicLimiter, async (req, res) => {
       console.error('[PublicVol/inscrever-form] insert:', insErr.message);
       return res.status(500).json({ error: 'Erro ao registrar inscrição' });
     }
+
+    // Contrato de porta: registra a evidência de identidade (não funde nada ·
+    // best-effort · tolera a tabela de observações ausente).
+    await registrarObservacaoSegura({
+      membroId, origem: 'voluntariado_formulario', origemId: insc?.id || null,
+      nome: nomeCompleto, cpf: cleanCpf, telefone: cleanTelefone,
+      email: cleanEmail, dataNascimento: cleanDataNascimento || null,
+    });
 
     // Opt-in de WhatsApp: se a pessoa consentiu E já casou com um membro,
     // grava o consentimento direto no mem_membros (só liga, nunca desliga um

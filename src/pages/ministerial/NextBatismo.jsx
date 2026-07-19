@@ -308,18 +308,26 @@ function DuplicadosTab({ onVerFicha }) {
   const [busca, setBusca] = useState('');
   const [prioridade, setPrioridade] = useState('todas');
   const [limiteVisivel, setLimiteVisivel] = useState(100);
+  const [vista, setVista] = useState('fila'); // 'fila' | 'adiados'
+  const adiadosQ = useQuery({
+    queryKey: ['next-batismo', 'duplicados-adiados'],
+    queryFn: () => api.duplicadosAdiados(),
+    enabled: vista === 'adiados',
+    ...FILA_CACHE,
+  });
 
   const recarregarMut = useMutation({
-    mutationFn: () => api.duplicados({ refresh: 1 }),
+    mutationFn: () => (vista === 'adiados' ? api.duplicadosAdiados({ refresh: 1 }) : api.duplicados({ refresh: 1 })),
     onSuccess: (resultado) => {
-      qc.setQueryData(['next-batismo', 'duplicados'], resultado);
+      qc.setQueryData(['next-batismo', vista === 'adiados' ? 'duplicados-adiados' : 'duplicados'], resultado);
       qc.invalidateQueries({ queryKey: ['next-batismo', 'resumo'] });
     },
-    onError: (e) => toast.error(e?.message || 'Erro ao recarregar possíveis duplicidades'),
+    onError: (e) => toast.error(e?.message || 'Erro ao recarregar'),
   });
 
   const invalida = () => {
     qc.invalidateQueries({ queryKey: ['next-batismo', 'duplicados'] });
+    qc.invalidateQueries({ queryKey: ['next-batismo', 'duplicados-adiados'] });
     qc.invalidateQueries({ queryKey: ['next-batismo', 'resumo'] });
   };
 
@@ -327,6 +335,16 @@ function DuplicadosTab({ onVerFicha }) {
     mutationFn: (par) => api.ignorarDuplicata({ membro_a_id: par.membro_a_id, membro_b_id: par.membro_b_id }),
     onSuccess: () => { toast.success('Marcado como pessoas distintas · não aparece mais'); invalida(); },
     onError: (e) => toast.error(e?.message || 'Erro ao ignorar'),
+  });
+  const adiarMut = useMutation({
+    mutationFn: (par) => api.adiarDuplicata({ membro_a_id: par.membro_a_id, membro_b_id: par.membro_b_id, confianca: par.confianca, prioridade: par.prioridade }),
+    onSuccess: () => { toast.success('Adiada · volta sozinha quando aparecer um cadastro completo'); invalida(); },
+    onError: (e) => toast.error(e?.message || 'Erro ao adiar'),
+  });
+  const reativarMut = useMutation({
+    mutationFn: (par) => api.reativarDuplicata({ membro_a_id: par.membro_a_id, membro_b_id: par.membro_b_id }),
+    onSuccess: () => { toast.success('De volta pra fila'); invalida(); },
+    onError: (e) => toast.error(e?.message || 'Erro ao trazer de volta'),
   });
   const mergeMut = useMutation({
     mutationFn: ({ keep_id, merge_ids }) => api.fundir({ keep_id, merge_ids }),
@@ -337,7 +355,12 @@ function DuplicadosTab({ onVerFicha }) {
     onError: (e) => toast.error(e?.message || 'Erro ao fundir'),
   });
 
-  const items = data?.items || [];
+  const emAdiados = vista === 'adiados';
+  const carregando = emAdiados ? adiadosQ.isLoading : isLoading;
+  const comErro = emAdiados ? adiadosQ.isError : isError;
+  const erro = emAdiados ? adiadosQ.error : error;
+  const recarregando = (emAdiados ? adiadosQ.isFetching : isFetching) || recarregarMut.isPending;
+  const items = (emAdiados ? adiadosQ.data : data)?.items || [];
   const termo = busca.trim().toLowerCase();
   const filtrados = items.filter((par) => {
     if (prioridade !== 'todas' && par.prioridade !== prioridade) return false;
@@ -353,14 +376,21 @@ function DuplicadosTab({ onVerFicha }) {
   return (
     <div className="space-y-4">
       <div className="flex items-start justify-between gap-2 flex-wrap">
-        <p className="text-xs text-muted-foreground max-w-2xl">
-          O sistema combina sinais antes de trazer um par. Telefone ou e-mail isolados não bastam,
-          e CPFs diferentes eliminam a sugestão. <strong>Confira as evidências e os módulos onde cada pessoa aparece antes de fundir.</strong>
-        </p>
-        <Button onClick={() => recarregarMut.mutate()} disabled={isFetching || recarregarMut.isPending} variant="outline" size="sm" className="gap-1.5">
-          <RefreshCw className={`size-3.5 ${isFetching || recarregarMut.isPending ? 'animate-spin' : ''}`} /> Recarregar
+        <div className="flex gap-1.5">
+          <Button size="sm" variant={vista === 'fila' ? 'default' : 'outline'} className="h-8 text-xs"
+            onClick={() => { setVista('fila'); setLimiteVisivel(100); }}>Fila</Button>
+          <Button size="sm" variant={vista === 'adiados' ? 'default' : 'outline'} className="h-8 text-xs"
+            onClick={() => { setVista('adiados'); setLimiteVisivel(100); }}>Não tenho certeza</Button>
+        </div>
+        <Button onClick={() => recarregarMut.mutate()} disabled={recarregando} variant="outline" size="sm" className="gap-1.5">
+          <RefreshCw className={`size-3.5 ${recarregando ? 'animate-spin' : ''}`} /> Recarregar
         </Button>
       </div>
+      <p className="text-xs text-muted-foreground max-w-2xl">
+        {emAdiados
+          ? 'Pares que você marcou como "não tenho certeza". Voltam sozinhos pra fila quando um cadastro completo (CPF + nascimento) confirmar a identidade — ou você traz de volta na mão.'
+          : (<>O sistema combina sinais antes de trazer um par. Telefone ou e-mail isolados não bastam, e CPFs diferentes eliminam a sugestão. <strong>Confira as evidências e os módulos onde cada pessoa aparece antes de fundir.</strong></>)}
+      </p>
 
       <div className="flex flex-col md:flex-row gap-2 md:items-center">
         <div className="relative flex-1 max-w-xl">
@@ -381,28 +411,33 @@ function DuplicadosTab({ onVerFicha }) {
         </div>
       </div>
 
-      {isLoading ? (
-        <Centro><Loader2 className="size-5 animate-spin mr-2" /> Procurando duplicatas...</Centro>
-      ) : isError ? (
+      {carregando ? (
+        <Centro><Loader2 className="size-5 animate-spin mr-2" /> {emAdiados ? 'Carregando adiados...' : 'Procurando duplicatas...'}</Centro>
+      ) : comErro ? (
         <div className="space-y-3">
-          <Vazio icon={ShieldQuestion} titulo="Não foi possível carregar as possíveis duplicidades"
-            texto={error?.message || 'A verificação da base falhou. Nenhuma fila vazia será exibida enquanto houver erro.'} />
+          <Vazio icon={ShieldQuestion} titulo="Não foi possível carregar"
+            texto={erro?.message || 'A verificação da base falhou. Nenhuma fila vazia será exibida enquanto houver erro.'} />
           <div className="flex justify-center">
-            <Button variant="outline" size="sm" onClick={() => refetch()} className="gap-1.5">
+            <Button variant="outline" size="sm" onClick={() => (emAdiados ? adiadosQ.refetch() : refetch())} className="gap-1.5">
               <RefreshCw className="size-3.5" /> Tentar novamente
             </Button>
           </div>
         </div>
       ) : items.length === 0 ? (
-        <Vazio icon={GitMerge} titulo="Nenhuma possível duplicata encontrada"
-          texto="A base foi verificada e, com as regras atuais, não existe nenhum par com evidências suficientes para revisão. Telefone isolado não gera duplicata." />
+        <Vazio icon={GitMerge}
+          titulo={emAdiados ? 'Nada adiado' : 'Nenhuma possível duplicata encontrada'}
+          texto={emAdiados
+            ? 'Você não marcou nenhum par como "não tenho certeza". Eles apareceriam aqui até um cadastro completo confirmar a identidade.'
+            : 'A base foi verificada e, com as regras atuais, não existe nenhum par com evidências suficientes para revisão. Telefone isolado não gera duplicata.'} />
       ) : (
         <div className="space-y-3">
           <div className="text-xs text-muted-foreground">{filtrados.length} de {items.length} par(es) · exibindo {visiveis.length}</div>
           {visiveis.map((par) => (
-            <ParCard key={par.par_id} par={par} onVerFicha={onVerFicha}
+            <ParCard key={par.par_id} par={par} onVerFicha={onVerFicha} emAdiados={emAdiados}
               onMerge={(keep_id) => setMergeDialog({ par, keep_id })}
-              onIgnorar={() => ignorarMut.mutate(par)} ignorando={ignorarMut.isPending} />
+              onIgnorar={() => ignorarMut.mutate(par)} ignorando={ignorarMut.isPending}
+              onAdiar={() => adiarMut.mutate(par)} adiando={adiarMut.isPending}
+              onReativar={() => reativarMut.mutate(par)} reativando={reativarMut.isPending} />
           ))}
           {limiteVisivel < filtrados.length && (
             <div className="flex justify-center pt-2">
@@ -462,7 +497,7 @@ function DuplicadosTab({ onVerFicha }) {
   );
 }
 
-function ParCard({ par, onMerge, onIgnorar, ignorando, onVerFicha }) {
+function ParCard({ par, onMerge, onIgnorar, ignorando, onVerFicha, emAdiados, onAdiar, adiando, onReativar, reativando }) {
   const motivos = par.motivos || [];
   const corPrincipal = par.prioridade === 'quase_confirmado' ? '#059669'
     : par.prioridade === 'alta' ? '#7C3AED' : MOTIVO_LABELS[motivos[0]]?.cor || '#6B7280';
@@ -488,9 +523,21 @@ function ParCard({ par, onMerge, onIgnorar, ignorando, onVerFicha }) {
             <span className="text-[10px] text-muted-foreground">Fontes: {par.fontes_evidencia.join(' · ')}</span>
           )}
         </div>
-        <Button variant="ghost" size="sm" onClick={onIgnorar} disabled={ignorando} className="h-7 text-xs gap-1">
-          <X className="size-3" /> Não é a mesma pessoa
-        </Button>
+        <div className="flex items-center gap-1 shrink-0">
+          {emAdiados ? (
+            <Button variant="ghost" size="sm" onClick={onReativar} disabled={reativando} className="h-7 text-xs gap-1">
+              <RefreshCw className="size-3" /> Trazer de volta
+            </Button>
+          ) : (
+            <Button variant="ghost" size="sm" onClick={onAdiar} disabled={adiando}
+              className="h-7 text-xs gap-1 text-amber-600 dark:text-amber-400 hover:text-amber-700">
+              <ShieldQuestion className="size-3" /> Não tenho certeza
+            </Button>
+          )}
+          <Button variant="ghost" size="sm" onClick={onIgnorar} disabled={ignorando} className="h-7 text-xs gap-1">
+            <X className="size-3" /> Não é a mesma pessoa
+          </Button>
+        </div>
       </CardHeader>
       <CardContent className="p-0">
         {par.contradicoes?.length > 0 && (
@@ -716,268 +763,6 @@ function PessoaFamilia({ pessoa, rotulo, onVerFicha }) {
         </div>
       </div>
     </button>
-  );
-}
-
-// Fluxo legado de registros sem membro: mantido fora da navegação enquanto as
-// origens são tratadas nos módulos responsáveis.
-function SemVinculoTab({ onVerFicha }) {
-  const qc = useQueryClient();
-  const { data, isLoading, refetch, isFetching } = useQuery({
-    queryKey: ['next-batismo', 'sem-vinculo'],
-    queryFn: () => api.semVinculo(),
-    staleTime: 30_000,
-  });
-  const [ligarRow, setLigarRow] = useState(null);
-  const [origemFiltro, setOrigemFiltro] = useState('todos');
-
-  const itens = data?.itens || [];
-  const itensFiltrados = origemFiltro === 'todos' ? itens : itens.filter((r) => r.tipo === origemFiltro);
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-start justify-between gap-2 flex-wrap">
-        <p className="text-xs text-muted-foreground max-w-2xl">
-          Inscrições do Next/Batismo, decisões e visitas que <strong>ainda não estão ligadas a um cadastro</strong>.
-          Ligue à pessoa certa (a busca sugere quem já existe) ou crie o cadastro se for alguém novo.
-        </p>
-        <Button onClick={() => refetch()} disabled={isFetching} variant="outline" size="sm" className="gap-1.5">
-          <RefreshCw className={`size-3.5 ${isFetching ? 'animate-spin' : ''}`} /> Recarregar
-        </Button>
-      </div>
-
-      {!isLoading && itens.length > 0 && (
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
-          <Button size="sm" variant={origemFiltro === 'todos' ? 'secondary' : 'ghost'} className="h-7 text-xs shrink-0"
-            onClick={() => setOrigemFiltro('todos')}>Todas as origens ({itens.length})</Button>
-          {Object.entries(ORIGEM_META).map(([key, meta]) => {
-            const count = data?.por_origem?.[key] || 0;
-            if (!count) return null;
-            return <Button key={key} size="sm" variant={origemFiltro === key ? 'secondary' : 'ghost'} className="h-7 text-xs shrink-0"
-              onClick={() => setOrigemFiltro(key)}>{meta.label} ({count})</Button>;
-          })}
-        </div>
-      )}
-
-      {isLoading ? (
-        <Centro><Loader2 className="size-5 animate-spin mr-2" /> Buscando pendências...</Centro>
-      ) : itensFiltrados.length === 0 ? (
-        <Vazio icon={Link2} titulo="Tudo ligado por aqui"
-          texto={itens.length === 0
-            ? 'Toda inscrição e decisão do funil está vinculada a um cadastro. Bom trabalho!'
-            : 'Não há pendências desta origem.'} />
-      ) : (
-        <div className="space-y-2">
-          <div className="text-xs text-muted-foreground">{itensFiltrados.length} pendência(s)</div>
-          {itensFiltrados.map((r) => <SemVinculoRow key={`${r.tipo}_${r.id}`} row={r} onLigar={() => setLigarRow(r)} />)}
-        </div>
-      )}
-
-      <LigarDialog row={ligarRow} onVerFicha={onVerFicha} onClose={() => setLigarRow(null)} onDone={() => {
-        qc.invalidateQueries({ queryKey: ['next-batismo', 'sem-vinculo'] });
-        qc.invalidateQueries({ queryKey: ['next-batismo', 'resumo'] });
-        qc.invalidateQueries({ queryKey: ['next-batismo', 'duplicados'] });
-        setLigarRow(null);
-      }} />
-    </div>
-  );
-}
-
-function SemVinculoRow({ row, onLigar }) {
-  const om = ORIGEM_META[row.tipo] || { label: row.tipo, cor: '#6B7280' };
-  return (
-    <div className="flex items-center justify-between gap-3 rounded-lg border bg-card px-3 py-2">
-      <div className="min-w-0">
-        <div className="flex items-center gap-2">
-          <Badge variant="outline" className="text-[10px]" style={{ borderColor: om.cor, color: om.cor }}>{om.label}</Badge>
-          <span className="font-medium text-sm text-foreground truncate">{row.nome}</span>
-        </div>
-        <div className="text-[11px] text-muted-foreground mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5">
-          {row.cpf && <span className="font-mono">{maskCpf(row.cpf)}</span>}
-          {row.telefone && <span>{maskTelefone(row.telefone)}</span>}
-          {row.email && <span className="truncate">{row.email}</span>}
-          <span>{row.contexto}{row.quando ? ` · ${fmtData(row.quando)}` : ''}</span>
-        </div>
-      </div>
-      <Button size="sm" variant="outline" onClick={onLigar} className="gap-1.5 text-xs h-8 shrink-0">
-        <Link2 className="size-3.5" /> Ligar
-      </Button>
-    </div>
-  );
-}
-
-function LigarDialog({ row, onClose, onDone, onVerFicha }) {
-  const open = !!row;
-  const { data, isLoading } = useQuery({
-    queryKey: ['next-batismo', 'candidatos', row?.tipo, row?.id],
-    queryFn: () => api.candidatos({ cpf: row.cpf || '', email: row.email || '', telefone: row.telefone || '', nome: row.nome || '' }),
-    enabled: open,
-    staleTime: 10_000,
-  });
-
-  const ligarMut = useMutation({
-    mutationFn: (payload) => api.ligar(payload),
-    onSuccess: (res) => {
-      toast.success(res?.familia_ligada ? 'Cadastro criado e ligado à mesma família' : res?.criado ? 'Cadastro novo criado e ligado' : 'Inscrição ligada ao cadastro');
-      onDone();
-    },
-    onError: (e) => toast.error(e?.message || 'Erro ao ligar'),
-  });
-
-  const candidatos = data?.candidatos || [];
-
-  return (
-    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader>
-          <DialogTitle>Ligar ao cadastro certo</DialogTitle>
-          <DialogDescription>
-            {row && (
-              <span>
-                <strong className="text-foreground">{row.nome}</strong>
-                {row.cpf ? ` · ${maskCpf(row.cpf)}` : ''}{row.telefone ? ` · ${maskTelefone(row.telefone)}` : ''} · {ORIGEM_META[row?.tipo]?.label}
-              </span>
-            )}
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="space-y-2">
-          <div className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-            <Users className="size-3.5" /> Já existe no sistema?
-          </div>
-          {isLoading ? (
-            <div className="py-6 flex items-center justify-center text-muted-foreground"><Loader2 className="size-4 animate-spin mr-2" /> Buscando...</div>
-          ) : candidatos.length === 0 ? (
-            <div className="rounded-lg border border-dashed bg-muted/20 p-4 text-center text-xs text-muted-foreground">
-              Nenhum cadastro parecido encontrado. Se for alguém novo, crie o cadastro abaixo.
-            </div>
-          ) : (
-            <div className="space-y-1.5 max-h-64 overflow-y-auto">
-              {candidatos.map((c) => (
-                <div key={c.id} className="rounded-lg border bg-card px-2.5 py-2 flex flex-col gap-2">
-                  {/* Linha 1 · pessoa + score (trunca, nunca estoura a largura) */}
-                  <div className="flex items-center gap-2 min-w-0">
-                    {c.foto_url
-                      ? <img src={c.foto_url} alt="" className="size-7 rounded-full object-cover shrink-0" />
-                      : <div className="size-7 rounded-full bg-muted flex items-center justify-center shrink-0"><UserIcon className="size-3.5 text-muted-foreground" /></div>}
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm font-medium text-foreground truncate">{c.nome}</div>
-                      <div className="text-[10px] text-muted-foreground flex flex-wrap gap-x-2">
-                        {c.cpf && <span className="font-mono">{maskCpf(c.cpf)}</span>}
-                        {c.telefone && <span>{maskTelefone(c.telefone)}</span>}
-                        <span className="opacity-70">{c.status}</span>
-                      </div>
-                    </div>
-                    <Badge variant="outline" className="text-[10px] shrink-0" title={(c.motivos || []).join(', ')}>{c.score}%</Badge>
-                    {onVerFicha && (
-                      <Button size="icon" variant="ghost" className="size-7 shrink-0" title="Ver ficha de entrada"
-                        onClick={() => onVerFicha(c.id)}>
-                        <Eye className="size-3.5" />
-                      </Button>
-                    )}
-                  </div>
-                  {/* Linha 2 · ações (alinhadas à direita, cabem sempre) */}
-                  <div className="flex items-center justify-end gap-1.5">
-                    <Button size="sm" variant="outline" className="h-7 text-xs gap-1"
-                      disabled={ligarMut.isPending}
-                      title="Cria um cadastro novo (pessoa diferente) e liga à mesma família deste"
-                      onClick={() => ligarMut.mutate({ tipo: row.tipo, id: row.id, familia_de: c.id })}>
-                      <Home className="size-3" /> Mesma família
-                    </Button>
-                    <Button size="sm" className="h-7 text-xs gap-1"
-                      disabled={ligarMut.isPending}
-                      onClick={() => ligarMut.mutate({ tipo: row.tipo, id: row.id, membro_id: c.id })}>
-                      <Link2 className="size-3" /> É esta
-                    </Button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <DialogFooter className="flex-col sm:flex-row gap-2">
-          <Button variant="outline" onClick={onClose} disabled={ligarMut.isPending} className="sm:mr-auto">Cancelar</Button>
-          <Button variant="secondary" className="gap-1.5" disabled={ligarMut.isPending}
-            onClick={() => ligarMut.mutate({ tipo: row.tipo, id: row.id, criar: true })}>
-            {ligarMut.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <UserPlus className="size-3.5" />}
-            É alguém novo · criar cadastro
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-// ----------------------------------------------------------------------------
-// LENTE 3 · Buscar pessoa → abre a Ficha de Entrada
-// ----------------------------------------------------------------------------
-function buildBuscaParams(text) {
-  const t = String(text || '').trim();
-  const d = t.replace(/\D/g, '');
-  const p = {};
-  if (d.length === 11) p.cpf = d;
-  if (d.length >= 10 && d.length <= 11) p.telefone = d;
-  if (/[a-zA-ZÀ-ÿ]/.test(t)) p.nome = t;
-  if (!p.cpf && !p.telefone && !p.nome) p.nome = t;
-  return p;
-}
-
-function PessoaTab({ onVerFicha }) {
-  const [q, setQ] = useState('');
-  const [enviado, setEnviado] = useState('');
-  const { data, isFetching } = useQuery({
-    queryKey: ['next-batismo', 'busca', enviado],
-    queryFn: () => api.candidatos(buildBuscaParams(enviado)),
-    enabled: enviado.trim().length >= 3,
-    staleTime: 10_000,
-  });
-  const resultados = data?.candidatos || [];
-
-  return (
-    <div className="space-y-4">
-      <p className="text-xs text-muted-foreground max-w-2xl">
-        Busque por nome, CPF ou telefone e abra a <strong>ficha de entrada</strong> da pessoa —
-        por onde entrou, a linha do tempo de toques, conexões e quem perguntar em caso de dúvida.
-      </p>
-      <form onSubmit={(e) => { e.preventDefault(); setEnviado(q); }} className="flex gap-2">
-        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Nome, CPF ou telefone..." className="max-w-md" />
-        <Button type="submit" className="gap-1.5" disabled={q.trim().length < 3}>
-          <Search className="size-4" /> Buscar
-        </Button>
-      </form>
-
-      {enviado.trim().length >= 3 && (
-        isFetching ? (
-          <Centro><Loader2 className="size-5 animate-spin mr-2" /> Buscando...</Centro>
-        ) : resultados.length === 0 ? (
-          <Vazio icon={Search} titulo="Ninguém encontrado" texto="Tente outro nome, CPF ou telefone." />
-        ) : (
-          <div className="space-y-2">
-            <div className="text-xs text-muted-foreground">{resultados.length} resultado(s)</div>
-            {resultados.map((c) => (
-              <button key={c.id} type="button" onClick={() => onVerFicha?.(c.id)}
-                className="w-full flex items-center justify-between gap-3 rounded-lg border bg-card px-3 py-2 text-left hover:border-primary/50 transition-colors">
-                <div className="flex items-center gap-2 min-w-0">
-                  {c.foto_url
-                    ? <img src={c.foto_url} alt="" className="size-8 rounded-full object-cover shrink-0" />
-                    : <div className="size-8 rounded-full bg-muted flex items-center justify-center shrink-0"><UserIcon className="size-4 text-muted-foreground" /></div>}
-                  <div className="min-w-0">
-                    <div className="text-sm font-medium text-foreground truncate">{c.nome}</div>
-                    <div className="text-[10px] text-muted-foreground flex flex-wrap gap-x-2">
-                      {c.cpf && <span className="font-mono">{maskCpf(c.cpf)}</span>}
-                      {c.telefone && <span>{maskTelefone(c.telefone)}</span>}
-                      <span className="opacity-70">{c.status}</span>
-                    </div>
-                  </div>
-                </div>
-                <span className="text-xs text-primary inline-flex items-center gap-1 shrink-0"><Eye className="size-3.5" /> Ver ficha</span>
-              </button>
-            ))}
-          </div>
-        )
-      )}
-    </div>
   );
 }
 
