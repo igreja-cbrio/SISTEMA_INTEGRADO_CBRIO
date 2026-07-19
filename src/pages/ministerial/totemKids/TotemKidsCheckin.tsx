@@ -783,6 +783,17 @@ export default function TotemKidsCheckin() {
     if (sugerida) setSalaSelecionada(sugerida.id);
   }, [crianca, salas]);
 
+  // Segurança (Marcos 2026-07-19): se o responsável selecionado não pertence à
+  // criança atual, ZERA. Nunca herdar o responsável de outro check-in — a "mãe
+  // errada" vinha de um responsável de outra família que sobrava no estado ao
+  // trocar de criança. O pré-check-in tem efeito próprio (abaixo) que preenche.
+  useEffect(() => {
+    if (usarRespManual) return;
+    const valido = (crianca?.responsaveis || []).some(r => r.membro_id === responsavelSelecionado);
+    if (responsavelSelecionado && !valido) setResponsavelSelecionado('');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [crianca?.id]);
+
   // Em modo pré-check-in: pré-seleciona o responsável que preparou no app
   // (só se ele constar como autorizado a buscar a criança · segurança).
   useEffect(() => {
@@ -895,9 +906,17 @@ export default function TotemKidsCheckin() {
         payload.responsavel_telefone_manual = respManualTel.trim();
         payload.responsavel_parentesco = 'outro';
       } else {
+        // Segurança: só envia um responsável que REALMENTE pertence a esta
+        // criança. Se o id selecionado não está na lista dela (herdado de outro
+        // check-in), aborta — nunca gravar "mãe errada".
         const resp = crianca.responsaveis.find(r => r.membro_id === responsavelSelecionado);
+        if (!resp) {
+          setImprimindo(false);
+          toast.error('Selecione o responsável que está trazendo esta criança');
+          return;
+        }
         payload.responsavel_id = responsavelSelecionado;
-        payload.responsavel_parentesco = resp?.parentesco || 'outro';
+        payload.responsavel_parentesco = resp.parentesco || 'outro';
       }
       payload.enviar_wpp = enviarWpp; // backend só envia se houver telefone
       if (cpfRes.cpf) payload.responsavel_cpf = cpfRes.cpf;
@@ -1229,6 +1248,7 @@ export default function TotemKidsCheckin() {
           // Criança COM irmãos → painel da família (família como centro · #14).
           // Durante pré-check-in do app, mantém o fluxo individual (fila 1 a 1).
           <PainelFamilia
+            key={crianca.id}
             primaria={crianca}
             irmaos={irmaos}
             salas={salas}
@@ -1502,8 +1522,11 @@ function PainelFamilia(props: {
 
   function confirmar() {
     if (!podeConfirmar) return;
-    const itens = selecionados.map(m => ({ crianca: m, sala_id: salaPor[m.id] }));
+    // Segurança: o responsável tem que ser um da FAMÍLIA (respOpcoes) ou manual.
+    // Nunca herdar um respId de outra família (a "mãe errada").
     const respSel = respOpcoes.find(r => r.membro_id === respId);
+    if (!manual && !respSel) { toast.error('Selecione o responsável que está trazendo'); return; }
+    const itens = selecionados.map(m => ({ crianca: m, sala_id: salaPor[m.id] }));
     onConfirmar(itens, {
       membroId: manual ? null : respId,
       parentesco: manual ? 'outro' : (respSel?.parentesco || 'outro'),
