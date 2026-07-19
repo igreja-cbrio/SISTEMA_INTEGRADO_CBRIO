@@ -200,7 +200,9 @@ app.use('/api/integracao', require('./routes/integracao'));
 app.use('/api/relatorios', require('./routes/relatorios'));
 app.use('/api/eventos-externos', require('./routes/eventosExternos'));
 app.use('/api/next', require('./routes/next'));
-app.use('/api/next-batismo', require('./routes/nextBatismo'));
+const entradasRouter = require('./routes/nextBatismo');
+app.use('/api/entradas', entradasRouter);
+app.use('/api/next-batismo', entradasRouter); // alias legado (nome antigo · bundles em cache / bookmarks)
 app.use('/api/governanca', require('./routes/governanca'));
 app.use('/api/processos', require('./routes/processos'));
 app.use('/api/tarefas', require('./routes/tarefas'));

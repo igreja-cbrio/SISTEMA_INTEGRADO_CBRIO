@@ -152,7 +152,7 @@ const NAV_ITEMS = [
           { label: 'Cuidados', description: 'Capelania e aconselhamento', icon: Heart, path: '/ministerial/cuidados', module: 'cuidados' },
           { label: 'Grupos', description: 'Grupos de conexão · pedidos · QR · mapa', icon: UsersRound, path: '/grupos', module: 'grupos', perm: 'canMembresia' },
           { label: 'Voluntariado', description: 'Check-in, escalas e QR codes', icon: HandHelping, path: '/ministerial/voluntariado', perm: 'canMembresia' },
-          { label: 'Entradas', description: 'Porta de entrada · uma pessoa = um cadastro · liga inscrição ao membro e funde duplicados', icon: UserSearch, path: '/next-batismo', module: 'next-batismo' },
+          { label: 'Entradas', description: 'Porta de entrada · uma pessoa = um cadastro · liga inscrição ao membro e funde duplicados', icon: UserSearch, path: '/entradas', module: 'next-batismo' },
         ],
       },
       {
