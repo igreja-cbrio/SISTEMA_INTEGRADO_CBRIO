@@ -1860,6 +1860,12 @@ export const nextBatismo = {
   },
   ligar: (data) => post('/next-batismo/ligar', data),
   ignorarDuplicata: (data) => post('/next-batismo/ignorar-duplicata', data),
+  adiarDuplicata: (data) => post('/next-batismo/adiar-duplicata', data),
+  reativarDuplicata: (data) => post('/next-batismo/reativar-duplicata', data),
+  duplicadosAdiados: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return get('/next-batismo/duplicados/adiados' + (qs ? '?' + qs : ''));
+  },
   fundir: (data) => post('/next-batismo/fundir', data),
   resolucoes: (params = {}) => {
     const qs = new URLSearchParams(params).toString();

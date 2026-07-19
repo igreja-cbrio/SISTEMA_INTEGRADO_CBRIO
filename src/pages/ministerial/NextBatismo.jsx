@@ -308,18 +308,26 @@ function DuplicadosTab({ onVerFicha }) {
   const [busca, setBusca] = useState('');
   const [prioridade, setPrioridade] = useState('todas');
   const [limiteVisivel, setLimiteVisivel] = useState(100);
+  const [vista, setVista] = useState('fila'); // 'fila' | 'adiados'
+  const adiadosQ = useQuery({
+    queryKey: ['next-batismo', 'duplicados-adiados'],
+    queryFn: () => api.duplicadosAdiados(),
+    enabled: vista === 'adiados',
+    ...FILA_CACHE,
+  });
 
   const recarregarMut = useMutation({
-    mutationFn: () => api.duplicados({ refresh: 1 }),
+    mutationFn: () => (vista === 'adiados' ? api.duplicadosAdiados({ refresh: 1 }) : api.duplicados({ refresh: 1 })),
     onSuccess: (resultado) => {
-      qc.setQueryData(['next-batismo', 'duplicados'], resultado);
+      qc.setQueryData(['next-batismo', vista === 'adiados' ? 'duplicados-adiados' : 'duplicados'], resultado);
       qc.invalidateQueries({ queryKey: ['next-batismo', 'resumo'] });
     },
-    onError: (e) => toast.error(e?.message || 'Erro ao recarregar possíveis duplicidades'),
+    onError: (e) => toast.error(e?.message || 'Erro ao recarregar'),
   });
 
   const invalida = () => {
     qc.invalidateQueries({ queryKey: ['next-batismo', 'duplicados'] });
+    qc.invalidateQueries({ queryKey: ['next-batismo', 'duplicados-adiados'] });
     qc.invalidateQueries({ queryKey: ['next-batismo', 'resumo'] });
   };
 
@@ -327,6 +335,16 @@ function DuplicadosTab({ onVerFicha }) {
     mutationFn: (par) => api.ignorarDuplicata({ membro_a_id: par.membro_a_id, membro_b_id: par.membro_b_id }),
     onSuccess: () => { toast.success('Marcado como pessoas distintas · não aparece mais'); invalida(); },
     onError: (e) => toast.error(e?.message || 'Erro ao ignorar'),
+  });
+  const adiarMut = useMutation({
+    mutationFn: (par) => api.adiarDuplicata({ membro_a_id: par.membro_a_id, membro_b_id: par.membro_b_id, confianca: par.confianca, prioridade: par.prioridade }),
+    onSuccess: () => { toast.success('Adiada · volta sozinha quando aparecer um cadastro completo'); invalida(); },
+    onError: (e) => toast.error(e?.message || 'Erro ao adiar'),
+  });
+  const reativarMut = useMutation({
+    mutationFn: (par) => api.reativarDuplicata({ membro_a_id: par.membro_a_id, membro_b_id: par.membro_b_id }),
+    onSuccess: () => { toast.success('De volta pra fila'); invalida(); },
+    onError: (e) => toast.error(e?.message || 'Erro ao trazer de volta'),
   });
   const mergeMut = useMutation({
     mutationFn: ({ keep_id, merge_ids }) => api.fundir({ keep_id, merge_ids }),
@@ -337,7 +355,12 @@ function DuplicadosTab({ onVerFicha }) {
     onError: (e) => toast.error(e?.message || 'Erro ao fundir'),
   });
 
-  const items = data?.items || [];
+  const emAdiados = vista === 'adiados';
+  const carregando = emAdiados ? adiadosQ.isLoading : isLoading;
+  const comErro = emAdiados ? adiadosQ.isError : isError;
+  const erro = emAdiados ? adiadosQ.error : error;
+  const recarregando = (emAdiados ? adiadosQ.isFetching : isFetching) || recarregarMut.isPending;
+  const items = (emAdiados ? adiadosQ.data : data)?.items || [];
   const termo = busca.trim().toLowerCase();
   const filtrados = items.filter((par) => {
     if (prioridade !== 'todas' && par.prioridade !== prioridade) return false;
@@ -353,14 +376,21 @@ function DuplicadosTab({ onVerFicha }) {
   return (
     <div className="space-y-4">
       <div className="flex items-start justify-between gap-2 flex-wrap">
-        <p className="text-xs text-muted-foreground max-w-2xl">
-          O sistema combina sinais antes de trazer um par. Telefone ou e-mail isolados não bastam,
-          e CPFs diferentes eliminam a sugestão. <strong>Confira as evidências e os módulos onde cada pessoa aparece antes de fundir.</strong>
-        </p>
-        <Button onClick={() => recarregarMut.mutate()} disabled={isFetching || recarregarMut.isPending} variant="outline" size="sm" className="gap-1.5">
-          <RefreshCw className={`size-3.5 ${isFetching || recarregarMut.isPending ? 'animate-spin' : ''}`} /> Recarregar
+        <div className="flex gap-1.5">
+          <Button size="sm" variant={vista === 'fila' ? 'default' : 'outline'} className="h-8 text-xs"
+            onClick={() => { setVista('fila'); setLimiteVisivel(100); }}>Fila</Button>
+          <Button size="sm" variant={vista === 'adiados' ? 'default' : 'outline'} className="h-8 text-xs"
+            onClick={() => { setVista('adiados'); setLimiteVisivel(100); }}>Não tenho certeza</Button>
+        </div>
+        <Button onClick={() => recarregarMut.mutate()} disabled={recarregando} variant="outline" size="sm" className="gap-1.5">
+          <RefreshCw className={`size-3.5 ${recarregando ? 'animate-spin' : ''}`} /> Recarregar
         </Button>
       </div>
+      <p className="text-xs text-muted-foreground max-w-2xl">
+        {emAdiados
+          ? 'Pares que você marcou como "não tenho certeza". Voltam sozinhos pra fila quando um cadastro completo (CPF + nascimento) confirmar a identidade — ou você traz de volta na mão.'
+          : (<>O sistema combina sinais antes de trazer um par. Telefone ou e-mail isolados não bastam, e CPFs diferentes eliminam a sugestão. <strong>Confira as evidências e os módulos onde cada pessoa aparece antes de fundir.</strong></>)}
+      </p>
 
       <div className="flex flex-col md:flex-row gap-2 md:items-center">
         <div className="relative flex-1 max-w-xl">
@@ -381,28 +411,33 @@ function DuplicadosTab({ onVerFicha }) {
         </div>
       </div>
 
-      {isLoading ? (
-        <Centro><Loader2 className="size-5 animate-spin mr-2" /> Procurando duplicatas...</Centro>
-      ) : isError ? (
+      {carregando ? (
+        <Centro><Loader2 className="size-5 animate-spin mr-2" /> {emAdiados ? 'Carregando adiados...' : 'Procurando duplicatas...'}</Centro>
+      ) : comErro ? (
         <div className="space-y-3">
-          <Vazio icon={ShieldQuestion} titulo="Não foi possível carregar as possíveis duplicidades"
-            texto={error?.message || 'A verificação da base falhou. Nenhuma fila vazia será exibida enquanto houver erro.'} />
+          <Vazio icon={ShieldQuestion} titulo="Não foi possível carregar"
+            texto={erro?.message || 'A verificação da base falhou. Nenhuma fila vazia será exibida enquanto houver erro.'} />
           <div className="flex justify-center">
-            <Button variant="outline" size="sm" onClick={() => refetch()} className="gap-1.5">
+            <Button variant="outline" size="sm" onClick={() => (emAdiados ? adiadosQ.refetch() : refetch())} className="gap-1.5">
               <RefreshCw className="size-3.5" /> Tentar novamente
             </Button>
           </div>
         </div>
       ) : items.length === 0 ? (
-        <Vazio icon={GitMerge} titulo="Nenhuma possível duplicata encontrada"
-          texto="A base foi verificada e, com as regras atuais, não existe nenhum par com evidências suficientes para revisão. Telefone isolado não gera duplicata." />
+        <Vazio icon={GitMerge}
+          titulo={emAdiados ? 'Nada adiado' : 'Nenhuma possível duplicata encontrada'}
+          texto={emAdiados
+            ? 'Você não marcou nenhum par como "não tenho certeza". Eles apareceriam aqui até um cadastro completo confirmar a identidade.'
+            : 'A base foi verificada e, com as regras atuais, não existe nenhum par com evidências suficientes para revisão. Telefone isolado não gera duplicata.'} />
       ) : (
         <div className="space-y-3">
           <div className="text-xs text-muted-foreground">{filtrados.length} de {items.length} par(es) · exibindo {visiveis.length}</div>
           {visiveis.map((par) => (
-            <ParCard key={par.par_id} par={par} onVerFicha={onVerFicha}
+            <ParCard key={par.par_id} par={par} onVerFicha={onVerFicha} emAdiados={emAdiados}
               onMerge={(keep_id) => setMergeDialog({ par, keep_id })}
-              onIgnorar={() => ignorarMut.mutate(par)} ignorando={ignorarMut.isPending} />
+              onIgnorar={() => ignorarMut.mutate(par)} ignorando={ignorarMut.isPending}
+              onAdiar={() => adiarMut.mutate(par)} adiando={adiarMut.isPending}
+              onReativar={() => reativarMut.mutate(par)} reativando={reativarMut.isPending} />
           ))}
           {limiteVisivel < filtrados.length && (
             <div className="flex justify-center pt-2">
@@ -462,7 +497,7 @@ function DuplicadosTab({ onVerFicha }) {
   );
 }
 
-function ParCard({ par, onMerge, onIgnorar, ignorando, onVerFicha }) {
+function ParCard({ par, onMerge, onIgnorar, ignorando, onVerFicha, emAdiados, onAdiar, adiando, onReativar, reativando }) {
   const motivos = par.motivos || [];
   const corPrincipal = par.prioridade === 'quase_confirmado' ? '#059669'
     : par.prioridade === 'alta' ? '#7C3AED' : MOTIVO_LABELS[motivos[0]]?.cor || '#6B7280';
@@ -488,9 +523,21 @@ function ParCard({ par, onMerge, onIgnorar, ignorando, onVerFicha }) {
             <span className="text-[10px] text-muted-foreground">Fontes: {par.fontes_evidencia.join(' · ')}</span>
           )}
         </div>
-        <Button variant="ghost" size="sm" onClick={onIgnorar} disabled={ignorando} className="h-7 text-xs gap-1">
-          <X className="size-3" /> Não é a mesma pessoa
-        </Button>
+        <div className="flex items-center gap-1 shrink-0">
+          {emAdiados ? (
+            <Button variant="ghost" size="sm" onClick={onReativar} disabled={reativando} className="h-7 text-xs gap-1">
+              <RefreshCw className="size-3" /> Trazer de volta
+            </Button>
+          ) : (
+            <Button variant="ghost" size="sm" onClick={onAdiar} disabled={adiando}
+              className="h-7 text-xs gap-1 text-amber-600 dark:text-amber-400 hover:text-amber-700">
+              <ShieldQuestion className="size-3" /> Não tenho certeza
+            </Button>
+          )}
+          <Button variant="ghost" size="sm" onClick={onIgnorar} disabled={ignorando} className="h-7 text-xs gap-1">
+            <X className="size-3" /> Não é a mesma pessoa
+          </Button>
+        </div>
       </CardHeader>
       <CardContent className="p-0">
         {par.contradicoes?.length > 0 && (

@@ -431,20 +431,77 @@ async function carregarDuplicadosProgressivos() {
     })).filter((p) => p.membro_a && p.membro_b);
 }
 
-async function carregarDuplicadosPendentes() {
-  const [triagem, progressivos] = await Promise.all([
-    carregarTriagemFamilias(), carregarDuplicadosProgressivos(),
+// "Não tenho certeza": reativa quando fica DECISIVO (quase_confirmado — em geral
+// CPF de um formulário completo) ou quando a confiança sobe materialmente acima
+// do momento do adiamento. Formulário completo (CPF+nascimento) empurra o par.
+const LIMIAR_QUASE = 90;
+const MARGEM_REATIVA = 10;
+const ORDEM_PRIORIDADE = { quase_confirmado: 0, alta: 1, media: 2, descoberta: 3 };
+function parKey(a, b) { return [a, b].sort().join('_'); }
+function ordenarPares(a, b) {
+  if (a.prioridade !== b.prioridade) return (ORDEM_PRIORIDADE[a.prioridade] ?? 9) - (ORDEM_PRIORIDADE[b.prioridade] ?? 9);
+  if ((a.confianca || 0) !== (b.confianca || 0)) return (b.confianca || 0) - (a.confianca || 0);
+  return String(a.membro_a?.nome || '').localeCompare(String(b.membro_a?.nome || ''), 'pt-BR');
+}
+function evidenciaDecisiva(par, adiado) {
+  if (par.prioridade === 'quase_confirmado' || (par.confianca || 0) >= LIMIAR_QUASE) return true;
+  return (par.confianca || 0) >= (adiado.confianca_no_adiamento || 0) + MARGEM_REATIVA;
+}
+const tabelaAdiadosAusente = (msg) => /entradas_pares_adiados|schema cache|does not exist/i.test(msg || '');
+
+// Pares adiados ainda ativos (não reativados). Map par_key -> registro.
+async function carregarAdiados() {
+  const mapa = new Map();
+  try {
+    const { data, error } = await supabase.from('entradas_pares_adiados')
+      .select('par_key, confianca_no_adiamento, prioridade_no_adiamento, adiado_em, adiado_por')
+      .is('reativado_em', null).limit(5000);
+    if (error) { if (tabelaAdiadosAusente(error.message)) return mapa; throw error; }
+    for (const r of data || []) mapa.set(r.par_key, r);
+  } catch (e) {
+    if (!tabelaAdiadosAusente(e.message)) throw e;
+  }
+  return mapa;
+}
+
+// Particiona os pares em ATIVOS (fila) e ADIADOS ("não tenho certeza" que ainda
+// não ficou decisivo). Um par adiado que voltou a ser decisivo reentra na fila
+// ativa e é carimbado como reativado (best-effort · nunca funde sozinho).
+async function montarDuplicados() {
+  const [triagem, progressivos, adiados] = await Promise.all([
+    carregarTriagemFamilias(), carregarDuplicadosProgressivos(), carregarAdiados(),
   ]);
   const porPar = new Map(reshapeDuplicados(triagem.duplicatas || []).map((p) => [p.par_id, p]));
   // A identidade progressiva conhece várias portas e prevalece sobre o retrato
   // atual de mem_membros para o mesmo par.
   for (const p of progressivos) porPar.set(p.par_id, p);
-  const ordem = { quase_confirmado: 0, alta: 1, media: 2, descoberta: 3 };
-  return [...porPar.values()].sort((a, b) => {
-    if (a.prioridade !== b.prioridade) return (ordem[a.prioridade] ?? 9) - (ordem[b.prioridade] ?? 9);
-    if ((a.confianca || 0) !== (b.confianca || 0)) return (b.confianca || 0) - (a.confianca || 0);
-    return String(a.membro_a?.nome || '').localeCompare(String(b.membro_a?.nome || ''), 'pt-BR');
-  });
+
+  const ativos = [];
+  const adiadosLista = [];
+  const reativarKeys = [];
+  for (const par of porPar.values()) {
+    const adi = par.membro_a_id && par.membro_b_id ? adiados.get(parKey(par.membro_a_id, par.membro_b_id)) : null;
+    if (!adi) { ativos.push(par); continue; }
+    if (evidenciaDecisiva(par, adi)) { ativos.push(par); reativarKeys.push(parKey(par.membro_a_id, par.membro_b_id)); }
+    else adiadosLista.push({ ...par, adiado_em: adi.adiado_em, confianca_no_adiamento: adi.confianca_no_adiamento });
+  }
+  if (reativarKeys.length) {
+    // Reativação automática · best-effort (não derruba a resposta da fila).
+    supabase.from('entradas_pares_adiados')
+      .update({ reativado_em: new Date().toISOString(), reativado_motivo: 'evidencia_decisiva' })
+      .in('par_key', reativarKeys).is('reativado_em', null)
+      .then(({ error }) => { if (error && !tabelaAdiadosAusente(error.message)) console.warn('[next-batismo] reativar adiado:', error.message); });
+  }
+  ativos.sort(ordenarPares);
+  adiadosLista.sort(ordenarPares);
+  return { ativos, adiados: adiadosLista };
+}
+
+async function carregarDuplicadosPendentes() {
+  return (await montarDuplicados()).ativos;
+}
+async function carregarDuplicadosAdiados() {
+  return (await montarDuplicados()).adiados;
 }
 
 // ── Normaliza uma linha do funil sem vínculo pra forma uniforme ──
@@ -490,14 +547,15 @@ function rowVisita(r) {
 router.get('/resumo', authorizeModule('next-batismo', 1), async (req, res) => {
   try {
     const cnt = async (q) => { const { count } = await q; return count || 0; };
-    const [duplicados, familiasPendentes, vivos, comCpf] = await Promise.all([
-      carregarDuplicadosPendentes(),
+    const [dup, familiasPendentes, vivos, comCpf] = await Promise.all([
+      montarDuplicados(),
       carregarFamiliasPendentes(),
       cnt(supabase.from('mem_membros').select('id', { count: 'exact', head: true }).is('deleted_at', null)),
       cnt(supabase.from('mem_membros').select('id', { count: 'exact', head: true }).is('deleted_at', null).not('cpf', 'is', null)),
     ]);
     res.json({
-      duplicatas: duplicados.length,
+      duplicatas: dup.ativos.length,
+      adiados: dup.adiados.length,
       familias_pendentes: familiasPendentes.length,
       // Saúde da identidade (corrida do CPF · faixa do topo da tela)
       saude: { pessoas: vivos, com_cpf: comCpf, pct_cpf: vivos > 0 ? Math.round((comCpf / vivos) * 100) : 0 },
@@ -540,6 +598,19 @@ router.get('/duplicados', authorizeModule('next-batismo', 1), async (req, res) =
   } catch (e) {
     console.error('[next-batismo/duplicados]', e.message);
     res.status(500).json({ error: e.message || 'Erro ao buscar duplicados' });
+  }
+});
+
+// ── GET /duplicados/adiados · fila "não tenho certeza" (some quando ficar decisivo) ──
+router.get('/duplicados/adiados', authorizeModule('next-batismo', 1), async (req, res) => {
+  try {
+    if (req.query.refresh === '1') invalidarTriagemPessoas();
+    const adiados = await carregarDuplicadosAdiados();
+    const items = await enriquecerOrigensDuplicados(adiados);
+    res.json({ total: items.length, items });
+  } catch (e) {
+    console.error('[next-batismo/duplicados-adiados]', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao buscar adiados' });
   }
 });
 
@@ -840,6 +911,63 @@ router.post('/ignorar-duplicata', authorizeModule('next-batismo', 2), async (req
   } catch (e) {
     console.error('[next-batismo/ignorar-duplicata]', e.message);
     res.status(500).json({ error: e.message || 'Erro ao ignorar' });
+  }
+});
+
+// ── POST /adiar-duplicata · "não tenho certeza" (tira da fila · volta se decisivo) ──
+router.post('/adiar-duplicata', authorizeModule('next-batismo', 2), async (req, res) => {
+  try {
+    const { membro_a_id, membro_b_id, confianca, prioridade, motivo } = req.body || {};
+    if (!membro_a_id || !membro_b_id) return res.status(400).json({ error: 'membro_a_id e membro_b_id obrigatórios' });
+    const [a, b] = [membro_a_id, membro_b_id].sort();
+    const key = `${a}_${b}`;
+    const { error } = await supabase.from('entradas_pares_adiados').upsert({
+      par_key: key, membro_a_id: a, membro_b_id: b,
+      confianca_no_adiamento: Number.isFinite(Number(confianca)) ? Number(confianca) : 0,
+      prioridade_no_adiamento: prioridade || null,
+      adiado_por: req.user?.id || null, adiado_em: new Date().toISOString(),
+      reativado_em: null, reativado_motivo: null,
+    }, { onConflict: 'par_key' });
+    if (error) {
+      if (tabelaAdiadosAusente(error.message)) return res.status(503).json({ error: 'Recurso indisponível: aplique a migration entradas_pares_adiados.' });
+      throw error;
+    }
+    await registrarResolucao({
+      tipo: 'duplicidade', acao: 'adiado',
+      membro_principal_id: a, membro_secundario_id: b,
+      origem: 'entradas_pares_adiados', origem_id: key,
+      detalhe: { motivo: motivo || 'Não tenho certeza', confianca: confianca ?? null },
+      resolvido_por: req.user?.id || null,
+    });
+    invalidarTriagemPessoas();
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[next-batismo/adiar-duplicata]', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao adiar' });
+  }
+});
+
+// ── POST /reativar-duplicata · "trazer de volta" pra fila ativa (manual) ─────
+router.post('/reativar-duplicata', authorizeModule('next-batismo', 2), async (req, res) => {
+  try {
+    const { membro_a_id, membro_b_id } = req.body || {};
+    if (!membro_a_id || !membro_b_id) return res.status(400).json({ error: 'membro_a_id e membro_b_id obrigatórios' });
+    const [a, b] = [membro_a_id, membro_b_id].sort();
+    const { error } = await supabase.from('entradas_pares_adiados')
+      .update({ reativado_em: new Date().toISOString(), reativado_motivo: 'manual' })
+      .eq('par_key', `${a}_${b}`).is('reativado_em', null);
+    if (error && !tabelaAdiadosAusente(error.message)) throw error;
+    await registrarResolucao({
+      tipo: 'duplicidade', acao: 'reativado',
+      membro_principal_id: a, membro_secundario_id: b,
+      origem: 'entradas_pares_adiados', origem_id: `${a}_${b}`,
+      resolvido_por: req.user?.id || null,
+    });
+    invalidarTriagemPessoas();
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[next-batismo/reativar-duplicata]', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao reativar' });
   }
 });
 
