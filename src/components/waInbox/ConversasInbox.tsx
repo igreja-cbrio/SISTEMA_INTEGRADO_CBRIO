@@ -13,14 +13,19 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
+  DropdownMenuSeparator, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
   Loader2, Send, Search, Check, MessageCircle, RefreshCw,
-  ExternalLink, Clock, User, CheckCheck,
+  ExternalLink, Clock, User, CheckCheck, UserPlus, ChevronDown, UserCheck,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
+type Atendente = { id: string; name: string };
 type Conversa = {
   id: string; telefone: string; nome: string | null; membro_id: string | null;
-  nao_lidas: number; resolvida: boolean; ultima_previa: string | null;
+  nao_lidas: number; resolvida: boolean; ultima_previa: string | null; atribuido_a: string | null;
   last_message_at: string | null; dentro_janela: boolean; janela_expira_em: string | null;
 };
 type Msg = { id: string; direcao: 'in' | 'out'; tipo: string; texto: string | null; criado_em: string };
@@ -55,9 +60,9 @@ function janelaRestante(iso?: string | null) {
   return h > 0 ? `${h}h${m.toString().padStart(2, '0')}` : `${m}min`;
 }
 
-export default function ConversasInbox() {
+export default function ConversasInbox({ atendentes = [], currentUserId }: { atendentes?: Atendente[]; currentUserId?: string }) {
   const [conversas, setConversas] = useState<Conversa[] | null>(null);
-  const [filtro, setFiltro] = useState<'abertas' | 'nao_lidas' | 'todas'>('abertas');
+  const [filtro, setFiltro] = useState<'abertas' | 'nao_lidas' | 'minhas' | 'todas'>('abertas');
   const [busca, setBusca] = useState('');
   const [selId, setSelId] = useState<string | null>(null);
   const [conv, setConv] = useState<Conversa | null>(null);
@@ -68,7 +73,8 @@ export default function ConversasInbox() {
   const selRef = useRef<string | null>(null);
   selRef.current = selId;
 
-  const statusApi = filtro === 'todas' || filtro === 'nao_lidas' ? 'todas' : 'abertas';
+  const statusApi = filtro === 'abertas' ? 'abertas' : 'todas';
+  const nomeResp = (id: string | null) => (id ? atendentes.find(a => a.id === id)?.name || null : null);
 
   const carregarConversas = useCallback(async () => {
     try {
@@ -118,8 +124,22 @@ export default function ConversasInbox() {
     } catch { toast.error('Erro'); }
   }
 
+  async function atribuir(userId: string | null) {
+    if (!selId) return;
+    // atualização otimista pra a UI responder na hora
+    setConv(c => (c ? { ...c, atribuido_a: userId } : c));
+    try {
+      await waInbox.atualizar(selId, { atribuido_a: userId });
+      toast.success(userId ? `Atribuída a ${nomeResp(userId) || 'responsável'}` : 'Atribuição removida');
+      carregarConversas();
+      carregarThread(selId);
+    } catch { toast.error('Erro ao atribuir'); carregarThread(selId); }
+  }
+
   const foraJanela = conv && !conv.dentro_janela;
-  const lista = (conversas || []).filter(c => filtro !== 'nao_lidas' || c.nao_lidas > 0);
+  const lista = (conversas || []).filter(c =>
+    (filtro !== 'nao_lidas' || c.nao_lidas > 0) &&
+    (filtro !== 'minhas' || (!!currentUserId && c.atribuido_a === currentUserId)));
   const totalNaoLidas = (conversas || []).reduce((a, c) => a + (c.nao_lidas || 0), 0);
 
   return (
@@ -151,9 +171,9 @@ export default function ConversasInbox() {
           </div>
 
           <div className="flex gap-1 px-3 pt-2.5">
-            {([['abertas', 'Abertas'], ['nao_lidas', 'Não lidas'], ['todas', 'Todas']] as const).map(([k, label]) => (
+            {([['abertas', 'Abertas'], ['nao_lidas', 'Não lidas'], ...(currentUserId ? [['minhas', 'Minhas'] as const] : []), ['todas', 'Todas']] as const).map(([k, label]) => (
               <button key={k} onClick={() => setFiltro(k)}
-                className={`flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${filtro === k ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:bg-muted'}`}>
+                className={`flex-1 rounded-md px-1.5 py-1.5 text-[11px] font-medium transition-colors ${filtro === k ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:bg-muted'}`}>
                 {label}
               </button>
             ))}
@@ -192,6 +212,14 @@ export default function ConversasInbox() {
                         {c.resolvida
                           ? <Badge variant="outline" className="h-4.5 border-blue-500/25 bg-blue-500/10 px-1.5 py-0 text-[10px] font-normal text-blue-600 dark:text-blue-400">Resolvida</Badge>
                           : <Badge variant="outline" className="h-4.5 border-primary/25 bg-primary/10 px-1.5 py-0 text-[10px] font-normal text-primary">Aberta</Badge>}
+                        {c.atribuido_a && nomeResp(c.atribuido_a) && (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground"><UserCheck className="h-3 w-3" />{nomeResp(c.atribuido_a)!.split(' ')[0]}</span>
+                            </TooltipTrigger>
+                            <TooltipContent>Responsável: {nomeResp(c.atribuido_a)}</TooltipContent>
+                          </Tooltip>
+                        )}
                         {c.nao_lidas > 0 && (
                           <span className="ml-auto flex h-4.5 min-w-[18px] items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground">{c.nao_lidas}</span>
                         )}
@@ -226,9 +254,48 @@ export default function ConversasInbox() {
                     ? <Badge variant="outline" className="border-blue-500/25 bg-blue-500/10 text-[11px] text-blue-600 dark:text-blue-400">Resolvida</Badge>
                     : <Badge variant="outline" className="border-primary/25 bg-primary/10 text-[11px] text-primary">Aberta</Badge>}
                 </div>
-                {conv.resolvida
-                  ? <Button size="sm" variant="outline" onClick={() => resolver(false)}>Reabrir</Button>
-                  : <Button size="sm" variant="outline" onClick={() => resolver(true)}><Check className="mr-1 h-3.5 w-3.5" />Resolver</Button>}
+                <div className="flex items-center gap-2 shrink-0">
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button size="sm" variant="outline" className="gap-1.5">
+                        {conv.atribuido_a && nomeResp(conv.atribuido_a)
+                          ? <><UserCheck className="h-3.5 w-3.5 text-primary" />{nomeResp(conv.atribuido_a)!.split(' ')[0]}</>
+                          : <><UserPlus className="h-3.5 w-3.5" />Atribuir</>}
+                        <ChevronDown className="h-3 w-3 opacity-60" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-56">
+                      <DropdownMenuLabel>Responsável pela conversa</DropdownMenuLabel>
+                      <DropdownMenuSeparator />
+                      {currentUserId && conv.atribuido_a !== currentUserId && (
+                        <DropdownMenuItem onClick={() => atribuir(currentUserId)} className="gap-2">
+                          <UserCheck className="h-4 w-4 text-primary" /> Atribuir a mim
+                        </DropdownMenuItem>
+                      )}
+                      <div className="max-h-56 overflow-y-auto">
+                        {atendentes.length === 0 && <div className="px-2 py-1.5 text-xs text-muted-foreground">Sem equipe cadastrada</div>}
+                        {atendentes.map(a => (
+                          <DropdownMenuItem key={a.id} onClick={() => atribuir(a.id)} className="gap-2">
+                            <span className={`h-2 w-2 rounded-full ${conv.atribuido_a === a.id ? 'bg-primary' : 'bg-muted-foreground/30'}`} />
+                            <span className="flex-1 truncate">{a.name}</span>
+                            {conv.atribuido_a === a.id && <Check className="h-3.5 w-3.5 text-primary" />}
+                          </DropdownMenuItem>
+                        ))}
+                      </div>
+                      {conv.atribuido_a && (
+                        <>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem onClick={() => atribuir(null)} className="gap-2 text-muted-foreground">
+                            Remover atribuição
+                          </DropdownMenuItem>
+                        </>
+                      )}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                  {conv.resolvida
+                    ? <Button size="sm" variant="outline" onClick={() => resolver(false)}>Reabrir</Button>
+                    : <Button size="sm" variant="outline" onClick={() => resolver(true)}><Check className="mr-1 h-3.5 w-3.5" />Resolver</Button>}
+                </div>
               </div>
 
               <ScrollArea className="flex-1 bg-muted/20">
@@ -297,6 +364,25 @@ export default function ConversasInbox() {
                 {conv.resolvida
                   ? <Badge variant="outline" className="border-blue-500/25 bg-blue-500/10 text-blue-600 dark:text-blue-400">Resolvida</Badge>
                   : <Badge variant="outline" className="border-primary/25 bg-primary/10 text-primary">Aberta</Badge>}
+              </div>
+              <Separator />
+              <div>
+                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Responsável</p>
+                {conv.atribuido_a && nomeResp(conv.atribuido_a) ? (
+                  <div className="flex items-center gap-2 rounded-lg border border-border p-2">
+                    <Avatar className="h-7 w-7"><AvatarFallback className="bg-primary/15 text-primary text-[10px] font-semibold">{iniciais(nomeResp(conv.atribuido_a), '')}</AvatarFallback></Avatar>
+                    <span className="flex-1 truncate text-sm">{nomeResp(conv.atribuido_a)}</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 rounded-lg border border-dashed border-border p-2 text-sm text-muted-foreground">
+                    <UserPlus className="h-4 w-4" /> Não atribuído
+                  </div>
+                )}
+                {currentUserId && conv.atribuido_a !== currentUserId && (
+                  <Button size="sm" variant="ghost" className="mt-1.5 h-7 gap-1 px-2 text-xs text-primary" onClick={() => atribuir(currentUserId)}>
+                    <UserCheck className="h-3.5 w-3.5" /> Atribuir a mim
+                  </Button>
+                )}
               </div>
               <Separator />
               <div>
