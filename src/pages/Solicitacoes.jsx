@@ -118,7 +118,13 @@ export default function Solicitacoes() {
   // alguma área (area_solicitacoes_responsaveis). Fonte de verdade no backend
   // via /meu-papel · colaborador comum so ve "Minhas Solicitações".
   // papel.eh_diretor_origem · habilita aba "Aprovar" (diretor de setor da Spec 001).
-  const [papel, setPapel] = useState({ atende: false, admin: false, eh_diretor_origem: false, pendentes_origem: 0, eh_triagem_admin: false, pendentes_triagem: 0 });
+  // Seed do último papel conhecido (localStorage) → a aba "Aprovar" renderiza NA
+  // HORA ao reabrir, sem piscar esperando o /meu-papel (bug 2026-07-20).
+  const PAPEL_PADRAO = { atende: false, admin: false, eh_diretor_origem: false, pendentes_origem: 0, eh_triagem_admin: false, pendentes_triagem: 0 };
+  const [papel, setPapel] = useState(() => {
+    try { const c = localStorage.getItem('cbrio_solic_papel'); return c ? { ...PAPEL_PADRAO, ...JSON.parse(c) } : PAPEL_PADRAO; }
+    catch { return PAPEL_PADRAO; }
+  });
   const [papelCarregado, setPapelCarregado] = useState(false);
   const atendeAreas = papel.atende;
   const ehDiretorOrigem = papel.eh_diretor_origem;
@@ -138,7 +144,7 @@ export default function Solicitacoes() {
   async function refreshPapel() {
     try {
       const r = await api.meuPapel?.();
-      if (r) setPapel(r);
+      if (r) { setPapel(r); try { localStorage.setItem('cbrio_solic_papel', JSON.stringify(r)); } catch (_) {} }
     } catch (_) {}
   }
 
@@ -147,7 +153,7 @@ export default function Solicitacoes() {
     (async () => {
       try {
         const r = await api.meuPapel?.();
-        if (alive && r) setPapel(r);
+        if (alive && r) { setPapel(r); try { localStorage.setItem('cbrio_solic_papel', JSON.stringify(r)); } catch (_) {} }
       } catch (_) {}
       finally { if (alive) setPapelCarregado(true); }
     })();
