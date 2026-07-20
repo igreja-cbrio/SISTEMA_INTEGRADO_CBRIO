@@ -151,13 +151,22 @@ async function processarMensagem(m, cfg) {
 
   // ── Persona 1 · numero desconhecido (ou sem permissão de coleta) ────
   if (!podeColetar) {
-    if (m.type !== 'text') return; // mídia de desconhecido · ignora (não custa LLM)
+    // Inbox humano (Cuidados → Conversas): captura a mensagem de quem NÃO é
+    // fluxo do bot (convertidos, visitantes) pra o time responder. Best-effort.
+    const waInbox = require('../services/waInbox');
+    await waInbox.registrarInbound({
+      telefone, texto, messageId,
+      tipo: m.type === 'image' ? 'image' : m.type === 'audio' ? 'audio' : 'text',
+    }).catch(e => console.error('[whatsapp webhook] inbox in:', e.message));
+    if (m.type !== 'text') return; // mídia: já no inbox; não custa LLM institucional
     const resposta = await responderInstitucional({ texto, institucional: cfg?.institucional });
     await supabase.from('whatsapp_coletas').insert({
       whatsapp_message_id: messageId, telefone, raw_text: texto,
       status: 'ignorado', erro: lider ? 'coleta_restrita' : 'institucional', modulo_destino: 'institucional',
     });
     await enviarTexto(telefone, resposta);
+    await waInbox.registrarOutbound({ telefone, texto: resposta, tipo: 'institucional' })
+      .catch(e => console.error('[whatsapp webhook] inbox out:', e.message));
     return;
   }
 

@@ -2829,6 +2829,21 @@ export const monitorAutomacoes = {
   status: () => get('/monitor-automacoes/status'),
 };
 
+// Inbox de WhatsApp (Cuidados → Conversas)
+export const waInbox = {
+  conversas: (params = {}) => {
+    const p = new URLSearchParams();
+    if (params.status) p.set('status', params.status);
+    if (params.q) p.set('q', params.q);
+    const qs = p.toString();
+    return get(`/wa-inbox/conversas${qs ? `?${qs}` : ''}`);
+  },
+  mensagens: (id) => get(`/wa-inbox/conversas/${id}/mensagens`),
+  responder: (id, body) => post(`/wa-inbox/conversas/${id}/responder`, body),
+  ler: (id) => post(`/wa-inbox/conversas/${id}/ler`, {}),
+  atualizar: (id, body) => patch(`/wa-inbox/conversas/${id}`, body),
+};
+
 export const cuidados = {
   dashboard: () => get('/cuidados/dashboard'),
   dashboardSeries: (params) => get('/cuidados/dashboard-series' + (params ? '?' + new URLSearchParams(params) : '')),
