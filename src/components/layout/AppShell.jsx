@@ -2,7 +2,7 @@ import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
-import { notificacoes as notifApi } from '../../api';
+import { notificacoes as notifApi, waInbox as waInboxApi } from '../../api';
 import { supabase } from '../../supabaseClient';
 import ChatIAFloating from './ChatIAFloating';
 import FeedbackButton from '../FeedbackButton';
@@ -246,6 +246,7 @@ export default function AppShell() {
     .toUpperCase();
 
   const [notifCount, setNotifCount] = useState(0);
+  const [waUnread, setWaUnread] = useState(0);
   const [notifOpen, setNotifOpen] = useState(false);
   const [pushSubscribed, setPushSubscribed] = useState(false);
   const [pushBusy, setPushBusy] = useState(false);
@@ -371,6 +372,37 @@ export default function AppShell() {
     } catch { /* backend might not be ready */ }
   }
 
+  // ── Conversas (WhatsApp) · badge dedicado no header ──────────────────
+  // Mensagens do inbox NÃO poluem o sino: têm o próprio ícone. Contador é o
+  // total de não-lidas do ESCOPO do usuário (área/atribuição). Realtime + poll.
+  const podeConversas = itemAllowed({ module: 'conversas' });
+  async function loadWaUnread() {
+    try { const r = await waInboxApi.naoLidas(); setWaUnread(r?.total || 0); }
+    catch { /* sem acesso ao módulo · ignora */ }
+  }
+  useEffect(() => {
+    if (!podeConversas) { setWaUnread(0); return; }
+    loadWaUnread();
+    const interval = setInterval(loadWaUnread, 30000);
+    const onVisible = () => { if (document.visibilityState === 'visible') loadWaUnread(); };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+    let ch = null;
+    if (supabase && profile?.id) {
+      ch = supabase.channel(`wa-unread:${profile.id}`)
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'wa_mensagens' }, () => loadWaUnread())
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'wa_conversas' }, () => loadWaUnread())
+        .subscribe();
+    }
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
+      if (ch) supabase.removeChannel(ch);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [podeConversas, profile?.id]);
+
   const loadNotifs = useCallback(async () => {
     setNotifsLoading(true);
     try {
@@ -471,6 +503,22 @@ export default function AppShell() {
               <span className="hidden md:inline">Buscar</span>
               <kbd className="hidden md:inline text-[10px] px-1 py-0.5 rounded bg-muted">⌘K</kbd>
             </button>
+
+            {/* Conversas (WhatsApp) · badge próprio, fora do sino */}
+            {podeConversas && (
+              <button
+                onClick={() => navigate('/conversas')}
+                className="relative p-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground"
+                title="Conversas (WhatsApp)"
+              >
+                <MessageSquare className="h-4 w-4" />
+                {waUnread > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 h-4 min-w-[16px] rounded-full bg-primary text-[9px] font-bold text-primary-foreground flex items-center justify-center cbrio-badge-pulse px-1">
+                    {waUnread > 9 ? '9+' : waUnread}
+                  </span>
+                )}
+              </button>
+            )}
 
             {/* Theme toggle */}
             <button onClick={toggleTheme} className="p-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground">
