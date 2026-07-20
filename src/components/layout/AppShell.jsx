@@ -150,6 +150,7 @@ const NAV_ITEMS = [
           { label: 'Batismo', description: 'Inscrições, horários, agendamento e check-in de batismo', icon: Droplets, path: '/batismo', module: 'batismo' },
           { label: 'Membresia', description: 'Cadastros, trilha dos valores e Jornada', icon: BookOpen, path: '/ministerial/membresia', perm: 'canMembresia' },
           { label: 'Cuidados', description: 'Capelania e aconselhamento', icon: Heart, path: '/ministerial/cuidados', module: 'cuidados' },
+          { label: 'Conversas', description: 'Inbox de WhatsApp da igreja · receber e responder, triagem por área', icon: MessageSquare, path: '/conversas', module: 'conversas' },
           { label: 'Grupos', description: 'Grupos de conexão · pedidos · QR · mapa', icon: UsersRound, path: '/grupos', module: 'grupos', perm: 'canMembresia' },
           { label: 'Voluntariado', description: 'Check-in, escalas e QR codes', icon: HandHelping, path: '/ministerial/voluntariado', perm: 'canMembresia' },
           { label: 'Entradas', description: 'Porta de entrada · uma pessoa = um cadastro · liga inscrição ao membro e funde duplicados', icon: UserSearch, path: '/entradas', module: 'next-batismo' },
