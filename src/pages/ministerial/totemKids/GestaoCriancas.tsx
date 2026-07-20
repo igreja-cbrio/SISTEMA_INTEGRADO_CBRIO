@@ -342,6 +342,9 @@ function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; on
         observacoes_medicas: form.observacoes_medicas?.trim() || null,
       };
       await api.criancas.update(criancaId, payload);
+      // Otimista (Marcos 2026-07-20): reflete a edição na ficha NA HORA, sem
+      // esperar o re-fetch do load() — que segue em segundo plano reconciliando.
+      setC((prev: any) => (prev ? { ...prev, ...payload } : prev));
       toast.success('Ficha atualizada');
       setEditando(false);
       load();

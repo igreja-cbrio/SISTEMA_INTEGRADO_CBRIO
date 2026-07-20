@@ -1828,57 +1828,58 @@ function ModalDetalhesCrianca({ crianca, atualizarCrianca, onClose, onAdicionarI
 
   async function salvarTudo() {
     if (form.nome.trim().length < 2) { setErro('Nome da criança muito curto.'); return; }
-    setSalvando(true); setErro('');
-    try {
-      const patch = {
-        nome: form.nome.trim(),
-        data_nascimento: form.data_nascimento || null,
-        observacoes_medicas: form.observacoes_medicas.trim() || null,
-        visitante: form.visitante,
-        tem_alergia: form.tem_alergia, alergia_qual: form.tem_alergia ? form.alergia_qual.trim() || null : null,
-        tem_espectro: form.tem_espectro, espectro_qual: form.tem_espectro ? form.espectro_qual.trim() || null : null,
-        tem_limitacao_fisica: form.tem_limitacao_fisica, limitacao_fisica_qual: form.tem_limitacao_fisica ? form.limitacao_fisica_qual.trim() || null : null,
-        ...(consentTocado ? { consent_marketing: consentMkt } : {}),
-      };
-      await totemKids.criancas.update(crianca.id, patch);
-      // Responsáveis com nome e/ou telefone alterado. A mudança grava no
-      // cadastro CENTRAL (mem_membros) e o backend propaga pros espelhos
-      // (conta de usuário, voluntariado) — mesmo número em todo o sistema.
-      for (const r of resps) {
-        const orig = crianca.responsaveis.find(x => x.membro_id === r.membro_id);
-        const patchResp: Record<string, string> = {};
-        if (r.nome.trim().length >= 2 && r.nome.trim() !== (orig?.membro?.nome || '')) patchResp.nome = r.nome.trim();
-        const telLimpo = r.telefone.replace(/\D/g, '');
-        const telOrig = String(orig?.membro?.telefone || '');
-        if (r.telefone.trim() && telLimpo.length >= 10 && r.telefone.trim() !== telOrig) patchResp.telefone = r.telefone.trim();
-        if (Object.keys(patchResp).length) {
-          await totemKids.criancas.updateResponsavelMembro(r.membro_id, patchResp);
+    setErro(''); setSalvando(true); // trava o botão; o modal fecha logo em seguida (otimista)
+    const patch = {
+      nome: form.nome.trim(),
+      data_nascimento: form.data_nascimento || null,
+      observacoes_medicas: form.observacoes_medicas.trim() || null,
+      visitante: form.visitante,
+      tem_alergia: form.tem_alergia, alergia_qual: form.tem_alergia ? form.alergia_qual.trim() || null : null,
+      tem_espectro: form.tem_espectro, espectro_qual: form.tem_espectro ? form.espectro_qual.trim() || null : null,
+      tem_limitacao_fisica: form.tem_limitacao_fisica, limitacao_fisica_qual: form.tem_limitacao_fisica ? form.limitacao_fisica_qual.trim() || null : null,
+      ...(consentTocado ? { consent_marketing: consentMkt } : {}),
+    };
+    // Otimista (Marcos 2026-07-20): aplica a mudança + FECHA o modal na hora — o
+    // dado não pode "demorar a aparecer". A gravação segue em segundo plano; se
+    // falhar, avisa por toast pra refazer (o próximo carregamento reconcilia).
+    atualizarCrianca({
+      ...patch,
+      responsaveis: crianca.responsaveis.map(r => {
+        const m = resps.find(x => x.membro_id === r.membro_id);
+        if (!m) return r;
+        return {
+          ...r,
+          membro: {
+            ...(r.membro || {}),
+            id: r.membro?.id || r.membro_id,
+            nome: m.nome.trim() || r.membro?.nome || '',
+            telefone: m.telefone.trim() || r.membro?.telefone || null,
+          },
+        };
+      }),
+    } as Partial<Crianca>);
+    toast.success('Ficha atualizada');
+    onClose();
+    // Persistência em segundo plano (não trava a tela). Responsáveis alterados
+    // gravam no cadastro CENTRAL (mem_membros) e o backend propaga pros espelhos.
+    (async () => {
+      try {
+        await totemKids.criancas.update(crianca.id, patch);
+        for (const r of resps) {
+          const orig = crianca.responsaveis.find(x => x.membro_id === r.membro_id);
+          const patchResp: Record<string, string> = {};
+          if (r.nome.trim().length >= 2 && r.nome.trim() !== (orig?.membro?.nome || '')) patchResp.nome = r.nome.trim();
+          const telLimpo = r.telefone.replace(/\D/g, '');
+          const telOrig = String(orig?.membro?.telefone || '');
+          if (r.telefone.trim() && telLimpo.length >= 10 && r.telefone.trim() !== telOrig) patchResp.telefone = r.telefone.trim();
+          if (Object.keys(patchResp).length) await totemKids.criancas.updateResponsavelMembro(r.membro_id, patchResp);
+          // Parentesco vive no VÍNCULO (kids_responsaveis), não no membro.
+          if (r.parentesco && r.parentesco !== (orig?.parentesco || '')) await totemKids.criancas.updateResponsavelVinculo(crianca.id, r.membro_id, { parentesco: r.parentesco });
         }
-        // Parentesco vive no VÍNCULO (kids_responsaveis), não no membro.
-        if (r.parentesco && r.parentesco !== (orig?.parentesco || '')) {
-          await totemKids.criancas.updateResponsavelVinculo(crianca.id, r.membro_id, { parentesco: r.parentesco });
-        }
+      } catch {
+        toast.error(`Não deu pra salvar a ficha de ${crianca.nome?.split(' ')[0] || 'a criança'} — refaça a edição.`);
       }
-      atualizarCrianca({
-        ...patch,
-        responsaveis: crianca.responsaveis.map(r => {
-          const m = resps.find(x => x.membro_id === r.membro_id);
-          if (!m) return r;
-          return {
-            ...r,
-            membro: {
-              ...(r.membro || {}),
-              id: r.membro?.id || r.membro_id,
-              nome: m.nome.trim() || r.membro?.nome || '',
-              telefone: m.telefone.trim() || r.membro?.telefone || null,
-            },
-          };
-        }),
-      } as Partial<Crianca>);
-      toast.success('Ficha atualizada');
-      onClose();
-    } catch (e: unknown) { setErro((e as { message?: string })?.message || 'Erro ao salvar'); }
-    finally { setSalvando(false); }
+    })();
   }
 
   async function removerResp(membroId: string) {
