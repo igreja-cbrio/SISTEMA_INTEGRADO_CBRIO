@@ -116,6 +116,44 @@ async function sendText(toRaw, texto) {
   } catch (err) { console.error('[WPP] text exception:', err.message); return { sent: false, reason: 'exception' }; }
 }
 
+// Envia mídia (imagem/documento) por LINK público. `kind` = 'image'|'document'.
+async function sendMedia(toRaw, kind, link, { filename, caption } = {}) {
+  const to = normalizarTelefone(toRaw);
+  if (!to) return { sent: false, reason: 'invalid_phone' };
+  if (!link) return { sent: false, reason: 'sem_link' };
+  if (!configurado()) { console.log('[WPP][DRY-RUN] %s to=%s: %s', kind, to, link); return { sent: false, reason: 'disabled', to }; }
+  const midia = kind === 'document'
+    ? { link, ...(filename ? { filename } : {}), ...(caption ? { caption } : {}) }
+    : { link, ...(caption ? { caption } : {}) };
+  const url = `https://graph.facebook.com/${GRAPH_VERSION}/${PHONE_NUMBER_ID}/messages`;
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messaging_product: 'whatsapp', to, type: kind, [kind]: midia }),
+      signal: AbortSignal.timeout(20000),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) { console.error('[WPP] %s erro %d: %s', kind, res.status, JSON.stringify(json)); return { sent: false, status: res.status, detail: json }; }
+    return { sent: true, to, messageId: json.messages?.[0]?.id };
+  } catch (err) { console.error('[WPP] %s exception:', err.message); return { sent: false, reason: 'exception' }; }
+}
+
+// Baixa a mídia recebida da Meta (2 fetches: metadados → binário). Cap 16MB.
+async function baixarMedia(mediaId) {
+  if (!mediaId || !TOKEN) return null;
+  try {
+    const meta = await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${mediaId}`, {
+      headers: { Authorization: `Bearer ${TOKEN}` }, signal: AbortSignal.timeout(15000),
+    }).then(r => r.json()).catch(() => null);
+    if (!meta?.url) return null;
+    const resp = await fetch(meta.url, { headers: { Authorization: `Bearer ${TOKEN}` }, signal: AbortSignal.timeout(20000) });
+    const buffer = Buffer.from(await resp.arrayBuffer());
+    if (buffer.length > 16 * 1024 * 1024) return null;
+    return { buffer, mime: meta.mime_type || resp.headers.get('content-type') || 'application/octet-stream' };
+  } catch (err) { console.error('[WPP] baixarMedia:', err.message); return null; }
+}
+
 // Envia notificação de atualização de pedido (template `pedido_atualizado`).
 // vars: { primeiroNome, tituloSolicitacao, statusLabel, detalhe, link }
 async function sendPedidoAtualizado(telefone, vars) {
@@ -234,6 +272,8 @@ module.exports = {
   normalizarTelefone,
   sendTemplate,
   sendText,
+  sendMedia,
+  baixarMedia,
   sendPedidoAtualizado,
   sendDevocionalDiario,
   notificarMembro,

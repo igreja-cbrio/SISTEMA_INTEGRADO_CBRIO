@@ -24,7 +24,7 @@ import { Label } from '@/components/ui/label';
 import {
   Loader2, Send, Search, Check, MessageCircle, RefreshCw, ExternalLink, Clock,
   User, CheckCheck, UserPlus, ChevronDown, UserCheck, Tag, Plus, Inbox, Filter,
-  Users, Droplets, HandHelping, Sparkles, StickyNote,
+  Users, Droplets, HandHelping, Sparkles, StickyNote, Paperclip,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -95,6 +95,8 @@ export default function ConversasInbox({
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [texto, setTexto] = useState('');
   const [enviando, setEnviando] = useState(false);
+  const [anexando, setAnexando] = useState(false);
+  const fileRef = useRef<HTMLInputElement | null>(null);
   const [areasDisp, setAreasDisp] = useState<Area[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [colaboradores, setColaboradores] = useState<Colaborador[]>([]);
@@ -203,6 +205,14 @@ export default function ConversasInbox({
       carregarConversas();
     } catch (e: any) { toast.error(e?.message || 'Erro ao enviar'); }
     finally { setEnviando(false); }
+  }
+  async function enviarAnexo(file: File) {
+    if (!selId || anexando) return;
+    if (file.size > 16 * 1024 * 1024) { toast.error('Arquivo muito grande (máx. 16MB).'); return; }
+    setAnexando(true);
+    try { await waInbox.anexar(selId, file); await carregarThread(selId); carregarConversas(); }
+    catch (e: any) { toast.error(e?.message || 'Erro ao enviar anexo'); }
+    finally { setAnexando(false); }
   }
   async function resolver(resolvida: boolean) {
     if (!selId) return;
@@ -420,6 +430,11 @@ export default function ConversasInbox({
               ) : (
                 <div className="border-t border-border p-3">
                   <div className="flex items-end gap-2 rounded-xl border border-border bg-background p-2">
+                    <input ref={fileRef} type="file" accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx" className="hidden"
+                      onChange={e => { const f = e.target.files?.[0]; if (f) enviarAnexo(f); e.target.value = ''; }} />
+                    <Button size="icon" variant="ghost" disabled={anexando} onClick={() => fileRef.current?.click()} className="h-9 w-9 shrink-0 text-muted-foreground" title="Anexar foto ou documento">
+                      {anexando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Paperclip className="h-4 w-4" />}
+                    </Button>
                     <textarea value={texto} onChange={e => setTexto(e.target.value)}
                       onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); responder(); } }}
                       rows={1} placeholder="Escreva uma mensagem…  (Enter envia · Shift+Enter quebra linha)"
