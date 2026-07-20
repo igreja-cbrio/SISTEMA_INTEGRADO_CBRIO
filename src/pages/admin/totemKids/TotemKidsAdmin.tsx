@@ -18,7 +18,7 @@ import { ColorPicker } from '@/components/ui/ColorPicker';
 import { Loader2, Plus, Pencil, Trash2, Baby, Calendar, ChevronDown, MapPin, Printer, ShieldAlert, ExternalLink, ArrowLeft, Sparkles, Upload, Download, AlertTriangle, CheckCircle2, FileSpreadsheet, RefreshCw, Users, Eye } from 'lucide-react';
 import { toast } from 'sonner';
 import { totemKids, kpis } from '@/api';
-import { EtiquetaTesteForm, LogosEtiquetaManager } from '@/pages/ministerial/totemKids/TotemKidsTesteEtiqueta';
+import { EtiquetaTesteForm } from '@/pages/ministerial/totemKids/TotemKidsTesteEtiqueta';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { formatIdadeShort } from '@/pages/ministerial/totemKids/lib/idade';
 import { format } from 'date-fns';
@@ -85,7 +85,7 @@ export function TotemKidsConfigTabs({ aba: abaProp, onAba, abas }: { aba?: strin
       {mostra('salas') && <TabsContent value="salas"><AbaSalas /></TabsContent>}
       {mostra('responsaveis') && <TabsContent value="responsaveis"><AbaResponsaveis /></TabsContent>}
       {mostra('auditoria') && <TabsContent value="auditoria"><AbaAuditoria /></TabsContent>}
-      {mostra('etiqueta') && <TabsContent value="etiqueta"><div className="space-y-4"><LogosEtiquetaManager /><EtiquetaTesteForm /></div></TabsContent>}
+      {mostra('etiqueta') && <TabsContent value="etiqueta"><div className="space-y-4"><EtiquetaTesteForm /></div></TabsContent>}
     </Tabs>
   );
 }

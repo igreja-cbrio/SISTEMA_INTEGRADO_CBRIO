@@ -3541,7 +3541,7 @@ router.post('/salas/:id/logo/remover', authorizeModule('kids', 3), async (req, r
 router.get('/etiqueta-config', authorizeModule('kids', 1), async (req, res) => {
   try {
     const { data } = await supabase.from('kids_etiqueta_config').select('*').eq('id', 1).maybeSingle();
-    res.json(data || { logo_tamanho: 'M', logo_posicao: 'esquerda', nome_tamanho: 'auto' });
+    res.json(data || { logo_tamanho: 'M', logo_posicao: 'esquerda', nome_tamanho: 'auto', fonte: 'sans', escala_fonte: 'M' });
   } catch (e) {
     res.status(500).json({ error: 'Erro ao carregar layout' });
   }
@@ -3552,10 +3552,14 @@ router.put('/etiqueta-config', authorizeModule('kids', 3), async (req, res) => {
     const tamOk = ['P', 'M', 'G'];
     const posOk = ['esquerda', 'direita', 'acima'];
     const nomeOk = ['auto', 'P', 'M', 'G'];
+    const fonteOk = ['sans', 'condensada', 'arredondada', 'serif', 'mono'];
+    const escalaOk = ['P', 'M', 'G', 'GG'];
     const patch = { id: 1, updated_at: new Date().toISOString() };
     if (tamOk.includes(req.body?.logo_tamanho)) patch.logo_tamanho = req.body.logo_tamanho;
     if (posOk.includes(req.body?.logo_posicao)) patch.logo_posicao = req.body.logo_posicao;
     if (nomeOk.includes(req.body?.nome_tamanho)) patch.nome_tamanho = req.body.nome_tamanho;
+    if (fonteOk.includes(req.body?.fonte)) patch.fonte = req.body.fonte;
+    if (escalaOk.includes(req.body?.escala_fonte)) patch.escala_fonte = req.body.escala_fonte;
     const { data, error } = await supabase.from('kids_etiqueta_config')
       .upsert(patch, { onConflict: 'id' }).select().single();
     if (error) throw error;
