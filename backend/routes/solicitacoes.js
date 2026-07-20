@@ -99,6 +99,14 @@ const CATEGORIA_TO_AREA_RESP = {
   outro:           { area: null,                subcategoria: 'default' },
 };
 
+// Categorias do setor CRIATIVO (pedido do Matheus · 2026-07-20): a aprovação de
+// ORIGEM é do diretor do Criativo (Pedro Paulo), por CATEGORIA — não pelo setor
+// de quem pede (pula Arthur Serpa/diretor do setor). Também pula o 2º carimbo de
+// Gestão (Eduardo/Juliana) e o julgamento de mérito. COM custo (valor>0) o pedido
+// vira uma compra cotada pela logística (Amaury) → financeiro (Yago); sem custo
+// segue direto pra execução do criativo.
+const CRIATIVO_CATEGORIAS = ['marketing', 'producao'];
+
 // Map módulo → categorias (for granular permission filtering)
 const MODULO_CATEGORIAS = {
   ti: ['ti'],
@@ -348,6 +356,9 @@ async function aprovadoresMeritoIds() {
 //   senão → pendente (fila da área alvo)
 function proximoStatusPosAprovacao(sol) {
   if (['compras', 'servico'].includes(sol.categoria)) return 'em_cotacao';
+  // Criativo COM custo → cotação da logística (Amaury) antes do financeiro,
+  // igual às compras (área já roteada pra logistica_compras na criação).
+  if (CRIATIVO_CATEGORIAS.includes(sol.categoria) && sol.precisa_aprovacao_financeira && !sol.aprovado_financeiro_em) return 'em_cotacao';
   if (sol.precisa_aprovacao_financeira && !sol.aprovado_financeiro_em) return 'aguardando_aprovacao_financeira';
   return 'pendente';
 }
@@ -355,6 +366,9 @@ function proximoStatusPosAprovacao(sol) {
 // Não-planejado com custo → julgamento de mérito. Só no fluxo novo
 // (eh_planejado=false) · linha legada (NULL) segue o fluxo antigo.
 function precisaMerito(sol) {
+  // Criativo não passa pelo julgamento de mérito (Pastor Presidente) — o
+  // controle é a aprovação de origem do Criativo + o financeiro (Yago).
+  if (CRIATIVO_CATEGORIAS.includes(sol.categoria)) return false;
   return sol.eh_planejado === false
     && sol.merito_status == null
     && !!sol.precisa_aprovacao_financeira
@@ -978,10 +992,18 @@ router.post('/', async (req, res) => {
       .slice(0, 5)
       .map(u => u.trim().slice(0, 2000));
 
+    // Criativo (marketing/producao): origem aprova o diretor do Criativo (Pedro
+    // Paulo) por CATEGORIA. COM custo (valor>0) vira compra cotada pela logística
+    // (Amaury) → financeiro (Yago); SEM custo segue pra execução do criativo.
+    const ehCriativo = CRIATIVO_CATEGORIAS.includes(categoria);
+    const criativoComCusto = ehCriativo && Number(valorEstimadoFinal) > 0;
+
     // Auto-mapeia area_responsavel + subcategoria
     const mapa = CATEGORIA_TO_AREA_RESP[categoria] || { area: null, subcategoria: 'default' };
-    const finalAreaResp = area_responsavel || mapa.area;
-    const finalSub = subcategoria || mapa.subcategoria;
+    // Criativo COM custo entra na fila da logística (Amaury cota) — a "Atender"
+    // filtra por area_responsavel, então precisa ser logistica_compras.
+    const finalAreaResp = area_responsavel || (criativoComCusto ? 'logistica_compras' : mapa.area);
+    const finalSub = subcategoria || (criativoComCusto ? 'default' : mapa.subcategoria);
 
     // Área do SOLICITANTE (dimensão de KPI) · NÃO vem mais de seletor no form
     // (2026-06-01). Deriva de quem preenche · ignora qualquer area_cliente do body.
@@ -1060,12 +1082,34 @@ router.post('/', async (req, res) => {
         motivo: COMPRA_COTACAO_DIRETA_MOTIVO };
     }
 
+    // Criativo: a aprovação de ORIGEM é do diretor do Criativo (Pedro Paulo), por
+    // CATEGORIA — venha de quem vier (pula o diretor do setor de quem pede, ex.:
+    // Arthur Serpa). Se a origem já veio dispensada (solicitante é diretor/
+    // diretoria/super-admin), mantém. ⚠️ Pedro Paulo NÃO vira aprovador geral:
+    // esta regra vale SÓ pra criativo (marketing/producao).
+    if (ehCriativo && rota?.aprovacao_status === 'pendente') {
+      try {
+        const { data: cri } = await supabase.from('setor_diretor')
+          .select('diretor_id').eq('setor', 'Criativo').maybeSingle();
+        if (cri?.diretor_id) {
+          rota = { diretor_id: cri.diretor_id, aprovacao_status: 'pendente',
+            status: 'aguardando_aprovacao_origem',
+            motivo: 'Criativo · aprovação de origem com o diretor do Criativo (por categoria)' };
+        }
+      } catch (e) { console.warn('[SOLICITAÇÕES] exceção origem Criativo:', e.message); }
+    }
+
     if (compraCotacaoDireta && !planejado) {
       // Carimbo de Gestão explicitamente dispensado (trilha de auditoria) —
       // NÃO cair no bloco abaixo, que recomputaria 'pendente' e devolveria o
       // pedido pra aguardando_aprovacao_origem.
       gestaoStatus = 'dispensada';
       gestaoMotivo = COMPRA_COTACAO_DIRETA_MOTIVO;
+    } else if (ehCriativo && !planejado) {
+      // Criativo NÃO passa pelo 2º carimbo de Gestão (Eduardo/Juliana): o
+      // controle é a aprovação de origem do Criativo + (com custo) financeiro.
+      gestaoStatus = 'dispensada';
+      gestaoMotivo = 'Criativo não passa pela Gestão · origem do Criativo + financeiro';
     } else if (!planejado && categoria !== 'reserva_espaco') {
       // 2º carimbo · Gestão (ou aprovadores específicos da categoria · ex.: TI →
       // Diego/Matheus). Best-effort · lista vazia degrada.
@@ -1106,6 +1150,11 @@ router.post('/', async (req, res) => {
         // Fluxo BPMN · origem SEMPRE (inclusive planejado); Gestão só no não-planejado.
         eh_planejado: planejado,
         ...(planejado && { planejado_por: userId }),
+        // Criativo COM custo precisa do financeiro (Yago) depois da cotação do
+        // Amaury. O trigger não marca marketing/producao, então setamos aqui (ele
+        // nunca desmarca). O status vem de 'aguardando_aprovacao_origem' no insert,
+        // então o trigger de SLA não mexe no status.
+        ...(criativoComCusto && { precisa_aprovacao_financeira: true }),
         // Roteamento hierárquico de origem resolvido acima (planejado ou não).
         // O trigger continua de rede de segurança quando a RPC falha (rota=null).
         ...(rota && {
