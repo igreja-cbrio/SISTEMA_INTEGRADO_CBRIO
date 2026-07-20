@@ -9,7 +9,7 @@ import { useEffect, useState } from 'react';
 import { grupos as api } from '../../api';
 import { Button } from '../../components/ui/button';
 import { toast } from 'sonner';
-import { Calendar, Lock, Unlock, CheckCircle2, Archive, UserMinus, ClipboardX } from 'lucide-react';
+import { Calendar, Lock, Unlock, CheckCircle2, Archive, UserMinus, ClipboardX, ListChecks, AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react';
 
 const fmtDT = (d) => { try { return new Date(d).toLocaleDateString('pt-BR'); } catch { return ''; } };
 
@@ -180,7 +180,132 @@ export default function TemporadasGrupos() {
         </ul>
       </div>
 
+      {!loading && temporadas.length > 0 && <ProntidaoTemporada temporadas={temporadas} />}
+
       {!loading && temporadas.length > 0 && <RevisaoFimTemporada temporadas={temporadas} />}
+    </div>
+  );
+}
+
+// Prontidão da temporada (Marcos · 20/07): checklist do que falta arrumar antes de
+// ABRIR as inscrições — grupos sem líder, líder sem WhatsApp, grupos sem supervisor,
+// modo de inscrição a revisar. É a ferramenta pra Naná fechar as lacunas antes de 2/8.
+// Read-only: só aponta o que resolver (a correção é feita na tela de Grupos/ficha).
+const SEV = {
+  alta: { cor: C.red, label: 'Crítico' },
+  media: { cor: C.amber, label: 'Atenção' },
+  baixa: { cor: C.t3, label: 'Revisar' },
+};
+
+function ProntidaoTemporada({ temporadas }) {
+  const [temporada, setTemporada] = useState(() => (temporadas.find(t => t.ativa)?.id || temporadas[0]?.id || ''));
+  const [dados, setDados] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [aberto, setAberto] = useState({});
+
+  async function load(temp) {
+    if (!temp) return;
+    setLoading(true);
+    try { setDados(await api.prontidaoTemporada(temp)); }
+    catch (e) { toast.error(e.message || 'Erro ao carregar a prontidão'); setDados(null); }
+    finally { setLoading(false); }
+  }
+  useEffect(() => { load(temporada); /* eslint-disable-next-line */ }, [temporada]);
+
+  const checks = dados?.checks || [];
+  const altas = checks.filter(c => c.severidade === 'alta' && c.count > 0);
+  const medias = checks.filter(c => c.severidade === 'media' && c.count > 0);
+  const prontoPraAbrir = checks.length > 0 && altas.length === 0;
+
+  return (
+    <div style={{ marginTop: 22, background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, overflow: 'hidden' }}>
+      <div style={{ padding: '14px 16px', borderBottom: `1px solid ${C.border}` }}>
+        <h2 style={{ fontSize: 15, fontWeight: 700, color: C.text, margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <ListChecks size={17} style={{ color: C.primary }} /> Prontidão da temporada
+        </h2>
+        <p style={{ fontSize: 12, color: C.t3, margin: '6px 0 0', lineHeight: 1.6 }}>
+          O que falta arrumar antes de <strong>abrir as inscrições</strong>. Corrija cada ponto na tela de Grupos
+          (líder, supervisor, modo de inscrição) ou na ficha do líder (telefone), e recarregue pra conferir.
+        </p>
+        <select
+          value={temporada}
+          onChange={e => setTemporada(e.target.value)}
+          style={{ marginTop: 10, padding: '7px 10px', borderRadius: 8, border: `1px solid ${C.border}`, background: 'var(--cbrio-input-bg)', color: C.text, fontSize: 13 }}
+        >
+          {temporadas.map(t => <option key={t.id} value={t.id}>{t.label}{t.ativa ? ' (atual)' : ''}</option>)}
+        </select>
+      </div>
+
+      <div style={{ padding: 16 }}>
+        {loading ? (
+          <div style={{ padding: 24, textAlign: 'center', color: C.t3, fontSize: 13 }}>Carregando...</div>
+        ) : !dados ? (
+          <div style={{ padding: 24, textAlign: 'center', color: C.t3, fontSize: 13 }}>Não foi possível carregar a prontidão.</div>
+        ) : (
+          <>
+            {/* Faixa de resumo */}
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', borderRadius: 10, marginBottom: 14,
+              background: (prontoPraAbrir ? C.green : C.red) + '15',
+              border: `1px solid ${(prontoPraAbrir ? C.green : C.red)}55`,
+            }}>
+              {prontoPraAbrir
+                ? <CheckCircle2 size={18} style={{ color: C.green, flexShrink: 0 }} />
+                : <AlertTriangle size={18} style={{ color: C.red, flexShrink: 0 }} />}
+              <span style={{ fontSize: 13, color: C.text, fontWeight: 600 }}>
+                {prontoPraAbrir
+                  ? <>Pronto pra abrir {dados.total_grupos} grupo(s){medias.length ? ` · ${medias.reduce((a, c) => a + c.count, 0)} ponto(s) de atenção (não bloqueiam)` : ''}.</>
+                  : <>{altas.reduce((a, c) => a + c.count, 0)} ponto(s) crítico(s) a resolver antes de abrir as inscrições.</>}
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {checks.map(c => {
+                const sev = SEV[c.severidade] || SEV.baixa;
+                const ok = c.count === 0;
+                const temLista = (c.itens || []).length > 0;
+                const exp = !!aberto[c.key];
+                return (
+                  <div key={c.key} style={{ border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden' }}>
+                    <button
+                      type="button"
+                      onClick={() => temLista && setAberto(a => ({ ...a, [c.key]: !a[c.key] }))}
+                      style={{
+                        width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px',
+                        background: 'none', border: 'none', cursor: temLista ? 'pointer' : 'default', textAlign: 'left',
+                      }}
+                    >
+                      {ok
+                        ? <CheckCircle2 size={16} style={{ color: C.green, flexShrink: 0 }} />
+                        : <span style={{ width: 9, height: 9, borderRadius: '50%', background: sev.cor, flexShrink: 0 }} />}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{c.label}</div>
+                        {!ok && c.hint && <div style={{ fontSize: 11.5, color: C.t3, marginTop: 2, lineHeight: 1.5 }}>{c.hint}</div>}
+                      </div>
+                      <span style={{
+                        fontSize: 12, fontWeight: 700, padding: '2px 10px', borderRadius: 99, whiteSpace: 'nowrap',
+                        background: ok ? C.green + '18' : sev.cor + '18', color: ok ? C.green : sev.cor,
+                      }}>
+                        {ok ? 'OK' : `${c.count} · ${sev.label}`}
+                      </span>
+                      {temLista && (exp ? <ChevronDown size={16} style={{ color: C.t3 }} /> : <ChevronRight size={16} style={{ color: C.t3 }} />)}
+                    </button>
+                    {temLista && exp && (
+                      <div style={{ borderTop: `1px solid ${C.border}`, background: C.bg }}>
+                        {c.itens.map((it, i) => (
+                          <div key={it.grupo_id || i} style={{ padding: '7px 12px 7px 38px', fontSize: 12.5, color: C.t2, borderTop: i ? `1px solid ${C.border}` : 'none' }}>
+                            {it.grupo_nome}{it.lider_nome ? <span style={{ color: C.t3 }}> · líder: {it.lider_nome}</span> : ''}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }

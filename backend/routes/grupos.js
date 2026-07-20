@@ -636,6 +636,74 @@ router.get('/kpis/sem-presenca', authorizeModule('grupos', 3), async (req, res) 
   }
 });
 
+// GET /api/grupos/kpis/prontidao?temporada=X — checklist de prontidão pra abrir a
+// temporada: grupos sem líder, líder sem WhatsApp válido, grupos sem supervisor e
+// grupos ainda no modo de inscrição padrão (a revisar). Sem temporada → usa a ativa.
+// Nível 3 (expõe listas de grupos/líderes pra ação · visão da coordenação · Naná).
+router.get('/kpis/prontidao', authorizeModule('grupos', 3), async (req, res) => {
+  try {
+    let { temporada } = req.query;
+    if (!temporada) {
+      const { data: ativa } = await supabase.from('mem_temporadas').select('id').eq('ativa', true).limit(1);
+      temporada = ativa && ativa[0] ? ativa[0].id : null;
+    }
+    if (!temporada) return res.status(400).json({ error: 'Informe a temporada' });
+
+    // Grupos ativos da temporada · paginado (cap do PostgREST)
+    let grupos = [], offset = 0;
+    while (true) {
+      const { data: page, error } = await supabase
+        .from('mem_grupos')
+        .select('id, nome, lider_id, supervisor_id, modo_inscricao')
+        .eq('ativo', true).is('deleted_at', null).eq('temporada', temporada)
+        .range(offset, offset + 999);
+      if (error) throw error;
+      grupos = grupos.concat(page || []);
+      if (!page || page.length < 1000) break;
+      offset += 1000;
+    }
+
+    // Telefone/nome dos líderes · .in() em chunks (limite de URL)
+    const liderIds = [...new Set(grupos.map(g => g.lider_id).filter(Boolean))];
+    const mMap = {};
+    for (let i = 0; i < liderIds.length; i += 400) {
+      const { data: ms } = await supabase
+        .from('mem_membros').select('id, nome, telefone')
+        .in('id', liderIds.slice(i, i + 400)).is('deleted_at', null);
+      (ms || []).forEach(m => { mMap[m.id] = m; });
+    }
+    const telOk = (t) => String(t || '').replace(/\D/g, '').length === 11;
+
+    const semLider = grupos.filter(g => !g.lider_id)
+      .map(g => ({ grupo_id: g.id, grupo_nome: g.nome }));
+    const liderSemTel = grupos.filter(g => g.lider_id && !telOk(mMap[g.lider_id]?.telefone))
+      .map(g => ({ grupo_id: g.id, grupo_nome: g.nome, lider_nome: mMap[g.lider_id]?.nome || '(líder sem cadastro)' }));
+    const semSupervisor = grupos.filter(g => !g.supervisor_id)
+      .map(g => ({ grupo_id: g.id, grupo_nome: g.nome }));
+    const modoPadrao = grupos.filter(g => !g.modo_inscricao || g.modo_inscricao === 'temporada').length;
+
+    const checks = [
+      { key: 'sem_lider', label: 'Grupos sem líder definido', severidade: 'alta',
+        hint: 'Grupo sem líder não recebe pedidos nem dispara o WhatsApp. Defina um líder antes de abrir.',
+        count: semLider.length, itens: semLider },
+      { key: 'lider_sem_whatsapp', label: 'Líderes sem WhatsApp válido', severidade: 'alta',
+        hint: 'Sem telefone de 11 dígitos, o líder não recebe a notificação de novo pedido. Complete o cadastro do líder.',
+        count: liderSemTel.length, itens: liderSemTel },
+      { key: 'sem_supervisor', label: 'Grupos sem supervisor', severidade: 'media',
+        hint: 'Não bloqueia a abertura, mas o grupo fica sem acompanhamento de supervisão.',
+        count: semSupervisor.length, itens: semSupervisor },
+      { key: 'modo_a_revisar', label: 'Grupos no modo de inscrição padrão', severidade: 'baixa',
+        hint: 'Nasceram como "temporada" (só aparecem no formulário com as inscrições abertas). Revise se algum deveria ser contínuo (sempre aberto) ou por convite (fechado).',
+        count: modoPadrao, itens: [] },
+    ];
+
+    res.json({ temporada, total_grupos: grupos.length, checks });
+  } catch (e) {
+    console.error('[grupos] kpis/prontidao:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar a prontidão da temporada' });
+  }
+});
+
 // GET /api/grupos/kpis/sem-relato · grupos ativos com o último encontro
 // registrado (qualquer via: sistema ou WhatsApp aplicado) e há quantos dias.
 // Alimenta o bloco "Grupos sem relatório" da aba Relatórios (visão do Pr.
