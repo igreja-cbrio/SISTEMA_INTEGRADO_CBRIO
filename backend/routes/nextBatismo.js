@@ -19,6 +19,7 @@ const { supabase } = require('../utils/supabase');
 const { buscarCandidatos, acharOuCriar, acharOuCriarGuardado } = require('../services/membroMatch');
 const { avaliarPossivelDuplicidade, nomesPodemSerMesmaPessoa, tokensNome } = require('../services/duplicidadePolicy');
 const { avaliarRelacaoFamiliar } = require('../services/familiaPolicy');
+const { montarPatchFusao } = require('../services/fusaoCampos');
 
 router.use(authenticate);
 
@@ -1229,26 +1230,9 @@ router.get('/pessoa/:id', authorizeModule('next-batismo', 1), async (req, res) =
 // ── POST /fundir · merge_membros (sensível · nível 3) ─────────────────────────
 // Fusão "melhor de cada": o merge_membros mantém um cadastro e só preenche os
 // campos VAZIOS a partir do absorvido. Quando os dois lados têm valores que
-// DIVERGEM (ex.: um tem o nome completo, o outro tem o CPF), o operador escolhe
-// no comparador qual valor vence e manda em `campos`; aqui fixamos esses campos
-// no mantido DEPOIS da fusão (os absorvidos já foram removidos, então não há
-// colisão de UNIQUE). Normaliza no padrão da casa (Contrato de porta).
-const CAMPOS_FUSAO_PERMITIDOS = ['nome', 'telefone', 'email', 'cpf', 'data_nascimento', 'genero'];
-function montarPatchFusao(campos) {
-  const patch = {};
-  if (!campos || typeof campos !== 'object') return patch;
-  for (const k of CAMPOS_FUSAO_PERMITIDOS) {
-    if (!(k in campos)) continue;
-    let v = campos[k];
-    if (v === null || v === undefined) continue;
-    v = String(v).trim();
-    if (!v) continue;
-    if (k === 'cpf' || k === 'telefone') v = v.replace(/\D/g, '');
-    else if (k === 'email') v = v.toLowerCase();
-    patch[k] = v;
-  }
-  return patch;
-}
+// DIVERGEM, o operador escolhe no comparador qual vence e manda em `campos`;
+// `montarPatchFusao` (serviço compartilhado) fixa esses campos no mantido DEPOIS
+// da fusão (os absorvidos já foram removidos, então não há colisão de UNIQUE).
 router.post('/fundir', authorizeModule('next-batismo', 3), async (req, res) => {
   try {
     const { keep_id, merge_ids, observacao, campos } = req.body || {};

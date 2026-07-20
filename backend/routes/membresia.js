@@ -8,6 +8,7 @@ const { enqueueSync } = require('../services/cerebroSync');
 const { escapePostgrestValue } = require('../utils/sanitize');
 const { acharOuCriarGuardado } = require('../services/membroMatch');
 const { avaliarPossivelDuplicidade } = require('../services/duplicidadePolicy');
+const { montarPatchFusao } = require('../services/fusaoCampos');
 const { normalizarCpf: normCpf11, cpfValido } = require('../utils/cpf');
 
 const uploadMw = multer({
@@ -2584,7 +2585,7 @@ router.delete('/vinculos/:id', authorize('admin', 'diretor'), async (req, res) =
 });
 
 router.post('/membros/merge', authorizeModule('membresia', 3), async (req, res) => {
-  const { keep_id, merge_ids, observacao } = req.body || {};
+  const { keep_id, merge_ids, observacao, campos } = req.body || {};
   if (!keep_id) return res.status(400).json({ error: 'keep_id obrigatorio' });
   if (!Array.isArray(merge_ids) || merge_ids.length === 0) {
     return res.status(400).json({ error: 'merge_ids obrigatório (array de uuids)' });
@@ -2597,7 +2598,19 @@ router.post('/membros/merge', authorizeModule('membresia', 3), async (req, res) 
       p_observacao: observacao || null,
     });
     if (error) throw error;
-    res.json(data);
+    // "Melhor de cada": fixa no mantido os campos escolhidos no comparador (o
+    // merge já apagou os absorvidos → sem colisão de UNIQUE de CPF com o par).
+    const patch = montarPatchFusao(campos);
+    let camposAplicados = [];
+    if (Object.keys(patch).length) {
+      const { error: upErr } = await supabase.from('mem_membros')
+        .update(patch).eq('id', keep_id).is('deleted_at', null);
+      if (upErr) console.error('[membresia/membros/merge campos]', upErr.message);
+      else camposAplicados = Object.keys(patch);
+    }
+    const resposta = (data && typeof data === 'object' && !Array.isArray(data)) ? { ...data } : { resultado: data };
+    resposta.campos_aplicados = camposAplicados;
+    res.json(resposta);
   } catch (e) {
     console.error('[membresia/membros/merge]', e.message);
     res.status(500).json({ error: e.message || 'Erro ao fundir membros' });
