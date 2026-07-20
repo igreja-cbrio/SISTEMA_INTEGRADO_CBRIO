@@ -43,180 +43,109 @@ export interface DadosImpressao {
 }
 
 // Configuração de layout da etiqueta (ajustável nas Configurações → Etiqueta)
+export type FonteEtiqueta = 'sans' | 'condensada' | 'arredondada' | 'serif' | 'mono';
+export type EscalaEtiqueta = 'P' | 'M' | 'G' | 'GG';
+
 export interface EtiquetaLayout {
-  logoTamanho?: 'P' | 'M' | 'G';                 // tamanho da logo da categoria
-  logoPosicao?: 'esquerda' | 'direita' | 'acima'; // posição da logo em relação ao nome
-  nomeTamanho?: 'auto' | 'P' | 'M' | 'G';        // fonte do nome (auto = pelo comprimento)
+  fonte?: FonteEtiqueta;                          // família da fonte da etiqueta
+  escalaFonte?: EscalaEtiqueta;                   // escala global do tamanho (P/M/G/GG)
+  nomeTamanho?: 'auto' | 'P' | 'M' | 'G';         // fonte do nome (auto = pelo comprimento)
+  // Descontinuados (a logo das salas saiu da etiqueta em 2026-07-20) — mantidos
+  // por retrocompatibilidade; não são mais usados na renderização.
+  logoTamanho?: 'P' | 'M' | 'G';
+  logoPosicao?: 'esquerda' | 'direita' | 'acima';
 }
 
 export const LAYOUT_ETIQUETA_PADRAO: EtiquetaLayout = {
-  logoTamanho: 'M',
-  logoPosicao: 'esquerda',
+  fonte: 'sans',
+  escalaFonte: 'M',
   nomeTamanho: 'auto',
 };
 
-// Altura da logo (mm) por tamanho
-const LOGO_MM: Record<string, number> = { P: 4.5, M: 6, G: 8.5 };
+// Família da fonte por opção → pilha de fontes segura pra impressão (só o que
+// costuma existir no Windows do totem; cai pro genérico se faltar).
+const FONTES: Record<FonteEtiqueta, string> = {
+  sans:        "'Inter','Helvetica Neue',Arial,system-ui,sans-serif",
+  condensada:  "'Arial Narrow','Roboto Condensed','Liberation Sans Narrow',sans-serif",
+  arredondada: "'Trebuchet MS','Segoe UI',Verdana,sans-serif",
+  serif:       "Georgia,'Times New Roman',Times,serif",
+  mono:        "'Courier New',Consolas,monospace",
+};
 
-// CSS comum das etiquetas · 90mm x 29mm (Brother DK-1201, paisagem)
-// Etiqueta de endereço · COMPRIDA na horizontal, estreita na vertical.
-// Layout em colunas: bloco esquerdo (identidade) | bloco direito (código).
-const CSS_ETIQUETA = `
-  @page {
-    size: 90mm 29mm;
-    margin: 0;
-  }
+// Multiplicador global do tamanho da fonte por escala.
+const ESCALAS: Record<EscalaEtiqueta, number> = { P: 0.88, M: 1, G: 1.14, GG: 1.28 };
+
+// CSS das etiquetas · 90mm x 29mm (Brother DK-1201, paisagem). Layout em duas
+// colunas: bloco esquerdo (identidade) | bloco direito (código).
+//
+// A FONTE (família) e a ESCALA (tamanho) vêm da config e entram por variáveis
+// CSS: `--fonte` na família e `--escala` multiplicando cada tamanho via calc().
+// O tamanho do nome vem por `--nome-pt` (inline, calculado pelo comprimento) e
+// também é escalado. Assim a etiqueta é PADRONIZADA (um só template) e tudo que
+// varia é configurável num lugar só.
+function cssEtiqueta(layout: EtiquetaLayout = LAYOUT_ETIQUETA_PADRAO): string {
+  const fonte = FONTES[layout.fonte || 'sans'] || FONTES.sans;
+  const escala = ESCALAS[layout.escalaFonte || 'M'] ?? 1;
+  // tamanho escalado, em pt (usa a variável --escala pra o preview refletir na hora)
+  const pt = (base: number) => `calc(${base}pt * var(--escala))`;
+  return `
+  :root { --fonte: ${fonte}; --escala: ${escala}; }
+  @page { size: 90mm 29mm; margin: 0; }
   * { box-sizing: border-box; }
   html, body {
-    width: 90mm;
-    margin: 0;
-    padding: 0;
-    font-family: 'Inter', 'Arial Narrow', system-ui, -apple-system, sans-serif;
-    color: #000;
-    background: #fff;
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
+    width: 90mm; margin: 0; padding: 0;
+    font-family: var(--fonte);
+    color: #000; background: #fff;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
   }
   /* Cada etiqueta ocupa uma página; a Brother corta entre elas (1 job só). */
   .pagina { break-inside: avoid; }
   .etiqueta {
-    width: 90mm;
-    height: 29mm;
-    padding: 1.5mm 2mm;
-    display: flex;
-    align-items: stretch;
-    gap: 2mm;
-    overflow: hidden;
-    position: relative;
+    width: 90mm; height: 29mm; padding: 1.5mm 2mm;
+    display: flex; align-items: stretch; gap: 2mm;
+    overflow: hidden; position: relative;
   }
-  .faixa-cor {
-    position: absolute;
-    top: 0; bottom: 0; left: 0;
-    width: 3mm;
-    background: var(--cor, #EC4899);
-  }
-  .col-esq {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    padding-left: 3mm;
-    overflow: hidden;
-  }
-  .col-dir {
-    width: 32mm;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    border-left: 1px solid #999;
-    padding-left: 2mm;
-  }
-  .nome-grande {
-    font-size: 13pt;
-    font-weight: 800;
-    line-height: 1;
-    margin-bottom: 1mm;
-    word-break: break-word;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-  }
-  .sala {
-    font-size: 9pt;
-    font-weight: 700;
-    line-height: 1.1;
-  }
-  .info-sec {
-    font-size: 7.5pt;
-    color: #444;
-    line-height: 1.2;
-    margin-top: 0.5mm;
-  }
-  .alerta {
-    background: #000;
-    color: #fff;
-    padding: 0.7mm 1.5mm;
-    margin-top: 1mm;
-    font-size: 7pt;
-    font-weight: 700;
-    line-height: 1.1;
-    border-radius: 0.5mm;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .codigo {
-    font-family: 'Courier New', monospace;
-    font-size: 20pt;
-    font-weight: 900;
-    letter-spacing: 2px;
-    line-height: 1;
-    text-align: center;
-  }
-  .barcode-area {
-    margin-top: 1mm;
-    text-align: center;
-  }
-  .barcode-area svg {
-    max-width: 28mm;
-    height: 6mm;
-  }
-  .data-hora {
-    font-size: 6.5pt;
-    color: #555;
-    margin-top: 1mm;
-    text-align: center;
-    line-height: 1.1;
-  }
-  .header-resp {
-    font-size: 7pt;
-    font-weight: 700;
-    color: #444;
-    text-align: center;
-    margin-bottom: 1mm;
-    line-height: 1.1;
-  }
-  .topo {
-    display: flex;
-    align-items: center;
-    gap: 1.5mm;
-    margin-bottom: 0.5mm;
-  }
-  .logo-sala {
-    height: 6mm;
-    max-width: 16mm;
-    object-fit: contain;
-    flex-shrink: 0;
-  }
-  .foto-badge {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    line-height: 0;
-    flex-shrink: 0;
-  }
+  /* Faixa de cor da sala (única marca visual da categoria — a logo saiu). */
+  .faixa-cor { position: absolute; top: 0; bottom: 0; left: 0; width: 3mm; background: var(--cor, #EC4899); }
+  .col-esq { flex: 1; display: flex; flex-direction: column; justify-content: center; padding-left: 3mm; overflow: hidden; }
+  .col-dir { width: 32mm; display: flex; flex-direction: column; align-items: center; justify-content: center; border-left: 1px solid #999; padding-left: 2mm; }
+
+  .topo { display: flex; align-items: center; gap: 1.5mm; margin-bottom: 0.5mm; }
+  .foto-badge { display: inline-flex; align-items: center; justify-content: center; line-height: 0; flex-shrink: 0; }
   .foto-badge svg { display: block; }
-  .topo-logo {
-    display: flex;
-    justify-content: flex-start;
-    margin-bottom: 0.5mm;
+
+  .nome-grande {
+    font-size: calc(var(--nome-pt, 13) * var(--escala) * 1pt);
+    font-weight: 800; line-height: 1; margin-bottom: 1mm;
+    word-break: break-word; overflow: hidden; text-overflow: ellipsis;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
   }
-  .cod-label { font-size: 6.5pt; color: #555; text-align: center; margin-top: 0.5mm; }
+  .sala { font-size: ${pt(9)}; font-weight: 700; line-height: 1.1; }
+  .info-sec { font-size: ${pt(7.5)}; color: #444; line-height: 1.2; margin-top: 0.5mm; }
+  .alerta {
+    background: #000; color: #fff; padding: 0.7mm 1.5mm; margin-top: 1mm;
+    font-size: ${pt(7)}; font-weight: 700; line-height: 1.1; border-radius: 0.5mm;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
+  /* Código de segurança · sempre monoespaçado (evita confundir O/0, I/1). */
+  .codigo { font-family: 'Courier New', monospace; font-size: ${pt(20)}; font-weight: 900; letter-spacing: 2px; line-height: 1; text-align: center; }
+  .cod-label { font-size: ${pt(6.5)}; color: #555; text-align: center; margin-top: 0.5mm; }
+  .barcode-area { margin-top: 1mm; text-align: center; }
+  .barcode-area svg { max-width: 28mm; height: 6mm; }
+  .data-hora { font-size: ${pt(6.5)}; color: #555; margin-top: 1mm; text-align: center; line-height: 1.1; }
+  .header-resp { font-size: ${pt(7)}; font-weight: 700; color: #444; text-align: center; margin-bottom: 1mm; line-height: 1.1; }
+
   /* Etiqueta de aniversário (4ª · na semana do aniversário) */
   .etiqueta.aniv { flex-direction: column; align-items: stretch; gap: 1mm; padding: 1.5mm 3mm; }
-  .aniv-banner {
-    background: #000; color: #fff; font-weight: 900; font-size: 12pt;
-    text-align: center; letter-spacing: 0.5px; padding: 1mm 0; border-radius: 0.5mm;
-  }
+  .aniv-banner { background: #000; color: #fff; font-weight: 900; font-size: ${pt(12)}; text-align: center; letter-spacing: 0.5px; padding: 1mm 0; border-radius: 0.5mm; }
   .aniv-row { display: flex; align-items: center; justify-content: space-between; gap: 2mm; flex: 1; }
   .aniv-logo { height: 9mm; max-width: 30mm; object-fit: contain; }
-  .aniv-idade { font-size: 15pt; font-weight: 900; white-space: nowrap; }
+  .aniv-idade { font-size: ${pt(15)}; font-weight: 900; white-space: nowrap; }
   .aniv-bolo { line-height: 0; }
   .aniv-bolo svg { height: 13mm; width: auto; display: block; }
-`;
+  `;
+}
 
 function gerarBarcodeSvg(codigo: string): Promise<string> {
   // Lazy import (so carrega quando precisa imprimir)
@@ -273,40 +202,30 @@ const ICONE_BOLO = `<svg viewBox="0 0 64 64" width="52" height="52" fill="none" 
 
 // ⚠️ Emoji em HTML de impressão é loteria (o 📷 saiu como ícone quebrado na
 // Brother/preview · Diego 2026-07-08) → só texto puro nos templates de etiqueta.
-function htmlEtiquetaCrianca(d: DadosImpressao, barcodeSvg: string): string {
-  // Alergia/necessidade em destaque (barra preta). Junta alergia + necessidade.
+// Etiqueta PADRÃO da criança · template único (a logo das salas saiu em 2026-07-20).
+// A categoria é indicada só pela faixa de cor. Fonte/tamanho vêm da config (CSS).
+function htmlEtiquetaCrianca(d: DadosImpressao): string {
+  const layout = { ...LAYOUT_ETIQUETA_PADRAO, ...(d.layout || {}) };
+
+  // Saúde em destaque (barra preta): alergia + necessidade; senão, obs. médica.
   const saude = [
     d.crianca.alergia ? `ALERGIA: ${d.crianca.alergia}` : '',
     d.crianca.necessidade || '',
     !d.crianca.alergia && !d.crianca.necessidade ? (d.crianca.observacoesMedicas || '') : '',
   ].filter(Boolean).join(' · ');
   const alerta = saude ? `<div class="alerta">! ${escapeHtml(saude)}</div>` : '';
-  // Selo de foto: ícone SVG de câmera. Sem autorização → câmera cortada
-  // (proibido) pro voluntário saber na hora (nada de escrever "SEM FOTO").
-  const foto = d.crianca.fotoAutorizada
-    ? `<span class="foto-badge">${ICONE_CAMERA_OK}</span>`
-    : `<span class="foto-badge">${ICONE_CAMERA_NAO}</span>`;
-  // (Aniversário saiu daqui — virou uma 4ª etiqueta dedicada, ver fragmentoAniversario.)
-  // Layout ajustável (tamanho/posição da logo, fonte do nome)
-  const layout = { ...LAYOUT_ETIQUETA_PADRAO, ...(d.layout || {}) };
-  const logoMm = LOGO_MM[layout.logoTamanho || 'M'] || 6;
-  const logo = d.crianca.salaLogoUrl
-    ? `<img class="logo-sala" style="height:${logoMm}mm" src="${escapeHtml(d.crianca.salaLogoUrl)}" alt="" />`
-    : '';
-  const nome = `<div class="nome-grande" style="margin:0;font-size:${fonteNome(d.crianca.nome, layout.nomeTamanho)}pt">${escapeHtml(nomeParaEtiqueta(d.crianca.nome))}</div>`;
-  // Monta a linha topo conforme a posição da logo
-  let topo: string;
-  if (layout.logoPosicao === 'acima' && logo) {
-    topo = `<div class="topo-logo">${logo}</div><div class="topo">${nome}${foto}</div>`;
-  } else if (layout.logoPosicao === 'direita') {
-    topo = `<div class="topo">${nome}${foto}${logo}</div>`;
-  } else {
-    topo = `<div class="topo">${logo}${nome}${foto}</div>`;
-  }
-  return `<div class="etiqueta" style="--cor: ${d.crianca.salaCor || '#EC4899'}">
+
+  // Selo de foto: câmera OK / câmera cortada (sem autorização) — nunca texto/emoji.
+  const foto = `<span class="foto-badge">${d.crianca.fotoAutorizada ? ICONE_CAMERA_OK : ICONE_CAMERA_NAO}</span>`;
+
+  // Tamanho-base do nome (pt) pelo comprimento/preset; a escala global multiplica no CSS.
+  const nomePt = fonteNome(d.crianca.nome, layout.nomeTamanho);
+  const nome = `<div class="nome-grande" style="--nome-pt:${nomePt}">${escapeHtml(nomeParaEtiqueta(d.crianca.nome))}</div>`;
+
+  return `<div class="etiqueta" style="--cor:${d.crianca.salaCor || '#EC4899'}">
     <div class="faixa-cor"></div>
     <div class="col-esq">
-      ${topo}
+      <div class="topo">${nome}${foto}</div>
       <div class="sala">${escapeHtml(d.crianca.salaNome)} · ${escapeHtml(d.crianca.idadeLabel)}</div>
       ${alerta}
     </div>
@@ -336,11 +255,11 @@ function htmlEtiquetaAniversario(d: DadosImpressao): string {
 
 // Monta o documento final com N fragmentos, um por página. A Brother corta
 // entre as páginas → tudo sai em UM job de impressão.
-function documento(fragmentos: string[]): string {
+function documento(fragmentos: string[], layout?: EtiquetaLayout): string {
   const corpo = fragmentos.map((f, i) =>
     `<div class="pagina"${i < fragmentos.length - 1 ? ' style="page-break-after:always"' : ''}>${f}</div>`
   ).join('');
-  return `<!doctype html><html><head><meta charset="utf-8"><style>${CSS_ETIQUETA}</style></head><body>${corpo}</body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><style>${cssEtiqueta(layout)}</style></head><body>${corpo}</body></html>`;
 }
 
 // Recibo do responsável: por segurança NÃO leva o nome da criança (quem achar
@@ -350,7 +269,7 @@ function htmlEtiquetaResponsavel(d: DadosImpressao, barcodeSvg: string): string 
   return `<div class="etiqueta">
     <div class="col-esq" style="padding-left:0">
       <div class="header-resp">CB Rio · Recibo Kids</div>
-      <div class="nome-grande" style="font-size:11pt">${escapeHtml(nomeParaEtiqueta(d.responsavel.nome))}</div>
+      <div class="nome-grande" style="--nome-pt:11">${escapeHtml(nomeParaEtiqueta(d.responsavel.nome))}</div>
       <div class="sala" style="font-size:8pt;color:#555">${escapeHtml(d.cultoDiaHora || d.crianca.salaNome)}</div>
       <div class="data-hora" style="text-align:left;margin-top:auto">
         ${escapeHtml(d.dataHora)} · Apresente este código para buscar
@@ -456,12 +375,12 @@ function imprimirHtml(html: string, preview = false): Promise<ResultadoImpressao
 // HTML da etiqueta da criança pra PRÉVIA na tela (iframe srcDoc). Sem barcode
 // (a etiqueta da criança não tem) — reflete logo + layout escolhidos.
 export function gerarHtmlPreviewCrianca(d: DadosImpressao): string {
-  return documento([htmlEtiquetaCrianca(d, '')]);
+  return documento([htmlEtiquetaCrianca(d)], d.layout);
 }
 
 // PRÉVIA da etiqueta de aniversário (iframe srcDoc)
 export function gerarHtmlPreviewAniversario(d: DadosImpressao): string {
-  return documento([htmlEtiquetaAniversario(d)]);
+  return documento([htmlEtiquetaAniversario(d)], d.layout);
 }
 
 // API pública · imprime TODAS as etiquetas em UM job (a Brother corta entre elas).
@@ -474,18 +393,17 @@ export function gerarHtmlPreviewAniversario(d: DadosImpressao): string {
 export async function imprimirEtiquetas(d: DadosImpressao, preview = false, incluirRecibo = true): Promise<void> {
   const [barcodeSvg] = await Promise.all([
     gerarBarcodeSvg(d.codigoBarras),
-    preloadImg(d.crianca.salaLogoUrl),
     d.crianca.aniversarioSemana ? preloadImg(d.logoAniversarioUrl) : Promise.resolve(),
   ]);
 
   // No CHECK-IN: 2 etiquetas da criança (uma na criança, outra na sacola/
   // pertences) + 1 do responsável (recibo) + 1 de aniversário (na semana).
-  const fragCrianca = htmlEtiquetaCrianca(d, barcodeSvg);
+  const fragCrianca = htmlEtiquetaCrianca(d);
   const fragmentos = [fragCrianca, fragCrianca];
   if (incluirRecibo) fragmentos.push(htmlEtiquetaResponsavel(d, barcodeSvg));
   if (d.crianca.aniversarioSemana) fragmentos.push(htmlEtiquetaAniversario(d));
 
-  const resultado = await imprimirHtml(documento(fragmentos), preview);
+  const resultado = await imprimirHtml(documento(fragmentos, d.layout), preview);
   if (preview) return;  // não loga impressão em modo preview
 
   totemKids.etiquetas.log({
@@ -516,9 +434,9 @@ export async function imprimirEtiquetas(d: DadosImpressao, preview = false, incl
 
 // Reimpressao (etiqueta rasgou ou impressora falhou) — 1 etiqueta, 1 job.
 export async function reimprimirEtiqueta(d: DadosImpressao, tipo: 'crianca' | 'responsavel', motivo: string): Promise<void> {
-  const [barcodeSvg] = await Promise.all([gerarBarcodeSvg(d.codigoBarras), preloadImg(d.crianca.salaLogoUrl)]);
-  const frag = tipo === 'crianca' ? htmlEtiquetaCrianca(d, barcodeSvg) : htmlEtiquetaResponsavel(d, barcodeSvg);
-  const resultado = await imprimirHtml(documento([frag]));
+  const barcodeSvg = await gerarBarcodeSvg(d.codigoBarras);
+  const frag = tipo === 'crianca' ? htmlEtiquetaCrianca(d) : htmlEtiquetaResponsavel(d, barcodeSvg);
+  const resultado = await imprimirHtml(documento([frag], d.layout));
   totemKids.etiquetas.log({
     checkin_id: d.checkinId,
     estacao_id: d.estacaoId,

@@ -347,13 +347,13 @@ export default function TotemKidsCheckin() {
   // Última etiqueta impressa · permite REIMPRIMIR sem novo check-in (se borrou/falhou).
   const [ultimaEtiqueta, setUltimaEtiqueta] = useState<Parameters<typeof imprimirEtiquetas>[0] | null>(null);
 
-  // Layout configurável da etiqueta (tamanho/posição da logo, fonte do nome)
+  // Layout configurável da etiqueta (fonte, tamanho da fonte, tamanho do nome)
   const [etqLayout, setEtqLayout] = useState<Parameters<typeof imprimirEtiquetas>[0]['layout']>(undefined);
   const [logoAniv, setLogoAniv] = useState<string | null>(null); // logo do Kids na etiqueta de aniversário
   useEffect(() => {
     totemKids.etiquetaConfig.get().then((c: any) => {
       if (c) {
-        setEtqLayout({ logoTamanho: c.logo_tamanho, logoPosicao: c.logo_posicao, nomeTamanho: c.nome_tamanho });
+        setEtqLayout({ fonte: c.fonte, escalaFonte: c.escala_fonte, nomeTamanho: c.nome_tamanho });
         setLogoAniv(c.logo_aniversario_url || null);
       }
     }).catch(() => {});
