@@ -288,6 +288,12 @@ export default function TotemKidsCheckin() {
   const [cultoAtualId, setCultoAtualId] = useState<string | null>(null);
   const [cultosSel, setCultosSel] = useState<Set<string>>(new Set());
   const criancaAtivaRef = useRef(false);
+  // Todos os cultos com Kids de HOJE (abertos ou não) + controle de "ativar
+  // sessão na mão" (Marcos 2026-07-20): se a sessão não abrir sozinha na hora do
+  // culto, o operador libera qualquer culto do dia com um toque, sem o relógio.
+  const [cultosDoDia, setCultosDoDia] = useState<any[]>([]);
+  const [ativandoCulto, setAtivandoCulto] = useState<string | null>(null);
+  const [mostrarAtivar, setMostrarAtivar] = useState(false);
 
   // Irmãos (mesma família) · quando a criança tem irmãos, o check-in vira o
   // PAINEL DA FAMÍLIA (família como centro · Marcos 2026-07-14). O gate de load
@@ -653,6 +659,7 @@ export default function TotemKidsCheckin() {
       // 152 check-ins caírem no 08:30 no teste). Garante a sessão do culto de
       // agora (abre se ainda não existe). O timer periódico re-avalia sozinho.
       const doDia: any[] = await totemKids.cultosDoDia(hoje);
+      setCultosDoDia(doDia || []);
       const { atual } = escolherCultoPorRelogio(doDia || []);
       let sessaoAtual: any = null;
       if (atual) {
@@ -689,6 +696,21 @@ export default function TotemKidsCheckin() {
   function recarregarSessao() {
     carregarCultosDoDia();
     totemKids.salas.list().then(setSalas).catch(() => {});
+  }
+
+  // Ativar (abrir/reabrir) a sessão de um culto NA MÃO — safety net do Marcos
+  // (2026-07-20): usa o mesmo garantir do relógio, mas sob demanda. Assim o
+  // check-in não trava se a sessão não liberar sozinha na hora do culto.
+  async function ativarSessao(cultoId: string, nome?: string) {
+    setAtivandoCulto(cultoId);
+    setMostrarAtivar(true); // mantém o painel aberto pra ativar mais de um culto se precisar
+    try {
+      await totemKids.sessoes.garantir(cultoId);
+      toast.success(`Sessão de ${nome || 'culto'} ativada.`);
+      await carregarCultosDoDia();
+    } catch (e: unknown) {
+      toast.error((e as { message?: string })?.message || 'Não deu pra ativar a sessão.');
+    } finally { setAtivandoCulto(null); }
   }
 
   function ativarTotem() {
@@ -1110,6 +1132,41 @@ export default function TotemKidsCheckin() {
               </div>
             </div>
           )}
+          {/* Ativar sessão na mão (Marcos 2026-07-20): safety net se a sessão não
+              abrir sozinha na hora do culto. Fica discreto quando há sessão aberta
+              e AUTO-ABRE em âmbar quando NÃO há nenhuma (o operador não trava). */}
+          {cultosDoDia.length > 0 && (
+            <div className="max-w-2xl mx-auto w-full">
+              <button type="button" onClick={() => setMostrarAtivar(v => !v)}
+                className={`flex items-center gap-1.5 mx-auto text-xs ${sessoesAbertas.length === 0 ? 'text-amber-600 dark:text-amber-400 font-medium' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}>
+                <Settings className="h-3.5 w-3.5" />
+                {sessoesAbertas.length === 0 ? 'Nenhuma sessão aberta — ative um culto' : 'Ativar sessão de um culto'}
+                <span>{(mostrarAtivar || sessoesAbertas.length === 0) ? '▲' : '▼'}</span>
+              </button>
+              {(mostrarAtivar || sessoesAbertas.length === 0) && (
+                <div className="mt-2 rounded-xl border border-slate-200 dark:border-slate-800 p-3 space-y-2">
+                  <p className="text-[11px] text-muted-foreground">Abre a sessão do culto agora, mesmo fora do horário — pra o check-in não travar.</p>
+                  <div className="flex flex-wrap gap-2">
+                    {cultosDoDia.map((c: any) => {
+                      const aberto = sessoesAbertas.some((s: any) => s.culto_id === c.id);
+                      return aberto ? (
+                        <span key={c.id} className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30 px-2.5 py-1.5 text-xs text-emerald-700 dark:text-emerald-300">
+                          <Check className="h-3.5 w-3.5" /> {c.nome}{c.hora ? ` · ${c.hora}` : ''} · ativo
+                        </span>
+                      ) : (
+                        <Button key={c.id} type="button" variant="outline" size="sm" className="h-8 text-xs"
+                          disabled={ativandoCulto === c.id} onClick={() => ativarSessao(c.id, c.nome)}>
+                          {ativandoCulto === c.id ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Plus className="h-3.5 w-3.5 mr-1" />}
+                          Ativar {c.nome}{c.hora ? ` · ${c.hora}` : ''}
+                        </Button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Título central · compacto pra a busca ficar mais alta (teclado não tapa as sugestões) */}
           <div className="text-center">
             <h1 className="text-xl sm:text-2xl font-black tracking-tight">Vamos fazer o check-in! 🎈</h1>
