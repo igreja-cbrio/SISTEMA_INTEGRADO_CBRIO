@@ -1467,10 +1467,8 @@ export const totemKids = {
   apresentacaoUpdate: (id, body) => patch(`/totem-kids/apresentacoes/${id}`, body),
   apresentacaoRemove: (id) => del(`/totem-kids/apresentacoes/${id}`),
   resumoExemplo: () => post('/totem-kids/resumo/exemplo', {}),
-  resumoPcoTestar: (data) => post('/totem-kids/resumo-pco/testar', data ? { data } : {}),
   comparativoMes: (mes) => get(`/totem-kids/comparativo-mes?mes=${encodeURIComponent(mes)}`),
   frequenciaSistema: (data) => get(`/totem-kids/frequencia-sistema?data=${encodeURIComponent(data)}`),
-  pcoPessoa: (pcoId) => get(`/totem-kids/pco-pessoa/${encodeURIComponent(pcoId)}`),
   kidsEquipe: {
     list: () => get('/totem-kids/kids-equipe'),
     buscar: (q) => get(`/totem-kids/kids-equipe/buscar?q=${encodeURIComponent(q)}`),
@@ -1540,16 +1538,6 @@ export const totemKids = {
     },
     // URL pra abrir e baixar modelo (browser cuida da auth via cookie/header)
     modeloImportacaoUrl: () => `${API}/totem-kids/criancas/modelo-importacao`,
-    // Sync com a API do Planning Center Check-Ins (upsert idempotente)
-    // Sync do Planning Center pagina por TODAS as pessoas do PCO → leva minutos.
-    // Timeout de 5 min (a função serverless tem maxDuration 300s) pra a UI não
-    // abortar em 30s achando que deu erro (a sync continua e conclui no servidor).
-    syncPco: (data = {}) => post('/totem-kids/sync-pco', data, { timeout: 300_000 }),
-    // Corrige responsáveis poluídos pela importação familiar, mantendo os guardiões
-    // reais (quem fez o check-in da criança no PCO OU no nosso totem).
-    // apply=false = prévia (dry-run · não altera nada). Longo → timeout de 5 min.
-    corrigirResponsaveisPco: (apply = false) => post('/totem-kids/responsaveis-pco', { apply }, { timeout: 300_000 }),
-    depurarInativos: (meses = 6) => post('/totem-kids/criancas/depurar-inativos', { meses }),
   },
   checkin: {
     criar: (data) => post('/totem-kids/checkin', data),
@@ -1562,7 +1550,6 @@ export const totemKids = {
   },
   cultosDoDia: (data) => get(`/totem-kids/cultos-do-dia?data=${encodeURIComponent(data)}`),
   ausentes: (min = 3) => get(`/totem-kids/ausentes?min=${min}`),
-  syncPresencasPco: (dias = 90) => post(`/totem-kids/sync-presencas-pco?dias=${dias}`, {}, { timeout: 300_000 }),
   // Pré-check-in pelo app do membro · o voluntário digita/escaneia o código
   preCheckin: {
     buscarCodigo: (codigo) => get(`/totem-kids/pre-checkin/codigo/${encodeURIComponent(codigo)}`),

@@ -12,7 +12,7 @@ import { Card, CardContent } from '../../../components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../../components/ui/dialog';
 import { toast } from 'sonner';
-import { Baby, Search, Plus, Loader2, AlertCircle, Phone, Trash2, UserX, UserCheck, ArrowLeft, Camera, X, Copy, RefreshCw, Sparkles, Pencil } from 'lucide-react';
+import { Baby, Search, Plus, Loader2, AlertCircle, Phone, Trash2, UserX, UserCheck, ArrowLeft, Camera, X, Copy, Sparkles, Pencil } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer } from 'recharts';
 import DataNascimentoPicker from './DataNascimentoPicker';
 import useConfirmarSaida from '../../../hooks/useConfirmarSaida';
@@ -49,7 +49,6 @@ export default function GestaoCriancas() {
     if (cid) setSel({ id: cid });
   }, [searchParams]);
 
-  const [sincronizando, setSincronizando] = useState(false);
   const carregar = useCallback(() => {
     setLoading(true);
     api.criancas.list({ ativo: status === 'ativos' })
@@ -67,60 +66,6 @@ export default function GestaoCriancas() {
       .finally(() => setLoadingAus(false));
   }, []);
   useEffect(() => { if (modo === 'faltantes') carregarAusentes(); }, [modo, carregarAusentes]);
-
-  const [syncPres, setSyncPres] = useState(false);
-  async function sincronizarPresencas() {
-    setSyncPres(true);
-    try {
-      const r: any = await api.syncPresencasPco(90);
-      toast.success(`Presenças do PCO sincronizadas · ${r?.presencas_upsert ?? 0} registros em ${r?.dias_processados ?? 0} cultos.`);
-      carregarAusentes();
-    } catch (e: any) {
-      toast.error(e?.message || 'Erro ao sincronizar presenças do PCO');
-    } finally { setSyncPres(false); }
-  }
-
-  async function sincronizarPco() {
-    setSincronizando(true);
-    try {
-      const r: any = await api.criancas.syncPco();
-      toast.success(`Planning Center sincronizado · ${r?.vinculadas ?? 0} vinculadas · ${r?.criadas ?? 0} novas · ${r?.atualizadas ?? 0} atualizadas.`);
-      carregar();
-    } catch (e: any) {
-      toast.error(e?.message || 'Erro ao sincronizar com o Planning Center.');
-    } finally { setSincronizando(false); }
-  }
-
-  const [corrigindoResp, setCorrigindoResp] = useState(false);
-  async function corrigirRespPco() {
-    setCorrigindoResp(true);
-    try {
-      const prev: any = await api.criancas.corrigirResponsaveisPco(false); // prévia (dry-run)
-      if (!prev?.criancas_afetadas) {
-        toast.info(`Nenhuma correção proposta (varri ${prev?.checkins_varridos ?? 0} check-ins do PCO; nada casou com guardião confirmado).`);
-        return;
-      }
-      if (!window.confirm(`Encontrei ${prev.criancas_afetadas} criança(s) com responsáveis a mais. Vou MANTER só quem faz o check-in delas no Planning Center e REMOVER ${prev.vinculos_removidos} vínculo(s) errado(s). Ninguém fica sem responsável. Aplicar?`)) return;
-      const r: any = await api.criancas.corrigirResponsaveisPco(true);
-      toast.success(`Corrigido · ${r?.criancas_afetadas ?? 0} crianças · ${r?.vinculos_removidos ?? 0} vínculos removidos.`);
-      carregar();
-    } catch (e: any) {
-      toast.error(e?.message || 'Erro ao corrigir responsáveis pelo PCO.');
-    } finally { setCorrigindoResp(false); }
-  }
-
-  const [depurando, setDepurando] = useState(false);
-  async function depurarInativos() {
-    if (!window.confirm('Desativar (tirar da lista) as crianças sem check-in no Planning Center nos últimos 6 meses? É reversível — elas ficam como inativas, não são apagadas.')) return;
-    setDepurando(true);
-    try {
-      const r: any = await api.criancas.depurarInativos(6);
-      toast.success(`${r?.desativadas ?? 0} crianças desativadas (sem check-in há 6+ meses).`);
-      carregar();
-    } catch (e: any) {
-      toast.error(e?.message || 'Erro ao depurar inativos.');
-    } finally { setDepurando(false); }
-  }
 
   const filtradas = useMemo(() => {
     const f = FAIXAS.find(x => x.key === faixa)!;
@@ -147,15 +92,6 @@ export default function GestaoCriancas() {
           <p className="text-sm text-muted-foreground">Gerencie cada criança · ficha, atendimentos, desativar.</p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={sincronizarPco} disabled={sincronizando}>
-            {sincronizando ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-1" />} Sincronizar Planning Center
-          </Button>
-          <Button variant="outline" onClick={depurarInativos} disabled={depurando}>
-            {depurando ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <UserX className="h-4 w-4 mr-1" />} Depurar inativos (6m)
-          </Button>
-          <Button variant="outline" onClick={corrigirRespPco} disabled={corrigindoResp} title="Poda responsáveis errados usando quem faz o check-in no Planning Center">
-            {corrigindoResp ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <UserCheck className="h-4 w-4 mr-1" />} Corrigir responsáveis (PCO)
-          </Button>
           <Button variant="outline" onClick={() => setDupOpen(true)}><Copy className="h-4 w-4 mr-1" /> Duplicados</Button>
           <Button onClick={() => setNovoOpen(true)}><Plus className="h-4 w-4 mr-1" /> Nova criança</Button>
         </div>
@@ -178,11 +114,8 @@ export default function GestaoCriancas() {
           <CardContent className="p-3">
             <div className="flex items-start justify-between gap-2 mb-2">
               <p className="text-xs text-muted-foreground">
-                Crianças ativas que ficaram <b>3+ cultos seguidos sem check-in</b> (última presença nos últimos 90 dias). Vale um contato com a família. A frequência vem dos check-ins do Planning Center.
+                Crianças frequentadoras ativas que ficaram <b>3+ cultos seguidos sem check-in</b> (última presença nos últimos 90 dias). Vale um contato com a família. A frequência vem dos check-ins do totem.
               </p>
-              <Button variant="outline" size="sm" className="shrink-0" onClick={sincronizarPresencas} disabled={syncPres}>
-                {syncPres ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-1" />} Sincronizar presenças (PCO)
-              </Button>
             </div>
             {loadingAus ? (
               <div className="flex justify-center py-10"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
@@ -989,7 +922,7 @@ function JornadaTab({ criancaId, c, onChanged }: { criancaId: string; c: any; on
           Frequência (check-ins){freq ? ` · total ${freq.total}${freq.ultima ? ` · último ${fmt(String(freq.ultima).slice(0, 10))}` : ''}` : ''}
         </div>
         {dados.length === 0 ? (
-          <p className="text-xs text-muted-foreground py-4 text-center">Sem check-ins registrados no Planning Center pra esta criança.</p>
+          <p className="text-xs text-muted-foreground py-4 text-center">Sem check-ins registrados no sistema pra esta criança.</p>
         ) : (
           <div style={{ height: 180 }}>
             <ResponsiveContainer width="100%" height="100%">

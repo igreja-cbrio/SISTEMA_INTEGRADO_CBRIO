@@ -240,7 +240,7 @@ const PainelBridge = lazyWithRetry(() => import('./pages/ministerial/PainelBridg
 const TotemKidsCheckin = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsCheckin'));
 const GestaoCriancas = lazyWithRetry(() => import('./pages/ministerial/totemKids/GestaoCriancas'));
 const KidsHub = lazyWithRetry(() => import('./pages/ministerial/totemKids/KidsHub'));
-const KidsFrequenciaPCO = lazyWithRetry(() => import('./pages/ministerial/totemKids/KidsFrequenciaPCO'));
+const KidsFrequencia = lazyWithRetry(() => import('./pages/ministerial/totemKids/KidsFrequencia'));
 const VoluntariosKids = lazyWithRetry(() => import('./pages/ministerial/totemKids/VoluntariosKids'));
 const VoluntariadoInscricoesKids = lazyWithRetry(() => import('./pages/ministerial/totemKids/VoluntariadoInscricoesKids'));
 const EstoqueKids = lazyWithRetry(() => import('./pages/ministerial/totemKids/EstoqueKids'));
@@ -615,7 +615,7 @@ function AppRoutes() {
         <Route path="/ministerial/totem-kids" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsCheckin /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/kids" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><KidsHub /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/criancas" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><GestaoCriancas /></Suspense></ModuleGuard>} />
-        <Route path="/ministerial/totem-kids/frequencia" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><KidsFrequenciaPCO /></Suspense></ModuleGuard>} />
+        <Route path="/ministerial/totem-kids/frequencia" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><KidsFrequencia /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/voluntarios" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><VoluntariosKids /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/voluntariado-inscricoes" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><VoluntariadoInscricoesKids /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/estoque" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><EstoqueKids /></Suspense></ModuleGuard>} />
