@@ -291,9 +291,10 @@ export default function TotemKidsCheckin() {
   // Todos os cultos com Kids de HOJE (abertos ou não) + controle de "ativar
   // sessão na mão" (Marcos 2026-07-20): se a sessão não abrir sozinha na hora do
   // culto, o operador libera qualquer culto do dia com um toque, sem o relógio.
+  // O controle vive no modal de Ajustes (engrenagem · onde o Marcos procura);
+  // na tela fica só o aviso âmbar quando NÃO há nenhuma sessão aberta.
   const [cultosDoDia, setCultosDoDia] = useState<any[]>([]);
   const [ativandoCulto, setAtivandoCulto] = useState<string | null>(null);
-  const [mostrarAtivar, setMostrarAtivar] = useState(false);
 
   // Irmãos (mesma família) · quando a criança tem irmãos, o check-in vira o
   // PAINEL DA FAMÍLIA (família como centro · Marcos 2026-07-14). O gate de load
@@ -675,7 +676,11 @@ export default function TotemKidsCheckin() {
       })).sort((a: any, b: any) => String(a.hora).localeCompare(String(b.hora)));
       setSessoesAbertas(cultos);
       setCultoAtualId(atual?.id || null);
-      setSessao(sessaoAtual || cultos.find((c: any) => c.culto_id === atual?.id)?.sessao || null);
+      // Fallback: fora da janela do relógio (atual=null), qualquer sessão ABERTA
+      // de hoje destrava a tela — senão "Ativar sessão" abria no banco e o totem
+      // continuava preso no "Sem culto de Kids agora" (bug do #1858). Nada é
+      // pré-selecionado: o voluntário segue escolhendo o culto no check-in.
+      setSessao(sessaoAtual || cultos.find((c: any) => c.culto_id === atual?.id)?.sessao || cultos[0]?.sessao || null);
     } catch { /* mantém o estado atual */ }
   }
   // Da seleção (cultosSel) resolve o culto PRIMÁRIO (a sessão do check-in) + os
@@ -703,7 +708,6 @@ export default function TotemKidsCheckin() {
   // check-in não trava se a sessão não liberar sozinha na hora do culto.
   async function ativarSessao(cultoId: string, nome?: string) {
     setAtivandoCulto(cultoId);
-    setMostrarAtivar(true); // mantém o painel aberto pra ativar mais de um culto se precisar
     try {
       await totemKids.sessoes.garantir(cultoId);
       toast.success(`Sessão de ${nome || 'culto'} ativada.`);
@@ -711,6 +715,30 @@ export default function TotemKidsCheckin() {
     } catch (e: unknown) {
       toast.error((e as { message?: string })?.message || 'Não deu pra ativar a sessão.');
     } finally { setAtivandoCulto(null); }
+  }
+
+  // Chips de ativação por culto (modal de Ajustes + aviso âmbar da tela quando
+  // nada está aberto). Aberto = chip verde "ativo"; fechado = botão "Ativar"
+  // (POST /sessoes/garantir · cria OU reabre sessão encerrada).
+  function renderCultosAtivar() {
+    return (
+      <div className="flex flex-wrap gap-2">
+        {cultosDoDia.map((c: any) => {
+          const aberto = sessoesAbertas.some((s: any) => s.culto_id === c.id);
+          return aberto ? (
+            <span key={c.id} className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30 px-2.5 py-1.5 text-xs text-emerald-700 dark:text-emerald-300">
+              <Check className="h-3.5 w-3.5" /> {c.nome}{c.hora ? ` · ${c.hora}` : ''} · ativo
+            </span>
+          ) : (
+            <Button key={c.id} type="button" variant="outline" size="sm" className="h-8 text-xs"
+              disabled={ativandoCulto === c.id} onClick={() => ativarSessao(c.id, c.nome)}>
+              {ativandoCulto === c.id ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Plus className="h-3.5 w-3.5 mr-1" />}
+              Ativar {c.nome}{c.hora ? ` · ${c.hora}` : ''}
+            </Button>
+          );
+        })}
+      </div>
+    );
   }
 
   function ativarTotem() {
@@ -1028,6 +1056,15 @@ export default function TotemKidsCheckin() {
           <DialogTitle>Ajustes do totem</DialogTitle>
           <DialogDescription>Sessões, estações e teste de etiqueta — sem sair do totem.</DialogDescription>
         </DialogHeader>
+        {/* Ativar sessão na mão (Marcos 2026-07-20): libera o culto quando a
+            sessão não abre sozinha na hora — o check-in não trava. */}
+        {cultosDoDia.length > 0 && (
+          <div className="rounded-xl border border-slate-200 dark:border-slate-800 p-3 space-y-2">
+            <p className="text-sm font-semibold">Ativar sessão de um culto</p>
+            <p className="text-xs text-muted-foreground">Abre (ou reabre) a sessão de um culto de hoje, mesmo fora do horário — pra o check-in não travar.</p>
+            {renderCultosAtivar()}
+          </div>
+        )}
         <TotemKidsConfigTabs aba={ajustesAba} onAba={setAjustesAba} abas={['sessoes', 'etiqueta']} />
       </DialogContent>
     </Dialog>
@@ -1104,6 +1141,15 @@ export default function TotemKidsCheckin() {
           <div className="w-16 h-16 mx-auto rounded-2xl bg-gradient-to-br from-orange-400 to-pink-500 flex items-center justify-center text-3xl shadow-lg shadow-pink-500/30">🧸</div>
           <p className="text-lg text-slate-600">Sem culto de Kids agora</p>
           <p className="text-sm text-slate-400">Não há culto com Kids pra este horário hoje. Quando começar, o check-in libera sozinho.</p>
+          {/* Antes esta tela era um beco: sem sessão aberta, não havia onde ativar
+              (o controle antigo ficava num branch inalcançável). Agora dá pra
+              liberar o culto daqui mesmo (Marcos 2026-07-20). */}
+          {cultosDoDia.length > 0 && (
+            <div className="max-w-md mx-auto rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 p-3 space-y-2">
+              <p className="text-sm font-medium text-amber-700 dark:text-amber-300">Precisa liberar agora? Ative a sessão de um culto:</p>
+              <div className="flex justify-center">{renderCultosAtivar()}</div>
+            </div>
+          )}
           <Button variant="outline" onClick={recarregarSessao}>Atualizar</Button>
         </div>
       ) : !crianca ? (
@@ -1132,38 +1178,13 @@ export default function TotemKidsCheckin() {
               </div>
             </div>
           )}
-          {/* Ativar sessão na mão (Marcos 2026-07-20): safety net se a sessão não
-              abrir sozinha na hora do culto. Fica discreto quando há sessão aberta
-              e AUTO-ABRE em âmbar quando NÃO há nenhuma (o operador não trava). */}
-          {cultosDoDia.length > 0 && (
-            <div className="max-w-2xl mx-auto w-full">
-              <button type="button" onClick={() => setMostrarAtivar(v => !v)}
-                className={`flex items-center gap-1.5 mx-auto text-xs ${sessoesAbertas.length === 0 ? 'text-amber-600 dark:text-amber-400 font-medium' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}>
-                <Settings className="h-3.5 w-3.5" />
-                {sessoesAbertas.length === 0 ? 'Nenhuma sessão aberta — ative um culto' : 'Ativar sessão de um culto'}
-                <span>{(mostrarAtivar || sessoesAbertas.length === 0) ? '▲' : '▼'}</span>
-              </button>
-              {(mostrarAtivar || sessoesAbertas.length === 0) && (
-                <div className="mt-2 rounded-xl border border-slate-200 dark:border-slate-800 p-3 space-y-2">
-                  <p className="text-[11px] text-muted-foreground">Abre a sessão do culto agora, mesmo fora do horário — pra o check-in não travar.</p>
-                  <div className="flex flex-wrap gap-2">
-                    {cultosDoDia.map((c: any) => {
-                      const aberto = sessoesAbertas.some((s: any) => s.culto_id === c.id);
-                      return aberto ? (
-                        <span key={c.id} className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30 px-2.5 py-1.5 text-xs text-emerald-700 dark:text-emerald-300">
-                          <Check className="h-3.5 w-3.5" /> {c.nome}{c.hora ? ` · ${c.hora}` : ''} · ativo
-                        </span>
-                      ) : (
-                        <Button key={c.id} type="button" variant="outline" size="sm" className="h-8 text-xs"
-                          disabled={ativandoCulto === c.id} onClick={() => ativarSessao(c.id, c.nome)}>
-                          {ativandoCulto === c.id ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Plus className="h-3.5 w-3.5 mr-1" />}
-                          Ativar {c.nome}{c.hora ? ` · ${c.hora}` : ''}
-                        </Button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
+          {/* Ativar sessão na mão (Marcos 2026-07-20): o controle completo vive no
+              modal de Ajustes (engrenagem). Aqui só o aviso âmbar quando NÃO há
+              nenhuma sessão aberta — o operador resolve sem procurar. */}
+          {cultosDoDia.length > 0 && sessoesAbertas.length === 0 && (
+            <div className="max-w-2xl mx-auto w-full rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 p-3 space-y-2">
+              <p className="text-sm font-medium text-amber-700 dark:text-amber-300">Nenhuma sessão aberta — ative um culto pra liberar o check-in.</p>
+              {renderCultosAtivar()}
             </div>
           )}
 

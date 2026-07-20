@@ -312,6 +312,31 @@ async function inativarVisitantesVencidos() {
   return (data || []).length;
 }
 
+// Visitante que VOLTA (Marcos 2026-07-20): um novo check-in com check-in anterior
+// de OUTRO dia promove a criança a FREQUENTADOR na hora — definitivo (limpa prazo
+// e relação; nada volta a marcá-la visitante sozinho). Roda DEPOIS do insert do
+// check-in, best-effort: nunca trava nem atrasa o check-in.
+async function promoverVisitanteRecorrente(criancaId) {
+  try {
+    const { data: cr } = await supabase.from('kids_criancas')
+      .select('id, visitante').eq('id', criancaId).maybeSingle();
+    if (!cr || cr.visitante !== true) return false;
+    // Já veio em outro dia? (o check-in de agora é de hoje · compara em BRT)
+    const { data: prev } = await supabase.from('kids_checkins')
+      .select('id').eq('crianca_id', criancaId).is('deleted_at', null)
+      .lt('checkin_at', `${_hojeBRT()}T00:00:00-03:00`).limit(1);
+    if (!prev || !prev.length) return false;
+    const { error } = await supabase.from('kids_criancas')
+      .update({ visitante: false, data_limite: null, visitante_relacao: null, updated_at: new Date().toISOString() })
+      .eq('id', criancaId).eq('visitante', true);
+    if (error) { console.error('[totemKids/promoverVisitanteRecorrente]', error.message); return false; }
+    return true;
+  } catch (e) {
+    console.error('[totemKids/promoverVisitanteRecorrente]', e.message);
+    return false;
+  }
+}
+
 // POST /api/totem-kids/sessoes/encerrar-vencidas · sweep lazy (SEM cron): o
 // totem/admin chama na carga; encerra sessões de dias anteriores + baixa abertos.
 router.post('/sessoes/encerrar-vencidas', authorizeModule('kids', 2), async (req, res) => {
@@ -860,10 +885,17 @@ router.patch('/criancas/:id', authorizeModule('kids', 3), async (req, res) => {
     for (const k of allowed) if (k in req.body) update[k] = req.body[k];
     // Visitante temporário (Marcos 2026-07-20): virou visitante → garante o prazo
     // (data_limite = hoje+28d, se não veio um); virou frequentador → limpa prazo
-    // e relação. Valida a relação.
+    // e relação (definitivo — nada re-marca sozinho). Valida a relação.
     if ('visitante' in req.body) {
       if (req.body.visitante === true) {
-        if (!req.body.data_limite) update.data_limite = _dataLimiteVisitante();
+        if (!req.body.data_limite) {
+          // O prazo só NASCE quando a criança está VIRANDO visitante agora (ou não
+          // tem prazo nenhum). Salvar a ficha de quem JÁ é visitante NÃO renova as
+          // 4 semanas (Marcos 2026-07-20: o status vale até alguém mudá-lo).
+          const { data: atual } = await supabase.from('kids_criancas')
+            .select('visitante, data_limite').eq('id', req.params.id).maybeSingle();
+          if (!(atual?.visitante === true && atual?.data_limite)) update.data_limite = _dataLimiteVisitante();
+        }
       } else {
         update.data_limite = null;
         update.visitante_relacao = null;
@@ -2637,6 +2669,10 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
       .eq('id', crianca_id).eq('ativo', false)
       .then(() => {}, (e) => console.error('[totemKids/checkin] reativar criança:', e?.message));
 
+    // Visitante que voltou em outro dia vira frequentador (definitivo) ·
+    // fire-and-forget (o helper engole erro — nunca segura a etiqueta).
+    promoverVisitanteRecorrente(crianca_id);
+
     // Cultos do grupo (pro recibo): começa com o atual.
     const cultosDoGrupo = [{ id: sessao.culto_id, nome: sessao.culto?.nome || null }];
 
@@ -2836,6 +2872,10 @@ router.post('/checkin/lote', authorizeModule('kids', 2), async (req, res) => {
       }
       supabase.from('kids_criancas').update({ ativo: true, motivo_inativacao: null, inativado_em: null })
         .eq('id', crianca_id).eq('ativo', false).then(() => {}, () => {});
+
+      // Visitante que voltou em outro dia vira frequentador (definitivo) ·
+      // fire-and-forget (o helper engole erro — nunca segura o lote).
+      promoverVisitanteRecorrente(crianca_id);
 
       const cultosDoGrupo = [{ id: sessao.culto_id, nome: sessao.culto?.nome || null }];
       for (const cultoId of cultosExtras) {
