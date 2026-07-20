@@ -1632,6 +1632,10 @@ async function aprovarOrigemHandler(req, res) {
             severidade: 'info',
             chaveDedup: `solicitacao_pos_aprovacao_${data.id}`,
             targetIds: filtered,
+            // Reembolso/pagamento caem direto na fila do financeiro (sem cotação):
+            // o aprovador financeiro (Alberto) recebe por e-mail também. Só o
+            // financeiro — não spammar Amaury/logística nas compras.
+            email: modulo === 'financeiro',
           }).catch(err => console.error('[SOLICITACOES] notify responsaveis:', err.message));
         }
       }).catch(err => console.error('[SOLICITACOES] resolve managers:', err.message));
@@ -1724,6 +1728,8 @@ router.post('/:id/registrar-cotacao', async (req, res) => {
           severidade: cotacaoAcimaDaDispensa ? 'alta' : 'info',
           chaveDedup: `solicitacao_cotacao_${data.id}`,
           targetIds: alvo,
+          // Aprovador financeiro (Alberto) recebe a cotação pronta por e-mail também.
+          email: true,
         }).catch(err => console.error('[SOLICITACOES] notify cotacao:', err.message));
       }
     }).catch(err => console.error('[SOLICITACOES] resolve financeiro:', err.message));
