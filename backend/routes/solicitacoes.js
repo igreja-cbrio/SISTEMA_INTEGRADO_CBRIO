@@ -505,6 +505,9 @@ router.get('/', async (req, res) => {
       for (const d of data) {
         const papeis = [];
         if (d.aprovacao_origem_status === 'pendente' && aprovarIds.includes(d.aprovacao_origem_diretor_id)) papeis.push('origem');
+        // Triagem (setor não resolvido) é dever do super-admin · sem isto o badge
+        // contava a triagem mas a lista a escondia (badge-fantasma · 2026-07-20).
+        if (isSuper && d.aprovacao_origem_status === 'triagem') papeis.push('origem');
         if (d.aprovacao_gestao_status === 'pendente' && ['aprovada', 'dispensada'].includes(d.aprovacao_origem_status) && aprovaGestaoDe(d.categoria)) papeis.push('gestao');
         if (d.status === 'aguardando_merito' && ehMerito) papeis.push('merito');
         papeisPorId[d.id] = papeis;
@@ -799,19 +802,13 @@ router.get('/meu-papel', async (req, res) => {
     // Super-admin? Define antes do contador · ele ve/aprova a fila inteira.
     const isSuper = await isAdminFallback(req);
 
-    // Contador de pendentes na fila de aprovacao.
-    // · super-admin: TODOS os pendentes (fallback · mesma fila da aba Aprovar).
-    // · diretor/co-aprovador: só os seus setores (diretor + co-aprovados).
+    // Contador de pendentes na fila de aprovacao · DEVE bater com a lista da aba
+    // (bug 2026-07-20: super-admin contava a fila INTEIRA no badge, mas a lista
+    // só mostra o que é DELE → "5 pra aprovar" com a lista vazia). Agora conta só
+    // o que o usuário realmente aprova: origem onde ele é o diretor/co-aprovador.
+    const aprovarIds = await diretorIdsQuePodeAprovar(userId);
     let pendentesOrigem = 0;
-    if (isSuper) {
-      const { count } = await supabase
-        .from('solicitacoes')
-        .select('id', { count: 'exact', head: true })
-        .eq('aprovacao_origem_status', 'pendente')
-        .is('deleted_at', null);
-      pendentesOrigem = count || 0;
-    } else if (ehAprovadorOrigem) {
-      const aprovarIds = await diretorIdsQuePodeAprovar(userId);
+    if (aprovarIds.length) {
       const { count } = await supabase
         .from('solicitacoes')
         .select('id', { count: 'exact', head: true })
@@ -845,8 +842,10 @@ router.get('/meu-papel', async (req, res) => {
     const meritoIds = await aprovadoresMeritoIds();
     const ehAprovadorMerito = meritoIds.includes(userId);
 
+    // Gestão/mérito: conta só o que o usuário aprova de fato (não a fila inteira
+    // por ser super-admin) — mesma régua da lista (aprovaGestaoDe / ehMerito).
     let pendentesGestao = 0;
-    if (ehAprovadorGestao || isSuper) {
+    if (ehAprovadorGestao) {
       const { data: gp } = await supabase
         .from('solicitacoes')
         .select('categoria')
@@ -854,10 +853,10 @@ router.get('/meu-papel', async (req, res) => {
         .in('aprovacao_origem_status', ['aprovada', 'dispensada'])
         .is('deleted_at', null)
         .limit(1000);
-      pendentesGestao = (gp || []).filter(r => isSuper || aprovaGestaoDeMP(r.categoria)).length;
+      pendentesGestao = (gp || []).filter(r => aprovaGestaoDeMP(r.categoria)).length;
     }
     let pendentesMerito = 0;
-    if (ehAprovadorMerito || isSuper) {
+    if (ehAprovadorMerito) {
       const { count } = await supabase
         .from('solicitacoes')
         .select('id', { count: 'exact', head: true })
