@@ -16,6 +16,7 @@
 // ============================================================================
 
 import { useState, useMemo } from 'react';
+import MergeFieldPicker from './dedup/MergeFieldPicker';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { membresia as membresiaApi } from '../api';
 import { toast } from 'sonner';
@@ -168,19 +169,25 @@ export default function MembrosDuplicadosPanel() {
 
   // ── ação por par único ──────────────────────────────────────────────────────
   const [parMerge, setParMerge] = useState(null); // { par } (confirmação)
+  const [mergeCampos, setMergeCampos] = useState({}); // overrides "melhor de cada"
   async function fundirUm(par) {
     setWorking(true);
     try {
       const keep = keepOf(par);
       const keep_id = keep === 'a' ? par.membro_a_id : par.membro_b_id;
       const drop_id = keep === 'a' ? par.membro_b_id : par.membro_a_id;
-      const res = await membresiaApi.duplicados.merge({ keep_id, merge_ids: [drop_id], observacao: 'Merge manual · aba Duplicados' });
-      toast.success(`Fundido · ${res?.merged || 1} cadastro absorvido`);
+      const res = await membresiaApi.duplicados.merge({ keep_id, merge_ids: [drop_id], observacao: 'Merge manual · aba Duplicados', campos: mergeCampos });
+      const pedidos = Object.keys(mergeCampos || {});
+      const aplicados = res?.campos_aplicados || [];
+      const faltaram = pedidos.filter((k) => !aplicados.includes(k));
+      if (faltaram.length) toast.warning(`Fundido, mas ${faltaram.length} campo(s) não entraram (conflito com outro cadastro): ${faltaram.join(', ')}. Ajuste na ficha.`);
+      else toast.success(`Fundido · ${res?.merged || 1} cadastro absorvido${aplicados.length ? ` · ${aplicados.length} campo(s) do melhor de cada` : ''}`);
       qc.invalidateQueries({ queryKey: ['membresia', 'duplicados'] });
       qc.invalidateQueries({ queryKey: ['membresia', 'membros'] });
     } catch (e) { toast.error(e?.message || 'Erro ao fundir'); }
     setWorking(false);
     setParMerge(null);
+    setMergeCampos({});
   }
   async function ignorarUm(par) {
     try {
@@ -272,7 +279,7 @@ export default function MembrosDuplicadosPanel() {
       )}
 
       {/* Confirmação · 1 par */}
-      <AlertDialog open={!!parMerge} onOpenChange={(o) => !o && setParMerge(null)}>
+      <AlertDialog open={!!parMerge} onOpenChange={(o) => { if (!o) { setParMerge(null); setMergeCampos({}); } }}>
         <AlertDialogContent>
           {parMerge && (() => {
             const keep = keepOf(parMerge.par);
@@ -293,6 +300,7 @@ export default function MembrosDuplicadosPanel() {
                     </div>
                   </AlertDialogDescription>
                 </AlertDialogHeader>
+                <MergeFieldPicker key={`${k.id}_${d.id}`} keep={k} drop={d} onCampos={setMergeCampos} />
                 <AlertDialogFooter>
                   <AlertDialogCancel disabled={working}>Cancelar</AlertDialogCancel>
                   <AlertDialogAction onClick={(e) => { e.preventDefault(); fundirUm(parMerge.par); }} disabled={working} className="gap-1.5">

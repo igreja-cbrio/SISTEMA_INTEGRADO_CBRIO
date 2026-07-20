@@ -6,6 +6,7 @@ const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { acharOuCriarGuardado, normalizarNome, normalizarCpf, normalizarTelefone, normalizarEmail } = require('../services/membroMatch');
 const { avaliarPossivelDuplicidade } = require('../services/duplicidadePolicy');
+const { montarPatchFusao } = require('../services/fusaoCampos');
 const multer = require('multer');
 const { uploadModuleFile, SHAREPOINT_CONFIGURED } = require('../services/storageService');
 const { notificar } = require('../services/notificar');
@@ -2457,7 +2458,7 @@ router.get('/duplicatas', authorizeModule('grupos', 3), async (req, res) => {
 // quebraria o matching), mas o alternativo fica visível na ficha.
 router.post('/duplicatas/fundir', authorizeModule('grupos', 5), async (req, res) => {
   try {
-    const { keep_id, merge_ids } = req.body || {};
+    const { keep_id, merge_ids, campos } = req.body || {};
     const merges = Array.isArray(merge_ids) ? [...new Set(merge_ids.filter(v => typeof v === 'string' && v && v !== keep_id))] : [];
     if (!keep_id || !merges.length) return res.status(400).json({ error: 'Informe keep_id e merge_ids' });
     if (merges.length > 10) return res.status(400).json({ error: 'Máximo de 10 cadastros por fusão' });
@@ -2484,9 +2485,24 @@ router.post('/duplicatas/fundir', authorizeModule('grupos', 5), async (req, res)
     if (error) throw error;
     _dupCache = { ts: 0, payload: null };
 
+    // "Melhor de cada": fixa no mantido os campos escolhidos na triagem (o merge
+    // já apagou os absorvidos → sem colisão de UNIQUE de CPF com o próprio grupo).
+    const patch = montarPatchFusao(campos);
+    let camposAplicados = [];
+    if (Object.keys(patch).length) {
+      const { error: upErr } = await supabase.from('mem_membros')
+        .update(patch).eq('id', keep_id).is('deleted_at', null);
+      if (upErr) console.error('[Grupos duplicatas fundir · campos]', upErr.message);
+      else camposAplicados = Object.keys(patch);
+    }
+
     // Divergências → observações do mantido (comparadas contra o keep PÓS-
-    // fusão, que já absorveu os campos que estavam vazios). Nunca derruba a
-    // fusão: se a nota falhar, o snapshot do mem_merge_log ainda guarda tudo.
+    // fusão, que já absorveu os campos que estavam vazios + os escolhidos acima).
+    // Inclui o snapshot ORIGINAL do mantido: se o operador trocou um campo pelo
+    // valor de um absorvido, o valor original do mantido não se perde — vira
+    // nota. Nunca derruba a fusão: o snapshot do mem_merge_log ainda guarda tudo.
+    const keepAntes = (antes || []).find(m => m.id === keep_id);
+    const registrosNota = [keepAntes, ...mergedAntes].filter(Boolean);
     const dadosSomados = [];
     try {
       const { data: keepDepois } = await supabase.from('mem_membros')
@@ -2499,7 +2515,7 @@ router.post('/duplicatas/fundir', authorizeModule('grupos', 5), async (req, res)
         const vistos = new Set();
         const soma = (chave, texto) => { if (!vistos.has(chave)) { vistos.add(chave); dadosSomados.push(texto); } };
         const fmtBr = (iso) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || '')); return m ? `${m[3]}/${m[2]}/${m[1]}` : iso; };
-        for (const m of mergedAntes) {
+        for (const m of registrosNota) {
           const em = normalizarEmail(m.email);
           if (em && em !== emailK) soma(`em:${em}`, `e-mail alternativo: ${m.email}`);
           const tl = normalizarTelefone(m.telefone);
@@ -2520,7 +2536,7 @@ router.post('/duplicatas/fundir', authorizeModule('grupos', 5), async (req, res)
       }
     } catch (e) { console.error('[Grupos duplicatas fundir · nota]', e.message); }
 
-    res.json({ ...(data && typeof data === 'object' ? data : {}), ok: true, dados_somados: dadosSomados });
+    res.json({ ...(data && typeof data === 'object' ? data : {}), ok: true, dados_somados: dadosSomados, campos_aplicados: camposAplicados });
   } catch (e) { console.error('[Grupos duplicatas fundir]', e.message); res.status(500).json({ error: e.message || 'Erro ao fundir cadastros' }); }
 });
 

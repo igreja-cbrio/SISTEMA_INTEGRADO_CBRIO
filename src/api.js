@@ -538,7 +538,7 @@ export const grupos = {
   // Possíveis duplicatas do universo de grupos (triagem da Naná)
   duplicatas: {
     list: (fresh) => get('/grupos/duplicatas' + (fresh ? '?fresh=1' : '')),
-    fundir: (keepId, mergeIds) => post('/grupos/duplicatas/fundir', { keep_id: keepId, merge_ids: mergeIds }),
+    fundir: (keepId, mergeIds, campos) => post('/grupos/duplicatas/fundir', { keep_id: keepId, merge_ids: mergeIds, campos }),
     ignorar: (ids) => post('/grupos/duplicatas/ignorar', { ids }),
   },
   gruposDoLider: (liderId, params) => get(`/grupos/lideres/${liderId}/grupos` + (params ? '?' + new URLSearchParams(params) : '')),

@@ -12,11 +12,12 @@
 //   3. Conflitos de CPF · fila temporária de identidade para revisão humana.
 // ============================================================================
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link as RouterLink } from 'react-router-dom';
 import { nextBatismo as api, membresia as membresiaApi } from '../../api';
 import { toast } from 'sonner';
+import MergeFieldPicker from '../../components/dedup/MergeFieldPicker';
 import {
   UserSearch, GitMerge, X, RefreshCw, Loader2, ArrowLeft, ArrowRight,
   Phone, Mail, Calendar, User as UserIcon, IdCard, Link2, UserPlus, Users,
@@ -297,73 +298,6 @@ function TabBtn({ active, onClick, icon: Icon, label, count }) {
 // ----------------------------------------------------------------------------
 // LENTE 1 · Duplicatas
 // ----------------------------------------------------------------------------
-// Fusão "melhor de cada": o merge_membros mantém um cadastro e preenche os
-// campos VAZIOS a partir do absorvido. Quando os dois lados DIVERGEM num campo
-// (ex.: um tem o nome completo, o outro só o CPF), aqui o operador escolhe qual
-// valor vence — resolve o caso "Arthur Serpa × Arthur Vicente Serpa Silva".
-const CAMPOS_FUSAO = [
-  { key: 'nome', label: 'Nome', fmt: (v) => v },
-  { key: 'telefone', label: 'Telefone', fmt: (v) => maskTelefone(v) },
-  { key: 'email', label: 'E-mail', fmt: (v) => v },
-  { key: 'cpf', label: 'CPF', fmt: (v) => maskCpf(v) },
-  { key: 'data_nascimento', label: 'Nascimento', fmt: (v) => fmtData(v) },
-  { key: 'genero', label: 'Gênero', fmt: (v) => v },
-];
-function normCampoFusao(key, v) {
-  if (v == null) return '';
-  const s = String(v).trim();
-  if (key === 'cpf' || key === 'telefone') return s.replace(/\D/g, '');
-  return s.toLowerCase();
-}
-function MergeFieldPicker({ keep, drop, onCampos }) {
-  // Só entram campos onde os DOIS têm valor e divergem. Onde só o absorvido tem
-  // valor, o merge_membros já preenche o vazio — não precisa de escolha.
-  const conflitos = CAMPOS_FUSAO.filter((c) => {
-    const nk = normCampoFusao(c.key, keep[c.key]);
-    const nd = normCampoFusao(c.key, drop[c.key]);
-    return nk && nd && nk !== nd;
-  });
-  const inicial = {};
-  conflitos.forEach((c) => {
-    // Nome → default o mais completo (mais longo). Demais → mantém o do escolhido.
-    inicial[c.key] = c.key === 'nome' && String(drop.nome || '').trim().length > String(keep.nome || '').trim().length
-      ? 'drop' : 'keep';
-  });
-  const [escolhas, setEscolhas] = useState(inicial);
-  useEffect(() => {
-    const campos = {};
-    conflitos.forEach((c) => { if (escolhas[c.key] === 'drop') campos[c.key] = drop[c.key]; });
-    onCampos(campos);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [escolhas]);
-  if (!conflitos.length) return null;
-  return (
-    <div className="rounded-lg border p-3 space-y-2.5">
-      <div className="text-[11px] font-semibold text-foreground">Campos divergentes · escolha o melhor de cada</div>
-      {conflitos.map((c) => (
-        <div key={c.key} className="space-y-1">
-          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{c.label}</div>
-          <div className="grid grid-cols-2 gap-1.5">
-            {['keep', 'drop'].map((lado) => {
-              const membro = lado === 'keep' ? keep : drop;
-              const ativo = escolhas[c.key] === lado;
-              return (
-                <button key={lado} type="button"
-                  onClick={() => setEscolhas((e) => ({ ...e, [c.key]: lado }))}
-                  className={`text-left rounded-md border px-2 py-1.5 text-xs transition ${ativo ? 'border-primary bg-primary/10 text-foreground font-medium' : 'border-border text-muted-foreground hover:border-primary/50'}`}>
-                  <span className="block truncate">{c.fmt(membro[c.key]) || '—'}</span>
-                  <span className="block text-[9px] opacity-60 mt-0.5">{lado === 'keep' ? 'mantido' : 'absorvido'}</span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      ))}
-      <p className="text-[10px] text-muted-foreground">Campos que só um lado tem são preenchidos automaticamente.</p>
-    </div>
-  );
-}
-
 function DuplicadosTab({ onVerFicha }) {
   const qc = useQueryClient();
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery({

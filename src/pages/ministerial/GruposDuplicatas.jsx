@@ -15,6 +15,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { grupos as api } from '../../api';
 import { Button } from '../../components/ui/button';
+import MergeFieldPicker from '../../components/dedup/MergeFieldPicker';
 import { toast } from 'sonner';
 import { RefreshCw, CheckCircle2 } from 'lucide-react';
 
@@ -53,6 +54,7 @@ export default function GruposDuplicatas({ podeResolver = false }) {
   const [loading, setLoading] = useState(true);
   const [busyIdx, setBusyIdx] = useState(null);
   const [keepSel, setKeepSel] = useState({});
+  const [camposSel, setCamposSel] = useState({}); // { [i]: campos } · "melhor de cada"
 
   const load = useCallback(async (fresh = false) => {
     setLoading(true);
@@ -62,6 +64,7 @@ export default function GruposDuplicatas({ podeResolver = false }) {
       const sel = {};
       (r?.clusters || []).forEach((c, i) => { sel[i] = melhorRegistro(c.pessoas); });
       setKeepSel(sel);
+      setCamposSel({});
     } catch (e) { toast.error(e.message || 'Erro ao analisar duplicatas'); }
     finally { setLoading(false); }
   }, []);
@@ -81,11 +84,18 @@ export default function GruposDuplicatas({ podeResolver = false }) {
     )) return;
     setBusyIdx(i);
     try {
-      const r = await api.duplicatas.fundir(keep, merges);
+      const r = await api.duplicatas.fundir(keep, merges, camposSel[i] || {});
+      const pedidos = Object.keys(camposSel[i] || {});
+      const aplicados = r?.campos_aplicados || [];
+      const faltaram = pedidos.filter(k => !aplicados.includes(k));
       const n = r?.dados_somados?.length || 0;
-      toast.success(n > 0
-        ? `Cadastros fundidos — ${n} dado${n === 1 ? '' : 's'} divergente${n === 1 ? '' : 's'} somado${n === 1 ? '' : 's'} nas observações da ficha`
-        : 'Cadastros fundidos em um só');
+      if (faltaram.length) {
+        toast.warning(`Fundido, mas ${faltaram.length} campo(s) escolhido(s) não entraram (conflito com outro cadastro): ${faltaram.join(', ')}. Ajuste na ficha.`);
+      } else {
+        toast.success(n > 0
+          ? `Cadastros fundidos — ${n} dado${n === 1 ? '' : 's'} divergente${n === 1 ? '' : 's'} somado${n === 1 ? '' : 's'} nas observações da ficha`
+          : 'Cadastros fundidos em um só');
+      }
       await load(true);
     } catch (e) { toast.error(e.message || 'Erro ao fundir'); }
     finally { setBusyIdx(null); }
@@ -198,6 +208,18 @@ export default function GruposDuplicatas({ podeResolver = false }) {
               </div>
 
               {podeResolver ? (
+                <>
+                  {keepSel[i] && (() => {
+                    const keepRec = c.pessoas.find(p => p.id === keepSel[i]);
+                    const outros = c.pessoas.filter(p => p.id !== keepSel[i]);
+                    if (!keepRec) return null;
+                    return (
+                      <div style={{ padding: '0 14px 6px' }}>
+                        <MergeFieldPicker key={`${i}_${keepSel[i]}`} keep={keepRec} outros={outros}
+                          onCampos={(campos) => setCamposSel(s => ({ ...s, [i]: campos }))} />
+                      </div>
+                    );
+                  })()}
                 <div style={{ padding: '10px 14px', display: 'flex', gap: 10, justifyContent: 'flex-end', alignItems: 'center', flexWrap: 'wrap' }}>
                   <span style={{ fontSize: 11, color: C.t3, marginRight: 'auto' }}>
                     Fundir não apaga nada — dados diferentes são somados nas observações da ficha.
@@ -209,6 +231,7 @@ export default function GruposDuplicatas({ podeResolver = false }) {
                     {busyIdx === i ? 'Processando...' : 'Fundir no selecionado'}
                   </Button>
                 </div>
+                </>
               ) : (
                 <div style={{ padding: '8px 14px', fontSize: 11.5, color: C.t3 }}>
                   Somente leitura — fundir/descartar exige nível de administração de grupos.
