@@ -226,6 +226,43 @@ function AbaSessoes() {
           Abra o período (ex.: <b>Domingo de manhã</b>) — os cultos do período ficam disponíveis. No check-in, o voluntário escolhe em qual culto a criança fica.
         </p>
 
+        {/* Ativar sessão de um culto de HOJE na mão (Marcos 2026-07-20): o botão
+            que destrava o check-in quando a sessão não abre sozinha. SEMPRE
+            visível — em dia sem culto com Kids mostra o porquê (senão parecia
+            que o controle tinha sumido, ex.: segunda-feira). */}
+        <div className="rounded-lg border border-border p-3 space-y-2">
+          <div className="text-sm font-semibold">Ativar sessão de um culto (hoje)</div>
+          <p className="text-xs text-muted-foreground">Abre (ou reabre) a sessão na mão, mesmo fora do horário — pra o check-in não travar.</p>
+          {(() => {
+            if (carregando) return <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />;
+            const cultosHoje = cultos
+              .filter((c: any) => String(c.data || '').slice(0, 10) === hojeBRT)
+              .sort((a: any, b: any) => String(a.hora || '').localeCompare(String(b.hora || '')));
+            if (!cultosHoje.length) return (
+              <p className="text-xs text-muted-foreground rounded-md border border-dashed border-border p-2">
+                Hoje não tem culto com Kids — não há sessão pra ativar. No dia do culto (domingo/quarta), os botões aparecem aqui.
+              </p>
+            );
+            return (
+              <div className="flex flex-wrap gap-2">
+                {cultosHoje.map((c: any) => {
+                  const aberta = sessaoPorCulto[c.id]?.status === 'aberta';
+                  const hhmm = c.hora ? ` · ${String(c.hora).slice(0, 5)}` : '';
+                  return aberta ? (
+                    <span key={c.id} className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30 px-2.5 py-1.5 text-xs text-emerald-700 dark:text-emerald-300">
+                      <CheckCircle2 className="h-3.5 w-3.5" /> {c.nome}{hhmm} · ativa
+                    </span>
+                  ) : (
+                    <Button key={c.id} type="button" variant="outline" size="sm" className="h-8 text-xs" onClick={() => abrirUma(c.id)}>
+                      <Plus className="h-3.5 w-3.5 mr-1" /> Ativar {c.nome}{hhmm}
+                    </Button>
+                  );
+                })}
+              </div>
+            );
+          })()}
+        </div>
+
         {/* Sessão atual do totem · trocar entre os períodos de HOJE (ex.: manhã →
             noite). Só aparece quando há +de um período hoje. Trocar ENCERRA o
             período anterior (consolida + baixa) e abre o escolhido. */}

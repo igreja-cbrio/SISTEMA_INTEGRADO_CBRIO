@@ -44,5 +44,6 @@ LANGUAGE sql STABLE AS $$
     AND (SELECT count(*) FROM cal WHERE cal.data > ult.ultima_data) >= p_min;
 $$;
 
-COMMENT ON FUNCTION public.fn_kids_ausentes_consecutivos(int) IS
-  'Crianças frequentadoras ativas faltando N+ cultos seguidos · presença = check-ins do totem (kids_checkins), sem Planning Center (2026-07-20).';
+-- (COMMENT numa linha só · o editor do Supabase engasgou com a quebra de linha
+--  entre o IS e a string na 1ª tentativa de aplicação · 2026-07-20)
+COMMENT ON FUNCTION public.fn_kids_ausentes_consecutivos(int) IS 'Radar de ausentes do Kids: presenca = check-ins do totem (kids_checkins), sem Planning Center (2026-07-20).';
