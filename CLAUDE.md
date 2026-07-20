@@ -3208,6 +3208,11 @@ migration `20260616160000`): obrigatório pra Marketing; pra Utility só se
 - **Já ligados:** confirmação de inscrição (`app.js` POST /app/inscricoes ·
   grupos/batismo/next/voluntariado/retiro/cursos/eventos · {{1}} nome {{2}} tipo) e
   vínculo Kids aprovado/recusado (`totemKids.js` · {{1}} criança {{2}} aprovado/recusado).
+- **Convite NEXT em massa (2026-07-20):** `nextConvite.js` POST `/next-convite/enviar`
+  dispara o template `WHATSAPP_TEMPLATE_NEXT_CONVITE` (= `next_convite`, aprovado ·
+  **1 variável {{1}}=1º nome**, link fixo/botão · pt_BR). Usado na aba Convertidos do
+  Cuidados ("Convidar para o NEXT"). ⚠️ Esse disparo usa `wpp.sendTemplate` direto —
+  NÃO checa opt-in (diferente do `notificarMembro`).
 - **A ligar quando útil:** doação (vem do webhook Stripe / Edge Function — fora do
   Express), batismo lembrete (cron), escala, aniversário. O helper já está pronto.
 - **Pra ativar um template:** aprovar na Meta → setar o env com o nome exato → começa
