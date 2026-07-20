@@ -12,7 +12,6 @@ import CuidadosJ180 from '../../components/CuidadosJ180';
 import AgentePrimeiroContato from '../../components/AgentePrimeiroContato';
 import AgenteBatismoNext from '../../components/AgenteBatismoNext';
 import NextConvite from '../../components/NextConvite';
-import ConversasInbox from '../../components/waInbox/ConversasInbox';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/tabs';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
@@ -830,7 +829,7 @@ function VisitasList({ itens, loading, canEdit, onNova, onEdit, onRemove }: {
 // Página principal
 // ──────────────────────────────────────────────────────────────────
 export default function Cuidados() {
-  const { isAdmin, getAccessLevel, user } = useAuth();
+  const { isAdmin, getAccessLevel } = useAuth();
   const podeEditarCuidados = isAdmin || (getAccessLevel?.(['cuidados']) ?? 0) >= 3;
   const [searchParams, setSearchParams] = useSearchParams();
   const [tab, setTab] = useState(() => {
@@ -1369,16 +1368,11 @@ export default function Cuidados() {
 
         {/* Próximos passos · lista operacional dos convertidos + jornada (contato/batismo/Next) */}
         <TabsContent value="convertidos" className="space-y-4">
-          <Tabs defaultValue="conversas" className="space-y-4">
+          <Tabs defaultValue="acompanhamento" className="space-y-4">
             <TabsList>
-              <TabsTrigger value="conversas">Conversas</TabsTrigger>
               <TabsTrigger value="acompanhamento">Acompanhamento</TabsTrigger>
               <TabsTrigger value="disparos">Disparos de mensagem</TabsTrigger>
             </TabsList>
-
-            <TabsContent value="conversas" className="space-y-4">
-              <ConversasInbox atendentes={atendentes} currentUserId={user?.id} />
-            </TabsContent>
 
             <TabsContent value="disparos" className="space-y-4">
               <AgentePrimeiroContato />

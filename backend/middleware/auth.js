@@ -30,6 +30,7 @@ const ROUTE_MODULE_MAP = {
   'integracao':   ['integracao'],
   'relatorios':   ['relatorios'],
   'cuidados':     ['cuidados'],
+  'conversas':    ['conversas'],
   'online':       ['online'],
   'wifi':         ['wifi'],
   'next':         ['next'],
