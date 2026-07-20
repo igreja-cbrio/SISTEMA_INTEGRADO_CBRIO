@@ -666,14 +666,21 @@ export default function TotemKidsCheckin() {
       if (atual) {
         try { sessaoAtual = await totemKids.sessoes.garantir(atual.id); } catch { /* rede · segue */ }
       }
-      // Todas as sessões abertas de HOJE alimentam o seletor (o operador ainda
-      // pode escolher outro culto na mão — ex.: um culto que atrasou). Nunca
-      // adota sessão de outro dia (backstop com encerrar-vencidas + o POST).
+      // Sessões abertas de HOJE ou de culto FUTURO alimentam o seletor (o
+      // operador escolhe o culto na mão — ex.: culto que atrasou, ou ENSAIO de
+      // um culto de outro dia ativado nos Ajustes · Marcos 2026-07-20). Culto
+      // futuro mostra a data no rótulo pra ninguém confundir. Sessão de dia
+      // PASSADO segue fora (backstop com encerrar-vencidas + o POST · R1).
       const abertas: any[] = await totemKids.sessoes.list({ status: 'aberta', limit: 30 });
-      const cultos = (abertas || []).filter((s: any) => s.culto && String(s.culto?.data).slice(0, 10) === hoje).map((s: any) => ({
-        culto_id: s.culto_id, sessao_id: s.id, nome: s.culto?.nome, data: s.culto?.data,
-        hora: String(s.culto?.service_type?.recurrence_time || '').slice(0, 5), sessao: s,
-      })).sort((a: any, b: any) => String(a.hora).localeCompare(String(b.hora)));
+      const cultos = (abertas || []).filter((s: any) => s.culto && String(s.culto?.data).slice(0, 10) >= hoje).map((s: any) => {
+        const dataC = String(s.culto?.data).slice(0, 10);
+        return {
+          culto_id: s.culto_id, sessao_id: s.id,
+          nome: dataC > hoje ? `${s.culto?.nome} · ${dataC.slice(8, 10)}/${dataC.slice(5, 7)}` : s.culto?.nome,
+          data: s.culto?.data,
+          hora: String(s.culto?.service_type?.recurrence_time || '').slice(0, 5), sessao: s,
+        };
+      }).sort((a: any, b: any) => String(a.data).localeCompare(String(b.data)) || String(a.hora).localeCompare(String(b.hora)));
       setSessoesAbertas(cultos);
       setCultoAtualId(atual?.id || null);
       // Fallback: fora da janela do relógio (atual=null), qualquer sessão ABERTA
@@ -691,10 +698,14 @@ export default function TotemKidsCheckin() {
     // usa o único (o seletor "em qual culto" só aparece quando há +de um horário).
     if (!marcados.length && sessoesAbertas.length === 1) marcados = [sessoesAbertas[0].culto_id];
     if (!marcados.length) return { sessao_id: null, cultos_extras: [] };
-    const horaDe = (id: string) => String(sessoesAbertas.find((c: any) => c.culto_id === id)?.hora || '');
+    // Ordena por DATA+hora (sessões abertas podem incluir culto futuro · ensaio)
+    const chaveDe = (id: string) => {
+      const c = sessoesAbertas.find((x: any) => x.culto_id === id);
+      return `${String(c?.data || '')}T${String(c?.hora || '')}`;
+    };
     const primaryId = (cultoAtualId && cultosSel.has(cultoAtualId))
       ? cultoAtualId
-      : [...marcados].sort((a, b) => horaDe(a).localeCompare(horaDe(b)))[0];
+      : [...marcados].sort((a, b) => chaveDe(a).localeCompare(chaveDe(b)))[0];
     const sessao_id = sessoesAbertas.find((c: any) => c.culto_id === primaryId)?.sessao_id || sessao?.id || null;
     return { sessao_id, cultos_extras: marcados.filter((id) => id !== primaryId) };
   }
