@@ -830,7 +830,7 @@ function VisitasList({ itens, loading, canEdit, onNova, onEdit, onRemove }: {
 // Página principal
 // ──────────────────────────────────────────────────────────────────
 export default function Cuidados() {
-  const { isAdmin, getAccessLevel } = useAuth();
+  const { isAdmin, getAccessLevel, user } = useAuth();
   const podeEditarCuidados = isAdmin || (getAccessLevel?.(['cuidados']) ?? 0) >= 3;
   const [searchParams, setSearchParams] = useSearchParams();
   const [tab, setTab] = useState(() => {
@@ -1377,7 +1377,7 @@ export default function Cuidados() {
             </TabsList>
 
             <TabsContent value="conversas" className="space-y-4">
-              <ConversasInbox />
+              <ConversasInbox atendentes={atendentes} currentUserId={user?.id} />
             </TabsContent>
 
             <TabsContent value="disparos" className="space-y-4">
