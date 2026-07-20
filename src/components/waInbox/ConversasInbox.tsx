@@ -400,7 +400,7 @@ export default function ConversasInbox({
               <div>
                 <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Cadastro</p>
                 {conv.membro_id ? (
-                  <a href={`/admin/membresia?id=${conv.membro_id}`} className="flex items-center gap-2 rounded-lg border border-border p-2 text-sm hover:bg-muted/50"><User className="h-4 w-4 text-primary" />Ver ficha do membro</a>
+                  <a href={`/ministerial/membresia?membro=${conv.membro_id}`} className="flex items-center gap-2 rounded-lg border border-border p-2 text-sm hover:bg-muted/50"><User className="h-4 w-4 text-primary" />Ver ficha do membro</a>
                 ) : (
                   <div className="flex items-center gap-2 rounded-lg border border-dashed border-border p-2 text-sm text-muted-foreground"><User className="h-4 w-4" />Sem cadastro vinculado</div>
                 )}

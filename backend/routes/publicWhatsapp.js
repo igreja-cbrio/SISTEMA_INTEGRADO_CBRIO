@@ -134,6 +134,26 @@ async function processarMensagem(m, cfg) {
     .catch(err => { console.error('[whatsapp webhook] nota:', err.message); return false; });
   if (tratadoNota) return;
 
+  // ── INBOX HUMANO ASSUMIDO ── se a igreja já iniciou/assumiu uma conversa
+  // com este número pelo inbox (Nova conversa ou resposta do time), as
+  // respostas voltam pro inbox — NÃO pro bot — mesmo que o número seja líder.
+  // Exceção: se houver coleta conversacional aberta (líder mid-report), o bot
+  // continua (não interrompe uma coleta em andamento).
+  const { data: convAssumida } = await supabase.from('wa_conversas')
+    .select('id').eq('telefone', telefone).eq('assumida_humano', true).is('deleted_at', null).maybeSingle();
+  if (convAssumida) {
+    const limColeta = new Date(Date.now() - JANELA_CONVERSA_MIN * 60 * 1000).toISOString();
+    const { data: coletaViva } = await supabase.from('whatsapp_coletas')
+      .select('id').eq('telefone', telefone).eq('status', 'aguardando_info').gte('created_at', limColeta).limit(1).maybeSingle();
+    if (!coletaViva) {
+      await require('../services/waInbox').registrarInbound({
+        telefone, texto, messageId,
+        tipo: m.type === 'image' ? 'image' : m.type === 'audio' ? 'audio' : 'text',
+      }).catch(e => console.error('[whatsapp webhook] inbox assumida:', e.message));
+      return; // não aciona bot nem resposta institucional
+    }
+  }
+
   // Identifica lider/assistente cadastrado
   const { data: lider } = await supabase
     .from('whatsapp_lideres')
