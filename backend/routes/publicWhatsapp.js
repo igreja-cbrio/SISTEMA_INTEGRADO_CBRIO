@@ -83,7 +83,7 @@ async function processarEvento(req) {
         const ehFlowReply = m.type === 'interactive' && m.interactive?.type === 'nfm_reply';
         // Áudio e foto são aceitos pro fluxo de GRUPOS (relato do encontro ·
         // transcrição/foto tratadas em services/whatsappGrupos).
-        const ehMidia = m.type === 'audio' || m.type === 'image';
+        const ehMidia = m.type === 'audio' || m.type === 'image' || m.type === 'document';
         if (!ehTexto && !ehFlowReply && !ehMidia) continue;
         if (++processadas > MAX_MSGS) {
           console.warn('[whatsapp webhook] limite de mensagens por evento atingido · ignorando excedente');
@@ -148,7 +148,8 @@ async function processarMensagem(m, cfg) {
     if (!coletaViva) {
       await require('../services/waInbox').registrarInbound({
         telefone, texto, messageId,
-        tipo: m.type === 'image' ? 'image' : m.type === 'audio' ? 'audio' : 'text',
+        tipo: m.type === 'image' ? 'image' : m.type === 'audio' ? 'audio' : m.type === 'document' ? 'document' : 'text',
+        mediaId: m.image?.id || m.audio?.id || m.document?.id,
       }).catch(e => console.error('[whatsapp webhook] inbox assumida:', e.message));
       return; // não aciona bot nem resposta institucional
     }
@@ -176,7 +177,8 @@ async function processarMensagem(m, cfg) {
     const waInbox = require('../services/waInbox');
     await waInbox.registrarInbound({
       telefone, texto, messageId,
-      tipo: m.type === 'image' ? 'image' : m.type === 'audio' ? 'audio' : 'text',
+      tipo: m.type === 'image' ? 'image' : m.type === 'audio' ? 'audio' : m.type === 'document' ? 'document' : 'text',
+      mediaId: m.image?.id || m.audio?.id || m.document?.id,
     }).catch(e => console.error('[whatsapp webhook] inbox in:', e.message));
     if (m.type !== 'text') return; // mídia: já no inbox; não custa LLM institucional
     const resposta = await responderInstitucional({ texto, institucional: cfg?.institucional });

@@ -42,15 +42,36 @@ async function acharOuCriarConversa(telefone) {
   return data;
 }
 
+// Sobe um buffer de mídia pro bucket público wa-inbox e devolve a URL pública.
+async function subirMedia({ buffer, mime, conversaId, origem = 'in', filename }) {
+  try {
+    let ext = ((mime || '').split(';')[0].split('/')[1] || 'bin').replace('jpeg', 'jpg');
+    if (filename && filename.includes('.')) ext = filename.split('.').pop().toLowerCase().slice(0, 8);
+    const path = `${conversaId}/${origem}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+    const { error } = await supabase.storage.from('wa-inbox')
+      .upload(path, buffer, { contentType: mime || 'application/octet-stream', upsert: true });
+    if (error) { console.error('[waInbox] upload media:', error.message); return null; }
+    return supabase.storage.from('wa-inbox').getPublicUrl(path).data.publicUrl;
+  } catch (e) { console.error('[waInbox] subirMedia:', e.message); return null; }
+}
+
 // Mensagem que CHEGOU (do contato). Marca não-lida, reabre e abre a janela de 24h.
-async function registrarInbound({ telefone, texto, tipo = 'text', messageId }) {
+// Se vier `mediaId` (imagem/documento/áudio), baixa da Meta e guarda a URL.
+async function registrarInbound({ telefone, texto, tipo = 'text', messageId, mediaId }) {
   const c = await acharOuCriarConversa(telefone);
   if (!c) return;
-  const { error } = await supabase.from('wa_mensagens').insert({
+  const ins = await supabase.from('wa_mensagens').insert({
     conversa_id: c.id, direcao: 'in', tipo, texto: texto || null, wa_message_id: messageId || null,
-  });
-  if (error) return; // provável reentrega (wa_message_id único) → não incrementa
-  const previa = (texto || (tipo === 'image' ? '[imagem]' : tipo === 'audio' ? '[áudio]' : '[mídia]')).slice(0, 140);
+  }).select('id').maybeSingle();
+  if (ins.error) return; // provável reentrega (wa_message_id único) → não incrementa
+  if (mediaId && ins.data?.id && ['image', 'document', 'audio'].includes(tipo)) {
+    const media = await wpp.baixarMedia(mediaId);
+    if (media?.buffer) {
+      const url = await subirMedia({ buffer: media.buffer, mime: media.mime, conversaId: c.id, origem: 'in' });
+      if (url) await supabase.from('wa_mensagens').update({ media_url: url }).eq('id', ins.data.id);
+    }
+  }
+  const previa = (texto || (tipo === 'image' ? '[imagem]' : tipo === 'audio' ? '[áudio]' : tipo === 'document' ? '[documento]' : '[mídia]')).slice(0, 140);
   const agora = new Date().toISOString();
   await supabase.from('wa_conversas').update({
     last_message_at: agora, last_inbound_at: agora,
@@ -61,11 +82,11 @@ async function registrarInbound({ telefone, texto, tipo = 'text', messageId }) {
 // Mensagem que SAIU (bot ou humano). Não mexe em não-lidas nem na janela.
 // Envio humano (autorId) ou template → marca a conversa como "assumida por
 // humano" (as respostas passam a voltar pro inbox, não pro bot).
-async function registrarOutbound({ telefone, texto, tipo = 'text', autorId = null }) {
+async function registrarOutbound({ telefone, texto, tipo = 'text', autorId = null, mediaUrl = null }) {
   const c = await acharOuCriarConversa(telefone);
   if (!c) return null;
   await supabase.from('wa_mensagens').insert({
-    conversa_id: c.id, direcao: 'out', tipo, texto: texto || null, autor_id: autorId,
+    conversa_id: c.id, direcao: 'out', tipo, texto: texto || null, autor_id: autorId, media_url: mediaUrl,
   });
   const patch = { last_message_at: new Date().toISOString(), ultima_previa: (texto || '').slice(0, 140) };
   if (autorId || tipo === 'template') patch.assumida_humano = true;
@@ -74,6 +95,6 @@ async function registrarOutbound({ telefone, texto, tipo = 'text', autorId = nul
 }
 
 module.exports = {
-  registrarInbound, registrarOutbound, acharOuCriarConversa,
+  registrarInbound, registrarOutbound, acharOuCriarConversa, subirMedia,
   dentroJanela24h, JANELA_24H_MS, soDigitos,
 };

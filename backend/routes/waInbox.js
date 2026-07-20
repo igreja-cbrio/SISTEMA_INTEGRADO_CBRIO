@@ -2,10 +2,17 @@
 // Entrada não-triada + a área do usuário + as suas), thread, responde (texto
 // livre <24h · template fora), triagem por área, atribuição e nova conversa.
 const router = require('express').Router();
+const multer = require('multer');
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const wpp = require('../services/whatsappService');
 const waInbox = require('../services/waInbox');
+
+// Anexos: imagem (jpg/png/webp) ou documento (pdf/doc/xls). Cap 16MB (limite Meta).
+const uploadAnexo = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 16 * 1024 * 1024 },
+});
 
 router.use(authenticate);
 
@@ -250,6 +257,34 @@ router.post('/conversas/:id/responder', authorizeModule('conversas', 2), async (
   } catch (e) {
     console.error('[wa-inbox] responder:', e.message);
     res.status(500).json({ error: 'Erro ao enviar resposta' });
+  }
+});
+
+// POST /conversas/:id/anexo — envia imagem/documento (multipart campo 'arquivo')
+router.post('/conversas/:id/anexo', authorizeModule('conversas', 2), uploadAnexo.single('arquivo'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Arquivo obrigatório.' });
+    const { data: conv } = await supabase.from('wa_conversas')
+      .select('id, telefone, last_inbound_at').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!conv) return res.status(404).json({ error: 'Conversa não encontrada' });
+    if (!waInbox.dentroJanela24h(conv.last_inbound_at)) {
+      return res.status(400).json({ error: 'Fora da janela de 24h — anexos só dentro da janela.', code: 'fora_janela' });
+    }
+    const mime = req.file.mimetype || 'application/octet-stream';
+    const kind = mime.startsWith('image/') ? 'image' : 'document';
+    // sobe pro bucket público → o WhatsApp busca pelo link
+    const urlPub = await waInbox.subirMedia({ buffer: req.file.buffer, mime, conversaId: conv.id, origem: 'out', filename: req.file.originalname });
+    if (!urlPub) return res.status(500).json({ error: 'Falha ao subir o arquivo.' });
+    const r = await wpp.sendMedia(conv.telefone, kind, urlPub, { filename: req.file.originalname });
+    if (!r?.sent) return res.status(502).json({ error: 'O WhatsApp não aceitou o anexo.', detail: r?.reason || r?.detail || null });
+    await waInbox.registrarOutbound({
+      telefone: conv.telefone, tipo: kind, autorId: uid(req), mediaUrl: urlPub,
+      texto: kind === 'document' ? (req.file.originalname || '[documento]') : null,
+    });
+    res.json({ ok: true, media_url: urlPub, messageId: r.messageId || null });
+  } catch (e) {
+    console.error('[wa-inbox] anexo:', e.message);
+    res.status(500).json({ error: 'Erro ao enviar anexo' });
   }
 });
 
