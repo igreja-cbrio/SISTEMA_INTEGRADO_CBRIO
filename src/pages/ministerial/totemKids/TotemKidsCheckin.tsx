@@ -40,6 +40,7 @@ type Crianca = {
   tem_limitacao_fisica: boolean | null;
   limitacao_fisica_qual: string | null;
   visitante: boolean;
+  visitante_relacao?: string | null;
   ativo?: boolean;
   motivo_inativacao?: string | null;
   idade_meses: number | null;
@@ -1793,6 +1794,7 @@ function ModalDetalhesCrianca({ crianca, atualizarCrianca, onClose, onAdicionarI
     data_nascimento: crianca.data_nascimento || '',
     observacoes_medicas: crianca.observacoes_medicas || '',
     visitante: !!crianca.visitante,
+    visitante_relacao: crianca.visitante_relacao || 'amigo',
     tem_alergia: !!crianca.tem_alergia, alergia_qual: crianca.alergia_qual || '',
     tem_espectro: !!crianca.tem_espectro, espectro_qual: crianca.espectro_qual || '',
     tem_limitacao_fisica: !!crianca.tem_limitacao_fisica, limitacao_fisica_qual: crianca.limitacao_fisica_qual || '',
@@ -1834,6 +1836,7 @@ function ModalDetalhesCrianca({ crianca, atualizarCrianca, onClose, onAdicionarI
       data_nascimento: form.data_nascimento || null,
       observacoes_medicas: form.observacoes_medicas.trim() || null,
       visitante: form.visitante,
+      visitante_relacao: form.visitante ? form.visitante_relacao : null,
       tem_alergia: form.tem_alergia, alergia_qual: form.tem_alergia ? form.alergia_qual.trim() || null : null,
       tem_espectro: form.tem_espectro, espectro_qual: form.tem_espectro ? form.espectro_qual.trim() || null : null,
       tem_limitacao_fisica: form.tem_limitacao_fisica, limitacao_fisica_qual: form.tem_limitacao_fisica ? form.limitacao_fisica_qual.trim() || null : null,
@@ -1880,6 +1883,20 @@ function ModalDetalhesCrianca({ crianca, atualizarCrianca, onClose, onAdicionarI
         toast.error(`Não deu pra salvar a ficha de ${crianca.nome?.split(' ')[0] || 'a criança'} — refaça a edição.`);
       }
     })();
+  }
+
+  async function promoverFrequentador() {
+    // Botão dedicado "Tornar frequentador" (Marcos 2026-07-20): deixa de ser
+    // visitante (limpa prazo + relação no servidor). Não fecha o modal — o
+    // operador pode seguir editando outros dados.
+    setF('visitante', false); setF('visitante_relacao', 'amigo');
+    atualizarCrianca({ visitante: false, visitante_relacao: null } as Partial<Crianca>);
+    try {
+      await totemKids.criancas.tornarFrequentador(crianca.id);
+      toast.success('Agora é frequentador (deixou de ser visitante).');
+    } catch {
+      toast.error('Não deu pra tornar frequentador — salve pela edição.');
+    }
   }
 
   async function removerResp(membroId: string) {
@@ -1970,6 +1987,25 @@ function ModalDetalhesCrianca({ crianca, atualizarCrianca, onClose, onAdicionarI
                 <input type="checkbox" checked={form.visitante} onChange={e => setF('visitante', e.target.checked)} /> Visitante
               </label>
             </div>
+            {form.visitante && (
+              <div className="space-y-1.5 rounded-md border border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 p-2">
+                <label className="text-xs text-muted-foreground block">Relação com a família</label>
+                <Select value={form.visitante_relacao} onValueChange={(v) => setF('visitante_relacao', v)}>
+                  <SelectTrigger className="h-9"><SelectValue placeholder="Relação" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="amigo">Amigo(a)</SelectItem>
+                    <SelectItem value="primo">Primo(a)</SelectItem>
+                    <SelectItem value="vizinho">Vizinho(a)</SelectItem>
+                    <SelectItem value="irmao">Irmão/Irmã</SelectItem>
+                    <SelectItem value="outros">Outros</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Button type="button" variant="outline" size="sm" className="w-full h-8 text-xs mt-1" onClick={promoverFrequentador}>
+                  Tornar frequentador (deixa de ser visitante)
+                </Button>
+                <p className="text-[11px] text-amber-700 dark:text-amber-300">Visitante fica visível no check-in por ~4 semanas; depois sai sozinho se não voltar.</p>
+              </div>
+            )}
             <div>
               <label className="text-xs text-muted-foreground block mb-1">Observações médicas</label>
               <Input value={form.observacoes_medicas} onChange={e => setF('observacoes_medicas', e.target.value)} placeholder="ex.: usa inalador" />
