@@ -2233,7 +2233,15 @@ router.post('/criancas/:id/responsaveis', authorizeModule('kids', 2), async (req
     if (error) {
       const t = traduzErroUmPaiUmaMae(error);
       if (t) return res.status(t.status).json({ error: t.error });
-      if (error.code === '23505') return res.status(409).json({ error: 'Responsável já cadastrado' });
+      // Já vinculado (Marcos 2026-07-20): não é erro — devolve o vínculo existente
+      // (idempotente · sem dead-end "já cadastrado"). O dedup de pessoa fica com a
+      // triagem do Entradas, não bloqueia aqui.
+      if (error.code === '23505') {
+        const { data: existente } = await supabase.from('kids_responsaveis')
+          .select('*, membro:mem_membros(id, nome, telefone, foto_url)')
+          .eq('crianca_id', req.params.id).eq('membro_id', membro_id).maybeSingle();
+        return res.json(existente || { ok: true, ja_vinculado: true });
+      }
       throw error;
     }
     res.status(201).json(data);
