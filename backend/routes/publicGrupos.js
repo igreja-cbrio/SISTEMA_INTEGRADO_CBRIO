@@ -1351,12 +1351,28 @@ router.post('/grupo/frequencia/visitante', async (req, res) => {
 
 // GET /api/public/grupos/cron/frequencia-mensal — Vercel Cron (dia 28) manda
 // o template a cada líder de grupo ativo com roster. Gated por CRON_SECRET
-// (fail-closed) e pelo WHATSAPP_ENABLED (sem ele, nada é enviado).
+// (fail-closed), pelo WHATSAPP_ENABLED (sem ele, nada é enviado) e pela
+// TEMPORADA: só envia se existe temporada ativa EM CURSO (data_inicio <=
+// hoje <= data_fim) — decisão do Marcos (2026-07-20): esta mensagem mensal é
+// a ÚNICA automática pro líder, e só com temporada rodando.
 // ⚠️ Sem idempotência por mês DE PROPÓSITO: re-executar manualmente reenvia
 // o template a todos os líderes (~1 conversa paga por líder) — use com
 // intenção (ex.: reenvio deliberado no fim do mês pra quem não respondeu).
 router.get('/cron/frequencia-mensal', requireCron, async (req, res) => {
   try {
+    const hoje = new Date().toISOString().slice(0, 10);
+    const { data: temporadaEmCurso } = await supabase
+      .from('mem_temporadas')
+      .select('id, data_inicio, data_fim')
+      .eq('ativa', true)
+      .lte('data_inicio', hoje)
+      .gte('data_fim', hoje)
+      .limit(1)
+      .maybeSingle();
+    if (!temporadaEmCurso) {
+      console.log('[grupos frequencia cron] sem temporada ativa em curso — nada enviado');
+      return res.json({ ok: true, enviados: 0, motivo: 'sem_temporada_em_curso' });
+    }
     const mes = new Date().toISOString().slice(0, 7); // mês corrente
     const { data: grupos } = await supabase.from('mem_grupos')
       .select('id, nome, lider_id')
