@@ -221,6 +221,9 @@ export default function GestaoCriancas() {
   );
 }
 
+// Relações do visitante temporário (mesmos slugs do banco · exibe com acento)
+const RELACAO_LABEL: Record<string, string> = { amigo: 'Amigo', primo: 'Primo', vizinho: 'Vizinho', irmao: 'Irmão', outros: 'Outros' };
+
 // ── Ficha da criança (Dados + Atendimentos) ──────────────────────────────────
 function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; onClose: () => void; onChanged: () => void }) {
   const navigate = useNavigate();
@@ -233,6 +236,20 @@ function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; on
   const [salvando, setSalvando] = useState(false);
   const [editando, setEditando] = useState(false);
   const [form, setForm] = useState<any>({});
+  const [promovendo, setPromovendo] = useState(false);
+
+  // Visitante → frequentador em 1 clique (limpa prazo/relação · definitivo).
+  async function tornarFrequentador() {
+    setPromovendo(true);
+    try {
+      await api.criancas.tornarFrequentador(criancaId);
+      toast.success('Agora é frequentador — o cadastro não expira mais.');
+      load();
+      onChanged();
+    } catch (e: any) {
+      toast.error(e?.message || 'Erro ao tornar frequentador');
+    } finally { setPromovendo(false); }
+  }
 
   function iniciarEdicao() {
     setForm({
@@ -243,6 +260,7 @@ function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; on
       data_conversao: c.data_conversao || '',
       data_batismo: c.data_batismo || '',
       visitante: !!c.visitante,
+      visitante_relacao: c.visitante_relacao || '',
       consent_marketing: c.consent_marketing === true,
       tem_alergia: !!c.tem_alergia,
       alergia_qual: c.alergia_qual || '',
@@ -265,6 +283,7 @@ function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; on
         nome: form.nome.trim(),
         data_nascimento: form.data_nascimento || null,
         sexo: form.sexo || null,
+        visitante_relacao: form.visitante ? (form.visitante_relacao || null) : null,
         serie: form.serie?.trim() || null,
         data_conversao: form.data_conversao || null,
         data_batismo: form.data_batismo || null,
@@ -359,9 +378,19 @@ function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; on
               <label className="text-xs">Tipo
                 <Select value={form.visitante ? 'visitante' : 'membro'} onValueChange={v => setForm((f: any) => ({ ...f, visitante: v === 'visitante' }))}>
                   <SelectTrigger className="mt-0.5 h-9"><SelectValue /></SelectTrigger>
-                  <SelectContent><SelectItem value="visitante">Visitante</SelectItem><SelectItem value="membro">Membro</SelectItem></SelectContent>
+                  <SelectContent><SelectItem value="visitante">Visitante</SelectItem><SelectItem value="membro">Frequentador</SelectItem></SelectContent>
                 </Select>
               </label>
+              {form.visitante && (
+                <label className="text-xs">Visitante de quem?
+                  <Select value={form.visitante_relacao || ''} onValueChange={v => setForm((f: any) => ({ ...f, visitante_relacao: v }))}>
+                    <SelectTrigger className="mt-0.5 h-9"><SelectValue placeholder="—" /></SelectTrigger>
+                    <SelectContent>
+                      {Object.entries(RELACAO_LABEL).map(([k, l]) => <SelectItem key={k} value={k}>{l}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </label>
+              )}
               <label className="text-xs">Conversão
                 <Input type="date" className="mt-0.5 h-9" value={form.data_conversao || ''} onChange={e => setForm((f: any) => ({ ...f, data_conversao: e.target.value }))} />
               </label>
@@ -414,9 +443,23 @@ function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; on
               <CampoSempre label="Série" v={c.serie} />
               <CampoSempre label="Conversão" v={c.data_conversao ? fmt(c.data_conversao) : ''} />
               <CampoSempre label="Batismo" v={c.data_batismo ? fmt(c.data_batismo) : ''} />
-              <CampoSempre label="Tipo" v={c.visitante ? 'Visitante' : 'Membro'} />
+              <CampoSempre label="Tipo" v={c.visitante ? `Visitante${c.visitante_relacao ? ` (${RELACAO_LABEL[c.visitante_relacao] || c.visitante_relacao})` : ''}` : 'Frequentador'} />
               <CampoSempre label="Uso de imagem" v={c.consent_marketing == null ? '' : (c.consent_marketing ? 'Autorizado' : 'Não autorizado')} />
             </div>
+            {/* Visitante temporário (Marcos 2026-07-20): prazo visível + promoção
+                em 1 clique, sem depender de sessão aberta no totem. */}
+            {c.visitante && (
+              <div className="rounded-md border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 p-2.5 space-y-1.5">
+                <div className="text-xs text-amber-800 dark:text-amber-300">
+                  <b>Visitante</b>{c.visitante_relacao ? ` · ${RELACAO_LABEL[c.visitante_relacao] || c.visitante_relacao}` : ''}
+                  {c.data_limite ? <> · aparece no check-in até <b>{fmt(c.data_limite)}</b> (some da lista se não voltar)</> : null}
+                  {' '}— se voltar em outro dia, vira frequentador sozinha.
+                </div>
+                <Button size="sm" variant="outline" className="h-7 text-xs" disabled={promovendo} onClick={tornarFrequentador}>
+                  {promovendo ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <UserCheck className="h-3.5 w-3.5 mr-1" />} Tornar frequentador
+                </Button>
+              </div>
+            )}
             <div className="rounded-md border border-border p-2 space-y-1">
               <div className="text-xs font-semibold text-muted-foreground">Saúde</div>
               <LinhaSaude label="Alergia" tem={c.tem_alergia} qual={c.alergia_qual} />

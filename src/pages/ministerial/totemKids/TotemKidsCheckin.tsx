@@ -1056,15 +1056,9 @@ export default function TotemKidsCheckin() {
           <DialogTitle>Ajustes do totem</DialogTitle>
           <DialogDescription>Sessões, estações e teste de etiqueta — sem sair do totem.</DialogDescription>
         </DialogHeader>
-        {/* Ativar sessão na mão (Marcos 2026-07-20): libera o culto quando a
-            sessão não abre sozinha na hora — o check-in não trava. */}
-        {cultosDoDia.length > 0 && (
-          <div className="rounded-xl border border-slate-200 dark:border-slate-800 p-3 space-y-2">
-            <p className="text-sm font-semibold">Ativar sessão de um culto</p>
-            <p className="text-xs text-muted-foreground">Abre (ou reabre) a sessão de um culto de hoje, mesmo fora do horário — pra o check-in não travar.</p>
-            {renderCultosAtivar()}
-          </div>
-        )}
+        {/* O "Ativar sessão de um culto (hoje)" vive DENTRO da aba Sessões
+            (AbaSessoes · TotemKidsAdmin) — aparece aqui e na página de
+            Configurações, sempre visível, com estado vazio em dia sem culto. */}
         <TotemKidsConfigTabs aba={ajustesAba} onAba={setAjustesAba} abas={['sessoes', 'etiqueta']} />
       </DialogContent>
     </Dialog>

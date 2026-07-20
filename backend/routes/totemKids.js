@@ -520,7 +520,7 @@ router.get('/criancas/buscar', authorizeModule('kids', 1), async (req, res) => {
       .select(`
         id, nome, data_nascimento, sexo, foto_url, foto_storage_path, foto_consentimento_em, observacoes_medicas,
         tem_espectro, espectro_qual, tem_alergia, alergia_qual, tem_limitacao_fisica, limitacao_fisica_qual,
-        visitante, ativo, motivo_inativacao, familia_id,
+        visitante, visitante_relacao, data_limite, ativo, motivo_inativacao, familia_id,
         familia:mem_familias(id, nome),
         responsaveis:kids_responsaveis(
           membro_id, parentesco, autorizado_buscar,
@@ -555,7 +555,7 @@ router.get('/criancas/buscar', authorizeModule('kids', 1), async (req, res) => {
             .from('kids_criancas')
             .select(`
               id, nome, data_nascimento, sexo, foto_url, foto_storage_path, foto_consentimento_em, observacoes_medicas,
-              visitante, ativo, motivo_inativacao, familia_id,
+              visitante, visitante_relacao, data_limite, ativo, motivo_inativacao, familia_id,
               familia:mem_familias(id, nome),
               responsaveis:kids_responsaveis(
                 membro_id, parentesco, autorizado_buscar,
@@ -604,7 +604,7 @@ router.get('/criancas/:id/irmaos', authorizeModule('kids', 1), async (req, res) 
       .select(`
         id, nome, data_nascimento, sexo, foto_url, foto_storage_path, foto_consentimento_em, observacoes_medicas,
         tem_espectro, espectro_qual, tem_alergia, alergia_qual, tem_limitacao_fisica, limitacao_fisica_qual,
-        visitante, ativo, motivo_inativacao, familia_id,
+        visitante, visitante_relacao, data_limite, ativo, motivo_inativacao, familia_id,
         familia:mem_familias(id, nome),
         responsaveis:kids_responsaveis(
           membro_id, parentesco, autorizado_buscar,
@@ -1087,7 +1087,7 @@ router.get('/criancas', authorizeModule('kids', 1), async (req, res) => {
         .from('kids_criancas')
         .select(`
           id, nome, data_nascimento, sexo, foto_url, foto_storage_path, foto_consentimento_em, observacoes_medicas,
-          necessidades_especiais, serie, consent_marketing, data_conversao, data_batismo, visitante, ativo, inativado_em, familia_id,
+          necessidades_especiais, serie, consent_marketing, data_conversao, data_batismo, visitante, visitante_relacao, data_limite, ativo, inativado_em, familia_id,
           familia:mem_familias(id, nome),
           responsaveis:kids_responsaveis(membro:mem_membros(id, nome, telefone))
         `)
