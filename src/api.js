@@ -2846,6 +2846,8 @@ export const waInbox = {
   atualizar: (id, body) => patch(`/wa-inbox/conversas/${id}`, body),
   areas: () => get('/wa-inbox/areas'),
   templates: () => get('/wa-inbox/templates'),
+  colaboradores: () => get('/wa-inbox/colaboradores'),
+  perfil: (id) => get(`/wa-inbox/conversas/${id}/perfil`),
 };
 
 export const cuidados = {

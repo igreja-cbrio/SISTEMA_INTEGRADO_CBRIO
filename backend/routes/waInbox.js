@@ -13,8 +13,10 @@ function uid(req) { return req.user?.userId || req.user?.id || null; }
 function ehAdmin(req) { return ['admin', 'diretor'].includes(req.user?.role); }
 function minhasAreas(req) { return (req.user?.granular?.areas || []).filter(Boolean); }
 function comJanela(c) {
+  const { membro, ...rest } = c || {};
   return {
-    ...c,
+    ...rest,
+    foto_url: rest.foto_url ?? membro?.foto_url ?? null,
     dentro_janela: waInbox.dentroJanela24h(c.last_inbound_at),
     janela_expira_em: c.last_inbound_at
       ? new Date(new Date(c.last_inbound_at).getTime() + waInbox.JANELA_24H_MS).toISOString() : null,
@@ -23,7 +25,8 @@ function comJanela(c) {
 // lista de valores p/ filtro PostgREST `in.(...)` com aspas (áreas têm acento/barra/espaço)
 function inList(vals) { return `(${vals.map(v => `"${String(v).replace(/"/g, '')}"`).join(',')})`; }
 
-const SEL = 'id, telefone, nome, membro_id, area, nao_lidas, resolvida, atribuido_a, ultima_previa, last_message_at, last_inbound_at';
+// foto vem do cadastro do membro (WhatsApp não expõe foto de perfil pela API)
+const SEL = 'id, telefone, nome, membro_id, area, nao_lidas, resolvida, atribuido_a, notas, ultima_previa, last_message_at, last_inbound_at, membro:mem_membros(foto_url)';
 
 // Templates aprovados p/ INICIAR conversa (fora da janela de 24h). Só entram os
 // que têm env configurado. Cadastrar novos = mais uma linha + env na Vercel.
@@ -48,6 +51,82 @@ router.get('/areas', authorizeModule('conversas', 1), async (req, res) => {
   } catch (e) {
     console.error('[wa-inbox] areas:', e.message);
     res.status(500).json({ error: 'Erro ao listar áreas' });
+  }
+});
+
+// GET /colaboradores — todos os colaboradores ativos (p/ atribuir responsável a qualquer um)
+router.get('/colaboradores', authorizeModule('conversas', 1), async (req, res) => {
+  try {
+    const { data } = await supabase.from('profiles')
+      .select('id, name, avatar_url').eq('active', true).order('name');
+    res.json({ colaboradores: (data || []).filter(p => p.name).map(p => ({ id: p.id, name: p.name, avatar_url: p.avatar_url || null })) });
+  } catch (e) {
+    console.error('[wa-inbox] colaboradores:', e.message);
+    res.status(500).json({ error: 'Erro ao listar colaboradores' });
+  }
+});
+
+// GET /conversas/:id/perfil — resumo da pessoa (grupo, batismo, serve+onde, NEXT)
+router.get('/conversas/:id/perfil', authorizeModule('conversas', 1), async (req, res) => {
+  try {
+    const { data: conv } = await supabase.from('wa_conversas')
+      .select('membro_id, telefone').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!conv) return res.status(404).json({ error: 'Conversa não encontrada' });
+    const mid = conv.membro_id;
+    if (!mid) return res.json({ membro: null, telefone: conv.telefone });
+
+    const { data: m } = await supabase.from('mem_membros')
+      .select('id, nome, foto_url, telefone, email, data_nascimento, status, batizado')
+      .eq('id', mid).is('deleted_at', null).maybeSingle();
+    if (!m) return res.json({ membro: null, telefone: conv.telefone });
+
+    // grupo atual
+    const { data: gm } = await supabase.from('mem_grupo_membros')
+      .select('funcao, grupo:mem_grupos(nome)')
+      .eq('membro_id', mid).is('saiu_em', null).is('deleted_at', null).limit(1).maybeSingle();
+
+    // serve onde (voluntariado · fonte PCO vol_*)
+    let ministerios = [];
+    const { data: vp } = await supabase.from('vol_profiles').select('id').eq('membresia_id', mid).maybeSingle();
+    if (vp?.id) {
+      const { data: tm } = await supabase.from('vol_team_members')
+        .select('is_active, team:vol_teams(name)').eq('volunteer_profile_id', vp.id);
+      ministerios = (tm || []).filter(t => t.is_active).map(t => t.team?.name).filter(Boolean);
+    }
+
+    // batizado (flag ou inscrição realizada)
+    let batizado = !!m.batizado;
+    if (!batizado) {
+      const { data: bi } = await supabase.from('batismo_inscricoes')
+        .select('id').eq('membro_id', mid).eq('status', 'realizado').is('deleted_at', null).limit(1).maybeSingle();
+      batizado = !!bi;
+    }
+
+    // fez NEXT (concluiu curso · view; fallback = compareceu ao evento)
+    let fezNext = false;
+    try {
+      const { data: nf } = await supabase.from('vw_next_formado_pessoa')
+        .select('membro_id').eq('membro_id', mid).limit(1).maybeSingle();
+      fezNext = !!nf;
+    } catch { /* view pode não existir · fallback abaixo */ }
+    if (!fezNext) {
+      const { data: ni } = await supabase.from('next_inscricoes')
+        .select('id').eq('membro_id', mid).not('check_in_at', 'is', null).limit(1).maybeSingle();
+      fezNext = !!ni;
+    }
+
+    res.json({
+      membro: { id: m.id, nome: m.nome, foto_url: m.foto_url, telefone: m.telefone, email: m.email, data_nascimento: m.data_nascimento, status: m.status },
+      grupo: gm?.grupo?.nome || null,
+      grupo_funcao: gm?.funcao || null,
+      batizado,
+      serve: ministerios.length > 0,
+      ministerios,
+      fez_next: fezNext,
+    });
+  } catch (e) {
+    console.error('[wa-inbox] perfil:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar perfil' });
   }
 });
 
@@ -93,10 +172,10 @@ router.get('/conversas', authorizeModule('conversas', 1), async (req, res) => {
 router.get('/conversas/:id/mensagens', authorizeModule('conversas', 1), async (req, res) => {
   try {
     const { data: conv } = await supabase.from('wa_conversas')
-      .select('*').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+      .select('*, membro:mem_membros(foto_url)').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
     if (!conv) return res.status(404).json({ error: 'Conversa não encontrada' });
     const { data: msgs } = await supabase.from('wa_mensagens')
-      .select('id, direcao, tipo, texto, autor_id, criado_em')
+      .select('id, direcao, tipo, texto, media_url, autor_id, criado_em')
       .eq('conversa_id', conv.id).order('criado_em', { ascending: true }).limit(500);
     if (conv.nao_lidas > 0) await supabase.from('wa_conversas').update({ nao_lidas: 0 }).eq('id', conv.id);
     res.json({ conversa: comJanela({ ...conv, nao_lidas: 0 }), mensagens: msgs || [] });
@@ -191,6 +270,7 @@ router.patch('/conversas/:id', authorizeModule('conversas', 2), async (req, res)
     if (typeof req.body?.resolvida === 'boolean') patch.resolvida = req.body.resolvida;
     if ('atribuido_a' in (req.body || {})) patch.atribuido_a = req.body.atribuido_a || null;
     if ('area' in (req.body || {})) patch.area = req.body.area ? String(req.body.area).trim() : null;
+    if ('notas' in (req.body || {})) patch.notas = req.body.notas ? String(req.body.notas) : null;
     if (Object.keys(patch).length === 0) return res.status(400).json({ error: 'Nada para atualizar' });
     const { data, error } = await supabase.from('wa_conversas').update(patch).eq('id', req.params.id).select().single();
     if (error) throw error;
