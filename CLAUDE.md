@@ -1121,7 +1121,8 @@ transcrição ele cria depois.
   (etiqueta "Fotos de grupos", `grupo_ids=[grupo]`) → aparece em Materiais.
 - **Rotas `routes/whatsappGrupos.js`** (`/api/whatsapp-grupos` · server.js):
   `GET /cron/diario` (CRON_SECRET · vercel.json `0 12 * * *` = 9h BRT ·
-  lembretes diários + estudo no dia `WHATSAPP_ESTUDO_DIA` default 1=segunda),
+  **desde 2026-07-20 só** sync de líderes + estudo no dia
+  `WHATSAPP_ESTUDO_DIA` default 1=segunda — sem cobrança/lembrete automático),
   `PATCH /materiais/:docId/estudo-semana` e `POST /enviar-estudo|lembretes`
   (manual · grupos≥3). Aba Materiais ganhou botão/badge 📖 "Estudo da semana"
   (`api.grupos.marcarEstudoSemana`).
@@ -1146,13 +1147,17 @@ transcrição ele cria depois.
   não posta em grupo → o bot manda pro(s) vínculo(s) com `papel='coordenador'`
   (ex.: Pr. Nélio) a mensagem pronta com "👉 Encaminhe no grupo dos líderes".
   NÃO é mais broadcast por líder (decisão do Marcos: "não há necessidade").
-- **Modo padrão do relato = espontâneo + cobrança 4 semanas**: o líder manda
-  1x/semana por conta própria; `enviarCobrancasSemRelato()` só cobra grupos
-  há 28+ dias SEM encontro registrado E SEM relato no WhatsApp (dedup mensal
-  `cobranca:<grupoId>:<AAAA-MM>` · cap `WHATSAPP_COBRANCA_CAP` default 40/dia
-  · abre a sessão de relato pra resposta cair certa). O lembrete SEMANAL
-  pós-encontro continua implementado mas DESLIGADO atrás de
-  `WHATSAPP_LEMBRETE_SEMANAL=1` (aguardando validação de custo com o gestor).
+- **⚠️ REVISTO 2026-07-20 (decisão do Marcos · lei): líder NUNCA recebe
+  cobrança/lembrete automático de relato — nem com temporada ativa.** A
+  cobrança de 4 semanas (`enviarCobrancasSemRelato`) foi REMOVIDA do código
+  (função + endpoint + chamada no cron; em 20/07 ela disparou 40 mensagens
+  indevidas pra líderes de temporada não-iniciada). O que o líder recebe:
+  (1) **1×/mês** o pedido de chamada do mês — cron `frequencia-mensal` em
+  `publicGrupos.js` (template `grupos_frequencia_mes`, link `/g/f/<token>`),
+  agora **gated por temporada ativa EM CURSO** (data_inicio<=hoje<=data_fim);
+  (2) lembrete avulso **só por disparo manual da coordenação**
+  (`POST /whatsapp-grupos/enviar-lembretes` · Naná — ainda sem botão na UI).
+  Não recriar cobrança automática.
 - **Opt-out**: o extrator Haiku devolve `opt_out` quando o líder pede pra
   parar → `recebe_lembretes=false` + confirmação (responder/registrar segue
   funcionando · coordenador religa via PUT /api/whatsapp/lideres/:id).

@@ -555,109 +555,11 @@ async function enviarLembretesEncontro() {
   return { grupos: grupos.length, enviados, sem_lider: semLider };
 }
 
-// Cobrança (modo padrão · Marcos 2026-06-10): o líder reporta ESPONTANEAMENTE
-// 1x/semana; o bot só manda mensagem se o grupo ficar 4 SEMANAS sem relato
-// (nem encontro registrado no sistema, nem relato em aberto no WhatsApp).
-// Dedup mensal por grupo · cap por execução (evita rajada no 1º dia) ·
-// respeita opt-out (recebe_lembretes=false).
-async function enviarCobrancasSemRelato() {
-  const LIMITE_DIAS = 28;
-  const CAP_POR_EXECUCAO = Number(process.env.WHATSAPP_COBRANCA_CAP || 40);
-  const desdeData = new Date(Date.now() - LIMITE_DIAS * 86400000).toISOString().slice(0, 10);
-  const desdeTs = new Date(Date.now() - LIMITE_DIAS * 86400000).toISOString();
-
-  const { data: grupos } = await supabase
-    .from('mem_grupos')
-    .select('id, nome, dia_semana, lider_id')
-    .eq('ativo', true).is('deleted_at', null)
-    .not('lider_id', 'is', null);
-  if (!grupos?.length) return { grupos: 0, cobrados: 0 };
-
-  // Grupos COM relato recente: encontro registrado (qualquer via) OU sessão/
-  // coleta de relato no WhatsApp dentro da janela
-  const comRelato = new Set();
-  let offset = 0;
-  while (true) {
-    const { data: page } = await supabase
-      .from('mem_grupo_encontros')
-      .select('grupo_id')
-      .gte('data', desdeData)
-      .range(offset, offset + 999);
-    (page || []).forEach(e => comRelato.add(e.grupo_id));
-    if (!page || page.length < 1000) break;
-    offset += 1000;
-  }
-  const { data: coletasRec } = await supabase
-    .from('whatsapp_coletas')
-    .select('parsed')
-    .eq('modulo_destino', 'grupos')
-    .gte('created_at', desdeTs)
-    .limit(1000);
-  (coletasRec || []).forEach(c => {
-    if (c.parsed?.fonte === 'grupo_encontro' && c.parsed?.grupo_id) comRelato.add(c.parsed.grupo_id);
-  });
-
-  // Vínculos elegíveis (sem opt-out) · índice por grupo_id e por telefone
-  const { data: lideres } = await supabase
-    .from('whatsapp_lideres')
-    .select('id, telefone, nome_exibicao, grupo_id, recebe_lembretes')
-    .eq('ativo', true).is('deleted_at', null)
-    .neq('recebe_lembretes', false)
-    .contains('escopo', ['grupos'])
-    .limit(1000);
-  const porGrupoId = new Map();
-  const porTelefone = new Map();
-  (lideres || []).forEach(l => {
-    if (l.grupo_id) porGrupoId.set(l.grupo_id, l);
-    porTelefone.set(l.telefone, l);
-  });
-
-  // Telefones dos líderes responsáveis (fallback quando o vínculo não tem grupo_id)
-  const liderIds = [...new Set(grupos.filter(g => !porGrupoId.has(g.id)).map(g => g.lider_id))];
-  const telDoMembro = {};
-  for (let i = 0; i < liderIds.length; i += 400) {
-    const { data: ms } = await supabase
-      .from('mem_membros').select('id, telefone')
-      .in('id', liderIds.slice(i, i + 400)).is('deleted_at', null);
-    (ms || []).forEach(m => { telDoMembro[m.id] = normalizarTelefoneBR(m.telefone); });
-  }
-
-  const mesRef = hojeISO().slice(0, 7);
-  let cobrados = 0, semVinculo = 0, pulados = 0;
-  for (const g of grupos) {
-    if (comRelato.has(g.id)) continue;
-    if (cobrados >= CAP_POR_EXECUCAO) break;
-
-    const lider = porGrupoId.get(g.id) || porTelefone.get(telDoMembro[g.lider_id] || '');
-    if (!lider) { semVinculo++; continue; }
-
-    // Dedup mensal da cobrança (1 por grupo/mês)
-    const { error: dupErr } = await supabase.from('whatsapp_coletas').insert({
-      whatsapp_message_id: `cobranca:${g.id}:${mesRef}`,
-      telefone: lider.telefone, lider_id: lider.id,
-      raw_text: `[cobrança de relato enviada · ${g.nome}]`,
-      status: 'ignorado', modulo_destino: 'grupos', erro: 'cobranca_enviada',
-    });
-    if (dupErr) { if (dupErr.code === '23505') { pulados++; continue; } continue; }
-
-    // Abre a sessão de relato (se ainda não houver) pra resposta cair certa
-    await abrirSessaoEncontro({ lider, telefone: lider.telefone, grupo: g, dataEncontro: ultimaOcorrencia(g.dia_semana) })
-      .catch(() => null);
-
-    const primeiro = (lider.nome_exibicao || '').split(' ')[0];
-    const msg = `Oi${primeiro ? ', ' + primeiro : ''}! Faz mais de um mês que não recebo o relato do ${g.nome}. `
-      + 'Como foram os últimos encontros? Me conta quantas pessoas vieram, quem veio e um resumo breve — pode ser por áudio. '
-      + 'Se não quiser mais receber esses lembretes, é só me dizer. 🙏';
-    const r = await enviarComFallback(lider.telefone, msg, 'WHATSAPP_TEMPLATE_LEMBRETE_GRUPO', [primeiro || 'líder', g.nome]);
-    if (r.ok) cobrados++;
-    else {
-      await supabase.from('whatsapp_coletas')
-        .update({ erro: ('cobranca_falhou: ' + String(r.error || '?')).slice(0, 250) })
-        .eq('whatsapp_message_id', `cobranca:${g.id}:${mesRef}`);
-    }
-  }
-  return { grupos: grupos.length, sem_relato: grupos.filter(g => !comRelato.has(g.id)).length, cobrados, sem_vinculo: semVinculo, pulados };
-}
+// Cobrança automática de relato: REMOVIDA em 2026-07-20 por decisão do
+// Marcos — o líder NUNCA recebe cobrança automática (nem com temporada
+// ativa). O pedido de chamada é 1×/mês pelo cron frequencia-mensal
+// (publicGrupos · template grupos_frequencia_mes, gated por temporada em
+// curso); lembrete avulso só por disparo manual da coordenação.
 
 // Estudo da semana: material marcado (estudo_semana=true) → vai pro(s)
 // COORDENADOR(ES) (vínculos com papel='coordenador') já formatado pra
@@ -756,7 +658,6 @@ async function aplicarColetaGrupoEncontro(coleta, userId) {
 module.exports = {
   tratarMensagemGrupos,
   enviarLembretesEncontro,
-  enviarCobrancasSemRelato,
   enviarEstudoSemanal,
   sincronizarLideresGrupos,
   aplicarColetaGrupoEncontro,
