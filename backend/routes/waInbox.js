@@ -61,6 +61,26 @@ router.get('/areas', authorizeModule('conversas', 1), async (req, res) => {
   }
 });
 
+// GET /nao-lidas — total de mensagens não lidas do escopo do usuário (badge do header)
+router.get('/nao-lidas', authorizeModule('conversas', 1), async (req, res) => {
+  try {
+    const userId = uid(req);
+    let query = supabase.from('wa_conversas').select('nao_lidas')
+      .is('deleted_at', null).eq('resolvida', false).gt('nao_lidas', 0).limit(500);
+    if (!ehAdmin(req)) {
+      const vis = ['area.is.null', `atribuido_a.eq.${userId}`];
+      const areas = minhasAreas(req);
+      if (areas.length) vis.push(`area.in.${inList(areas)}`);
+      query = query.or(vis.join(','));
+    }
+    const { data } = await query;
+    res.json({ total: (data || []).reduce((a, c) => a + (c.nao_lidas || 0), 0), conversas: (data || []).length });
+  } catch (e) {
+    console.error('[wa-inbox] nao-lidas:', e.message);
+    res.json({ total: 0, conversas: 0 });
+  }
+});
+
 // GET /colaboradores — todos os colaboradores ativos (p/ atribuir responsável a qualquer um)
 router.get('/colaboradores', authorizeModule('conversas', 1), async (req, res) => {
   try {

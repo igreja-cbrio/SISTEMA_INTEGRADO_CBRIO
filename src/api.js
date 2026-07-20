@@ -2849,6 +2849,7 @@ export const waInbox = {
   templates: () => get('/wa-inbox/templates'),
   colaboradores: () => get('/wa-inbox/colaboradores'),
   perfil: (id) => get(`/wa-inbox/conversas/${id}/perfil`),
+  naoLidas: () => get('/wa-inbox/nao-lidas'),
 };
 
 export const cuidados = {
