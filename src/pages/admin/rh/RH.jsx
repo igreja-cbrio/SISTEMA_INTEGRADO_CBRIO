@@ -2731,18 +2731,28 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = t
     if (!estru) {
       try { estru = await permissoes.estrutura(); setEstrutura(estru); } catch (e) { console.error(e); return; }
     }
+    // Sem e-mail não há login possível: o acesso ao sistema (login, permissões e
+    // aprovações) casa por e-mail em profiles/usuarios. Criar um "usuário" sem
+    // e-mail gerava uma linha órfã que nunca loga nem recebe aprovações — e o
+    // editor ficava "Salvando..." sem efeito. Bloqueia com mensagem clara.
+    if (!data.email) {
+      setPermError('Este colaborador não tem e-mail cadastrado. O acesso ao sistema (login, permissões e aprovações) é vinculado ao e-mail — cadastre um e-mail em “Editar colaborador” antes de configurar permissões.');
+      setPermSuccess('');
+      setShowPerms(false);
+      return;
+    }
+    setPermError('');
     try {
-      let permUser = null;
-      if (data.email) permUser = await permissoes.usuarioPorEmail(data.email);
+      let permUser = await permissoes.usuarioPorEmail(data.email);
       if (!permUser) {
-        const result = await permissoes.criarUsuario({ nome: data.nome, email: data.email || null, cargo_id: 2 });
+        const result = await permissoes.criarUsuario({ nome: data.nome, email: data.email, cargo_id: 2 });
         permUser = { id: result.id };
       }
       const perms = await permissoes.usuario(permUser.id);
       setPermData(perms);
       initLocalPerms(perms, estru);
-    } catch (e) { console.error(e); }
-    setShowPerms(true);
+      setShowPerms(true);
+    } catch (e) { console.error(e); setPermError(e.message || 'Falha ao carregar as permissões.'); }
   }
 
   function handleCargoChange(cargoId) {
@@ -2764,7 +2774,10 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = t
   }
 
   async function savePermissions() {
-    if (!permData?.usuario) return;
+    if (!permData?.usuario) {
+      setPermError('Permissões ainda não carregadas. Feche e abra o painel novamente.');
+      return;
+    }
     setSaving(true);
     setPermError('');
     setPermSuccess('');
@@ -2800,7 +2813,7 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = t
       setPermSuccess('Permissões salvas com sucesso!');
       setTimeout(() => setPermSuccess(''), 3000);
     } catch (e) { setPermError(e.message); }
-    setSaving(false);
+    finally { setSaving(false); }
   }
 
   if (!data || !open) return null;
