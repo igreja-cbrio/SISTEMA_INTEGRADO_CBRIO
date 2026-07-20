@@ -540,9 +540,17 @@ router.post('/usuario', async (req, res) => {
     const { nome, email, cargo_id } = req.body;
     if (!nome || !cargo_id) return res.status(400).json({ error: 'Nome e cargo são obrigatórios' });
 
+    // E-mail é a CHAVE que casa usuarios ↔ profiles (login/permissões/aprovações).
+    // Sem e-mail, a linha vira órfã (nunca loga, nunca recebe aprovação) e o
+    // .eq('email','') abaixo nunca casa a de e-mail nulo → duplicava a cada save.
+    const emailNorm = String(email || '').trim().toLowerCase();
+    if (!emailNorm || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(emailNorm)) {
+      return res.status(400).json({ error: 'É preciso um e-mail válido para criar o acesso deste colaborador.' });
+    }
+
     // Check if exists by email
     const { data: existing } = await supabase.from('usuarios')
-      .select('id').eq('email', email || '').limit(1);
+      .select('id').eq('email', emailNorm).limit(1);
 
     let userId;
     if (existing?.length) {
@@ -550,7 +558,7 @@ router.post('/usuario', async (req, res) => {
       userId = existing[0].id;
     } else {
       const { data, error } = await supabase.from('usuarios')
-        .insert({ nome, email: email || null, cargo_id }).select().single();
+        .insert({ nome, email: emailNorm, cargo_id }).select().single();
       if (error) return res.status(400).json({ error: error.message });
       userId = data.id;
     }
