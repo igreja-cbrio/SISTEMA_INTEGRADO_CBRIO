@@ -174,10 +174,23 @@ serverless functions via `api/index.js`).
 
 > **Kids · hub × módulo (2026-07-06)**: o hub `/ministerial/kids` (KidsHub)
 > ficou só com a OPERAÇÃO de culto (Check-in Totem, Crianças, Painel ao vivo,
-> Etiqueta, Configurações + aniversariantes). O GERENCIAL (Frequência PCO,
+> Etiqueta, Configurações + aniversariantes). O GERENCIAL (Frequência,
 > Vínculos + solicitações, Equipe, Estoque, Batismos, Apresentação de crianças,
 > Decisões) mudou pro módulo `/kids` da aba Cultos (PainelKids = seção Gestão
 > [kids nível >=2] + PainelArea de indicadores).
+
+> **Kids · Planning Center REMOVIDO do código (2026-07-20)**: decisão do Marcos
+> ("começar a excluir tudo que vem do PCO"). A frequência do Kids é 100% do
+> totem (`kids_checkins`): tela Frequência (`KidsFrequencia.tsx`) nativa, cron
+> `/cron/resumo-kids` (ex `resumo-pco`) conta crianças únicas do totem, radar de
+> ausentes (`fn_kids_ausentes_consecutivos` · migration `20260720210000`) lê
+> `kids_checkins`, jornada/análise-frequência idem. Serviços
+> `planningCenterKids*.js`, rotas `sync-pco`/`responsaveis-pco`/
+> `sync-presencas-pco`/`pco-pessoa`/`depurar-inativos` e a aba Responsáveis do
+> admin foram deletados. Ficaram no BANCO (sem leitor · dropar numa limpeza
+> futura com aval): `kids_pco_presencas` e `kids_criancas.planning_center_id`.
+> ⚠️ O PCO do VOLUNTARIADO (Planning Center Services · vol_*) é outro produto e
+> segue vivo — não confundir.
 
 ## Mapa do sistema · o que cada módulo faz, quem usa e o que alimenta
 

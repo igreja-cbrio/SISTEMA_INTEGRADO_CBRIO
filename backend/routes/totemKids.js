@@ -26,7 +26,10 @@ const wpp = require('../services/whatsappService');
 const { traduzErroUmPaiUmaMae } = require('../utils/kidsResponsavel');
 const { enviarTexto: enviarTextoWpp, enviarTemplate: enviarTemplateWpp } = require('../services/whatsappSend');
 const { acharOuCriarGuardado } = require('../services/membroMatch');
-const { syncCriancasPCO } = require('../services/planningCenterKids');
+// O Planning Center Check-Ins saiu do código (Marcos 2026-07-20): a frequência
+// do Kids é 100% do nosso totem (kids_checkins). Sobrou só a coluna legada
+// kids_criancas.planning_center_id e a tabela kids_pco_presencas (histórico
+// congelado · sem leitor) até a limpeza definitiva no banco.
 
 // authenticate aplicado condicionalmente abaixo · só o cron bypassa (com
 // CRON_SECRET válido). O modelo antigo de TVs/pagers/estações pareadas foi
@@ -483,10 +486,9 @@ router.post('/sessoes/:id/encerrar', authorizeModule('kids', 3), async (req, res
       })
       .eq('sessao_id', req.params.id).is('checkout_at', null);
     if (eCk) console.error('[totemKids/sessoes/encerrar] auto-checkout:', eCk.message);
-    // O resumo do Kids pros líderes NÃO sai mais daqui: o cron /cron/resumo-pco
-    // é o emissor ÚNICO (crianças únicas = PCO + totem, dedup por
-    // planning_center_id, com kids_resumo_enviado_at + chaveDedup). Evita dois
-    // resumos pro mesmo culto (encerrar sessão × cron).
+    // O resumo do Kids pros líderes NÃO sai daqui: o cron /cron/resumo-kids é o
+    // emissor ÚNICO (crianças únicas do totem · dedup por kids_resumo_enviado_at
+    // + chaveDedup). Evita dois resumos pro mesmo culto (encerrar sessão × cron).
     res.json(data);
   } catch (e) {
     console.error('[totemKids/sessoes/encerrar]', e.message);
@@ -510,8 +512,8 @@ router.get('/criancas/buscar', authorizeModule('kids', 1), async (req, res) => {
     // "Pedro Theodoro Litwinczuk" mesmo com termos não adjacentes/fora de ordem.
     const termos = qNorm.split(/\s+/).filter(t => t.length >= 1).slice(0, 6);
 
-    // Inclui INATIVAS (marcadas) pra criança que sumiu 6+ meses do PCO ou não
-    // apareceu na última importação continuar achável — o check-in reativa.
+    // Inclui INATIVAS (marcadas) pra criança inativada (visitante vencido,
+    // age-out, depuração antiga) continuar achável — o check-in reativa.
     // Ativas vêm primeiro.
     let buscaQ = supabase
       .from('kids_criancas')
@@ -1075,7 +1077,7 @@ router.post('/edit-senha/verificar', authorizeModule('kids', 1), async (req, res
 router.get('/criancas', authorizeModule('kids', 1), async (req, res) => {
   try {
     const ativo = req.query.ativo !== 'false';
-    // Paginado · a base de crianças (import XLSX + sync PCO) passa de 1000, e o
+    // Paginado · a base de crianças (import XLSX + cadastros do totem) passa de 1000, e o
     // PostgREST capa em 1000 por página. Loop até trazer todas (antes capava em 500).
     const pageSize = 1000;
     let from = 0;
@@ -1487,15 +1489,6 @@ async function enviarResumoWpp(telefone, { texto, params }) {
   return enviarTextoWpp(telefone, texto);
 }
 
-async function enviarResumoKids(sessaoId) {
-  try {
-    const { texto, params } = await gerarResumoKids(sessaoId);
-    const lideres = await lideresKidsComTelefone();
-    for (const l of lideres) { await enviarResumoWpp(l.telefone, { texto, params }).catch(() => {}); }
-    notificar({ modulo: 'kids', tipo: 'resumo_kids', titulo: 'Resumo do Kids (fim de culto)', mensagem: texto.replace(/\*/g, ''), severidade: 'info', link: '/ministerial/kids', email: true }).catch(() => {});
-  } catch (e) { console.error('[totemKids] enviarResumoKids:', e.message); }
-}
-
 // POST /resumo/exemplo · envia um exemplo do resumo pro WhatsApp do solicitante
 router.post('/resumo/exemplo', authorizeModule('kids', 1), async (req, res) => {
   try {
@@ -1513,30 +1506,8 @@ router.post('/resumo/exemplo', authorizeModule('kids', 1), async (req, res) => {
   } catch (e) { console.error('[totemKids] resumo exemplo:', e.message); res.status(500).json({ error: 'Erro ao enviar exemplo' }); }
 });
 
-// POST /resumo-pco/testar · DIAGNÓSTICO (só leitura · não grava, não envia):
-// puxa os check-ins do Planning Center de um dia e devolve a frequência de
-// crianças por culto + um retrato da estrutura do PCO. Default = último domingo.
-router.post('/resumo-pco/testar', authorizeModule('kids', 1), async (req, res) => {
-  try {
-    const { coletarFrequenciaKidsPCO } = require('../services/planningCenterKidsCheckins');
-    let data = req.body?.data;
-    if (!data) {
-      // último domingo (BRT)
-      const hojeBRT = new Date(Date.now() - 3 * 3600 * 1000);
-      const d = new Date(hojeBRT); d.setUTCDate(d.getUTCDate() - d.getUTCDay());
-      data = d.toISOString().slice(0, 10);
-    }
-    const r = await coletarFrequenciaKidsPCO(data);
-    res.json(r);
-  } catch (e) {
-    console.error('[totemKids] resumo-pco/testar:', e.message);
-    res.status(500).json({ error: e.message || 'Erro ao consultar o Planning Center' });
-  }
-});
-
-// GET /frequencia-sistema?data=YYYY-MM-DD · check-ins feitos PELO SISTEMA (totem)
-// naquele dia, agrupados por culto. Complementa a frequência do PCO (a mesma
-// tela mostra as duas fontes).
+// GET /frequencia-sistema?data=YYYY-MM-DD · check-ins feitos pelo totem naquele
+// dia, agrupados por culto (com lista nominal). Fonte da tela de Frequência.
 router.get('/frequencia-sistema', authorizeModule('kids', 1), async (req, res) => {
   try {
     const data = String(req.query.data || '').slice(0, 10);
@@ -1594,11 +1565,11 @@ router.get('/frequencia-sistema', authorizeModule('kids', 1), async (req, res) =
   }
 });
 
-// GET /comparativo-mes?mes=YYYY-MM · base do comparativo "sistema × PCO" da tela
-// de Frequência: devolve os cultos do mês com o presencial_kids gravado hoje
-// (2025 = backfill da planilha "Dados Reconfigurados" · 2026+ = totem/coleta).
-// O front consulta o PCO dia a dia (POST /resumo-pco/testar) e cruza com esta
-// lista pra mostrar a diferença por culto e o total do mês.
+// GET /comparativo-mes?mes=YYYY-MM · base do comparativo da tela de Frequência:
+// devolve os cultos do mês com o presencial_kids GRAVADO (2025 = backfill da
+// planilha "Dados Reconfigurados" · 2026+ = totem/coleta) + os check-ins do
+// TOTEM por culto (crianças únicas) — pra conferir se a consolidação bate com
+// os check-ins reais (sessão não encerrada aparece como diferença).
 router.get('/comparativo-mes', authorizeModule('kids', 1), async (req, res) => {
   try {
     const mes = String(req.query.mes || '').slice(0, 7);
@@ -1613,6 +1584,35 @@ router.get('/comparativo-mes', authorizeModule('kids', 1), async (req, res) => {
       .order('data', { ascending: true });
     if (error) throw error;
 
+    // Check-ins do totem por culto (crianças únicas) · uma passada paginada
+    // (cap 1000 do PostgREST — um mês de domingos já chega perto).
+    const totemPorCulto = {};
+    const cultoIds = (cultos || []).map(c => c.id);
+    if (cultoIds.length) {
+      const { data: sess } = await supabase.from('kids_sessoes')
+        .select('id, culto_id').in('culto_id', cultoIds);
+      const sessCulto = Object.fromEntries((sess || []).map(s => [s.id, s.culto_id]));
+      const sessIds = (sess || []).map(s => s.id);
+      if (sessIds.length) {
+        const vistos = {};
+        let from = 0;
+        while (true) {
+          const { data: cks, error: eCk } = await supabase.from('kids_checkins')
+            .select('sessao_id, crianca_id').in('sessao_id', sessIds)
+            .is('deleted_at', null).range(from, from + 999);
+          if (eCk) throw eCk;
+          for (const ck of cks || []) {
+            const cid = sessCulto[ck.sessao_id];
+            if (!cid || !ck.crianca_id) continue;
+            (vistos[cid] = vistos[cid] || new Set()).add(ck.crianca_id);
+          }
+          if (!cks || cks.length < 1000) break;
+          from += 1000;
+        }
+        for (const [cid, set] of Object.entries(vistos)) totemPorCulto[cid] = set.size;
+      }
+    }
+
     const lista = (cultos || []).map(c => ({
       culto_id: c.id,
       nome: c.nome || c.vol_service_types?.name || 'Culto',
@@ -1620,6 +1620,7 @@ router.get('/comparativo-mes', authorizeModule('kids', 1), async (req, res) => {
       hhmm: (c.vol_service_types?.recurrence_time || '').slice(0, 5) || null,
       has_kids: !!c.vol_service_types?.has_kids,
       presencial_kids: c.presencial_kids ?? null,
+      checkins_totem: totemPorCulto[c.id] ?? 0,
     }));
     res.json({ mes, inicio, fim, cultos: lista, datas: [...new Set(lista.map(c => c.data))] });
   } catch (e) {
@@ -1628,119 +1629,32 @@ router.get('/comparativo-mes', authorizeModule('kids', 1), async (req, res) => {
   }
 });
 
-// POST /criancas/depurar-inativos · desativa as crianças (com vínculo PCO) que
-// NÃO tiveram check-in nos últimos N meses (default 6). Saem da lista (que mostra
-// só ativos). Reversível (ativo=false · não apaga). Body: { meses }.
-router.post('/criancas/depurar-inativos', authorizeModule('kids', 3), async (req, res) => {
-  try {
-    const meses = Math.min(Math.max(Number(req.body?.meses) || 6, 1), 60);
-    const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - meses);
-    const { idsComCheckinDesde } = require('../services/planningCenterKidsCheckins');
-    const ativosPco = await idsComCheckinDesde(cutoff.toISOString());
-
-    // Crianças ativas COM vínculo PCO que não aparecem nos check-ins recentes.
-    const inativar = [];
-    let from = 0;
-    while (true) {
-      const { data, error } = await supabase.from('kids_criancas')
-        .select('id, planning_center_id')
-        .eq('ativo', true).is('deleted_at', null)
-        .not('planning_center_id', 'is', null)
-        .range(from, from + 999);
-      if (error) throw error;
-      if (!data || !data.length) break;
-      for (const c of data) if (!ativosPco.has(String(c.planning_center_id))) inativar.push(c.id);
-      if (data.length < 1000) break;
-      from += 1000;
-    }
-
-    let desativadas = 0;
-    const motivo = `Sem check-in no Planning Center nos últimos ${meses} meses`;
-    for (let i = 0; i < inativar.length; i += 500) {
-      const lote = inativar.slice(i, i + 500);
-      const { error } = await supabase.from('kids_criancas')
-        .update({ ativo: false, inativado_em: new Date().toISOString(), motivo_inativacao: motivo })
-        .in('id', lote);
-      if (!error) desativadas += lote.length;
-    }
-    res.json({ ok: true, meses, ativos_pco: ativosPco.size, desativadas });
-  } catch (e) {
-    console.error('[totemKids] depurar-inativos:', e.message);
-    res.status(500).json({ error: e.message || 'Erro ao depurar inativos' });
-  }
-});
-
-// GET /pco-pessoa/:pcoId · ficha + histórico de check-ins de uma criança no PCO
-// (clique na lista de frequência). Resolve a ficha local por planning_center_id
-// quando existir (sexo, responsáveis). Só leitura.
-router.get('/pco-pessoa/:pcoId', authorizeModule('kids', 1), async (req, res) => {
-  try {
-    const { detalhePessoaPCO } = require('../services/planningCenterKidsCheckins');
-    const r = await detalhePessoaPCO(req.params.pcoId);
-    const { data: cr } = await supabase.from('kids_criancas')
-      .select('id, nome, data_nascimento, sexo, visitante')
-      .eq('planning_center_id', req.params.pcoId).maybeSingle();
-    let responsaveis = [];
-    if (cr?.id) {
-      const { data: resp } = await supabase.from('kids_responsaveis')
-        .select('parentesco, autorizado_buscar, membro:mem_membros(nome, telefone)')
-        .eq('crianca_id', cr.id);
-      responsaveis = (resp || []).map(x => ({
-        parentesco: x.parentesco, autorizado_buscar: x.autorizado_buscar,
-        nome: x.membro?.nome || null, telefone: x.membro?.telefone || null,
-      }));
-    }
-    res.json({ ...r, crianca_local: cr || null, responsaveis });
-  } catch (e) {
-    console.error('[totemKids] pco-pessoa:', e.message);
-    res.status(500).json({ error: e.message || 'Erro ao consultar o Planning Center' });
-  }
-});
-
 // E-mails dos destinatários do resumo (Mari Gaia, Milena, Matheus) → profile ids
 // pra notificação in-app/e-mail (a Mari não tem WhatsApp, recebe por aqui).
 const RESUMO_KIDS_EMAILS = ['mariane.gaia@cbrio.org', 'milena.rochet@cbrio.org', 'matheus.toscano@cbrio.org', 'matheus@cbrio.com.br'];
 
-// Check-ins do NOSSO sistema (totem) pra um culto → crianças ÚNICAS.
-// Retorna { comPco: Set(planning_center_id), semPco: Set(crianca_id sem vínculo
-// PCO) }. Serve pra combinar com o PCO sem dupla contagem (dedup por
-// planning_center_id quando a criança está vinculada aos dois lados).
-async function nossosCheckinsDoCulto(cultoId) {
+// Crianças ÚNICAS com check-in do TOTEM num culto (todas as sessões dele).
+async function totalKidsTotem(cultoId) {
   const { data: sessoes } = await supabase.from('kids_sessoes').select('id').eq('culto_id', cultoId);
   const sessIds = (sessoes || []).map((s) => s.id);
-  if (!sessIds.length) return { comPco: new Set(), semPco: new Set() };
-  const { data: cis } = await supabase.from('kids_checkins')
-    .select('crianca_id, crianca:kids_criancas(planning_center_id)')
-    .in('sessao_id', sessIds).is('deleted_at', null);
-  const comPco = new Set();
-  const semPco = new Set();
-  for (const ci of cis || []) {
-    const pco = ci.crianca?.planning_center_id;
-    if (pco) comPco.add(String(pco));
-    else if (ci.crianca_id) semPco.add(ci.crianca_id);
+  if (!sessIds.length) return 0;
+  const uniq = new Set();
+  let from = 0;
+  while (true) {
+    const { data: cis } = await supabase.from('kids_checkins')
+      .select('crianca_id').in('sessao_id', sessIds).is('deleted_at', null)
+      .range(from, from + 999);
+    for (const ci of cis || []) if (ci.crianca_id) uniq.add(ci.crianca_id);
+    if (!cis || cis.length < 1000) break;
+    from += 1000;
   }
-  return { comPco, semPco };
+  return uniq.size;
 }
 
-// Total combinado de crianças ÚNICAS no culto = PCO ∪ nosso sistema (totem),
-// deduplicado por planning_center_id. `entry` é a linha por_culto do
-// coletarFrequenciaKidsPCO. Devolve { total, pco, totem } (totem = extras do
-// nosso sistema que NÃO estavam no PCO).
-async function totalKidsCombinado(cultoId, entry) {
-  const pco = entry?.total || 0;
-  const pcoSet = new Set((entry?.criancas || []).map((c) => c.pco_id).filter(Boolean).map(String));
-  const nossos = await nossosCheckinsDoCulto(cultoId);
-  let extras = nossos.semPco.size;
-  for (const p of nossos.comPco) if (!pcoSet.has(p)) extras += 1;
-  return { total: pco + extras, pco, totem: extras };
-}
-
-// Dispara o resumo de UM culto (crianças únicas: PCO + totem) pros líderes.
-async function dispararResumoKidsCulto(culto, total, fontes) {
+// Dispara o resumo de UM culto (crianças únicas do totem) pros líderes.
+async function dispararResumoKidsCulto(culto, total) {
   const dataFmt = culto.data ? new Date(culto.data + 'T00:00:00').toLocaleDateString('pt-BR') : '';
-  const detalhe = fontes && (fontes.totem || 0) > 0
-    ? `PCO ${fontes.pco || 0} · Totem ${fontes.totem || 0}`
-    : 'Frequência do Planning Center';
+  const detalhe = 'Check-ins do totem';
   const linhas = [
     '🧒 *Resumo do Kids*',
     `${culto.nome}${dataFmt ? ` · ${dataFmt}` : ''}`,
@@ -1770,23 +1684,26 @@ async function dispararResumoKidsCulto(culto, total, fontes) {
   }).catch(() => {});
 }
 
-// GET /cron/resumo-pco · roda de hora em hora (vercel.json · crons da Vercel são
+// GET /cron/resumo-kids · roda de hora em hora (vercel.json · crons da Vercel são
 // GET). Pra cada culto com Kids que JÁ terminou (data+horário+90min) e ainda não
-// teve resumo enviado, puxa o total de crianças do PCO, grava em
+// teve resumo enviado, conta as crianças únicas do TOTEM, grava em
 // cultos.presencial_kids e dispara o resumo pros líderes. Idempotente (dedup por
 // kids_resumo_enviado_at). Self-gating (barato quando não há culto pendente).
-router.get('/cron/resumo-pco', async (req, res) => {
+// Rede de segurança da consolidação: sessão esquecida aberta não segura o número
+// (o trigger do encerrar continua sendo o caminho principal). A frequência por
+// criança do radar de ausentes sai DIRETO de kids_checkins (fn no banco) — não
+// há mais gravação em kids_pco_presencas.
+router.get('/cron/resumo-kids', async (req, res) => {
   if (!isAuthorizedCron(req)) return res.status(401).json({ error: 'Unauthorized' });
   try {
-    const { coletarFrequenciaKidsPCO } = require('../services/planningCenterKidsCheckins');
     const agora = Date.now();
     const agoraBRT = new Date(agora - 3 * 3600 * 1000);
     const hoje = agoraBRT.toISOString().slice(0, 10);
     const ontem = new Date(agoraBRT.getTime() - 24 * 3600 * 1000).toISOString().slice(0, 10);
 
     // Cultos com Kids dos últimos 2 dias (pendentes de resumo + já resumidos,
-    // estes pra RECONCILIAR o número · check-ins corrigidos no PCO depois da
-    // foto deixavam o dashboard ±1 diferente do módulo · 06/07).
+    // estes pra RECONCILIAR o número · check-ins corrigidos depois da foto
+    // deixavam o dashboard ±1 diferente do módulo · 06/07).
     const { data: cultos } = await supabase
       .from('cultos')
       .select('id, nome, data, presencial_kids, kids_resumo_enviado_at, vol_service_types(recurrence_time, has_kids)')
@@ -1806,81 +1723,35 @@ router.get('/cron/resumo-pco', async (req, res) => {
       return res.json({ ok: true, enviados: 0, motivo: 'nenhum culto pendente' });
     }
 
-    // Coleta 1x por data (a coleta já devolve o total por culto do dia).
-    const datas = [...new Set([...pendentes, ...reconciliar].map((c) => c.data))];
-    const porData = {};
-    for (const d of datas) {
-      try { porData[d] = await coletarFrequenciaKidsPCO(d); } catch (e) { console.error(`[resumo-pco] coleta ${d}:`, e.message); porData[d] = null; }
-    }
-
     let enviados = 0;
     const detalhe = [];
     for (const c of pendentes) {
-      const col = porData[c.data];
-      if (!col) continue; // coleta falhou → tenta de novo na próxima hora
-      const entry = (col.por_culto || []).find((p) => p.culto_id === c.id);
-      // Crianças únicas = PCO ∪ nosso sistema (totem), sem dupla contagem.
-      const comb = await totalKidsCombinado(c.id, entry);
-      const total = comb.total;
-      if (total <= 0) continue; // sem check-in em NENHUMA fonte ainda → não envia "0", reavalia depois
+      const total = await totalKidsTotem(c.id);
+      if (total <= 0) continue; // nenhum check-in ainda → não envia "0", reavalia na próxima hora
       await supabase.from('cultos')
         .update({ presencial_kids: total, kids_resumo_enviado_at: new Date().toISOString() })
         .eq('id', c.id);
-      await dispararResumoKidsCulto(c, total, comb);
+      await dispararResumoKidsCulto(c, total);
       enviados += 1;
-      detalhe.push({ culto: c.nome, total, pco: comb.pco, totem: comb.totem });
+      detalhe.push({ culto: c.nome, total });
     }
 
-    // Reconciliação: check-ins corrigidos no PCO/totem depois → atualiza o
-    // número SEM reenviar o resumo (kids_resumo_enviado_at fica como está).
+    // Reconciliação: check-ins corrigidos/lançados depois → atualiza o número
+    // SEM reenviar o resumo (kids_resumo_enviado_at fica como está).
     let reconciliados = 0;
     for (const c of reconciliar) {
-      const col = porData[c.data];
-      if (!col) continue;
-      const entry = (col.por_culto || []).find((p) => p.culto_id === c.id);
-      const comb = await totalKidsCombinado(c.id, entry);
-      const total = comb.total;
+      const total = await totalKidsTotem(c.id);
       if (total > 0 && total !== c.presencial_kids) {
         await supabase.from('cultos').update({ presencial_kids: total }).eq('id', c.id);
         reconciliados += 1;
         detalhe.push({ culto: c.nome, total, reconciliado: true, antes: c.presencial_kids });
       }
     }
-    // Persiste a presença por criança (frequência do Kids · alimenta a aba/alerta
-    // "faltando 3+ cultos") a partir do que já foi coletado do PCO.
-    try {
-      const { data: cris } = await supabase.from('kids_criancas')
-        .select('id, planning_center_id').not('planning_center_id', 'is', null).is('deleted_at', null);
-      const porPco = new Map((cris || []).map((c) => [String(c.planning_center_id), c.id]));
-      for (const d of datas) {
-        const col = porData[d]; if (!col) continue;
-        const uniq = new Map();
-        for (const culto of col.por_culto || []) for (const cr of culto.criancas || []) {
-          const cid = cr.pco_id ? porPco.get(String(cr.pco_id)) : null;
-          if (cid) uniq.set(cid, { crianca_id: cid, data: d, culto_id: culto.culto_id || null });
-        }
-        if (uniq.size) await supabase.from('kids_pco_presencas').upsert([...uniq.values()], { onConflict: 'crianca_id,data', ignoreDuplicates: true });
-      }
-    } catch (e) { console.error('[resumo-pco] presencas:', e.message); }
 
     res.json({ ok: true, enviados, reconciliados, detalhe });
   } catch (e) {
-    console.error('[totemKids] cron resumo-pco:', e.message);
+    console.error('[totemKids] cron resumo-kids:', e.message);
     res.status(500).json({ error: e.message || 'Erro no resumo do Kids' });
-  }
-});
-
-// POST /sync-presencas-pco?dias=90 · backfill das presenças por criança (do PCO)
-// pras datas de culto com Kids no período. Alimenta a aba/alerta de faltantes.
-router.post('/sync-presencas-pco', authorizeModule('kids', 3), async (req, res) => {
-  try {
-    const dias = Math.min(400, Math.max(1, Number(req.query.dias || req.body?.dias) || 90));
-    const { sincronizarPresencasKidsPCO } = require('../services/planningCenterKidsCheckins');
-    const r = await sincronizarPresencasKidsPCO({ dias });
-    res.json({ ok: true, ...r });
-  } catch (e) {
-    console.error('[totemKids] sync-presencas-pco:', e.message);
-    res.status(500).json({ error: e.message || 'Erro ao sincronizar presenças do PCO' });
   }
 });
 
@@ -2072,13 +1943,15 @@ router.delete('/criancas/:id/foto', authorizeModule('kids', 2), async (req, res)
 router.get('/criancas/:id/jornada', authorizeModule('kids', 1), async (req, res) => {
   try {
     const id = req.params.id;
-    const { data: crianca } = await supabase.from('kids_criancas').select('familia_id, planning_center_id').eq('id', id).maybeSingle();
+    const { data: crianca } = await supabase.from('kids_criancas').select('familia_id').eq('id', id).maybeSingle();
     let familia_membros = [];
     if (crianca?.familia_id) {
       const { data: ms } = await supabase.from('mem_membros')
         .select('id, nome, telefone').eq('familia_id', crianca.familia_id).is('deleted_at', null).order('nome');
       familia_membros = ms || [];
     }
+    // Frequência = check-ins do TOTEM (kids_checkins). O histórico do Planning
+    // Center saiu do código (2026-07-20) — a série começa quando o totem entrou.
     const { data: cis } = await supabase.from('kids_checkins')
       .select('checkin_at, fez_decisao_jesus, decisao_jesus_em')
       .eq('crianca_id', id).is('deleted_at', null).order('checkin_at');
@@ -2093,21 +1966,7 @@ router.get('/criancas/:id/jornada', authorizeModule('kids', 1), async (req, res)
       if (!ultima || ymd > ultima) ultima = ymd;
       total += 1;
     };
-    lista.forEach((c) => addCheckin(c.checkin_at)); // totem (quando houver)
-
-    // Frequência REAL vem do Planning Center: histórico de check-ins da criança
-    // nos eventos do Kids (CBKids). Liga o gráfico mesmo sem o totem.
-    if (crianca?.planning_center_id) {
-      try {
-        const { detalhePessoaPCO, ehEventoKids } = require('../services/planningCenterKidsCheckins');
-        const det = await detalhePessoaPCO(crianca.planning_center_id);
-        (det?.historico || []).forEach((h) => {
-          if (String(h.kind || '').toLowerCase() === 'volunteer') return;
-          if (h.evento && !ehEventoKids(h.evento)) return; // só check-ins do Kids
-          addCheckin(h.data);
-        });
-      } catch (e) { console.error('[totemKids] jornada PCO:', e.message); }
-    }
+    lista.forEach((c) => addCheckin(c.checkin_at));
 
     const porMes = Object.entries(porMesMap).map(([mes, total]) => ({ mes, total })).sort((a, b) => a.mes.localeCompare(b.mes));
     const dec = lista.filter((c) => c.fez_decisao_jesus).map((c) => c.decisao_jesus_em || c.checkin_at).filter(Boolean).sort();
@@ -2123,22 +1982,23 @@ router.get('/criancas/:id/jornada', authorizeModule('kids', 1), async (req, res)
 });
 
 // GET /criancas/:id/analise-frequencia · análise de IA (Haiku) da frequência da
-// criança a partir do histórico de check-ins do Planning Center. As estatísticas
-// são calculadas em JS (não no modelo); a IA só interpreta e sugere ação pastoral.
+// criança a partir dos check-ins do TOTEM (kids_checkins). As estatísticas são
+// calculadas em JS (não no modelo); a IA só interpreta e sugere ação pastoral.
 router.get('/criancas/:id/analise-frequencia', authorizeModule('kids', 1), async (req, res) => {
   try {
     const { data: cr } = await supabase.from('kids_criancas')
-      .select('nome, data_nascimento, planning_center_id, data_conversao, data_batismo')
+      .select('nome, data_nascimento, data_conversao, data_batismo')
       .eq('id', req.params.id).maybeSingle();
     if (!cr) return res.status(404).json({ error: 'Criança não encontrada' });
-    if (!cr.planning_center_id) return res.json({ sem_dados: true, motivo: 'Criança sem vínculo com o Planning Center.' });
 
-    const { detalhePessoaPCO, ehEventoKids } = require('../services/planningCenterKidsCheckins');
-    const det = await detalhePessoaPCO(cr.planning_center_id);
-    const datas = (det?.historico || [])
-      .filter(h => String(h.kind || '').toLowerCase() !== 'volunteer' && (!h.evento || ehEventoKids(h.evento)) && h.data)
-      .map(h => h.data).sort();
-    if (!datas.length) return res.json({ sem_dados: true, motivo: 'Sem check-ins do Kids no Planning Center.' });
+    // Dias distintos com check-in no totem (dedup por dia em BRT).
+    const { data: cis } = await supabase.from('kids_checkins')
+      .select('checkin_at').eq('crianca_id', req.params.id)
+      .is('deleted_at', null).order('checkin_at');
+    const datas = [...new Set((cis || [])
+      .map(c => c.checkin_at ? new Date(new Date(c.checkin_at).getTime() - 3 * 3600 * 1000).toISOString().slice(0, 10) : null)
+      .filter(Boolean))].sort();
+    if (!datas.length) return res.json({ sem_dados: true, motivo: 'Sem check-ins registrados no sistema pra esta criança.' });
 
     const hoje = new Date();
     const diasDesde = (d) => Math.floor((hoje - new Date(d + 'T00:00:00')) / 86400000);
@@ -2210,34 +2070,6 @@ router.get('/cron/encerrar-vencidas', async (req, res) => {
     const encerradas = await encerrarSessoesVencidas(null);
     res.json({ ok: true, encerradas });
   } catch (e) { console.error('[totemKids] cron/encerrar-vencidas:', e.message); res.status(500).json({ error: 'Erro ao encerrar vencidas' }); }
-});
-
-// POST /api/totem-kids/sync-pco · puxa a base de crianças do Planning Center
-// Check-Ins e faz upsert por planning_center_id (idempotente). Nível 3 no módulo.
-router.post('/sync-pco', authorizeModule('kids', 3), async (req, res) => {
-  try {
-    const maxIdade = Number(req.body?.maxIdade) || 12;
-    const resumo = await syncCriancasPCO({ maxIdade });
-    res.json({ ok: true, ...resumo });
-  } catch (e) {
-    console.error('[totemKids/sync-pco]', e.message);
-    res.status(500).json({ error: e.message || 'Erro ao sincronizar com o Planning Center' });
-  }
-});
-
-// POST /api/totem-kids/responsaveis-pco · corrige os responsáveis poluídos
-// (importação familiar de 22/05) podando pelos guardiões reais do PCO (checked_in_by).
-// Body { apply:true } grava · sem apply = prévia (dry-run · não altera nada).
-router.post('/responsaveis-pco', authorizeModule('kids', 3), async (req, res) => {
-  try {
-    const apply = ['1', 'true', true].includes(req.body?.apply);
-    const { corrigirResponsaveisPCO } = require('../services/planningCenterKidsCheckins');
-    const r = await corrigirResponsaveisPCO({ apply });
-    res.json(r);
-  } catch (e) {
-    console.error('[totemKids/responsaveis-pco]', e.message);
-    res.status(500).json({ error: e.message || 'Erro ao corrigir responsáveis pelo PCO' });
-  }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2663,7 +2495,7 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
     if (errIns) throw errIns;
 
     // Fez check-in → a criança está ativa de novo. Reativa se tinha sido
-    // auto-inativada (sumiu 6+ meses do PCO / não veio no último import).
+    // inativada (visitante vencido, age-out, depuração antiga).
     supabase.from('kids_criancas')
       .update({ ativo: true, motivo_inativacao: null, inativado_em: null })
       .eq('id', crianca_id).eq('ativo', false)

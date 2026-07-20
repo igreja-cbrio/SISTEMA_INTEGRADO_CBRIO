@@ -1,7 +1,7 @@
 // Kids · módulo da aba Cultos (/kids)
 // Reorganização 2026-07-06 (pedido do Matheus): além dos indicadores
 // (PainelArea), este módulo recebeu a GESTÃO do ministério infantil que vivia
-// no hub (/ministerial/kids) — frequência PCO, vínculos, equipe, estoque,
+// no hub (/ministerial/kids) — frequência, vínculos, equipe, estoque,
 // batismos, apresentação de crianças e decisões. O hub ficou só com a operação
 // de culto (check-in, crianças, painel ao vivo, etiqueta, config). A seção de
 // gestão só aparece pra quem tem kids nível >= 2 (só-leitura vê indicadores).
@@ -18,7 +18,7 @@ import {
 import PainelArea from './PainelArea';
 
 const GESTAO = [
-  { titulo: 'Frequência (PCO)', desc: 'Validar check-ins das crianças por culto', icon: BarChart3, path: '/ministerial/totem-kids/frequencia', cor: '#0ea5e9' },
+  { titulo: 'Frequência', desc: 'Check-ins das crianças por culto (totem)', icon: BarChart3, path: '/ministerial/totem-kids/frequencia', cor: '#0ea5e9' },
   { titulo: 'Vínculos', desc: 'Pedidos de vínculo criança ↔ responsável', icon: ShieldCheck, path: '/ministerial/totem-kids/vinculos', cor: '#3b82f6' },
   { titulo: 'Equipe do Kids', desc: 'Voluntários por posição (salas, recepção...) + ficha', icon: UserCheck, path: '/ministerial/totem-kids/voluntarios', cor: '#14b8a6' },
   { titulo: 'Voluntariado (inscrições)', desc: 'Quem quer servir no Kids · contatar (WhatsApp) e encaminhar', icon: UserPlus, path: '/ministerial/totem-kids/voluntariado-inscricoes', cor: '#ec4899' },
