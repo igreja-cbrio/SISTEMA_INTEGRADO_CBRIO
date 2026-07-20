@@ -252,6 +252,14 @@ function _hojeBRT() {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
 }
 
+// Data-limite de uma criança visitante = hoje (BRT) + 28 dias (4 domingos · o
+// dia + 3 semanas · Marcos 2026-07-20). Passou disso, ela inativa sozinha.
+function _dataLimiteVisitante() {
+  const d = new Date(_hojeBRT() + 'T12:00:00Z');
+  d.setUTCDate(d.getUTCDate() + 28);
+  return d.toISOString().slice(0, 10);
+}
+
 // Encerra sessões ABERTAS cujo culto é de um dia ANTERIOR a hoje (BRT) e dá
 // checkout automático em quem ficou aberto nelas — mesmo efeito do "Encerrar"
 // manual (#1758a). É o fechamento LAZY (SEM cron · pedido do Marcos): roda na
@@ -291,12 +299,26 @@ async function encerrarSessoesVencidas(userId) {
   return _fecharSessoes(vencidas, userId, 'Baixa automática (sessão de outro dia)');
 }
 
+// Inativa (LAZY · SEM cron · Marcos 2026-07-20) as crianças VISITANTES cujo
+// prazo (data_limite) passou e que não viraram frequentador. Somem do check-in
+// (que já filtra ativo). Roda na carga do totem, junto com o encerrar sessões.
+async function inativarVisitantesVencidos() {
+  const hoje = _hojeBRT();
+  const { data, error } = await supabase.from('kids_criancas')
+    .update({ ativo: false, inativado_em: new Date().toISOString(), motivo_inativacao: 'Visitante não retornou (prazo de 4 semanas)' })
+    .eq('visitante', true).eq('ativo', true).lt('data_limite', hoje).is('deleted_at', null)
+    .select('id');
+  if (error) { console.error('[totemKids/inativarVisitantesVencidos]', error.message); return 0; }
+  return (data || []).length;
+}
+
 // POST /api/totem-kids/sessoes/encerrar-vencidas · sweep lazy (SEM cron): o
 // totem/admin chama na carga; encerra sessões de dias anteriores + baixa abertos.
 router.post('/sessoes/encerrar-vencidas', authorizeModule('kids', 2), async (req, res) => {
   try {
     const n = await encerrarSessoesVencidas(req.user.userId);
-    res.json({ encerradas: n });
+    const visitantes_inativados = await inativarVisitantesVencidos().catch(() => 0);
+    res.json({ encerradas: n, visitantes_inativados });
   } catch (e) {
     console.error('[totemKids/sessoes/encerrar-vencidas]', e.message);
     res.status(500).json({ error: 'Erro ao encerrar sessões vencidas' });
@@ -666,7 +688,15 @@ router.post('/criancas', authorizeModule('kids', 2), async (req, res) => {
 
     const txt = (cond, v) => (cond && v ? String(v).trim().slice(0, 500) : null);
     const bool = (v) => (v === true ? true : (v === false ? false : null));
-    // Base da criança (+ saúde) compartilhada entre os fluxos. Sempre visitante=true.
+    // Base da criança (+ saúde) compartilhada entre os fluxos. `visitante` vem do
+    // toggle — cadastro normal nasce FREQUENTADOR (false · Marcos 2026-07-20).
+    // Visitante temporário aparece ~4 semanas (data_limite = hoje+28d) e depois
+    // inativa sozinho (lazy). relação = amigo/primo/vizinho/irmao/outros.
+    const RELACOES_VISITANTE = ['amigo', 'primo', 'vizinho', 'irmao', 'outros'];
+    const ehVisitante = crianca.visitante === true;
+    const relacaoVisitante = ehVisitante && RELACOES_VISITANTE.includes(crianca.visitante_relacao)
+      ? crianca.visitante_relacao : null;
+    const dataLimiteVisitante = ehVisitante ? _dataLimiteVisitante() : null;
     const camposCrianca = {
       nome: crianca.nome,
       data_nascimento: crianca.data_nascimento || null,
@@ -685,7 +715,9 @@ router.post('/criancas', authorizeModule('kids', 2), async (req, res) => {
       consent_marketing: bool(crianca.consent_marketing),
       consent_marketing_em: crianca.consent_marketing == null ? null : new Date().toISOString(),
       consent_marketing_versao: crianca.consent_marketing == null ? null : 'v1',
-      visitante: true,
+      visitante: ehVisitante,
+      visitante_relacao: relacaoVisitante,
+      data_limite: dataLimiteVisitante,
       created_by: req.user.userId,
     };
 
@@ -696,7 +728,7 @@ router.post('/criancas', authorizeModule('kids', 2), async (req, res) => {
       if (!amigo) return res.status(404).json({ error: 'Criança de referência não encontrada' });
       const { data: criancaCriada, error: errC } = await supabase.from('kids_criancas')
         .insert({ ...camposCrianca, familia_id: amigo.familia_id || null,
-          observacoes_internas: `Visitante · amigo(a) de ${amigo.nome}` })
+          observacoes_internas: ehVisitante ? `Visitante (${relacaoVisitante || 'outros'}) · de ${amigo.nome}` : null })
         .select('*, familia:mem_familias(id, nome)').single();
       if (errC) throw errC;
       const { data: resps } = await supabase.from('kids_responsaveis')
@@ -819,12 +851,27 @@ router.post('/criancas', authorizeModule('kids', 2), async (req, res) => {
 router.patch('/criancas/:id', authorizeModule('kids', 3), async (req, res) => {
   try {
     const allowed = ['nome', 'data_nascimento', 'sexo', 'familia_id', 'observacoes_medicas',
-                     'necessidades_especiais', 'foto_url', 'visitante', 'ativo', 'observacoes_internas',
+                     'necessidades_especiais', 'foto_url', 'visitante', 'visitante_relacao', 'data_limite',
+                     'ativo', 'observacoes_internas',
                      'serie', 'data_conversao', 'data_batismo', 'consent_marketing',
                      'tem_espectro', 'espectro_qual', 'tem_alergia', 'alergia_qual',
                      'tem_limitacao_fisica', 'limitacao_fisica_qual'];
     const update = {};
     for (const k of allowed) if (k in req.body) update[k] = req.body[k];
+    // Visitante temporário (Marcos 2026-07-20): virou visitante → garante o prazo
+    // (data_limite = hoje+28d, se não veio um); virou frequentador → limpa prazo
+    // e relação. Valida a relação.
+    if ('visitante' in req.body) {
+      if (req.body.visitante === true) {
+        if (!req.body.data_limite) update.data_limite = _dataLimiteVisitante();
+      } else {
+        update.data_limite = null;
+        update.visitante_relacao = null;
+      }
+    }
+    if (update.visitante_relacao && !['amigo', 'primo', 'vizinho', 'irmao', 'outros'].includes(update.visitante_relacao)) {
+      delete update.visitante_relacao;
+    }
     if (req.body.foto_url && !req.body.foto_consentimento_em) {
       update.foto_consentimento_em = new Date().toISOString();
     }
@@ -843,6 +890,21 @@ router.patch('/criancas/:id', authorizeModule('kids', 3), async (req, res) => {
     res.json(data);
   } catch (e) {
     res.status(500).json({ error: 'Erro ao editar criança' });
+  }
+});
+
+// POST /criancas/:id/tornar-frequentador · a visitante virou regular → some o
+// prazo (data_limite) e a relação; deixa de expirar sozinha. (Marcos 2026-07-20)
+router.post('/criancas/:id/tornar-frequentador', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('kids_criancas')
+      .update({ visitante: false, data_limite: null, visitante_relacao: null, updated_at: new Date().toISOString() })
+      .eq('id', req.params.id).select('id, nome, visitante').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('[totemKids/tornar-frequentador]', e.message);
+    res.status(500).json({ error: 'Erro ao tornar a criança frequentador' });
   }
 });
 

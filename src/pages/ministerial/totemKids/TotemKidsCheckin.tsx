@@ -2615,6 +2615,7 @@ function ModalNovaCrianca(props: {
     nome: '', nasc: '', sexo: '', foto: null as string | null, consent: false,
     temAlergia: false, alergiaQual: '', temEspectro: false, espectroQual: '',
     temLimitacao: false, limitacaoQual: '', obsMed: '',
+    visitante: false, visitanteRelacao: 'amigo',
   });
   // Uma OU MAIS crianças de uma vez (irmãos/primos/amigos que vieram juntos ·
   // Marcos 2026-07-15) — mesma família, compartilham os responsáveis.
@@ -2656,6 +2657,8 @@ function ModalNovaCrianca(props: {
     tem_alergia: c.temAlergia, alergia_qual: c.temAlergia ? c.alergiaQual.trim() || null : null,
     tem_espectro: c.temEspectro, espectro_qual: c.temEspectro ? c.espectroQual.trim() || null : null,
     tem_limitacao_fisica: c.temLimitacao, limitacao_fisica_qual: c.temLimitacao ? c.limitacaoQual.trim() || null : null,
+    visitante: !!c.visitante,
+    visitante_relacao: c.visitante ? (c.visitanteRelacao || 'outros') : null,
   });
 
   async function salvar() {
@@ -2774,6 +2777,24 @@ function ModalNovaCrianca(props: {
                 <Toggle on={c.temLimitacao} set={(b) => setCri(i, { temLimitacao: b })} label="Limitação física / deficiência" />
                 {c.temLimitacao && <Input placeholder="Qual limitação?" value={c.limitacaoQual} onChange={e => setCri(i, { limitacaoQual: e.target.value })} />}
                 <Input placeholder="Observações médicas (medicação, cuidados...)" value={c.obsMed} onChange={e => setCri(i, { obsMed: e.target.value })} />
+                {/* Visitante temporário (Marcos 2026-07-20): aparece ~4 semanas e some sozinho se não voltar */}
+                <Toggle on={!!c.visitante} set={(b) => setCri(i, { visitante: b })} label="É visitante?" />
+                {c.visitante && (
+                  <div className="space-y-1.5 rounded-md border border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 p-2">
+                    <label className="text-xs text-muted-foreground block">Relação com a família</label>
+                    <Select value={c.visitanteRelacao || 'amigo'} onValueChange={(v) => setCri(i, { visitanteRelacao: v })}>
+                      <SelectTrigger className="h-9"><SelectValue placeholder="Relação" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="amigo">Amigo(a)</SelectItem>
+                        <SelectItem value="primo">Primo(a)</SelectItem>
+                        <SelectItem value="vizinho">Vizinho(a)</SelectItem>
+                        <SelectItem value="irmao">Irmão/Irmã</SelectItem>
+                        <SelectItem value="outros">Outros</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-[11px] text-amber-700 dark:text-amber-300">Fica visível no check-in por ~4 semanas; depois sai sozinho se não voltar.</p>
+                  </div>
+                )}
               </div>
             ))}
           </div>
