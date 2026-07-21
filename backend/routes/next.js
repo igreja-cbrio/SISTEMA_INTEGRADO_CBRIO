@@ -826,6 +826,21 @@ router.patch('/matriculas/:id', async (req, res) => {
   res.json(data);
 });
 
+// PATCH /matriculas/:id/contato — marca/desmarca "contato feito" com a pessoa.
+// body { feito: boolean } (default true). Carimba quem/quando pra ficar rastreável.
+router.patch('/matriculas/:id/contato', async (req, res) => {
+  const feito = req.body?.feito !== false;
+  const patch = feito
+    ? { contato_em: new Date().toISOString(), contato_por: req.user?.id ?? null }
+    : { contato_em: null, contato_por: null };
+  const { data, error } = await supabase.from('next_matriculas')
+    .update(patch).eq('id', req.params.id).is('deleted_at', null)
+    .select('id, contato_em, contato_por').maybeSingle();
+  if (error) return res.status(500).json({ error: error.message });
+  if (!data) return res.status(404).json({ error: 'Matrícula não encontrada' });
+  res.json(data);
+});
+
 // DELETE /matriculas/:id — soft delete
 router.delete('/matriculas/:id', async (req, res) => {
   const { error } = await supabase.rpc('app_soft_delete', { p_table_name: 'next_matriculas', p_row_id: req.params.id, p_deleted_by: req.user?.id ?? null });
