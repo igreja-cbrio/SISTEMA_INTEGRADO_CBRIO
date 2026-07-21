@@ -23,7 +23,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { Switch } from '../../components/ui/switch';
 import { Badge } from '../../components/ui/badge';
 import { StatisticsCard } from '../../components/ui/statistics-card';
-import { Heart, Users, UserCheck, CheckCircle2, Plus, Trash2, Loader2, Search, Sparkles, CalendarCheck, CalendarPlus, ArrowRight, Phone, MessageSquare, AlertTriangle, HeartHandshake } from 'lucide-react';
+import { Heart, Users, UserCheck, CheckCircle2, Plus, Trash2, Loader2, Search, Sparkles, CalendarCheck, CalendarPlus, ArrowRight, Phone, MessageSquare, AlertTriangle, HeartHandshake, Pencil, Check, X } from 'lucide-react';
 import { ResponsiveContainer, LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 import { toast } from 'sonner';
 import { useAuth } from '../../contexts/AuthContext';
@@ -295,12 +295,11 @@ const RESPONSAVEIS_FALLBACK = [
 ];
 
 // Modal "Gerenciar responsáveis" · a equipe liga/desliga quem está disponível,
-// adiciona gente nova e exclui quem NUNCA foi usado (nome errado etc. · o
-// backend bloqueia com 409 se o nome está em algum convertido). Sem renomear
-// de propósito: o vínculo com o convertido é pelo NOME — desativar preserva
-// o histórico.
-function GerenciarResponsaveisModal({ open, onClose, responsaveis, onChanged }: {
-  open: boolean; onClose: () => void; responsaveis: any[]; onChanged: () => void;
+// adiciona gente nova, EDITA o nome (o backend propaga pros convertidos — o
+// vínculo é por texto) e exclui quem NUNCA foi usado (nome errado etc. · o
+// backend bloqueia com 409 se o nome está em algum convertido).
+function GerenciarResponsaveisModal({ open, onClose, responsaveis, onChanged, onRenomeado }: {
+  open: boolean; onClose: () => void; responsaveis: any[]; onChanged: () => void; onRenomeado?: () => void;
 }) {
   const [novoNome, setNovoNome] = useState('');
   const [salvando, setSalvando] = useState(false);
@@ -350,29 +349,94 @@ function GerenciarResponsaveisModal({ open, onClose, responsaveis, onChanged }: 
     }
   }
 
+  // Editar nome: renomeia no catálogo E em todos os convertidos que apontam
+  // pro nome antigo (o backend propaga · vínculo por texto).
+  const [editandoId, setEditandoId] = useState<string | null>(null);
+  const [editNome, setEditNome] = useState('');
+
+  function iniciarEdicao(r: any) {
+    setEditandoId(r.id);
+    setEditNome(r.nome);
+  }
+
+  async function salvarNome(r: any) {
+    const nome = editNome.trim();
+    if (nome === r.nome || nome.length < 2) { setEditandoId(null); return; }
+    setTogglingId(r.id);
+    try {
+      const resp = await cuidadosApi.responsaveis.update(r.id, { nome });
+      const n = resp?.renomeados || 0;
+      toast.success(n > 0
+        ? `Renomeado pra ${nome} — ${n} convertido(s) atualizados junto.`
+        : `Renomeado pra ${nome}.`);
+      setEditandoId(null);
+      onChanged();
+      if (n > 0) onRenomeado?.(); // recarrega os convertidos (a tabela mostra o nome novo)
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setTogglingId(null);
+    }
+  }
+
   const ativos = responsaveis.filter(r => r.ativo);
   const inativos = responsaveis.filter(r => !r.ativo);
 
-  function LinhaResponsavel({ r }: { r: any }) {
+  // Função comum (não componente · evita remount/perda de foco do input de edição)
+  function linhaResponsavel(r: any) {
+    const editando = editandoId === r.id;
     return (
-      <div className={`flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2 ${r.ativo ? '' : 'opacity-70'}`}>
-        <span className="text-sm flex-1">{r.nome}</span>
-        <Switch
-          checked={r.ativo}
-          disabled={togglingId === r.id}
-          onCheckedChange={() => toggleAtivo(r, !r.ativo)}
-          title={r.ativo ? 'Disponível · clique pra desativar' : 'Indisponível · clique pra reativar'}
-        />
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7 text-muted-foreground hover:text-destructive"
-          disabled={togglingId === r.id}
-          onClick={() => excluir(r)}
-          title="Excluir (só se nunca foi usado em nenhum convertido)"
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-        </Button>
+      <div key={r.id} className={`flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2 ${r.ativo || editando ? '' : 'opacity-70'}`}>
+        {editando ? (
+          <>
+            <Input
+              autoFocus
+              className="h-7 text-sm flex-1"
+              value={editNome}
+              onChange={e => setEditNome(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') { e.preventDefault(); salvarNome(r); }
+                if (e.key === 'Escape') setEditandoId(null);
+              }}
+            />
+            <Button variant="ghost" size="icon" className="h-7 w-7 text-primary" disabled={togglingId === r.id} onClick={() => salvarNome(r)} title="Salvar novo nome">
+              {togglingId === r.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+            </Button>
+            <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground" disabled={togglingId === r.id} onClick={() => setEditandoId(null)} title="Cancelar edição">
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          </>
+        ) : (
+          <>
+            <span className="text-sm flex-1">{r.nome}</span>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 text-muted-foreground"
+              disabled={togglingId === r.id}
+              onClick={() => iniciarEdicao(r)}
+              title="Editar nome (atualiza também os convertidos já registrados com ele)"
+            >
+              <Pencil className="h-3.5 w-3.5" />
+            </Button>
+            <Switch
+              checked={r.ativo}
+              disabled={togglingId === r.id}
+              onCheckedChange={() => toggleAtivo(r, !r.ativo)}
+              title={r.ativo ? 'Disponível · clique pra desativar' : 'Indisponível · clique pra reativar'}
+            />
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 text-muted-foreground hover:text-destructive"
+              disabled={togglingId === r.id}
+              onClick={() => excluir(r)}
+              title="Excluir (só se nunca foi usado em nenhum convertido)"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          </>
+        )}
       </div>
     );
   }
@@ -387,6 +451,7 @@ function GerenciarResponsaveisModal({ open, onClose, responsaveis, onChanged }: 
           <p className="text-xs text-muted-foreground">
             Quem está <strong>disponível</strong> aparece no seletor de responsável dos convertidos.
             Desativar não apaga nada — os registros antigos continuam mostrando o nome.
+            Editar o nome (lápis) atualiza também os convertidos já registrados com ele.
             A lixeira exclui de vez, mas só quem nunca foi usado em nenhum convertido.
           </p>
           <div className="flex gap-2">
@@ -403,12 +468,12 @@ function GerenciarResponsaveisModal({ open, onClose, responsaveis, onChanged }: 
           <div className="space-y-1.5">
             <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Disponíveis ({ativos.length})</p>
             {ativos.length === 0 && <p className="text-xs text-muted-foreground">Ninguém disponível — adicione ou reative alguém abaixo.</p>}
-            {ativos.map(r => <LinhaResponsavel key={r.id} r={r} />)}
+            {ativos.map(r => linhaResponsavel(r))}
           </div>
           {inativos.length > 0 && (
             <div className="space-y-1.5">
               <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Antigos / indisponíveis ({inativos.length})</p>
-              {inativos.map(r => <LinhaResponsavel key={r.id} r={r} />)}
+              {inativos.map(r => linhaResponsavel(r))}
             </div>
           )}
         </div>
@@ -1872,6 +1937,7 @@ export default function Cuidados() {
         onClose={() => setModalResponsaveis(false)}
         responsaveis={responsaveis}
         onChanged={loadResponsaveis}
+        onRenomeado={loadAll}
       />
     </div>
   );
