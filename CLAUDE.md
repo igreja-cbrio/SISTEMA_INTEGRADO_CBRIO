@@ -953,6 +953,32 @@ Pra debug similar futuro · `/api/permissoes/diagnostico/:email` mostra
 `matrix_stats.cargoMatrix_total_rows`. Se for exatamente 1000, sintoma
 do cap presente.
 
+### Varredura Onda 1 aplicada (2026-07-21 · auditoria de performance)
+
+Todos os pontos mapeados pela auditoria de 08/07 que liam base inteira com
+select cru foram corrigidos (números de prod do dia: 3.698 membros ativos ·
+20.196 contribuições · 1.422 vínculos de grupo ativos · 1.196 check-ins de
+voluntário/90d — tudo acima do cap):
+- `membresia /contribuicoes/kpis`: totais do ano truncados em 1000 de 3.018 e
+  `.in()` com a lista inteira de membros (3,6k UUIDs → URL estoura e falha
+  SILENCIOSO · a classificação ativo/irregular/inativo saía do nada). Paginado
+  + cruzamento em JS + filtro `deleted_at` que faltava nos membros.
+- Séries do carrossel do `/painel`: Generosidade (dizimistas/ofertantes,
+  doações R$, doadores únicos), `entradas_grupos` e devocionais →
+  `fetchAllPaginado`.
+- Coletores do cron (`kpiAutoCollector.js`): `cuidados.engajados_valor` (sem
+  `.in()` gigante), `voluntariado.ativos_semanal/trimestral`,
+  `generosidade.recorrencia`, `cuidados.devocional_membros`,
+  `devocionais.familias`. Helper `fetchAll` promovido a módulo-level — TODO
+  coletor novo que ler tabela grande usa ele.
+- `notificacaoGenerator` membro-sem-grupo: lia só os 1000 primeiros
+  `membro_ativo` (são 1.083) e o `.in()` gigante falhava silencioso — TODO
+  MUNDO parecia sem grupo. Paginado + cruzamento por Set.
+Já estavam corrigidos (semana de formulários 14–17/07, validado): diretório
+da Membresia, `membros_count` de Grupos, snapshots Conectar do painel.
+**Regra permanente:** leitura de tabela que passa (ou vai passar) de 1000
+linhas usa `fetchAll`/`fetchAllPaginado`; `.in()` sempre em lotes ≤200.
+
 ## Jornada NSM · engajamento de verdade (2026-06-10)
 
 Contexto: Marcos vai liberar os módulos ministeriais dos 4 primeiros valores
@@ -1170,6 +1196,9 @@ transcrição ele cria depois.
   (1) **1×/mês** o pedido de chamada do mês — cron `frequencia-mensal` em
   `publicGrupos.js` (template `grupos_frequencia_mes`, link `/g/f/<token>`),
   agora **gated por temporada ativa EM CURSO** (data_inicio<=hoje<=data_fim);
+  desde 2026-07-21 o cron **enfileira em LOTE** na fila `whatsapp_envios`
+  (`enfileirarLote` · leituras de roster/líder em lote em vez de 2 queries por
+  grupo; a entrega sai no cron horário da fila com retry/backoff);
   (2) lembrete avulso **só por disparo manual da coordenação**
   (`POST /whatsapp-grupos/enviar-lembretes` · Naná — ainda sem botão na UI).
   Não recriar cobrança automática.
@@ -2353,6 +2382,11 @@ via `window.print` na Brother QL-820NWB default do Windows).
   segurança o critério de soft-delete (sem idade + sem responsável + sem atividade
   há mais de 1 ano), portanto nenhuma foi apagada. O script é conservador e deve
   sempre rodar primeiro sem `--auto` para diagnóstico.
+- **Fotos do app assinadas em LOTE (2026-07-21 · Onda 1 performance)**: as
+  listas (gestão de crianças, busca do totem, irmãos, pré-check-in por código)
+  resolvem foto via `anexarFotosEmLote` (`totemKids.js` · `createSignedUrls` =
+  1 chamada pra N fotos + cache em memória ~25 min; falha degrada pra sem
+  foto). O detalhe individual segue com `fotoVisivelCrianca`.
 - **Pendências operacionais**: aplicar migration
   `20260522300000_totem_kids_chamadas_display.sql`; Brother no Windows do totem
   (docs/totem-kids-setup-brother.md); comprar/parear 6 Fire TV Sticks;
