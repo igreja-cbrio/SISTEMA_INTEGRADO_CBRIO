@@ -2852,6 +2852,11 @@ export const waInbox = {
   colaboradores: () => get('/wa-inbox/colaboradores'),
   perfil: (id) => get(`/wa-inbox/conversas/${id}/perfil`),
   naoLidas: () => get('/wa-inbox/nao-lidas'),
+  resumoAreas: () => get('/wa-inbox/resumo-areas'),
+  setores: () => get('/wa-inbox/setores'),
+  criarSetor: (body) => post('/wa-inbox/setores', body),
+  salvarSetor: (id, body) => put(`/wa-inbox/setores/${id}`, body),
+  removerSetor: (id) => del(`/wa-inbox/setores/${id}`),
 };
 
 export const cuidados = {

@@ -81,6 +81,90 @@ router.get('/nao-lidas', authorizeModule('conversas', 1), async (req, res) => {
   }
 });
 
+// GET /resumo-areas — pendências agrupadas por área (painel), respeitando o escopo
+router.get('/resumo-areas', authorizeModule('conversas', 1), async (req, res) => {
+  try {
+    const userId = uid(req);
+    let query = supabase.from('wa_conversas')
+      .select('area, nao_lidas, resolvida, atribuido_a').is('deleted_at', null).limit(5000);
+    if (!ehAdmin(req)) {
+      const vis = ['area.is.null', `atribuido_a.eq.${userId}`];
+      const areas = minhasAreas(req);
+      if (areas.length) vis.push(`area.in.${inList(areas)}`);
+      query = query.or(vis.join(','));
+    }
+    const { data, error } = await query;
+    if (error) throw error;
+    const mapa = new Map();
+    for (const c of (data || [])) {
+      const chave = c.area || '__entrada__';
+      const r = mapa.get(chave) || { area: c.area, entrada: !c.area, novas: 0, ativos: 0, pendentes: 0 };
+      r.novas += (c.nao_lidas || 0);
+      if (!c.resolvida) { r.ativos += 1; if (!c.atribuido_a) r.pendentes += 1; }
+      mapa.set(chave, r);
+    }
+    const linhas = [...mapa.values()].sort((a, b) => (b.novas + b.ativos) - (a.novas + a.ativos));
+    res.json({ areas: linhas });
+  } catch (e) {
+    console.error('[wa-inbox] resumo-areas:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar painel' });
+  }
+});
+
+// ── Menu de setores do bot de triagem (editável no /admin) ──────────────
+// GET /setores — lista (todos, p/ admin) · usado pelo painel e pela config
+router.get('/setores', authorizeModule('conversas', 1), async (req, res) => {
+  try {
+    const { data } = await supabase.from('conversas_setores')
+      .select('id, ordem, rotulo, area, ativo').order('ordem', { ascending: true });
+    res.json({ setores: data || [] });
+  } catch (e) {
+    console.error('[wa-inbox] setores get:', e.message);
+    res.status(500).json({ error: 'Erro ao listar setores' });
+  }
+});
+// POST /setores — cria (admin do módulo)
+router.post('/setores', authorizeModule('conversas', 3), async (req, res) => {
+  try {
+    const { rotulo, area, ordem, ativo } = req.body || {};
+    if (!rotulo || !area) return res.status(400).json({ error: 'Rótulo e área são obrigatórios.' });
+    const { data, error } = await supabase.from('conversas_setores')
+      .insert({ rotulo: String(rotulo).trim(), area: String(area).trim(), ordem: Number(ordem) || 0, ativo: ativo !== false })
+      .select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('[wa-inbox] setores post:', e.message);
+    res.status(500).json({ error: 'Erro ao criar setor' });
+  }
+});
+// PUT /setores/:id — edita
+router.put('/setores/:id', authorizeModule('conversas', 3), async (req, res) => {
+  try {
+    const patch = {};
+    for (const k of ['rotulo', 'area']) if (k in (req.body || {})) patch[k] = String(req.body[k] || '').trim();
+    if ('ordem' in (req.body || {})) patch.ordem = Number(req.body.ordem) || 0;
+    if ('ativo' in (req.body || {})) patch.ativo = !!req.body.ativo;
+    if (!Object.keys(patch).length) return res.status(400).json({ error: 'Nada para atualizar' });
+    const { data, error } = await supabase.from('conversas_setores').update(patch).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('[wa-inbox] setores put:', e.message);
+    res.status(500).json({ error: 'Erro ao atualizar setor' });
+  }
+});
+// DELETE /setores/:id — remove
+router.delete('/setores/:id', authorizeModule('conversas', 3), async (req, res) => {
+  try {
+    await supabase.from('conversas_setores').delete().eq('id', req.params.id);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[wa-inbox] setores del:', e.message);
+    res.status(500).json({ error: 'Erro ao remover setor' });
+  }
+});
+
 // GET /colaboradores — todos os colaboradores ativos (p/ atribuir responsável a qualquer um)
 router.get('/colaboradores', authorizeModule('conversas', 1), async (req, res) => {
   try {

@@ -181,6 +181,23 @@ async function processarMensagem(m, cfg) {
       mediaId: m.image?.id || m.audio?.id || m.document?.id,
     }).catch(e => console.error('[whatsapp webhook] inbox in:', e.message));
     if (m.type !== 'text') return; // mídia: já no inbox; não custa LLM institucional
+
+    // ── BOT DE TRIAGEM ── número realmente desconhecido (não-líder): o bot
+    // pergunta o setor + nome, tria pra área e notifica a equipe. Substitui a
+    // FAQ institucional. Líder-comum (coleta_restrita) mantém o institucional.
+    if (!lider) {
+      const assumiu = await require('../services/whatsappTriagem')
+        .tratar({ telefone, texto })
+        .catch(e => { console.error('[whatsapp webhook] triagem:', e.message); return false; });
+      if (assumiu) {
+        await supabase.from('whatsapp_coletas').insert({
+          whatsapp_message_id: messageId, telefone, raw_text: texto,
+          status: 'ignorado', erro: 'triagem', modulo_destino: 'conversas',
+        }).catch(() => {});
+        return;
+      }
+    }
+
     const resposta = await responderInstitucional({ texto, institucional: cfg?.institucional });
     await supabase.from('whatsapp_coletas').insert({
       whatsapp_message_id: messageId, telefone, raw_text: texto,
