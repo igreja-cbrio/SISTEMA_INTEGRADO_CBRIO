@@ -106,8 +106,6 @@ export default function ConversasInbox({
   const [novaOpen, setNovaOpen] = useState(false);
   const fimRef = useRef<HTMLDivElement | null>(null);
   const selRef = useRef<string | null>(null);
-  const unreadRef = useRef<number | null>(null);
-  const audioRef = useRef<AudioContext | null>(null);
   selRef.current = selId;
 
   const areasChips = isAdmin ? areasDisp.map(a => a.nome) : userAreas;
@@ -115,32 +113,10 @@ export default function ConversasInbox({
   const respName = (id: string | null) => (id ? colaboradores.find(a => a.id === id)?.name || null : null);
   const respFoto = (id: string | null) => (id ? colaboradores.find(a => a.id === id)?.avatar_url || null : null);
 
-  function plim() {
-    try {
-      const AC = (window.AudioContext || (window as any).webkitAudioContext);
-      if (!AC) return;
-      if (!audioRef.current) audioRef.current = new AC();
-      const ctx = audioRef.current;
-      if (ctx.state === 'suspended') ctx.resume();
-      const o = ctx.createOscillator(); const g = ctx.createGain();
-      o.type = 'sine'; o.frequency.setValueAtTime(880, ctx.currentTime);
-      o.frequency.setValueAtTime(1180, ctx.currentTime + 0.09);
-      g.gain.setValueAtTime(0.001, ctx.currentTime);
-      g.gain.exponentialRampToValueAtTime(0.12, ctx.currentTime + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.28);
-      o.connect(g); g.connect(ctx.destination);
-      o.start(); o.stop(ctx.currentTime + 0.3);
-    } catch { /* silencioso */ }
-  }
-
-  const carregarConversas = useCallback(async (comSom = false) => {
+  const carregarConversas = useCallback(async () => {
     try {
       const r = await waInbox.conversas({ status: statusApi, q: busca || undefined, area: areaFiltro });
-      const lista = r?.conversas || [];
-      const total = lista.reduce((a: number, c: Conversa) => a + (c.nao_lidas || 0), 0);
-      if (comSom && unreadRef.current != null && total > unreadRef.current) plim();
-      unreadRef.current = total;
-      setConversas(lista);
+      setConversas(r?.conversas || []);
     } catch { setConversas([]); }
   }, [statusApi, busca, areaFiltro]);
 
@@ -179,16 +155,16 @@ export default function ConversasInbox({
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'wa_mensagens' }, (payload: any) => {
         const m = payload?.new;
         if (m?.conversa_id && selRef.current && m.conversa_id === selRef.current) sched(() => carregarThread(selRef.current!));
-        sched(() => carregarConversas(true)); // toca plim se aumentar não-lidas do MEU escopo
+        sched(carregarConversas); // o plim é tocado pelo header (AppShell), app-wide
       })
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'wa_conversas' }, () => sched(() => carregarConversas(false)))
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'wa_conversas' }, () => sched(carregarConversas))
       .subscribe();
     return () => { clearTimeout(t); supabase.removeChannel(ch); };
   }, [currentUserId, carregarConversas, carregarThread]);
 
   // rede de segurança (reconexão): polling lento
   useEffect(() => {
-    const t1 = setInterval(() => carregarConversas(false), 20_000);
+    const t1 = setInterval(() => carregarConversas(), 20_000);
     const t2 = setInterval(() => { if (selRef.current) carregarThread(selRef.current); }, 15_000);
     return () => { clearInterval(t1); clearInterval(t2); };
   }, [carregarConversas, carregarThread]);
