@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { cadastroPublico } from '../../api';
 import { useHomeScreenMeta } from '@/hooks/useHomeScreenMeta';
 import AnimatedBackground from './AnimatedBackground';
-import { usePublicTheme, PublicThemeToggle } from './publicTheme';
+import { usePublicTheme, PublicThemeToggle, PublicPaletteCtx, usePublicPalette } from './publicTheme';
 import { MultistepFormShell } from '../../components/ui/multistep-form';
 import { BirthDatePicker } from '../../components/ui/birth-date-picker';
 import MemberWalletPass from '../../components/membresia/MemberWalletPass';
@@ -120,6 +120,7 @@ function Field({ id, label, type = 'text', value, onChange, required, placeholde
 }
 
 function SelectField({ id, label, value, onChange, options, required }) {
+  const C = usePublicPalette();
   const [focused, setFocused] = useState(false);
   const active = focused || (value !== undefined && value !== null && String(value).length > 0);
 
@@ -537,6 +538,7 @@ export default function CadastroMembresia() {
   };
 
   return (
+    <PublicPaletteCtx.Provider value={C}>
     <div style={{
       minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
       position: 'relative', overflow: 'hidden',
@@ -1115,5 +1117,6 @@ export default function CadastroMembresia() {
         onOpenChange={setWalletDialogOpen}
       />
     </div>
+    </PublicPaletteCtx.Provider>
   );
 }
