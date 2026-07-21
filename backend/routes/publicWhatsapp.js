@@ -134,6 +134,37 @@ async function processarMensagem(m, cfg) {
     .catch(err => { console.error('[whatsapp webhook] nota:', err.message); return false; });
   if (tratadoNota) return;
 
+  // ── PESQUISA DE SATISFAÇÃO ── conversa finalizada aguardando a nota (0-5).
+  // Captura a resposta como avaliação e agradece (não reabre o ticket).
+  if (m.type === 'text') {
+    const { data: convP } = await supabase.from('wa_conversas')
+      .select('id, pesquisa_estado, protocolo').eq('telefone', telefone)
+      .eq('pesquisa_estado', 'aguardando').is('deleted_at', null).maybeSingle();
+    if (convP) {
+      const waInbox = require('../services/waInbox');
+      const t = String(texto || '').trim();
+      const nota = /^[0-5]$/.test(t) ? Number(t) : null;
+      const agora = new Date().toISOString();
+      if (nota != null) {
+        await supabase.from('wa_mensagens').insert({
+          conversa_id: convP.id, direcao: 'in', tipo: 'avaliacao', texto: t, wa_message_id: messageId,
+        }).catch(() => {});
+        await supabase.from('wa_conversas').update({
+          satisfacao: nota, satisfacao_em: agora, pesquisa_estado: 'respondida',
+          last_message_at: agora, ultima_previa: `Avaliação: ${nota}/5`,
+        }).eq('id', convP.id);
+        const agr = `Obrigado pela sua avaliação (${nota}/5)! 🙏 Se precisar, é só chamar de novo.`;
+        await enviarTexto(telefone, agr).catch(() => {});
+        await waInbox.registrarOutbound({ telefone, texto: agr, tipo: 'bot' }).catch(() => {});
+      } else {
+        // não foi 0-5 → encerra a espera e deixa a mensagem no inbox pro time
+        await supabase.from('wa_conversas').update({ pesquisa_estado: 'ignorada' }).eq('id', convP.id);
+        await waInbox.registrarInbound({ telefone, texto, messageId, tipo: 'text' }).catch(() => {});
+      }
+      return;
+    }
+  }
+
   // ── INBOX HUMANO ASSUMIDO ── se a igreja já iniciou/assumiu uma conversa
   // com este número pelo inbox (Nova conversa ou resposta do time), as
   // respostas voltam pro inbox — NÃO pro bot — mesmo que o número seja líder.

@@ -24,7 +24,7 @@ import { Label } from '@/components/ui/label';
 import {
   Loader2, Send, Search, Check, MessageCircle, RefreshCw, ExternalLink, Clock,
   User, CheckCheck, UserPlus, ChevronDown, UserCheck, Tag, Plus, Inbox, Filter,
-  Users, Droplets, HandHelping, Sparkles, StickyNote, Paperclip,
+  Users, Droplets, HandHelping, Sparkles, StickyNote, Paperclip, ArrowLeftRight, Hash, Star,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -35,6 +35,7 @@ type Conversa = {
   id: string; telefone: string; nome: string | null; membro_id: string | null; foto_url: string | null;
   area: string | null; nao_lidas: number; resolvida: boolean; ultima_previa: string | null;
   atribuido_a: string | null; notas: string | null; last_message_at: string | null;
+  protocolo: string | null; satisfacao: number | null; pesquisa_estado: string | null;
   dentro_janela: boolean; janela_expira_em: string | null;
 };
 type Msg = { id: string; direcao: 'in' | 'out'; tipo: string; texto: string | null; media_url: string | null; criado_em: string };
@@ -205,8 +206,16 @@ export default function ConversasInbox({
   }
   async function resolver(resolvida: boolean) {
     if (!selId) return;
-    try { await waInbox.atualizar(selId, { resolvida }); toast.success(resolvida ? 'Conversa resolvida' : 'Conversa reaberta'); carregarConversas(); carregarThread(selId); }
-    catch { toast.error('Erro'); }
+    try {
+      const r: any = await waInbox.atualizar(selId, { resolvida });
+      toast.success(resolvida ? (r?.pesquisa_enviada ? 'Finalizada · pesquisa de satisfação enviada' : 'Conversa finalizada') : 'Conversa reaberta');
+      carregarConversas(); carregarThread(selId);
+    } catch { toast.error('Erro'); }
+  }
+  async function transferir(area: string) {
+    if (!selId) return;
+    try { await waInbox.transferir(selId, area); toast.success(`Transferida para ${area}`); carregarConversas(); carregarThread(selId); }
+    catch (e: any) { toast.error(e?.message || 'Erro ao transferir'); }
   }
   async function atribuir(userId: string | null) {
     if (!selId) return;
@@ -391,19 +400,40 @@ export default function ConversasInbox({
                       {conv.atribuido_a && (<><DropdownMenuSeparator /><DropdownMenuItem onClick={() => atribuir(null)} className="gap-2 text-muted-foreground">Remover atribuição</DropdownMenuItem></>)}
                     </DropdownMenuContent>
                   </DropdownMenu>
+                  {/* transferir de área */}
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button size="sm" variant="outline" className="gap-1.5"><ArrowLeftRight className="h-3.5 w-3.5" />Transferir</Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-52">
+                      <DropdownMenuLabel>Transferir para a área</DropdownMenuLabel>
+                      <DropdownMenuSeparator />
+                      <div className="max-h-64 overflow-y-auto">
+                        {areasDisp.filter(a => a.nome !== conv.area).map(a => (
+                          <DropdownMenuItem key={a.nome} onClick={() => transferir(a.nome)} className="gap-2"><ArrowLeftRight className="h-3.5 w-3.5 text-muted-foreground" />{a.nome}</DropdownMenuItem>
+                        ))}
+                      </div>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                   {conv.resolvida
                     ? <Button size="sm" variant="outline" onClick={() => resolver(false)}>Reabrir</Button>
-                    : <Button size="sm" variant="outline" onClick={() => resolver(true)}><Check className="mr-1 h-3.5 w-3.5" />Resolver</Button>}
+                    : <Button size="sm" variant="outline" onClick={() => resolver(true)}><Check className="mr-1 h-3.5 w-3.5" />Finalizar</Button>}
                 </div>
               </div>
 
               <ScrollArea className="flex-1 bg-muted/20">
                 <div className="flex flex-col gap-2 p-5">
                   <div className="mx-auto rounded-full bg-muted px-3 py-1 text-[11px] text-muted-foreground">Conversa</div>
-                  {msgs.map(m => (
+                  {msgs.map(m => m.tipo === 'sistema' ? (
+                    <div key={m.id} className="flex justify-center">
+                      <span className="rounded-full bg-muted px-3 py-1 text-[11px] text-muted-foreground">{m.texto}</span>
+                    </div>
+                  ) : (
                     <div key={m.id} className={`flex ${m.direcao === 'out' ? 'justify-end' : 'justify-start'}`}>
                       <div className={`max-w-[72%] rounded-2xl px-3.5 py-2 text-sm shadow-sm whitespace-pre-wrap break-words ${m.direcao === 'out' ? 'rounded-tr-sm bg-primary text-primary-foreground' : 'rounded-tl-sm border border-border bg-background'}`}>
                         {m.tipo === 'template' && <p className="mb-0.5 text-[10px] font-medium opacity-70">template</p>}
+                        {m.tipo === 'pesquisa' && <p className="mb-0.5 text-[10px] font-medium opacity-70">pesquisa de satisfação</p>}
+                        {m.tipo === 'avaliacao' && <p className="mb-0.5 flex items-center gap-0.5 text-[10px] font-medium opacity-80"><Star className="h-3 w-3 fill-current" />avaliação</p>}
                         {m.tipo === 'institucional' && <p className="mb-0.5 text-[10px] font-medium opacity-70">resposta automática</p>}
                         {m.tipo === 'image' && m.media_url && <img src={m.media_url} alt="imagem" className="mb-1 max-h-60 rounded-lg" />}
                         {m.tipo === 'document' && m.media_url && <a href={m.media_url} target="_blank" rel="noreferrer" className="mb-1 flex items-center gap-1 underline"><ExternalLink className="h-3.5 w-3.5" />documento</a>}
@@ -452,6 +482,12 @@ export default function ConversasInbox({
                 <Avatar className="h-16 w-16">{conv.foto_url && <AvatarImage src={conv.foto_url} alt={conv.nome || ''} />}<AvatarFallback className="bg-primary/15 text-primary text-lg font-semibold">{iniciais(conv.nome, conv.telefone)}</AvatarFallback></Avatar>
                 <p className="text-sm font-semibold text-center">{conv.nome || telBonito(conv.telefone)}</p>
                 <p className="text-xs text-muted-foreground">{telBonito(conv.telefone)}{perfil?.membro?.data_nascimento && idade(perfil.membro.data_nascimento) != null ? ` · ${idade(perfil.membro.data_nascimento)} anos` : ''}</p>
+                {conv.protocolo && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium tabular-nums text-muted-foreground"><Hash className="h-3 w-3" />{conv.protocolo}</span>
+                )}
+                {conv.satisfacao != null && (
+                  <span className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-600 dark:text-amber-400"><Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />Satisfação: {conv.satisfacao}/5</span>
+                )}
                 <a href={`https://wa.me/${conv.telefone.replace(/\D+/g, '')}`} target="_blank" rel="noreferrer" className="mt-1"><Button variant="outline" size="sm" className="h-7 gap-1 text-xs"><ExternalLink className="h-3 w-3" />Abrir no WhatsApp</Button></a>
               </div>
               <div className="flex flex-col gap-3.5 p-4">

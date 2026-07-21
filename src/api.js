@@ -2848,6 +2848,7 @@ export const waInbox = {
   nova: (body) => post('/wa-inbox/conversas/nova', body),
   ler: (id) => post(`/wa-inbox/conversas/${id}/ler`, {}),
   atualizar: (id, body) => patch(`/wa-inbox/conversas/${id}`, body),
+  transferir: (id, area) => post(`/wa-inbox/conversas/${id}/transferir`, { area }),
   anexar: (id, file) => { const fd = new FormData(); fd.append('arquivo', file); return requestFile(`/wa-inbox/conversas/${id}/anexo`, fd, { timeoutMs: 120_000 }); },
   areas: () => get('/wa-inbox/areas'),
   templates: () => get('/wa-inbox/templates'),

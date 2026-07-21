@@ -49,7 +49,7 @@ async function responder(telefone, texto) {
 async function tratar({ telefone, texto }) {
   const tel = normalizarTelefone(telefone) || String(telefone).replace(/\D+/g, '');
   const { data: conv } = await supabase.from('wa_conversas')
-    .select('id, nome, membro_id, bot_estado, bot_area_pendente')
+    .select('id, nome, membro_id, protocolo, bot_estado, bot_area_pendente')
     .eq('telefone', tel).is('deleted_at', null).maybeSingle();
   if (!conv) return false; // sem conversa (não deveria acontecer) → deixa o institucional
 
@@ -88,7 +88,8 @@ async function tratar({ telefone, texto }) {
     if (!conv.membro_id && nomeInformado) patch.nome = nomeInformado;
     await supabase.from('wa_conversas').update(patch).eq('id', conv.id);
 
-    await responder(telefone, `Obrigado, ${primeiroNome(patch.nome || conv.nome || nomeInformado)}! 🙏 Já encaminhei sua mensagem pro time de *${rotulo}*. Em breve alguém fala com você por aqui.`);
+    const proto = conv.protocolo ? `\n\nSeu protocolo de atendimento é *${conv.protocolo}* (guarde pra acompanhar).` : '';
+    await responder(telefone, `Obrigado, ${primeiroNome(patch.nome || conv.nome || nomeInformado)}! 🙏 Já encaminhei sua mensagem pro time de *${rotulo}*. Em breve alguém fala com você por aqui.${proto}`);
 
     // notifica a equipe da área (todos de usuario_areas)
     try {
