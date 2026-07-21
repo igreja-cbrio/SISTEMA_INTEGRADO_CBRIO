@@ -1774,6 +1774,44 @@ router.get('/batismos', authorizeModule('kids', 1), async (req, res) => {
   }
 });
 
+// PATCH /batismos/:id · a equipe Kids GERENCIA a inscrição de batismo de
+// CRIANÇA (status/data/observações) sem depender do módulo Integração — o
+// guard restringe às inscrições infantis (eh_crianca ou <13 anos); inscrição
+// de adulto continua exclusiva da Integração (PUT /kpis/batismos/:id).
+router.patch('/batismos/:id', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const corte = new Date(); corte.setFullYear(corte.getFullYear() - 13);
+    const corteISO = corte.toISOString().slice(0, 10);
+    const { data: insc } = await supabase.from('batismo_inscricoes')
+      .select('id, eh_crianca, data_nascimento')
+      .eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!insc) return res.status(404).json({ error: 'Inscrição não encontrada' });
+    const ehCrianca = insc.eh_crianca || (insc.data_nascimento && insc.data_nascimento >= corteISO);
+    if (!ehCrianca) {
+      return res.status(403).json({ error: 'Inscrição de adulto — gerencie pela Integração' });
+    }
+
+    const STATUS_OK = ['pendente', 'confirmado', 'realizado', 'cancelado'];
+    const payload = { updated_at: new Date().toISOString() };
+    if (req.body?.status !== undefined) {
+      if (!STATUS_OK.includes(req.body.status)) return res.status(400).json({ error: 'Status inválido' });
+      payload.status = req.body.status;
+    }
+    if (req.body?.data_batismo !== undefined) payload.data_batismo = req.body.data_batismo || null;
+    if (req.body?.observacoes !== undefined) {
+      payload.observacoes = req.body.observacoes ? String(req.body.observacoes).trim() : null;
+    }
+    const { data, error } = await supabase.from('batismo_inscricoes')
+      .update(payload).eq('id', req.params.id)
+      .select('id, status, data_batismo, observacoes').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('[totemKids] batismo update:', e.message);
+    res.status(500).json({ error: 'Erro ao atualizar batismo' });
+  }
+});
+
 // Apresentação de crianças · inscrições do form público (agrupadas por turma na UI)
 router.get('/apresentacoes', authorizeModule('kids', 1), async (req, res) => {
   try {
