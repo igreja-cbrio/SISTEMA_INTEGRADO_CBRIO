@@ -340,7 +340,12 @@ export default function ConversasInbox({
               <div className="flex items-center justify-between border-b border-border px-4 py-3 gap-2">
                 <div className="flex items-center gap-3 min-w-0">
                   <Avatar className="h-10 w-10">{conv.foto_url && <AvatarImage src={conv.foto_url} alt={conv.nome || ''} />}<AvatarFallback className="bg-primary/15 text-primary text-xs font-semibold">{iniciais(conv.nome, conv.telefone)}</AvatarFallback></Avatar>
-                  <div className="min-w-0"><p className="truncate text-sm font-semibold">{conv.nome || telBonito(conv.telefone)}</p><p className="text-[11px] text-muted-foreground">{telBonito(conv.telefone)}</p></div>
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold flex items-center gap-1.5">{conv.nome || telBonito(conv.telefone)}
+                      {!conv.membro_id && <Badge variant="outline" className="h-4.5 border-amber-500/30 bg-amber-500/10 px-1.5 py-0 text-[9px] font-normal text-amber-600 dark:text-amber-400">não cadastrado</Badge>}
+                    </p>
+                    <p className="text-[11px] text-muted-foreground">{telBonito(conv.telefone)}</p>
+                  </div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   {/* triagem por área */}

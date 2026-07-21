@@ -85,6 +85,7 @@ const NAV_ITEMS = [
         items: [
           { label: 'Permissões', description: 'Matriz cargo × módulo + usuários (cargo, áreas, overrides)', icon: Shield, path: '/admin/permissoes', perm: 'isAdmin' },
           { label: 'Bot WhatsApp', description: 'Líderes vinculados + coletas de dados pelo WhatsApp', icon: MessageSquare, path: '/admin/whatsapp', module: 'integracao', moduleMin: 3 },
+          { label: 'Menu das Conversas', description: 'Setores do bot de triagem (menu que o WhatsApp mostra)', icon: MessageSquare, path: '/admin/conversas-setores', module: 'conversas', moduleMin: 3 },
           { label: 'Feedback do piloto', description: 'Reportes dos testadores + erros capturados durante os testes', icon: Activity, path: '/admin/feedback', perm: 'isAdmin' },
           { label: 'Analytics do App', description: 'Painel ao vivo (online agora, cadastros) + uso e erros do app', icon: MonitorSmartphone, path: '/admin/app-analytics', module: 'dashboard', moduleMin: 1 },
         ],
