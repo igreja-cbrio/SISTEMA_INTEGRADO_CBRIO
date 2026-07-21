@@ -376,9 +376,17 @@ export default function AppShell() {
   // Mensagens do inbox NÃO poluem o sino: têm o próprio ícone. Contador é o
   // total de não-lidas do ESCOPO do usuário (área/atribuição). Realtime + poll.
   const podeConversas = itemAllowed({ module: 'conversas' });
+  const prevWaUnread = useRef(-1);
   async function loadWaUnread() {
-    try { const r = await waInboxApi.naoLidas(); setWaUnread(r?.total || 0); }
-    catch { /* sem acesso ao módulo · ignora */ }
+    try {
+      const r = await waInboxApi.naoLidas();
+      const total = r?.total || 0;
+      // toca o plim quando o total sobe (mensagem nova no escopo do usuário) ·
+      // funciona em qualquer tela, não só dentro de /conversas.
+      if (total > 0 && prevWaUnread.current >= 0 && total > prevWaUnread.current) playNotificationSound();
+      prevWaUnread.current = total;
+      setWaUnread(total);
+    } catch { /* sem acesso ao módulo · ignora */ }
   }
   useEffect(() => {
     if (!podeConversas) { setWaUnread(0); return; }
