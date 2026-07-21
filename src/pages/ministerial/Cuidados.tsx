@@ -292,9 +292,11 @@ const RESPONSAVEIS_FALLBACK = [
   ...RESPONSAVEIS_ANTIGOS.map(nome => ({ id: nome, nome, ativo: false })),
 ];
 
-// Modal "Gerenciar responsáveis" · a equipe liga/desliga quem está disponível
-// e adiciona gente nova. Sem renomear/excluir de propósito: o vínculo com o
-// convertido é pelo NOME — desativar preserva o histórico.
+// Modal "Gerenciar responsáveis" · a equipe liga/desliga quem está disponível,
+// adiciona gente nova e exclui quem NUNCA foi usado (nome errado etc. · o
+// backend bloqueia com 409 se o nome está em algum convertido). Sem renomear
+// de propósito: o vínculo com o convertido é pelo NOME — desativar preserva
+// o histórico.
 function GerenciarResponsaveisModal({ open, onClose, responsaveis, onChanged }: {
   open: boolean; onClose: () => void; responsaveis: any[]; onChanged: () => void;
 }) {
@@ -330,8 +332,48 @@ function GerenciarResponsaveisModal({ open, onClose, responsaveis, onChanged }: 
     }
   }
 
+  // Excluir de verdade: só quem nunca atendeu ninguém (o backend valida e
+  // responde 409 com orientação pra desativar quando o nome está em uso).
+  async function excluir(r: any) {
+    if (!confirm(`Excluir ${r.nome} da lista? Só é possível se nunca foi usado em nenhum convertido.`)) return;
+    setTogglingId(r.id);
+    try {
+      await cuidadosApi.responsaveis.remove(r.id);
+      toast.success(`${r.nome} excluído.`);
+      onChanged();
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setTogglingId(null);
+    }
+  }
+
   const ativos = responsaveis.filter(r => r.ativo);
   const inativos = responsaveis.filter(r => !r.ativo);
+
+  function LinhaResponsavel({ r }: { r: any }) {
+    return (
+      <div className={`flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2 ${r.ativo ? '' : 'opacity-70'}`}>
+        <span className="text-sm flex-1">{r.nome}</span>
+        <Switch
+          checked={r.ativo}
+          disabled={togglingId === r.id}
+          onCheckedChange={() => toggleAtivo(r, !r.ativo)}
+          title={r.ativo ? 'Disponível · clique pra desativar' : 'Indisponível · clique pra reativar'}
+        />
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 text-muted-foreground hover:text-destructive"
+          disabled={togglingId === r.id}
+          onClick={() => excluir(r)}
+          title="Excluir (só se nunca foi usado em nenhum convertido)"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+    );
+  }
 
   return (
     <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>
@@ -343,6 +385,7 @@ function GerenciarResponsaveisModal({ open, onClose, responsaveis, onChanged }: 
           <p className="text-xs text-muted-foreground">
             Quem está <strong>disponível</strong> aparece no seletor de responsável dos convertidos.
             Desativar não apaga nada — os registros antigos continuam mostrando o nome.
+            A lixeira exclui de vez, mas só quem nunca foi usado em nenhum convertido.
           </p>
           <div className="flex gap-2">
             <Input
@@ -358,22 +401,12 @@ function GerenciarResponsaveisModal({ open, onClose, responsaveis, onChanged }: 
           <div className="space-y-1.5">
             <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Disponíveis ({ativos.length})</p>
             {ativos.length === 0 && <p className="text-xs text-muted-foreground">Ninguém disponível — adicione ou reative alguém abaixo.</p>}
-            {ativos.map(r => (
-              <div key={r.id} className="flex items-center justify-between rounded-md border border-border px-3 py-2">
-                <span className="text-sm">{r.nome}</span>
-                <Switch checked disabled={togglingId === r.id} onCheckedChange={() => toggleAtivo(r, false)} title="Disponível · clique pra desativar" />
-              </div>
-            ))}
+            {ativos.map(r => <LinhaResponsavel key={r.id} r={r} />)}
           </div>
           {inativos.length > 0 && (
             <div className="space-y-1.5">
               <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Antigos / indisponíveis ({inativos.length})</p>
-              {inativos.map(r => (
-                <div key={r.id} className="flex items-center justify-between rounded-md border border-border px-3 py-2 opacity-70">
-                  <span className="text-sm">{r.nome}</span>
-                  <Switch checked={false} disabled={togglingId === r.id} onCheckedChange={() => toggleAtivo(r, true)} title="Indisponível · clique pra reativar" />
-                </div>
-              ))}
+              {inativos.map(r => <LinhaResponsavel key={r.id} r={r} />)}
             </div>
           )}
         </div>

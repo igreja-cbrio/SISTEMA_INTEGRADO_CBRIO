@@ -949,6 +949,43 @@ router.patch('/responsaveis/:id', authorizeModule('cuidados', 3), async (req, re
   }
 });
 
+// Excluir de verdade SÓ quem nunca foi usado (nome digitado errado etc.).
+// Se o nome está em algum convertido (mesmo soft-deletado · histórico),
+// bloqueia com 409 e orienta a desativar. Hard delete ok: cui_responsaveis
+// é catálogo de configuração (não-PII · fora da whitelist de soft-delete).
+router.delete('/responsaveis/:id', authorizeModule('cuidados', 3), async (req, res) => {
+  try {
+    const { data: resp, error: e1 } = await supabase
+      .from('cui_responsaveis')
+      .select('id, nome')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (e1) throw e1;
+    if (!resp) return res.status(404).json({ error: 'Responsável não encontrado.' });
+
+    const { count, error: e2 } = await supabase
+      .from('cui_convertidos')
+      .select('id', { count: 'exact', head: true })
+      .eq('responsavel_atendimento', resp.nome);
+    if (e2) throw e2;
+    if ((count || 0) > 0) {
+      return res.status(409).json({
+        error: `${resp.nome} está registrado em ${count} convertido(s) — desative em vez de excluir, pra preservar o histórico.`,
+      });
+    }
+
+    const { error: e3 } = await supabase
+      .from('cui_responsaveis')
+      .delete()
+      .eq('id', resp.id);
+    if (e3) throw e3;
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[CUIDADOS] responsaveis delete:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Quem pode atender convertidos (decisão do Marcos · 2026-06-10): só líderes
 // de culto (coordenador kids/ami/bridge/online) e líderes de ministérios
 // (lider-ministerial + coordenador-voluntarios). Filtra por CARGO, não por

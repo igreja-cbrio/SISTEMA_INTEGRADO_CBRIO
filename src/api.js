@@ -2935,6 +2935,7 @@ export const cuidados = {
     list: () => get('/cuidados/responsaveis'),
     create: (nome) => post('/cuidados/responsaveis', { nome }),
     update: (id, data) => patch(`/cuidados/responsaveis/${id}`, data),
+    remove: (id) => del(`/cuidados/responsaveis/${id}`),
   },
   // Visitas pastorais e atendimentos avulsos (fora do funil de convertidos)
   visitas: {
