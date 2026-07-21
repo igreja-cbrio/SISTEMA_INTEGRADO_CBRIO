@@ -11,9 +11,9 @@ const {
 } = require('../services/membroMatch');
 const {
   verificarToken, notificarLiderNovoPedido, formatarQuando, formatarOnde,
-  notificarLiderFrequencia, rotuloMes, enviarInscricaoConfirmada,
+  montarEnvioFrequencia, rotuloMes, enviarInscricaoConfirmada,
 } = require('../services/gruposWhatsapp');
-const { processarFila } = require('../services/whatsappFila');
+const { processarFila, enfileirarLote } = require('../services/whatsappFila');
 const { registrarEventoPedido } = require('../services/grupoPedidoEventos');
 const { registrarObservacaoSegura } = require('../services/identidadeProgressiva');
 const { requireCron } = require('../utils/cronAuth');
@@ -1349,13 +1349,14 @@ router.post('/grupo/frequencia/visitante', async (req, res) => {
   }
 });
 
-// GET /api/public/grupos/cron/frequencia-mensal — Vercel Cron (dia 28) manda
-// o template a cada líder de grupo ativo com roster. Gated por CRON_SECRET
-// (fail-closed), pelo WHATSAPP_ENABLED (sem ele, nada é enviado) e pela
-// TEMPORADA: só envia se existe temporada ativa EM CURSO (data_inicio <=
-// hoje <= data_fim) — decisão do Marcos (2026-07-20): esta mensagem mensal é
-// a ÚNICA automática pro líder, e só com temporada rodando.
-// ⚠️ Sem idempotência por mês DE PROPÓSITO: re-executar manualmente reenvia
+// GET /api/public/grupos/cron/frequencia-mensal — Vercel Cron (dia 28)
+// ENFILEIRA o template pra cada líder de grupo ativo com roster (a fila
+// horária cron/whatsapp-fila entrega com retry/backoff). Gated por
+// CRON_SECRET (fail-closed), pelo WHATSAPP_ENABLED (sem ele, nada é
+// enfileirado) e pela TEMPORADA: só envia se existe temporada ativa EM CURSO
+// (data_inicio <= hoje <= data_fim) — decisão do Marcos (2026-07-20): esta
+// mensagem mensal é a ÚNICA automática pro líder, e só com temporada rodando.
+// ⚠️ Sem idempotência por mês DE PROPÓSITO: re-executar manualmente reenfileira
 // o template a todos os líderes (~1 conversa paga por líder) — use com
 // intenção (ex.: reenvio deliberado no fim do mês pra quem não respondeu).
 router.get('/cron/frequencia-mensal', requireCron, async (req, res) => {
@@ -1379,23 +1380,44 @@ router.get('/cron/frequencia-mensal', requireCron, async (req, res) => {
       .eq('ativo', true).not('lider_id', 'is', null).is('deleted_at', null)
       .limit(1000);
 
-    let enviados = 0;
+    // Leituras em LOTE (antes era 2 queries POR grupo) e envio via FILA em vez
+    // de loop síncrono de Meta API — o cron fecha em segundos e a fila horária
+    // (cron/whatsapp-fila) drena com o backoff/cap habituais.
+    const comRoster = new Set();
+    for (let offset = 0; ; offset += 1000) {
+      const { data: pagina, error: eR } = await supabase.from('mem_grupo_membros')
+        .select('grupo_id')
+        .is('saiu_em', null).is('deleted_at', null)
+        .order('id').range(offset, offset + 999);
+      if (eR) throw eR;
+      (pagina || []).forEach(p => comRoster.add(p.grupo_id));
+      if (!pagina || pagina.length < 1000) break;
+    }
+
+    const liderIds = [...new Set((grupos || [])
+      .filter(g => comRoster.has(g.id))
+      .map(g => g.lider_id).filter(Boolean))];
+    const lideres = new Map();
+    for (let i = 0; i < liderIds.length; i += 200) { // .in() em lotes ≤200 (URL)
+      const { data: pagina, error: eL } = await supabase.from('mem_membros')
+        .select('id, nome, telefone')
+        .in('id', liderIds.slice(i, i + 200)).is('deleted_at', null);
+      if (eL) throw eL;
+      (pagina || []).forEach(l => lideres.set(l.id, l));
+    }
+
+    const envios = [];
     const pulados = [];
     for (const g of (grupos || [])) {
       // Sem gente no roster não há chamada a fazer
-      const { count } = await supabase.from('mem_grupo_membros')
-        .select('id', { count: 'exact', head: true })
-        .eq('grupo_id', g.id).is('saiu_em', null).is('deleted_at', null);
-      if (!count) { pulados.push({ grupo: g.nome, motivo: 'sem_roster' }); continue; }
-
-      const { data: lider } = await supabase.from('mem_membros')
-        .select('nome, telefone').eq('id', g.lider_id).maybeSingle();
-      const r = await notificarLiderFrequencia({ grupo: g, lider, mes });
-      if (r?.sent) enviados += 1;
-      else pulados.push({ grupo: g.nome, motivo: r?.reason || 'erro' });
+      if (!comRoster.has(g.id)) { pulados.push({ grupo: g.nome, motivo: 'sem_roster' }); continue; }
+      const m = montarEnvioFrequencia({ grupo: g, lider: lideres.get(g.lider_id), mes });
+      if (m.erro) { pulados.push({ grupo: g.nome, motivo: m.erro }); continue; }
+      envios.push(m.envio);
     }
-    console.log(`[grupos frequencia cron] mês ${mes}: ${enviados} enviados · ${pulados.length} pulados`);
-    res.json({ ok: true, mes, enviados, pulados: pulados.length });
+    const lote = await enfileirarLote(envios);
+    console.log(`[grupos frequencia cron] mês ${mes}: ${lote.queued} na fila · ${pulados.length} pulados`);
+    res.json({ ok: true, mes, enfileirados: lote.queued, pulados: pulados.length });
   } catch (e) {
     console.error('[public grupos frequencia cron]', e.message);
     res.status(500).json({ error: 'Erro no envio mensal.' });

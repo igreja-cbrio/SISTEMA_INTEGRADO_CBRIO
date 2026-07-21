@@ -239,19 +239,21 @@ async function notificarPessoaSugestao({ telefone, pessoaNome, grupoOriginalNome
 // Template 4 · grupos_frequencia_mes — 1×/mês pede ao LÍDER a chamada do mês
 // pelo link /g/f/<token> (marca quem participou · vira encontro+presenças).
 // {{1}} primeiro nome do líder · {{2}} mês (julho/2026) · {{3}} grupo · {{4}} link
-async function notificarLiderFrequencia({ grupo, lider, mes }) {
+// Monta o envio SEM enviar — o cron mensal enfileira em LOTE (enfileirarLote,
+// a fila horária drena com backoff); o caminho individual abaixo envia na hora.
+// Gate ANTES de assinar (token não pode parar em log de dry-run).
+function montarEnvioFrequencia({ grupo, lider, mes }) {
+  if (!WHATSAPP_LIGADO()) return { erro: 'disabled' };
+  if (!lider?.telefone) return { erro: 'lider_sem_telefone' };
+  let link;
   try {
-    // Gate ANTES de assinar (token não pode parar em log de dry-run).
-    if (!WHATSAPP_LIGADO()) return { sent: false, reason: 'disabled' };
-    if (!lider?.telefone) return { sent: false, reason: 'lider_sem_telefone' };
-    let link;
-    try {
-      link = `${baseUrl()}/g/f/${assinarToken('freq', grupo.id, { m: mes, l: grupo.lider_id })}`;
-    } catch (e) {
-      console.error('[GruposWPP] token não assinado:', e.message);
-      return { sent: false, reason: 'sem_secret' };
-    }
-    const r = await enfileirar({
+    link = `${baseUrl()}/g/f/${assinarToken('freq', grupo.id, { m: mes, l: grupo.lider_id })}`;
+  } catch (e) {
+    console.error('[GruposWPP] token não assinado:', e.message);
+    return { erro: 'sem_secret' };
+  }
+  return {
+    envio: {
       telefone: lider.telefone,
       template: TPL_FREQUENCIA_MES,
       params: [
@@ -262,7 +264,16 @@ async function notificarLiderFrequencia({ grupo, lider, mes }) {
       ],
       contexto: 'grupos.frequencia_mes',
       refId: grupo.id,
-    });
+    },
+  };
+}
+
+// Caminho individual (reenvio deliberado a um líder): envia na hora via fila.
+async function notificarLiderFrequencia({ grupo, lider, mes }) {
+  try {
+    const m = montarEnvioFrequencia({ grupo, lider, mes });
+    if (m.erro) return { sent: false, reason: m.erro };
+    const r = await enfileirar(m.envio);
     if (!r.sent) console.log('[GruposWPP] template frequência não enviado:', r.reason || r.status);
     return r;
   } catch (e) {
@@ -304,6 +315,7 @@ module.exports = {
   notificarLiderNovoPedido,
   notificarPessoaAprovada,
   notificarPessoaSugestao,
+  montarEnvioFrequencia,
   notificarLiderFrequencia,
   enviarInscricaoConfirmada,
 };
