@@ -13,7 +13,7 @@ import { Card, CardContent } from '../../../components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../../components/ui/dialog';
 import { toast } from 'sonner';
-import { Baby, Search, Plus, Loader2, AlertCircle, Phone, Trash2, UserX, UserCheck, ArrowLeft, Camera, X, Copy, Sparkles, Pencil } from 'lucide-react';
+import { Baby, Search, Plus, Loader2, AlertCircle, Phone, Trash2, UserX, UserCheck, ArrowLeft, Camera, X, Copy, Sparkles, Pencil, MessageSquare } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer } from 'recharts';
 import DataNascimentoPicker from './DataNascimentoPicker';
 import useConfirmarSaida from '../../../hooks/useConfirmarSaida';
@@ -482,6 +482,16 @@ function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; on
           <JornadaTab criancaId={criancaId} c={c} onChanged={() => { load(); onChanged(); }} />
         ) : (
           <div className="space-y-3">
+            {/* Atalho: abrir conversa (WhatsApp) com o responsável no inbox */}
+            {(() => {
+              const resp = (c.responsaveis || []).find((r: any) => r.telefone || r.membro?.telefone);
+              const tel = resp?.telefone || resp?.membro?.telefone;
+              return tel ? (
+                <Link to={hrefConversa(tel)} className="inline-flex items-center gap-1.5 rounded-md border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30 px-2.5 py-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-950/50">
+                  <MessageSquare className="h-3.5 w-3.5" /> Abrir conversa com o responsável
+                </Link>
+              ) : null;
+            })()}
             {/* Novo atendimento */}
             <div className="rounded-lg border border-border p-3 space-y-2">
               <div className="flex gap-2">
@@ -679,6 +689,7 @@ function RowResp({ r, busy, onChanged, onSave, onRemove }: { r: any; busy: boole
       <div className="flex items-center gap-2">
         {r.membro?.id && <FotoMembroAvatar membro={r.membro} onChanged={onChanged} />}
         <Input className="flex-1 h-8" value={edit.nome} placeholder="Nome" onChange={e => setEdit(x => ({ ...x, nome: e.target.value }))} />
+        {edit.telefone.trim() && <Link to={hrefConversa(edit.telefone)} title="Abrir conversa no WhatsApp" className="text-emerald-600 hover:text-emerald-700 shrink-0"><MessageSquare className="h-4 w-4" /></Link>}
         <button type="button" onClick={() => onRemove(r)} className="text-muted-foreground hover:text-red-500 shrink-0" title="Remover responsável"><X className="h-4 w-4" /></button>
       </div>
       <div className="grid grid-cols-2 gap-2">
