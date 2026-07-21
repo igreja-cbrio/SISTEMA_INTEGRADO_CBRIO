@@ -3884,6 +3884,87 @@ router.post('/importar-lideres/aplicar', authorizeModule('grupos', 3), async (re
   }
 });
 
+// GET /api/grupos/:id/historico-alteracoes — log de alterações do grupo e das
+// participações dele, lido do app_audit_log (triggers da migration
+// 20260720230000 · sem elas aplicadas, devolve lista vazia). O app_audit_log
+// tem RLS só de super-admin; aqui a leitura é via service role com guard
+// gerencial do módulo (grupos>=3). Autor nulo = escrita do backend (service
+// role não carrega auth.uid()).
+router.get('/:id/historico-alteracoes', authorizeModule('grupos', 3), async (req, res) => {
+  try {
+    const grupoId = req.params.id;
+
+    // Participações do grupo (abertas e fechadas) — o audit aponta pro id do vínculo
+    const vincIds = [];
+    const membroDoVinc = {};
+    for (let off = 0; ; off += 1000) {
+      const { data, error } = await supabase
+        .from('mem_grupo_membros')
+        .select('id, membro_id')
+        .eq('grupo_id', grupoId)
+        .range(off, off + 999);
+      if (error) throw error;
+      (data || []).forEach(v => { vincIds.push(v.id); membroDoVinc[v.id] = v.membro_id; });
+      if (!data || data.length < 1000) break;
+    }
+
+    const eventos = [];
+    {
+      const { data, error } = await supabase
+        .from('app_audit_log')
+        .select('table_name, row_id, action, user_email, changes, created_at')
+        .eq('table_name', 'mem_grupos')
+        .eq('row_id', grupoId)
+        .order('created_at', { ascending: false })
+        .limit(100);
+      if (error) throw error;
+      eventos.push(...(data || []));
+    }
+    // .in() em lotes pequenos (lição do cap de URL do PostgREST)
+    for (let i = 0; i < vincIds.length; i += 150) {
+      const { data, error } = await supabase
+        .from('app_audit_log')
+        .select('table_name, row_id, action, user_email, changes, created_at')
+        .eq('table_name', 'mem_grupo_membros')
+        .in('row_id', vincIds.slice(i, i + 150))
+        .order('created_at', { ascending: false })
+        .limit(200);
+      if (error) throw error;
+      eventos.push(...(data || []));
+    }
+
+    // Nome do participante pra linha ficar legível
+    const membroIds = [...new Set(
+      eventos.filter(e => e.table_name === 'mem_grupo_membros')
+        .map(e => membroDoVinc[e.row_id]).filter(Boolean)
+    )];
+    const nomes = {};
+    for (let i = 0; i < membroIds.length; i += 150) {
+      const { data } = await supabase
+        .from('mem_membros').select('id, nome')
+        .in('id', membroIds.slice(i, i + 150));
+      (data || []).forEach(m => { nomes[m.id] = m.nome; });
+    }
+
+    eventos.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+    res.json({
+      items: eventos.slice(0, 200).map(e => ({
+        quando: e.created_at,
+        acao: e.action,
+        tabela: e.table_name,
+        autor: e.user_email || null,
+        membro_nome: e.table_name === 'mem_grupo_membros'
+          ? (nomes[membroDoVinc[e.row_id]] || null)
+          : null,
+        changes: e.changes,
+      })),
+    });
+  } catch (e) {
+    console.error('[grupos historico-alteracoes]', e.message);
+    res.status(500).json({ error: 'Erro ao carregar o log de alterações' });
+  }
+});
+
 module.exports = router;
 // Compartilhado com a rota pública de aprovação por token (publicGrupos.js /aprovar)
 module.exports.aprovarPedidoCore = aprovarPedidoCore;

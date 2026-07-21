@@ -1150,6 +1150,9 @@ export default function Grupos() {
           </div>
         )}
 
+        {/* Log de alterações (app_audit_log · carrega sob demanda) */}
+        {!isOptimistic && <LogAlteracoesCard grupoId={g.id} />}
+
         {/* Modal de chamada / edição */}
         <ChamadaModal
           open={chamadaOpen}
@@ -3301,6 +3304,91 @@ function ComparativoTemporadas() {
       <div style={{ fontSize: 11, color: C.t3, lineHeight: 1.6 }}>
         Os números das temporadas fechadas ficam <strong>congelados</strong> (não mudam mais, mesmo quando os grupos passam pra temporada seguinte). A temporada em andamento aparece como <strong>parcial</strong> até ser consolidada em Inscrições → Administração → Temporadas.
       </div>
+    </div>
+  );
+}
+
+// Log de alterações do grupo (lê o app_audit_log via backend · triggers da
+// migration 20260720230000). Carrega sob demanda pra não pesar a abertura da
+// ficha; quem não tem grupos>=3 recebe erro do guard e o card mostra o aviso.
+function LogAlteracoesCard({ grupoId }) {
+  const [aberto, setAberto] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [itens, setItens] = useState(null);
+  const [erro, setErro] = useState(null);
+
+  const carregar = async () => {
+    setAberto(true); setLoading(true); setErro(null);
+    try {
+      const r = await api.historicoAlteracoes(grupoId);
+      setItens(r?.items || []);
+    } catch (e) {
+      setErro('Não foi possível carregar o log (permissão insuficiente ou erro no servidor).');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const CAMPO = {
+    nome: 'nome', lider_id: 'líder', supervisor_id: 'supervisor', ativo: 'ativo',
+    dia_semana: 'dia da semana', horario: 'horário', endereco: 'endereço',
+    bairro: 'bairro', cep: 'CEP', local: 'local', descricao: 'descrição',
+    tema: 'tema', categoria: 'categoria', recorrencia: 'recorrência',
+    observacoes: 'observações', temporada: 'temporada', codigo: 'código',
+    capacidade: 'capacidade', aceitando_inscricoes: 'aceitando inscrições',
+    modo_inscricao: 'modo de inscrição', faixa_etaria: 'faixa etária',
+    idade_min: 'idade mínima', idade_max: 'idade máxima', rede_id: 'rede',
+    funcao: 'função', entrou_em: 'entrada', saiu_em: 'saída',
+    motivo_saida: 'motivo da saída', presencas: 'presenças',
+    membro_id: 'pessoa', grupo_id: 'grupo', deleted_at: 'exclusão',
+  };
+  const fmtVal = (v) => {
+    if (v === null || v === undefined || v === '') return '—';
+    if (typeof v === 'boolean') return v ? 'sim' : 'não';
+    const s = String(v);
+    return s.length > 70 ? s.slice(0, 70) + '…' : s;
+  };
+  const descreve = (it) => {
+    const alvo = it.tabela === 'mem_grupo_membros'
+      ? `Participação${it.membro_nome ? ` de ${it.membro_nome}` : ''}`
+      : 'Grupo';
+    if (it.acao === 'INSERT') return `${alvo} criada${it.tabela === 'mem_grupos' ? ' (cadastro do grupo)' : ''}`;
+    if (it.acao === 'DELETE') return `${alvo} excluída (linha removida do banco)`;
+    const partes = Object.entries(it.changes || {})
+      .map(([c, d]) => `${CAMPO[c] || c}: ${fmtVal(d?.old)} → ${fmtVal(d?.new)}`);
+    return `${alvo} · ${partes.join(' · ') || 'alteração'}`;
+  };
+
+  return (
+    <div style={{ background: C.card, borderRadius: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', marginTop: 16, overflow: 'hidden' }}>
+      <div style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <FileText size={14} style={{ color: C.t3 }} />
+          <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Log de alterações</span>
+        </div>
+        {!aberto && (
+          <Button size="sm" variant="outline" onClick={carregar}>Ver log</Button>
+        )}
+      </div>
+      {aberto && (
+        <div style={{ borderTop: `1px solid ${C.border}`, maxHeight: 340, overflowY: 'auto' }}>
+          {loading && <div style={{ padding: 16, fontSize: 13, color: C.t3 }}>Carregando…</div>}
+          {erro && <div style={{ padding: 16, fontSize: 13, color: C.t3 }}>{erro}</div>}
+          {!loading && !erro && itens && itens.length === 0 && (
+            <div style={{ padding: 16, fontSize: 13, color: C.t3 }}>
+              Nenhuma alteração registrada ainda — o log grava a partir da ativação dos gatilhos no banco (mudanças antigas não aparecem retroativamente).
+            </div>
+          )}
+          {!loading && !erro && itens && itens.map((it, i) => (
+            <div key={i} style={{ padding: '10px 16px', borderBottom: `1px solid ${C.border}` }}>
+              <div style={{ fontSize: 11, color: C.t3, marginBottom: 2 }}>
+                {it.quando ? new Date(it.quando).toLocaleString('pt-BR') : '—'} · {it.autor || 'sistema (backend)'}
+              </div>
+              <div style={{ fontSize: 12.5, color: C.text }}>{descreve(it)}</div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

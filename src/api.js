@@ -500,6 +500,7 @@ export const grupos = {
   atualizarEncontro: (encontroId, data) => patch(`/grupos/encontros/${encontroId}`, data),
   removerEncontro: (encontroId) => del(`/grupos/encontros/${encontroId}`),
   metricas: (grupoId) => get(`/grupos/${grupoId}/metricas`),
+  historicoAlteracoes: (grupoId) => get(`/grupos/${grupoId}/historico-alteracoes`),
   saudeAgregada: (params) => get('/grupos/saude/agregado' + (params ? '?' + new URLSearchParams(params) : '')),
   relatorioKpis: (params) => get('/grupos/kpis/relatorio' + (params ? '?' + new URLSearchParams(params) : '')),
   lideresTreinamento: (params) => get('/grupos/kpis/lideres-treinamento' + (params ? '?' + new URLSearchParams(params) : '')),

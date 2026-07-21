@@ -1079,6 +1079,21 @@ vivo. Aparar quando der.
 PRs: #938 (rename PE), #944 (Acompanhamento), #948 (rename Gestão Anual), #951 (hub), #952
 (recorte de ano), #954 (limpeza · DROP). Migrations aplicadas em prod por Marcos.
 
+## Grupos · Log de alterações (2026-07-20)
+
+Pedido do Marcos (com a Naná saneando a listagem de grupos): rastrear **o que
+mudou e quando** em `mem_grupos`/`mem_grupo_membros` — `created_at` só data o
+INSERT, `updated_at` é sobrescrito em massa e edição/remoção não deixava rastro.
+Migration `20260720230000_grupos_audit_log.sql` (idempotente ·
+backwards-compatible) liga o `audit_log_changes()` genérico (app_audit_log ·
+20260521230000) nas 2 tabelas, todas as colunas. Leitura:
+`GET /grupos/:id/historico-alteracoes` (guard grupos>=3 · service role lê o
+app_audit_log e resolve o nome do participante) + card **"Log de alterações"**
+na ficha do grupo em `Grupos.jsx` (`LogAlteracoesCard` · carrega sob demanda).
+Limitação conhecida: escrita via backend (service role) fica **sem autor**
+(`auth.uid()` nulo → exibe "sistema") — autoria por request é evolução futura.
+O log só grava a partir da aplicação da migration (nada retroativo).
+
 ## Grupos × Bot WhatsApp · estudo semanal + relato do encontro (2026-06-10)
 
 Marcos: o bot manda o ESTUDO DA SEMANA pros líderes de grupos e, no dia
