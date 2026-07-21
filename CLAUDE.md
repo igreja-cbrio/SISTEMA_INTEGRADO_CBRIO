@@ -1740,13 +1740,17 @@ virou a tabela **`cui_responsaveis`** (nome + ativo · migration
 módulo). A própria equipe gerencia pelo botão **"Gerenciar responsáveis"**
 (ao lado de "Novo convertido" · só `podeEditarCuidados`): modal com switch
 disponível/indisponível + adicionar nome (nome repetido inativo é REATIVADO,
-não duplica). **Sem renomear/excluir de propósito** — o vínculo com
+não duplica). **Excluir só quem NUNCA foi usado** (follow-up 2026-07-21 ·
+lixeira no modal): o DELETE conta `cui_convertidos.responsavel_atendimento`
+pelo nome (incluindo soft-deletados) e responde 409 orientando a desativar se
+houver uso — hard delete ok (catálogo de config, não-PII, fora da whitelist).
+**Sem renomear de propósito** — o vínculo com
 `cui_convertidos.responsavel_atendimento` é por NOME (texto · essas pessoas
 não logam no sistema), então inativar preserva o histórico: inativo aparece
 desabilitado no dropdown da tabela (só exibível no registro que já o tem).
-Backend: `GET/POST/PATCH /cuidados/responsaveis` (leitura nível 1 · escrita 3).
-Front: constantes viraram FALLBACK (se a API falhar, vale a lista antiga).
-`api.js`: `cuidados.responsaveis.{list,create,update}`.
+Backend: `GET/POST/PATCH/DELETE /cuidados/responsaveis` (leitura nível 1 ·
+escrita/exclusão 3). Front: constantes viraram FALLBACK (se a API falhar, vale
+a lista antiga). `api.js`: `cuidados.responsaveis.{list,create,update,remove}`.
 
 ## Auditoria do sistema (2026-06-08) · correção dos 4 CRÍTICOS
 
