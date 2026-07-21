@@ -282,11 +282,13 @@ const TAG_COLORS: Record<string, string> = {
 // o Marcelo registra quem ficou responsável. A lista vive no banco
 // (cui_responsaveis) e a própria equipe gerencia pelo modal "Gerenciar
 // responsáveis" da aba Próximos passos (Marcos 2026-07-21). As constantes
-// abaixo são só FALLBACK enquanto a API não responde (espelham o seed da
-// migration 20260721160000). Inativo = histórico: aparece desabilitado no
-// dropdown, não pode ser escolhido em novos lançamentos.
+// abaixo são só FALLBACK enquanto a API não responde (espelham o estado do
+// banco pós-dedup da migration 20260721190000: Kevin/Arthur, Arthur/Kevin,
+// Naná, Mari e Carmet/Arthur foram consolidados no responsável canônico).
+// Inativo = histórico: aparece desabilitado no dropdown, não pode ser
+// escolhido em novos lançamentos.
 const RESPONSAVEIS_ATENDIMENTO = ['Arthur Cecconi', 'Renata Martins', 'Nélio Paiva', 'Wesley Ramos'];
-const RESPONSAVEIS_ANTIGOS = ['Lorena', 'Lilian', 'Sebastião', 'Natasha', 'Mariane', 'Carmet', 'Carmet/Arthur', 'Léia', 'Kevin', 'Kevin/Arthur', 'Arthur/Kevin', 'Mari', 'Naná'];
+const RESPONSAVEIS_ANTIGOS = ['Lorena', 'Lilian', 'Sebastião', 'Natasha', 'Mariane', 'Carmet', 'Léia', 'Kevin'];
 const RESPONSAVEIS_FALLBACK = [
   ...RESPONSAVEIS_ATENDIMENTO.map(nome => ({ id: nome, nome, ativo: true })),
   ...RESPONSAVEIS_ANTIGOS.map(nome => ({ id: nome, nome, ativo: false })),
