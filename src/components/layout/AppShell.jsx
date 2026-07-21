@@ -9,7 +9,7 @@ import FeedbackButton from '../FeedbackButton';
 import PrimeiroAcessoSenhaModal from '../auth/PrimeiroAcessoSenhaModal';
 import PrimeiroAcessoFotoModal from '../auth/PrimeiroAcessoFotoModal';
 import FotoLightboxGlobal from '../FotoLightboxGlobal';
-import { playNotificationSound } from '../../lib/sounds';
+import { playNotificationSound, playMessageSound } from '../../lib/sounds';
 import { isPushSupported, getCurrentSubscription, subscribePush, unsubscribePush } from '../../lib/pushNotifications';
 import MegaMenu from '../ui/mega-menu';
 import { CommandSearch } from '../ui/command-search';
@@ -383,7 +383,7 @@ export default function AppShell() {
       const total = r?.total || 0;
       // toca o plim quando o total sobe (mensagem nova no escopo do usuário) ·
       // funciona em qualquer tela, não só dentro de /conversas.
-      if (total > 0 && prevWaUnread.current >= 0 && total > prevWaUnread.current) playNotificationSound();
+      if (total > 0 && prevWaUnread.current >= 0 && total > prevWaUnread.current) playMessageSound();
       prevWaUnread.current = total;
       setWaUnread(total);
     } catch { /* sem acesso ao módulo · ignora */ }
