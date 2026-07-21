@@ -20,6 +20,7 @@ import { Label } from '../../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../../components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
+import { Switch } from '../../components/ui/switch';
 import { Badge } from '../../components/ui/badge';
 import { StatisticsCard } from '../../components/ui/statistics-card';
 import { Heart, Users, UserCheck, CheckCircle2, Plus, Trash2, Loader2, Search, Sparkles, CalendarCheck, CalendarPlus, ArrowRight, Phone, MessageSquare, AlertTriangle, HeartHandshake } from 'lucide-react';
@@ -277,13 +278,112 @@ const TAG_COLORS: Record<string, string> = {
   outro: '#94a3b8',
 };
 
-// Lista fixa de quem faz o atendimento do convertido. Essas pessoas NÃO logam no
-// Cuidados — o Marcelo registra quem ficou responsável. Editável aqui se a equipe mudar.
+// Quem faz o atendimento do convertido. Essas pessoas NÃO logam no Cuidados —
+// o Marcelo registra quem ficou responsável. A lista vive no banco
+// (cui_responsaveis) e a própria equipe gerencia pelo modal "Gerenciar
+// responsáveis" da aba Próximos passos (Marcos 2026-07-21). As constantes
+// abaixo são só FALLBACK enquanto a API não responde (espelham o seed da
+// migration 20260721160000). Inativo = histórico: aparece desabilitado no
+// dropdown, não pode ser escolhido em novos lançamentos.
 const RESPONSAVEIS_ATENDIMENTO = ['Arthur Cecconi', 'Renata Martins', 'Nélio Paiva', 'Wesley Ramos'];
-// Responsáveis antigos (estavam na planilha do Marcelo, não são mais acionados p/ atendimento):
-// mantêm o histórico nos registros e aparecem no dropdown, mas DESABILITADOS — não podem ser
-// selecionados em novos lançamentos (Marcos 2026-07-01).
 const RESPONSAVEIS_ANTIGOS = ['Lorena', 'Lilian', 'Sebastião', 'Natasha', 'Mariane', 'Carmet', 'Carmet/Arthur', 'Léia', 'Kevin', 'Kevin/Arthur', 'Arthur/Kevin', 'Mari', 'Naná'];
+const RESPONSAVEIS_FALLBACK = [
+  ...RESPONSAVEIS_ATENDIMENTO.map(nome => ({ id: nome, nome, ativo: true })),
+  ...RESPONSAVEIS_ANTIGOS.map(nome => ({ id: nome, nome, ativo: false })),
+];
+
+// Modal "Gerenciar responsáveis" · a equipe liga/desliga quem está disponível
+// e adiciona gente nova. Sem renomear/excluir de propósito: o vínculo com o
+// convertido é pelo NOME — desativar preserva o histórico.
+function GerenciarResponsaveisModal({ open, onClose, responsaveis, onChanged }: {
+  open: boolean; onClose: () => void; responsaveis: any[]; onChanged: () => void;
+}) {
+  const [novoNome, setNovoNome] = useState('');
+  const [salvando, setSalvando] = useState(false);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
+
+  async function adicionar() {
+    const nome = novoNome.trim();
+    if (nome.length < 2) { toast.error('Informe o nome do responsável.'); return; }
+    setSalvando(true);
+    try {
+      await cuidadosApi.responsaveis.create(nome);
+      setNovoNome('');
+      toast.success(`${nome} adicionado à lista.`);
+      onChanged();
+    } catch (e: any) {
+      toast.error(`Não foi possível adicionar: ${e.message}`);
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  async function toggleAtivo(r: any, ativo: boolean) {
+    setTogglingId(r.id);
+    try {
+      await cuidadosApi.responsaveis.update(r.id, { ativo });
+      onChanged();
+    } catch (e: any) {
+      toast.error(`Não foi possível atualizar: ${e.message}`);
+    } finally {
+      setTogglingId(null);
+    }
+  }
+
+  const ativos = responsaveis.filter(r => r.ativo);
+  const inativos = responsaveis.filter(r => !r.ativo);
+
+  return (
+    <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>
+      <DialogContent className="max-w-md flex flex-col max-h-[85vh]">
+        <DialogHeader>
+          <DialogTitle>Gerenciar responsáveis</DialogTitle>
+        </DialogHeader>
+        <div className="flex-1 overflow-y-auto min-h-0 space-y-4">
+          <p className="text-xs text-muted-foreground">
+            Quem está <strong>disponível</strong> aparece no seletor de responsável dos convertidos.
+            Desativar não apaga nada — os registros antigos continuam mostrando o nome.
+          </p>
+          <div className="flex gap-2">
+            <Input
+              placeholder="Nome do novo responsável"
+              value={novoNome}
+              onChange={e => setNovoNome(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); adicionar(); } }}
+            />
+            <Button onClick={adicionar} disabled={salvando}>
+              {salvando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+            </Button>
+          </div>
+          <div className="space-y-1.5">
+            <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Disponíveis ({ativos.length})</p>
+            {ativos.length === 0 && <p className="text-xs text-muted-foreground">Ninguém disponível — adicione ou reative alguém abaixo.</p>}
+            {ativos.map(r => (
+              <div key={r.id} className="flex items-center justify-between rounded-md border border-border px-3 py-2">
+                <span className="text-sm">{r.nome}</span>
+                <Switch checked disabled={togglingId === r.id} onCheckedChange={() => toggleAtivo(r, false)} title="Disponível · clique pra desativar" />
+              </div>
+            ))}
+          </div>
+          {inativos.length > 0 && (
+            <div className="space-y-1.5">
+              <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Antigos / indisponíveis ({inativos.length})</p>
+              {inativos.map(r => (
+                <div key={r.id} className="flex items-center justify-between rounded-md border border-border px-3 py-2 opacity-70">
+                  <span className="text-sm">{r.nome}</span>
+                  <Switch checked={false} disabled={togglingId === r.id} onCheckedChange={() => toggleAtivo(r, true)} title="Indisponível · clique pra reativar" />
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Fechar</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 // Pra NOVO CONVERTIDO o único próximo passo direcionável no Cuidados é o NEXT (decisão
 // Marcos · 2026-06-25 · o direcionamento pros valores — Grupos/Voluntários/Batismo/Devocional —
@@ -862,6 +962,9 @@ export default function Cuidados() {
   const [editConvert, setEditConvert] = useState<any | null>(null);
   const [detailConvert, setDetailConvert] = useState<any | null>(null);
   const [atendentes, setAtendentes] = useState<any[]>([]);
+  // Responsáveis do atendimento (cui_responsaveis) · fallback = lista fixa antiga
+  const [responsaveis, setResponsaveis] = useState<any[]>(RESPONSAVEIS_FALLBACK);
+  const [modalResponsaveis, setModalResponsaveis] = useState(false);
   const [visitas, setVisitas] = useState<any[]>([]);
   const [visitasLoading, setVisitasLoading] = useState(true);
   const [modalVisita, setModalVisita] = useState(false);
@@ -905,6 +1008,18 @@ export default function Cuidados() {
   useEffect(() => {
     cuidadosApi.convertidos.atendentes().then(setAtendentes).catch(() => {});
   }, []);
+
+  // Responsáveis do atendimento (lista gerenciável) · se a API falhar,
+  // fica o fallback fixo (comportamento antigo).
+  function loadResponsaveis() {
+    cuidadosApi.responsaveis.list()
+      .then((r: any[]) => { if (Array.isArray(r) && r.length) setResponsaveis(r); })
+      .catch(() => {});
+  }
+  useEffect(() => { loadResponsaveis(); }, []);
+
+  const responsaveisAtivos = useMemo(() => responsaveis.filter((r: any) => r.ativo), [responsaveis]);
+  const responsaveisInativos = useMemo(() => responsaveis.filter((r: any) => !r.ativo), [responsaveis]);
 
   // Séries do dashboard novo · recarrega ao trocar o período ou quando os dados mudam
   useEffect(() => {
@@ -1428,12 +1543,21 @@ export default function Cuidados() {
                 convertido" leva pra Integração registrar a decisão no culto —
                 Cuidados acompanha/direciona, não origina. */}
             {podeEditarCuidados && (
-              <Button
-                onClick={() => navigate('/ministerial/integracao')}
-                title="Registrar pela Integração (decisão de culto)"
-              >
-                <Plus className="h-4 w-4 mr-2" />Novo convertido
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => setModalResponsaveis(true)}
+                  title="Gerenciar quem está disponível pra atender os convertidos"
+                >
+                  <Users className="h-4 w-4 mr-2" />Gerenciar responsáveis
+                </Button>
+                <Button
+                  onClick={() => navigate('/ministerial/integracao')}
+                  title="Registrar pela Integração (decisão de culto)"
+                >
+                  <Plus className="h-4 w-4 mr-2" />Novo convertido
+                </Button>
+              </div>
             )}
           </div>
           <div className="flex items-center gap-3 flex-wrap">
@@ -1549,15 +1673,21 @@ export default function Cuidados() {
                             title="Responsável do atendimento"
                           >
                             <option value="">A definir</option>
-                            {RESPONSAVEIS_ATENDIMENTO.map(n => (
-                              <option key={n} value={n}>{n}</option>
+                            {responsaveisAtivos.map((r: any) => (
+                              <option key={r.id} value={r.nome}>{r.nome}</option>
                             ))}
-                            {/* Antigos: histórico · desabilitados (o próprio valor do registro fica habilitado pra exibir) */}
-                            <optgroup label="Antigos (histórico · não selecionável)">
-                              {RESPONSAVEIS_ANTIGOS.map(n => (
-                                <option key={n} value={n} disabled={c.responsavel_atendimento !== n}>{n}</option>
-                              ))}
-                            </optgroup>
+                            {/* Inativos: histórico · desabilitados (o próprio valor do registro fica habilitado pra exibir) */}
+                            {responsaveisInativos.length > 0 && (
+                              <optgroup label="Antigos (histórico · não selecionável)">
+                                {responsaveisInativos.map((r: any) => (
+                                  <option key={r.id} value={r.nome} disabled={c.responsavel_atendimento !== r.nome}>{r.nome}</option>
+                                ))}
+                              </optgroup>
+                            )}
+                            {/* Valor do registro que não está em lista nenhuma (removido/legado) · mantém exibível */}
+                            {c.responsavel_atendimento && !responsaveis.some((r: any) => r.nome === c.responsavel_atendimento) && (
+                              <option value={c.responsavel_atendimento}>{c.responsavel_atendimento}</option>
+                            )}
                           </select>
                         ) : (
                           <span className="text-xs">{c.responsavel_atendimento || <span className="text-muted-foreground">—</span>}</span>
@@ -1701,6 +1831,12 @@ export default function Cuidados() {
         onClose={() => { setModalVisita(false); setEditVisita(null); }}
         onSaved={loadVisitas}
         initial={editVisita}
+      />
+      <GerenciarResponsaveisModal
+        open={modalResponsaveis}
+        onClose={() => setModalResponsaveis(false)}
+        responsaveis={responsaveis}
+        onChanged={loadResponsaveis}
       />
     </div>
   );

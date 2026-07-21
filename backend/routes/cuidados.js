@@ -871,6 +871,84 @@ router.get('/convertidos/tags', (_req, res) => {
   res.json(CONVERTIDO_TAGS);
 });
 
+// ─────────────────────────────────────────────────────────────
+// Responsáveis do atendimento (cui_responsaveis) — a lista era
+// fixa no front (RESPONSAVEIS_ATENDIMENTO/ANTIGOS); agora a própria
+// equipe de Cuidados gerencia quem está disponível pelo modal
+// "Gerenciar responsáveis" da aba Próximos passos (Marcos 2026-07-21).
+// Sem rename/delete de propósito: o vínculo com
+// cui_convertidos.responsavel_atendimento é por NOME (texto) —
+// inativar preserva o histórico.
+// ─────────────────────────────────────────────────────────────
+router.get('/responsaveis', authorizeModule('cuidados', 1), async (_req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('cui_responsaveis')
+      .select('id, nome, ativo')
+      .order('ativo', { ascending: false })
+      .order('nome');
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) {
+    console.error('[CUIDADOS] responsaveis list:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post('/responsaveis', authorizeModule('cuidados', 3), async (req, res) => {
+  try {
+    const nome = String(req.body?.nome || '').trim();
+    if (nome.length < 2) return res.status(400).json({ error: 'Informe o nome do responsável.' });
+    // Se o nome já existe (inclusive inativo), reativa em vez de duplicar
+    const { data: existente, error: e1 } = await supabase
+      .from('cui_responsaveis')
+      .select('id, ativo')
+      .ilike('nome', nome)
+      .maybeSingle();
+    if (e1) throw e1;
+    if (existente) {
+      if (existente.ativo) return res.status(409).json({ error: 'Esse responsável já está na lista.' });
+      const { data, error } = await supabase
+        .from('cui_responsaveis')
+        .update({ ativo: true, updated_at: new Date().toISOString() })
+        .eq('id', existente.id)
+        .select()
+        .single();
+      if (error) throw error;
+      return res.json(data);
+    }
+    const { data, error } = await supabase
+      .from('cui_responsaveis')
+      .insert({ nome })
+      .select()
+      .single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) {
+    console.error('[CUIDADOS] responsaveis create:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.patch('/responsaveis/:id', authorizeModule('cuidados', 3), async (req, res) => {
+  try {
+    if (typeof req.body?.ativo !== 'boolean') {
+      return res.status(400).json({ error: 'Informe ativo=true/false.' });
+    }
+    const { data, error } = await supabase
+      .from('cui_responsaveis')
+      .update({ ativo: req.body.ativo, updated_at: new Date().toISOString() })
+      .eq('id', req.params.id)
+      .select()
+      .single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('[CUIDADOS] responsaveis update:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Quem pode atender convertidos (decisão do Marcos · 2026-06-10): só líderes
 // de culto (coordenador kids/ami/bridge/online) e líderes de ministérios
 // (lider-ministerial + coordenador-voluntarios). Filtra por CARGO, não por
