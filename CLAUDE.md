@@ -1730,6 +1730,24 @@ Follow-ups (próximas PRs): "engajou" cruzar com o sinal real do valor (grupo/vo
 fechar-o-loop (aceite na área cria o pedido de grupo / inscrição de voluntário nativos),
 funil de analytics encaminhados→aderiram.
 
+## Cuidados · responsáveis do atendimento gerenciáveis (2026-07-21)
+
+Pedido do Marcos: a lista de responsáveis da aba **Próximos passos** do
+`/ministerial/cuidados` (quem atende os convertidos) deixou de ser constante no
+front (`RESPONSAVEIS_ATENDIMENTO`/`RESPONSAVEIS_ANTIGOS` em `Cuidados.tsx`) e
+virou a tabela **`cui_responsaveis`** (nome + ativo · migration
+`20260721160000` · seed = 4 ativos + 13 antigos inativos · RLS padrão do
+módulo). A própria equipe gerencia pelo botão **"Gerenciar responsáveis"**
+(ao lado de "Novo convertido" · só `podeEditarCuidados`): modal com switch
+disponível/indisponível + adicionar nome (nome repetido inativo é REATIVADO,
+não duplica). **Sem renomear/excluir de propósito** — o vínculo com
+`cui_convertidos.responsavel_atendimento` é por NOME (texto · essas pessoas
+não logam no sistema), então inativar preserva o histórico: inativo aparece
+desabilitado no dropdown da tabela (só exibível no registro que já o tem).
+Backend: `GET/POST/PATCH /cuidados/responsaveis` (leitura nível 1 · escrita 3).
+Front: constantes viraram FALLBACK (se a API falhar, vale a lista antiga).
+`api.js`: `cuidados.responsaveis.{list,create,update}`.
+
 ## Auditoria do sistema (2026-06-08) · correção dos 4 CRÍTICOS
 
 Auditoria ampla do ERP (workflow multi-agente · find → verificação adversarial →

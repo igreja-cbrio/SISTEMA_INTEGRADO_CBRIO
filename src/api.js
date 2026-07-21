@@ -2930,6 +2930,12 @@ export const cuidados = {
     // criam o handoff na caixa da área · NÃO marca engajamento.
     direcionar: (id, direcionamento) => post(`/cuidados/convertidos/${id}/direcionar`, { direcionamento }),
   },
+  // Responsáveis do atendimento (lista gerenciável na aba Próximos passos)
+  responsaveis: {
+    list: () => get('/cuidados/responsaveis'),
+    create: (nome) => post('/cuidados/responsaveis', { nome }),
+    update: (id, data) => patch(`/cuidados/responsaveis/${id}`, data),
+  },
   // Visitas pastorais e atendimentos avulsos (fora do funil de convertidos)
   visitas: {
     list: (params) => get('/cuidados/visitas' + (params ? '?' + new URLSearchParams(params) : '')),
