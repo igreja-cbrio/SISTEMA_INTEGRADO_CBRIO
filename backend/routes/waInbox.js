@@ -7,6 +7,15 @@ const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const wpp = require('../services/whatsappService');
 const waInbox = require('../services/waInbox');
+const { notificar } = require('../services/notificar');
+
+// profile_id[] de todos os usuários da área (mesma fn usada pelo bot de triagem)
+async function profilesDaArea(areaNome) {
+  try {
+    const { data } = await supabase.rpc('conversas_profiles_da_area', { area_nome: areaNome });
+    return [...new Set((data || []).map(r => r.profile_id).filter(Boolean))];
+  } catch { return []; }
+}
 
 // Anexos: imagem (jpg/png/webp) ou documento (pdf/doc/xls). Cap 16MB (limite Meta).
 const uploadAnexo = multer({
@@ -33,7 +42,7 @@ function comJanela(c) {
 function inList(vals) { return `(${vals.map(v => `"${String(v).replace(/"/g, '')}"`).join(',')})`; }
 
 // foto vem do cadastro do membro (WhatsApp não expõe foto de perfil pela API)
-const SEL = 'id, telefone, nome, membro_id, area, nao_lidas, resolvida, atribuido_a, notas, ultima_previa, last_message_at, last_inbound_at, membro:mem_membros(foto_url)';
+const SEL = 'id, telefone, nome, membro_id, area, nao_lidas, resolvida, atribuido_a, notas, protocolo, satisfacao, pesquisa_estado, ultima_previa, last_message_at, last_inbound_at, membro:mem_membros(foto_url)';
 
 // Templates aprovados p/ INICIAR conversa (fora da janela de 24h). Só entram os
 // que têm env configurado. Cadastrar novos = mais uma linha + env na Vercel.
@@ -421,18 +430,76 @@ router.post('/conversas/:id/ler', authorizeModule('conversas', 1), async (req, r
 // PATCH /conversas/:id — resolver/reabrir, atribuir, triar (área)
 router.patch('/conversas/:id', authorizeModule('conversas', 2), async (req, res) => {
   try {
+    const { data: antes } = await supabase.from('wa_conversas')
+      .select('id, telefone, protocolo, resolvida, last_inbound_at').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!antes) return res.status(404).json({ error: 'Conversa não encontrada' });
+
     const patch = {};
     if (typeof req.body?.resolvida === 'boolean') patch.resolvida = req.body.resolvida;
     if ('atribuido_a' in (req.body || {})) patch.atribuido_a = req.body.atribuido_a || null;
     if ('area' in (req.body || {})) patch.area = req.body.area ? String(req.body.area).trim() : null;
     if ('notas' in (req.body || {})) patch.notas = req.body.notas ? String(req.body.notas) : null;
     if (Object.keys(patch).length === 0) return res.status(400).json({ error: 'Nada para atualizar' });
+
+    // Ao FINALIZAR (resolvida: false → true): manda a pesquisa de satisfação 0-5
+    // com o protocolo. Só dá pra mandar texto livre dentro da janela de 24h.
+    let pesquisaEnviada = false;
+    if (patch.resolvida === true && !antes.resolvida && waInbox.dentroJanela24h(antes.last_inbound_at)) {
+      const msg = `Sua conversa foi finalizada! 🙏\nProtocolo: *${antes.protocolo || '—'}*\n\nDe *0 a 5*, como você avalia nosso atendimento? Responda só com o número (0 = péssimo · 5 = excelente).`;
+      const r = await wpp.sendText(antes.telefone, msg).catch(() => ({ sent: false }));
+      if (r?.sent) {
+        pesquisaEnviada = true;
+        patch.pesquisa_estado = 'aguardando';
+        patch.pesquisa_em = new Date().toISOString();
+        await waInbox.registrarOutbound({ telefone: antes.telefone, texto: msg, tipo: 'pesquisa' }).catch(() => {});
+      }
+    }
+
     const { data, error } = await supabase.from('wa_conversas').update(patch).eq('id', req.params.id).select().single();
     if (error) throw error;
-    res.json(comJanela(data));
+    res.json({ ...comJanela(data), pesquisa_enviada: pesquisaEnviada });
   } catch (e) {
     console.error('[wa-inbox] patch:', e.message);
     res.status(500).json({ error: 'Erro ao atualizar conversa' });
+  }
+});
+
+// POST /conversas/:id/transferir { area } — transfere o atendimento pra outra área
+router.post('/conversas/:id/transferir', authorizeModule('conversas', 2), async (req, res) => {
+  try {
+    const area = req.body?.area ? String(req.body.area).trim() : '';
+    if (!area) return res.status(400).json({ error: 'Escolha a área de destino.' });
+    const { data: conv } = await supabase.from('wa_conversas')
+      .select('id, area, protocolo, nome, telefone').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!conv) return res.status(404).json({ error: 'Conversa não encontrada' });
+    if (conv.area === area) return res.status(400).json({ error: 'A conversa já está nessa área.' });
+
+    // transfere: nova área, tira da fila do responsável atual, reabre se resolvida
+    await supabase.from('wa_conversas')
+      .update({ area, atribuido_a: null, resolvida: false }).eq('id', conv.id);
+    // nota de sistema na thread
+    await supabase.from('wa_mensagens').insert({
+      conversa_id: conv.id, direcao: 'out', tipo: 'sistema', autor_id: uid(req),
+      texto: `🔀 Transferida de ${conv.area || 'Entrada'} para ${area}`,
+    }).catch(() => {});
+    // notifica a equipe da nova área
+    try {
+      const alvos = await profilesDaArea(area);
+      await notificar({
+        modulo: 'conversas', tipo: 'conversa_transferida',
+        titulo: `Conversa transferida · ${area}`,
+        mensagem: `${conv.nome || conv.telefone} (${conv.protocolo || '—'}) foi transferida pra ${area}.`,
+        link: `/conversas?area=${encodeURIComponent(area)}`,
+        chaveDedup: `conversa_transf_${conv.id}_${area}`,
+        targetIds: alvos.length ? alvos : undefined,
+      });
+    } catch (e) { console.error('[wa-inbox] transferir notificar:', e.message); }
+
+    const { data: fresh } = await supabase.from('wa_conversas').select(SEL).eq('id', conv.id).maybeSingle();
+    res.json(comJanela(fresh || conv));
+  } catch (e) {
+    console.error('[wa-inbox] transferir:', e.message);
+    res.status(500).json({ error: 'Erro ao transferir' });
   }
 });
 
