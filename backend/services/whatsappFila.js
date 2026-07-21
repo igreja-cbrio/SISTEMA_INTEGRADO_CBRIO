@@ -85,6 +85,39 @@ async function tentarEnvio(id) {
   return { sent: false, reason: razao };
 }
 
+// Insere N envios de uma vez SEM tentativa imediata (nascem 'pendente' com
+// proxima_tentativa_em = now() pelo default da coluna) — o cron horário da
+// fila drena com o backoff/cap habituais. Pra remessa em massa (ex.: pedido
+// mensal de frequência dos grupos): um loop síncrono de Meta API na function
+// serverless estoura o tempo de execução conforme a base de grupos cresce.
+async function enfileirarLote(itens) {
+  if (!configurado()) return { queued: 0, motivo: 'disabled' };
+  const linhas = (itens || [])
+    .filter(i => i && i.telefone && i.template)
+    .map(i => ({
+      telefone: i.telefone,
+      template: i.template,
+      idioma: i.idioma || TEMPLATE_LANG,
+      params: Array.isArray(i.params) ? i.params : [],
+      contexto: i.contexto || null,
+      ref_id: i.refId || null,
+    }));
+  if (!linhas.length) return { queued: 0 };
+  const { data, error } = await supabase.from('whatsapp_envios').insert(linhas).select('id');
+  if (error) {
+    // Fila indisponível → degrada pro caminho individual (que por sua vez
+    // degrada pro envio direto) — melhor entregar do que travar o cron.
+    console.error('[whatsappFila] lote falhou, caindo pro individual:', error.message);
+    let ok = 0;
+    for (const i of itens) {
+      const r = await enfileirar(i);
+      if (r.sent || r.queued) ok += 1;
+    }
+    return { queued: ok, degradado: true };
+  }
+  return { queued: (data || []).length };
+}
+
 // Reprocessa a fila (cron): envia o que está pendente e vencido, mais antigo
 // primeiro. Cap por rodada — o excedente fica pra próxima hora (não adianta
 // martelar a Meta com o teto diário estourado).
@@ -107,4 +140,4 @@ async function processarFila({ limite = 200 } = {}) {
   return { processados: (pendentes || []).length, enviados };
 }
 
-module.exports = { enfileirar, processarFila, tentarEnvio };
+module.exports = { enfileirar, enfileirarLote, processarFila, tentarEnvio };

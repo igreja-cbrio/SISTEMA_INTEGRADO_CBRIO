@@ -1749,57 +1749,70 @@ router.get('/contribuicoes/kpis', async (req, res) => {
     const hoje = new Date();
     const anoAtual = hoje.getFullYear();
 
+    // Leituras paginadas: mem_contribuicoes (20k+ linhas · 3k+ só no ano) e
+    // mem_membros (3,6k ativos) passam do cap server-side de 1000 do PostgREST
+    // — o select cru truncava os totais em silêncio. E o .in() com a lista
+    // inteira de membros estoura a URL do request e falha silencioso (a
+    // classificação por nível saía do nada). Tudo agora pagina e cruza em JS.
+    const PAGE = 1000;
+    const fetchTudo = async (montar) => {
+      const out = [];
+      for (let offset = 0; ; offset += PAGE) {
+        const { data, error } = await montar().order('id').range(offset, offset + PAGE - 1);
+        if (error) throw error;
+        out.push(...(data || []));
+        if (!data || data.length < PAGE) break;
+      }
+      return out;
+    };
+
     // Totais do ano por tipo
-    const { data: contribsAno } = await supabase
+    const contribsAno = await fetchTudo(() => supabase
       .from('mem_contribuicoes')
       .select('tipo, valor, data, membro_id')
-      .gte('data', `${anoAtual}-01-01`);
+      .gte('data', `${anoAtual}-01-01`));
 
     const totais = { dizimo: 0, oferta: 0, campanha: 0, total: 0 };
-    const contribuintesPorMembro = new Map(); // membro_id -> data mais recente
-    (contribsAno || []).forEach(c => {
+    const contribuintesAno = new Set();
+    contribsAno.forEach(c => {
       const v = Number(c.valor) || 0;
       totais[c.tipo] = (totais[c.tipo] || 0) + v;
       totais.total += v;
-      const atual = contribuintesPorMembro.get(c.membro_id);
-      if (!atual || new Date(c.data) > new Date(atual)) {
-        contribuintesPorMembro.set(c.membro_id, c.data);
-      }
+      if (c.membro_id) contribuintesAno.add(c.membro_id);
     });
 
-    // Classificação por nível (ativo/irregular/inativo) considerando TODOS os membros ativos
-    const { data: todosMembros } = await supabase
-      .from('mem_membros')
-      .select('id')
-      .eq('active', true);
-
-    // Para inativo/ativo preciso olhar histórico completo (não só do ano). Pegamos última contribuição por membro.
-    const membroIds = (todosMembros || []).map(m => m.id);
-    const niveis = { ativo: 0, irregular: 0, inativo: 0, nunca_contribuiu: 0 };
-
-    if (membroIds.length > 0) {
-      const { data: ultimas } = await supabase
+    // Classificação por nível (ativo/irregular/inativo) considerando TODOS os
+    // membros ativos. A última contribuição por membro sai de uma varredura
+    // paginada da tabela inteira (histórico completo, não só do ano).
+    const [todosMembros, todasContribs] = await Promise.all([
+      fetchTudo(() => supabase
+        .from('mem_membros')
+        .select('id')
+        .eq('active', true)
+        .is('deleted_at', null)),
+      fetchTudo(() => supabase
         .from('mem_contribuicoes')
-        .select('membro_id, data')
-        .in('membro_id', membroIds)
-        .order('data', { ascending: false });
+        .select('membro_id, data')),
+    ]);
 
-      const ultimaPorMembro = new Map();
-      (ultimas || []).forEach(c => {
-        if (!ultimaPorMembro.has(c.membro_id)) ultimaPorMembro.set(c.membro_id, c.data);
-      });
+    const ultimaPorMembro = new Map();
+    todasContribs.forEach(c => {
+      if (!c.membro_id || !c.data) return;
+      const atual = ultimaPorMembro.get(c.membro_id);
+      if (!atual || c.data > atual) ultimaPorMembro.set(c.membro_id, c.data);
+    });
 
-      membroIds.forEach(id => {
-        const n = calcularNivelGenerosidade(ultimaPorMembro.get(id));
-        niveis[n] = (niveis[n] || 0) + 1;
-      });
-    }
+    const niveis = { ativo: 0, irregular: 0, inativo: 0, nunca_contribuiu: 0 };
+    todosMembros.forEach(m => {
+      const n = calcularNivelGenerosidade(ultimaPorMembro.get(m.id));
+      niveis[n] = (niveis[n] || 0) + 1;
+    });
 
     res.json({
       ano: anoAtual,
       totais,
       niveis,
-      contribuintes_unicos_ano: contribuintesPorMembro.size,
+      contribuintes_unicos_ano: contribuintesAno.size,
     });
   } catch (e) {
     res.status(500).json({ error: 'Erro ao buscar KPIs de contribuições' });

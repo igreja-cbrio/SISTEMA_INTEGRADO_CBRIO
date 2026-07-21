@@ -99,24 +99,28 @@ function isAmiBridgeCulto(c) {
 
 // ── Coletores por fonte ─────────────────────────────────────────────────────
 
+// Lê TODAS as linhas contornando o cap server-side de 1000 do PostgREST
+// (paginação por .range). Todo coletor que lê tabela que passa (ou vai passar)
+// de 1000 linhas usa isto — select cru trunca em silêncio e o KPI nasce errado.
+async function fetchAll(table, columns, applyFilter) {
+  const out = []; let from = 0; const page = 1000;
+  while (true) {
+    let q = supabase.from(table).select(columns).range(from, from + page - 1);
+    if (applyFilter) q = applyFilter(q);
+    const { data, error } = await q;
+    if (error) throw error;
+    out.push(...(data || []));
+    if (!data || data.length < page) break;
+    from += page;
+  }
+  return out;
+}
+
 // Coorte dos primeiros 90 dias: dos convertidos do período/área, % que cumpriu
 // o marco (batismo ou Next) em <=90 dias da conversão. Cruza por membro/cpf/nome.
 async function cohortNoPrazoPct({ inicio, fim, area, marco }) {
   const DIA = 86400000;
   const dig = (v) => String(v || '').replace(/\D/g, '');
-  const fetchAll = async (table, columns, applyFilter) => {
-    const out = []; let from = 0; const page = 1000;
-    while (true) {
-      let q = supabase.from(table).select(columns).range(from, from + page - 1);
-      if (applyFilter) q = applyFilter(q);
-      const { data, error } = await q;
-      if (error) throw error;
-      out.push(...(data || []));
-      if (!data || data.length < page) break;
-      from += page;
-    }
-    return out;
-  };
 
   let cq = supabase.from('cui_convertidos')
     .select('id, nome, cpf, membro_id, data_culto')
@@ -343,24 +347,27 @@ const COLLECTORS = {
 
   'cuidados.engajados_valor': async () => {
     // CUID-05: % novos convertidos engajados em ao menos 1 dos 5 valores
-    // Calcula real: convertidos com pelo menos 1 valor ativo
+    // Calcula real: convertidos com pelo menos 1 valor ativo.
+    // Sem `.in()` com a lista inteira de convertidos: a partir de ~400 UUIDs a
+    // URL do PostgREST estoura e o fetch falha SILENCIOSO (numerador zerado).
+    // Lê os conjuntos paginados e cruza em JS.
     const d90 = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
-    const { data: convertidos } = await supabase.from('cui_convertidos').select('membro_id').not('membro_id', 'is', null);
-    const membroIds = [...new Set((convertidos || []).map(c => c.membro_id).filter(Boolean))];
-    if (membroIds.length === 0) return { valor: 0, observacao: 'Sem convertidos com membro vinculado' };
+    const convertidos = await fetchAll('cui_convertidos', 'membro_id',
+      q => q.not('membro_id', 'is', null).order('id'));
+    const membroIds = new Set(convertidos.map(c => c.membro_id).filter(Boolean));
+    if (membroIds.size === 0) return { valor: 0, observacao: 'Sem convertidos com membro vinculado' };
 
     const [grupos, vols, contribs] = await Promise.all([
-      supabase.from('mem_grupo_membros').select('membro_id').in('membro_id', membroIds).is('saiu_em', null),
-      supabase.from('mem_voluntarios').select('membro_id').in('membro_id', membroIds).is('ate', null),
-      supabase.from('mem_contribuicoes').select('membro_id').in('membro_id', membroIds).gte('data', d90),
+      fetchAll('mem_grupo_membros', 'membro_id', q => q.is('saiu_em', null).order('id')),
+      fetchAll('mem_voluntarios', 'membro_id', q => q.is('ate', null).order('id')),
+      fetchAll('mem_contribuicoes', 'membro_id', q => q.gte('data', d90).order('id')),
     ]);
-    const engajados = new Set([
-      ...(grupos.data || []).map(g => g.membro_id),
-      ...(vols.data || []).map(v => v.membro_id),
-      ...(contribs.data || []).map(c => c.membro_id),
-    ]);
-    const pct = Math.round((engajados.size / membroIds.length) * 100);
-    return { valor: pct, observacao: `${engajados.size} de ${membroIds.length} convertidos com 1+ valor` };
+    const engajados = new Set();
+    for (const r of [...grupos, ...vols, ...contribs]) {
+      if (r.membro_id && membroIds.has(r.membro_id)) engajados.add(r.membro_id);
+    }
+    const pct = Math.round((engajados.size / membroIds.size) * 100);
+    return { valor: pct, observacao: `${engajados.size} de ${membroIds.size} convertidos com 1+ valor` };
   },
 
   'cuidados.membros_2mais_valores': async () => {
@@ -379,12 +386,11 @@ const COLLECTORS = {
   // Devocional: count distinct membros que registraram pelo menos 1 devocional
   // no período (do módulo de Cuidados → aba Devocional, tabela mem_devocionais)
   'cuidados.devocional_membros': async ({ inicio, fim }) => {
-    const { data } = await supabase
-      .from('mem_devocionais')
-      .select('membro_id, concluida')
-      .eq('concluida', true)
-      .gte('data_devocional', inicio)
-      .lt('data_devocional', fim);
+    const data = await fetchAll('mem_devocionais', 'membro_id, concluida',
+      q => q.eq('concluida', true)
+        .gte('data_devocional', inicio)
+        .lt('data_devocional', fim)
+        .order('id'));
     const distinct = new Set((data || []).map(d => d.membro_id));
     return {
       valor: distinct.size,
@@ -642,15 +648,18 @@ const COLLECTORS = {
 
   // VOLT-01: voluntários ativos na semana (check-ins últimos 7 dias)
   'voluntariado.ativos_semanal': async ({ inicio, fim }) => {
-    const { data } = await supabase.from('vol_check_ins').select('volunteer_id').gte('checked_in_at', inicio).lt('checked_in_at', fim);
-    const unique = new Set((data || []).map(d => d.volunteer_id).filter(Boolean)).size;
+    const data = await fetchAll('vol_check_ins', 'volunteer_id',
+      q => q.gte('checked_in_at', inicio).lt('checked_in_at', fim).order('checked_in_at'));
+    const unique = new Set(data.map(d => d.volunteer_id).filter(Boolean)).size;
     return { valor: unique, observacao: `${unique} voluntários com check-in na semana` };
   },
 
-  // VOLT-03: voluntários ativos no trimestre
+  // VOLT-03: voluntários ativos no trimestre (um trimestre já passa de 1000
+  // check-ins — sem paginar, o cap do PostgREST subcontava o KPI)
   'voluntariado.ativos_trimestral': async ({ inicio, fim }) => {
-    const { data } = await supabase.from('vol_check_ins').select('volunteer_id').gte('checked_in_at', inicio).lt('checked_in_at', fim);
-    const unique = new Set((data || []).map(d => d.volunteer_id).filter(Boolean)).size;
+    const data = await fetchAll('vol_check_ins', 'volunteer_id',
+      q => q.gte('checked_in_at', inicio).lt('checked_in_at', fim).order('checked_in_at'));
+    const unique = new Set(data.map(d => d.volunteer_id).filter(Boolean)).size;
     return { valor: unique, observacao: `${unique} voluntários com check-in no trimestre` };
   },
 
@@ -713,9 +722,12 @@ const COLLECTORS = {
   // GEN-02: % doadores ativos com recorrencia >= 3 meses
   'generosidade.recorrencia': async () => {
     const d90 = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
-    const { data: recentes } = await supabase.from('mem_contribuicoes').select('membro_id, data').gte('data', d90);
+    // 90 dias de contribuições já passam de 1000 linhas — paginado.
+    const recentes = await fetchAll('mem_contribuicoes', 'membro_id, data',
+      q => q.gte('data', d90).order('id'));
     const doadores = {};
-    (recentes || []).forEach(c => {
+    recentes.forEach(c => {
+      if (!c.membro_id || !c.data) return; // contribuição sem membro não é doador contável
       if (!doadores[c.membro_id]) doadores[c.membro_id] = new Set();
       doadores[c.membro_id].add(c.data.slice(0, 7)); // YYYY-MM
     });
@@ -741,11 +753,11 @@ const COLLECTORS = {
   // KID-04: famílias fazendo devocionais — conta famílias distintas com
   // ao menos 1 devocional do tipo 'familiar' no período.
   'devocionais.familias': async ({ inicio, fim }) => {
-    const { data } = await supabase.from('mem_devocionais')
-      .select('membro_id, mem_membros(familia_id)')
-      .eq('tipo', 'familiar')
-      .gte('data_devocional', inicio)
-      .lt('data_devocional', fim);
+    const data = await fetchAll('mem_devocionais', 'membro_id, mem_membros(familia_id)',
+      q => q.eq('tipo', 'familiar')
+        .gte('data_devocional', inicio)
+        .lt('data_devocional', fim)
+        .order('id'));
     const familias = new Set();
     (data || []).forEach(d => {
       const fid = d.mem_membros?.familia_id;
