@@ -1744,10 +1744,13 @@ não duplica). **Excluir só quem NUNCA foi usado** (follow-up 2026-07-21 ·
 lixeira no modal): o DELETE conta `cui_convertidos.responsavel_atendimento`
 pelo nome (incluindo soft-deletados) e responde 409 orientando a desativar se
 houver uso — hard delete ok (catálogo de config, não-PII, fora da whitelist).
-**Sem renomear de propósito** — o vínculo com
-`cui_convertidos.responsavel_atendimento` é por NOME (texto · essas pessoas
-não logam no sistema), então inativar preserva o histórico: inativo aparece
-desabilitado no dropdown da tabela (só exibível no registro que já o tem).
+**Renomear PROPAGA** (follow-up 2026-07-21 · lápis no modal): o PATCH aceita
+`{nome}` e atualiza `cui_convertidos.responsavel_atendimento` em cascata
+(incluindo soft-deletados · devolve `renomeados`; conflito com nome existente
+→ 409 orientando consolidar; falha na propagação reverte o nome no catálogo).
+O vínculo é por NOME (texto · essas pessoas não logam no sistema), então
+inativar preserva o histórico: inativo aparece desabilitado no dropdown da
+tabela (só exibível no registro que já o tem).
 Backend: `GET/POST/PATCH/DELETE /cuidados/responsaveis` (leitura nível 1 ·
 escrita/exclusão 3). Front: constantes viraram FALLBACK (se a API falhar, vale
 a lista antiga). `api.js`: `cuidados.responsaveis.{list,create,update,remove}`.

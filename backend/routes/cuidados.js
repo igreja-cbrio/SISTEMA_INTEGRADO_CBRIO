@@ -930,19 +930,73 @@ router.post('/responsaveis', authorizeModule('cuidados', 3), async (req, res) =>
   }
 });
 
+// Aceita { ativo } e/ou { nome }. Renomear PROPAGA pros convertidos
+// (cui_convertidos.responsavel_atendimento é texto vinculado por nome —
+// renomear só o catálogo órfãnaria o histórico). Inclui soft-deletados
+// de propósito (histórico consistente, mesmo padrão do dedup 20260721190000).
 router.patch('/responsaveis/:id', authorizeModule('cuidados', 3), async (req, res) => {
   try {
-    if (typeof req.body?.ativo !== 'boolean') {
-      return res.status(400).json({ error: 'Informe ativo=true/false.' });
+    const temAtivo = typeof req.body?.ativo === 'boolean';
+    const nomeNovo = typeof req.body?.nome === 'string' ? req.body.nome.trim() : '';
+    if (!temAtivo && !nomeNovo) {
+      return res.status(400).json({ error: 'Informe ativo=true/false e/ou nome.' });
     }
+    if (nomeNovo && nomeNovo.length < 2) {
+      return res.status(400).json({ error: 'O nome precisa ter pelo menos 2 caracteres.' });
+    }
+
+    const { data: atual, error: e1 } = await supabase
+      .from('cui_responsaveis')
+      .select('id, nome, ativo')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (e1) throw e1;
+    if (!atual) return res.status(404).json({ error: 'Responsável não encontrado.' });
+
+    const renomeando = !!nomeNovo && nomeNovo !== atual.nome;
+    if (renomeando) {
+      const { data: conflito, error: e2 } = await supabase
+        .from('cui_responsaveis')
+        .select('id, nome')
+        .ilike('nome', nomeNovo)
+        .neq('id', atual.id)
+        .maybeSingle();
+      if (e2) throw e2;
+      if (conflito) {
+        return res.status(409).json({
+          error: `Já existe "${conflito.nome}" na lista. Pra juntar os dois num só, é uma consolidação de registros — me avise em vez de renomear por cima.`,
+        });
+      }
+    }
+
+    const patch = { updated_at: new Date().toISOString() };
+    if (temAtivo) patch.ativo = req.body.ativo;
+    if (renomeando) patch.nome = nomeNovo;
+
     const { data, error } = await supabase
       .from('cui_responsaveis')
-      .update({ ativo: req.body.ativo, updated_at: new Date().toISOString() })
-      .eq('id', req.params.id)
+      .update(patch)
+      .eq('id', atual.id)
       .select()
       .single();
     if (error) throw error;
-    res.json(data);
+
+    let renomeados = 0;
+    if (renomeando) {
+      const { count, error: e3 } = await supabase
+        .from('cui_convertidos')
+        .update({ responsavel_atendimento: nomeNovo }, { count: 'exact' })
+        .eq('responsavel_atendimento', atual.nome);
+      if (e3) {
+        // O catálogo já mudou mas os registros não — reverte o nome pra não
+        // deixar o histórico órfão (o toggle de ativo, se veio junto, fica).
+        await supabase.from('cui_responsaveis').update({ nome: atual.nome }).eq('id', atual.id);
+        throw e3;
+      }
+      renomeados = count || 0;
+    }
+
+    res.json({ ...data, renomeados });
   } catch (e) {
     console.error('[CUIDADOS] responsaveis update:', e.message);
     res.status(500).json({ error: e.message });
