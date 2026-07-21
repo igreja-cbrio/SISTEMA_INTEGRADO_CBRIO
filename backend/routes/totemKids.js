@@ -68,6 +68,39 @@ async function fotoVisivelCrianca(c) {
   return c.foto_url || null;
 }
 
+// Versão EM LOTE do fotoVisivelCrianca pras listas: 1 chamada ao Storage
+// assina N fotos (createSignedUrls) em vez de 1 chamada por criança, com
+// cache em memória (~25 min · a URL vale 30) — listas re-renderizam com
+// frequência e re-assinavam as mesmas fotos. Falha de assinatura degrada
+// pra sem foto, nunca quebra a lista. Devolve cópias com foto_url resolvida.
+const fotoSignCache = new Map(); // foto_storage_path -> { url, expira }
+async function anexarFotosEmLote(criancas) {
+  const lista = criancas || [];
+  const agora = Date.now();
+  const pendentes = [...new Set(lista
+    .filter(c => c && c.foto_storage_path && c.foto_consentimento_em)
+    .map(c => c.foto_storage_path))]
+    .filter(p => !(fotoSignCache.get(p)?.expira > agora));
+  if (pendentes.length) {
+    try {
+      const { data } = await supabase.storage.from('kids-documentos').createSignedUrls(pendentes, 60 * 30);
+      (data || []).forEach(s => {
+        if (s?.path && s?.signedUrl) fotoSignCache.set(s.path, { url: s.signedUrl, expira: agora + 25 * 60000 });
+      });
+    } catch (e) {
+      console.error('[TOTEM-KIDS] assinatura de fotos em lote falhou:', e.message);
+    }
+  }
+  return lista.map(c => {
+    if (!c) return c;
+    let foto = c.foto_url || null;
+    if (c.foto_storage_path) {
+      foto = c.foto_consentimento_em ? (fotoSignCache.get(c.foto_storage_path)?.url || null) : null;
+    }
+    return { ...c, foto_url: foto };
+  });
+}
+
 function calcIdadeMeses(dataNascimento) {
   if (!dataNascimento) return null;
   const nasc = new Date(dataNascimento);
@@ -572,12 +605,11 @@ router.get('/criancas/buscar', authorizeModule('kids', 1), async (req, res) => {
     // Une por id
     const map = new Map();
     [...(criancas || []), ...extras].forEach(c => map.set(c.id, c));
-    const lista = await Promise.all([...map.values()].map(async c => ({
+    const lista = (await anexarFotosEmLote([...map.values()])).map(c => ({
       ...c,
-      foto_url: await fotoVisivelCrianca(c),
       idade_meses: calcIdadeMeses(c.data_nascimento),
       idade_label: formatIdade(calcIdadeMeses(c.data_nascimento)),
-    })));
+    }));
 
     res.json(lista);
   } catch (e) {
@@ -617,12 +649,11 @@ router.get('/criancas/:id/irmaos', authorizeModule('kids', 1), async (req, res) 
       .is('deleted_at', null)
       .order('nome');
 
-    const lista = await Promise.all((irmaos || []).map(async c => ({
+    const lista = (await anexarFotosEmLote(irmaos)).map(c => ({
       ...c,
-      foto_url: await fotoVisivelCrianca(c),
       idade_meses: calcIdadeMeses(c.data_nascimento),
       idade_label: formatIdade(calcIdadeMeses(c.data_nascimento)),
-    })));
+    }));
     res.json(lista);
   } catch (e) {
     console.error('[totemKids/criancas/irmaos]', e.message);
@@ -1100,12 +1131,11 @@ router.get('/criancas', authorizeModule('kids', 1), async (req, res) => {
       if (page.length < pageSize) break;
       from += pageSize;
     }
-    res.json(await Promise.all(data.map(async c => ({
+    res.json((await anexarFotosEmLote(data)).map(c => ({
       ...c,
-      foto_url: await fotoVisivelCrianca(c),
       idade_meses: calcIdadeMeses(c.data_nascimento),
       idade_label: formatIdade(calcIdadeMeses(c.data_nascimento)),
-    }))));
+    })));
   } catch (e) {
     res.status(500).json({ error: 'Erro ao listar crianças' });
   }
@@ -3922,14 +3952,15 @@ router.get('/pre-checkin/codigo/:codigo', authorizeModule('kids', 2), async (req
       .in('id', pre.crianca_ids)
       .eq('ativo', true);
 
-    const enriquecidas = await Promise.all((criancas || []).map(async (c) => {
+    const comFoto = await anexarFotosEmLote(criancas);
+    const enriquecidas = await Promise.all(comFoto.map(async (c) => {
       let idadeMeses = null;
       if (c.data_nascimento) {
         const nasc = new Date(c.data_nascimento);
         idadeMeses = Math.floor((Date.now() - nasc.getTime()) / (1000 * 60 * 60 * 24 * 30.44));
       }
       const sala = await sugerirSala(idadeMeses);
-      return { ...c, foto_url: await fotoVisivelCrianca(c), idade_meses: idadeMeses, sala_sugerida: sala };
+      return { ...c, idade_meses: idadeMeses, sala_sugerida: sala };
     }));
 
     res.json({
