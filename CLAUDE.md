@@ -3302,6 +3302,16 @@ default CBRio>/live`). **Somente leitura** (a coleta do YouTube continua no cron
 do `/online`); sem migration, sem env nova. App: tela `videos.tsx` (`/videos` ·
 atalho na Home + "Pregações" no Menu) abre os vídeos no YouTube via Linking.
 
+## App Staff · Kids gerencia batismo de criança (2026-07-21)
+
+`PATCH /totem-kids/batismos/:id` (kids ≥ 3): a equipe Kids atualiza
+status/data_batismo/observações de inscrição de batismo **de criança**
+(eh_crianca ou <13 anos) sem depender do módulo Integração — inscrição de
+adulto responde 403 e segue exclusiva do `PUT /kpis/batismos/:id`
+(authorizeBatismo). Status aceitos: pendente/confirmado/realizado/cancelado.
+Consumidor: app CBRio-Staff (telas Kids · batismos/apresentações). As
+apresentações já tinham PATCH/DELETE próprios (kids ≥ 3/4) — sem mudança.
+
 ## Entradas · identidade progressiva e fusão segura (2026-07-18)
 
 Prioridade zero definida pelo Marcos: **todo cadastro novo precisa aumentar a
