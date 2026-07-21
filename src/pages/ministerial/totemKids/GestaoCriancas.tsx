@@ -2,7 +2,8 @@
 // desativar, e ficha completa com aba de Atendimentos (histórico de contatos).
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { totemKids as api } from '../../../api';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams, Link } from 'react-router-dom';
+import { hrefConversa } from '@/lib/conversas';
 import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
 import { Label } from '../../../components/ui/label';
@@ -138,10 +139,10 @@ export default function GestaoCriancas() {
                         </div>
                       </button>
                       {telFull && (
-                        <a href={`https://wa.me/${telFull}`} target="_blank" rel="noopener noreferrer"
+                        <Link to={hrefConversa(telFull)}
                           className="inline-flex items-center justify-center h-9 w-9 rounded-full bg-emerald-500 text-white hover:bg-emerald-600 shrink-0" title={`WhatsApp de ${resp?.nome || 'responsável'}`}>
                           <Phone className="h-4 w-4" />
-                        </a>
+                        </Link>
                       )}
                     </div>
                   );
@@ -1019,7 +1020,7 @@ function JornadaTab({ criancaId, c, onChanged }: { criancaId: string; c: any; on
             {j.familia_membros.map((m: any) => (
               <div key={m.id} className="flex items-center gap-2 rounded-md border border-border p-1.5 text-xs">
                 <button onClick={() => navigate(`/ministerial/membresia?membro=${m.id}`)} className="flex-1 min-w-0 truncate text-left text-primary hover:underline">{m.nome}</button>
-                {m.telefone && <a href={`https://wa.me/55${String(m.telefone).replace(/\D/g, '')}`} target="_blank" rel="noopener noreferrer" className="text-primary"><Phone className="h-3.5 w-3.5" /></a>}
+                {m.telefone && <Link to={hrefConversa(m.telefone)} className="text-primary"><Phone className="h-3.5 w-3.5" /></Link>}
               </div>
             ))}
           </div>

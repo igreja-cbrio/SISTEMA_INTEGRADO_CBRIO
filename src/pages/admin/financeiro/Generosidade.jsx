@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
+import { hrefConversa } from '@/lib/conversas';
 import {
   Loader2, RefreshCw, TrendingUp, TrendingDown, Users, Heart, Wallet,
   UserCheck, UserX, AlertTriangle, Phone, Mail, ExternalLink,
@@ -343,10 +345,10 @@ function AbaPararam() {
                       <td className="py-2 px-2 font-medium">{d.nome}</td>
                       <td className="py-2 px-2 text-xs">
                         {d.telefone && (
-                          <a href={`https://wa.me/55${(d.telefone || '').replace(/\D/g, '')}`} target="_blank" rel="noopener noreferrer"
+                          <Link to={hrefConversa(`55${(d.telefone || '').replace(/\D/g, '')}`)}
                              className="inline-flex items-center gap-1 hover:underline">
                             <Phone className="h-3 w-3" /> {d.telefone}
-                          </a>
+                          </Link>
                         )}
                         {d.email && (
                           <a href={`mailto:${d.email}`} className="inline-flex items-center gap-1 hover:underline mt-1">

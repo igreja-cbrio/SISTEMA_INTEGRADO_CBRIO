@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import { useQueryClient, useMutation } from '@tanstack/react-query';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -12,6 +13,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { voluntariado } from '@/api';
+import { hrefConversa } from '@/lib/conversas';
 import Paginacao, { usePaginacaoLocal } from '@/components/Paginacao';
 import {
   useVolunteersPool, useSyncPlanningCenter, useWaitingAllocation,
@@ -110,11 +112,11 @@ function AniversariantesSemana() {
                     </p>
                   </div>
                   {wa ? (
-                    <a href={wa} target="_blank" rel="noopener noreferrer">
+                    <Link to={hrefConversa(r.telefone, mensagemPara(r.nome))}>
                       <Button size="sm" className="h-8 gap-1.5 bg-[#25D366] hover:bg-[#25D366]/85 text-white">
                         <MessageCircle className="h-3.5 w-3.5" /> Parabenizar
                       </Button>
-                    </a>
+                    </Link>
                   ) : (
                     <span className="text-xs text-muted-foreground">sem telefone</span>
                   )}

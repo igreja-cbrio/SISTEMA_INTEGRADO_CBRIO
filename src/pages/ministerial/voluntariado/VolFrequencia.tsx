@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import { voluntariado as api } from '@/api';
+import { hrefConversa } from '@/lib/conversas';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -170,7 +172,7 @@ export default function VolFrequencia() {
                   </td>
                   <td className="px-4 py-2">
                     {waLink(r.telefone)
-                      ? <a href={waLink(r.telefone)!} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="inline-flex items-center gap-1 text-xs text-emerald-600 hover:underline"><Phone className="h-3 w-3" /> WhatsApp</a>
+                      ? <Link to={hrefConversa(r.telefone)} onClick={(e) => e.stopPropagation()} className="inline-flex items-center gap-1 text-xs text-emerald-600 hover:underline"><Phone className="h-3 w-3" /> WhatsApp</Link>
                       : <span className="text-xs text-muted-foreground">—</span>}
                   </td>
                   <td className="px-4 py-2">
