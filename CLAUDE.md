@@ -1751,6 +1751,12 @@ desabilitado no dropdown da tabela (só exibível no registro que já o tem).
 Backend: `GET/POST/PATCH/DELETE /cuidados/responsaveis` (leitura nível 1 ·
 escrita/exclusão 3). Front: constantes viraram FALLBACK (se a API falhar, vale
 a lista antiga). `api.js`: `cuidados.responsaveis.{list,create,update,remove}`.
+**Dedup dos nomes da planilha antiga** (migration `20260721190000` · pedido do
+Marcos 2026-07-21): `cui_convertidos.responsavel_atendimento` consolidado —
+Kevin/Arthur + Arthur/Kevin → Arthur Cecconi · Naná → Natasha · Mari → Mariane ·
+Carmet/Arthur → Carmet — e os 5 nomes duplicados removidos de
+`cui_responsaveis` (com guarda: só sai quem ficou sem registro). Fallback do
+front espelha o pós-dedup (8 antigos).
 
 ## Auditoria do sistema (2026-06-08) · correção dos 4 CRÍTICOS
 
