@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -6,6 +7,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Loader2, Mail, Phone, CalendarCheck, ScanLine, ListChecks, Activity, MessageCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { voluntariado } from '@/api';
+import { hrefConversa } from '@/lib/conversas';
 
 const TERMOMETRO: Record<string, { color: string; hint: string }> = {
   muito_ativo: { color: '#0f9d6b', hint: 'serve com frequência' },
@@ -86,11 +88,11 @@ export default function VolDetalheDialog({ id, onClose }: { id: string | null; o
                       </div>
                     ) : <span className="text-sm text-muted-foreground">Contato</span>}
                     {wa && (
-                      <a href={wa} target="_blank" rel="noopener noreferrer">
+                      <Link to={hrefConversa(p.phone)}>
                         <Button size="sm" className="h-8 gap-1.5 bg-[#25D366] hover:bg-[#25D366]/85 text-white">
                           <MessageCircle className="w-3.5 h-3.5" /> WhatsApp
                         </Button>
-                      </a>
+                      </Link>
                     )}
                   </div>
                 );

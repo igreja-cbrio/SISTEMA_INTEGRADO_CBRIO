@@ -83,8 +83,8 @@ function idade(iso?: string | null) {
 }
 
 export default function ConversasInbox({
-  currentUserId, userAreas = [], isAdmin = false,
-}: { atendentes?: any[]; currentUserId?: string; userAreas?: string[]; isAdmin?: boolean }) {
+  currentUserId, userAreas = [], isAdmin = false, abrirTelefone, textoInicial,
+}: { atendentes?: any[]; currentUserId?: string; userAreas?: string[]; isAdmin?: boolean; abrirTelefone?: string; textoInicial?: string }) {
   const [conversas, setConversas] = useState<Conversa[] | null>(null);
   const [status, setStatus] = useState<'abertas' | 'todas'>('abertas');
   const [soNaoLidas, setSoNaoLidas] = useState(false);
@@ -137,6 +137,19 @@ export default function ConversasInbox({
 
   useEffect(() => { carregarConversas(); }, [carregarConversas]);
   useEffect(() => { if (selId) carregarThread(selId); }, [selId, carregarThread]);
+
+  // abre direto a conversa de um telefone (vindo dos botões de WhatsApp dos módulos)
+  useEffect(() => {
+    if (!abrirTelefone) return;
+    let cancel = false;
+    waInbox.abrir({ telefone: abrirTelefone }).then((r: any) => {
+      if (cancel || !r?.conversa?.id) return;
+      setSelId(r.conversa.id);
+      if (textoInicial) setTexto(textoInicial);
+      carregarConversas();
+    }).catch(() => {});
+    return () => { cancel = true; };
+  }, [abrirTelefone, textoInicial]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // perfil da pessoa + anotações ao abrir conversa
   useEffect(() => {

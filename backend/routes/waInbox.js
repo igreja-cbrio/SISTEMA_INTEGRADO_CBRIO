@@ -212,6 +212,22 @@ router.get('/conversas/:id/mensagens', authorizeModule('conversas', 1), async (r
   }
 });
 
+// POST /conversas/abrir { telefone, nome? } — acha-ou-cria a conversa da pessoa
+// (usado pelos botões de WhatsApp dos outros módulos p/ abrir direto no inbox)
+router.post('/conversas/abrir', authorizeModule('conversas', 1), async (req, res) => {
+  try {
+    const { telefone, nome } = req.body || {};
+    if (!telefone || !String(telefone).replace(/\D+/g, '')) return res.status(400).json({ error: 'Telefone inválido.' });
+    const conv = await waInbox.acharOuCriarConversa(telefone);
+    if (!conv) return res.status(400).json({ error: 'Telefone inválido.' });
+    if (nome && !conv.nome) { await supabase.from('wa_conversas').update({ nome }).eq('id', conv.id); conv.nome = nome; }
+    res.json({ conversa: comJanela(conv) });
+  } catch (e) {
+    console.error('[wa-inbox] abrir:', e.message);
+    res.status(500).json({ error: 'Erro ao abrir conversa' });
+  }
+});
+
 // POST /conversas/nova { telefone, area?, texto? , template_name?, template_params? }
 router.post('/conversas/nova', authorizeModule('conversas', 2), async (req, res) => {
   try {

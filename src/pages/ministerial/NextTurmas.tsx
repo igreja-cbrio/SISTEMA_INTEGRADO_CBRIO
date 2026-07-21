@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import { next as nextApi } from '../../api';
+import { hrefConversa } from '@/lib/conversas';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
@@ -19,14 +21,8 @@ const C = { primary: '#00B39D', warn: '#f59e0b', danger: '#ef4444', info: '#3b82
 const MESES_PT = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 function nomeMesAtual() { const d = new Date(); return `${MESES_PT[d.getMonth()]} ${d.getFullYear()}`; }
 
-// wa.me da pessoa (normaliza pra 55 + DDD + número). Mensagem pré-preenchida
-// (editável no WhatsApp antes de enviar) com a turma e as datas dos encontros.
-function waHref(telefone?: string | null, msg?: string) {
-  const num = String(telefone || '').replace(/\D/g, '');
-  if (!num) return null;
-  const full = num.length <= 11 ? `55${num}` : num;
-  return `https://wa.me/${full}${msg ? `?text=${encodeURIComponent(msg)}` : ''}`;
-}
+// Mensagem pré-preenchida (editável antes de enviar) com a turma e as datas
+// dos encontros. Abre o inbox interno (/conversas) já com o texto.
 function msgTurma(nome: string, turmaNome: string, encontros?: { data?: string | null }[]) {
   const datas = (encontros || []).map(e => e.data).filter(Boolean)
     .map(d => { const [, m, day] = String(d).split('-'); return `${day}/${m}`; });
@@ -346,15 +342,13 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
                         <td className="p-2">
                           <div className="flex items-center gap-2">
                             <span className={incompletoFim ? 'text-amber-600' : ''}>{m.nome} {m.sobrenome || ''}</span>
-                            {(() => {
-                              const wa = waHref(m.telefone, msgTurma(`${m.nome}${m.sobrenome ? ' ' + m.sobrenome : ''}`, det.nome, det.encontros));
-                              return wa ? (
-                                <a href={wa} target="_blank" rel="noreferrer" title="Avisar no WhatsApp (dia dos encontros)"
-                                  className="inline-flex items-center gap-1 text-[11px] text-emerald-600 hover:underline shrink-0">
-                                  <MessageCircle className="h-3.5 w-3.5" /> WhatsApp
-                                </a>
-                              ) : null;
-                            })()}
+                            {m.telefone ? (
+                              <Link to={hrefConversa(m.telefone, msgTurma(`${m.nome}${m.sobrenome ? ' ' + m.sobrenome : ''}`, det.nome, det.encontros))}
+                                title="Avisar no WhatsApp (dia dos encontros)"
+                                className="inline-flex items-center gap-1 text-[11px] text-emerald-600 hover:underline shrink-0">
+                                <MessageCircle className="h-3.5 w-3.5" /> WhatsApp
+                              </Link>
+                            ) : null}
                           </div>
                           {m.telefone && <span className="block text-[11px] text-muted-foreground">{m.telefone}</span>}
                         </td>

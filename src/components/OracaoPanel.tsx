@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
+import { hrefConversa } from '@/lib/conversas';
 import { cuidados as cuidadosApi } from '../api';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
@@ -170,7 +171,7 @@ export default function OracaoPanel({ canWrite }: { canWrite: boolean }) {
               {sel.telefone && (
                 <div className="flex items-center gap-3 text-xs text-muted-foreground">
                   <a href={`tel:${tel(sel.telefone)}`} className="flex items-center gap-1 hover:text-primary"><Phone className="h-3 w-3" />{sel.telefone}</a>
-                  <a href={`https://wa.me/55${tel(sel.telefone)}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 hover:text-primary"><MessageSquare className="h-3 w-3" />WhatsApp</a>
+                  <Link to={hrefConversa(`55${tel(sel.telefone)}`)} className="flex items-center gap-1 hover:text-primary"><MessageSquare className="h-3 w-3" />WhatsApp</Link>
                 </div>
               )}
 

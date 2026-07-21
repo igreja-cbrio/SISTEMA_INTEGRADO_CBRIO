@@ -2841,6 +2841,7 @@ export const waInbox = {
   },
   mensagens: (id) => get(`/wa-inbox/conversas/${id}/mensagens`),
   responder: (id, body) => post(`/wa-inbox/conversas/${id}/responder`, body),
+  abrir: (body) => post('/wa-inbox/conversas/abrir', body),
   nova: (body) => post('/wa-inbox/conversas/nova', body),
   ler: (id) => post(`/wa-inbox/conversas/${id}/ler`, {}),
   atualizar: (id, body) => patch(`/wa-inbox/conversas/${id}`, body),

@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { ModuleHeader } from '../../components/layout/ModuleHeader';
 import { useSearchParams, Link, useNavigate } from 'react-router-dom';
+import { hrefConversa } from '@/lib/conversas';
 import { cuidados as cuidadosApi } from '../../api';
 import Paginacao, { usePaginacaoLocal } from '../../components/Paginacao';
 import useConfirmarSaida from '../../hooks/useConfirmarSaida';
@@ -1264,7 +1265,7 @@ export default function Cuidados() {
                           {p.telefone && (
                             <div className="flex items-center gap-3 mt-0.5 text-xs text-muted-foreground">
                               <a href={`tel:${tel}`} className="flex items-center gap-1 hover:text-primary"><Phone className="h-3 w-3" />{p.telefone}</a>
-                              {tel && <a href={`https://wa.me/55${tel}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 hover:text-primary"><MessageSquare className="h-3 w-3" />WhatsApp</a>}
+                              {tel && <Link to={hrefConversa(`55${tel}`)} className="flex items-center gap-1 hover:text-primary"><MessageSquare className="h-3 w-3" />WhatsApp</Link>}
                             </div>
                           )}
                         </TableCell>
@@ -1620,14 +1621,14 @@ export default function Cuidados() {
                           const primeiro = String(c.nome || '').trim().split(/\s+/)[0] || '';
                           const msg = `Olá ${primeiro}! Aqui é da CBRio 🙏 Que alegria te ver no culto e na decisão que você tomou! Queremos te acompanhar nos próximos passos — podemos conversar?`;
                           return (
-                            <a
-                              href={`https://wa.me/55${tel}?text=${encodeURIComponent(msg)}`}
-                              target="_blank" rel="noopener noreferrer" title="Enviar WhatsApp"
+                            <Link
+                              to={hrefConversa(`55${tel}`, msg)}
+                              title="Abrir conversa no WhatsApp"
                               onClick={e => e.stopPropagation()}
                               className="inline-flex items-center justify-center h-8 w-8 rounded-md hover:bg-accent align-middle"
                             >
                               <MessageSquare className="h-3.5 w-3.5 text-emerald-600" />
-                            </a>
+                            </Link>
                           );
                         })()}
                         {podeEditarCuidados && (

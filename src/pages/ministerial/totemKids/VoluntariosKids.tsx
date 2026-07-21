@@ -3,7 +3,8 @@
 // Baby, Little 3-4, Recepção, Coordenação...). Grava em vol_team_members (mesma
 // fonte do voluntariado). Cada voluntário tem ficha (perfil + antecedentes).
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
+import { hrefConversa } from '@/lib/conversas';
 import { totemKids as api } from '../../../api';
 import { Card } from '../../../components/ui/card';
 import { Button } from '../../../components/ui/button';
@@ -175,7 +176,7 @@ function FichaVoluntario({ volProfileId, onClose }: { volProfileId: string; onCl
           <div className="space-y-3 text-sm">
             {p?.phone && (
               <div className="flex items-center gap-2"><Phone className="h-4 w-4 text-muted-foreground" /> {p.phone}
-                <a href={`https://wa.me/55${String(p.phone).replace(/\D/g, '')}`} target="_blank" rel="noopener noreferrer" className="text-primary text-xs">WhatsApp</a>
+                <Link to={hrefConversa(p.phone)} className="text-primary text-xs">WhatsApp</Link>
               </div>
             )}
             {p?.email && <div className="text-muted-foreground text-xs">{p.email}</div>}
