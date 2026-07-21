@@ -902,23 +902,40 @@ async function gerarNotificacoesGrupos() {
   }
 
   // 2. Membros (status = membro_ativo) sem grupo ha 90+ dias
+  //    Paginado: já são 1000+ membros ativos (o cap do PostgREST deixava os do
+  //    fim da lista sem avaliação) e o .in() com a lista inteira de UUIDs
+  //    estoura a URL e falha SILENCIOSO — todo mundo parecia "sem grupo".
+  //    O vínculo de grupo agora sai de uma leitura paginada cruzada em JS.
   const noventaDias = new Date(now - 90 * 86400000).toISOString().slice(0, 10);
-  const { data: membros } = await supabase
-    .from('mem_membros')
-    .select('id, nome, created_at, status, active')
-    .eq('active', true)
-    .eq('status', 'membro_ativo')
-    .lte('created_at', noventaDias);
+  const PAGE = 1000;
+  const membros = [];
+  for (let offset = 0; ; offset += PAGE) {
+    const { data: pagina } = await supabase
+      .from('mem_membros')
+      .select('id, nome, created_at, status, active')
+      .eq('active', true)
+      .eq('status', 'membro_ativo')
+      .is('deleted_at', null)
+      .lte('created_at', noventaDias)
+      .order('id')
+      .range(offset, offset + PAGE - 1);
+    membros.push(...(pagina || []));
+    if (!pagina || pagina.length < PAGE) break;
+  }
 
-  if (membros?.length) {
-    const membroIds = membros.map(m => m.id);
-    const { data: participacoes } = await supabase
-      .from('mem_grupo_membros')
-      .select('membro_id')
-      .in('membro_id', membroIds)
-      .is('saiu_em', null);
-
-    const comGrupo = new Set((participacoes || []).map(p => p.membro_id));
+  if (membros.length) {
+    const comGrupo = new Set();
+    for (let offset = 0; ; offset += PAGE) {
+      const { data: pagina } = await supabase
+        .from('mem_grupo_membros')
+        .select('membro_id')
+        .is('saiu_em', null)
+        .is('deleted_at', null)
+        .order('id')
+        .range(offset, offset + PAGE - 1);
+      (pagina || []).forEach(p => { if (p.membro_id) comGrupo.add(p.membro_id); });
+      if (!pagina || pagina.length < PAGE) break;
+    }
     const semGrupo = membros.filter(m => !comGrupo.has(m.id));
 
     for (const m of semGrupo) {
