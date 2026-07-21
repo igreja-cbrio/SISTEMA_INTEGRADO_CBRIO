@@ -107,6 +107,16 @@ const CATEGORIA_TO_AREA_RESP = {
 // segue direto pra execução do criativo.
 const CRIATIVO_CATEGORIAS = ['marketing', 'producao'];
 
+// Aprovação de ORIGEM por categoria · override do roteamento por setor.
+// Hospitalidade (recepção, café, hospedagem de convidados) é aprovada E
+// atendida pelo Amaury (operações) — decisão do Matheus (2026-07-21). Sem esse
+// override, pedidos de hospitalidade de quem não tem setor resolvido caíam em
+// `triagem` e apareciam pra diretoria/super-admin aprovar. Também pula o 2º
+// carimbo de Gestão (ver bloco de gestaoStatus): Amaury aprova e atende.
+const CATEGORIA_ORIGEM_APROVADOR = {
+  hospitalidade: '8e4ece03-b306-4019-9ece-55b7ec1088cb', // Amaury Araújo · amaury.araujo@cbrio.org
+};
+
 // Map módulo → categorias (for granular permission filtering)
 const MODULO_CATEGORIAS = {
   ti: ['ti'],
@@ -1067,6 +1077,15 @@ router.post('/', async (req, res) => {
         motivo: 'Reserva de espaço vai direto para operações (Amaury)' };
     }
 
+    // Origem por categoria (ex.: hospitalidade → Amaury aprova E atende): a
+    // aprovação de origem vai pro responsável da categoria, não pro diretor do
+    // setor de quem pede — assim nunca cai em `triagem` (fila da diretoria).
+    if (CATEGORIA_ORIGEM_APROVADOR[categoria]) {
+      rota = { diretor_id: CATEGORIA_ORIGEM_APROVADOR[categoria], aprovacao_status: 'pendente',
+        status: 'aguardando_aprovacao_origem',
+        motivo: 'Origem aprovada pelo responsável da categoria' };
+    }
+
     // Compra de até R$ 1.000 → direto pra cotação do Amaury, planejada ou não
     // (decisão do Matheus · 2026-07-15). Sobrescreve a rota DEPOIS dos overrides
     // de Criativo/reserva; o status 'pendente' vira 'em_cotacao' no trigger de
@@ -1109,6 +1128,11 @@ router.post('/', async (req, res) => {
       // controle é a aprovação de origem do Criativo + (com custo) financeiro.
       gestaoStatus = 'dispensada';
       gestaoMotivo = 'Criativo não passa pela Gestão · origem do Criativo + financeiro';
+    } else if (CATEGORIA_ORIGEM_APROVADOR[categoria] && !planejado) {
+      // Hospitalidade: o responsável da categoria (Amaury) aprova a origem E
+      // atende — sem 2º carimbo de Gestão (decisão do Matheus · 2026-07-21).
+      gestaoStatus = 'dispensada';
+      gestaoMotivo = 'Origem aprovada pelo responsável da categoria (Amaury) · sem carimbo de Gestão';
     } else if (!planejado && categoria !== 'reserva_espaco') {
       // 2º carimbo · Gestão (ou aprovadores específicos da categoria · ex.: TI →
       // Diego/Matheus). Best-effort · lista vazia degrada.
