@@ -1004,6 +1004,16 @@ export const financeiroV2 = {
       fd.append('arquivo', file);
       return requestFile('/financeiro-v2/importar/balanco', fd, { timeoutMs: 300_000 });
     },
+    contribuicoesPrevia: (file) => {
+      const fd = new FormData();
+      fd.append('arquivo', file);
+      return requestFile('/financeiro-v2/importar/contribuicoes/previa', fd, { timeoutMs: 300_000 });
+    },
+    contribuicoes: (file) => {
+      const fd = new FormData();
+      fd.append('arquivo', file);
+      return requestFile('/financeiro-v2/importar/contribuicoes', fd, { timeoutMs: 300_000 });
+    },
   },
   uploads: (params) => get('/financeiro-v2/uploads' + (params ? '?' + new URLSearchParams(params) : '')),
   lancamentosBrutos: (params) => get('/financeiro-v2/lancamentos-brutos' + (params ? '?' + new URLSearchParams(params) : '')),
