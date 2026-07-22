@@ -1005,6 +1005,23 @@ da Membresia, `membros_count` de Grupos, snapshots Conectar do painel.
 **Regra permanente:** leitura de tabela que passa (ou vai passar) de 1000
 linhas usa `fetchAll`/`fetchAllPaginado`; `.in()` sempre em lotes ≤200.
 
+### Onda 2 (2026-07-21 · migration `20260721150000` · ⚠️ aplicar antes do merge)
+
+Matcher + NSM (idempotente · backwards-compatible · mesmos resultados, só
+mais barato): (1) `fn_link_or_create_membro` filtrava CPF/telefone com
+`coalesce(coluna,'')` — expressão ≠ da do índice único de CPF (20260715120000)
+→ planner ignorava o índice e fazia seq scan a cada decisão/cadastro; os
+predicados agora usam a coluna crua + `IS NOT NULL` explícito (casa o índice
+parcial). ⚠️ Lição permanente: **índice funcional só funciona se a query usar
+a expressão IDÊNTICA**. (2) Índices novos: telefone digits + e-mail
+lower(trim) em `mem_membros` (ramos 2 e 3 do matcher varriam a tabela) +
+`batismo_inscricoes(membro_id)` (EXISTS da NSM). (3) Guarda
+`pg_trigger_depth() > 1` nas funções de recálculo da NSM disparadas por
+`nsm_eventos` e `cui_convertidos` — a cascata de cada decisão recalculava a
+NSM 2x+ na rajada de domingo; escrita em cascata agora conta com o trigger de
+`cultos` (depth 0), o cron horário e o recálculo manual; escrita direta
+(serviço/backfill) segue recalculando na hora.
+
 ## Jornada NSM · engajamento de verdade (2026-06-10)
 
 Contexto: Marcos vai liberar os módulos ministeriais dos 4 primeiros valores
