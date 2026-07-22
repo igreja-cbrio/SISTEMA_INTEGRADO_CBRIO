@@ -37,6 +37,28 @@ const idade = (d?: string | null) => {
   } catch { return ''; }
 };
 
+// Abre uma janela imprimível com a lista de aniversariantes (Nome · Idade · Data).
+function imprimirAniversariantes(lista: any[]) {
+  const esc = (s: any) => String(s ?? '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' } as any)[c]);
+  const linhas = (lista || []).map(a =>
+    `<tr><td>${esc(a.nome)}</td><td>${esc(idade(a.data_nascimento))}</td><td>${esc(fmtDiaMes(a.data_nascimento))}</td></tr>`).join('');
+  const hoje = new Date().toLocaleDateString('pt-BR');
+  const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Aniversariantes CBKids</title>
+    <style>body{font-family:system-ui,-apple-system,Arial,sans-serif;margin:28px;color:#111}
+    h1{font-size:18px;margin:0 0 2px}p.sub{color:#666;font-size:12px;margin:0 0 14px}
+    table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #e5e5e5;font-size:13px}
+    th{background:#f6f6f6;font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:#555}
+    @media print{body{margin:0}}</style></head><body>
+    <h1>🎂 Aniversariantes da semana — CBKids</h1>
+    <p class="sub">${(lista || []).length} criança(s) · próximos 7 dias · impresso em ${hoje}</p>
+    <table><thead><tr><th>Nome</th><th>Idade</th><th>Aniversário</th></tr></thead><tbody>${linhas}</tbody></table>
+    <script>window.onload=function(){window.print()}</script></body></html>`;
+  const w = window.open('', '_blank');
+  if (!w) return;
+  w.document.write(html);
+  w.document.close();
+}
+
 export default function KidsHub() {
   const navigate = useNavigate();
   const [d, setD] = useState<any>(null);
@@ -100,7 +122,15 @@ export default function KidsHub() {
       <div className="grid grid-cols-1 gap-4">
         {/* Aniversariantes da semana */}
         <Card className="glass-solid p-4">
-          <div className="font-semibold text-sm flex items-center gap-2 mb-3"><Cake className="h-4 w-4 text-pink-500" /> Aniversariantes da semana</div>
+          <div className="font-semibold text-sm flex items-center gap-2 mb-3">
+            <Cake className="h-4 w-4 text-pink-500" /> Aniversariantes da semana
+            {(d?.aniversariantes || []).length > 0 && (
+              <button onClick={() => imprimirAniversariantes(d.aniversariantes)}
+                className="ml-auto inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:opacity-80">
+                <Printer className="h-3.5 w-3.5" /> Imprimir lista
+              </button>
+            )}
+          </div>
           {loading ? (
             <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-primary" /></div>
           ) : (d?.aniversariantes || []).length === 0 ? (
