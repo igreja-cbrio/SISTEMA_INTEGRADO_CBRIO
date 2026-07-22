@@ -26,6 +26,16 @@ const STATUS_LABEL = {
   sem_dado: 'Sem dado',
 };
 
+// Rótulos curtos só para exibição na pétala da mandala geral (5 valores) —
+// o texto completo (backend) fica cortado em 16 chars nesse espaço reduzido.
+// Não altera dado nenhum, só o texto mostrado aqui.
+const LABEL_CURTO_GERAL = {
+  generosidade: 'Generosidade',
+  servir: 'Servir',
+  conectar: 'Conectar-se',
+  investir: 'Investir Tempo',
+};
+
 // Geometria do círculo completo
 const SIZE = 380;
 const CX = SIZE / 2;
@@ -87,6 +97,7 @@ export default function MandalaSlide({ modo, data, onPetalClick, mes }) {
         labelY: ly,
         corBase,
         opacity,
+        label: isGeral ? (LABEL_CURTO_GERAL[item.key] || item.label) : item.label,
       };
     });
   }, [items, isGeral, data.cor, n]);
