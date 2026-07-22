@@ -13,10 +13,11 @@ import {
 import { Loader2, ExternalLink, Zap, Hand } from 'lucide-react';
 
 const FONTE_ROTA = {
-  cultos: '/cultos', cuidados: '/ministerial/cuidados', batismos: '/batismo',
-  grupos: '/grupos', voluntariado: '/ministerial/voluntariado', next: '/ministerial/next',
-  generosidade: '/admin/financeiro/generosidade', devocionais: '/ministerial/membresia',
-  marketing: '/marketing', integracao: '/ministerial/integracao', cba: '/ministerial/integracao',
+  cultos: '/integracao', cuidados: '/ministerial/cuidados', batismos: '/batismo',
+  grupos: '/grupos', voluntariado: '/voluntariado', next: '/next',
+  generosidade: '/admin/financeiro', devocionais: '/ministerial/membresia',
+  marketing: '/marketing', integracao: '/integracao', cba: '/integracao',
+  online: '/online',
 };
 function fonteInfo(fonteAuto) {
   if (!fonteAuto) return { auto: false, label: 'Manual (preenchido à mão)', rota: null, chave: null };
@@ -44,7 +45,9 @@ export default function KpiDetalheModal({ kpiId, onClose }) {
     .map(h => ({ periodo: h.periodo_referencia, valor: h.valor_realizado == null ? null : Number(h.valor_realizado) }))
     .filter(h => h.valor != null)
     .reverse();
-  const ultimo = hist[0];
+  // "Último valor" = última medição com dado real (a semana/mês em curso costuma
+  // estar zerada — mostrar ela como "último valor 0" confunde). Fallback: hist[0].
+  const ultimo = hist.find(h => h.valor_realizado != null && Number(h.valor_realizado) > 0) || hist[0];
   const pct = traj.percentual_meta;
   const corPct = pct == null ? 'text-muted-foreground' : pct >= 100 ? 'text-emerald-600' : pct >= 90 ? 'text-amber-600' : 'text-red-600';
 
