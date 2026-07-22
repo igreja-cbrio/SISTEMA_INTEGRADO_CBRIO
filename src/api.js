@@ -2913,6 +2913,14 @@ export const cuidados = {
     list: (params) => get('/cuidados/pedidos-app' + (params ? '?' + new URLSearchParams(params) : '')),
     updateStatus: (id, tratamento_status) => patch(`/cuidados/pedidos-app/${id}`, { tratamento_status }),
   },
+  // Caixa de entrada · pedidos de cuidado canônicos (cui_pedidos · whatsapp/plataforma/manual)
+  pedidos: {
+    list: (params) => get('/cuidados/pedidos' + (params ? '?' + new URLSearchParams(params) : '')),
+    create: (data) => post('/cuidados/pedidos', data),
+    update: (id, data) => patch(`/cuidados/pedidos/${id}`, data),
+    remove: (id) => del(`/cuidados/pedidos/${id}`),
+    atender: (fonte, id, atendimento) => post('/cuidados/pedidos/atender', { fonte, id, atendimento }),
+  },
   oracoes: {
     list: () => get('/cuidados/oracoes'),
     insights: () => get('/cuidados/oracoes/insights'),
@@ -2980,6 +2988,13 @@ export const cuidados = {
     create: (data) => post('/cuidados/visitas', data),
     update: (id, data) => patch(`/cuidados/visitas/${id}`, data),
     remove: (id) => del(`/cuidados/visitas/${id}`),
+  },
+  // Trilha por pessoa (aba Visitas e Atendimentos) · agrupa visitas + acompanhamentos
+  trilha: () => get('/cuidados/trilha'),
+  atendimentoComentarios: {
+    list: (refTipo, refId) => get(`/cuidados/atendimentos/${refTipo}/${refId}/comentarios`),
+    create: (refTipo, refId, texto) => post(`/cuidados/atendimentos/${refTipo}/${refId}/comentarios`, { texto }),
+    remove: (id) => del(`/cuidados/atendimento-comentarios/${id}`),
   },
   agregado: {
     list: (mes) => get(`/cuidados/agregado${mes ? `?mes=${mes}` : ''}`),
