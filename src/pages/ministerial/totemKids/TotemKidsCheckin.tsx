@@ -2931,6 +2931,8 @@ function ModalNovaCrianca(props: {
   const [captura, setCaptura] = useState<{ tipo: 'crianca' | 'resp'; i: number } | null>(null);
   const [salvando, setSalvando] = useState(false);
   const [dispensaCpf, setDispensaCpf] = useState(false); // supervisor liberou o cadastro sem CPF (PIN)
+  // Sugestão de família existente (CPF do responsável já tem filhos · Marcos 2026-07-22).
+  const [familiaSugerida, setFamiliaSugerida] = useState<{ membro: { id: string; nome: string }; familia_nome: string | null; ref_crianca_id: string; criancas: { id: string; nome: string }[] } | null>(null);
   const setCri = (i: number, patch: any) => setCriancas(cs => cs.map((c, idx) => idx === i ? { ...c, ...patch } : c));
   const addCri = () => setCriancas(cs => [...cs, emptyCrianca()]);
   const delCri = (i: number) => setCriancas(cs => cs.length > 1 ? cs.filter((_, idx) => idx !== i) : cs);
@@ -2981,21 +2983,47 @@ function ModalNovaCrianca(props: {
       toast.error('CPF do responsável é obrigatório. Se não tiver agora, use "Não tenho o CPF agora".');
       return;
     }
+    // Sugestão de família existente (Marcos 2026-07-22 · só cadastro NOVO): se o
+    // CPF do 1º responsável já é de um pai/mãe COM filhos, oferece juntar à
+    // família (com o nome dela pra confirmar) antes de criar uma nova. Gatilho SÓ
+    // por CPF. Fail-safe: qualquer erro no lookup → segue o cadastro normal.
+    if (!props.referencia && !dispensaCpf) {
+      const cpfPrincipal = validos.map(r => (r.cpf || '').replace(/\D/g, '')).find(cpf => cpfValido(cpf));
+      if (cpfPrincipal) {
+        try {
+          const m: any = await totemKids.criancas.responsavelFamilia(cpfPrincipal);
+          if (m?.encontrado && Array.isArray(m.criancas) && m.criancas.length && m.ref_crianca_id) {
+            setFamiliaSugerida(m); // abre o preview; o operador decide
+            return;
+          }
+        } catch { /* sem sugestão · segue normal */ }
+      }
+    }
+    await executarCadastro(null);
+  }
+
+  // Cria a(s) criança(s). joinRefId != null → TODAS entram na família existente
+  // (fluxo amigo_de_crianca_id, já testado). null → família nova (padrão).
+  // `revisar` (só na recusa da sugestão) registra rastro pra unir famílias depois.
+  async function executarCadastro(joinRefId: string | null, revisar?: { membroId: string; familiaNome: string | null } | null) {
+    const validasCri = criancas.filter(c => c.nome.trim());
+    const validos = props.referencia ? [] : resps.filter(r => r.nome.trim() && r.telefone.trim());
+    const juntando = !!(joinRefId || props.referencia);
     setSalvando(true);
     try {
-      let primeiroId: string | null = props.referencia?.id || null;
+      let primeiroId: string | null = joinRefId || props.referencia?.id || null;
       let primeiroCriado: any = null;
       for (let i = 0; i < validasCri.length; i++) {
         const c = validasCri[i];
-        // 1ª criança de um cadastro NOVO cria a família + responsáveis; as demais
-        // (e todas no modo "adicionar à família") herdam via amigo_de_crianca_id.
-        const body = (props.referencia || primeiroCriado)
+        // Juntando (família existente/sugerida) OU já criei a 1ª → herda via
+        // amigo_de_crianca_id. Senão, a 1ª cria família + responsáveis.
+        const body = (juntando || primeiroCriado)
           ? { crianca: montarCrianca(c), amigo_de_crianca_id: primeiroId }
           : { crianca: montarCrianca(c), permitir_sem_cpf: dispensaCpf || undefined, responsaveis: validos.map(x => ({ nome: x.nome.trim(), telefone: x.telefone.trim(), cpf: x.cpf?.trim() || null, parentesco: x.parentesco, autorizado_buscar: x.autorizado_buscar })) };
         const r = await totemKids.criancas.create(body);
         const cid = r?.crianca?.id;
         if (cid && c.foto) { try { await totemKids.criancas.uploadFoto(cid, c.foto); } catch { /* noop */ } }
-        if (i === 0 && !props.referencia) {
+        if (i === 0 && !juntando) {
           primeiroId = cid; primeiroCriado = r?.crianca;
           const retResps = Array.isArray(r?.responsaveis) ? r.responsaveis : [];
           for (let j = 0; j < retResps.length; j++) {
@@ -3005,10 +3033,14 @@ function ModalNovaCrianca(props: {
           primeiroCriado = r?.crianca;
         }
       }
+      // Recusou a sugestão de família → deixa um rastro pra revisão (best-effort).
+      if (revisar?.membroId && primeiroCriado?.id) {
+        totemKids.criancas.familiaRevisar({ crianca_id: primeiroCriado.id, responsavel_membro_id: revisar.membroId, familia_existente_nome: revisar.familiaNome }).catch(() => {});
+      }
       toast.success(validasCri.length > 1 ? `${validasCri.length} crianças cadastradas` : `${primeiroCriado?.nome || 'Criança'} cadastrada`);
-      // Sem referência (família nova) o fluxo segue com a 1ª criança (já com
-      // família → cai no painel da família). Com referência, o pai recarrega a família.
-      if (props.referencia) {
+      // Juntando (à família existente/sugerida) → segue com a 1ª criança nova (cai
+      // no painel da família). Família nova → recarrega pela busca.
+      if (juntando) {
         props.onCadastrado(primeiroCriado as Crianca);
       } else {
         const detalhe = await totemKids.criancas.buscar(validasCri[0].nome.trim());
@@ -3030,6 +3062,7 @@ function ModalNovaCrianca(props: {
   const { tentarFechar } = useConfirmarSaida(temAlteracoes, props.onClose);
 
   return (
+    <>
     <Dialog open={props.open} onOpenChange={(o) => { if (!o) tentarFechar(); }}>
       <DialogContent className="max-w-lg max-h-[90vh] flex flex-col">
         <DialogHeader>
@@ -3183,6 +3216,43 @@ function ModalNovaCrianca(props: {
         />
       )}
     </Dialog>
+
+    {/* Preview: adicionar à FAMÍLIA EXISTENTE (Marcos 2026-07-22) — o CPF do
+        responsável já é de um pai/mãe com filhos. O operador CONFIRMA o nome da
+        família + os irmãos antes de juntar (evita cadastro na família errada).
+        Recusar cria cadastro novo e deixa rastro pra revisão. Gatilho só por CPF. */}
+    {familiaSugerida && (
+      <Dialog open onOpenChange={(o) => { if (!o) setFamiliaSugerida(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Users className="h-5 w-5 text-pink-600" /> É dessa família?
+            </DialogTitle>
+            <DialogDescription>
+              O CPF de <b>{familiaSugerida.membro.nome}</b> já é responsável na{' '}
+              <b>{familiaSugerida.familia_nome || 'família cadastrada'}</b>. Confira se é a mesma família antes de juntar.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="rounded-lg border border-border p-3">
+            <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">Filhos já cadastrados</div>
+            <ul className="text-sm font-medium space-y-0.5">
+              {familiaSugerida.criancas.map((f) => <li key={f.id}>• {f.nome}</li>)}
+            </ul>
+          </div>
+          <div className="flex flex-col gap-2 pt-1">
+            <Button className="w-full bg-pink-600 hover:bg-pink-700" disabled={salvando}
+              onClick={() => { const ref = familiaSugerida.ref_crianca_id; setFamiliaSugerida(null); executarCadastro(ref); }}>
+              <CheckCircle2 className="h-4 w-4 mr-1" /> Sim, adicionar a esta família
+            </Button>
+            <Button variant="outline" className="w-full" disabled={salvando}
+              onClick={() => { const info = familiaSugerida; setFamiliaSugerida(null); executarCadastro(null, { membroId: info.membro.id, familiaNome: info.familia_nome }); }}>
+              Não é a mesma — criar cadastro novo
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    )}
+    </>
   );
 }
 // ── Modal: cadastrar responsável rápido (auto-abre se criança sem responsável) ──

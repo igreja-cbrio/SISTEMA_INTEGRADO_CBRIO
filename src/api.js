@@ -1534,6 +1534,10 @@ export const totemKids = {
     tornarFrequentador: (id) => post(`/totem-kids/criancas/${id}/tornar-frequentador`, {}),
     // Limite de 2 etiquetas de aniversário por semana (Milena 2026-07-22).
     aniversarioImpressoes: (id) => get(`/totem-kids/criancas/${id}/aniversario-impressoes`),
+    // "Nova criança": sugerir adicionar à família existente pelo CPF (Marcos 2026-07-22).
+    responsavelFamilia: (cpf) => get(`/totem-kids/responsavel-familia?cpf=${encodeURIComponent(cpf)}`),
+    // Registra rastro pra revisão quando o operador recusa a sugestão de família.
+    familiaRevisar: (data) => post('/totem-kids/familia-revisar', data),
     jornada: (id) => get(`/totem-kids/criancas/${id}/jornada`),
     analiseFrequencia: (id) => get(`/totem-kids/criancas/${id}/analise-frequencia`),
     // Atendimentos (histórico de contatos da equipe Kids com a criança)
