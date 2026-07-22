@@ -89,6 +89,7 @@ export default function TabCadastros({ onMembrosChange }) {
   const [motivoRejeicao, setMotivoRejeicao] = useState('');
   const [observacoesAprov, setObservacoesAprov] = useState('');
   const [salvando, setSalvando] = useState(false);
+  const [confirmando, setConfirmando] = useState(false);
 
   // Família — sugestão automática na aprovação
   const [familiasDisponiveis, setFamiliasDisponiveis] = useState([]);
@@ -195,6 +196,17 @@ export default function TabCadastros({ onMembrosChange }) {
       setSalvando(false);
       setAcao(null);
     }
+  }
+
+  async function handleConfirmarWhatsapp() {
+    if (!selecionado || confirmando) return;
+    setConfirmando(true);
+    try {
+      await membresia.cadastros.confirmarWhatsapp(selecionado.id);
+      toast.success('Confirmação enviada pelo WhatsApp ✅');
+    } catch (e) {
+      toast.error(e.message || 'Erro ao enviar confirmação');
+    } finally { setConfirmando(false); }
   }
 
   async function handleRejeitar() {
@@ -504,13 +516,14 @@ export default function TabCadastros({ onMembrosChange }) {
                 )}
               </div>
 
-              {/* Aprovado: abrir a conversa já com a confirmação pré-preenchida */}
+              {/* Aprovado: envia a confirmação pela API (template) · fallback abre a conversa */}
               {selecionado.status === 'aprovado' && (selecionado.telefone || '').replace(/\D/g, '') && (
-                <div style={{ marginTop: 22 }}>
-                  <Link to={hrefConversa(selecionado.telefone, `Olá, ${(selecionado.nome || '').trim().split(/\s+/)[0]}! 🎉 Seu cadastro na CBRio foi confirmado. Que alegria ter você com a gente! Qualquer coisa, é só chamar por aqui. 🙏`)}>
-                    <Button style={{ background: C.green, color: '#fff', width: '100%' }}>
-                      <MessageSquare style={{ width: 16, height: 16 }} /> Confirmar cadastro no WhatsApp
-                    </Button>
+                <div style={{ marginTop: 22, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <Button onClick={handleConfirmarWhatsapp} disabled={confirmando} style={{ background: C.green, color: '#fff', width: '100%' }}>
+                    <MessageSquare style={{ width: 16, height: 16 }} /> {confirmando ? 'Enviando…' : 'Enviar confirmação no WhatsApp'}
+                  </Button>
+                  <Link to={hrefConversa(selecionado.telefone, `Olá, ${(selecionado.nome || '').trim().split(/\s+/)[0]}! 🎉 Seu cadastro na CBRio foi confirmado. Que alegria ter você com a gente! Qualquer coisa, é só chamar por aqui. 🙏`)} style={{ textAlign: 'center', fontSize: 12, color: C.text3 }}>
+                    ou abrir a conversa manualmente
                   </Link>
                 </div>
               )}
