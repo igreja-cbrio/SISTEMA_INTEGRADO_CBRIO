@@ -6,7 +6,7 @@ import { nps as api } from '../api';
 import { toast } from 'sonner';
 import {
   Plus, X, MessageSquare, Sparkles, Users, Link2, Copy, Check, Loader2,
-  TrendingUp, TrendingDown, Minus, BarChart3, Search, Send, BrainCircuit, Pencil, Trash2,
+  TrendingUp, TrendingDown, Minus, BarChart3, Search, Send, BrainCircuit, Pencil, Trash2, Upload,
 } from 'lucide-react';
 
 const C = {
@@ -110,6 +110,16 @@ function Btn({ children, onClick, variant = 'primary', disabled, size = 'md', st
   return <button type={type || 'button'} onClick={onClick} disabled={disabled} style={{ ...base, ...v[variant], ...sx }}>{children}</button>;
 }
 
+function FieldRow({ label, children, hint }) {
+  return (
+    <div>
+      <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: C.t2, marginBottom: 6 }}>{label}</label>
+      {children}
+      {hint && <p style={{ fontSize: 11, color: C.t3, margin: '4px 0 0' }}>{hint}</p>}
+    </div>
+  );
+}
+
 function Modal({ open, onClose, title, children, footer, width = 640 }) {
   if (!open) return null;
   return (
@@ -172,6 +182,7 @@ export default function Nps() {
   const [search, setSearch] = useState('');
   const [filtroArea, setFiltroArea] = useState('todas');
   const [showCreate, setShowCreate] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [detalheId, setDetalheId] = useState(null);
 
   async function load() {
@@ -205,7 +216,12 @@ export default function Nps() {
         title="NPS — Pesquisas com IA"
         accent={C.cyan}
         subtitle="Crie pesquisas para os 5 valores · IA gera as perguntas a partir do que você quer medir · respostas analisadas automaticamente e ligadas aos KPIs."
-        actions={canCreate ? <Btn onClick={() => setShowCreate(true)} variant="cyan"><Plus size={16} />Nova NPS</Btn> : undefined}
+        actions={canCreate ? (
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Btn onClick={() => setShowImport(true)} variant="ghost"><Link2 size={16} />Importar do Forms</Btn>
+            <Btn onClick={() => setShowCreate(true)} variant="cyan"><Plus size={16} />Nova NPS</Btn>
+          </div>
+        ) : undefined}
       />
 
       {/* Tabs + busca */}
@@ -286,6 +302,13 @@ export default function Nps() {
         />
       )}
 
+      {showImport && (
+        <ImportarFormModal
+          onClose={() => setShowImport(false)}
+          onCreated={() => { setShowImport(false); load(); }}
+        />
+      )}
+
       {detalheId && (
         <DetalheModal
           id={detalheId}
@@ -296,6 +319,248 @@ export default function Nps() {
         />
       )}
     </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════
+// Importar do Google Forms · lê as perguntas do link e cria a pesquisa
+const TIPO_LABEL_IMPORT = {
+  texto_curto: 'Texto curto', texto_longo: 'Parágrafo', escala_5: 'Escala',
+  opcao_unica: 'Múltipla escolha', multipla: 'Caixas de seleção', secao: 'Seção',
+};
+
+function ImportarFormModal({ onClose, onCreated }) {
+  const { isAdmin, isDiretor, userAreas } = useAuth();
+  const restringeArea = !isAdmin && !isDiretor;
+  const minhasAreas = (userAreas || []).map(normArea).filter(Boolean);
+  const areaInicial = restringeArea ? (minhasAreas[0] || '') : 'geral';
+  const gruposArea = restringeArea
+    ? AREAS_NPS.map(g => ({ ...g, opcoes: g.opcoes.filter(o => minhasAreas.includes(o.id)) })).filter(g => g.opcoes.length)
+    : AREAS_NPS;
+
+  const [url, setUrl] = useState('');
+  const [lendo, setLendo] = useState(false);
+  const [form, setForm] = useState(null);
+  const [titulo, setTitulo] = useState('');
+  const [valor, setValor] = useState(null);
+  const [area, setArea] = useState(areaInicial);
+  const [contextoKpi, setContextoKpi] = useState('nps_geral');
+  const [permitePublico, setPermitePublico] = useState(true);
+  const [dataFim, setDataFim] = useState('');
+  const [notaId, setNotaId] = useState('');
+  const [salvando, setSalvando] = useState(false);
+
+  const areaEspecifica = area && area.toLowerCase() !== 'geral';
+  const escopoOk = !!valor || areaEspecifica;
+
+  async function ler() {
+    if (!url.trim()) return toast.error('Cole o link do Google Forms.');
+    setLendo(true);
+    try {
+      const f = await api.importarForm(url.trim());
+      setForm(f);
+      setTitulo(f.titulo || 'Pesquisa importada');
+      setNotaId(f.candidatos_nota?.[0]?.id || '');
+    } catch (e) { toast.error(e.message || 'Erro ao ler o formulário'); }
+    setLendo(false);
+  }
+
+  async function criar() {
+    if (!escopoOk) return toast.error('Escolha um valor ou uma área específica (não "Geral").');
+    if (!titulo.trim()) return toast.error('Defina um título.');
+    setSalvando(true);
+    try {
+      const itens = form.itens || [];
+      const notaItem = notaId ? itens.find(i => i.id === notaId) : null;
+      const pergunta_nps = notaItem
+        ? { id: notaItem.id, tipo: 'nps', texto: notaItem.texto }
+        : { id: 'nps', tipo: 'nps', texto: 'De 0 a 10, o quanto você recomendaria a CBRio para um amigo ou familiar?' };
+      // perguntas_extras = todas menos a nota · remove o campo interno 'escala'
+      const perguntas_extras = itens
+        .filter(i => !notaItem || i.id !== notaItem.id)
+        .map(({ escala, ...rest }) => rest);
+      const escalaNota = notaItem?.escala
+        ? (notaItem.escala.min === 0 && notaItem.escala.max === 10 ? { tipo: '0-10' } : { min: notaItem.escala.min, max: notaItem.escala.max })
+        : { tipo: '0-10' };
+      const mapa_textos = {};
+      itens.forEach(i => { mapa_textos[i.id] = i.texto; });
+
+      await api.create({
+        titulo: titulo.trim(),
+        valor,
+        area,
+        contexto_kpi: contextoKpi,
+        objetivo: form.descricao || titulo.trim(),
+        permite_publico: permitePublico,
+        data_fim: dataFim || null,
+        perguntas: { descricao_curta: form.descricao || null, pergunta_nps, perguntas_extras },
+        import_meta: {
+          fonte: 'google_forms', url: form.url,
+          nota: { pergunta_id: pergunta_nps.id, escala: escalaNota },
+          mapa_textos,
+        },
+      });
+      toast.success('Pesquisa importada e criada.');
+      onCreated();
+    } catch (e) { toast.error(e.message || 'Erro ao criar'); }
+    setSalvando(false);
+  }
+
+  return (
+    <Modal open onClose={onClose} title={form ? 'Revisar e criar' : 'Importar do Google Forms'} width={720}
+      footer={form ? (
+        <>
+          <Btn variant="ghost" onClick={() => setForm(null)}>Voltar</Btn>
+          <Btn variant="cyan" onClick={criar} disabled={salvando}>
+            {salvando ? <><Loader2 size={14} className="animate-spin" />Criando...</> : <><Send size={14} />Criar pesquisa</>}
+          </Btn>
+        </>
+      ) : (
+        <>
+          <Btn variant="ghost" onClick={onClose}>Cancelar</Btn>
+          <Btn variant="cyan" onClick={ler} disabled={lendo}>
+            {lendo ? <><Loader2 size={14} className="animate-spin" />Lendo...</> : <><Link2 size={14} />Ler perguntas</>}
+          </Btn>
+        </>
+      )}
+    >
+      {!form ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <p style={{ fontSize: 13, color: C.t2, margin: 0 }}>Cole o link público do Google Forms. Eu leio as perguntas e monto a pesquisa aqui — você confere e escolhe qual pergunta é a nota (0 a 10).</p>
+          <input value={url} onChange={e => setUrl(e.target.value)} placeholder="https://docs.google.com/forms/d/e/.../viewform" style={inp} />
+          <p style={{ fontSize: 11, color: C.t3, margin: 0 }}>O formulário precisa estar público (aceitando respostas, sem exigir login).</p>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <FieldRow label="Título"><input value={titulo} onChange={e => setTitulo(e.target.value)} style={inp} /></FieldRow>
+          <FieldRow label="Valor da CBRio (opcional se escolher área)">
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              <button type="button" onClick={() => setValor(null)} style={{ padding: '6px 12px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: `1.5px solid ${valor === null ? C.primary : C.border}`, background: valor === null ? C.primaryBg : 'transparent', color: valor === null ? C.primary : C.t3 }}>Sem valor</button>
+              {VALORES.map(v => (
+                <button key={v.id} type="button" onClick={() => setValor(v.id)} style={{ padding: '6px 12px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: `1.5px solid ${valor === v.id ? v.color : C.border}`, background: valor === v.id ? `${v.color}15` : 'transparent', color: valor === v.id ? v.color : C.t2 }}>{v.label}</button>
+              ))}
+            </div>
+          </FieldRow>
+          <FieldRow label="Área">
+            <select value={area} onChange={e => setArea(e.target.value)} style={inp}>
+              {gruposArea.map(g => <optgroup key={g.grupo} label={g.grupo}>{g.opcoes.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}</optgroup>)}
+            </select>
+          </FieldRow>
+          <FieldRow label="Contexto do KPI">
+            <select value={contextoKpi} onChange={e => setContextoKpi(e.target.value)} style={inp}>
+              {CONTEXTOS_KPI.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+            </select>
+          </FieldRow>
+          {!escopoOk && <p style={{ fontSize: 11, color: C.amber, margin: 0 }}>Escolha um valor OU uma área específica (diferente de "Geral").</p>}
+          <FieldRow label="Qual pergunta é a nota (0 a 10)?" hint="Se a escala não for 0–10, converto as respostas automaticamente na importação.">
+            <select value={notaId} onChange={e => setNotaId(e.target.value)} style={inp}>
+              {(form.candidatos_nota || []).map(c => <option key={c.id} value={c.id}>{c.texto} (escala {c.min}–{c.max})</option>)}
+              <option value="">+ Adicionar pergunta 0–10 padrão</option>
+            </select>
+          </FieldRow>
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 600, color: C.t2 }}>Perguntas lidas ({form.itens.length})</label>
+            <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 240, overflowY: 'auto' }}>
+              {form.itens.map(i => (
+                <div key={i.id} style={{ padding: '8px 10px', border: `1px solid ${C.border}`, borderRadius: 8, background: C.card }}>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: C.cyan, background: C.cyanBg, padding: '1px 7px', borderRadius: 8 }}>{TIPO_LABEL_IMPORT[i.tipo] || i.tipo}</span>
+                    <span style={{ fontSize: 13, color: C.text }}>{i.texto}</span>
+                  </div>
+                  {i.opcoes?.length ? <div style={{ fontSize: 11, color: C.t3, marginTop: 3 }}>{i.opcoes.join(' · ')}</div> : null}
+                </div>
+              ))}
+            </div>
+          </div>
+          {form.avisos?.length ? <p style={{ fontSize: 11, color: C.amber, margin: 0 }}>{form.avisos.length} item(ns) não suportado(s) foram ignorados (ex.: grade, upload de arquivo).</p> : null}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+// Importar respostas de uma planilha (export do Forms) para uma pesquisa existente
+function ImportarRespostasModal({ pesquisaId, onClose, onImported }) {
+  const [file, setFile] = useState(null);
+  const [preview, setPreview] = useState(null);
+  const [notaColuna, setNotaColuna] = useState('');
+  const [carregando, setCarregando] = useState(false);
+  const [importando, setImportando] = useState(false);
+
+  async function onFile(e) {
+    const f = e.target.files?.[0];
+    e.target.value = '';
+    if (!f) return;
+    setFile(f); setPreview(null); setNotaColuna('');
+    setCarregando(true);
+    try {
+      const p = await api.importarRespostas(pesquisaId, f, { preview: true });
+      setPreview(p);
+      setNotaColuna(p.nota_coluna || '');
+    } catch (err) { toast.error(err.message || 'Erro ao ler a planilha'); }
+    setCarregando(false);
+  }
+
+  async function importar() {
+    if (!file) return;
+    setImportando(true);
+    try {
+      const r = await api.importarRespostas(pesquisaId, file, { notaColuna: notaColuna || undefined });
+      toast.success(`${r.inseridas} resposta(s) importada(s)${r.ignoradas ? ` · ${r.ignoradas} ignorada(s) sem nota` : ''}.`);
+      onImported();
+    } catch (err) { toast.error(err.message || 'Erro ao importar'); }
+    setImportando(false);
+  }
+
+  return (
+    <Modal open onClose={onClose} title="Importar respostas (planilha)" width={640}
+      footer={preview ? (
+        <>
+          <Btn variant="ghost" onClick={() => { setPreview(null); setFile(null); }}>Trocar arquivo</Btn>
+          <Btn variant="cyan" onClick={importar} disabled={importando || !preview.validas || (!preview.nota_ok && !notaColuna)}>
+            {importando ? <><Loader2 size={14} className="animate-spin" />Importando...</> : <><Upload size={14} />Importar {preview.validas} resposta(s)</>}
+          </Btn>
+        </>
+      ) : <Btn variant="ghost" onClick={onClose}>Fechar</Btn>}
+    >
+      {!preview ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <p style={{ fontSize: 13, color: C.t2, margin: 0 }}>Suba a planilha de respostas exportada do Google Forms (.xlsx ou .csv). Eu mapeio as colunas com as perguntas da pesquisa e converto a nota pra 0–10.</p>
+          <label style={{ ...inp, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: C.t2 }}>
+            <Upload size={16} /> {carregando ? 'Lendo planilha...' : 'Escolher planilha (.xlsx/.csv)'}
+            <input type="file" accept=".xlsx,.xls,.csv" style={{ display: 'none' }} onChange={onFile} disabled={carregando} />
+          </label>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ display: 'flex', gap: 14, fontSize: 13 }}>
+            <span><b>{preview.validas}</b> com nota</span>
+            <span style={{ color: C.t3 }}><b>{preview.ignoradas}</b> sem nota</span>
+            <span style={{ color: C.t3 }}>de {preview.total_linhas} linhas</span>
+          </div>
+          <FieldRow label="Coluna da nota (0–10)" hint="Se o automático não acertou, escolha a coluna certa.">
+            <select value={notaColuna} onChange={e => setNotaColuna(e.target.value)} style={inp}>
+              <option value="">{preview.nota_ok ? `Automático: ${preview.nota_coluna}` : '— escolher a coluna —'}</option>
+              {preview.mapeamento.filter(m => m.papel === 'pergunta').map((m, i) => <option key={i} value={m.coluna}>{m.coluna}</option>)}
+            </select>
+          </FieldRow>
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 600, color: C.t2 }}>Mapeamento das colunas</label>
+            <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 220, overflowY: 'auto' }}>
+              {preview.mapeamento.map((m, i) => (
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: 12, padding: '6px 8px', border: `1px solid ${C.border}`, borderRadius: 6 }}>
+                  <span style={{ color: C.text }}>{m.coluna}</span>
+                  <span style={{ color: m.eh_nota ? C.cyan : m.papel === 'sem_mapa' ? C.amber : C.t3, textAlign: 'right' }}>
+                    {m.eh_nota ? 'NOTA (0–10)' : m.papel === 'carimbo' ? 'data' : m.papel === 'email' ? 'e-mail' : m.papel === 'sem_mapa' ? 'sem correspondência' : m.pergunta}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+          {preview.sem_mapa?.length ? <p style={{ fontSize: 11, color: C.amber, margin: 0 }}>{preview.sem_mapa.length} coluna(s) sem correspondência serão ignoradas.</p> : null}
+        </div>
+      )}
+    </Modal>
   );
 }
 
@@ -819,6 +1084,7 @@ function DetalheModal({ id, onClose, onChanged, canWrite, onResponder }) {
   const [excluindo, setExcluindo] = useState(false);
   const [copied, setCopied] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  const [importRespOpen, setImportRespOpen] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -975,6 +1241,9 @@ function DetalheModal({ id, onClose, onChanged, canWrite, onResponder }) {
           <Btn variant="ghost" size="sm" onClick={() => setEditOpen(true)}>
             <Pencil size={12} />Editar
           </Btn>
+          <Btn variant="ghost" size="sm" onClick={() => setImportRespOpen(true)}>
+            <Upload size={12} />Importar respostas
+          </Btn>
           {pesquisa.status === 'ativa' && (
             <Btn variant="danger" size="sm" onClick={encerrar}>Encerrar</Btn>
           )}
@@ -991,6 +1260,14 @@ function DetalheModal({ id, onClose, onChanged, canWrite, onResponder }) {
           pesquisa={pesquisa}
           onClose={() => setEditOpen(false)}
           onSaved={() => { setEditOpen(false); load(); onChanged?.(); }}
+        />
+      )}
+
+      {importRespOpen && (
+        <ImportarRespostasModal
+          pesquisaId={id}
+          onClose={() => setImportRespOpen(false)}
+          onImported={() => { setImportRespOpen(false); load(); onChanged?.(); }}
         />
       )}
 
