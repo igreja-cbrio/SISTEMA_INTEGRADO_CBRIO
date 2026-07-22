@@ -765,6 +765,29 @@ const COLLECTORS = {
     return { valor: pct, observacao: `${concluidos} de ${total} convertidos em doadores` };
   },
 
+  // ── NPS Culto por área (CULTO-NPS-*) ──
+  // "NPS do culto" da área = MÉDIA das notas (0-10) das respostas da(s) pesquisa(s)
+  // de NPS geral (contexto_kpi='nps_geral') daquela área. Só LÊ as respostas que o
+  // módulo NPS já coleta — não altera nada no NPS. Área sem pesquisa/resposta → "—".
+  // (Decisão do Matheus: usar os NPS de área existentes; escala 0-10 · meta = 9.)
+  // ⚠️ NPS é pontual (a pesquisa é respondida numa data): usamos a média ACUMULADA
+  // até o fim do período (não só as respostas DO mês) pra o card refletir o NPS
+  // atual da área em qualquer mês a partir da resposta — senão só apareceria no mês
+  // exato em que a pesquisa foi respondida.
+  'nps.culto_area': async ({ fim, area }) => {
+    if (!area) return null;
+    const { data: pesquisas } = await supabase.from('nps_pesquisas')
+      .select('id').eq('area', String(area).toLowerCase())
+      .eq('contexto_kpi', 'nps_geral').is('deleted_at', null);
+    const ids = (pesquisas || []).map(p => p.id);
+    if (!ids.length) return null;
+    const rows = await fetchAll('nps_respostas', 'score',
+      q => q.in('pesquisa_id', ids).lt('created_at', fim));
+    if (!rows.length) return null;
+    const media = rows.reduce((s, r) => s + Number(r.score || 0), 0) / rows.length;
+    return { valor: Math.round(media * 10) / 10, observacao: `${rows.length} respostas · média ${media.toFixed(1)} (0-10)` };
+  },
+
   // ── Devocionais (Gap 3) ──
   // KID-04: famílias fazendo devocionais — conta famílias distintas com
   // ao menos 1 devocional do tipo 'familiar' no período.
