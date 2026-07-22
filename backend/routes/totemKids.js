@@ -672,7 +672,7 @@ router.get('/criancas/buscar', authorizeModule('kids', 1), async (req, res) => {
     let buscaQ = supabase
       .from('kids_criancas')
       .select(`
-        id, nome, data_nascimento, sexo, foto_url, foto_storage_path, foto_consentimento_em, observacoes_medicas,
+        id, nome, data_nascimento, sexo, foto_url, foto_storage_path, foto_consentimento_em, observacoes_medicas, consent_marketing,
         tem_espectro, espectro_qual, tem_alergia, alergia_qual, tem_limitacao_fisica, limitacao_fisica_qual,
         visitante, visitante_relacao, data_limite, ativo, motivo_inativacao, familia_id,
         familia:mem_familias(id, nome),
@@ -708,7 +708,7 @@ router.get('/criancas/buscar', authorizeModule('kids', 1), async (req, res) => {
           const { data: extras2 } = await supabase
             .from('kids_criancas')
             .select(`
-              id, nome, data_nascimento, sexo, foto_url, foto_storage_path, foto_consentimento_em, observacoes_medicas,
+              id, nome, data_nascimento, sexo, foto_url, foto_storage_path, foto_consentimento_em, observacoes_medicas, consent_marketing,
               visitante, visitante_relacao, data_limite, ativo, motivo_inativacao, familia_id,
               familia:mem_familias(id, nome),
               responsaveis:kids_responsaveis(
@@ -755,7 +755,7 @@ router.get('/criancas/:id/irmaos', authorizeModule('kids', 1), async (req, res) 
     const { data: irmaos } = await supabase
       .from('kids_criancas')
       .select(`
-        id, nome, data_nascimento, sexo, foto_url, foto_storage_path, foto_consentimento_em, observacoes_medicas,
+        id, nome, data_nascimento, sexo, foto_url, foto_storage_path, foto_consentimento_em, observacoes_medicas, consent_marketing,
         tem_espectro, espectro_qual, tem_alergia, alergia_qual, tem_limitacao_fisica, limitacao_fisica_qual,
         visitante, visitante_relacao, data_limite, ativo, motivo_inativacao, familia_id,
         familia:mem_familias(id, nome),
