@@ -678,7 +678,7 @@ router.get('/criancas/buscar', authorizeModule('kids', 1), async (req, res) => {
         familia:mem_familias(id, nome),
         responsaveis:kids_responsaveis(
           membro_id, parentesco, autorizado_buscar,
-          membro:mem_membros(id, nome, telefone, cpf, foto_url)
+          membro:mem_membros(id, nome, telefone, cpf, foto_url, deleted_at)
         )
       `)
       .is('deleted_at', null);
@@ -713,7 +713,7 @@ router.get('/criancas/buscar', authorizeModule('kids', 1), async (req, res) => {
               familia:mem_familias(id, nome),
               responsaveis:kids_responsaveis(
                 membro_id, parentesco, autorizado_buscar,
-                membro:mem_membros(id, nome, telefone, cpf, foto_url)
+                membro:mem_membros(id, nome, telefone, cpf, foto_url, deleted_at)
               )
             `)
             .in('id', criancaIds)
@@ -728,6 +728,10 @@ router.get('/criancas/buscar', authorizeModule('kids', 1), async (req, res) => {
     [...(criancas || []), ...extras].forEach(c => map.set(c.id, c));
     const lista = (await anexarFotosEmLote([...map.values()])).map(c => ({
       ...c,
+      // Responsável com cadastro soft-deletado fica FORA do totem (o embed não
+      // filtra deleted_at sozinho): não pode ser "quem está trazendo" nem
+      // editado — era o fantasma do caso Julliane Gaia (2026-07-22).
+      responsaveis: (c.responsaveis || []).filter((r) => r.membro && !r.membro.deleted_at),
       idade_meses: calcIdadeMeses(c.data_nascimento),
       idade_label: formatIdade(calcIdadeMeses(c.data_nascimento)),
     }));
@@ -761,7 +765,7 @@ router.get('/criancas/:id/irmaos', authorizeModule('kids', 1), async (req, res) 
         familia:mem_familias(id, nome),
         responsaveis:kids_responsaveis(
           membro_id, parentesco, autorizado_buscar,
-          membro:mem_membros(id, nome, telefone, cpf, foto_url)
+          membro:mem_membros(id, nome, telefone, cpf, foto_url, deleted_at)
         )
       `)
       .eq('familia_id', base.familia_id)
@@ -772,6 +776,8 @@ router.get('/criancas/:id/irmaos', authorizeModule('kids', 1), async (req, res) 
 
     const lista = (await anexarFotosEmLote(irmaos)).map(c => ({
       ...c,
+      // Mesmo filtro da busca: membro deletado não aparece como responsável.
+      responsaveis: (c.responsaveis || []).filter((r) => r.membro && !r.membro.deleted_at),
       idade_meses: calcIdadeMeses(c.data_nascimento),
       idade_label: formatIdade(calcIdadeMeses(c.data_nascimento)),
     }));
@@ -835,7 +841,7 @@ router.get('/criancas/:id', authorizeModule('kids', 1), async (req, res) => {
         *, familia:mem_familias(id, nome),
         responsaveis:kids_responsaveis(
           id, membro_id, parentesco, autorizado_buscar, contato_emergencia, observacao,
-          membro:mem_membros(id, nome, telefone, cpf, foto_url, email)
+          membro:mem_membros(id, nome, telefone, cpf, foto_url, email, deleted_at)
         )
       `)
       .eq('id', req.params.id)
@@ -845,6 +851,8 @@ router.get('/criancas/:id', authorizeModule('kids', 1), async (req, res) => {
 
     res.json({
       ...data,
+      // Mesmo filtro da busca: membro deletado não aparece como responsável.
+      responsaveis: (data.responsaveis || []).filter((r) => r.membro && !r.membro.deleted_at),
       foto_url: await fotoVisivelCrianca(data),
       idade_meses: calcIdadeMeses(data.data_nascimento),
       idade_label: formatIdade(calcIdadeMeses(data.data_nascimento)),
@@ -1159,8 +1167,18 @@ router.patch('/membro/:id', authorizeModule('kids', 3), async (req, res) => {
       .eq('id', req.params.id)
       .is('deleted_at', null)
       .select('id, nome, telefone')
-      .single();
+      .maybeSingle();
     if (error) throw error;
+    if (!data) {
+      // Cadastro soft-deletado na Membresia (ex.: depuração PCO de 20/06 pegou
+      // responsáveis ativos do Kids) ou id inexistente — antes caía no .single()
+      // e virava 500 genérico ("não conseguimos editar" · caso da mãe do Samuel
+      // Gaia · 2026-07-22). Erro CLARO + flag pro front tratar se quiser.
+      return res.status(404).json({
+        error: 'O cadastro deste responsável está desativado na Membresia — não dá pra editar. Re-vincule o responsável pela ficha (Adicionar) ou peça a um administrador pra restaurar o cadastro.',
+        cadastro_desativado: true,
+      });
+    }
 
     // mem_membros é o cadastro CANÔNICO da pessoa — propaga a mudança pros
     // espelhos (best-effort · não falha a resposta): conta de usuário

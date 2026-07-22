@@ -2461,6 +2461,19 @@ via `window.print` na Brother QL-820NWB default do Windows).
   Decisão do conselho: **Painel ao vivo NÃO ganha botão Ativar** (superfície
   de monitoramento). Residual documentado: ensaio no MESMO dia do culto conta
   como real até o Encerrar perguntar (ensaie com culto de outro dia).
+- **⚠️ Vínculo do Kids × limpeza da Membresia (incidente 2026-07-22 · lei)**: a
+  antiga rotina "depurar inativos" da era PCO (removida no #1861) soft-deletou
+  em 20/06 **129 mem_membros que eram responsáveis ATIVOS** em
+  `kids_responsaveis` (sem passar por merge · mem_merge_log vazio). Sintoma: o
+  responsável aparecia no check-in (embed não filtra `deleted_at`), mas TODA
+  edição falhava com 500 genérico (`PATCH /totem-kids/membro/:id` filtrava
+  `deleted_at IS NULL` + `.single()` → 0 linhas · caso Julliane Gaia, mãe do
+  Samuel). Reparo por script (repontar vínculo pra gêmeo vivo por telefone/nome
+  · `app_restore` dos sem gêmeo). Código: o PATCH devolve **404 claro** com
+  `cadastro_desativado`; busca/irmãos/`GET /criancas/:id` **filtram responsável
+  com membro deletado**. **Regra: qualquer limpeza/soft-delete em massa de
+  `mem_membros` DEVE checar antes `kids_responsaveis` (e repontar/poupar quem
+  é responsável ativo).**
 - **Saneamento da base Kids (2026-07-17 · `scripts/kids_integridade_auto.cjs
   --auto`)**: executado com backup JSON antes das mutações. Foram fundidos 2
   responsáveis realmente duplicados (mesmo telefone + grafia quase idêntica),
