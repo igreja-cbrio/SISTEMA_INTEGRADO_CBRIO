@@ -2461,6 +2461,19 @@ via `window.print` na Brother QL-820NWB default do Windows).
   Decisão do conselho: **Painel ao vivo NÃO ganha botão Ativar** (superfície
   de monitoramento). Residual documentado: ensaio no MESMO dia do culto conta
   como real até o Encerrar perguntar (ensaie com culto de outro dia).
+- **⚠️ LEI · criança nova NUNCA entra em família existente automaticamente
+  (Marcos 2026-07-22 · caso Benjamin/Mariane Gaia)**: o `POST /criancas` (fluxo
+  normal) herdava `mem_membros.familia_id` do responsável — a Mariane (tia do
+  Samuel, agrupada na família da irmã pela MEMBRESIA) cadastrou o próprio filho
+  e ele nasceu na família da irmã, com **duas mães** na mesma família. Agora o
+  fluxo normal **sempre cria `mem_familias` nova** ("Família <sobrenome da
+  criança>"); juntar núcleos é ato explícito — botão "Cadastrar criança na
+  família" (`amigo_de_crianca_id`) ou Gestão/Entradas (Vincular famílias).
+  Efeito colateral aceito: irmão cadastrado pela via errada ("Nova criança" em
+  vez do botão da família) nasce em família separada — corrige-se juntando as
+  famílias, o inverso (criança na família alheia) é que era irreversível de
+  detectar. Diagnóstico do dia: na base inteira só 2 famílias tinham 2+ mães
+  (a do caso + Nicolle duplicada nos filhos do Juninho · ambas corrigidas).
 - **⚠️ Vínculo do Kids × limpeza da Membresia (incidente 2026-07-22 · lei)**: a
   antiga rotina "depurar inativos" da era PCO (removida no #1861) soft-deletou
   em 20/06 **129 mem_membros que eram responsáveis ATIVOS** em
