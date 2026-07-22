@@ -322,7 +322,16 @@ export default function TotemKidsPainel() {
     if (!confirm(`Encerrar a sessão de ${cultoSel.culto_nome}? Vai consolidar ${cultoSel.presentes} criança(s) no culto.`)) return;
     setEncerrando(true);
     try {
-      await totemKids.sessoes.encerrar(cultoSel.sessao_id);
+      try {
+        await totemKids.sessoes.encerrar(cultoSel.sessao_id);
+      } catch (e409: unknown) {
+        // Design v5 (2026-07-22): 409 = há check-ins fora do horário do culto
+        // (provável teste de ensaio) — decisão humana antes de consolidar.
+        const err = e409 as { precisa_confirmar_limpeza?: boolean; suspeitos?: number };
+        if (!err?.precisa_confirmar_limpeza) throw e409;
+        const limpar = confirm(`${err.suspeitos} check-in(s) fora do horário do culto parecem teste.\n\nOK = apagar antes de consolidar (não contam no número) · Cancelar = manter tudo`);
+        await totemKids.sessoes.encerrar(cultoSel.sessao_id, { limpar_testes: limpar });
+      }
       toast.success('Sessão encerrada · KPIs consolidados');
       carregar();
     } catch (e: unknown) {

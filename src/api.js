@@ -1498,7 +1498,7 @@ export const totemKids = {
     },
     create: (data) => post('/totem-kids/sessoes', data),
     abrir: (id) => post(`/totem-kids/sessoes/${id}/abrir`, {}),
-    encerrar: (id) => post(`/totem-kids/sessoes/${id}/encerrar`, {}),
+    encerrar: (id, body = {}) => post(`/totem-kids/sessoes/${id}/encerrar`, body),
     encerrarVencidas: () => post('/totem-kids/sessoes/encerrar-vencidas', {}),
     trocarPeriodo: (cultoIds) => post('/totem-kids/sessoes/trocar-periodo', { culto_ids: cultoIds }),
   },

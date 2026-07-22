@@ -199,13 +199,26 @@ function AbaSessoes() {
     } finally { setProcessando(null); }
   }
 
+  // Encerra com confirmação de limpeza (design v5 · 2026-07-22): o backend
+  // devolve 409 quando há check-ins fora do horário do culto (provável teste de
+  // ensaio) — pergunta e re-chama com a decisão humana. Nunca apaga sozinho.
+  async function encerrarComLimpeza(id: string) {
+    try {
+      await totemKids.sessoes.encerrar(id);
+    } catch (e: any) {
+      if (!e?.precisa_confirmar_limpeza) throw e;
+      const limpar = confirm(`${e.suspeitos} check-in(s) fora do horário do culto parecem teste.\n\nOK = apagar antes de consolidar (não contam no número) · Cancelar = manter tudo`);
+      await totemKids.sessoes.encerrar(id, { limpar_testes: limpar });
+    }
+  }
+
   async function encerrarGrupo(g: any) {
     const abertas = g.cultos.map((c: any) => sessaoPorCulto[c.id]).filter((s: any) => s && s.status === 'aberta');
     if (!abertas.length) return;
     if (!confirm(`Encerrar ${rotuloGrupo(g)}? Os KPIs de Kids serão consolidados.`)) return;
     setProcessando(g.key);
     try {
-      for (const s of abertas) await totemKids.sessoes.encerrar(s.id);
+      for (const s of abertas) await encerrarComLimpeza(s.id);
       toast.success('Encerrado · KPIs consolidados');
       await carregar();
     } catch (e: any) {
@@ -228,7 +241,7 @@ function AbaSessoes() {
 
   async function encerrarUma(id: string) {
     if (!confirm('Encerrar essa sessão? KPIs serão consolidados.')) return;
-    try { await totemKids.sessoes.encerrar(id); toast.success('Encerrada'); await carregar(); }
+    try { await encerrarComLimpeza(id); toast.success('Encerrada'); await carregar(); }
     catch (e: any) { toast.error(e?.message || 'Erro'); }
   }
   async function abrirUma(cultoId: string) {
@@ -248,17 +261,19 @@ function AbaSessoes() {
           Abra o período (ex.: <b>Domingo de manhã</b>) — os cultos do período ficam disponíveis. No check-in, o voluntário escolhe em qual culto a criança fica.
         </p>
 
-        {/* Ativar sessão de QUALQUER culto (Marcos 2026-07-20 v2): escolhe o
-            culto e ativa, independente do dia e da hora — serve pra ENSAIAR o
-            check-in antes do culto ("vai que dá algum problema"). A sessão vira
-            AO VIVO na hora. Sempre visível. Culto de dia PASSADO fica fora
-            (check-in em culto antigo corrompe o número daquele culto · R1 —
-            e o fechamento lazy encerraria a sessão em seguida de todo jeito). */}
+        {/* Ativar sessão de QUALQUER culto (Marcos 2026-07-20 v2 · v5 2026-07-22):
+            escolhe o culto e ativa, independente do dia e da hora — serve pra
+            ENSAIAR o check-in antes do culto. Design v5: ensaio (culto de outro
+            dia) NÃO entra no seletor da criança quando há culto de hoje aberto;
+            sem culto hoje, o check-in entra em MODO ENSAIO explícito (banner +
+            etiqueta TESTE) e os check-ins de teste são limpos sozinhos na virada
+            do dia (sweep). Culto de dia PASSADO fica fora (R1). */}
         <div className="rounded-lg border border-border p-3 space-y-2">
           <div className="text-sm font-semibold">Ativar sessão de um culto</div>
           <p className="text-xs text-muted-foreground">
             Escolha o culto e ative — vale qualquer dia e hora (ex.: ensaiar o check-in antes do domingo).
-            A sessão fica <b>ao vivo</b> no check-in até ser encerrada.
+            Ensaio de culto de outro dia aparece no check-in <b>só quando não há culto de hoje aberto</b>,
+            sai com etiqueta <b>TESTE</b> e os check-ins de teste somem sozinhos na virada do dia.
           </p>
           {carregando ? (
             <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
