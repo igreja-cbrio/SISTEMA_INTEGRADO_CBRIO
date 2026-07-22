@@ -959,10 +959,15 @@ router.post('/criancas', authorizeModule('kids', 2), async (req, res) => {
       }
     }
 
-    // Resolve cada responsável (find-or-create membro) + resolve a família
-    // (compartilhada por todos · a do 1º que já tiver, senão cria uma nova).
+    // Resolve cada responsável (find-or-create membro).
+    // ⚠️ LEI (Marcos 2026-07-22 · caso Benjamin/Mariane Gaia): criança NOVA
+    // NUNCA entra automaticamente numa família já existente. Antes o fluxo
+    // herdava mem_membros.familia_id do responsável — a Mariane (tia do Samuel,
+    // agrupada na família da irmã pela Membresia) cadastrou o PRÓPRIO filho e
+    // ele nasceu dentro da família da irmã, com duas mães. Juntar núcleos é ato
+    // EXPLÍCITO: "Cadastrar criança na família" (fluxo amigo_de_crianca_id
+    // acima) ou Gestão/Entradas (Vincular famílias).
     const membros = [];
-    let familiaId = null;
     for (const resp of validos) {
       const tel = normalizarTelefone(resp.telefone);
       const cpf = normalizarCpf(resp.cpf);
@@ -971,16 +976,15 @@ router.post('/criancas', authorizeModule('kids', 2), async (req, res) => {
       });
       const { data: membro } = await supabase.from('mem_membros')
         .select('id, nome, familia_id').eq('id', rr.membro_id).single();
-      if (!familiaId) familiaId = membro.familia_id || null;
       membros.push({ membro, tel, cpf, parentesco: resp.parentesco || 'outro', autorizado_buscar: resp.autorizado_buscar !== false });
     }
-    if (!familiaId) {
-      const base = membros[0].membro;
-      const { data: f, error: fe } = await supabase.from('mem_familias')
-        .insert({ nome: `Familia ${base.nome.split(' ')[0]}` }).select('id').single();
-      if (fe) throw fe;
-      familiaId = f.id;
-    }
+    // Família SEMPRE nova pra criança nova — nome pelo sobrenome da criança
+    // (padrão do totem pra distinguir homônimas · fallback: 1º nome do resp.).
+    const sobrenomeCrianca = String(crianca.nome).trim().split(/\s+/).slice(1).join(' ');
+    const { data: f, error: fe } = await supabase.from('mem_familias')
+      .insert({ nome: `Família ${sobrenomeCrianca || membros[0].membro.nome.split(' ')[0]}` }).select('id').single();
+    if (fe) throw fe;
+    const familiaId = f.id;
     // Vincula à família quem ainda não tem
     for (const m of membros) {
       if (!m.membro.familia_id) {
