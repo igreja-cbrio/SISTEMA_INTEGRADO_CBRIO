@@ -144,11 +144,14 @@ function cssEtiqueta(layout: EtiquetaLayout = LAYOUT_ETIQUETA_PADRAO): string {
     text-align: center; line-height: 1; padding: 1mm 1mm 0.8mm; border-radius: 0.6mm;
   }
   .codigo-band-g { font-size: ${pt(21)}; letter-spacing: 3px; }
-  /* Recibo do responsável: código gigante à esquerda · culto/barcode à direita. */
-  .recibo-nome { font-size: ${pt(10)}; font-weight: 800; line-height: 1.05; margin-top: 0.8mm; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .recibo-hint { font-size: ${pt(6.5)}; color: #555; line-height: 1.1; }
-  .recibo-dir { border-left: none; width: 34mm; }
-  .recibo-culto { font-size: ${pt(8)}; font-weight: 800; text-align: center; line-height: 1.1; }
+  /* Recibo do responsável (v2 · Marcos 22/07): nome + logo + culto à esquerda;
+     código na banda preta + barcode à direita, divisor tracejado no meio. */
+  .recibo-nome { font-size: ${pt(10)}; font-weight: 800; line-height: 1.05; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .recibo-logo { display: block; height: 6mm; max-width: 26mm; object-fit: contain; align-self: flex-start; margin: 0.6mm 0 0.4mm; }
+  .recibo-hint { font-size: ${pt(6.5)}; color: #555; line-height: 1.1; margin-top: 0.3mm; }
+  .recibo-dir { width: 42mm; justify-content: center; }
+  .recibo-dir .barcode-area svg { max-width: 34mm; height: 7mm; }
+  .recibo-culto { font-size: ${pt(8)}; font-weight: 800; line-height: 1.1; }
   .info-sec { font-size: ${pt(7.5)}; color: #444; line-height: 1.2; margin-top: 0.5mm; }
   .alerta {
     background: #000; color: #fff; padding: 0.7mm 1.5mm; margin-top: 1mm;
@@ -329,21 +332,27 @@ function documento(fragmentos: string[], layout?: EtiquetaLayout): string {
 // a etiqueta perdida não descobre de qual criança é) — mostra o nome do
 // RESPONSÁVEL; o vínculo com a criança fica só pelo código, no sistema.
 function htmlEtiquetaResponsavel(d: DadosImpressao, barcodeSvg: string): string {
-  // Visual do sistema antigo (Milena 2026-07-22): código GIGANTE em banda preta
-  // à esquerda (é o que o pai mostra no portão), dia/hora do culto + barcode à
-  // direita, nome do responsável embaixo. Segue SEM o nome da criança (quem
-  // achar a etiqueta perdida não descobre de qual criança é).
+  // v2 (Marcos 2026-07-22, depois do teste impresso — o v1 ficou confuso):
+  // ESQUERDA = nome do responsável + logo do CBKids + nome do culto;
+  // DIREITA = código na banda preta + código de barras, separados pelo divisor
+  // tracejado no meio. SEM hora de check-in (ficava pequeno demais). Segue SEM
+  // o nome da criança (etiqueta perdida não identifica a criança). A logo é a
+  // mesma configurada no admin (logo_aniversario_url · pré-carregada antes de
+  // imprimir); sem logo configurada, a linha simplesmente não sai.
+  const logo = d.logoAniversarioUrl
+    ? `<img class="recibo-logo" src="${escapeHtml(d.logoAniversarioUrl)}" alt="" />`
+    : '';
   return `<div class="etiqueta">
     <div class="col-esq" style="padding-left:0">
       ${d.ensaio ? '<div class="ensaio-strip">TESTE / ENSAIO — NÃO VALE COMO PRESENÇA</div>' : ''}
-      ${bandaCodigo(d.codigoSeguranca, true)}
       <div class="recibo-nome">${escapeHtml(nomeParaEtiqueta(d.responsavel.nome))}</div>
+      ${logo}
+      <div class="recibo-culto">${escapeHtml(d.cultoDiaHora || d.crianca.salaNome)}</div>
       <div class="recibo-hint">Apresente este código para buscar</div>
     </div>
     <div class="col-dir recibo-dir">
-      <div class="recibo-culto">${escapeHtml(d.cultoDiaHora || d.crianca.salaNome)}</div>
+      ${bandaCodigo(d.codigoSeguranca, true)}
       <div class="barcode-area">${barcodeSvg}</div>
-      <div class="data-hora">${escapeHtml(d.dataHora)}</div>
     </div>
   </div>`;
 }
@@ -459,7 +468,9 @@ export function gerarHtmlPreviewAniversario(d: DadosImpressao): string {
 export async function imprimirEtiquetas(d: DadosImpressao, preview = false, incluirRecibo = true): Promise<void> {
   const [barcodeSvg] = await Promise.all([
     gerarBarcodeSvg(d.codigoBarras),
-    d.crianca.aniversarioSemana ? preloadImg(d.logoAniversarioUrl) : Promise.resolve(),
+    // Logo do CBKids sai no recibo (v2) e na etiqueta de aniversário —
+    // pré-carrega sempre que houver (preloadImg tolera null e não trava).
+    preloadImg(d.logoAniversarioUrl),
   ]);
 
   // No CHECK-IN: 2 etiquetas da criança (uma na criança, outra na sacola/
@@ -500,7 +511,10 @@ export async function imprimirEtiquetas(d: DadosImpressao, preview = false, incl
 
 // Reimpressao (etiqueta rasgou ou impressora falhou) — 1 etiqueta, 1 job.
 export async function reimprimirEtiqueta(d: DadosImpressao, tipo: 'crianca' | 'responsavel', motivo: string): Promise<void> {
-  const barcodeSvg = await gerarBarcodeSvg(d.codigoBarras);
+  const [barcodeSvg] = await Promise.all([
+    gerarBarcodeSvg(d.codigoBarras),
+    tipo === 'responsavel' ? preloadImg(d.logoAniversarioUrl) : Promise.resolve(),
+  ]);
   const frag = tipo === 'crianca' ? htmlEtiquetaCrianca(d) : htmlEtiquetaResponsavel(d, barcodeSvg);
   const resultado = await imprimirHtml(documento([frag], d.layout));
   totemKids.etiquetas.log({
@@ -521,7 +535,7 @@ export async function reimprimirEtiquetasCompletas(d: DadosImpressao, motivo: st
   const [barcodeSvg] = await Promise.all([
     gerarBarcodeSvg(d.codigoBarras),
     preloadImg(d.crianca.salaLogoUrl),
-    d.crianca.aniversarioSemana ? preloadImg(d.logoAniversarioUrl) : Promise.resolve(),
+    preloadImg(d.logoAniversarioUrl),
   ]);
   const fragCrianca = htmlEtiquetaCrianca(d, barcodeSvg);
   const fragmentos = [fragCrianca, fragCrianca, htmlEtiquetaResponsavel(d, barcodeSvg)];
