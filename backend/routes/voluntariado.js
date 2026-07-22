@@ -376,8 +376,11 @@ router.get('/frequencia', async (req, res) => {
   try {
     const build = () => {
       let q = supabase.from('vw_vol_frequencia').select('*');
-      if (req.query.status === 'ativos') q = q.eq('ativo', true);
-      else if (req.query.status === 'inativos') q = q.eq('ativo', false);
+      // Filtro por SITUAÇÃO (ativo/inativo/novo). Inativo = já serviu e parou 3+
+      // meses (exclui novos/sem-serviço, quem saiu da igreja e afastados por saúde).
+      if (req.query.status === 'ativos') q = q.eq('situacao', 'ativo');
+      else if (req.query.status === 'inativos') q = q.eq('situacao', 'inativo');
+      else if (req.query.status === 'novos') q = q.eq('situacao', 'novo');
       // Vínculo = ligado a um MEMBRO (CPF). A lista já é de voluntários reais.
       if (req.query.vinculo === 'nao') q = q.is('membro_id', null);
       else if (req.query.vinculo === 'sim') q = q.not('membro_id', 'is', null);
@@ -397,8 +400,12 @@ router.get('/frequencia', async (req, res) => {
     // Resumo (cards) = SEMPRE o total geral · contagem real no banco, NÃO muda
     // com o filtro da lista (antes recalculava do subconjunto capado → números
     // divergentes entre "Todos" e "Ativos").
+    const contarSituacao = (situ) => supabase.from('vw_vol_frequencia')
+      .select('chave', { count: 'exact', head: true }).eq('situacao', situ);
     const { count: total } = await supabase.from('vw_vol_frequencia').select('chave', { count: 'exact', head: true });
-    const { count: ativos } = await supabase.from('vw_vol_frequencia').select('chave', { count: 'exact', head: true }).eq('ativo', true);
+    const { count: ativos } = await contarSituacao('ativo');
+    const { count: inativos } = await contarSituacao('inativo');
+    const { count: novos } = await contarSituacao('novo');
 
     // Enriquece com o motivo de inatividade (por chave · tabela vol_inatividade)
     const chaves = [...new Set(data.map(r => r.chave).filter(Boolean))];
@@ -415,7 +422,7 @@ router.get('/frequencia', async (req, res) => {
       inatividade_detalhe: motivoByChave[r.chave]?.detalhe || null,
       inatividade_em: motivoByChave[r.chave]?.registrado_em || null,
     }));
-    res.json({ resumo: { total: total || 0, ativos: ativos || 0, inativos: (total || 0) - (ativos || 0) }, itens });
+    res.json({ resumo: { total: total || 0, ativos: ativos || 0, inativos: inativos || 0, novos: novos || 0 }, itens });
   } catch (e) {
     console.error('[vol] frequencia', e.message);
     res.status(500).json({ error: 'Erro ao carregar frequência' });
@@ -460,6 +467,38 @@ router.put('/frequencia/inatividade', authorizeModule('membresia', 2), async (re
   } catch (e) {
     console.error('[vol] inatividade', e.message);
     res.status(500).json({ error: 'Erro ao salvar o motivo' });
+  }
+});
+
+// POST /api/voluntariado/frequencia/saiu-igreja  body { chave, membro_id, detalhe }
+// Marca que o voluntário SAIU da igreja: registra motivo 'saiu_igreja' no
+// voluntariado E, se houver membro vinculado, muda o status dele pra 'inativo'
+// na Membresia (reflete no cadastro). Sai da contagem de inativos do voluntariado.
+router.post('/frequencia/saiu-igreja', authorizeModule('membresia', 2), async (req, res) => {
+  try {
+    const chave = String(req.body?.chave || '').trim();
+    if (!chave) return res.status(400).json({ error: 'chave obrigatória' });
+    const membroId = req.body?.membro_id ? String(req.body.membro_id).trim() : null;
+    const detalhe = req.body?.detalhe != null ? String(req.body.detalhe).trim().slice(0, 1000) : null;
+
+    // 1) marca no voluntariado (motivo saiu_igreja · por chave)
+    const { error: viErr } = await supabase.from('vol_inatividade')
+      .upsert({ chave, motivo: 'saiu_igreja', detalhe: detalhe || null, registrado_por: req.user?.id ?? null, updated_at: new Date().toISOString() },
+        { onConflict: 'chave' });
+    if (viErr) return res.status(500).json({ error: viErr.message });
+
+    // 2) reflete na Membresia (se houver cadastro de membro vinculado)
+    let membroAtualizado = false;
+    if (membroId && /^[0-9a-f-]{36}$/i.test(membroId)) {
+      const { error: mmErr } = await supabase.from('mem_membros')
+        .update({ status: 'inativo' }).eq('id', membroId).is('deleted_at', null);
+      if (mmErr) console.error('[vol] saiu-igreja mem_membros:', mmErr.message);
+      else membroAtualizado = true;
+    }
+    res.json({ ok: true, membro_atualizado: membroAtualizado });
+  } catch (e) {
+    console.error('[vol] saiu-igreja', e.message);
+    res.status(500).json({ error: 'Erro ao registrar a saída' });
   }
 });
 
