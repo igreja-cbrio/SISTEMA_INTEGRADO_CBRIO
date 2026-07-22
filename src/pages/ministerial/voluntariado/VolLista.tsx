@@ -1,5 +1,4 @@
 import { useState, useMemo } from 'react';
-import { Link } from 'react-router-dom';
 import { useQueryClient, useMutation } from '@tanstack/react-query';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -13,7 +12,6 @@ import { Textarea } from '@/components/ui/textarea';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { voluntariado } from '@/api';
-import { hrefConversa } from '@/lib/conversas';
 import Paginacao, { usePaginacaoLocal } from '@/components/Paginacao';
 import {
   useVolunteersPool, useSyncPlanningCenter, useWaitingAllocation,
@@ -80,6 +78,22 @@ function AniversariantesSemana() {
     return msg.replace(/\{nome\}/g, primeiro);
   };
 
+  const qc = useQueryClient();
+  const [enviandoId, setEnviandoId] = useState<string | null>(null);
+  async function parabenizar(r: any) {
+    setEnviandoId(r.vol_profile_id);
+    try {
+      await voluntariado.parabenizar(r.vol_profile_id);
+      toast.success(`Parabéns enviado para ${(r.nome || '').split(/\s+/)[0]}! 🎉`);
+      qc.invalidateQueries({ queryKey: ['vol', 'aniversariantes'] });
+    } catch (e: any) {
+      // sem opt-in / sem cadastro / template → abre o WhatsApp pra mandar manual
+      toast.error(e?.message || 'Não foi possível enviar pela API. Abrindo o WhatsApp…');
+      const wa = waBday(r.telefone, mensagemPara(r.nome));
+      if (wa) window.open(wa, '_blank');
+    } finally { setEnviandoId(null); }
+  }
+
   return (
     <Card className="border-[#00B39D]/30">
       <CardContent className="p-4">
@@ -111,12 +125,14 @@ function AniversariantesSemana() {
                       {r.hoje ? <span className="text-[#00B39D] font-semibold">Hoje 🎉</span> : `${DOW_LBL[r.dow] ?? ''} · ${dataFmt}`}
                     </p>
                   </div>
-                  {wa ? (
-                    <Link to={hrefConversa(r.telefone, mensagemPara(r.nome))}>
-                      <Button size="sm" className="h-8 gap-1.5 bg-[#25D366] hover:bg-[#25D366]/85 text-white">
-                        <MessageCircle className="h-3.5 w-3.5" /> Parabenizar
-                      </Button>
-                    </Link>
+                  {r.parabenizado ? (
+                    <Button size="sm" variant="outline" disabled className="h-8 gap-1.5 border-emerald-300 text-emerald-600">
+                      <CheckCircle2 className="h-3.5 w-3.5" /> Enviado
+                    </Button>
+                  ) : wa ? (
+                    <Button size="sm" disabled={enviandoId === r.vol_profile_id} onClick={() => parabenizar(r)} className="h-8 gap-1.5 bg-[#25D366] hover:bg-[#25D366]/85 text-white">
+                      <MessageCircle className="h-3.5 w-3.5" /> {enviandoId === r.vol_profile_id ? 'Enviando…' : 'Parabenizar'}
+                    </Button>
                   ) : (
                     <span className="text-xs text-muted-foreground">sem telefone</span>
                   )}
