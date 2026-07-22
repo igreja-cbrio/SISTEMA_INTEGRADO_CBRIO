@@ -25,7 +25,7 @@ import {
   Loader2, Send, Search, Check, MessageCircle, RefreshCw, ExternalLink, Clock,
   User, CheckCheck, UserPlus, ChevronDown, UserCheck, Tag, Plus, Inbox, Filter,
   Users, Droplets, HandHelping, Sparkles, StickyNote, Paperclip, ArrowLeftRight, Hash, Star,
-  Zap, Trash2,
+  Zap,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -108,10 +108,6 @@ export default function ConversasInbox({
   const [novaOpen, setNovaOpen] = useState(false);
   const [prontas, setProntas] = useState<{ id: string; titulo: string; texto: string }[]>([]);
   const [prontasOpen, setProntasOpen] = useState(false);
-  const [gerenciarProntas, setGerenciarProntas] = useState(false);
-  const [novaProntaTitulo, setNovaProntaTitulo] = useState('');
-  const [novaProntaTexto, setNovaProntaTexto] = useState('');
-  const [salvandoPronta, setSalvandoPronta] = useState(false);
   const fimRef = useRef<HTMLDivElement | null>(null);
   const selRef = useRef<string | null>(null);
   selRef.current = selId;
@@ -147,21 +143,6 @@ export default function ConversasInbox({
   const recarregarProntas = useCallback(() => {
     waInbox.mensagensProntas().then(r => setProntas(r?.mensagens || [])).catch(() => {});
   }, []);
-  async function salvarPronta() {
-    if (!novaProntaTitulo.trim() || !novaProntaTexto.trim()) return;
-    setSalvandoPronta(true);
-    try {
-      await waInbox.criarMensagemPronta({ titulo: novaProntaTitulo.trim(), texto: novaProntaTexto.trim() });
-      setNovaProntaTitulo(''); setNovaProntaTexto('');
-      recarregarProntas();
-      toast.success('Mensagem pronta salva');
-    } catch (e: any) { toast.error(e?.message || 'Erro ao salvar'); }
-    finally { setSalvandoPronta(false); }
-  }
-  async function removerPronta(id: string) {
-    try { await waInbox.removerMensagemPronta(id); recarregarProntas(); }
-    catch (e: any) { toast.error(e?.message || 'Erro ao remover'); }
-  }
 
   useEffect(() => { carregarConversas(); }, [carregarConversas]);
   useEffect(() => { if (selId) carregarThread(selId); }, [selId, carregarThread]);
@@ -493,38 +474,19 @@ export default function ConversasInbox({
                       <div className="absolute bottom-full left-3 right-3 mb-2 max-h-80 overflow-y-auto rounded-xl border border-border bg-popover shadow-lg z-20">
                         <div className="flex items-center justify-between px-3 py-2 border-b border-border">
                           <span className="text-xs font-semibold">Mensagens prontas</span>
-                          <button className="text-[11px] text-primary hover:underline" onClick={() => setGerenciarProntas(v => !v)}>
-                            {gerenciarProntas ? 'Concluir' : 'Gerenciar'}
-                          </button>
+                          <span className="text-[11px] text-muted-foreground">Gerencie na aba "Mensagens prontas"</span>
                         </div>
-                        {prontas.length === 0 && !gerenciarProntas && (
-                          <div className="px-3 py-4 text-center text-xs text-muted-foreground">Nenhuma mensagem pronta. Clique em "Gerenciar" pra criar.</div>
+                        {prontas.length === 0 && (
+                          <div className="px-3 py-4 text-center text-xs text-muted-foreground">Nenhuma mensagem pronta. Crie na aba "Mensagens prontas".</div>
                         )}
                         <div className="divide-y divide-border/60">
                           {prontas.map(p => (
-                            <div key={p.id} className="flex items-start gap-2 px-3 py-2 hover:bg-accent/40">
-                              <button className="min-w-0 flex-1 text-left" onClick={() => usarPronta(p.texto)}>
-                                <div className="text-xs font-medium text-foreground truncate">{p.titulo}</div>
-                                <div className="text-[11px] text-muted-foreground line-clamp-2">{p.texto}</div>
-                              </button>
-                              {gerenciarProntas && (
-                                <button className="shrink-0 text-muted-foreground hover:text-destructive" title="Remover" onClick={() => removerPronta(p.id)}>
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </button>
-                              )}
-                            </div>
+                            <button key={p.id} className="block w-full text-left px-3 py-2 hover:bg-accent/40" onClick={() => usarPronta(p.texto)}>
+                              <div className="text-xs font-medium text-foreground truncate">{p.titulo}</div>
+                              <div className="text-[11px] text-muted-foreground line-clamp-2">{p.texto}</div>
+                            </button>
                           ))}
                         </div>
-                        {gerenciarProntas && (
-                          <div className="border-t border-border p-2 space-y-1.5">
-                            <Input value={novaProntaTitulo} onChange={e => setNovaProntaTitulo(e.target.value)} placeholder="Título (ex.: Boas-vindas)" className="h-8 text-xs" />
-                            <textarea value={novaProntaTexto} onChange={e => setNovaProntaTexto(e.target.value)} rows={3}
-                              placeholder="Texto da mensagem…" className="w-full resize-none rounded-md border border-border bg-background px-2 py-1.5 text-xs outline-none" />
-                            <Button size="sm" className="h-8 w-full gap-1.5" disabled={salvandoPronta || !novaProntaTitulo.trim() || !novaProntaTexto.trim()} onClick={salvarPronta}>
-                              {salvandoPronta ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />} Adicionar mensagem pronta
-                            </Button>
-                          </div>
-                        )}
                       </div>
                     )}
                     {foraJanela && (
@@ -535,7 +497,7 @@ export default function ConversasInbox({
                     <div className="flex items-end gap-2 rounded-xl border border-border bg-background p-2">
                       <input ref={fileRef} type="file" accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx" className="hidden"
                         onChange={e => { const f = e.target.files?.[0]; if (f) enviarAnexo(f); e.target.value = ''; }} />
-                      <Button size="icon" variant="ghost" onClick={() => setProntasOpen(v => !v)} className={`h-9 w-9 shrink-0 ${prontasOpen ? 'text-primary' : 'text-muted-foreground'}`} title="Mensagens prontas">
+                      <Button size="icon" variant="ghost" onClick={() => setProntasOpen(v => { const nv = !v; if (nv) recarregarProntas(); return nv; })} className={`h-9 w-9 shrink-0 ${prontasOpen ? 'text-primary' : 'text-muted-foreground'}`} title="Mensagens prontas">
                         <Zap className="h-4 w-4" />
                       </Button>
                       {!foraJanela && (
