@@ -11,7 +11,9 @@ const multer = require('multer');
 const { uploadModuleFile, SHAREPOINT_CONFIGURED } = require('../services/storageService');
 const { notificar } = require('../services/notificar');
 const { importarParticipantes } = require('../services/gruposImporter');
-const { notificarPessoaAprovada, notificarPessoaSugestao } = require('../services/gruposWhatsapp');
+const { notificarPessoaAprovada, notificarPessoaSugestao, montarEnvioRenovacao } = require('../services/gruposWhatsapp');
+const { enfileirarLote } = require('../services/whatsappFila');
+const { configurado: whatsappConfigurado } = require('../services/whatsappService');
 const { registrarEventoPedido } = require('../services/grupoPedidoEventos');
 
 // Auto-sync dos vínculos do bot WhatsApp (Marcos 2026-06-10): novo líder /
@@ -1210,7 +1212,14 @@ router.get('/pedidos/count', async (req, res) => {
         .select('id', { count: 'exact', head: true }).eq('status', 'pendente').is('deleted_at', null);
       lideresPendentes = count || 0;
     } catch { /* migration ainda não aplicada → badge segue sem essa parcela */ }
-    res.json({ pendentes: isAdmin ? total : mine, mine, total, lideres_pendentes: lideresPendentes });
+    // Renovações "líder não continua" aguardando triagem (badge da caixa)
+    let renovacoesTriagem = 0;
+    try {
+      const { count } = await supabase.from('mem_grupo_renovacoes')
+        .select('id', { count: 'exact', head: true }).eq('status', 'nao_continua').is('deleted_at', null);
+      renovacoesTriagem = count || 0;
+    } catch { /* migration ainda não aplicada → badge segue sem essa parcela */ }
+    res.json({ pendentes: isAdmin ? total : mine, mine, total, lideres_pendentes: lideresPendentes, renovacoes_triagem: renovacoesTriagem });
   } catch (e) {
     console.error('[Pedidos count]', e.message);
     res.status(500).json({ error: 'Erro ao contar pedidos' });
@@ -1414,6 +1423,254 @@ router.post('/lideres-inscricoes/:id/vincular', authorizeModule('grupos', 3), as
   } catch (e) {
     console.error('[Lideres inscricoes vincular]', e.message);
     res.status(500).json({ error: 'Erro ao vincular ao grupo' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// RENOVAÇÃO DE TEMPORADA (Marcos · 21/07): 1×/semestre, com a temporada
+// fechada, a coordenação DISPARA (manual · nunca cron — lei de 20/07) o
+// template pra cada líder de grupo ativo perguntando se continua. A resposta
+// entra pelo link público /g/r/<token> (publicGrupos.js). Aqui ficam o painel,
+// o disparo e a triagem dos "não continuo" (caixa de entrada da coordenação).
+// Rotas com 2 segmentos — não colidem com /:id.
+// ─────────────────────────────────────────────────────────────
+
+// GET /api/grupos/renovacao/painel?temporada=&status=
+// Painel completo: resumo + 1 linha por grupo (status da renovação, líder,
+// nº de membros ativos). ?status=nao_continua filtra (uso da caixa de entrada).
+router.get('/renovacao/painel', authorizeModule('grupos', 1), async (req, res) => {
+  try {
+    let temporadaId = req.query.temporada || null;
+    if (!temporadaId) {
+      const { data: ativa } = await supabase.from('mem_temporadas')
+        .select('id').eq('ativa', true).maybeSingle();
+      temporadaId = ativa?.id || null;
+    }
+    if (!temporadaId) return res.status(404).json({ error: 'Nenhuma temporada ativa.' });
+    const { data: temporada } = await supabase.from('mem_temporadas')
+      .select('id, label, ativa, inscricoes_abertas, data_inicio, data_fim')
+      .eq('id', temporadaId).maybeSingle();
+    if (!temporada) return res.status(404).json({ error: 'Temporada não encontrada.' });
+
+    // Universo = grupos ATIVOS da temporada (mesma seleção do disparo)
+    const { data: grupos } = await supabase.from('mem_grupos')
+      .select('id, nome, codigo, lider_id, dia_semana, horario, bairro')
+      .eq('ativo', true).eq('temporada', temporadaId).is('deleted_at', null)
+      .limit(1000);
+    const grupoIds = (grupos || []).map(g => g.id);
+
+    // Renovações existentes da temporada
+    const { data: rens } = await supabase.from('mem_grupo_renovacoes')
+      .select('*').eq('temporada_id', temporadaId).is('deleted_at', null)
+      .limit(1000);
+    const renPorGrupo = new Map((rens || []).map(r => [r.grupo_id, r]));
+
+    // Líderes (nome/telefone) em lotes ≤200
+    const liderIds = [...new Set((grupos || []).map(g => g.lider_id).filter(Boolean))];
+    const lideres = new Map();
+    for (let i = 0; i < liderIds.length; i += 200) {
+      const { data: pagina } = await supabase.from('mem_membros')
+        .select('id, nome, telefone').in('id', liderIds.slice(i, i + 200)).is('deleted_at', null);
+      (pagina || []).forEach(l => lideres.set(l.id, l));
+    }
+
+    // Membros ativos por grupo (paginado — o total da base passa de 1000)
+    const membrosPorGrupo = new Map();
+    for (let offset = 0; ; offset += 1000) {
+      const { data: pagina, error: eV } = await supabase.from('mem_grupo_membros')
+        .select('grupo_id')
+        .is('saiu_em', null).is('deleted_at', null)
+        .order('id').range(offset, offset + 999);
+      if (eV) throw eV;
+      (pagina || []).forEach(v => membrosPorGrupo.set(v.grupo_id, (membrosPorGrupo.get(v.grupo_id) || 0) + 1));
+      if (!pagina || pagina.length < 1000) break;
+    }
+
+    const telefoneOk = (t) => String(t || '').replace(/\D/g, '').length >= 10;
+    let rows = (grupos || []).map(g => {
+      const ren = renPorGrupo.get(g.id) || null;
+      const lider = g.lider_id ? (lideres.get(g.lider_id) || null) : null;
+      return {
+        grupo_id: g.id, grupo_nome: g.nome, grupo_codigo: g.codigo || null,
+        membros_ativos: membrosPorGrupo.get(g.id) || 0,
+        lider_id: g.lider_id, lider_nome: lider?.nome || null, lider_telefone: lider?.telefone || null,
+        pode_receber: !!(g.lider_id && telefoneOk(lider?.telefone)),
+        renovacao: ren ? {
+          id: ren.id, status: ren.status, motivo: ren.motivo,
+          roster_total: ren.roster_total, confirmados_count: ren.confirmados_count,
+          removidos_count: ren.removidos_count, token_geracao: ren.token_geracao,
+          enviado_em: ren.enviado_em, ultima_resposta_em: ren.ultima_resposta_em,
+          triagem_acao: ren.triagem_acao, triagem_obs: ren.triagem_obs,
+          triado_por_nome: ren.triado_por_nome, triado_em: ren.triado_em,
+        } : null,
+      };
+    });
+    if (req.query.status) {
+      rows = rows.filter(r => r.renovacao?.status === req.query.status);
+    }
+    // Triagem primeiro (grupo grande primeiro), depois pendentes de resposta
+    rows.sort((a, b) => {
+      const peso = (r) => r.renovacao?.status === 'nao_continua' ? 0
+        : r.renovacao?.status === 'enviada' ? 1
+        : r.renovacao ? 2 : 3;
+      return peso(a) - peso(b) || b.membros_ativos - a.membros_ativos;
+    });
+
+    const dos = (s) => rows.filter(r => r.renovacao?.status === s).length;
+    res.json({
+      temporada,
+      whatsapp_ligado: whatsappConfigurado(),
+      resumo: {
+        grupos: rows.length,
+        podem_receber: rows.filter(r => r.pode_receber).length,
+        sem_lider: rows.filter(r => !r.lider_id).length,
+        lider_sem_telefone: rows.filter(r => r.lider_id && !r.pode_receber).length,
+        enviadas: rows.filter(r => r.renovacao).length,
+        sem_resposta: dos('enviada'),
+        continuam: dos('continua'),
+        nao_continuam: dos('nao_continua'),
+        triadas: dos('triada'),
+      },
+      rows,
+    });
+  } catch (e) {
+    console.error('[grupos renovacao painel]', e.message);
+    res.status(500).json({ error: 'Erro ao carregar o painel da renovação' });
+  }
+});
+
+// POST /api/grupos/renovacao/disparar — body { temporada_id }
+// Cria/atualiza 1 renovação por grupo ativo da temporada e ENFILEIRA o
+// template pro líder. Idempotente e re-executável: grupo já RESPONDIDO é
+// pulado; sem resposta é REENVIADO com token_geracao+1 (o link antigo morre).
+// Janela anti-duplo-clique: enviado há <10 min é pulado. Nível 5 (operação
+// semestral em massa · boost de área dá 5 pra coordenação de Grupos).
+router.post('/renovacao/disparar', authorizeModule('grupos', 5), async (req, res) => {
+  try {
+    const temporadaId = req.body?.temporada_id;
+    if (!temporadaId) return res.status(400).json({ error: 'Informe a temporada.' });
+    const { data: temporada } = await supabase.from('mem_temporadas')
+      .select('id, label, inscricoes_abertas').eq('id', temporadaId).maybeSingle();
+    if (!temporada) return res.status(404).json({ error: 'Temporada não encontrada.' });
+    if (temporada.inscricoes_abertas) {
+      return res.status(409).json({ error: 'As inscrições desta temporada já estão abertas — a renovação é feita ANTES da abertura.' });
+    }
+    // Erro visível, não sucesso-zero (lição do conselho): sem WhatsApp
+    // configurado o disparo não tem como acontecer.
+    if (!whatsappConfigurado()) {
+      return res.status(409).json({ error: 'O envio de WhatsApp não está configurado no servidor — nada foi enviado.' });
+    }
+
+    const { data: grupos } = await supabase.from('mem_grupos')
+      .select('id, nome, lider_id')
+      .eq('ativo', true).eq('temporada', temporadaId).is('deleted_at', null)
+      .limit(1000);
+    if (!grupos?.length) return res.status(404).json({ error: 'Nenhum grupo ativo nesta temporada.' });
+
+    const { data: rens } = await supabase.from('mem_grupo_renovacoes')
+      .select('*').eq('temporada_id', temporadaId).is('deleted_at', null).limit(1000);
+    const renPorGrupo = new Map((rens || []).map(r => [r.grupo_id, r]));
+
+    const liderIds = [...new Set(grupos.map(g => g.lider_id).filter(Boolean))];
+    const lideres = new Map();
+    for (let i = 0; i < liderIds.length; i += 200) {
+      const { data: pagina } = await supabase.from('mem_membros')
+        .select('id, nome, telefone').in('id', liderIds.slice(i, i + 200)).is('deleted_at', null);
+      (pagina || []).forEach(l => lideres.set(l.id, l));
+    }
+
+    const agora = Date.now();
+    const envios = [];
+    const pulados = { sem_lider: 0, sem_telefone: 0, ja_respondida: 0, enviada_ha_pouco: 0, erro: 0 };
+    for (const g of grupos) {
+      if (!g.lider_id) { pulados.sem_lider++; continue; }
+      const lider = lideres.get(g.lider_id);
+      if (!lider || String(lider.telefone || '').replace(/\D/g, '').length < 10) { pulados.sem_telefone++; continue; }
+
+      const atual = renPorGrupo.get(g.id);
+      if (atual && atual.status !== 'enviada') { pulados.ja_respondida++; continue; }
+      if (atual?.enviado_em && (agora - new Date(atual.enviado_em).getTime()) < 10 * 60 * 1000) {
+        pulados.enviada_ha_pouco++; continue;
+      }
+
+      let renId = atual?.id || null;
+      let geracao = 1;
+      if (atual) {
+        // Reenvio deliberado ao sem-resposta: nova geração mata o link antigo
+        geracao = (atual.token_geracao || 1) + 1;
+        const { error: eUp } = await supabase.from('mem_grupo_renovacoes')
+          .update({
+            token_geracao: geracao,
+            lider_membro_id: g.lider_id, lider_nome: lider.nome || null, lider_telefone: lider.telefone || null,
+            enviado_em: new Date().toISOString(), updated_at: new Date().toISOString(),
+          }).eq('id', atual.id);
+        if (eUp) { pulados.erro++; continue; }
+      } else {
+        const { data: nova, error: eIns } = await supabase.from('mem_grupo_renovacoes')
+          .insert({
+            grupo_id: g.id, temporada_id: temporadaId,
+            lider_membro_id: g.lider_id, lider_nome: lider.nome || null, lider_telefone: lider.telefone || null,
+            status: 'enviada', token_geracao: 1, enviado_em: new Date().toISOString(),
+          }).select('id').single();
+        if (eIns || !nova) { pulados.erro++; continue; }
+        renId = nova.id;
+      }
+
+      const m = montarEnvioRenovacao({ grupo: g, lider, temporada, renovacaoId: renId, geracao });
+      if (m.erro) { pulados.erro++; continue; }
+      envios.push(m.envio);
+    }
+
+    const lote = envios.length ? await enfileirarLote(envios) : { queued: 0 };
+    console.log(`[grupos renovacao] ${temporadaId}: ${lote.queued} na fila ·`, JSON.stringify(pulados));
+    res.json({ ok: true, temporada: temporadaId, enfileirados: lote.queued, pulados });
+  } catch (e) {
+    console.error('[grupos renovacao disparar]', e.message);
+    res.status(500).json({ error: 'Erro ao disparar a renovação' });
+  }
+});
+
+// POST /api/grupos/renovacao/:renId/triar — body { acao, obs }
+// Triagem da coordenação pro "não continuo": fechar_grupo (desativa o grupo),
+// buscar_lider (grupo segue ativo · a busca é operacional) ou manter. Nota
+// curta obrigatória — triagem sem registro é buraco de auditoria.
+router.post('/renovacao/:renId/triar', authorizeModule('grupos', 3), async (req, res) => {
+  try {
+    const { acao, obs } = req.body || {};
+    if (!['fechar_grupo', 'buscar_lider', 'manter'].includes(acao)) {
+      return res.status(400).json({ error: 'Ação inválida.' });
+    }
+    const obsLimpa = String(obs || '').trim();
+    if (obsLimpa.length < 3) {
+      return res.status(400).json({ error: 'Escreva uma nota curta do que foi decidido.', campo: 'obs' });
+    }
+    const { data: ren } = await supabase.from('mem_grupo_renovacoes')
+      .select('*').eq('id', req.params.renId).is('deleted_at', null).maybeSingle();
+    if (!ren) return res.status(404).json({ error: 'Renovação não encontrada.' });
+    if (ren.status !== 'nao_continua') {
+      return res.status(409).json({ error: `Só renovações "não continua" passam por triagem (esta está "${ren.status}").` });
+    }
+
+    if (acao === 'fechar_grupo') {
+      const { error: eG } = await supabase.from('mem_grupos')
+        .update({ ativo: false, status_temporada: 'encerrado' })
+        .eq('id', ren.grupo_id);
+      if (eG) throw eG;
+    }
+
+    const agora = new Date().toISOString();
+    const { error } = await supabase.from('mem_grupo_renovacoes')
+      .update({
+        status: 'triada', triagem_acao: acao, triagem_obs: obsLimpa.slice(0, 2000),
+        triado_por: req.user.userId || null, triado_por_nome: req.user.name || null,
+        triado_em: agora, updated_at: agora,
+      }).eq('id', ren.id);
+    if (error) throw error;
+
+    res.json({ ok: true, acao });
+  } catch (e) {
+    console.error('[grupos renovacao triar]', e.message);
+    res.status(500).json({ error: 'Erro ao registrar a triagem' });
   }
 });
 

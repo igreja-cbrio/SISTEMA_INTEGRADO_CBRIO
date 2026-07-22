@@ -56,6 +56,9 @@ const STATUS_ROW = {
   lid_aceito: { label: 'Aceito · a vincular', cor: C.blue, bg: C.blueBg },
   lid_vinculado: { label: 'Vinculado', cor: C.green, bg: C.greenBg },
   lid_recusado: { label: 'Recusado', cor: C.red, bg: C.redBg },
+  // Renovação de temporada — líder respondeu que NÃO continua (triagem)
+  ren_nao_continua: { label: 'Líder não continua', cor: C.red, bg: C.redBg },
+  ren_triada: { label: 'Renovação triada', cor: C.green, bg: C.greenBg },
 };
 
 // Filtro de status agrupa os dois ciclos num vocabulário só. Rótulo curto na
@@ -67,6 +70,7 @@ const FILTRO_STATUS = [
   { key: 'encaminhado', label: 'Encaminhados', casa: ['encaminhado'] },
   { key: 'a_contatar', label: 'Next · a contatar', casa: ['enc_pendente', 'enc_nao_respondeu', 'enc_em_duvida'] },
   { key: 'lideres_decidir', label: 'Novos líderes · a decidir', casa: ['lid_pendente', 'lid_aceito'] },
+  { key: 'renovacao_triagem', label: 'Renovação · líder não continua', casa: ['ren_nao_continua'] },
   { key: 'aprovado', label: 'Aprovados / engajaram', casa: ['aprovado', 'resolvido', 'enc_engajou', 'lid_vinculado'] },
   { key: 'rejeitado', label: 'Rejeitados / sem interesse', casa: ['rejeitado', 'cancelado', 'enc_sem_interesse', 'lid_recusado'] },
 ];
@@ -117,6 +121,7 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
   const [pedidos, setPedidos] = useState([]);
   const [encs, setEncs] = useState([]);
   const [lideresInsc, setLideresInsc] = useState([]);
+  const [renovacoes, setRenovacoes] = useState([]);
   const [loading, setLoading] = useState(true);
 
   const [busca, setBusca] = useState('');
@@ -172,16 +177,20 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
     setLoading(true);
     try {
       const desde = new Date(Date.now() - fPeriodo * 86400000).toISOString();
-      const [peds, encRows, lidRows] = await Promise.all([
+      const [peds, encRows, lidRows, renRows] = await Promise.all([
         api.listarPedidos({ desde }),
         encApi.list({ destino: 'grupos' }).catch(() => []),
         // Terceira origem: candidaturas de líder/anfitrião (falha silenciosa
         // enquanto a migration não estiver aplicada — a caixa segue de pé).
         api.liderInscricoes.list({ desde }).catch(() => []),
+        // Quarta origem: renovação de temporada — líderes que responderam que
+        // NÃO continuam (aguardando triagem). Mesma tolerância a migration.
+        api.renovacao.painel({ status: 'nao_continua' }).then(r => r?.rows || []).catch(() => []),
       ]);
       setPedidos(Array.isArray(peds) ? peds : []);
       setEncs(Array.isArray(encRows) ? encRows : []);
       setLideresInsc(Array.isArray(lidRows) ? lidRows : []);
+      setRenovacoes(Array.isArray(renRows) ? renRows : []);
       setSelected(new Set());
     } catch {
       toast.error('Erro ao carregar a caixa de entrada');
@@ -236,6 +245,19 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
         raw: l,
       });
     }
+    for (const r of renovacoes) {
+      if (!r.renovacao) continue;
+      const quando = r.renovacao.ultima_resposta_em || r.renovacao.enviado_em;
+      if (quando && new Date(quando).getTime() < desdeMs) continue;
+      lista.push({
+        tipo: 'renov', key: `r_${r.renovacao.id}`, data: quando,
+        nome: r.lider_nome || 'Líder', telefone: r.lider_telefone, email: null,
+        statusKey: `ren_${r.renovacao.status}`,
+        veioNext: false,
+        grupoNome: r.grupo_nome || null, grupoCodigo: r.grupo_codigo || null,
+        raw: r,
+      });
+    }
 
     const s = busca.trim().toLowerCase();
     return lista
@@ -243,6 +265,7 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
         if (fOrigem === 'next' && !r.veioNext) return false;
         if (fOrigem === 'inscricao' && (r.tipo !== 'pedido' || r.veioNext)) return false;
         if (fOrigem === 'lideres' && r.tipo !== 'lider') return false;
+        if (fOrigem === 'renovacao' && r.tipo !== 'renov') return false;
         if (s) {
           const alvo = [r.nome, r.telefone, r.email, r.grupoNome, r.grupoCodigo].filter(Boolean).join(' ').toLowerCase();
           if (!alvo.includes(s)) return false;
@@ -250,7 +273,7 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
         return true;
       })
       .sort((a, b) => new Date(b.data) - new Date(a.data));
-  }, [pedidos, encs, lideresInsc, busca, fOrigem, fPeriodo]);
+  }, [pedidos, encs, lideresInsc, renovacoes, busca, fOrigem, fPeriodo]);
 
   const rows = useMemo(() => {
     const bucket = FILTRO_STATUS.find(f => f.key === fStatus)?.casa || null;
@@ -300,7 +323,7 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
   };
 
   // Envelhecimento das linhas que precisam de ação
-  const PRECISA_ACAO = ['pendente', 'devolvido', 'enc_pendente', 'enc_nao_respondeu', 'enc_em_duvida', 'lid_pendente', 'lid_aceito'];
+  const PRECISA_ACAO = ['pendente', 'devolvido', 'enc_pendente', 'enc_nao_respondeu', 'enc_em_duvida', 'lid_pendente', 'lid_aceito', 'ren_nao_continua'];
   const idadeDe = (r) => {
     if (!PRECISA_ACAO.includes(r.statusKey)) return null;
     const horas = (Date.now() - new Date(r.data)) / 36e5;
@@ -524,6 +547,7 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
           <option value="inscricao">Inscrição de grupos</option>
           <option value="next">Next</option>
           <option value="lideres">Novos líderes/anfitriões</option>
+          <option value="renovacao">Renovação de temporada</option>
         </select>
         <select value={fStatus} onChange={e => setFStatus(e.target.value)} style={selStyle}>
           {FILTRO_STATUS.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
@@ -626,7 +650,9 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
                           </div>
                         </td>
                         <td style={{ padding: '10px 8px' }}>
-                          {r.tipo === 'lider' ? (
+                          {r.tipo === 'renov' ? (
+                            <span style={{ fontSize: 10.5, padding: '2px 9px', borderRadius: 99, background: C.redBg, color: C.red, fontWeight: 700 }}>Renovação</span>
+                          ) : r.tipo === 'lider' ? (
                             <span style={{ fontSize: 10.5, padding: '2px 9px', borderRadius: 99, background: C.primaryBg, color: C.primary, fontWeight: 700 }}>
                               {[r.raw.quer_lider && 'Líder', r.raw.quer_anfitriao && 'Anfitrião'].filter(Boolean).join(' + ')}
                             </span>
@@ -680,6 +706,8 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
                                   pausarInscricoes={pausarInscricoes}
                                   fecharSugestao={() => { setSugerindoId(null); setGrupoSugestao(''); setMotivoSel(''); setMotivoLivre(''); }}
                                 />
+                              : r.tipo === 'renov'
+                              ? <PainelRenovacao row={r.raw} podeEditar={podeEditar} onTriado={depois} />
                               : r.tipo === 'lider'
                               ? <PainelLider
                                   insc={r.raw}
@@ -1159,6 +1187,108 @@ function PainelNext({
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
             <Button size="sm" disabled={salvando} onClick={salvar}>
               {salvando ? 'Salvando...' : 'Registrar devolutiva'}
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Painel da RENOVAÇÃO DE TEMPORADA — o líder respondeu pelo WhatsApp que NÃO
+// continua. O grupo NÃO fecha sozinho: a coordenação decide aqui (fechar de
+// vez, procurar novo líder ou manter), sempre com uma nota curta. Trocar o
+// líder é na ficha do grupo (a triagem só registra a decisão).
+const TRIAGEM_ACOES = [
+  { key: 'buscar_lider', label: 'Vamos procurar novo líder (grupo segue ativo)' },
+  { key: 'manter', label: 'Manter como está (ex.: líder reconsiderou)' },
+  { key: 'fechar_grupo', label: 'Fechar o grupo nesta temporada' },
+];
+
+function PainelRenovacao({ row, podeEditar, onTriado }) {
+  const ren = row.renovacao;
+  const [acao, setAcao] = useState('');
+  const [obs, setObs] = useState('');
+  const [salvando, setSalvando] = useState(false);
+  const telDigits = String(row.lider_telefone || '').replace(/\D/g, '');
+
+  const triar = async () => {
+    if (!acao) { toast.error('Escolha o que foi decidido'); return; }
+    if (obs.trim().length < 3) { toast.error('Escreva uma nota curta da decisão'); return; }
+    if (acao === 'fechar_grupo' && !confirm(
+      `Fechar o grupo "${row.grupo_nome}"? Ele sai da listagem ativa (dá pra reativar depois na ficha do grupo). As ${row.membros_ativos} pessoa(s) continuam cadastradas.`
+    )) return;
+    setSalvando(true);
+    try {
+      await api.renovacao.triar(ren.id, { acao, obs: obs.trim() });
+      toast.success(acao === 'fechar_grupo' ? 'Grupo fechado e renovação triada' : 'Triagem registrada');
+      onTriado?.();
+    } catch (e) { toast.error(e.message || 'Erro ao registrar a triagem'); }
+    finally { setSalvando(false); }
+  };
+
+  return (
+    <div style={{ background: C.bg, borderRadius: 10, padding: 12 }}>
+      <p style={{ fontSize: 12, color: C.t2, margin: '0 0 8px', lineHeight: 1.55 }}>
+        O líder respondeu na <strong>renovação de temporada</strong> que <strong style={{ color: C.red }}>não
+        continua</strong> com o grupo. Nada mudou pras pessoas ainda — decida o destino do grupo abaixo.
+      </p>
+
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center', marginBottom: 10 }}>
+        <span style={{
+          fontSize: 12, fontWeight: 700, padding: '3px 10px', borderRadius: 99,
+          background: row.membros_ativos >= 10 ? C.redBg : C.amberBg,
+          color: row.membros_ativos >= 10 ? C.red : C.amber,
+        }}>
+          {row.membros_ativos} pessoa(s) ativas no grupo
+        </span>
+        {ren.ultima_resposta_em && (
+          <span style={{ fontSize: 11.5, color: C.t3 }}>Respondido em {fmtData(ren.ultima_resposta_em)}</span>
+        )}
+        {telDigits.length >= 10 && (
+          <a
+            href={`https://wa.me/${telDigits.length <= 11 ? '55' + telDigits : telDigits}`}
+            target="_blank" rel="noreferrer"
+            style={{ fontSize: 12, color: C.primary, fontWeight: 700, textDecoration: 'none' }}
+            onClick={e => e.stopPropagation()}
+          >
+            Falar com {row.lider_nome ? row.lider_nome.split(/\s+/)[0] : 'o líder'} no WhatsApp →
+          </a>
+        )}
+      </div>
+
+      {ren.motivo && (
+        <div style={{
+          fontSize: 12.5, color: C.t2, fontStyle: 'italic', marginBottom: 10,
+          borderLeft: `3px solid ${C.amber}`, paddingLeft: 10, lineHeight: 1.55,
+        }}>
+          "{ren.motivo}"
+        </div>
+      )}
+
+      {!podeEditar ? (
+        <div style={{ fontSize: 12, color: C.t3 }}>Somente leitura.</div>
+      ) : (
+        <div style={{ background: C.card, borderRadius: 8, padding: 10, border: `1px solid ${C.border}` }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
+            {TRIAGEM_ACOES.map(a => (
+              <label key={a.key} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: C.text, cursor: 'pointer' }}>
+                <input
+                  type="radio" name={`triagem_${ren.id}`} checked={acao === a.key}
+                  onChange={() => setAcao(a.key)} style={{ accentColor: C.primary }}
+                />
+                {a.label}
+              </label>
+            ))}
+          </div>
+          <Input
+            placeholder="Nota curta do que foi decidido (obrigatória)..."
+            value={obs}
+            onChange={ev => setObs(ev.target.value)}
+          />
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
+            <Button size="sm" disabled={salvando} onClick={triar}>
+              {salvando ? 'Salvando...' : 'Registrar decisão'}
             </Button>
           </div>
         </div>

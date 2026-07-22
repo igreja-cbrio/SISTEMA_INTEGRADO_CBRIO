@@ -1349,6 +1349,256 @@ router.post('/grupo/frequencia/visitante', async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────
+// RENOVAÇÃO DE TEMPORADA pelo líder (/g/r/<token> · sem login).
+// 1×/semestre (disparo MANUAL da coordenação) o líder diz se continua com o
+// grupo na próxima temporada. SIM → checklist do roster; quem não for marcado
+// sai do grupo (saiu_em · soft · renovacao_id aponta pra esta renovação —
+// re-submissão reativa com precisão). NÃO → motivo obrigatório e o grupo vai
+// pra triagem da coordenação (caixa de entrada) — o grupo NÃO fecha sozinho.
+// Token 'renov' = { p: grupoId, r: renovacaoId, g: geração, l: liderId } ·
+// a validade REAL é decidida aqui a cada uso (não só o exp de 30d):
+// geração × linha (reenvio mata link antigo), liderança atual, linha não
+// triada e inscrições da temporada ainda fechadas (resposta tardia não pode
+// mexer num roster que a abertura já está montando).
+// ─────────────────────────────────────────────────────────────
+
+async function contextoRenovacao(token) {
+  const payload = verificarToken(token, 'renov');
+  if (!payload) return { erro: { status: 401, msg: 'Link inválido ou expirado.' } };
+  const { data: ren, error } = await supabase.from('mem_grupo_renovacoes')
+    .select('*').eq('id', payload.r).is('deleted_at', null).maybeSingle();
+  if (error) throw error;
+  if (!ren || ren.grupo_id !== payload.p) return { erro: { status: 404, msg: 'Renovação não encontrada.' } };
+  if ((payload.g || 1) !== (ren.token_geracao || 1)) {
+    return { erro: { status: 403, msg: 'Este link foi substituído por um mais novo — abra o último que você recebeu no WhatsApp.' } };
+  }
+  const { data: grupo } = await supabase.from('mem_grupos')
+    .select('id, nome, lider_id, ativo').eq('id', ren.grupo_id).is('deleted_at', null).maybeSingle();
+  if (!grupo || !grupo.ativo) return { erro: { status: 404, msg: 'Grupo não encontrado ou já encerrado.' } };
+  if (!payload.l || grupo.lider_id !== payload.l) {
+    return { erro: { status: 403, msg: 'A liderança deste grupo mudou — este link não vale mais.' } };
+  }
+  if (ren.status === 'triada') {
+    return { erro: { status: 409, msg: 'A coordenação já tratou a renovação deste grupo. Se algo mudou, fale direto com ela.' } };
+  }
+  const { data: temporada } = await supabase.from('mem_temporadas')
+    .select('id, label, inscricoes_abertas').eq('id', ren.temporada_id).maybeSingle();
+  if (temporada?.inscricoes_abertas) {
+    return { erro: { status: 409, msg: 'As inscrições da nova temporada já abriram — ajustes na lista agora são com a coordenação.' } };
+  }
+  return { payload, ren, grupo, temporada };
+}
+
+// Roster pra tela: vínculos ATIVOS + os que ESTA renovação removeu (pra
+// reedição). 1 linha por pessoa; `marcado` reflete o estado atual.
+async function rosterRenovacao(ren, jaRespondeu) {
+  const linhas = new Map(); // membro_id → { id, nome, foto_url, marcado }
+  const { data: ativos } = await supabase.from('mem_grupo_membros')
+    .select('membro_id, mem_membros!inner(id, nome, foto_url)')
+    .eq('grupo_id', ren.grupo_id).is('saiu_em', null).is('deleted_at', null)
+    .limit(1000);
+  for (const v of (ativos || [])) {
+    if (!linhas.has(v.membro_id)) {
+      linhas.set(v.membro_id, {
+        id: v.mem_membros.id, nome: v.mem_membros.nome,
+        foto_url: v.mem_membros.foto_url || null,
+        // 1ª visita: tudo desmarcado (o líder marca ativamente quem continua);
+        // reedição: quem está ativo aparece marcado (foi confirmado ou entrou depois)
+        marcado: !!jaRespondeu,
+      });
+    }
+  }
+  const { data: removidos } = await supabase.from('mem_grupo_membros')
+    .select('membro_id, mem_membros!inner(id, nome, foto_url)')
+    .eq('grupo_id', ren.grupo_id).eq('renovacao_id', ren.id)
+    .not('saiu_em', 'is', null).is('deleted_at', null)
+    .limit(1000);
+  for (const v of (removidos || [])) {
+    if (!linhas.has(v.membro_id)) {
+      linhas.set(v.membro_id, {
+        id: v.mem_membros.id, nome: v.mem_membros.nome,
+        foto_url: v.mem_membros.foto_url || null, marcado: false,
+      });
+    }
+  }
+  return [...linhas.values()].sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt-BR'));
+}
+
+// GET /api/public/grupos/grupo/renovacao?token=...
+router.get('/grupo/renovacao', async (req, res) => {
+  try {
+    const ctx = await contextoRenovacao(req.query.token);
+    if (ctx.erro) return res.status(ctx.erro.status).json({ error: ctx.erro.msg });
+    const { ren, grupo, temporada } = ctx;
+    const jaRespondeu = ren.status !== 'enviada';
+    const membros = await rosterRenovacao(ren, ren.status === 'continua');
+    res.json({
+      grupo: { nome: grupo.nome },
+      temporada: { id: ren.temporada_id, label: temporada?.label || ren.temporada_id },
+      status: ren.status,           // enviada | continua | nao_continua
+      motivo: ren.motivo || null,
+      ja_respondeu: jaRespondeu,
+      membros,
+    });
+  } catch (e) {
+    console.error('[public grupos renovacao get]', e.message);
+    res.status(500).json({ error: 'Erro ao carregar a renovação.' });
+  }
+});
+
+// POST /api/public/grupos/grupo/renovacao
+// body { token, resposta: 'continua'|'nao_continua', continuam: [membro_ids],
+//        exibidos: [membro_ids], motivo }
+// O servidor SÓ age sobre `exibidos ∩ roster ativo atual`: quem entrou no
+// grupo DEPOIS da tela aberta (pedido aprovado, visitante da chamada) nunca é
+// removido por um submit atrasado. Última resposta vence (reedição).
+router.post('/grupo/renovacao', async (req, res) => {
+  try {
+    const { token, resposta, motivo } = req.body || {};
+    const ctx = await contextoRenovacao(token);
+    if (ctx.erro) return res.status(ctx.erro.status).json({ error: ctx.erro.msg });
+    const { ren, grupo, temporada } = ctx;
+    const agora = new Date().toISOString();
+    const hoje = agora.slice(0, 10);
+    const label = temporada?.label || ren.temporada_id;
+
+    if (resposta === 'nao_continua') {
+      const motivoLimpo = String(motivo || '').trim();
+      if (motivoLimpo.length < 5) {
+        return res.status(400).json({ error: 'Conte pra gente o motivo — ele ajuda a coordenação a cuidar do grupo.', campo: 'motivo' });
+      }
+      const { error } = await supabase.from('mem_grupo_renovacoes')
+        .update({
+          status: 'nao_continua', motivo: motivoLimpo.slice(0, 2000),
+          primeira_resposta_em: ren.primeira_resposta_em || agora,
+          ultima_resposta_em: agora, updated_at: agora,
+        }).eq('id', ren.id);
+      if (error) throw error;
+      // Nada muda no roster — a coordenação tria (fechar/buscar líder/manter).
+      try {
+        await notificar({
+          modulo: 'grupos',
+          tipo: 'renovacao_nao_continua',
+          titulo: `Líder não continua: ${grupo.nome}`,
+          mensagem: `O líder do grupo ${grupo.nome} respondeu que não continua na temporada ${label}. Motivo: ${motivoLimpo.slice(0, 200)}. O grupo aguarda triagem na caixa de entrada.`,
+          link: '/grupos?tab=entrada',
+          severidade: 'aviso',
+          chaveDedup: `renovacao_nao_continua_${ren.id}`,
+        });
+      } catch (eN) { console.error('[renovacao notificar]', eN.message); }
+      return res.json({ ok: true, status: 'nao_continua' });
+    }
+
+    if (resposta !== 'continua') {
+      return res.status(400).json({ error: 'Resposta inválida.' });
+    }
+    const continuam = Array.isArray(req.body?.continuam) ? req.body.continuam : null;
+    const exibidos = Array.isArray(req.body?.exibidos) ? req.body.exibidos : null;
+    if (!continuam || !exibidos) {
+      return res.status(400).json({ error: 'Lista de participantes inválida.' });
+    }
+
+    // Roster ativo ATUAL (vínculos linha a linha — pode haver mais de um por pessoa)
+    const { data: ativos } = await supabase.from('mem_grupo_membros')
+      .select('id, membro_id')
+      .eq('grupo_id', grupo.id).is('saiu_em', null).is('deleted_at', null)
+      .limit(1000);
+    const ativosPorMembro = new Map();
+    for (const v of (ativos || [])) {
+      if (!ativosPorMembro.has(v.membro_id)) ativosPorMembro.set(v.membro_id, []);
+      ativosPorMembro.get(v.membro_id).push(v.id);
+    }
+
+    const setExibidos = new Set(exibidos);
+    const setContinuam = new Set(continuam.filter(id => setExibidos.has(id)));
+
+    // 1) Remover: exibido + ativo agora + não marcado → fecha TODOS os vínculos
+    //    ativos da pessoa neste grupo (soft · renovacao_id = reversível aqui).
+    const removerVincIds = [];
+    const removidosMembroIds = [];
+    for (const [membroId, vincIds] of ativosPorMembro) {
+      if (!setExibidos.has(membroId)) continue; // entrou depois da tela — intocado
+      if (setContinuam.has(membroId)) continue;
+      removerVincIds.push(...vincIds);
+      removidosMembroIds.push(membroId);
+    }
+    if (removerVincIds.length) {
+      for (let i = 0; i < removerVincIds.length; i += 150) {
+        const { error } = await supabase.from('mem_grupo_membros')
+          .update({
+            saiu_em: hoje,
+            motivo_saida: `Não confirmado na renovação da temporada ${label}`,
+            renovacao_id: ren.id,
+          })
+          .in('id', removerVincIds.slice(i, i + 150));
+        if (error) throw error;
+      }
+    }
+
+    // 2) Reativar: pessoa marcada cujo vínculo FOI fechado por ESTA renovação
+    //    (re-submissão corrigindo). Só se não houver outro vínculo ativo dela
+    //    no grupo (a Naná pode ter recriado manualmente — nunca duplicar).
+    const { data: fechadosPorNos } = await supabase.from('mem_grupo_membros')
+      .select('id, membro_id')
+      .eq('grupo_id', grupo.id).eq('renovacao_id', ren.id)
+      .not('saiu_em', 'is', null).is('deleted_at', null)
+      .limit(1000);
+    const reativarIds = [];
+    const reativadosMembroIds = new Set();
+    for (const v of (fechadosPorNos || [])) {
+      if (!setContinuam.has(v.membro_id)) continue;
+      if (ativosPorMembro.has(v.membro_id)) continue;      // já ativo por outra via
+      if (reativadosMembroIds.has(v.membro_id)) continue;  // 1 vínculo por pessoa basta
+      reativarIds.push(v.id);
+      reativadosMembroIds.add(v.membro_id);
+    }
+    if (reativarIds.length) {
+      for (let i = 0; i < reativarIds.length; i += 150) {
+        const { error } = await supabase.from('mem_grupo_membros')
+          .update({ saiu_em: null, motivo_saida: null, renovacao_id: null })
+          .in('id', reativarIds.slice(i, i + 150));
+        if (error) throw error;
+      }
+    }
+
+    // 3) Resumo na linha (cache de exibição — a fonte auditável é o audit log
+    //    de mem_grupo_membros + renovacao_id). Os contadores refletem o estado
+    //    APÓS a operação (reedição inclui quem já estava fora e continuou fora),
+    //    não só o delta deste submit.
+    const confirmadosFinal = [...setContinuam];
+    // "Fora" = pessoa que o líder NÃO marcou (independente do caminho: fechada
+    // agora, ou fechada antes e não re-marcada). Quem está em setContinuam
+    // nunca conta — mesmo que o vínculo antigo siga fechado porque a pessoa já
+    // estava ativa de novo por outra via (ex.: recriada manualmente).
+    const seguemFora = (fechadosPorNos || []).filter(v => !setContinuam.has(v.membro_id));
+    const foraAgoraIds = [...removerVincIds, ...seguemFora.map(v => v.id)];
+    const foraAgoraMembros = new Set([...removidosMembroIds, ...seguemFora.map(v => v.membro_id)]);
+    const { error: eUp } = await supabase.from('mem_grupo_renovacoes')
+      .update({
+        status: 'continua', motivo: null,
+        roster_total: setExibidos.size,
+        confirmados_count: confirmadosFinal.length,
+        removidos_count: foraAgoraMembros.size,
+        confirmados_ids: confirmadosFinal,
+        removidos_vinculo_ids: [...new Set(foraAgoraIds)],
+        primeira_resposta_em: ren.primeira_resposta_em || agora,
+        ultima_resposta_em: agora, updated_at: agora,
+      }).eq('id', ren.id);
+    if (eUp) throw eUp;
+
+    res.json({
+      ok: true, status: 'continua',
+      confirmados: confirmadosFinal.length,
+      removidos: foraAgoraMembros.size,
+      reativados: reativarIds.length,
+    });
+  } catch (e) {
+    console.error('[public grupos renovacao post]', e.message);
+    res.status(500).json({ error: 'Erro ao salvar a resposta.' });
+  }
+});
+
 // GET /api/public/grupos/cron/frequencia-mensal — Vercel Cron (dia 28)
 // ENFILEIRA o template pra cada líder de grupo ativo com roster (a fila
 // horária cron/whatsapp-fila entrega com retry/backoff). Gated por

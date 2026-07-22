@@ -1120,6 +1120,42 @@ Limitação conhecida: escrita via backend (service role) fica **sem autor**
 (`auth.uid()` nulo → exibe "sistema") — autoria por request é evolução futura.
 O log só grava a partir da aplicação da migration (nada retroativo).
 
+## Grupos · Renovação de temporada pelo líder (2026-07-21)
+
+Pedido do Marcos: 1×/semestre, com a temporada fechada (antes de abrir as
+inscrições da próxima), TODOS os líderes recebem WhatsApp perguntando se
+continuam com o grupo. **Disparo SEMPRE manual** da coordenação (lei de 20/07 —
+nada automático pro líder), no card "Renovação de temporada" em Config >
+Temporadas (`TemporadasGrupos.jsx` · nível 5 · re-executar reenvia SÓ aos
+sem-resposta). Fluxo do líder no link público `/g/r/<token>`
+(`GrupoRenovacao.jsx` · token `renov` 30d · molde da frequência):
+- **SIM** → checklist do roster DESMARCADO ("quem provavelmente continua" ·
+  estimativa explícita) + selecionar todos + modal de confirmação **com os
+  NOMES** de quem sai. Não-marcado → `saiu_em` + `renovacao_id` (coluna FK
+  dedicada em `mem_grupo_membros` — NUNCA tag em texto) + motivo humano.
+  Pessoa segue no sistema e pode se reinscrever na abertura. **Reedição
+  permitida** (última vence): re-marcar reativa SÓ vínculos com
+  `renovacao_id` da própria renovação e sem outro vínculo ativo.
+- **NÃO** → motivo obrigatório → o grupo NÃO fecha: vira 4ª origem na Caixa
+  de entrada (`ren_nao_continua`) pra triagem da Naná (`PainelRenovacao`:
+  fechar grupo / buscar líder / manter · nota obrigatória) + `notificar()`.
+- **Sem resposta → roster INTOCADO** (lei: nunca remover por omissão).
+
+Segurança do submit (conselho 21/07): o POST carrega a lista **exibida** — o
+servidor só age sobre `exibidos ∩ roster ativo atual` (quem entrou depois da
+tela aberta nunca é removido por submit atrasado); token morre com: geração
+antiga (`token_geracao` na linha · reenvio incrementa), liderança trocada,
+linha triada ou **inscrições da temporada abertas**. Schema:
+`mem_grupo_renovacoes` (UNIQUE grupo+temporada · snapshot do líder ·
+contadores/ids jsonb como cache de exibição · triagem_*) + RLS molde
+mem_lider_inscricoes + audit trigger + whitelist (migration `20260721170000`,
+que também DROPa `uniq_mem_grupo_membros_ativo` — formaliza o multi-grupo que
+já valia em prod). Template Meta `grupos_renovacao_temporada` (UTILITY · {{1}}
+nome {{2}} temporada {{3}} grupo {{4}} link como variável de body · env
+override `WHATSAPP_TEMPLATE_GRUPOS_RENOVACAO`) via fila `whatsapp_envios`.
+A pessoa removida NÃO é notificada (decisão pastoral) — o caminho de volta é o
+broadcast de abertura das inscrições.
+
 ## Grupos × Bot WhatsApp · estudo semanal + relato do encontro (2026-06-10)
 
 Marcos: o bot manda o ESTUDO DA SEMANA pros líderes de grupos e, no dia
