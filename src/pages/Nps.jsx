@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { ModuleHeader } from '../components/layout/ModuleHeader';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { nps as api } from '../api';
+import { nps as api, next as nextApi } from '../api';
 import { toast } from 'sonner';
 import {
   Plus, X, MessageSquare, Sparkles, Users, Link2, Copy, Check, Loader2,
@@ -819,6 +819,10 @@ function DetalheModal({ id, onClose, onChanged, canWrite, onResponder }) {
   const [excluindo, setExcluindo] = useState(false);
   const [copied, setCopied] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  // Filtro por turma (NPS do Next por turma). Mapa turma_id → nome resolvido via
+  // next.turmas.list(). 'todas' = consolidado.
+  const [turmaFiltro, setTurmaFiltro] = useState('todas');
+  const [turmaNomes, setTurmaNomes] = useState({});
 
   async function load() {
     setLoading(true);
@@ -838,6 +842,18 @@ function DetalheModal({ id, onClose, onChanged, canWrite, onResponder }) {
   }
 
   useEffect(() => { load(); }, [id]);
+
+  // Resolve os NOMES das turmas (turma_id → nome) pro seletor. Carrega uma vez
+  // por pesquisa; se a lista falhar, o seletor cai em "Turma (sem nome)".
+  const precisaTurmas = pesquisa?.contexto_kpi === 'nps_next' || respostas.some(r => r.turma_id);
+  useEffect(() => {
+    if (!precisaTurmas) return;
+    let vivo = true;
+    nextApi.turmas.list()
+      .then((lista) => { if (vivo) setTurmaNomes(Object.fromEntries((lista || []).map(t => [t.id, t.nome]))); })
+      .catch(() => { /* mantém fallback "sem nome" */ });
+    return () => { vivo = false; };
+  }, [precisaTurmas]);
 
   const linkPublico = useMemo(() => {
     if (!pesquisa?.link_publico_token) return null;
@@ -924,6 +940,15 @@ function DetalheModal({ id, onClose, onChanged, canWrite, onResponder }) {
   const perguntasMap = {};
   (pesquisa.perguntas?.perguntas_extras || []).forEach((p) => { if (p.tipo !== 'secao') perguntasMap[p.id] = p.texto; });
 
+  // NPS do Next por turma · o seletor só aparece quando é a pesquisa do Next OU
+  // quando alguma resposta veio de um QR por turma. Filtra o Resumo e a aba
+  // Respostas (consolidado = todas).
+  const turmaIdsPresentes = [...new Set(respostas.map(r => r.turma_id).filter(Boolean))];
+  const temTurmas = pesquisa.contexto_kpi === 'nps_next' || turmaIdsPresentes.length > 0;
+  const respostasFiltradas = turmaFiltro === 'todas'
+    ? respostas
+    : respostas.filter(r => r.turma_id === turmaFiltro);
+
   return (
     <Modal open onClose={onClose} title={pesquisa.titulo} width={820}>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }}>
@@ -994,6 +1019,26 @@ function DetalheModal({ id, onClose, onChanged, canWrite, onResponder }) {
         />
       )}
 
+      {/* Seletor de turma (NPS do Next por turma) · filtra Resumo e Respostas */}
+      {temTurmas && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: C.t2 }}>Turma:</span>
+          <select
+            value={turmaFiltro}
+            onChange={(e) => setTurmaFiltro(e.target.value)}
+            style={{ padding: '6px 10px', borderRadius: 8, border: `1px solid ${C.border}`, background: C.inputBg, color: C.text, fontSize: 12, fontFamily: 'inherit' }}
+          >
+            <option value="todas">Todas as turmas (consolidado)</option>
+            {turmaIdsPresentes.map((tid) => (
+              <option key={tid} value={tid}>{turmaNomes[tid] || 'Turma (sem nome)'}</option>
+            ))}
+          </select>
+          {turmaFiltro !== 'todas' && (
+            <span style={{ fontSize: 11, color: C.t3 }}>{respostasFiltradas.length} resposta(s) nesta turma</span>
+          )}
+        </div>
+      )}
+
       {/* Tabs */}
       <div style={{ display: 'flex', gap: 4, marginBottom: 12, borderBottom: `1px solid ${C.border}` }}>
         {['resumo', 'respostas', 'perguntas', 'analise'].map(t => (
@@ -1004,14 +1049,14 @@ function DetalheModal({ id, onClose, onChanged, canWrite, onResponder }) {
         ))}
       </div>
 
-      {tab === 'resumo' && <ResumoTab pesquisa={pesquisa} respostas={respostas} />}
+      {tab === 'resumo' && <ResumoTab pesquisa={pesquisa} respostas={respostasFiltradas} />}
 
       {tab === 'respostas' && (
-        respostas.length === 0 ? (
+        respostasFiltradas.length === 0 ? (
           <div style={{ textAlign: 'center', padding: 30, color: C.t3, fontSize: 13 }}>Nenhuma resposta ainda</div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 360, overflowY: 'auto' }}>
-            {respostas.map(r => <RespostaCard key={r.id} r={r} perguntasMap={perguntasMap} />)}
+            {respostasFiltradas.map(r => <RespostaCard key={r.id} r={r} perguntasMap={perguntasMap} />)}
           </div>
         )
       )}

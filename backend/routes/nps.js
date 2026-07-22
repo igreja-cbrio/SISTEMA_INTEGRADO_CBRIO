@@ -350,7 +350,7 @@ router.get('/:id/respostas', async (req, res) => {
 
     const data = await listarRespostasCompletas(
       req.params.id,
-      'id, score, respostas, comentario, origem, nome_publico, email_publico, profile_id, created_at'
+      'id, score, respostas, comentario, origem, nome_publico, email_publico, profile_id, turma_id, created_at'
     );
     res.json(data);
   } catch (e) {

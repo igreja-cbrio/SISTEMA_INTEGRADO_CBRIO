@@ -298,6 +298,7 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
   const [det, setDet] = useState<TurmaDetalhe | null>(null);
   const [loading, setLoading] = useState(true);
   const [addOpen, setAddOpen] = useState(false);
+  const [qrSatisfacaoOpen, setQrSatisfacaoOpen] = useState(false);
   const [ordem, setOrdem] = useState<'nome' | 'recentes'>('nome');
   const load = useCallback(async () => {
     setLoading(true);
@@ -457,7 +458,10 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
             </div>
             </div>
             <DialogFooter className="flex-wrap gap-2 sm:justify-between">
-              <Button variant="outline" onClick={() => setAddOpen(true)} className="gap-2"><UserPlus className="h-4 w-4" /> Matricular pessoa</Button>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" onClick={() => setAddOpen(true)} className="gap-2"><UserPlus className="h-4 w-4" /> Matricular pessoa</Button>
+                <Button variant="outline" onClick={() => setQrSatisfacaoOpen(true)} className="gap-2"><Share2 className="h-4 w-4" /> QR de satisfação</Button>
+              </div>
               <div className="flex gap-2">
                 {det.status === 'aberta' && <Button variant="outline" onClick={encerrar}>Encerrar turma</Button>}
                 {det.status === 'encerrada' && <Button variant="outline" onClick={reabrir}>Reabrir turma</Button>}
@@ -465,6 +469,7 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
               </div>
             </DialogFooter>
             {addOpen && <AddMatriculaModal turmaId={turmaId} onClose={() => setAddOpen(false)} onAdded={() => { setAddOpen(false); load(); onChanged(); }} />}
+            {qrSatisfacaoOpen && <QrSatisfacaoModal turmaId={turmaId} turmaNome={det.nome} onClose={() => setQrSatisfacaoOpen(false)} />}
           </>
         )}
       </DialogContent>
@@ -1047,6 +1052,54 @@ function QrDirecionarModal({ onClose }: { onClose: () => void }) {
                 <Button size="sm" variant="outline" onClick={() => { navigator.clipboard.writeText(url); toast.success('Link copiado!'); }} className="shrink-0"><Copy className="h-3.5 w-3.5" /></Button>
               </div>
             )}
+          </div>
+        )}
+        <DialogFooter><Button variant="outline" onClick={onClose}>Fechar</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// QR de satisfação por turma · usa a pesquisa NPS canônica do Next (Satisfação
+// do Next) + ?turma=<id>. Mesmo link pra todas as turmas, só muda o parâmetro.
+function QrSatisfacaoModal({ turmaId, turmaNome, onClose }: { turmaId: string; turmaNome: string; onClose: () => void }) {
+  const [qrDataUrl, setQrDataUrl] = useState('');
+  const [url, setUrl] = useState('');
+  const [erro, setErro] = useState('');
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    nextApi.satisfacao()
+      .then((r: any) => {
+        if (!r?.link_publico_token) { setErro('Pesquisa de satisfação sem link público.'); setLoading(false); return; }
+        const link = `${window.location.origin}/nps/publica/${r.link_publico_token}?turma=${turmaId}`;
+        setUrl(link);
+        QRCode.toDataURL(link, { width: 320, margin: 2, color: { dark: '#000000', light: '#ffffff' } })
+          .then(setQrDataUrl).catch(() => {})
+          .finally(() => setLoading(false));
+      })
+      .catch((e: any) => { setErro(e?.message || 'Não foi possível gerar o QR'); setLoading(false); });
+  }, [turmaId]);
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><Share2 className="h-5 w-5" /> Satisfação do Next — {turmaNome}</DialogTitle>
+        </DialogHeader>
+        <p className="text-xs text-muted-foreground">Mostre este QR no fim do encontro: cada resposta fica ligada a <strong>esta turma</strong>. A análise por turma aparece no módulo NPS.</p>
+        {loading ? (
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground mx-auto my-8" />
+        ) : erro ? (
+          <p className="text-sm text-destructive text-center py-6">{erro}</p>
+        ) : (
+          <div className="space-y-3">
+            {qrDataUrl && <img src={qrDataUrl} alt="QR de satisfação" className="mx-auto rounded-lg border border-border" style={{ width: 240, height: 240 }} />}
+            {url && (
+              <div className="flex gap-2">
+                <Input value={url} readOnly className="font-mono text-xs" />
+                <Button size="sm" variant="outline" onClick={() => { navigator.clipboard.writeText(url); toast.success('Link copiado!'); }} className="shrink-0"><Copy className="h-3.5 w-3.5" /></Button>
+              </div>
+            )}
+            <Link to="/nps" className="block text-center text-xs text-primary hover:underline">Ver análise no módulo NPS</Link>
           </div>
         )}
         <DialogFooter><Button variant="outline" onClick={onClose}>Fechar</Button></DialogFooter>

@@ -357,6 +357,8 @@ export const next = {
   }).then(async r => { const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j; }),
   // QR de direcionamento (token fixo · resolve a turma aberta do momento) · admin
   direcionarQr: () => get('/next/direcionar-qr'),
+  // Pesquisa NPS canônica do Next (Satisfação do Next) · provisiona na 1ª chamada.
+  satisfacao: () => get('/next/satisfacao'),
   // Admin
   dashboard: () => get('/next/dashboard'),
   eventos: {
@@ -3299,9 +3301,10 @@ export const nps = {
   // soluço/challenge momentâneo sob pico. Em vez de perder a resposta, o celular
   // tenta de novo sozinho (backoff). Status "de borda" (403 challenge / 429 / 503)
   // e erro de rede são retentados; 400/404 (dado inválido / pesquisa off) não.
-  publicGet: (token) =>
+  // turma (opcional) · QR por turma do Next → busca o nome pra confirmar a turma.
+  publicGet: (token, turma) =>
     npsFetchRetry(
-      () => fetch(`${API}/public/nps/${encodeURIComponent(token)}`, { headers: { 'Content-Type': 'application/json' } }),
+      () => fetch(`${API}/public/nps/${encodeURIComponent(token)}` + (turma ? `?turma=${encodeURIComponent(turma)}` : ''), { headers: { 'Content-Type': 'application/json' } }),
       { tentativas: 4, msg: 'Erro ao carregar pesquisa' },
     ),
   publicResponder: (token, payload) =>
