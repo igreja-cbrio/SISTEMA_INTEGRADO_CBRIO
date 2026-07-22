@@ -81,10 +81,13 @@ async function processarEvento(req) {
       for (const m of mensagens) {
         const ehTexto = m.type === 'text';
         const ehFlowReply = m.type === 'interactive' && m.interactive?.type === 'nfm_reply';
+        // Botão de Aprovar/Recusar da aprovação de solicitação: interativo
+        // (mensagem de sessão) OU quick-reply de TEMPLATE (m.type === 'button').
+        const ehBotao = (m.type === 'interactive' && m.interactive?.type === 'button_reply') || m.type === 'button';
         // Áudio e foto são aceitos pro fluxo de GRUPOS (relato do encontro ·
         // transcrição/foto tratadas em services/whatsappGrupos).
         const ehMidia = m.type === 'audio' || m.type === 'image' || m.type === 'document';
-        if (!ehTexto && !ehFlowReply && !ehMidia) continue;
+        if (!ehTexto && !ehFlowReply && !ehMidia && !ehBotao) continue;
         if (++processadas > MAX_MSGS) {
           console.warn('[whatsapp webhook] limite de mensagens por evento atingido · ignorando excedente');
           return;
@@ -92,6 +95,9 @@ async function processarEvento(req) {
         if (ehFlowReply) {
           await processarFlowReply(m).catch(err =>
             console.error('[whatsapp webhook] flow:', err.message));
+        } else if (ehBotao) {
+          await processarBotaoAprovacao(m).catch(err =>
+            console.error('[whatsapp webhook] botao:', err.message));
         } else {
           await processarMensagem(m, cfg).catch(err =>
             console.error('[whatsapp webhook] mensagem:', err.message));
@@ -99,6 +105,27 @@ async function processarEvento(req) {
       }
     }
   }
+}
+
+// Resposta por BOTÃO (Aprovar/Recusar) da aprovação de solicitação. O id do botão
+// ('aprovar'/'rejeitar') é interpretado pelo tratarRespostaAprovacao igual ao número.
+async function processarBotaoAprovacao(m) {
+  const messageId = m.id;
+  const telefone = normalizarTelefone(m.from);
+  // Botão interativo (session) → interactive.button_reply.id · quick-reply de
+  // TEMPLATE → m.button.text/payload (ex.: "Aprovar"/"Recusar"). interpretar() casa os dois.
+  const botaoId = m.type === 'button'
+    ? (m.button?.text || m.button?.payload || '')
+    : (m.interactive?.button_reply?.id || '');
+  const { data: jaVisto } = await supabase
+    .from('whatsapp_coletas').select('id').eq('whatsapp_message_id', messageId).maybeSingle();
+  if (jaVisto) return;
+  await require('../services/solicitacaoWpp')
+    .tratarRespostaAprovacao({ telefone, texto: botaoId })
+    .catch(err => console.error('[whatsapp webhook] botao aprovacao:', err.message));
+  await supabase.from('whatsapp_coletas').insert({
+    whatsapp_message_id: messageId, telefone, raw_text: botaoId, status: 'ignorado',
+  }).catch(() => {});
 }
 
 async function processarMensagem(m, cfg) {
@@ -133,6 +160,37 @@ async function processarMensagem(m, cfg) {
     .tratarNotaFiscal({ m, telefone, texto, messageId })
     .catch(err => { console.error('[whatsapp webhook] nota:', err.message); return false; });
   if (tratadoNota) return;
+
+  // ── PESQUISA DE SATISFAÇÃO ── conversa finalizada aguardando a nota (0-5).
+  // Captura a resposta como avaliação e agradece (não reabre o ticket).
+  if (m.type === 'text') {
+    const { data: convP } = await supabase.from('wa_conversas')
+      .select('id, pesquisa_estado, protocolo').eq('telefone', telefone)
+      .eq('pesquisa_estado', 'aguardando').is('deleted_at', null).maybeSingle();
+    if (convP) {
+      const waInbox = require('../services/waInbox');
+      const t = String(texto || '').trim();
+      const nota = /^[0-5]$/.test(t) ? Number(t) : null;
+      const agora = new Date().toISOString();
+      if (nota != null) {
+        await supabase.from('wa_mensagens').insert({
+          conversa_id: convP.id, direcao: 'in', tipo: 'avaliacao', texto: t, wa_message_id: messageId,
+        }).catch(() => {});
+        await supabase.from('wa_conversas').update({
+          satisfacao: nota, satisfacao_em: agora, pesquisa_estado: 'respondida',
+          last_message_at: agora, ultima_previa: `Avaliação: ${nota}/5`,
+        }).eq('id', convP.id);
+        const agr = `Obrigado pela sua avaliação (${nota}/5)! 🙏 Se precisar, é só chamar de novo.`;
+        await enviarTexto(telefone, agr).catch(() => {});
+        await waInbox.registrarOutbound({ telefone, texto: agr, tipo: 'bot' }).catch(() => {});
+      } else {
+        // não foi 0-5 → encerra a espera e deixa a mensagem no inbox pro time
+        await supabase.from('wa_conversas').update({ pesquisa_estado: 'ignorada' }).eq('id', convP.id);
+        await waInbox.registrarInbound({ telefone, texto, messageId, tipo: 'text' }).catch(() => {});
+      }
+      return;
+    }
+  }
 
   // ── INBOX HUMANO ASSUMIDO ── se a igreja já iniciou/assumiu uma conversa
   // com este número pelo inbox (Nova conversa ou resposta do time), as
@@ -181,6 +239,23 @@ async function processarMensagem(m, cfg) {
       mediaId: m.image?.id || m.audio?.id || m.document?.id,
     }).catch(e => console.error('[whatsapp webhook] inbox in:', e.message));
     if (m.type !== 'text') return; // mídia: já no inbox; não custa LLM institucional
+
+    // ── BOT DE TRIAGEM ── número realmente desconhecido (não-líder): o bot
+    // pergunta o setor + nome, tria pra área e notifica a equipe. Substitui a
+    // FAQ institucional. Líder-comum (coleta_restrita) mantém o institucional.
+    if (!lider) {
+      const assumiu = await require('../services/whatsappTriagem')
+        .tratar({ telefone, texto })
+        .catch(e => { console.error('[whatsapp webhook] triagem:', e.message); return false; });
+      if (assumiu) {
+        await supabase.from('whatsapp_coletas').insert({
+          whatsapp_message_id: messageId, telefone, raw_text: texto,
+          status: 'ignorado', erro: 'triagem', modulo_destino: 'conversas',
+        }).catch(() => {});
+        return;
+      }
+    }
+
     const resposta = await responderInstitucional({ texto, institucional: cfg?.institucional });
     await supabase.from('whatsapp_coletas').insert({
       whatsapp_message_id: messageId, telefone, raw_text: texto,

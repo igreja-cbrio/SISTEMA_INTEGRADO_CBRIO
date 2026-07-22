@@ -376,13 +376,16 @@ function proximoStatusPosAprovacao(sol) {
 // Não-planejado com custo → julgamento de mérito. Só no fluxo novo
 // (eh_planejado=false) · linha legada (NULL) segue o fluxo antigo.
 function precisaMerito(sol) {
-  // Criativo não passa pelo julgamento de mérito (Pastor Presidente) — o
-  // controle é a aprovação de origem do Criativo + o financeiro (Yago).
-  if (CRIATIVO_CATEGORIAS.includes(sol.categoria)) return false;
-  return sol.eh_planejado === false
-    && sol.merito_status == null
-    && !!sol.precisa_aprovacao_financeira
-    && !sol.aprovado_financeiro_em;
+  // Julgamento de mérito (Pastor Presidente) · só em COMPRAS, por valor + planejado
+  // (fluxo definido pelo Matheus · 2026-07-22):
+  //   planejado      → mérito quando o pedido passa de R$ 5.000
+  //   não planejado  → mérito quando o pedido passa de R$ 1.000
+  // Faixa pelo valor ESTIMADO (a aprovação é antes da cotação). Outras categorias
+  // seguem sem mérito por ora.
+  if (sol.categoria !== 'compras') return false;
+  if (sol.merito_status != null) return false; // já decidido
+  const valor = Number(sol.valor_estimado) || 0;
+  return sol.eh_planejado === true ? valor > 5000 : valor > 1000;
 }
 
 // Evento explícito na timeline com o ATOR correto (o trigger genérico registra
@@ -1055,19 +1058,23 @@ router.post('/', async (req, res) => {
       console.error('[SOLICITAÇÕES] roteamento de origem falhou (fallback trigger):', rerr.message);
     }
 
-    // Compras NÃO passam pela aprovação de origem do diretor do Criativo (Pedro
-    // Menezes) — decisão do Matheus (2026-07-13). Se a origem cairia nele,
-    // dispensa (compras já têm cotação + aprovação financeira depois). Vale só
-    // pro Criativo; os outros setores seguem aprovando suas compras normalmente.
-    if (categoria === 'compras' && rota?.diretor_id) {
-      try {
-        const { data: criativo } = await supabase.from('setor_diretor')
-          .select('diretor_id').eq('setor', 'Criativo').maybeSingle();
-        if (criativo?.diretor_id && rota.diretor_id === criativo.diretor_id) {
-          rota = { diretor_id: null, aprovacao_status: 'dispensada', status: 'pendente',
-            motivo: 'Compras não passam pelo diretor do Criativo' };
-        }
-      } catch (e) { console.warn('[SOLICITAÇÕES] exceção compras/Criativo:', e.message); }
+    // ── COMPRAS · fluxo por valor + planejado (2026-07-22, Matheus) ───────────
+    //   Planejado ≤ R$ 1.000            → direto pra cotação (sem diretor/presidente)
+    //   Planejado R$ 1.000–5.000        → diretor da área aprova
+    //   Planejado > R$ 5.000            → diretor da área + Pastor Presidente
+    //   Não planejado ≤ R$ 1.000        → diretor da área aprova
+    //   Não planejado > R$ 1.000        → diretor da área + Pastor Presidente
+    // A origem é o DIRETOR DA ÁREA (rota do RPC · já vem 'dispensada' quando o
+    // solicitante é diretor/diretoria/super). O mérito (presidente) é decidido
+    // DEPOIS, por valor (precisaMerito). Gestão (2º carimbo) segue dispensada.
+    // Depois de tudo: cotação (Amaury) → financeiro (Alberto).
+    if (categoria === 'compras') {
+      const valorCompra = Number(valorEstimadoFinal) || 0;
+      if (planejado && valorCompra <= 1000) {
+        rota = { diretor_id: null, aprovacao_status: 'dispensada', status: 'pendente',
+          motivo: 'Compra planejada até R$ 1.000 · direto para cotação' };
+      }
+      // demais casos: mantém a rota do RPC (diretor da área aprova).
     }
 
     // Reserva de espaço vai DIRETO pro Amaury (coordenador de operações) — sem
@@ -1086,19 +1093,8 @@ router.post('/', async (req, res) => {
         motivo: 'Origem aprovada pelo responsável da categoria' };
     }
 
-    // Compra de até R$ 1.000 → direto pra cotação do Amaury, planejada ou não
-    // (decisão do Matheus · 2026-07-15). Sobrescreve a rota DEPOIS dos overrides
-    // de Criativo/reserva; o status 'pendente' vira 'em_cotacao' no trigger de
-    // SLA (compras no INSERT · migration 20260616160000). Number() explícito:
-    // valorEstimadoFinal pode chegar string/null — null/0/'' ficam de fora
-    // (fail-closed · sem valor conhecido, o pedido segue as aprovações normais).
-    const compraCotacaoDireta = categoria === 'compras'
-      && Number(valorEstimadoFinal) > 0
-      && Number(valorEstimadoFinal) <= COMPRA_COTACAO_DIRETA_LIMITE;
-    if (compraCotacaoDireta) {
-      rota = { diretor_id: null, aprovacao_status: 'dispensada', status: 'pendente',
-        motivo: COMPRA_COTACAO_DIRETA_MOTIVO };
-    }
+    // (Compras já roteadas no bloco unificado acima · o status 'pendente'
+    // dispensado vira 'em_cotacao' no trigger de SLA · migration 20260616160000.)
 
     // Criativo: a aprovação de ORIGEM é do diretor do Criativo (Pedro Paulo), por
     // CATEGORIA — venha de quem vier (pula o diretor do setor de quem pede, ex.:
@@ -1117,12 +1113,11 @@ router.post('/', async (req, res) => {
       } catch (e) { console.warn('[SOLICITAÇÕES] exceção origem Criativo:', e.message); }
     }
 
-    if (compraCotacaoDireta && !planejado) {
-      // Carimbo de Gestão explicitamente dispensado (trilha de auditoria) —
-      // NÃO cair no bloco abaixo, que recomputaria 'pendente' e devolveria o
-      // pedido pra aguardando_aprovacao_origem.
+    if (categoria === 'compras' && !planejado) {
+      // Compras NÃO passam pelo 2º carimbo de Gestão (2026-07-22): vão direto pra
+      // cotação; a origem, quando aplicável, é Pedro (Criativo) ou Arthur (>R$1k).
       gestaoStatus = 'dispensada';
-      gestaoMotivo = COMPRA_COTACAO_DIRETA_MOTIVO;
+      gestaoMotivo = 'Compras não passam pela Gestão · origem (quando aplicável) + cotação + financeiro';
     } else if (ehCriativo && !planejado) {
       // Criativo NÃO passa pelo 2º carimbo de Gestão (Eduardo/Juliana): o
       // controle é a aprovação de origem do Criativo + (com custo) financeiro.
@@ -1267,14 +1262,12 @@ router.post('/', async (req, res) => {
       .single();
     if (error) throw error;
 
-    // ⚠️ Fluxo BPMN · se AMBOS os carimbos nasceram dispensados e o pedido TEM
-    // CUSTO (precisa_aprovacao_financeira calculado pelo trigger no insert),
-    // ele já nasce no julgamento de mérito (não-planejado com custo → Pastor
-    // Presidente). Planejado nunca passa por aqui.
-    if (!planejado
-        && !compraCotacaoDireta // compra ≤ R$ 1.000 também pula o mérito (2026-07-15)
-        && data.aprovacao_origem_status === 'dispensada'
-        && data.aprovacao_gestao_status === 'dispensada'
+    // ⚠️ Fluxo BPMN · se a ORIGEM nasceu dispensada (ex.: o próprio diretor pede)
+    // mas o pedido ainda precisa do Pastor Presidente pela faixa de valor, já nasce
+    // no julgamento de mérito. Vale planejado e não-planejado (a régua de valor
+    // está em precisaMerito). Gestão nula = planejado (2º carimbo não se aplica).
+    if (data.aprovacao_origem_status === 'dispensada'
+        && (data.aprovacao_gestao_status === 'dispensada' || data.aprovacao_gestao_status == null)
         && precisaMerito(data)) {
       const statusAntes = data.status;
       const { data: up, error: upErr } = await supabase
@@ -1292,6 +1285,7 @@ router.post('/', async (req, res) => {
           observacao: 'Carimbos dispensados · pedido com custo enviado ao julgamento de mérito',
         });
         notificarMeritoPendente(data);
+        require('../services/solicitacaoWpp').enviarMeritoWpp(data).catch(() => {});
       } else if (upErr) {
         console.error('[SOLICITACOES] mover pra mérito no create:', upErr.message);
       }
@@ -1339,22 +1333,23 @@ router.post('/', async (req, res) => {
       extraTargetIds: responsaveisDaArea,
     }).catch(err => console.error('[SOLICITACOES] notify error:', err.message));
 
-    // Compra ≤ R$ 1.000 nasceu direto em cotação → evento explícito na timeline
-    // + call-to-action "Cotar" pros responsáveis de compras (no fluxo normal esse
-    // aviso só sai no aprovar-origem, que aqui foi dispensado).
-    if (compraCotacaoDireta && data.status === 'em_cotacao') {
+    // Compra que nasceu direto em cotação (sem filtro de origem) → evento
+    // explícito na timeline + call-to-action "Cotar" pros responsáveis de compras
+    // (no fluxo com origem esse aviso sai no aprovar-origem).
+    if (categoria === 'compras' && data.status === 'em_cotacao'
+        && data.aprovacao_origem_status === 'dispensada') {
       registrarEvento(data.id, {
         statusAnterior: null,
         statusNovo: 'em_cotacao',
         atorId: userId,
-        observacao: COMPRA_COTACAO_DIRETA_MOTIVO,
+        observacao: 'Compra entrou direto na cotação (Amaury)',
       });
       if (responsaveisDaArea.length) {
         notificar({
           modulo,
           tipo: 'solicitacao_status',
           titulo: `Cotar: ${titulo}`,
-          mensagem: `Compra de até R$ ${COMPRA_COTACAO_DIRETA_LIMITE} entrou direto na cotação — registre a cotação (valor + fornecedor) pra seguir pra aprovação do financeiro.`,
+          mensagem: `Compra entrou direto na cotação — registre a cotação (valor + fornecedor) pra seguir pra aprovação financeira.`,
           link: '/solicitacoes',
           severidade: 'info',
           chaveDedup: `solicitacao_cotar_${data.id}`,
@@ -1619,6 +1614,7 @@ async function aprovarOrigemHandler(req, res) {
         targetIds: [data.solicitante_id].filter(Boolean),
       }).catch(err => console.error('[SOLICITACOES] notify merito solicitante:', err.message));
       notificarMeritoPendente(data);
+      require('../services/solicitacaoWpp').enviarMeritoWpp(data).catch(() => {});
       notificarPedidoWhatsapp(data.id, 'aguardando julgamento de mérito', null);
       return res.json(data);
     }
@@ -2268,7 +2264,7 @@ async function podeJulgarMerito(req) {
   return isAdminFallback(req); // fallback super-admin/admin
 }
 
-router.post('/:id/aprovar-merito', async (req, res) => {
+async function aprovarMeritoHandler(req, res) {
   try {
     const userId = req.user.userId;
     const userName = req.user.name;
@@ -2354,11 +2350,12 @@ router.post('/:id/aprovar-merito', async (req, res) => {
     console.error('[SOLICITACOES] aprovar-merito:', e.message);
     res.status(500).json({ error: e.message || 'Erro ao aprovar o mérito' });
   }
-});
+}
+router.post('/:id/aprovar-merito', aprovarMeritoHandler);
 
 // Reprovação de mérito é IMUTÁVEL (como a rejeição de origem · não reabre ·
 // cria-se nova solicitação). Motivo obrigatório (mínimo 5 caracteres).
-router.post('/:id/reprovar-merito', async (req, res) => {
+async function reprovarMeritoHandler(req, res) {
   try {
     const userId = req.user.userId;
     const userName = req.user.name;
@@ -2420,7 +2417,23 @@ router.post('/:id/reprovar-merito', async (req, res) => {
     console.error('[SOLICITACOES] reprovar-merito:', e.message);
     res.status(500).json({ error: e.message || 'Erro ao reprovar o mérito' });
   }
-});
+}
+router.post('/:id/reprovar-merito', reprovarMeritoHandler);
+
+// Wrappers internos (aprovação/reprovação de mérito pelo WhatsApp · mesmo padrão
+// do origem). aprovadorId = profile do aprovador de mérito (passa no podeJulgarMerito).
+async function aprovarMeritoInterno({ solicitacaoId, aprovadorId, aprovadorNome, aprovadorEmail }) {
+  const req = { params: { id: solicitacaoId }, body: {}, user: { userId: aprovadorId, name: aprovadorNome || null, email: aprovadorEmail || '', role: 'assistente' } };
+  const res = _fakeRes();
+  await aprovarMeritoHandler(req, res);
+  return { ok: res.statusCode < 400, status: res.statusCode, data: res.body };
+}
+async function rejeitarMeritoInterno({ solicitacaoId, aprovadorId, aprovadorNome, aprovadorEmail, motivo }) {
+  const req = { params: { id: solicitacaoId }, body: { motivo: motivo || 'Reprovada pelo WhatsApp' }, user: { userId: aprovadorId, name: aprovadorNome || null, email: aprovadorEmail || '', role: 'assistente' } };
+  const res = _fakeRes();
+  await reprovarMeritoHandler(req, res);
+  return { ok: res.statusCode < 400, status: res.statusCode, data: res.body };
+}
 
 // ══════════════════════════════════════════════════════════════════════════
 // SOBRESTAR / RETOMAR (fluxo BPMN 2026-07-02) · "em espera" com motivo + data
@@ -3764,3 +3777,6 @@ router.post('/:id/atender-estoque', async (req, res) => {
 module.exports = router;
 module.exports.aprovarOrigemInterno = aprovarOrigemInterno;
 module.exports.rejeitarOrigemInterno = rejeitarOrigemInterno;
+module.exports.aprovarMeritoInterno = aprovarMeritoInterno;
+module.exports.rejeitarMeritoInterno = rejeitarMeritoInterno;
+module.exports.aprovadoresMeritoIds = aprovadoresMeritoIds;

@@ -24,7 +24,8 @@ import { Label } from '@/components/ui/label';
 import {
   Loader2, Send, Search, Check, MessageCircle, RefreshCw, ExternalLink, Clock,
   User, CheckCheck, UserPlus, ChevronDown, UserCheck, Tag, Plus, Inbox, Filter,
-  Users, Droplets, HandHelping, Sparkles, StickyNote, Paperclip,
+  Users, Droplets, HandHelping, Sparkles, StickyNote, Paperclip, ArrowLeftRight, Hash, Star,
+  Zap,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -35,6 +36,7 @@ type Conversa = {
   id: string; telefone: string; nome: string | null; membro_id: string | null; foto_url: string | null;
   area: string | null; nao_lidas: number; resolvida: boolean; ultima_previa: string | null;
   atribuido_a: string | null; notas: string | null; last_message_at: string | null;
+  protocolo: string | null; satisfacao: number | null; pesquisa_estado: string | null;
   dentro_janela: boolean; janela_expira_em: string | null;
 };
 type Msg = { id: string; direcao: 'in' | 'out'; tipo: string; texto: string | null; media_url: string | null; criado_em: string };
@@ -104,6 +106,8 @@ export default function ConversasInbox({
   const [perfil, setPerfil] = useState<Perfil | null>(null);
   const [notasDraft, setNotasDraft] = useState('');
   const [novaOpen, setNovaOpen] = useState(false);
+  const [prontas, setProntas] = useState<{ id: string; titulo: string; texto: string }[]>([]);
+  const [prontasOpen, setProntasOpen] = useState(false);
   const fimRef = useRef<HTMLDivElement | null>(null);
   const selRef = useRef<string | null>(null);
   selRef.current = selId;
@@ -133,6 +137,11 @@ export default function ConversasInbox({
     waInbox.areas().then(r => setAreasDisp(r?.areas || [])).catch(() => {});
     waInbox.templates().then(r => setTemplates(r?.templates || [])).catch(() => {});
     waInbox.colaboradores().then(r => setColaboradores(r?.colaboradores || [])).catch(() => {});
+    waInbox.mensagensProntas().then(r => setProntas(r?.mensagens || [])).catch(() => {});
+  }, []);
+
+  const recarregarProntas = useCallback(() => {
+    waInbox.mensagensProntas().then(r => setProntas(r?.mensagens || [])).catch(() => {});
   }, []);
 
   useEffect(() => { carregarConversas(); }, [carregarConversas]);
@@ -205,8 +214,16 @@ export default function ConversasInbox({
   }
   async function resolver(resolvida: boolean) {
     if (!selId) return;
-    try { await waInbox.atualizar(selId, { resolvida }); toast.success(resolvida ? 'Conversa resolvida' : 'Conversa reaberta'); carregarConversas(); carregarThread(selId); }
-    catch { toast.error('Erro'); }
+    try {
+      const r: any = await waInbox.atualizar(selId, { resolvida });
+      toast.success(resolvida ? (r?.pesquisa_enviada ? 'Finalizada · pesquisa de satisfação enviada' : 'Conversa finalizada') : 'Conversa reaberta');
+      carregarConversas(); carregarThread(selId);
+    } catch { toast.error('Erro'); }
+  }
+  async function transferir(area: string) {
+    if (!selId) return;
+    try { await waInbox.transferir(selId, area); toast.success(`Transferida para ${area}`); carregarConversas(); carregarThread(selId); }
+    catch (e: any) { toast.error(e?.message || 'Erro ao transferir'); }
   }
   async function atribuir(userId: string | null) {
     if (!selId) return;
@@ -340,7 +357,12 @@ export default function ConversasInbox({
               <div className="flex items-center justify-between border-b border-border px-4 py-3 gap-2">
                 <div className="flex items-center gap-3 min-w-0">
                   <Avatar className="h-10 w-10">{conv.foto_url && <AvatarImage src={conv.foto_url} alt={conv.nome || ''} />}<AvatarFallback className="bg-primary/15 text-primary text-xs font-semibold">{iniciais(conv.nome, conv.telefone)}</AvatarFallback></Avatar>
-                  <div className="min-w-0"><p className="truncate text-sm font-semibold">{conv.nome || telBonito(conv.telefone)}</p><p className="text-[11px] text-muted-foreground">{telBonito(conv.telefone)}</p></div>
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold flex items-center gap-1.5">{conv.nome || telBonito(conv.telefone)}
+                      {!conv.membro_id && <Badge variant="outline" className="h-4.5 border-amber-500/30 bg-amber-500/10 px-1.5 py-0 text-[9px] font-normal text-amber-600 dark:text-amber-400">não cadastrado</Badge>}
+                    </p>
+                    <p className="text-[11px] text-muted-foreground">{telBonito(conv.telefone)}</p>
+                  </div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   {/* triagem por área */}
@@ -386,19 +408,40 @@ export default function ConversasInbox({
                       {conv.atribuido_a && (<><DropdownMenuSeparator /><DropdownMenuItem onClick={() => atribuir(null)} className="gap-2 text-muted-foreground">Remover atribuição</DropdownMenuItem></>)}
                     </DropdownMenuContent>
                   </DropdownMenu>
+                  {/* transferir de área */}
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button size="sm" variant="outline" className="gap-1.5"><ArrowLeftRight className="h-3.5 w-3.5" />Transferir</Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-52">
+                      <DropdownMenuLabel>Transferir para a área</DropdownMenuLabel>
+                      <DropdownMenuSeparator />
+                      <div className="max-h-64 overflow-y-auto">
+                        {areasDisp.filter(a => a.nome !== conv.area).map(a => (
+                          <DropdownMenuItem key={a.nome} onClick={() => transferir(a.nome)} className="gap-2"><ArrowLeftRight className="h-3.5 w-3.5 text-muted-foreground" />{a.nome}</DropdownMenuItem>
+                        ))}
+                      </div>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                   {conv.resolvida
                     ? <Button size="sm" variant="outline" onClick={() => resolver(false)}>Reabrir</Button>
-                    : <Button size="sm" variant="outline" onClick={() => resolver(true)}><Check className="mr-1 h-3.5 w-3.5" />Resolver</Button>}
+                    : <Button size="sm" variant="outline" onClick={() => resolver(true)}><Check className="mr-1 h-3.5 w-3.5" />Finalizar</Button>}
                 </div>
               </div>
 
               <ScrollArea className="flex-1 bg-muted/20">
                 <div className="flex flex-col gap-2 p-5">
                   <div className="mx-auto rounded-full bg-muted px-3 py-1 text-[11px] text-muted-foreground">Conversa</div>
-                  {msgs.map(m => (
+                  {msgs.map(m => m.tipo === 'sistema' ? (
+                    <div key={m.id} className="flex justify-center">
+                      <span className="rounded-full bg-muted px-3 py-1 text-[11px] text-muted-foreground">{m.texto}</span>
+                    </div>
+                  ) : (
                     <div key={m.id} className={`flex ${m.direcao === 'out' ? 'justify-end' : 'justify-start'}`}>
                       <div className={`max-w-[72%] rounded-2xl px-3.5 py-2 text-sm shadow-sm whitespace-pre-wrap break-words ${m.direcao === 'out' ? 'rounded-tr-sm bg-primary text-primary-foreground' : 'rounded-tl-sm border border-border bg-background'}`}>
                         {m.tipo === 'template' && <p className="mb-0.5 text-[10px] font-medium opacity-70">template</p>}
+                        {m.tipo === 'pesquisa' && <p className="mb-0.5 text-[10px] font-medium opacity-70">pesquisa de satisfação</p>}
+                        {m.tipo === 'avaliacao' && <p className="mb-0.5 flex items-center gap-0.5 text-[10px] font-medium opacity-80"><Star className="h-3 w-3 fill-current" />avaliação</p>}
                         {m.tipo === 'institucional' && <p className="mb-0.5 text-[10px] font-medium opacity-70">resposta automática</p>}
                         {m.tipo === 'image' && m.media_url && <img src={m.media_url} alt="imagem" className="mb-1 max-h-60 rounded-lg" />}
                         {m.tipo === 'document' && m.media_url && <a href={m.media_url} target="_blank" rel="noreferrer" className="mb-1 flex items-center gap-1 underline"><ExternalLink className="h-3.5 w-3.5" />documento</a>}
@@ -412,29 +455,70 @@ export default function ConversasInbox({
                 </div>
               </ScrollArea>
 
-              {foraJanela ? (
-                <div className="border-t border-border bg-amber-50 px-4 py-3 text-[12px] text-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
-                  ⚠️ Fora da janela de 24h do WhatsApp — só é possível enviar um <b>template aprovado</b> agora. Assim que a pessoa responder, o campo de texto libera.
-                </div>
-              ) : (
-                <div className="border-t border-border p-3">
-                  <div className="flex items-end gap-2 rounded-xl border border-border bg-background p-2">
-                    <input ref={fileRef} type="file" accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx" className="hidden"
-                      onChange={e => { const f = e.target.files?.[0]; if (f) enviarAnexo(f); e.target.value = ''; }} />
-                    <Button size="icon" variant="ghost" disabled={anexando} onClick={() => fileRef.current?.click()} className="h-9 w-9 shrink-0 text-muted-foreground" title="Anexar foto ou documento">
-                      {anexando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Paperclip className="h-4 w-4" />}
-                    </Button>
-                    <textarea value={texto} onChange={e => setTexto(e.target.value)}
-                      onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); responder(); } }}
-                      rows={1} placeholder="Escreva uma mensagem…  (Enter envia · Shift+Enter quebra linha)"
-                      className="max-h-32 min-h-[36px] flex-1 resize-none bg-transparent px-1 py-1.5 text-sm outline-none placeholder:text-muted-foreground" />
-                    <Button size="icon" disabled={enviando || !texto.trim()} onClick={responder} className="h-9 w-9 shrink-0">{enviando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}</Button>
+              {(() => {
+                // Caixa SEMPRE aberta. Dentro da janela de 24h → envia pela API do
+                // WhatsApp (texto livre). Fora da janela, a API não permite texto
+                // livre — então o envio abre o WhatsApp da pessoa (wa.me) com o
+                // texto pronto (bom pra parabenizar/proativo). Anexo só na janela.
+                const telDig = (conv.telefone || '').replace(/\D/g, '');
+                const waMe = `https://wa.me/${telDig}${texto.trim() ? `?text=${encodeURIComponent(texto.trim())}` : ''}`;
+                const enviarMsg = () => {
+                  if (!texto.trim()) return;
+                  if (foraJanela) { window.open(waMe, '_blank', 'noopener'); }
+                  else responder();
+                };
+                const usarPronta = (t: string) => { setTexto(prev => (prev.trim() ? prev + '\n' + t : t)); setProntasOpen(false); };
+                return (
+                  <div className="relative border-t border-border p-3">
+                    {prontasOpen && (
+                      <div className="absolute bottom-full left-3 right-3 mb-2 max-h-80 overflow-y-auto rounded-xl border border-border bg-popover shadow-lg z-20">
+                        <div className="flex items-center justify-between px-3 py-2 border-b border-border">
+                          <span className="text-xs font-semibold">Mensagens prontas</span>
+                          <span className="text-[11px] text-muted-foreground">Gerencie na aba "Mensagens prontas"</span>
+                        </div>
+                        {prontas.length === 0 && (
+                          <div className="px-3 py-4 text-center text-xs text-muted-foreground">Nenhuma mensagem pronta. Crie na aba "Mensagens prontas".</div>
+                        )}
+                        <div className="divide-y divide-border/60">
+                          {prontas.map(p => (
+                            <button key={p.id} className="block w-full text-left px-3 py-2 hover:bg-accent/40" onClick={() => usarPronta(p.texto)}>
+                              <div className="text-xs font-medium text-foreground truncate">{p.titulo}</div>
+                              <div className="text-[11px] text-muted-foreground line-clamp-2">{p.texto}</div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {foraJanela && (
+                      <div className="mb-2 rounded-lg bg-amber-50 px-3 py-2 text-[11px] text-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
+                        ⚠️ Fora da janela de 24h — a API do WhatsApp não envia texto livre. Escreva aqui e o envio abre o <b>WhatsApp da pessoa</b> com o texto pronto (ou use "Nova" pra um template aprovado).
+                      </div>
+                    )}
+                    <div className="flex items-end gap-2 rounded-xl border border-border bg-background p-2">
+                      <input ref={fileRef} type="file" accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx" className="hidden"
+                        onChange={e => { const f = e.target.files?.[0]; if (f) enviarAnexo(f); e.target.value = ''; }} />
+                      <Button size="icon" variant="ghost" onClick={() => setProntasOpen(v => { const nv = !v; if (nv) recarregarProntas(); return nv; })} className={`h-9 w-9 shrink-0 ${prontasOpen ? 'text-primary' : 'text-muted-foreground'}`} title="Mensagens prontas">
+                        <Zap className="h-4 w-4" />
+                      </Button>
+                      {!foraJanela && (
+                        <Button size="icon" variant="ghost" disabled={anexando} onClick={() => fileRef.current?.click()} className="h-9 w-9 shrink-0 text-muted-foreground" title="Anexar foto ou documento">
+                          {anexando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Paperclip className="h-4 w-4" />}
+                        </Button>
+                      )}
+                      <textarea value={texto} onChange={e => setTexto(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); enviarMsg(); } }}
+                        rows={1} placeholder={foraJanela ? 'Escreva a mensagem…  (Enter abre o WhatsApp da pessoa)' : 'Escreva uma mensagem…  (Enter envia · Shift+Enter quebra linha)'}
+                        className="max-h-32 min-h-[36px] flex-1 resize-none bg-transparent px-1 py-1.5 text-sm outline-none placeholder:text-muted-foreground" />
+                      <Button size="icon" disabled={enviando || !texto.trim()} onClick={enviarMsg} className="h-9 w-9 shrink-0" title={foraJanela ? 'Abrir no WhatsApp da pessoa' : 'Enviar'}>
+                        {enviando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                      </Button>
+                    </div>
+                    {!foraJanela && conv.janela_expira_em && janelaRestante(conv.janela_expira_em) && (
+                      <div className="mt-1.5 flex items-center gap-1 px-1 text-[11px] text-muted-foreground"><Clock className="h-3 w-3" />Janela de resposta livre expira em <span className="font-medium text-foreground">{janelaRestante(conv.janela_expira_em)}</span></div>
+                    )}
                   </div>
-                  {conv.janela_expira_em && janelaRestante(conv.janela_expira_em) && (
-                    <div className="mt-1.5 flex items-center gap-1 px-1 text-[11px] text-muted-foreground"><Clock className="h-3 w-3" />Janela de resposta livre expira em <span className="font-medium text-foreground">{janelaRestante(conv.janela_expira_em)}</span></div>
-                  )}
-                </div>
-              )}
+                );
+              })()}
             </>
           )}
         </div>
@@ -447,6 +531,12 @@ export default function ConversasInbox({
                 <Avatar className="h-16 w-16">{conv.foto_url && <AvatarImage src={conv.foto_url} alt={conv.nome || ''} />}<AvatarFallback className="bg-primary/15 text-primary text-lg font-semibold">{iniciais(conv.nome, conv.telefone)}</AvatarFallback></Avatar>
                 <p className="text-sm font-semibold text-center">{conv.nome || telBonito(conv.telefone)}</p>
                 <p className="text-xs text-muted-foreground">{telBonito(conv.telefone)}{perfil?.membro?.data_nascimento && idade(perfil.membro.data_nascimento) != null ? ` · ${idade(perfil.membro.data_nascimento)} anos` : ''}</p>
+                {conv.protocolo && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium tabular-nums text-muted-foreground"><Hash className="h-3 w-3" />{conv.protocolo}</span>
+                )}
+                {conv.satisfacao != null && (
+                  <span className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-600 dark:text-amber-400"><Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />Satisfação: {conv.satisfacao}/5</span>
+                )}
                 <a href={`https://wa.me/${conv.telefone.replace(/\D+/g, '')}`} target="_blank" rel="noreferrer" className="mt-1"><Button variant="outline" size="sm" className="h-7 gap-1 text-xs"><ExternalLink className="h-3 w-3" />Abrir no WhatsApp</Button></a>
               </div>
               <div className="flex flex-col gap-3.5 p-4">

@@ -39,8 +39,8 @@ export default function SuccessOverlay({ volunteerName, teamName, positionName, 
               <div className="space-y-1">
                 <p className="font-semibold text-yellow-200">Você não estava escalado para hoje.</p>
                 <p className="text-sm text-yellow-100/90 leading-relaxed">
-                  A lideranca aconselha que voce se escale nas proximas vezes para
-                  ajudar na gestao dos voluntarios da CBRio.
+                  A liderança aconselha que você se escale nas próximas vezes para
+                  ajudar na gestão dos voluntários da CBRio.
                 </p>
               </div>
             </div>

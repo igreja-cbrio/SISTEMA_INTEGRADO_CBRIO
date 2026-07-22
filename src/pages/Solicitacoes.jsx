@@ -91,6 +91,18 @@ function getUrgMeta(urg) {
 function getStatusMeta(status) {
   return STATUS_LABELS[status] || { label: status, color: 'bg-muted text-muted-foreground' };
 }
+// Normaliza pra comparar texto sem se importar com acento/caixa (ex.: "Produção" ~ "Produção de Culto").
+function normalizarTxt(s) {
+  return (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+}
+// A badge de área é redundante quando o nome da área é igual (ou está contido) no nome da
+// categoria — ex.: categoria "Compras" · área "Compras", ou "Produção de Culto" · "Produção".
+// Nesses casos as duas badges mostravam a mesma palavra lado a lado.
+function areaBadgeRedundante(catLabel, areaLabel) {
+  const a = normalizarTxt(catLabel), b = normalizarTxt(areaLabel);
+  if (!a || !b) return false;
+  return a === b || a.includes(b) || b.includes(a);
+}
 
 
 export default function Solicitacoes() {
@@ -334,6 +346,13 @@ export default function Solicitacoes() {
       if (timeout) clearTimeout(timeout);
       timeout = setTimeout(() => { loadRef.current?.(); }, 400);
     }
+    // Garante que o socket de realtime está autenticado com o JWT atual · sem
+    // isso o canal pode conectar como anon e a RLS (policies só de authenticated)
+    // descarta TODOS os eventos → o quadro não atualiza sozinho.
+    supabase.auth.getSession().then(({ data }) => {
+      const tk = data?.session?.access_token;
+      if (tk) { try { supabase.realtime.setAuth(tk); } catch { /* best-effort */ } }
+    }).catch(() => {});
     const channel = supabase
       .channel(`solicitacoes:${profile.id}`)
       .on(
@@ -347,6 +366,27 @@ export default function Solicitacoes() {
       supabase.removeChannel(channel);
     };
   }, [profile?.id, isResponsavel]);
+
+  // Rede de garantia do "tempo real" · além do canal Realtime (que pode perder
+  // eventos por RLS/reconexão do socket), um poll leve mantém o quadro fresco SEM
+  // recarregar a página. Pausa quando a aba está oculta; ao voltar ao foco,
+  // recarrega na hora. 12s é suave pra um ERP interno e imperceptível na UI
+  // (load() tem guarda de sequência · não pisca nem atropela ação em curso).
+  useEffect(() => {
+    function tick() {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      loadRef.current?.();
+    }
+    function onVisible() {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') loadRef.current?.();
+    }
+    const interval = setInterval(tick, 12000);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, []);
 
   // Opções dos filtros derivadas do conjunto carregado (sempre relevantes).
   const areasOpts = useMemo(
@@ -1247,7 +1287,7 @@ function ListaSolicitacoes({ items, onOpen, profileId, emptyMsg, comTracker = fa
                   {ML_STATUS_META[item.ml_last_status].emoji} {ML_STATUS_META[item.ml_last_status].label}
                 </Badge>
               )}
-              {item.area_responsavel && (
+              {item.area_responsavel && !areaBadgeRedundante(cat.label, AREA_LABELS[item.area_responsavel] || item.area_responsavel) && (
                 <Badge className="text-xs bg-muted text-muted-foreground hidden sm:inline-flex">{AREA_LABELS[item.area_responsavel] || item.area_responsavel}</Badge>
               )}
               {sla && <Badge className={`text-xs ${sla.color}`}>{sla.label}</Badge>}
@@ -1749,6 +1789,12 @@ function tempoAtras(iso) {
 function ehUrgente(item) {
   return item.eh_urgente === true || item.urgencia === 'critica' || item.urgencia === 'alta';
 }
+// Encerrada = status terminal · não conta mais como aberta/ativa (some da visão
+// por solicitante e não aparece nos urgentes). 'aprovado' segue ativo (falta concluir).
+const STATUS_ENCERRADOS = ['concluido', 'cancelado', 'rejeitado', 'avaliado'];
+function ehEncerrada(item) {
+  return STATUS_ENCERRADOS.includes(item.status);
+}
 function dotUrg(item) {
   if (item.urgencia === 'critica' || item.eh_urgente) return 'bg-rose-500';
   if (item.urgencia === 'alta') return 'bg-amber-500';
@@ -1830,9 +1876,12 @@ function SolicitanteCard({ grupo, maxCarga, onOpen }) {
 }
 
 function PainelPorSolicitante({ items, onOpen }) {
+  // Só solicitações ABERTAS (não encerradas) · com o tempo o histórico acumula
+  // e polui a visão por solicitante (pedido do Matheus 2026-07-22).
+  const ativos = useMemo(() => (items || []).filter(i => !ehEncerrada(i)), [items]);
   const grupos = useMemo(() => {
     const map = new Map();
-    for (const it of items) {
+    for (const it of ativos) {
       const key = it.solicitante_id || it.solicitante?.id || `nome:${(it.solicitante_nome || it.solicitante?.name || 'desconhecido').toLowerCase()}`;
       if (!map.has(key)) {
         map.set(key, { key, nome: it.solicitante?.name || it.solicitante_nome || 'Desconhecido', email: it.solicitante?.email || '', demandas: [] });
@@ -1848,23 +1897,23 @@ function PainelPorSolicitante({ items, onOpen }) {
     });
     arr.sort((a, b) => (b.urgentes - a.urgentes) || (b.demandas.length - a.demandas.length) || a.nome.localeCompare(b.nome));
     return arr;
-  }, [items]);
+  }, [ativos]);
 
   const maxCarga = Math.max(1, ...grupos.map(g => g.demandas.length));
   const urgentesGlobais = useMemo(
-    () => items.filter(ehUrgente).sort((a, b) => new Date(b.created_at) - new Date(a.created_at)),
-    [items]
+    () => ativos.filter(ehUrgente).sort((a, b) => new Date(b.created_at) - new Date(a.created_at)),
+    [ativos]
   );
-  const totalSla = items.filter(i => { const s = getSlaBadge(i); return !!s && s.color.includes('rose'); }).length;
+  const totalSla = ativos.filter(i => { const s = getSlaBadge(i); return !!s && s.color.includes('rose'); }).length;
 
-  if (items.length === 0) {
-    return <Card className="p-8 text-center text-muted-foreground">Nenhuma solicitação na fila para os filtros atuais.</Card>;
+  if (ativos.length === 0) {
+    return <Card className="p-8 text-center text-muted-foreground">Nenhuma solicitação aberta para os filtros atuais. 🎉</Card>;
   }
 
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <StatMini label="Solicitações ativas" valor={items.length} />
+        <StatMini label="Solicitações ativas" valor={ativos.length} />
         <StatMini label="Solicitantes" valor={grupos.length} />
         <StatMini label="Urgentes" valor={urgentesGlobais.length} tom="rose" />
         <StatMini label="SLA atrasado" valor={totalSla} tom="amber" />

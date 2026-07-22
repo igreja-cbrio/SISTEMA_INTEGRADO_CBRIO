@@ -390,15 +390,19 @@ export const next = {
   encontros: {
     update: (id, data) => patch(`/next/encontros/${id}`, data),
     setPresencas: (id, matriculaIds) => put(`/next/encontros/${id}/presencas`, { matricula_ids: matriculaIds }),
+    // Marca/desmarca UMA pessoa no encontro (Totem · presente=false desmarca).
+    setPresenca: (id, matriculaId, presente = true) => post(`/next/encontros/${id}/presenca`, { matricula_id: matriculaId, presente }),
   },
   matriculas: {
     list: (params) => get('/next/matriculas' + (params ? '?' + new URLSearchParams(params) : '')),
     create: (data) => post('/next/matriculas', data),
     update: (id, data) => patch(`/next/matriculas/${id}`, data),
     remove: (id) => del(`/next/matriculas/${id}`),
+    // Marca/desmarca "contato feito" com a pessoa (feito=false desmarca).
+    setContato: (id, feito) => patch(`/next/matriculas/${id}/contato`, { feito }),
     // Direcionar pros valores (grupos/voluntarios/batismo/devocional) · cria encaminhamento
     // origem='next' (grupos/voluntarios), inscrição pendente (batismo), registra (devocional).
-    direcionar: (id, destinos) => post(`/next/matriculas/${id}/direcionar`, { destinos }),
+    direcionar: (id, destinos, areas) => post(`/next/matriculas/${id}/direcionar`, { destinos, areas }),
     // Liga as matrículas órfãs (sem membro_id) via matcher forte (fecha o funil).
     backfillMembros: () => post('/next/matriculas/backfill-membros', {}),
   },
@@ -501,6 +505,11 @@ export const grupos = {
   removerEncontro: (encontroId) => del(`/grupos/encontros/${encontroId}`),
   metricas: (grupoId) => get(`/grupos/${grupoId}/metricas`),
   historicoAlteracoes: (grupoId) => get(`/grupos/${grupoId}/historico-alteracoes`),
+  renovacao: {
+    painel: (params) => get('/grupos/renovacao/painel' + (params ? '?' + new URLSearchParams(params) : '')),
+    disparar: (temporadaId) => post('/grupos/renovacao/disparar', { temporada_id: temporadaId }),
+    triar: (renId, body) => post(`/grupos/renovacao/${renId}/triar`, body),
+  },
   saudeAgregada: (params) => get('/grupos/saude/agregado' + (params ? '?' + new URLSearchParams(params) : '')),
   relatorioKpis: (params) => get('/grupos/kpis/relatorio' + (params ? '?' + new URLSearchParams(params) : '')),
   lideresTreinamento: (params) => get('/grupos/kpis/lideres-treinamento' + (params ? '?' + new URLSearchParams(params) : '')),
@@ -1496,7 +1505,7 @@ export const totemKids = {
     },
     create: (data) => post('/totem-kids/sessoes', data),
     abrir: (id) => post(`/totem-kids/sessoes/${id}/abrir`, {}),
-    encerrar: (id) => post(`/totem-kids/sessoes/${id}/encerrar`, {}),
+    encerrar: (id, body = {}) => post(`/totem-kids/sessoes/${id}/encerrar`, body),
     encerrarVencidas: () => post('/totem-kids/sessoes/encerrar-vencidas', {}),
     trocarPeriodo: (cultoIds) => post('/totem-kids/sessoes/trocar-periodo', { culto_ids: cultoIds }),
   },
@@ -1527,6 +1536,10 @@ export const totemKids = {
     tornarFrequentador: (id) => post(`/totem-kids/criancas/${id}/tornar-frequentador`, {}),
     // Limite de 2 etiquetas de aniversário por semana (Milena 2026-07-22).
     aniversarioImpressoes: (id) => get(`/totem-kids/criancas/${id}/aniversario-impressoes`),
+    // "Nova criança": sugerir adicionar à família existente pelo CPF (Marcos 2026-07-22).
+    responsavelFamilia: (cpf) => get(`/totem-kids/responsavel-familia?cpf=${encodeURIComponent(cpf)}`),
+    // Registra rastro pra revisão quando o operador recusa a sugestão de família.
+    familiaRevisar: (data) => post('/totem-kids/familia-revisar', data),
     jornada: (id) => get(`/totem-kids/criancas/${id}/jornada`),
     analiseFrequencia: (id) => get(`/totem-kids/criancas/${id}/analise-frequencia`),
     // Atendimentos (histórico de contatos da equipe Kids com a criança)
@@ -1989,6 +2002,8 @@ export const membresia = {
   cadastros: {
     list: (params) => get('/membresia/cadastros' + (params ? '?' + new URLSearchParams(params) : '')),
     kpis: () => get('/membresia/cadastros/kpis'),
+    podeAprovar: () => get('/membresia/cadastros/pode-aprovar'),
+    confirmarWhatsapp: (id) => post(`/membresia/cadastros/${id}/confirmar-whatsapp`, {}),
     aprovar: (id, data) => post(`/membresia/cadastros/${id}/aprovar`, data || {}),
     rejeitar: (id, motivo) => post(`/membresia/cadastros/${id}/rejeitar`, { motivo }),
     update: (id, data) => patch(`/membresia/cadastros/${id}`, data),
@@ -2122,6 +2137,22 @@ export const gruposPublic = {
     const j = await r.json().catch(() => ({}));
     if (!r.ok) { const e = new Error(j.error || 'Erro ao adicionar visitante'); Object.assign(e, j); throw e; }
     return j; // { ok, membro: { id, nome, foto_url } }
+  },
+  // Renovação de temporada · líder responde se continua com o grupo
+  renovacaoPorToken: async (token) => {
+    const r = await fetch(`${API}/public/grupos/grupo/renovacao?token=${encodeURIComponent(token)}`);
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || 'Erro ao carregar a renovação');
+    return j; // { grupo, temporada, status, motivo, ja_respondeu, membros }
+  },
+  responderRenovacao: async (token, body) => {
+    const r = await fetch(`${API}/public/grupos/grupo/renovacao`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, ...body }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { const e = new Error(j.error || 'Erro ao salvar a resposta'); Object.assign(e, j); throw e; }
+    return j; // { ok, status, confirmados?, removidos?, reativados? }
   },
 };
 
@@ -2417,6 +2448,7 @@ export const publicVoluntariado = {
 export const voluntariado = {
   // Aniversariantes da semana (pra parabenizar) · próximos 7 dias
   aniversariantesSemana: () => get('/voluntariado/aniversariantes-semana'),
+  parabenizar: (volProfileId) => post(`/voluntariado/aniversariantes/${volProfileId}/parabenizar`, {}),
   // Controle de acesso de voluntários (quem tem login + cargo + cruzamento com membresia)
   acessos: {
     list: (params) => get('/voluntariado/acessos' + (params ? '?' + new URLSearchParams(params) : '')),
@@ -2433,6 +2465,10 @@ export const voluntariado = {
     sugerirVinculos: () => post('/voluntariado/frequencia/sugerir-vinculos', {}),
     vincularLote: (vinculos) => post('/voluntariado/frequencia/vincular-lote', { vinculos }),
     importar: (file) => { const fd = new FormData(); fd.append('arquivo', file); return requestFile('/voluntariado/frequencia/importar', fd); },
+    // Motivo de inatividade (motivo vazio limpa). chave = identidade da linha.
+    setInatividade: (chave, motivo, detalhe) => put('/voluntariado/frequencia/inatividade', { chave, motivo, detalhe }),
+    // Saiu da igreja: marca no voluntariado + status 'inativo' na Membresia (se vinculado).
+    saiuIgreja: (chave, membro_id, detalhe) => post('/voluntariado/frequencia/saiu-igreja', { chave, membro_id, detalhe }),
   },
   // Mensagem automática de WhatsApp (boas-vindas ao se inscrever pra servir)
   whatsappAuto: {
@@ -2726,6 +2762,8 @@ export const kpis = {
     list: (params) => get('/kpis/batismos' + (params ? '?' + new URLSearchParams(params) : '')),
     create: (data) => post('/kpis/batismos', data),
     update: (id, data) => put(`/kpis/batismos/${id}`, data),
+    // Muda o status de várias inscrições de uma vez (ex.: marcar presentes → realizado).
+    updateEmMassa: (ids, status) => put('/kpis/batismos/em-massa', { ids, status }),
     coberturaConvertidos: () => get('/kpis/batismos/cobertura-convertidos'),
     // Horários do batismo (abrir/fechar + limite de vagas)
     horarios: {
@@ -2851,12 +2889,23 @@ export const waInbox = {
   nova: (body) => post('/wa-inbox/conversas/nova', body),
   ler: (id) => post(`/wa-inbox/conversas/${id}/ler`, {}),
   atualizar: (id, body) => patch(`/wa-inbox/conversas/${id}`, body),
+  transferir: (id, area) => post(`/wa-inbox/conversas/${id}/transferir`, { area }),
   anexar: (id, file) => { const fd = new FormData(); fd.append('arquivo', file); return requestFile(`/wa-inbox/conversas/${id}/anexo`, fd, { timeoutMs: 120_000 }); },
   areas: () => get('/wa-inbox/areas'),
   templates: () => get('/wa-inbox/templates'),
   colaboradores: () => get('/wa-inbox/colaboradores'),
+  // Mensagens prontas (respostas rápidas reutilizáveis)
+  mensagensProntas: () => get('/wa-inbox/mensagens-prontas'),
+  criarMensagemPronta: (body) => post('/wa-inbox/mensagens-prontas', body),
+  atualizarMensagemPronta: (id, body) => patch(`/wa-inbox/mensagens-prontas/${id}`, body),
+  removerMensagemPronta: (id) => del(`/wa-inbox/mensagens-prontas/${id}`),
   perfil: (id) => get(`/wa-inbox/conversas/${id}/perfil`),
   naoLidas: () => get('/wa-inbox/nao-lidas'),
+  resumoAreas: () => get('/wa-inbox/resumo-areas'),
+  setores: () => get('/wa-inbox/setores'),
+  criarSetor: (body) => post('/wa-inbox/setores', body),
+  salvarSetor: (id, body) => put(`/wa-inbox/setores/${id}`, body),
+  removerSetor: (id) => del(`/wa-inbox/setores/${id}`),
 };
 
 export const cuidados = {
@@ -2872,6 +2921,14 @@ export const cuidados = {
   pedidosApp: {
     list: (params) => get('/cuidados/pedidos-app' + (params ? '?' + new URLSearchParams(params) : '')),
     updateStatus: (id, tratamento_status) => patch(`/cuidados/pedidos-app/${id}`, { tratamento_status }),
+  },
+  // Caixa de entrada · pedidos de cuidado canônicos (cui_pedidos · whatsapp/plataforma/manual)
+  pedidos: {
+    list: (params) => get('/cuidados/pedidos' + (params ? '?' + new URLSearchParams(params) : '')),
+    create: (data) => post('/cuidados/pedidos', data),
+    update: (id, data) => patch(`/cuidados/pedidos/${id}`, data),
+    remove: (id) => del(`/cuidados/pedidos/${id}`),
+    atender: (fonte, id, atendimento) => post('/cuidados/pedidos/atender', { fonte, id, atendimento }),
   },
   oracoes: {
     list: () => get('/cuidados/oracoes'),
@@ -2927,12 +2984,26 @@ export const cuidados = {
     // criam o handoff na caixa da área · NÃO marca engajamento.
     direcionar: (id, direcionamento) => post(`/cuidados/convertidos/${id}/direcionar`, { direcionamento }),
   },
+  // Responsáveis do atendimento (lista gerenciável na aba Próximos passos)
+  responsaveis: {
+    list: () => get('/cuidados/responsaveis'),
+    create: (nome) => post('/cuidados/responsaveis', { nome }),
+    update: (id, data) => patch(`/cuidados/responsaveis/${id}`, data),
+    remove: (id) => del(`/cuidados/responsaveis/${id}`),
+  },
   // Visitas pastorais e atendimentos avulsos (fora do funil de convertidos)
   visitas: {
     list: (params) => get('/cuidados/visitas' + (params ? '?' + new URLSearchParams(params) : '')),
     create: (data) => post('/cuidados/visitas', data),
     update: (id, data) => patch(`/cuidados/visitas/${id}`, data),
     remove: (id) => del(`/cuidados/visitas/${id}`),
+  },
+  // Trilha por pessoa (aba Visitas e Atendimentos) · agrupa visitas + acompanhamentos
+  trilha: () => get('/cuidados/trilha'),
+  atendimentoComentarios: {
+    list: (refTipo, refId) => get(`/cuidados/atendimentos/${refTipo}/${refId}/comentarios`),
+    create: (refTipo, refId, texto) => post(`/cuidados/atendimentos/${refTipo}/${refId}/comentarios`, { texto }),
+    remove: (id) => del(`/cuidados/atendimento-comentarios/${id}`),
   },
   agregado: {
     list: (mes) => get(`/cuidados/agregado${mes ? `?mes=${mes}` : ''}`),

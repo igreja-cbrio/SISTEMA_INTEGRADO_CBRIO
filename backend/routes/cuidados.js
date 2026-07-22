@@ -5,6 +5,7 @@ const { notificar } = require('../services/notificar');
 const { enqueueSync } = require('../services/cerebroSync');
 const { mountWhatsappAuto } = require('./whatsappAutoRoutes');
 const { acharOuCriarGuardado } = require('../services/membroMatch');
+const { registrarPedidoCuidado } = require('../services/cuidadosPedidos');
 
 router.use(authenticate);
 
@@ -871,6 +872,175 @@ router.get('/convertidos/tags', (_req, res) => {
   res.json(CONVERTIDO_TAGS);
 });
 
+// ─────────────────────────────────────────────────────────────
+// Responsáveis do atendimento (cui_responsaveis) — a lista era
+// fixa no front (RESPONSAVEIS_ATENDIMENTO/ANTIGOS); agora a própria
+// equipe de Cuidados gerencia quem está disponível pelo modal
+// "Gerenciar responsáveis" da aba Próximos passos (Marcos 2026-07-21).
+// Sem rename/delete de propósito: o vínculo com
+// cui_convertidos.responsavel_atendimento é por NOME (texto) —
+// inativar preserva o histórico.
+// ─────────────────────────────────────────────────────────────
+router.get('/responsaveis', authorizeModule('cuidados', 1), async (_req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('cui_responsaveis')
+      .select('id, nome, ativo')
+      .order('ativo', { ascending: false })
+      .order('nome');
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) {
+    console.error('[CUIDADOS] responsaveis list:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post('/responsaveis', authorizeModule('cuidados', 3), async (req, res) => {
+  try {
+    const nome = String(req.body?.nome || '').trim();
+    if (nome.length < 2) return res.status(400).json({ error: 'Informe o nome do responsável.' });
+    // Se o nome já existe (inclusive inativo), reativa em vez de duplicar
+    const { data: existente, error: e1 } = await supabase
+      .from('cui_responsaveis')
+      .select('id, ativo')
+      .ilike('nome', nome)
+      .maybeSingle();
+    if (e1) throw e1;
+    if (existente) {
+      if (existente.ativo) return res.status(409).json({ error: 'Esse responsável já está na lista.' });
+      const { data, error } = await supabase
+        .from('cui_responsaveis')
+        .update({ ativo: true, updated_at: new Date().toISOString() })
+        .eq('id', existente.id)
+        .select()
+        .single();
+      if (error) throw error;
+      return res.json(data);
+    }
+    const { data, error } = await supabase
+      .from('cui_responsaveis')
+      .insert({ nome })
+      .select()
+      .single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) {
+    console.error('[CUIDADOS] responsaveis create:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Aceita { ativo } e/ou { nome }. Renomear PROPAGA pros convertidos
+// (cui_convertidos.responsavel_atendimento é texto vinculado por nome —
+// renomear só o catálogo órfãnaria o histórico). Inclui soft-deletados
+// de propósito (histórico consistente, mesmo padrão do dedup 20260721190000).
+router.patch('/responsaveis/:id', authorizeModule('cuidados', 3), async (req, res) => {
+  try {
+    const temAtivo = typeof req.body?.ativo === 'boolean';
+    const nomeNovo = typeof req.body?.nome === 'string' ? req.body.nome.trim() : '';
+    if (!temAtivo && !nomeNovo) {
+      return res.status(400).json({ error: 'Informe ativo=true/false e/ou nome.' });
+    }
+    if (nomeNovo && nomeNovo.length < 2) {
+      return res.status(400).json({ error: 'O nome precisa ter pelo menos 2 caracteres.' });
+    }
+
+    const { data: atual, error: e1 } = await supabase
+      .from('cui_responsaveis')
+      .select('id, nome, ativo')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (e1) throw e1;
+    if (!atual) return res.status(404).json({ error: 'Responsável não encontrado.' });
+
+    const renomeando = !!nomeNovo && nomeNovo !== atual.nome;
+    if (renomeando) {
+      const { data: conflito, error: e2 } = await supabase
+        .from('cui_responsaveis')
+        .select('id, nome')
+        .ilike('nome', nomeNovo)
+        .neq('id', atual.id)
+        .maybeSingle();
+      if (e2) throw e2;
+      if (conflito) {
+        return res.status(409).json({
+          error: `Já existe "${conflito.nome}" na lista. Pra juntar os dois num só, é uma consolidação de registros — me avise em vez de renomear por cima.`,
+        });
+      }
+    }
+
+    const patch = { updated_at: new Date().toISOString() };
+    if (temAtivo) patch.ativo = req.body.ativo;
+    if (renomeando) patch.nome = nomeNovo;
+
+    const { data, error } = await supabase
+      .from('cui_responsaveis')
+      .update(patch)
+      .eq('id', atual.id)
+      .select()
+      .single();
+    if (error) throw error;
+
+    let renomeados = 0;
+    if (renomeando) {
+      const { count, error: e3 } = await supabase
+        .from('cui_convertidos')
+        .update({ responsavel_atendimento: nomeNovo }, { count: 'exact' })
+        .eq('responsavel_atendimento', atual.nome);
+      if (e3) {
+        // O catálogo já mudou mas os registros não — reverte o nome pra não
+        // deixar o histórico órfão (o toggle de ativo, se veio junto, fica).
+        await supabase.from('cui_responsaveis').update({ nome: atual.nome }).eq('id', atual.id);
+        throw e3;
+      }
+      renomeados = count || 0;
+    }
+
+    res.json({ ...data, renomeados });
+  } catch (e) {
+    console.error('[CUIDADOS] responsaveis update:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Excluir de verdade SÓ quem nunca foi usado (nome digitado errado etc.).
+// Se o nome está em algum convertido (mesmo soft-deletado · histórico),
+// bloqueia com 409 e orienta a desativar. Hard delete ok: cui_responsaveis
+// é catálogo de configuração (não-PII · fora da whitelist de soft-delete).
+router.delete('/responsaveis/:id', authorizeModule('cuidados', 3), async (req, res) => {
+  try {
+    const { data: resp, error: e1 } = await supabase
+      .from('cui_responsaveis')
+      .select('id, nome')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (e1) throw e1;
+    if (!resp) return res.status(404).json({ error: 'Responsável não encontrado.' });
+
+    const { count, error: e2 } = await supabase
+      .from('cui_convertidos')
+      .select('id', { count: 'exact', head: true })
+      .eq('responsavel_atendimento', resp.nome);
+    if (e2) throw e2;
+    if ((count || 0) > 0) {
+      return res.status(409).json({
+        error: `${resp.nome} está registrado em ${count} convertido(s) — desative em vez de excluir, pra preservar o histórico.`,
+      });
+    }
+
+    const { error: e3 } = await supabase
+      .from('cui_responsaveis')
+      .delete()
+      .eq('id', resp.id);
+    if (e3) throw e3;
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[CUIDADOS] responsaveis delete:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Quem pode atender convertidos (decisão do Marcos · 2026-06-10): só líderes
 // de culto (coordenador kids/ami/bridge/online) e líderes de ministérios
 // (lider-ministerial + coordenador-voluntarios). Filtra por CARGO, não por
@@ -1324,6 +1494,280 @@ router.delete('/visitas/:id', authorizeModule('cuidados', 3), async (req, res) =
     if (error) throw error;
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─────────────────────────────────────────────────────────────
+// Trilha por pessoa (aba "Visitas e Atendimentos") · 2026-07-22
+// Agrupa os atendimentos por PESSOA num histórico contínuo. JUNTA na leitura
+// cui_visitas (visitas/atendimentos) + cui_acompanhamentos (aconselhamento/
+// capelania) — NÃO mexe no cui_acompanhamentos (ele alimenta KPIs/painel/notif/
+// cérebro/LGPD). Âncora da pessoa: membro_id > telefone(dígitos) > nome
+// normalizado. Comentários por atendimento em cui_atendimento_comentarios.
+// ─────────────────────────────────────────────────────────────
+async function _fetchTudoCui(table, columns, applyFilter) {
+  let all = [], from = 0; const page = 1000;
+  for (;;) {
+    let q = supabase.from(table).select(columns).range(from, from + page - 1);
+    if (applyFilter) q = applyFilter(q);
+    const { data, error } = await q;
+    if (error) throw error;
+    all = all.concat(data || []);
+    if (!data || data.length < page) break;
+    from += page;
+  }
+  return all;
+}
+const _cuiDigs = (v) => String(v || '').replace(/\D/g, '');
+const _cuiNorm = (v) => String(v || '').trim().toLowerCase().normalize('NFD')
+  .split('').filter((ch) => { const c = ch.charCodeAt(0); return c < 0x300 || c > 0x36f; }).join('')
+  .replace(/\s+/g, ' ');
+function _pessoaChave(r) {
+  if (r.membro_id) return 'm:' + r.membro_id;
+  const tel = _cuiDigs(r.telefone);
+  if (tel.length >= 10) return 't:' + tel;
+  const n = _cuiNorm(r.nome);
+  return n ? ('n:' + n) : ('x:' + r.fonte + ':' + r.id);
+}
+
+async function carregarAtendimentosTrilha() {
+  const [visitas, acomp] = await Promise.all([
+    _fetchTudoCui('cui_visitas',
+      'id, membro_id, nome, telefone, data_visita, tipo, tipo_outro, responsavel, status, observacao, created_at',
+      (q) => q.is('deleted_at', null)),
+    _fetchTudoCui('cui_acompanhamentos',
+      'id, membro_id, nome, telefone, tipo, motivo, observacoes, agendamento_data, agendamento_hora, agendamento_responsavel_nome, status, created_at',
+      (q) => q.is('deleted_at', null)),
+  ]);
+  const itens = [];
+  for (const v of visitas) itens.push({
+    fonte: 'visita', id: v.id, membro_id: v.membro_id || null, nome: v.nome || null, telefone: v.telefone || null,
+    data: v.data_visita || (v.created_at ? String(v.created_at).slice(0, 10) : null),
+    tipo: v.tipo, tipo_outro: v.tipo_outro || null, responsavel: v.responsavel || null,
+    status: v.status || null, texto: v.observacao || null, hora: null, created_at: v.created_at,
+  });
+  for (const a of acomp) itens.push({
+    fonte: 'acompanhamento', id: a.id, membro_id: a.membro_id || null, nome: a.nome || null, telefone: a.telefone || null,
+    data: a.agendamento_data || (a.created_at ? String(a.created_at).slice(0, 10) : null),
+    tipo: a.tipo || 'aconselhamento', tipo_outro: null, responsavel: a.agendamento_responsavel_nome || null,
+    status: a.status || null, texto: [a.motivo, a.observacoes].filter(Boolean).join(' — ') || null,
+    hora: a.agendamento_hora || null, created_at: a.created_at,
+  });
+  return itens;
+}
+
+router.get('/trilha', authorizeModule('cuidados', 1), async (req, res) => {
+  try {
+    const itens = await carregarAtendimentosTrilha();
+    const { data: coments } = await supabase
+      .from('cui_atendimento_comentarios').select('ref_tipo, ref_id').is('deleted_at', null).limit(5000);
+    const cCount = {};
+    for (const c of (coments || [])) { const k = c.ref_tipo + ':' + c.ref_id; cCount[k] = (cCount[k] || 0) + 1; }
+
+    const mapa = new Map();
+    for (const it of itens) {
+      const chave = _pessoaChave(it);
+      if (!mapa.has(chave)) mapa.set(chave, { chave, membro_id: it.membro_id || null, nome: it.nome || null, telefone: it.telefone || null, total: 0, ultimo_em: null, tipos: new Set(), atendimentos: [] });
+      const p = mapa.get(chave);
+      if (!p.membro_id && it.membro_id) p.membro_id = it.membro_id;
+      if (!p.nome && it.nome) p.nome = it.nome;
+      if (!p.telefone && it.telefone) p.telefone = it.telefone;
+      p.total += 1;
+      p.tipos.add(it.tipo);
+      const quando = it.data || (it.created_at ? String(it.created_at).slice(0, 10) : null);
+      if (quando && (!p.ultimo_em || quando > p.ultimo_em)) p.ultimo_em = quando;
+      p.atendimentos.push({ ...it, comentarios_count: cCount[it.fonte + ':' + it.id] || 0 });
+    }
+    const pessoas = [...mapa.values()].map((p) => {
+      p.atendimentos.sort((a, b) => String(b.data || b.created_at || '').localeCompare(String(a.data || a.created_at || '')));
+      return { ...p, tipos: [...p.tipos] };
+    }).sort((a, b) => String(b.ultimo_em || '').localeCompare(String(a.ultimo_em || '')));
+    res.json(pessoas);
+  } catch (e) {
+    console.error('[CUIDADOS] trilha:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.get('/atendimentos/:refTipo/:refId/comentarios', authorizeModule('cuidados', 1), async (req, res) => {
+  try {
+    const { refTipo, refId } = req.params;
+    if (!['visita', 'acompanhamento'].includes(refTipo)) return res.status(400).json({ error: 'ref inválido' });
+    const { data, error } = await supabase
+      .from('cui_atendimento_comentarios')
+      .select('id, texto, autor_id, autor_nome, created_at')
+      .eq('ref_tipo', refTipo).eq('ref_id', refId).is('deleted_at', null)
+      .order('created_at', { ascending: true });
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/atendimentos/:refTipo/:refId/comentarios', authorizeModule('cuidados', 2), async (req, res) => {
+  try {
+    const { refTipo, refId } = req.params;
+    if (!['visita', 'acompanhamento'].includes(refTipo)) return res.status(400).json({ error: 'ref inválido' });
+    const texto = String(req.body?.texto || '').trim();
+    if (!texto) return res.status(400).json({ error: 'Comentário vazio' });
+    const autorId = req.user?.id || req.user?.userId || null;
+    let autorNome = null;
+    if (autorId) {
+      const { data: prof } = await supabase.from('profiles').select('name').eq('id', autorId).maybeSingle();
+      autorNome = prof?.name || null;
+    }
+    const { data, error } = await supabase
+      .from('cui_atendimento_comentarios')
+      .insert({ ref_tipo: refTipo, ref_id: refId, texto, autor_id: autorId, autor_nome: autorNome })
+      .select('id, texto, autor_id, autor_nome, created_at').single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete('/atendimento-comentarios/:id', authorizeModule('cuidados', 3), async (req, res) => {
+  try {
+    const { error } = await supabase.from('cui_atendimento_comentarios')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('id', req.params.id).is('deleted_at', null);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─────────────────────────────────────────────────────────────
+// Caixa de entrada · pedidos de cuidado (cui_pedidos) · 2026-07-22
+// Fila unificada de triagem. Lê cui_pedidos (whatsapp/plataforma/manual) +
+// app_inscricoes (canal app · endpoints /pedidos-app já existentes). Ao ATENDER,
+// o líder escolhe o tipo → cria o atendimento na trilha (cui_visitas/cui_acompanhamentos).
+// ─────────────────────────────────────────────────────────────
+const PEDIDO_STATUS = ['pendente', 'em_andamento', 'concluido'];
+
+router.get('/pedidos', authorizeModule('cuidados', 1), async (req, res) => {
+  try {
+    const { status } = req.query;
+    let q = supabase.from('cui_pedidos').select('*').is('deleted_at', null)
+      .order('created_at', { ascending: false }).limit(500);
+    if (status && PEDIDO_STATUS.includes(status)) q = q.eq('status', status);
+    const { data, error } = await q;
+    if (error) throw error;
+    const ids = [...new Set((data || []).map(r => r.atribuido_a).filter(Boolean))];
+    let profs = {};
+    if (ids.length) {
+      const { data: ps } = await supabase.from('profiles').select('id, name').in('id', ids);
+      profs = Object.fromEntries((ps || []).map(p => [p.id, p.name]));
+    }
+    res.json((data || []).map(r => ({ ...r, atribuido_nome: r.atribuido_a ? (profs[r.atribuido_a] || null) : null })));
+  } catch (e) {
+    console.error('[CUIDADOS] pedidos:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post('/pedidos', authorizeModule('cuidados', 2), async (req, res) => {
+  try {
+    const d = req.body || {};
+    if (!d.nome && !d.telefone && !d.membro_id) return res.status(400).json({ error: 'Informe ao menos nome ou telefone.' });
+    let membro_id = d.membro_id || null;
+    if (!membro_id && d.cpf) { const m = await findMembroByCpf(d.cpf); if (m) membro_id = m.id; }
+    const pedido = await registrarPedidoCuidado({
+      canal: 'manual', tipo: d.tipo, membro_id, nome: d.nome, telefone: d.telefone,
+      email: d.email, mensagem: d.mensagem, criado_por: req.user?.id || req.user?.userId || null,
+    });
+    res.status(201).json(pedido);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.patch('/pedidos/:id', authorizeModule('cuidados', 3), async (req, res) => {
+  try {
+    const b = req.body || {};
+    const patch = { updated_at: new Date().toISOString() };
+    if (b.status !== undefined) {
+      if (!PEDIDO_STATUS.includes(b.status)) return res.status(400).json({ error: 'Status inválido' });
+      patch.status = b.status;
+      patch.tratado_por = req.user?.id || req.user?.userId || null;
+      patch.tratado_em = b.status === 'pendente' ? null : new Date().toISOString();
+    }
+    if ('atribuido_a' in b) patch.atribuido_a = b.atribuido_a || null;
+    const { data, error } = await supabase.from('cui_pedidos').update(patch)
+      .eq('id', req.params.id).is('deleted_at', null).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete('/pedidos/:id', authorizeModule('cuidados', 3), async (req, res) => {
+  try {
+    const { error } = await supabase.from('cui_pedidos')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('id', req.params.id).is('deleted_at', null);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /cuidados/pedidos/atender — o líder escolhe o TIPO de atendimento/visita e
+// isso cria o atendimento na TRILHA da pessoa (aba Visitas e Atendimentos).
+// Roteia: aconselhamento/capelania → cui_acompanhamentos (alimenta os KPIs de
+// capelania/aconselhamento) · demais → cui_visitas. fonte 'cui' (cui_pedidos) ou 'app'.
+router.post('/pedidos/atender', authorizeModule('cuidados', 2), async (req, res) => {
+  try {
+    const { fonte, id, atendimento } = req.body || {};
+    const a = atendimento || {};
+    if (!['cui', 'app'].includes(fonte) || !id) return res.status(400).json({ error: 'fonte/id inválidos' });
+
+    let pessoa = { nome: null, telefone: null, membro_id: null };
+    if (fonte === 'cui') {
+      const { data: p } = await supabase.from('cui_pedidos').select('*').eq('id', id).is('deleted_at', null).maybeSingle();
+      if (!p) return res.status(404).json({ error: 'Pedido não encontrado' });
+      pessoa = { nome: p.nome, telefone: p.telefone, membro_id: p.membro_id };
+    } else {
+      const { data: ins } = await supabase.from('app_inscricoes').select('id, dados, membro_id').eq('id', id).maybeSingle();
+      if (!ins) return res.status(404).json({ error: 'Pedido não encontrado' });
+      const dd = ins.dados || {};
+      let m = null;
+      if (ins.membro_id) { const { data: mm } = await supabase.from('mem_membros').select('nome, telefone').eq('id', ins.membro_id).maybeSingle(); m = mm; }
+      pessoa = { nome: m?.nome || dd.nome || null, telefone: m?.telefone || dd.telefone || null, membro_id: ins.membro_id || null };
+    }
+
+    const tipo = a.tipo || 'aconselhamento';
+    const uid = req.user?.id || req.user?.userId || null;
+    const hoje = new Date().toISOString().slice(0, 10);
+    const nome = pessoa.nome || 'Sem nome';
+    let ref = null;
+
+    if (['aconselhamento', 'capelania'].includes(tipo)) {
+      const { data: ins, error } = await supabase.from('cui_acompanhamentos').insert({
+        nome, telefone: pessoa.telefone, membro_id: pessoa.membro_id, tipo,
+        motivo: a.motivo || null, observacoes: a.observacao || null,
+        agendamento_data: a.data || null, agendamento_hora: a.hora || null,
+        agendamento_responsavel_id: a.responsavel_id || null,
+        agendamento_responsavel_nome: a.responsavel || null,
+        status: a.status || 'ativo', created_by: uid,
+      }).select('id').single();
+      if (error) throw error;
+      ref = { tabela: 'cui_acompanhamentos', id: ins.id };
+    } else {
+      const VT = ['visita_domiciliar', 'visita_hospitalar', 'funeral', 'casamento', 'outro'];
+      const tv = VT.includes(tipo) ? tipo : 'visita_domiciliar';
+      const { data: ins, error } = await supabase.from('cui_visitas').insert({
+        nome, telefone: pessoa.telefone, membro_id: pessoa.membro_id,
+        data_visita: a.data || hoje, tipo: tv, tipo_outro: tv === 'outro' ? (a.tipo_outro || null) : null,
+        responsavel: a.responsavel || null, status: a.status || 'agendada',
+        observacao: a.observacao || null, created_by: uid,
+      }).select('id').single();
+      if (error) throw error;
+      ref = { tabela: 'cui_visitas', id: ins.id };
+    }
+
+    if (fonte === 'cui') {
+      await supabase.from('cui_pedidos').update({ status: 'em_andamento', atendimento_ref: ref, tratado_por: uid, tratado_em: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', id);
+    } else {
+      await supabase.from('app_inscricoes').update({ tratamento_status: 'em_andamento', tratado_por: uid, tratado_em: new Date().toISOString() }).eq('id', id);
+    }
+    res.status(201).json({ ok: true, atendimento_ref: ref });
+  } catch (e) {
+    console.error('[CUIDADOS] atender pedido:', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // GET /api/cuidados/visitas-pendentes

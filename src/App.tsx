@@ -287,6 +287,7 @@ const InscricaoLideres = lazyWithRetry(() => import('./pages/public/InscricaoLid
 const GrupoAprovarPedido = lazyWithRetry(() => import('./pages/public/GrupoAprovarPedido'));
 const GrupoSugestaoAceite = lazyWithRetry(() => import('./pages/public/GrupoSugestaoAceite'));
 const GrupoFrequenciaMes = lazyWithRetry(() => import('./pages/public/GrupoFrequenciaMes'));
+const GrupoRenovacao = lazyWithRetry(() => import('./pages/public/GrupoRenovacao'));
 const InscricaoGruposQRCode = lazyWithRetry(() => import('./pages/admin/InscricaoGruposQRCode'));
 const GruposGeocode = lazyWithRetry(() => import('./pages/admin/GruposGeocode'));
 const TemporadasGrupos = lazyWithRetry(() => import('./pages/admin/TemporadasGrupos'));
@@ -305,6 +306,7 @@ const VolSelfCheckin = lazyWithRetry(() => import('./pages/ministerial/voluntari
 const PcCallback = lazyWithRetry(() => import('./pages/auth/PcCallback'));
 const Cuidados = lazyWithRetry(() => import('./pages/ministerial/Cuidados'));
 const Conversas = lazyWithRetry(() => import('./pages/Conversas'));
+const ConversasSetores = lazyWithRetry(() => import('./pages/admin/ConversasSetores'));
 const DevocionalMovido = lazyWithRetry(() => import('./pages/devocional/DevocionalMovido'));
 const Integracao = lazyWithRetry(() => import('./pages/ministerial/Integracao'));
 const Batismo = lazyWithRetry(() => import('./pages/ministerial/Batismos'));
@@ -534,6 +536,7 @@ function AppRoutes() {
       <Route path="/g/s/:token" element={<Suspense fallback={<Loading />}><GrupoSugestaoAceite /></Suspense>} />
       {/* Líder registra a frequência do mês do grupo pelo link do WhatsApp · sem login */}
       <Route path="/g/f/:token" element={<Suspense fallback={<Loading />}><GrupoFrequenciaMes /></Suspense>} />
+      <Route path="/g/r/:token" element={<Suspense fallback={<Loading />}><GrupoRenovacao /></Suspense>} />
       <Route path="/next" element={<Suspense fallback={<Loading />}><InscricaoNext /></Suspense>} />
       <Route path="/next/inscrever" element={<Suspense fallback={<Loading />}><InscricaoNext /></Suspense>} />
       <Route path="/next/direcionar/:token" element={<Suspense fallback={<Loading />}><NextDirecionar /></Suspense>} />
@@ -639,6 +642,7 @@ function AppRoutes() {
         <Route path="/grupos/pedidos" element={<Navigate to="/grupos?tab=entrada" replace />} />
         <Route path="/ministerial/cuidados" element={<ModuleGuard moduleSlug="cuidados"><Suspense fallback={<Loading />}><Cuidados /></Suspense></ModuleGuard>} />
         <Route path="/conversas" element={<ModuleGuard moduleSlug="conversas"><Suspense fallback={<Loading />}><Conversas /></Suspense></ModuleGuard>} />
+        <Route path="/admin/conversas-setores" element={<ModuleGuard moduleSlug="conversas" nivelMinimo={3}><Suspense fallback={<Loading />}><ConversasSetores /></Suspense></ModuleGuard>} />
         <Route path="/wifi" element={<ModuleGuard moduleSlug="wifi"><Suspense fallback={<Loading />}><WifiModulo /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/devocional" element={<Navigate to="/ministerial/cuidados?tab=devocional" replace />} />
         <Route path="/ministerial/jornada" element={<Navigate to="/ministerial/membresia" replace />} />

@@ -7,6 +7,15 @@ const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const wpp = require('../services/whatsappService');
 const waInbox = require('../services/waInbox');
+const { notificar } = require('../services/notificar');
+
+// profile_id[] de todos os usuários da área (mesma fn usada pelo bot de triagem)
+async function profilesDaArea(areaNome) {
+  try {
+    const { data } = await supabase.rpc('conversas_profiles_da_area', { area_nome: areaNome });
+    return [...new Set((data || []).map(r => r.profile_id).filter(Boolean))];
+  } catch { return []; }
+}
 
 // Anexos: imagem (jpg/png/webp) ou documento (pdf/doc/xls). Cap 16MB (limite Meta).
 const uploadAnexo = multer({
@@ -33,7 +42,7 @@ function comJanela(c) {
 function inList(vals) { return `(${vals.map(v => `"${String(v).replace(/"/g, '')}"`).join(',')})`; }
 
 // foto vem do cadastro do membro (WhatsApp não expõe foto de perfil pela API)
-const SEL = 'id, telefone, nome, membro_id, area, nao_lidas, resolvida, atribuido_a, notas, ultima_previa, last_message_at, last_inbound_at, membro:mem_membros(foto_url)';
+const SEL = 'id, telefone, nome, membro_id, area, nao_lidas, resolvida, atribuido_a, notas, protocolo, satisfacao, pesquisa_estado, ultima_previa, last_message_at, last_inbound_at, membro:mem_membros(foto_url)';
 
 // Templates aprovados p/ INICIAR conversa (fora da janela de 24h). Só entram os
 // que têm env configurado. Cadastrar novos = mais uma linha + env na Vercel.
@@ -41,6 +50,7 @@ const TEMPLATES_ABERTURA = [
   { key: 'next_convite', rotulo: 'Convite NEXT', nome: process.env.WHATSAPP_TEMPLATE_NEXT_CONVITE, params: [{ label: 'Primeiro nome' }] },
   { key: 'aniversario', rotulo: 'Aniversário', nome: process.env.WHATSAPP_TEMPLATE_ANIVERSARIO2 || process.env.WHATSAPP_TEMPLATE_ANIVERSARIO, params: [{ label: 'Nome' }] },
   { key: 'batismo_lembrete', rotulo: 'Lembrete de batismo', nome: process.env.WHATSAPP_TEMPLATE_BATISMO, params: [{ label: 'Data' }, { label: 'Hora' }] },
+  { key: 'cadastro_confirmado', rotulo: 'Cadastro confirmado', nome: process.env.WHATSAPP_TEMPLATE_CADASTRO, params: [{ label: 'Primeiro nome' }] },
 ].filter(t => t.nome);
 
 // GET /templates — templates de abertura disponíveis p/ nova conversa
@@ -81,15 +91,159 @@ router.get('/nao-lidas', authorizeModule('conversas', 1), async (req, res) => {
   }
 });
 
-// GET /colaboradores — todos os colaboradores ativos (p/ atribuir responsável a qualquer um)
+// GET /resumo-areas — pendências agrupadas por área (painel), respeitando o escopo
+router.get('/resumo-areas', authorizeModule('conversas', 1), async (req, res) => {
+  try {
+    const userId = uid(req);
+    let query = supabase.from('wa_conversas')
+      .select('area, nao_lidas, resolvida, atribuido_a').is('deleted_at', null)
+      .not('last_message_at', 'is', null).limit(5000);
+    if (!ehAdmin(req)) {
+      const vis = ['area.is.null', `atribuido_a.eq.${userId}`];
+      const areas = minhasAreas(req);
+      if (areas.length) vis.push(`area.in.${inList(areas)}`);
+      query = query.or(vis.join(','));
+    }
+    const { data, error } = await query;
+    if (error) throw error;
+    const mapa = new Map();
+    for (const c of (data || [])) {
+      const chave = c.area || '__entrada__';
+      const r = mapa.get(chave) || { area: c.area, entrada: !c.area, novas: 0, ativos: 0, pendentes: 0 };
+      r.novas += (c.nao_lidas || 0);
+      if (!c.resolvida) { r.ativos += 1; if (!c.atribuido_a) r.pendentes += 1; }
+      mapa.set(chave, r);
+    }
+    const linhas = [...mapa.values()].sort((a, b) => (b.novas + b.ativos) - (a.novas + a.ativos));
+    res.json({ areas: linhas });
+  } catch (e) {
+    console.error('[wa-inbox] resumo-areas:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar painel' });
+  }
+});
+
+// ── Menu de setores do bot de triagem (editável no /admin) ──────────────
+// GET /setores — lista (todos, p/ admin) · usado pelo painel e pela config
+router.get('/setores', authorizeModule('conversas', 1), async (req, res) => {
+  try {
+    const { data } = await supabase.from('conversas_setores')
+      .select('id, ordem, rotulo, area, ativo').order('ordem', { ascending: true });
+    res.json({ setores: data || [] });
+  } catch (e) {
+    console.error('[wa-inbox] setores get:', e.message);
+    res.status(500).json({ error: 'Erro ao listar setores' });
+  }
+});
+// POST /setores — cria (admin do módulo)
+router.post('/setores', authorizeModule('conversas', 3), async (req, res) => {
+  try {
+    const { rotulo, area, ordem, ativo } = req.body || {};
+    if (!rotulo || !area) return res.status(400).json({ error: 'Rótulo e área são obrigatórios.' });
+    const { data, error } = await supabase.from('conversas_setores')
+      .insert({ rotulo: String(rotulo).trim(), area: String(area).trim(), ordem: Number(ordem) || 0, ativo: ativo !== false })
+      .select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('[wa-inbox] setores post:', e.message);
+    res.status(500).json({ error: 'Erro ao criar setor' });
+  }
+});
+// PUT /setores/:id — edita
+router.put('/setores/:id', authorizeModule('conversas', 3), async (req, res) => {
+  try {
+    const patch = {};
+    for (const k of ['rotulo', 'area']) if (k in (req.body || {})) patch[k] = String(req.body[k] || '').trim();
+    if ('ordem' in (req.body || {})) patch.ordem = Number(req.body.ordem) || 0;
+    if ('ativo' in (req.body || {})) patch.ativo = !!req.body.ativo;
+    if (!Object.keys(patch).length) return res.status(400).json({ error: 'Nada para atualizar' });
+    const { data, error } = await supabase.from('conversas_setores').update(patch).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('[wa-inbox] setores put:', e.message);
+    res.status(500).json({ error: 'Erro ao atualizar setor' });
+  }
+});
+// DELETE /setores/:id — remove
+router.delete('/setores/:id', authorizeModule('conversas', 3), async (req, res) => {
+  try {
+    await supabase.from('conversas_setores').delete().eq('id', req.params.id);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[wa-inbox] setores del:', e.message);
+    res.status(500).json({ error: 'Erro ao remover setor' });
+  }
+});
+
+// GET /colaboradores — colaboradores REAIS (p/ atribuir responsável). Exclui:
+//   - contas de AGENTE/BOT (name "Agente X" ou email agente.*@cbrio.org)
+//   - membros do app (is_membro_only) — não são staff da inbox
 router.get('/colaboradores', authorizeModule('conversas', 1), async (req, res) => {
   try {
     const { data } = await supabase.from('profiles')
-      .select('id, name, avatar_url').eq('active', true).order('name');
-    res.json({ colaboradores: (data || []).filter(p => p.name).map(p => ({ id: p.id, name: p.name, avatar_url: p.avatar_url || null })) });
+      .select('id, name, avatar_url, email, is_membro_only').eq('active', true).order('name');
+    const ehAgente = (p) => /^\s*agente\s/i.test(p.name || '') || /^agente\.[^@]+@cbrio\.org$/i.test(p.email || '');
+    const colaboradores = (data || [])
+      .filter(p => p.name && !p.is_membro_only && !ehAgente(p))
+      .map(p => ({ id: p.id, name: p.name, avatar_url: p.avatar_url || null }));
+    res.json({ colaboradores });
   } catch (e) {
     console.error('[wa-inbox] colaboradores:', e.message);
     res.status(500).json({ error: 'Erro ao listar colaboradores' });
+  }
+});
+
+// ── Mensagens prontas (respostas rápidas reutilizáveis) ───────────────────
+// GET lista (todos que podem usar a inbox) · POST/PATCH/DELETE (quem edita, >=2)
+router.get('/mensagens-prontas', authorizeModule('conversas', 1), async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('wa_mensagens_prontas')
+      .select('id, titulo, texto').eq('ativo', true).order('titulo');
+    if (error) throw error;
+    res.json({ mensagens: data || [] });
+  } catch (e) {
+    console.error('[wa-inbox] mensagens-prontas list:', e.message);
+    res.status(500).json({ error: 'Erro ao listar mensagens prontas' });
+  }
+});
+router.post('/mensagens-prontas', authorizeModule('conversas', 2), async (req, res) => {
+  try {
+    const titulo = String(req.body?.titulo || '').trim().slice(0, 80);
+    const texto = String(req.body?.texto || '').trim().slice(0, 4000);
+    if (!titulo || !texto) return res.status(400).json({ error: 'Título e texto são obrigatórios.' });
+    const { data, error } = await supabase.from('wa_mensagens_prontas')
+      .insert({ titulo, texto, criado_por: uid(req) }).select('id, titulo, texto').single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) {
+    console.error('[wa-inbox] mensagens-prontas create:', e.message);
+    res.status(500).json({ error: 'Erro ao salvar a mensagem pronta' });
+  }
+});
+router.patch('/mensagens-prontas/:id', authorizeModule('conversas', 2), async (req, res) => {
+  try {
+    const patch = { updated_at: new Date().toISOString() };
+    if ('titulo' in (req.body || {})) patch.titulo = String(req.body.titulo || '').trim().slice(0, 80);
+    if ('texto' in (req.body || {})) patch.texto = String(req.body.texto || '').trim().slice(0, 4000);
+    const { data, error } = await supabase.from('wa_mensagens_prontas')
+      .update(patch).eq('id', req.params.id).select('id, titulo, texto').maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Mensagem não encontrada' });
+    res.json(data);
+  } catch (e) {
+    console.error('[wa-inbox] mensagens-prontas patch:', e.message);
+    res.status(500).json({ error: 'Erro ao atualizar a mensagem pronta' });
+  }
+});
+router.delete('/mensagens-prontas/:id', authorizeModule('conversas', 2), async (req, res) => {
+  try {
+    const { error } = await supabase.from('wa_mensagens_prontas').delete().eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[wa-inbox] mensagens-prontas delete:', e.message);
+    res.status(500).json({ error: 'Erro ao remover a mensagem pronta' });
   }
 });
 
@@ -167,6 +321,7 @@ router.get('/conversas', authorizeModule('conversas', 1), async (req, res) => {
 
     let query = supabase.from('wa_conversas').select(SEL)
       .is('deleted_at', null)
+      .not('last_message_at', 'is', null) // esconde conversas criadas só por clique (sem nenhuma mensagem)
       .order('last_message_at', { ascending: false, nullsFirst: false })
       .limit(200);
     if (status === 'abertas') query = query.eq('resolvida', false);
@@ -337,18 +492,76 @@ router.post('/conversas/:id/ler', authorizeModule('conversas', 1), async (req, r
 // PATCH /conversas/:id — resolver/reabrir, atribuir, triar (área)
 router.patch('/conversas/:id', authorizeModule('conversas', 2), async (req, res) => {
   try {
+    const { data: antes } = await supabase.from('wa_conversas')
+      .select('id, telefone, protocolo, resolvida, last_inbound_at').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!antes) return res.status(404).json({ error: 'Conversa não encontrada' });
+
     const patch = {};
     if (typeof req.body?.resolvida === 'boolean') patch.resolvida = req.body.resolvida;
     if ('atribuido_a' in (req.body || {})) patch.atribuido_a = req.body.atribuido_a || null;
     if ('area' in (req.body || {})) patch.area = req.body.area ? String(req.body.area).trim() : null;
     if ('notas' in (req.body || {})) patch.notas = req.body.notas ? String(req.body.notas) : null;
     if (Object.keys(patch).length === 0) return res.status(400).json({ error: 'Nada para atualizar' });
+
+    // Ao FINALIZAR (resolvida: false → true): manda a pesquisa de satisfação 0-5
+    // com o protocolo. Só dá pra mandar texto livre dentro da janela de 24h.
+    let pesquisaEnviada = false;
+    if (patch.resolvida === true && !antes.resolvida && waInbox.dentroJanela24h(antes.last_inbound_at)) {
+      const msg = `Sua conversa foi finalizada! 🙏\nProtocolo: *${antes.protocolo || '—'}*\n\nDe *0 a 5*, como você avalia nosso atendimento? Responda só com o número (0 = péssimo · 5 = excelente).`;
+      const r = await wpp.sendText(antes.telefone, msg).catch(() => ({ sent: false }));
+      if (r?.sent) {
+        pesquisaEnviada = true;
+        patch.pesquisa_estado = 'aguardando';
+        patch.pesquisa_em = new Date().toISOString();
+        await waInbox.registrarOutbound({ telefone: antes.telefone, texto: msg, tipo: 'pesquisa' }).catch(() => {});
+      }
+    }
+
     const { data, error } = await supabase.from('wa_conversas').update(patch).eq('id', req.params.id).select().single();
     if (error) throw error;
-    res.json(comJanela(data));
+    res.json({ ...comJanela(data), pesquisa_enviada: pesquisaEnviada });
   } catch (e) {
     console.error('[wa-inbox] patch:', e.message);
     res.status(500).json({ error: 'Erro ao atualizar conversa' });
+  }
+});
+
+// POST /conversas/:id/transferir { area } — transfere o atendimento pra outra área
+router.post('/conversas/:id/transferir', authorizeModule('conversas', 2), async (req, res) => {
+  try {
+    const area = req.body?.area ? String(req.body.area).trim() : '';
+    if (!area) return res.status(400).json({ error: 'Escolha a área de destino.' });
+    const { data: conv } = await supabase.from('wa_conversas')
+      .select('id, area, protocolo, nome, telefone').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!conv) return res.status(404).json({ error: 'Conversa não encontrada' });
+    if (conv.area === area) return res.status(400).json({ error: 'A conversa já está nessa área.' });
+
+    // transfere: nova área, tira da fila do responsável atual, reabre se resolvida
+    await supabase.from('wa_conversas')
+      .update({ area, atribuido_a: null, resolvida: false }).eq('id', conv.id);
+    // nota de sistema na thread
+    await supabase.from('wa_mensagens').insert({
+      conversa_id: conv.id, direcao: 'out', tipo: 'sistema', autor_id: uid(req),
+      texto: `🔀 Transferida de ${conv.area || 'Entrada'} para ${area}`,
+    }).catch(() => {});
+    // notifica a equipe da nova área
+    try {
+      const alvos = await profilesDaArea(area);
+      await notificar({
+        modulo: 'conversas', tipo: 'conversa_transferida',
+        titulo: `Conversa transferida · ${area}`,
+        mensagem: `${conv.nome || conv.telefone} (${conv.protocolo || '—'}) foi transferida pra ${area}.`,
+        link: `/conversas?area=${encodeURIComponent(area)}`,
+        chaveDedup: `conversa_transf_${conv.id}_${area}`,
+        targetIds: alvos.length ? alvos : undefined,
+      });
+    } catch (e) { console.error('[wa-inbox] transferir notificar:', e.message); }
+
+    const { data: fresh } = await supabase.from('wa_conversas').select(SEL).eq('id', conv.id).maybeSingle();
+    res.json(comJanela(fresh || conv));
+  } catch (e) {
+    console.error('[wa-inbox] transferir:', e.message);
+    res.status(500).json({ error: 'Erro ao transferir' });
   }
 });
 

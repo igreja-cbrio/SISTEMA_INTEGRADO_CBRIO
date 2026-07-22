@@ -244,7 +244,10 @@ async function buildKPI(mes) {
     // Investir em Deus = devocional do app (mem_devocionais · decisão Matheus 2026-06-20, era PENSE)
     supabase.from('mem_devocionais').select('membro_id').eq('concluida', true).is('deleted_at', null).gte('data_devocional', inicioStr).lte('data_devocional', fimStr),
     supabase.rpc('kpi_servir_comunidade', { _since: noventaDias.toISOString() }),
-    supabase.from('cultura_mensal').select('*').eq('mes', inicioStr).maybeSingle(),
+    // Generosidade = balanço vivo (fin_transacoes → vw_doacoes_mensal · dízimo+
+    // oferta por código de plano de contas), alimentado toda semana. Substitui o
+    // cultura_mensal (snapshot manual · parou em abr/2026 → falso "não preenchido").
+    supabase.from('vw_doacoes_mensal').select('*').eq('mes', inicioStr).maybeSingle(),
     supabase.from('kpi_metas').select('*').order('area'),
     supabase.from('mem_membros').select('id', { count: 'exact', head: true }).eq('status', 'membro_ativo').is('deleted_at', null),
   ]);
@@ -258,6 +261,13 @@ async function buildKPI(mes) {
   const devoPessoas = new Set(devoRows.map(d => d.membro_id).filter(Boolean)).size;
   const volAtivos = pick(4).data != null ? (typeof pick(4).data === 'number' ? pick(4).data : 0) : 0;
   const cm = pick(5).data;
+  const genTotal = Number(cm?.total || 0);
+  const genDizimo = Number(cm?.dizimo || 0);
+  const genOferta = Number(cm?.oferta || 0);
+  const genDoacoes = Number(cm?.qtd_doacoes || 0);
+  const genDoadores = Number(cm?.qtd_doadores_unicos || 0);
+  const genPreenchido = genTotal > 0 || genDoacoes > 0;
+  const brl = (n) => 'R$ ' + Math.round(Number(n) || 0).toLocaleString('pt-BR');
   const metas = pick(6).data || [];
   const membrosAtivos = pick(7).count || 0;
 
@@ -276,14 +286,14 @@ async function buildKPI(mes) {
     conectar_pessoas: { label: 'Conectar Pessoas', valor: gruposCount, detalhe: `${gruposCount} membros ativos em grupos`, cor: '#10b981' },
     investir_deus: { label: 'Investir em Deus', valor: devoPessoas, detalhe: `${devoPessoas} pessoas no devocional (${devoCheckins} check-ins no mês)`, cor: '#f59e0b' },
     servir: { label: 'Servir', valor: volAtivos, detalhe: `${volAtivos} voluntarios ativos (90d)`, cor: '#ef4444' },
-    generosidade: { label: 'Generosidade', valor: (cm?.qtd_dizimistas || 0) + (cm?.qtd_ofertantes || 0), detalhe: `${cm?.qtd_dizimistas || 0} dizimistas + ${cm?.qtd_ofertantes || 0} ofertantes`, cor: '#8b5cf6' },
+    generosidade: { label: 'Generosidade', valor: genDoadores > 0 ? genDoadores : genDoacoes, detalhe: genPreenchido ? `${brl(genTotal)} · ${brl(genDizimo)} dízimo + ${brl(genOferta)} oferta (${genDoacoes} doações${genDoadores > 0 ? ` · ${genDoadores} doadores` : ''})` : 'Sem doações no mês', cor: '#8b5cf6' },
   };
 
   return {
     checklist: [
       { item: 'Cultos do mês registrados', ok: cultosAtual.length > 0, valor: `${cultosAtual.length} cultos` },
       { item: 'Presenca registrada', ok: presMedia > 0, valor: presMedia > 0 ? `Media: ${presMedia}` : 'Sem registros' },
-      { item: 'Dados de generosidade', ok: cm != null, valor: cm ? `${cm.qtd_dizimistas || 0} dizimistas` : 'Não preenchido' },
+      { item: 'Dados de generosidade', ok: genPreenchido, valor: genPreenchido ? `${brl(genTotal)} · ${genDoacoes} doações` : 'Não preenchido' },
       { item: 'Membresia atualizada', ok: membrosAtivos > 0, valor: `${membrosAtivos} membros ativos` },
     ],
     resumo: {
@@ -1170,7 +1180,7 @@ router.post('/meetings/:id/gerar-pauta', wr, async (req, res) => {
     const dadosVivos = await dadosVivosPorSigla(sigla, mes);
     const row = await govIA.gerarPauta({ meetingId: req.params.id, userId: req.user.userId, dadosVivos });
     res.status(201).json(row);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { console.error('[governanca] gerar-pauta:', e.message); res.status(500).json({ error: e.message }); }
 });
 
 // Edita o texto in-app de um documento gerado (pauta_ia · refinamento humano).

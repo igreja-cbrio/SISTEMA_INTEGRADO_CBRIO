@@ -376,8 +376,11 @@ router.get('/frequencia', async (req, res) => {
   try {
     const build = () => {
       let q = supabase.from('vw_vol_frequencia').select('*');
-      if (req.query.status === 'ativos') q = q.eq('ativo', true);
-      else if (req.query.status === 'inativos') q = q.eq('ativo', false);
+      // Filtro por SITUAÇÃO (ativo/inativo/novo). Inativo = já serviu e parou 3+
+      // meses (exclui novos/sem-serviço, quem saiu da igreja e afastados por saúde).
+      if (req.query.status === 'ativos') q = q.eq('situacao', 'ativo');
+      else if (req.query.status === 'inativos') q = q.eq('situacao', 'inativo');
+      else if (req.query.status === 'novos') q = q.eq('situacao', 'novo');
       // Vínculo = ligado a um MEMBRO (CPF). A lista já é de voluntários reais.
       if (req.query.vinculo === 'nao') q = q.is('membro_id', null);
       else if (req.query.vinculo === 'sim') q = q.not('membro_id', 'is', null);
@@ -397,9 +400,29 @@ router.get('/frequencia', async (req, res) => {
     // Resumo (cards) = SEMPRE o total geral · contagem real no banco, NÃO muda
     // com o filtro da lista (antes recalculava do subconjunto capado → números
     // divergentes entre "Todos" e "Ativos").
+    const contarSituacao = (situ) => supabase.from('vw_vol_frequencia')
+      .select('chave', { count: 'exact', head: true }).eq('situacao', situ);
     const { count: total } = await supabase.from('vw_vol_frequencia').select('chave', { count: 'exact', head: true });
-    const { count: ativos } = await supabase.from('vw_vol_frequencia').select('chave', { count: 'exact', head: true }).eq('ativo', true);
-    res.json({ resumo: { total: total || 0, ativos: ativos || 0, inativos: (total || 0) - (ativos || 0) }, itens: data });
+    const { count: ativos } = await contarSituacao('ativo');
+    const { count: inativos } = await contarSituacao('inativo');
+    const { count: novos } = await contarSituacao('novo');
+
+    // Enriquece com o motivo de inatividade (por chave · tabela vol_inatividade)
+    const chaves = [...new Set(data.map(r => r.chave).filter(Boolean))];
+    const motivoByChave = {};
+    for (let i = 0; i < chaves.length; i += 500) {
+      const lote = chaves.slice(i, i + 500);
+      const { data: ms } = await supabase.from('vol_inatividade')
+        .select('chave, motivo, detalhe, registrado_em').in('chave', lote);
+      (ms || []).forEach(m => { motivoByChave[m.chave] = m; });
+    }
+    const itens = data.map(r => ({
+      ...r,
+      inatividade_motivo: motivoByChave[r.chave]?.motivo || null,
+      inatividade_detalhe: motivoByChave[r.chave]?.detalhe || null,
+      inatividade_em: motivoByChave[r.chave]?.registrado_em || null,
+    }));
+    res.json({ resumo: { total: total || 0, ativos: ativos || 0, inativos: inativos || 0, novos: novos || 0 }, itens });
   } catch (e) {
     console.error('[vol] frequencia', e.message);
     res.status(500).json({ error: 'Erro ao carregar frequência' });
@@ -419,6 +442,63 @@ router.get('/frequencia/detalhe', async (req, res) => {
     res.json(data || []);
   } catch (e) {
     res.status(500).json({ error: 'Erro ao carregar detalhe' });
+  }
+});
+
+// PUT /api/voluntariado/frequencia/inatividade  body { chave, motivo, detalhe }
+// Registra/edita o MOTIVO pelo qual o voluntário está inativo. motivo vazio = limpa.
+// Guardado por `chave` da vw_vol_frequencia (cpf:/membresia:/id:).
+router.put('/frequencia/inatividade', authorizeModule('membresia', 2), async (req, res) => {
+  try {
+    const chave = String(req.body?.chave || '').trim();
+    if (!chave) return res.status(400).json({ error: 'chave obrigatória' });
+    const motivo = String(req.body?.motivo || '').trim().slice(0, 60);
+    const detalhe = req.body?.detalhe != null ? String(req.body.detalhe).trim().slice(0, 1000) : null;
+    if (!motivo) {
+      await supabase.from('vol_inatividade').delete().eq('chave', chave);
+      return res.json({ ok: true, cleared: true });
+    }
+    const { data, error } = await supabase.from('vol_inatividade')
+      .upsert({ chave, motivo, detalhe: detalhe || null, registrado_por: req.user?.id ?? null, updated_at: new Date().toISOString() },
+        { onConflict: 'chave' })
+      .select('chave, motivo, detalhe, registrado_em').single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true, motivo: data });
+  } catch (e) {
+    console.error('[vol] inatividade', e.message);
+    res.status(500).json({ error: 'Erro ao salvar o motivo' });
+  }
+});
+
+// POST /api/voluntariado/frequencia/saiu-igreja  body { chave, membro_id, detalhe }
+// Marca que o voluntário SAIU da igreja: registra motivo 'saiu_igreja' no
+// voluntariado E, se houver membro vinculado, muda o status dele pra 'inativo'
+// na Membresia (reflete no cadastro). Sai da contagem de inativos do voluntariado.
+router.post('/frequencia/saiu-igreja', authorizeModule('membresia', 2), async (req, res) => {
+  try {
+    const chave = String(req.body?.chave || '').trim();
+    if (!chave) return res.status(400).json({ error: 'chave obrigatória' });
+    const membroId = req.body?.membro_id ? String(req.body.membro_id).trim() : null;
+    const detalhe = req.body?.detalhe != null ? String(req.body.detalhe).trim().slice(0, 1000) : null;
+
+    // 1) marca no voluntariado (motivo saiu_igreja · por chave)
+    const { error: viErr } = await supabase.from('vol_inatividade')
+      .upsert({ chave, motivo: 'saiu_igreja', detalhe: detalhe || null, registrado_por: req.user?.id ?? null, updated_at: new Date().toISOString() },
+        { onConflict: 'chave' });
+    if (viErr) return res.status(500).json({ error: viErr.message });
+
+    // 2) reflete na Membresia (se houver cadastro de membro vinculado)
+    let membroAtualizado = false;
+    if (membroId && /^[0-9a-f-]{36}$/i.test(membroId)) {
+      const { error: mmErr } = await supabase.from('mem_membros')
+        .update({ status: 'inativo' }).eq('id', membroId).is('deleted_at', null);
+      if (mmErr) console.error('[vol] saiu-igreja mem_membros:', mmErr.message);
+      else membroAtualizado = true;
+    }
+    res.json({ ok: true, membro_atualizado: membroAtualizado });
+  } catch (e) {
+    console.error('[vol] saiu-igreja', e.message);
+    res.status(500).json({ error: 'Erro ao registrar a saída' });
   }
 });
 
@@ -1145,11 +1225,64 @@ router.get('/aniversariantes-semana', async (req, res) => {
       aniversario: r.aniversario, // a data do aniversário nesta semana
       dow: r.dow,
       hoje: r.aniversario === new Date().toISOString().slice(0, 10),
+      parabenizado: false,
     }));
+    // marca quem já foi parabenizado neste ano (controle do líder)
+    const anoAtual = new Date().getFullYear();
+    const ids = rows.map((r) => r.vol_profile_id).filter(Boolean);
+    if (ids.length) {
+      const { data: pb } = await supabase.from('vol_parabens')
+        .select('vol_profile_id').eq('ano', anoAtual).in('vol_profile_id', ids);
+      const enviados = new Set((pb || []).map((p) => p.vol_profile_id));
+      rows.forEach((r) => { r.parabenizado = enviados.has(r.vol_profile_id); });
+    }
     res.json({ rows });
   } catch (e) {
     console.error('[vol] aniversariantes-semana', e.message);
     res.status(500).json({ error: 'Erro ao carregar aniversariantes' });
+  }
+});
+
+// POST /voluntariado/aniversariantes/:volProfileId/parabenizar — envia o template
+// de aniversário pela API (respeita opt-in · Marketing) e marca como enviado.
+const MSG_RESULTADO = {
+  sem_optin: 'A pessoa não deu consentimento (opt-in) para receber mensagens no WhatsApp. Use o botão de abrir no WhatsApp para falar manualmente.',
+  sem_cadastro: 'Voluntário sem cadastro de membro (sem opt-in registrado). Use o WhatsApp manual.',
+  sem_membro: 'Voluntário sem cadastro de membro vinculado.',
+  sem_telefone: 'Voluntário sem telefone.',
+  telefone_invalido: 'Telefone inválido.',
+  template_nao_configurado: 'Template de aniversário não configurado na Meta/env.',
+  wpp_nao_configurado: 'WhatsApp não configurado.',
+};
+router.post('/aniversariantes/:volProfileId/parabenizar', async (req, res) => {
+  try {
+    const volId = req.params.volProfileId;
+    const { data: vp } = await supabase.from('vol_profiles')
+      .select('id, full_name, membresia_id').eq('id', volId).maybeSingle();
+    if (!vp) return res.status(404).json({ error: 'Voluntário não encontrado' });
+
+    const primeiro = String(vp.full_name || '').trim().split(/\s+/)[0] || '';
+    let resultado = 'sem_cadastro';
+    let sent = false;
+    if (vp.membresia_id) {
+      const wpp = require('../services/whatsappService');
+      const r = await wpp.notificarMembro(vp.membresia_id, 'aniversario', [primeiro]);
+      if (r?.sent) { sent = true; resultado = 'enviado'; }
+      else resultado = r?.skipped || r?.reason || 'falhou';
+    }
+
+    if (sent) {
+      const ano = new Date().getFullYear();
+      await supabase.from('vol_parabens').upsert({
+        vol_profile_id: volId, ano, enviado_em: new Date().toISOString(),
+        enviado_por: req.user.userId || req.user.id, resultado,
+      }, { onConflict: 'vol_profile_id,ano' });
+      return res.json({ ok: true, resultado });
+    }
+    return res.status(400).json({ ok: false, resultado, error: MSG_RESULTADO[resultado] || 'Não foi possível enviar pela API. Use o WhatsApp manual.' });
+  } catch (e) {
+    console.error('[vol] parabenizar', e.message);
+    res.status(500).json({ error: 'Erro ao parabenizar' });
   }
 });
 

@@ -17,8 +17,7 @@ import { totemKids } from '@/api';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { useAuth } from '@/contexts/AuthContext';
-import { useNavigate, Link } from 'react-router-dom';
-import { hrefConversa } from '@/lib/conversas';
+import { useNavigate } from 'react-router-dom';
 
 type CultoDia = {
   culto_id: string;
@@ -322,7 +321,16 @@ export default function TotemKidsPainel() {
     if (!confirm(`Encerrar a sessão de ${cultoSel.culto_nome}? Vai consolidar ${cultoSel.presentes} criança(s) no culto.`)) return;
     setEncerrando(true);
     try {
-      await totemKids.sessoes.encerrar(cultoSel.sessao_id);
+      try {
+        await totemKids.sessoes.encerrar(cultoSel.sessao_id);
+      } catch (e409: unknown) {
+        // Design v5 (2026-07-22): 409 = há check-ins fora do horário do culto
+        // (provável teste de ensaio) — decisão humana antes de consolidar.
+        const err = e409 as { precisa_confirmar_limpeza?: boolean; suspeitos?: number };
+        if (!err?.precisa_confirmar_limpeza) throw e409;
+        const limpar = confirm(`${err.suspeitos} check-in(s) fora do horário do culto parecem teste.\n\nOK = apagar antes de consolidar (não contam no número) · Cancelar = manter tudo`);
+        await totemKids.sessoes.encerrar(cultoSel.sessao_id, { limpar_testes: limpar });
+      }
       toast.success('Sessão encerrada · KPIs consolidados');
       carregar();
     } catch (e: unknown) {
@@ -545,6 +553,14 @@ export default function TotemKidsPainel() {
                       <div className="min-w-0">
                         <p className="text-lg font-bold leading-tight">{criancaDet.nome}</p>
                         <p className="text-sm text-muted-foreground">{criancaDet.idade_label}</p>
+                        {/* Horário do check-in (Marcos 2026-07-22): útil pra procurar
+                            a criança nas câmeras. Mostra a saída também quando já saiu. */}
+                        {criancaSelCheckin?.checkin_at && (
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            Check-in às <b>{format(new Date(criancaSelCheckin.checkin_at), 'HH:mm', { locale: ptBR })}</b>
+                            {criancaSelCheckin.checkout_at && <> · saída às <b>{format(new Date(criancaSelCheckin.checkout_at), 'HH:mm', { locale: ptBR })}</b></>}
+                          </p>
+                        )}
                       </div>
                     </div>
 
@@ -587,9 +603,12 @@ export default function TotemKidsPainel() {
                                       <a href={`tel:+${tel}`} className="inline-flex items-center justify-center h-9 w-9 rounded-full bg-muted hover:bg-accent" title="Ligar">
                                         <Phone className="h-4 w-4" />
                                       </a>
-                                      <Link to={hrefConversa(tel)} className="inline-flex items-center justify-center h-9 w-9 rounded-full bg-emerald-500 text-white hover:bg-emerald-600" title="WhatsApp">
+                                      {/* WhatsApp DIRETO (wa.me), de propósito — aqui é a líder do Kids
+                                          acionando o pai/mãe durante o culto; não passa pelo inbox
+                                          interno (Conversas) pra não parecer bot (Marcos 2026-07-22). */}
+                                      <a href={`https://wa.me/${tel}`} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center h-9 w-9 rounded-full bg-emerald-500 text-white hover:bg-emerald-600" title="WhatsApp">
                                         <MessageCircle className="h-4 w-4" />
-                                      </Link>
+                                      </a>
                                     </div>
                                   )}
                                 </div>

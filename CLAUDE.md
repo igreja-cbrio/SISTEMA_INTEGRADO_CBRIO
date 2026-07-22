@@ -192,6 +192,16 @@ serverless functions via `api/index.js`).
 > ⚠️ O PCO do VOLUNTARIADO (Planning Center Services · vol_*) é outro produto e
 > segue vivo — não confundir.
 
+> **Cuidados · Jornada 180 saiu do módulo (2026-07-22)**: decisão do Marcos — quem
+> gerencia os grupos de Jornada 180 é o módulo **Grupos** (J180 é um tipo de grupo lá,
+> `TIPOS_GRUPO`). Removida a aba "Jornada 180" do `/cuidados` (o `CuidadosJ180` + o
+> `EncaminhamentosInbox destino="jornada180"`). Deep-link `?tab=jornada` redireciona
+> pro dashboard. NÃO apaguei nada no banco: `cui_jornada180`/`j180_*` + rotas
+> `/cuidados/j180/*`/`/jornada180` + `api.cuidados.j180`/`jornada180` ficam DORMENTES
+> (alimentam o dashboard-series e KPIs · dropar só numa limpeza futura com aval). O
+> `DESTINO_META.jornada180` (backend) fica só pra rotular encaminhamentos legados; o
+> desfecho do convertido não oferece mais esse destino (só Next direciona hoje).
+
 ## Mapa do sistema · o que cada módulo faz, quem usa e o que alimenta
 
 Visão de helicóptero (formato: o que faz · quem usa · **impacto** = o que
@@ -1120,6 +1130,42 @@ Limitação conhecida: escrita via backend (service role) fica **sem autor**
 (`auth.uid()` nulo → exibe "sistema") — autoria por request é evolução futura.
 O log só grava a partir da aplicação da migration (nada retroativo).
 
+## Grupos · Renovação de temporada pelo líder (2026-07-21)
+
+Pedido do Marcos: 1×/semestre, com a temporada fechada (antes de abrir as
+inscrições da próxima), TODOS os líderes recebem WhatsApp perguntando se
+continuam com o grupo. **Disparo SEMPRE manual** da coordenação (lei de 20/07 —
+nada automático pro líder), no card "Renovação de temporada" em Config >
+Temporadas (`TemporadasGrupos.jsx` · nível 5 · re-executar reenvia SÓ aos
+sem-resposta). Fluxo do líder no link público `/g/r/<token>`
+(`GrupoRenovacao.jsx` · token `renov` 30d · molde da frequência):
+- **SIM** → checklist do roster DESMARCADO ("quem provavelmente continua" ·
+  estimativa explícita) + selecionar todos + modal de confirmação **com os
+  NOMES** de quem sai. Não-marcado → `saiu_em` + `renovacao_id` (coluna FK
+  dedicada em `mem_grupo_membros` — NUNCA tag em texto) + motivo humano.
+  Pessoa segue no sistema e pode se reinscrever na abertura. **Reedição
+  permitida** (última vence): re-marcar reativa SÓ vínculos com
+  `renovacao_id` da própria renovação e sem outro vínculo ativo.
+- **NÃO** → motivo obrigatório → o grupo NÃO fecha: vira 4ª origem na Caixa
+  de entrada (`ren_nao_continua`) pra triagem da Naná (`PainelRenovacao`:
+  fechar grupo / buscar líder / manter · nota obrigatória) + `notificar()`.
+- **Sem resposta → roster INTOCADO** (lei: nunca remover por omissão).
+
+Segurança do submit (conselho 21/07): o POST carrega a lista **exibida** — o
+servidor só age sobre `exibidos ∩ roster ativo atual` (quem entrou depois da
+tela aberta nunca é removido por submit atrasado); token morre com: geração
+antiga (`token_geracao` na linha · reenvio incrementa), liderança trocada,
+linha triada ou **inscrições da temporada abertas**. Schema:
+`mem_grupo_renovacoes` (UNIQUE grupo+temporada · snapshot do líder ·
+contadores/ids jsonb como cache de exibição · triagem_*) + RLS molde
+mem_lider_inscricoes + audit trigger + whitelist (migration `20260721170000`,
+que também DROPa `uniq_mem_grupo_membros_ativo` — formaliza o multi-grupo que
+já valia em prod). Template Meta `grupos_renovacao_temporada` (UTILITY · {{1}}
+nome {{2}} temporada {{3}} grupo {{4}} link como variável de body · env
+override `WHATSAPP_TEMPLATE_GRUPOS_RENOVACAO`) via fila `whatsapp_envios`.
+A pessoa removida NÃO é notificada (decisão pastoral) — o caminho de volta é o
+broadcast de abertura das inscrições.
+
 ## Grupos × Bot WhatsApp · estudo semanal + relato do encontro (2026-06-10)
 
 Marcos: o bot manda o ESTUDO DA SEMANA pros líderes de grupos e, no dia
@@ -1729,6 +1775,124 @@ pendentes). `api.kpis.batismos.coberturaConvertidos()`.
 Follow-ups (próximas PRs): "engajou" cruzar com o sinal real do valor (grupo/voluntário),
 fechar-o-loop (aceite na área cria o pedido de grupo / inscrição de voluntário nativos),
 funil de analytics encaminhados→aderiram.
+
+## Cuidados · Caixa de entrada (intake de pedidos) (2026-07-22)
+
+A aba **"Aconselhamento" virou "Caixa de entrada"**: fila única de triagem de
+todo pedido de cuidado (aconselhamento, capelania, oração, SOS, visita), no
+estilo da caixa de entrada do Grupos. Ponte com a trilha: ao **Atender**, o líder
+escolhe o TIPO de atendimento/visita → cria o atendimento na trilha da pessoa
+(aba Visitas e Atendimentos).
+- **Migration `20260722190000`**: tabela **canônica `cui_pedidos`** (canal
+  app|whatsapp|plataforma|manual · tipo aconselhamento|capelania|oracao|sos|visita|
+  outro · status pendente|em_andamento|concluido · membro/nome/telefone/email ·
+  mensagem · atribuido_a · `origem_ref` · `atendimento_ref`) + RLS módulo cuidados.
+  Soft-delete via UPDATE `deleted_at` (padrão do módulo · sem whitelist).
+- **Contrato** = `backend/services/cuidadosPedidos.js` `registrarPedidoCuidado({canal,
+  tipo,membro_id,nome,telefone,email,mensagem,origem_ref})` — **alvo único pro
+  WhatsApp do Matheus e pra plataforma/app** plugarem (normaliza telefone/e-mail +
+  notifica). O canal `app` já entra por `app_inscricoes` (a Caixa lê de lá também
+  via `/pedidos-app`) — não precisa chamar o contrato. ⚠️ Ligar o canal WhatsApp em
+  si é do lado do Matheus (ele chama `registrarPedidoCuidado`) — alinhar a forma
+  com ele; o resto funciona sem depender disso.
+- **Multi-fonte por decisão** (não trigger-espelho): a Caixa lê `cui_pedidos`
+  (whatsapp/plataforma/manual) + `app_inscricoes` (canal app · endpoints
+  `/pedidos-app` já existentes) e mescla numa fila só. `cui_pedidos` é a canônica
+  pros canais novos; o app segue na sua tabela (fluxo/push intactos). Consolidar o
+  app em `cui_pedidos` por trigger fica pra uma futura, se quisermos tabela física
+  única.
+- **Backend** (`routes/cuidados.js`): `GET /cuidados/pedidos` (fila cui_pedidos +
+  nome de quem atribuiu) · `POST /cuidados/pedidos` (manual) · `PATCH
+  /cuidados/pedidos/:id` (status/atribuir) · `DELETE` (soft) · **`POST
+  /cuidados/pedidos/atender`** (`{fonte:'cui'|'app', id, atendimento:{tipo,...}}` →
+  roteia por tipo: aconselhamento/capelania → `cui_acompanhamentos` (mantém os KPIs
+  de capelania/aconselhamento) · demais → `cui_visitas` · marca o pedido
+  em_andamento + guarda `atendimento_ref`). `/pedidos-app` (canal app) intocado.
+- **Frontend** (`Cuidados.tsx`): `CaixaEntrada` (filtros canal/tipo/status + busca ·
+  cards de pedido com telefone + botão **"Conversas"** (link `hrefConversa` → o pastor
+  vê/responde no módulo Conversas, NÃO gerencia aqui) · status inline · "Atender" ·
+  "Registrar pedido" manual) + `AtenderPedidoModal` + `RegistrarPedidoModal`. Badge de
+  pendentes na aba. `api.js`: `cuidados.pedidos.{list,create,update,remove,atender}`.
+  ⚠️ **Insights de oração + config de WhatsApp SAÍRAM da Caixa de entrada (2026-07-22)** —
+  aquele bloco `<details>` (OracaoPanel + WhatsappAutoConfig) foi removido: gerenciamento
+  de WhatsApp é do módulo de WhatsApp/Conversas (do Matheus). Cada pedido tem só o link
+  pro Conversas. Componentes `OracaoPanel`/`WhatsappAutoConfig` seguem no repo (usados
+  em outro lugar), só não são mais montados no Cuidados.
+- **`AcompanhamentoModal` ficou dormente** (sem render) — criar aconselhamento/
+  capelania novo agora é pelo fluxo "Atender" (ou registrar pedido manual + atender).
+  A tabela `cui_acompanhamentos` segue viva (KPIs + trilha).
+- ⚠️ Aplicar a migration `20260722190000` antes do merge.
+
+## Cuidados · trilha por pessoa na aba "Visitas e Atendimentos" (2026-07-22)
+
+Parte do redesenho do Cuidados (aprovado pelo Marcos). A aba deixou de ser uma
+lista solta de atendimentos independentes e virou uma **trilha por PESSOA**: o
+histórico de cada pessoa vira um fio contínuo, com **comentários por atendimento**.
+- **Migration `20260722180000`**: `cui_atendimento_comentarios` (comentário
+  polimórfico · `ref_tipo` visita|acompanhamento + `ref_id`) + RLS módulo cuidados +
+  service_role. Soft-delete via UPDATE `deleted_at` no backend (mesmo padrão do
+  `cui_visitas` · não usa `app_soft_delete`/whitelist).
+- **A trilha JUNTA na leitura `cui_visitas` (visitas/atendimentos) +
+  `cui_acompanhamentos` (aconselhamento/capelania)** — decisão consciente de **NÃO
+  migrar/mexer no `cui_acompanhamentos`**: ele alimenta 6 leitores (KPIs de
+  capelania/aconselhamento em `kpiAutoCollector`, `painel.js`, `notificacaoGenerator`,
+  `agentContext`, `cerebroSync`, `lgpd`). Unificar por leitura preserva os KPIs e evita
+  a armadilha "não é swap de 1 linha".
+- **Âncora da pessoa** (chave): `membro_id` > telefone (só dígitos, ≥10) > nome
+  normalizado (sem acento/caixa). Contrato de porta.
+- **Backend** (`routes/cuidados.js`): `GET /cuidados/trilha` (pessoas agrupadas ·
+  cada uma com `atendimentos[]` já ordenados + `comentarios_count`; helper
+  `carregarAtendimentosTrilha` + `_fetchTudoCui` paginado p/ o cap de 1000) ·
+  `GET/POST /cuidados/atendimentos/:refTipo/:refId/comentarios` ·
+  `DELETE /cuidados/atendimento-comentarios/:id`.
+- **Filtros da aba (2026-07-22 · client-side, sem backend/migration):** `TrilhaPessoas`
+  tem filtros por **tipo**, **status**, **quem atendeu** (`responsavel`) e **período**
+  (De/Até por `data` do atendimento). As opções de tipo/status/responsável são
+  derivadas dos atendimentos JÁ carregados por `trilha()` (distinct no `useMemo`), então
+  não precisou de endpoint novo. Regra de match: a pessoa aparece se tiver **≥1
+  atendimento** que casa TODOS os filtros ativos (busca por nome/telefone continua no
+  nível da pessoa). Botão "Limpar filtros" some quando nada está ativo. O
+  `TrilhaPessoaDialog` segue mostrando o histórico completo da pessoa (filtro serve pra
+  ACHAR, não pra recortar a timeline).
+- **Frontend** (`Cuidados.tsx`): `TrilhaPessoas` (cards de pessoa · busca · filtros · paginação)
+  → `TrilhaPessoaDialog` (timeline) → `ComentariosAtendimento` (lazy). "Registrar
+  atendimento" reusa o `VisitaModal` (cui_visitas); editar/prefill por pessoa idem.
+  Capelania só é EXIBIDA na trilha (vem de `cui_acompanhamentos`) — criar capelania/
+  aconselhamento novo segue na aba Aconselhamento (até a Caixa de entrada ligar a
+  ponte "atender → cria atendimento na trilha", próxima PR). `api.js`:
+  `cuidados.trilha()` + `cuidados.atendimentoComentarios.{list,create,remove}`.
+- ⚠️ Aplicar a migration `20260722180000` antes do merge.
+
+## Cuidados · responsáveis do atendimento gerenciáveis (2026-07-21)
+
+Pedido do Marcos: a lista de responsáveis da aba **Próximos passos** do
+`/ministerial/cuidados` (quem atende os convertidos) deixou de ser constante no
+front (`RESPONSAVEIS_ATENDIMENTO`/`RESPONSAVEIS_ANTIGOS` em `Cuidados.tsx`) e
+virou a tabela **`cui_responsaveis`** (nome + ativo · migration
+`20260721160000` · seed = 4 ativos + 13 antigos inativos · RLS padrão do
+módulo). A própria equipe gerencia pelo botão **"Gerenciar responsáveis"**
+(ao lado de "Novo convertido" · só `podeEditarCuidados`): modal com switch
+disponível/indisponível + adicionar nome (nome repetido inativo é REATIVADO,
+não duplica). **Excluir só quem NUNCA foi usado** (follow-up 2026-07-21 ·
+lixeira no modal): o DELETE conta `cui_convertidos.responsavel_atendimento`
+pelo nome (incluindo soft-deletados) e responde 409 orientando a desativar se
+houver uso — hard delete ok (catálogo de config, não-PII, fora da whitelist).
+**Renomear PROPAGA** (follow-up 2026-07-21 · lápis no modal): o PATCH aceita
+`{nome}` e atualiza `cui_convertidos.responsavel_atendimento` em cascata
+(incluindo soft-deletados · devolve `renomeados`; conflito com nome existente
+→ 409 orientando consolidar; falha na propagação reverte o nome no catálogo).
+O vínculo é por NOME (texto · essas pessoas não logam no sistema), então
+inativar preserva o histórico: inativo aparece desabilitado no dropdown da
+tabela (só exibível no registro que já o tem).
+Backend: `GET/POST/PATCH/DELETE /cuidados/responsaveis` (leitura nível 1 ·
+escrita/exclusão 3). Front: constantes viraram FALLBACK (se a API falhar, vale
+a lista antiga). `api.js`: `cuidados.responsaveis.{list,create,update,remove}`.
+**Dedup dos nomes da planilha antiga** (migration `20260721190000` · pedido do
+Marcos 2026-07-21): `cui_convertidos.responsavel_atendimento` consolidado —
+Kevin/Arthur + Arthur/Kevin → Arthur Cecconi · Naná → Natasha · Mari → Mariane ·
+Carmet/Arthur → Carmet — e os 5 nomes duplicados removidos de
+`cui_responsaveis` (com guarda: só sai quem ficou sem registro). Fallback do
+front espelha o pós-dedup (8 antigos).
 
 ## Auditoria do sistema (2026-06-08) · correção dos 4 CRÍTICOS
 
@@ -2369,6 +2533,57 @@ via `window.print` na Brother QL-820NWB default do Windows).
   `20260717160000_kids_codigo_seguranca_integridade.sql` (**aplicada em produção
   manualmente em 2026-07-17**); irmãos/multi-culto do mesmo `checkin_grupo_id`
   podem compartilhar o código, famílias diferentes não.
+- **⚠️ Check-in v5 · destino do culto + modo ensaio (2026-07-22 · decisão do
+  Marcos, validada por conselho deliberativo — não regredir)**: invariante =
+  *check-in só é dado real se o dia (BRT) do check-in for o dia do culto*.
+  3 camadas: (1) TELA — chip **"Registrando em: <culto>"** sempre visível
+  (mesmo com 1 sessão, quando o seletor some); o seletor lista SÓ cultos de
+  HOJE do **período atual** (manhã = os 3 da manhã; o das 19h e ensaios ficam
+  fora do fluxo da criança); o culto da janela do relógio vem **PRÉ-MARCADO
+  por criança** (recalculado na hora, não pelo poll · "automático com
+  confirmação visível" — revisa o seletor-vazio de 14/07; voltar ao 100%
+  manual = 1 linha no effect de `crianca?.id`); sem culto de hoje aberto,
+  sessão de culto FUTURO destrava a tela em **MODO ENSAIO** explícito (banner
+  âmbar + rótulo `TESTE ·` + etiqueta/recibo com faixa TESTE + botão "Encerrar
+  ensaio e limpar testes"). (2) SERVIDOR — `POST /checkin`(/lote) recusa 409
+  sessão de culto futuro quando há culto de hoje aberto; `cultos_extras` só do
+  MESMO dia do primário. (3) DADOS — sweep lazy fecha ensaio ativado em dia
+  anterior e **soft-deleta check-ins de ensaio** (corte = min(meia-noite do
+  dia do culto, início−2h) — nunca pega culto de virada); sessões de cultos de
+  HOJE são limpas de resíduo de ensaio na carga; Encerrar manual com check-ins
+  a +2h do início → 409 `precisa_confirmar_limpeza` e o front pergunta (humano
+  decide · Painel/AbaSessoes). Migration `20260722120000` (idempotente ·
+  consolidação passa a ignorar `deleted_at` — sem ela a limpeza não afeta o
+  KPI consolidado — e o radar de ausentes ignora culto de dia futuro).
+  Decisão do conselho: **Painel ao vivo NÃO ganha botão Ativar** (superfície
+  de monitoramento). Residual documentado: ensaio no MESMO dia do culto conta
+  como real até o Encerrar perguntar (ensaie com culto de outro dia).
+- **⚠️ LEI · criança nova NUNCA entra em família existente automaticamente
+  (Marcos 2026-07-22 · caso Benjamin/Mariane Gaia)**: o `POST /criancas` (fluxo
+  normal) herdava `mem_membros.familia_id` do responsável — a Mariane (tia do
+  Samuel, agrupada na família da irmã pela MEMBRESIA) cadastrou o próprio filho
+  e ele nasceu na família da irmã, com **duas mães** na mesma família. Agora o
+  fluxo normal **sempre cria `mem_familias` nova** ("Família <sobrenome da
+  criança>"); juntar núcleos é ato explícito — botão "Cadastrar criança na
+  família" (`amigo_de_crianca_id`) ou Gestão/Entradas (Vincular famílias).
+  Efeito colateral aceito: irmão cadastrado pela via errada ("Nova criança" em
+  vez do botão da família) nasce em família separada — corrige-se juntando as
+  famílias, o inverso (criança na família alheia) é que era irreversível de
+  detectar. Diagnóstico do dia: na base inteira só 2 famílias tinham 2+ mães
+  (a do caso + Nicolle duplicada nos filhos do Juninho · ambas corrigidas).
+- **⚠️ Vínculo do Kids × limpeza da Membresia (incidente 2026-07-22 · lei)**: a
+  antiga rotina "depurar inativos" da era PCO (removida no #1861) soft-deletou
+  em 20/06 **129 mem_membros que eram responsáveis ATIVOS** em
+  `kids_responsaveis` (sem passar por merge · mem_merge_log vazio). Sintoma: o
+  responsável aparecia no check-in (embed não filtra `deleted_at`), mas TODA
+  edição falhava com 500 genérico (`PATCH /totem-kids/membro/:id` filtrava
+  `deleted_at IS NULL` + `.single()` → 0 linhas · caso Julliane Gaia, mãe do
+  Samuel). Reparo por script (repontar vínculo pra gêmeo vivo por telefone/nome
+  · `app_restore` dos sem gêmeo). Código: o PATCH devolve **404 claro** com
+  `cadastro_desativado`; busca/irmãos/`GET /criancas/:id` **filtram responsável
+  com membro deletado**. **Regra: qualquer limpeza/soft-delete em massa de
+  `mem_membros` DEVE checar antes `kids_responsaveis` (e repontar/poupar quem
+  é responsável ativo).**
 - **Saneamento da base Kids (2026-07-17 · `scripts/kids_integridade_auto.cjs
   --auto`)**: executado com backup JSON antes das mutações. Foram fundidos 2
   responsáveis realmente duplicados (mesmo telefone + grafia quase idêntica),

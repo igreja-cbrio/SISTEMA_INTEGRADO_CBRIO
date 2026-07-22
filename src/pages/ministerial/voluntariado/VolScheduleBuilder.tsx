@@ -437,7 +437,7 @@ function AddVolunteerDialog({ serviceId, teams, existingSchedules, onClose }: {
 
         {/* Footer */}
         <div className="border-t px-4 py-3 shrink-0 flex items-center justify-between">
-          <p className="text-xs text-muted-foreground">{filtered.length} disponivel(is)</p>
+          <p className="text-xs text-muted-foreground">{filtered.length} disponível(is)</p>
           <Button variant="outline" size="sm" onClick={onClose}>Fechar</Button>
         </div>
       </DialogContent>
@@ -539,10 +539,10 @@ function CreateServiceDialog({ onClose }: { onClose: () => void }) {
           )}
           <div>
             <Label>Nome</Label>
-            <Input value={name} onChange={e => setName(e.target.value)} placeholder="Ex: Culto Domingo Manha" />
+            <Input value={name} onChange={e => setName(e.target.value)} placeholder="Ex: Culto Domingo Manhã" />
           </div>
           <div>
-            <Label>Data e Horario</Label>
+            <Label>Data e Horário</Label>
             <Input type="datetime-local" value={scheduledAt} onChange={e => setScheduledAt(e.target.value)} />
           </div>
         </div>

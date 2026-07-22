@@ -7,7 +7,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Baby, Users, Printer, AlertTriangle, Plus, ArrowLeft, Loader2, CheckCircle2, Phone, Settings, LogOut, Sparkles, UserPlus, ShieldCheck, Maximize, Lock, Check, Camera, Pencil, X } from 'lucide-react';
+import { Search, Baby, Users, Printer, AlertTriangle, Plus, ArrowLeft, Loader2, CheckCircle2, Phone, Settings, LogOut, Sparkles, UserPlus, ShieldCheck, Maximize, Lock, Check, Camera, Pencil, X, BellRing } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
@@ -32,6 +32,7 @@ type Crianca = {
   nome: string;
   data_nascimento: string | null;
   foto_url: string | null;
+  consent_marketing?: boolean | null;
   observacoes_medicas: string | null;
   tem_espectro: boolean | null;
   espectro_qual: string | null;
@@ -104,6 +105,15 @@ function rotuloPeriodo(data?: string, hora?: string): string {
   const dias = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
   return `${dias[dt.getDay()] || ''} ${_periodoDia(hora)}`.trim();
 }
+// Hoje em BRT (YYYY-MM-DD) — espelho do _hojeBRT do backend.
+function hojeBRTStr(): string {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+}
+// Chave de período pra agrupar cultos no seletor (manhã <12h · tarde <18h · noite).
+function _periodoKey(hora?: string): 'manha' | 'tarde' | 'noite' {
+  const h = Number(String(hora || '').slice(0, 2)) || 0;
+  return h < 12 ? 'manha' : h < 18 ? 'tarde' : 'noite';
+}
 
 // Sobrenome = tudo depois do 1º nome.
 function _sobrenome(nome?: string): string {
@@ -165,6 +175,8 @@ function ModalCpfResponsavel({ respNome, onConfirmar, onDispensar, onCancelar }:
   const [motivo, setMotivo] = useState('');
   const [erro, setErro] = useState('');
   const ok = cpfValido(cpf);
+  // Clicar fora com algo digitado pergunta antes de descartar (Marcos 2026-07-22).
+  const { tentarFechar } = useConfirmarSaida(!!(cpf || pin || motivo), onCancelar);
 
   function confirmarDispensa() {
     if (pin.trim() !== DISPENSA_PIN) { setErro('PIN incorreto'); return; }
@@ -172,7 +184,7 @@ function ModalCpfResponsavel({ respNome, onConfirmar, onDispensar, onCancelar }:
   }
 
   return (
-    <Dialog open onOpenChange={(o) => { if (!o) onCancelar(); }}>
+    <Dialog open onOpenChange={(o) => { if (!o) tentarFechar(); }}>
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2"><ShieldCheck className="h-5 w-5 text-pink-600" /> CPF do responsável</DialogTitle>
@@ -261,6 +273,14 @@ function DispensaCpfInline({ dispensado, onDispensar, onCancelar }: {
   );
 }
 
+// Pager no balcão (sugestão da equipe · 2026-07-22): criança pequena (< 4 anos =
+// < 48 meses) OU com espectro/limitação física → a equipe entrega um pager ao
+// responsável. Ao concluir o check-in, o totem avisa pra pegar no balcão.
+function precisaPager(c: { idade_meses?: number | null; tem_espectro?: boolean | null; tem_limitacao_fisica?: boolean | null }): boolean {
+  const menor4 = c.idade_meses != null && c.idade_meses < 48;
+  return menor4 || !!c.tem_espectro || !!c.tem_limitacao_fisica;
+}
+
 export default function TotemKidsCheckin() {
   const navigate = useNavigate();
   const [sessao, setSessao] = useState<Sessao | null>(null);
@@ -282,9 +302,18 @@ export default function TotemKidsCheckin() {
   const [imprimindo, setImprimindo] = useState(false);
   const [enviarWpp, setEnviarWpp] = useState(WPP_RETIRADA_ATIVO); // código+QR de retirada por WhatsApp (oculto por enquanto)
 
-  // Sessões ABERTAS (o período aberto) · a pessoa escolhe no check-in em qual
-  // culto a criança fica; o culto de agora (relógio) já vem pré-marcado.
+  // Sessões ABERTAS que o SELETOR mostra (design v5 · Marcos 2026-07-22): só os
+  // cultos de HOJE do período atual (manhã = os 3 da manhã; o das 19h e ensaio
+  // ficam fora do fluxo da criança). Sem nenhum culto de hoje aberto, entram as
+  // sessões de ENSAIO (culto futuro) com a tela em modo ensaio explícito. O
+  // culto da janela do relógio vem PRÉ-MARCADO por criança ("automático com
+  // confirmação visível") e o destino fica sempre à vista no chip.
   const [sessoesAbertas, setSessoesAbertas] = useState<any[]>([]);
+  // TODAS as sessões abertas (hoje + futuro · sem filtro de período) — backstops:
+  // chips "ativo" do Ativar, encerrar ensaio, avisos.
+  const [sessoesAbertasTodas, setSessoesAbertasTodas] = useState<any[]>([]);
+  const [modoEnsaio, setModoEnsaio] = useState(false);
+  const [encerrandoEnsaio, setEncerrandoEnsaio] = useState(false);
   const [cultoAtualId, setCultoAtualId] = useState<string | null>(null);
   const [cultosSel, setCultosSel] = useState<Set<string>>(new Set());
   const criancaAtivaRef = useRef(false);
@@ -347,6 +376,8 @@ export default function TotemKidsCheckin() {
 
   // Última etiqueta impressa · permite REIMPRIMIR sem novo check-in (se borrou/falhou).
   const [ultimaEtiqueta, setUltimaEtiqueta] = useState<Parameters<typeof imprimirEtiquetas>[0] | null>(null);
+  // Nomes (1º nome) das crianças recém-check-in que precisam de pager no balcão.
+  const [pagerNomes, setPagerNomes] = useState<string[]>([]);
 
   // Layout configurável da etiqueta (fonte, tamanho da fonte, tamanho do nome)
   const [etqLayout, setEtqLayout] = useState<Parameters<typeof imprimirEtiquetas>[0]['layout']>(undefined);
@@ -396,8 +427,12 @@ export default function TotemKidsCheckin() {
     const cultoDiaHora = args.cultoNome
       ? `${args.cultoNome}${args.cultoData ? ` · ${format(new Date(args.cultoData + 'T00:00:00'), 'dd/MM', { locale: ptBR })}` : ''}`
       : undefined;
+    // Sessão de culto de OUTRO dia = ensaio → as etiquetas saem com a faixa
+    // TESTE (a etiqueta física sobrevive à tela; não pode ter cara de real).
+    const ensaio = !!(args.cultoData && String(args.cultoData).slice(0, 10) > hojeBRTStr());
     return {
       checkinId: args.checkinId,
+      criancaId: c.id,
       estacaoId: null,
       crianca: {
         nome: c.nome,
@@ -409,7 +444,11 @@ export default function TotemKidsCheckin() {
         observacoesMedicas: c.observacoes_medicas,
         alergia: alergiaLabel,
         necessidade: necessidadeLabel,
-        fotoAutorizada: !!c.foto_url,
+        // Selo da câmera = AUTORIZAÇÃO DE USO DE IMAGEM do cadastro
+        // (kids_criancas.consent_marketing · Marcos 2026-07-22). Só a marcação
+        // explícita tira a câmera cortada; null/false = cortada (hoje a base
+        // vem sem autorização — a campanha de coleta preenche aos poucos).
+        fotoAutorizada: c.consent_marketing === true,
         aniversarioSemana,
       },
       responsavel: { nome: args.respNome },
@@ -418,6 +457,7 @@ export default function TotemKidsCheckin() {
       dataHora: format(new Date(), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR }),
       cultoNome: args.cultoNome || undefined,
       cultoDiaHora,
+      ensaio,
       layout: etqLayout,
       logoAniversarioUrl: logoAniv,
     };
@@ -523,9 +563,11 @@ export default function TotemKidsCheckin() {
       // Família compartilha o código → o recibo do responsável (genérico, sem nome de
       // criança) sai UMA vez só. Etiquetas de cada criança saem normalmente.
       let reciboImpresso = false;
+      const pagerFam: string[] = []; // filhos que precisam de pager no balcão
       for (const s of saidas) {
         if (s?.ok) {
           const cr = porId.get(s.crianca_id);
+          if (cr && precisaPager(cr)) pagerFam.push(cr.nome.split(' ')[0]);
           if (cr) {
             const dados = montarDadosEtiqueta(cr, {
               checkinId: s.checkin.id, salaNome: s.sala.nome, salaCor: s.sala.cor, salaLogoUrl: s.sala.logo_url,
@@ -550,6 +592,7 @@ export default function TotemKidsCheckin() {
       + (falhou ? ` · ${falhou} não deu` : ''),
       { duration: 5000 },
     );
+    setPagerNomes(pagerFam);
     setCrianca(null); setBusca(''); setSalaSelecionada(''); setResponsavelSelecionado('');
     setUsarRespManual(false); setRespManualNome(''); setRespManualTel(''); setCultosSel(new Set());
     setResultados([]); setIrmaos([]);
@@ -642,18 +685,18 @@ export default function TotemKidsCheckin() {
   const PIN_KEY = 'cbrio-totem-kids-pin';
 
   function abrirAjustes(aba: string = 'sessoes') { setAjustesAba(aba); setAjustesOpen(true); }
-  // Carrega as sessões ABERTAS de HOJE (o período aberto). NADA é pré-selecionado:
-  // o voluntário escolhe o culto no check-in (Marcos 2026-07-14 · senão, se ninguém
-  // trocar ao fim de um culto, tudo cairia no culto errado). O culto de agora
-  // (relógio) vira só a DICA "agora" na lista. Se nada estiver aberto, garante o
-  // culto de agora de HOJE por conveniência (mas sem marcar).
+  // Carrega as sessões abertas e decide o que o SELETOR mostra (design v5 ·
+  // Marcos 2026-07-22): com culto AO VIVO (de hoje), só os cultos de hoje do
+  // período atual entram no fluxo da criança; sem nenhum ao vivo, sessões de
+  // ENSAIO (culto futuro) destravam a tela em modo ensaio explícito. O culto do
+  // relógio é garantido (abre sozinho) e vira o PRÉ-MARCADO por criança.
   async function carregarCultosDoDia() {
     try {
-      // Fecha (lazy · SEM cron) sessões de dias anteriores deixadas abertas —
-      // senão o check-in adotaria uma sessão da semana passada e corromperia o
-      // KPI do culto antigo (R1). Baixa quem ficou aberto nelas. Best-effort.
+      // Fecha (lazy · SEM cron) sessões de dias anteriores E ensaios ativados em
+      // outro dia (limpando os check-ins de teste · design v5) — senão o
+      // check-in adotaria sessão errada e corromperia o KPI (R1). Best-effort.
       try { await totemKids.sessoes.encerrarVencidas(); } catch { /* segue */ }
-      const hoje = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+      const hoje = hojeBRTStr();
       // Culto de AGORA pelo relógio, COM ANTECEDÊNCIA (Marcos 2026-07-19): o
       // totem abre/troca de culto SOZINHO na virada da janela (ex.: às 09:30 já
       // vale o 10:00) — sem depender de alguém clicar "Encerrar" (foi o que fez
@@ -666,28 +709,43 @@ export default function TotemKidsCheckin() {
       if (atual) {
         try { sessaoAtual = await totemKids.sessoes.garantir(atual.id); } catch { /* rede · segue */ }
       }
-      // Sessões abertas de HOJE ou de culto FUTURO alimentam o seletor (o
-      // operador escolhe o culto na mão — ex.: culto que atrasou, ou ENSAIO de
-      // um culto de outro dia ativado nos Ajustes · Marcos 2026-07-20). Culto
-      // futuro mostra a data no rótulo pra ninguém confundir. Sessão de dia
-      // PASSADO segue fora (backstop com encerrar-vencidas + o POST · R1).
+      // Sessões abertas de HOJE ou de culto FUTURO (ensaio · rótulo grita TESTE
+      // + data). Dia PASSADO fica fora (backstop: encerrar-vencidas + POST · R1).
       const abertas: any[] = await totemKids.sessoes.list({ status: 'aberta', limit: 30 });
-      const cultos = (abertas || []).filter((s: any) => s.culto && String(s.culto?.data).slice(0, 10) >= hoje).map((s: any) => {
+      const todas = (abertas || []).filter((s: any) => s.culto && String(s.culto?.data).slice(0, 10) >= hoje).map((s: any) => {
         const dataC = String(s.culto?.data).slice(0, 10);
+        const futuro = dataC > hoje;
         return {
           culto_id: s.culto_id, sessao_id: s.id,
-          nome: dataC > hoje ? `${s.culto?.nome} · ${dataC.slice(8, 10)}/${dataC.slice(5, 7)}` : s.culto?.nome,
-          data: s.culto?.data,
+          nome: futuro ? `TESTE · ${s.culto?.nome} · ${dataC.slice(8, 10)}/${dataC.slice(5, 7)}` : s.culto?.nome,
+          data: s.culto?.data, futuro,
           hora: String(s.culto?.service_type?.recurrence_time || '').slice(0, 5), sessao: s,
         };
       }).sort((a: any, b: any) => String(a.data).localeCompare(String(b.data)) || String(a.hora).localeCompare(String(b.hora)));
-      setSessoesAbertas(cultos);
+      setSessoesAbertasTodas(todas);
+
+      const aoVivo = todas.filter((c: any) => !c.futuro);
+      const ensaios = todas.filter((c: any) => c.futuro);
+      // Com culto ao vivo: seletor = só os de HOJE do PERÍODO atual (manhã = os
+      // 3 da manhã; o das 19h e ensaios ficam fora do fluxo da criança — seguem
+      // geríveis na aba Sessões · Marcos 2026-07-22). Fallback: nunca esvazia
+      // com culto de hoje aberto (ex.: 13h com a manhã ainda aberta — mostra o
+      // que há; o chip diz o destino).
+      let visiveis = aoVivo;
+      if (aoVivo.length) {
+        const horaAgora = new Date().toLocaleTimeString('en-GB', { timeZone: 'America/Sao_Paulo', hour12: false, hour: '2-digit', minute: '2-digit' });
+        const perAtual = _periodoKey(atual?.hora || horaAgora);
+        const doPeriodo = aoVivo.filter((c: any) => _periodoKey(c.hora) === perAtual);
+        visiveis = doPeriodo.length ? doPeriodo : aoVivo;
+      }
+      const selecionaveis = aoVivo.length ? visiveis : ensaios;
+      setSessoesAbertas(selecionaveis);
+      setModoEnsaio(!aoVivo.length && ensaios.length > 0);
       setCultoAtualId(atual?.id || null);
-      // Fallback: fora da janela do relógio (atual=null), qualquer sessão ABERTA
-      // de hoje destrava a tela — senão "Ativar sessão" abria no banco e o totem
-      // continuava preso no "Sem culto de Kids agora" (bug do #1858). Nada é
-      // pré-selecionado: o voluntário segue escolhendo o culto no check-in.
-      setSessao(sessaoAtual || cultos.find((c: any) => c.culto_id === atual?.id)?.sessao || cultos[0]?.sessao || null);
+      // Fora da janela do relógio (atual=null), qualquer sessão aberta destrava
+      // a tela (bug do #1858). A pré-marcação é POR CRIANÇA, recalculada do
+      // relógio na hora (effect do crianca?.id) — nada fica velho na virada.
+      setSessao(sessaoAtual || selecionaveis.find((c: any) => c.culto_id === atual?.id)?.sessao || selecionaveis[0]?.sessao || null);
     } catch { /* mantém o estado atual */ }
   }
   // Da seleção (cultosSel) resolve o culto PRIMÁRIO (a sessão do check-in) + os
@@ -735,7 +793,7 @@ export default function TotemKidsCheckin() {
     return (
       <div className="flex flex-wrap gap-2">
         {cultosDoDia.map((c: any) => {
-          const aberto = sessoesAbertas.some((s: any) => s.culto_id === c.id);
+          const aberto = sessoesAbertasTodas.some((s: any) => s.culto_id === c.id);
           return aberto ? (
             <span key={c.id} className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30 px-2.5 py-1.5 text-xs text-emerald-700 dark:text-emerald-300">
               <Check className="h-3.5 w-3.5" /> {c.nome}{c.hora ? ` · ${c.hora}` : ''} · ativo
@@ -750,6 +808,42 @@ export default function TotemKidsCheckin() {
         })}
       </div>
     );
+  }
+
+  // Rótulo do DESTINO do check-in (chip fixo + banner de ensaio): reflete a
+  // seleção da criança em tela; sem seleção, mostra o que o fluxo vai usar
+  // (única sessão aberta / culto da janela pré-marcado). É o que mata o "caiu
+  // no culto errado sem ninguém ver" — informação sempre presente, zero toque.
+  function destinoLabel(): string {
+    const nomeDe = (c: any) => `${c.nome}${c.hora ? ` · ${c.hora}` : ''}`;
+    const marcados = sessoesAbertas.filter((c: any) => cultosSel.has(c.culto_id));
+    if (marcados.length) return marcados.map(nomeDe).join('  +  ');
+    if (sessoesAbertas.length === 1) return nomeDe(sessoesAbertas[0]);
+    const agora = sessoesAbertas.find((c: any) => c.culto_id === cultoAtualId);
+    if (agora) return `${nomeDe(agora)} (pré-marcado)`;
+    return 'escolha o culto no check-in';
+  }
+
+  // Encerra TODAS as sessões de ensaio abertas (culto de outro dia), limpando
+  // os check-ins de teste (limpar_testes) — botão do banner do modo ensaio.
+  async function encerrarEnsaio() {
+    setEncerrandoEnsaio(true);
+    try {
+      const ensaios = sessoesAbertasTodas.filter((c: any) => c.futuro);
+      let limpos = 0;
+      let falhou = false;
+      for (const c of ensaios) {
+        try {
+          const r: any = await totemKids.sessoes.encerrar(c.sessao_id, { limpar_testes: true });
+          limpos += r?.testes_limpos || 0;
+        } catch (e: unknown) {
+          falhou = true;
+          toast.error((e as { message?: string })?.message || 'Não deu pra encerrar o ensaio.');
+        }
+      }
+      if (!falhou) toast.success(`Ensaio encerrado${limpos ? ` · ${limpos} check-in(s) de teste limpos` : ''}.`);
+      await carregarCultosDoDia();
+    } finally { setEncerrandoEnsaio(false); }
   }
 
   function ativarTotem() {
@@ -797,9 +891,19 @@ export default function TotemKidsCheckin() {
   // pra o culto avançar sozinho ao passar do horário — sem ninguém trocar nada.
   useEffect(() => {
     criancaAtivaRef.current = !!crianca;
-    // Ao selecionar uma criança, o seletor de culto começa VAZIO — o voluntário
-    // escolhe (nada pré-preenchido pelo relógio · Marcos 2026-07-14).
-    if (crianca) setCultosSel(new Set());
+    // Ao selecionar uma criança, o culto da JANELA DO RELÓGIO vem PRÉ-MARCADO
+    // (Marcos 2026-07-22 · "automático com confirmação visível" — revisa o
+    // seletor-vazio de 14/07). O default é RECALCULADO do relógio a cada criança
+    // (nunca fica velho na virada; não depende do poll de 2min) e o seletor +
+    // chip continuam na tela: um toque troca ou adiciona culto. Se o culto da
+    // janela não está aberto/visível (ou é modo ensaio), começa vazio — a
+    // pessoa escolhe (nada de chute).
+    if (crianca) {
+      const { atual } = escolherCultoPorRelogio(cultosDoDia);
+      const aberto = atual && sessoesAbertas.some((c: any) => c.culto_id === atual.id) ? atual.id : null;
+      setCultosSel(aberto ? new Set([aberto]) : new Set());
+      if (atual?.id) setCultoAtualId(atual.id);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [crianca?.id]);
   useEffect(() => {
@@ -1009,6 +1113,8 @@ export default function TotemKidsCheckin() {
 
       toast.success(`${r.crianca.nome} · check-in OK · código ${r.codigo_seguranca}`, { duration: 4000 });
       dispararConfete();
+      // Pager pra criança pequena (< 4 anos) ou com espectro/limitação (avisa antes do reset).
+      setPagerNomes(crianca && precisaPager(crianca) ? [crianca.nome.split(' ')[0]] : []);
 
       // Reset
       setCrianca(null);
@@ -1094,7 +1200,7 @@ export default function TotemKidsCheckin() {
             <p className="text-lg font-black leading-none">Totem Kids</p>
             {/* Período da sessão ativa (ex.: "Domingo de manhã") · sem horário */}
             {sessao?.culto ? (
-              <span className="text-xs font-medium text-slate-400">{rotuloPeriodo(sessao.culto.data, sessao.culto.service_type?.recurrence_time) || sessao.culto.nome}</span>
+              <span className={`text-xs font-medium ${modoEnsaio ? 'text-amber-600 font-bold' : 'text-slate-400'}`}>{modoEnsaio ? 'ENSAIO · ' : ''}{rotuloPeriodo(sessao.culto.data, sessao.culto.service_type?.recurrence_time) || sessao.culto.nome}</span>
             ) : (
               <span className="text-xs font-medium text-slate-400">Sem culto de Kids agora</span>
             )}
@@ -1127,6 +1233,34 @@ export default function TotemKidsCheckin() {
 
       {ajustesDialog}
 
+      {/* Destino SEMPRE visível (design v5 · conselho 21/07): mata o "caiu no
+          culto errado sem ninguém ver" — inclusive quando há UMA sessão só e o
+          seletor de culto não aparece. Reativo à seleção da criança em tela. */}
+      {tela === 'checkin' && sessao && !modoEnsaio && (
+        <div className="mb-4 flex justify-center">
+          <span className="inline-flex items-center gap-2 rounded-full border border-pink-200 dark:border-pink-900 bg-pink-50 dark:bg-pink-950/30 px-4 py-1.5 text-sm max-w-full">
+            <span className="text-slate-500 shrink-0">Registrando em:</span>
+            <strong className="text-pink-700 dark:text-pink-300 truncate">{destinoLabel()}</strong>
+          </span>
+        </div>
+      )}
+      {/* MODO ENSAIO (culto de outro dia · nenhum culto de hoje aberto): a tela
+          inteira avisa; check-ins daqui saem com etiqueta TESTE e somem sozinhos
+          na virada do dia (sweep) — ou agora, pelo botão. */}
+      {tela === 'checkin' && modoEnsaio && (
+        <div className="mb-4 rounded-2xl border-2 border-amber-400 bg-amber-50 dark:bg-amber-950/40 p-4 flex flex-wrap items-center gap-3">
+          <AlertTriangle className="h-6 w-6 text-amber-600 shrink-0" />
+          <div className="flex-1 min-w-[220px]">
+            <div className="font-black text-amber-800 dark:text-amber-200 tracking-wide">MODO ENSAIO — {destinoLabel()}</div>
+            <div className="text-sm text-amber-700 dark:text-amber-300">Check-ins daqui são de TESTE (a etiqueta sai marcada) e somem sozinhos na virada do dia. Não valem como presença.</div>
+          </div>
+          <Button variant="outline" size="sm" className="border-amber-500 text-amber-700 dark:text-amber-300" disabled={encerrandoEnsaio} onClick={encerrarEnsaio}>
+            {encerrandoEnsaio ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <X className="h-4 w-4 mr-1" />}
+            Encerrar ensaio e limpar testes
+          </Button>
+        </div>
+      )}
+
       {scanAberto && (
         <Dialog open onOpenChange={(o) => { if (!o) setScanAberto(false); }}>
           <DialogContent className="max-w-sm">
@@ -1135,6 +1269,34 @@ export default function TotemKidsCheckin() {
               <DialogDescription>Aponte a câmera pro QR do pré-check-in do responsável.</DialogDescription>
             </DialogHeader>
             <QrScanner onScan={onScanQR} onError={(e) => toast.error(e || 'Erro ao abrir a câmera')} />
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {/* Pager no balcão (sugestão da equipe · 2026-07-22): criança < 4 anos ou
+          com espectro/limitação física → a equipe entrega um pager ao
+          responsável. Aparece logo após o check-in (individual ou família). */}
+      {pagerNomes.length > 0 && (
+        <Dialog open onOpenChange={(o) => { if (!o) setPagerNomes([]); }}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-amber-600">
+                <BellRing className="h-6 w-6" /> Pegue o pager no balcão
+              </DialogTitle>
+              <DialogDescription>
+                {pagerNomes.length === 1
+                  ? <>Entregue um <b>pager</b> ao responsável de <b>{pagerNomes[0]}</b> — criança pequena (até 3 anos) ou que precisa de atenção especial.</>
+                  : <>Entregue um <b>pager</b> ao responsável destas crianças (pequenas ou com atenção especial):</>}
+              </DialogDescription>
+            </DialogHeader>
+            {pagerNomes.length > 1 && (
+              <ul className="list-disc pl-6 text-sm font-semibold space-y-0.5">
+                {pagerNomes.map((n, i) => <li key={i}>{n}</li>)}
+              </ul>
+            )}
+            <Button className="w-full bg-amber-600 hover:bg-amber-700 text-white h-12 text-base" onClick={() => setPagerNomes([])}>
+              Ok, peguei o pager
+            </Button>
           </DialogContent>
         </Dialog>
       )}
@@ -1186,7 +1348,7 @@ export default function TotemKidsCheckin() {
           {/* Ativar sessão na mão (Marcos 2026-07-20): o controle completo vive no
               modal de Ajustes (engrenagem). Aqui só o aviso âmbar quando NÃO há
               nenhuma sessão aberta — o operador resolve sem procurar. */}
-          {cultosDoDia.length > 0 && sessoesAbertas.length === 0 && (
+          {cultosDoDia.length > 0 && sessoesAbertasTodas.length === 0 && (
             <div className="max-w-2xl mx-auto w-full rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 p-3 space-y-2">
               <p className="text-sm font-medium text-amber-700 dark:text-amber-300">Nenhuma sessão aberta — ative um culto pra liberar o check-in.</p>
               {renderCultosAtivar()}
@@ -1702,8 +1864,13 @@ function PainelFamilia(props: {
                     </div>
                     <div className="text-xs text-muted-foreground">{formatIdade(m.idade_meses) || 'idade não informada'}</div>
                   </div>
+                  {/* Botão com RÓTULO (Marcos 2026-07-22 · o lápis solto passava
+                      batido — "não tinha opção de edição"): abre a ficha completa
+                      (dados + responsáveis: parentesco/remover/adicionar). */}
                   <button type="button" onClick={() => setDetalheId(m.id)} title="Ver/editar a ficha (exige senha do Kids)"
-                    className="text-muted-foreground hover:text-pink-600 shrink-0 p-1"><Pencil className="h-4 w-4" /></button>
+                    className="shrink-0 inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:text-pink-600 hover:border-pink-300">
+                    <Pencil className="h-3.5 w-3.5" /> Editar
+                  </button>
                 </div>
                 {temSaude ? (
                   <div className="mt-2 pl-9 text-xs space-y-0.5">
@@ -1993,8 +2160,26 @@ function ModalDetalhesCrianca({ crianca, atualizarCrianca, onClose, onAdicionarI
     } catch (e: unknown) { toast.error((e as { message?: string })?.message || 'Erro ao remover'); }
   }
 
+  // Clicar fora com a ficha editada pergunta antes de descartar (Marcos 2026-07-22).
+  // Só na fase de edição (a tela de senha não tem o que perder).
+  const respsMudou = JSON.stringify(resps.map(r => ({ m: r.membro_id, n: r.nome.trim(), t: String(r.telefone).trim(), p: r.parentesco })))
+    !== JSON.stringify(crianca.responsaveis.map(r => ({ m: r.membro_id, n: (r.membro?.nome || '').trim(), t: String(r.membro?.telefone || '').trim(), p: r.parentesco || 'outro' })));
+  const temAlteracoes = fase === 'edit' && (
+    form.nome !== (crianca.nome || '')
+    || form.data_nascimento !== (crianca.data_nascimento || '')
+    || form.observacoes_medicas !== (crianca.observacoes_medicas || '')
+    || form.visitante !== !!crianca.visitante
+    || (form.visitante && form.visitante_relacao !== (crianca.visitante_relacao || 'amigo'))
+    || form.tem_alergia !== !!crianca.tem_alergia || form.alergia_qual !== (crianca.alergia_qual || '')
+    || form.tem_espectro !== !!crianca.tem_espectro || form.espectro_qual !== (crianca.espectro_qual || '')
+    || form.tem_limitacao_fisica !== !!crianca.tem_limitacao_fisica || form.limitacao_fisica_qual !== (crianca.limitacao_fisica_qual || '')
+    || consentTocado
+    || respsMudou
+  );
+  const { tentarFechar } = useConfirmarSaida(temAlteracoes, onClose);
+
   return (
-    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+    <Dialog open onOpenChange={(o) => { if (!o) tentarFechar(); }}>
       <DialogContent className="max-w-lg max-h-[92vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{fase === 'edit' ? `Editar ficha · ${crianca.nome.split(' ')[0]}` : 'Editar ficha da criança'}</DialogTitle>
@@ -2378,7 +2563,9 @@ function CheckinSelecao(props: {
             <h2 className="text-2xl font-bold flex items-center gap-2">
               <span className="truncate">{crianca.nome}</span>
               <button type="button" onClick={() => setDetalhesOpen(true)} title="Editar ficha da criança (exige senha do Kids)"
-                className="text-muted-foreground hover:text-pink-600 shrink-0"><Pencil className="h-4 w-4" /></button>
+                className="shrink-0 inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:text-pink-600 hover:border-pink-300">
+                <Pencil className="h-3.5 w-3.5" /> Editar ficha
+              </button>
             </h2>
             <p className="text-muted-foreground">
               {formatIdade(crianca.idade_meses) || 'idade não informada'}
@@ -2744,6 +2931,8 @@ function ModalNovaCrianca(props: {
   const [captura, setCaptura] = useState<{ tipo: 'crianca' | 'resp'; i: number } | null>(null);
   const [salvando, setSalvando] = useState(false);
   const [dispensaCpf, setDispensaCpf] = useState(false); // supervisor liberou o cadastro sem CPF (PIN)
+  // Sugestão de família existente (CPF do responsável já tem filhos · Marcos 2026-07-22).
+  const [familiaSugerida, setFamiliaSugerida] = useState<{ membro: { id: string; nome: string }; familia_nome: string | null; ref_crianca_id: string; criancas: { id: string; nome: string }[] } | null>(null);
   const setCri = (i: number, patch: any) => setCriancas(cs => cs.map((c, idx) => idx === i ? { ...c, ...patch } : c));
   const addCri = () => setCriancas(cs => [...cs, emptyCrianca()]);
   const delCri = (i: number) => setCriancas(cs => cs.length > 1 ? cs.filter((_, idx) => idx !== i) : cs);
@@ -2765,7 +2954,9 @@ function ModalNovaCrianca(props: {
     <div className="flex items-center justify-between rounded-md border border-border px-3 py-2">
       <span className="text-sm">{label}</span>
       <div className="inline-flex rounded-md border border-border overflow-hidden text-xs">
-        <button type="button" onClick={() => set(false)} className={`px-3 py-1 ${!on ? 'bg-muted font-medium' : ''}`}>Não</button>
+        {/* "Não" também fica ROSA quando selecionado (Marcos 2026-07-22): antes
+            ficava só cinza-claro e a equipe não percebia que já estava marcado. */}
+        <button type="button" onClick={() => set(false)} className={`px-3 py-1 ${!on ? 'bg-pink-600 text-white font-medium' : ''}`}>Não</button>
         <button type="button" onClick={() => set(true)} className={`px-3 py-1 ${on ? 'bg-pink-600 text-white font-medium' : ''}`}>Sim</button>
       </div>
     </div>
@@ -2792,21 +2983,47 @@ function ModalNovaCrianca(props: {
       toast.error('CPF do responsável é obrigatório. Se não tiver agora, use "Não tenho o CPF agora".');
       return;
     }
+    // Sugestão de família existente (Marcos 2026-07-22 · só cadastro NOVO): se o
+    // CPF do 1º responsável já é de um pai/mãe COM filhos, oferece juntar à
+    // família (com o nome dela pra confirmar) antes de criar uma nova. Gatilho SÓ
+    // por CPF. Fail-safe: qualquer erro no lookup → segue o cadastro normal.
+    if (!props.referencia && !dispensaCpf) {
+      const cpfPrincipal = validos.map(r => (r.cpf || '').replace(/\D/g, '')).find(cpf => cpfValido(cpf));
+      if (cpfPrincipal) {
+        try {
+          const m: any = await totemKids.criancas.responsavelFamilia(cpfPrincipal);
+          if (m?.encontrado && Array.isArray(m.criancas) && m.criancas.length && m.ref_crianca_id) {
+            setFamiliaSugerida(m); // abre o preview; o operador decide
+            return;
+          }
+        } catch { /* sem sugestão · segue normal */ }
+      }
+    }
+    await executarCadastro(null);
+  }
+
+  // Cria a(s) criança(s). joinRefId != null → TODAS entram na família existente
+  // (fluxo amigo_de_crianca_id, já testado). null → família nova (padrão).
+  // `revisar` (só na recusa da sugestão) registra rastro pra unir famílias depois.
+  async function executarCadastro(joinRefId: string | null, revisar?: { membroId: string; familiaNome: string | null } | null) {
+    const validasCri = criancas.filter(c => c.nome.trim());
+    const validos = props.referencia ? [] : resps.filter(r => r.nome.trim() && r.telefone.trim());
+    const juntando = !!(joinRefId || props.referencia);
     setSalvando(true);
     try {
-      let primeiroId: string | null = props.referencia?.id || null;
+      let primeiroId: string | null = joinRefId || props.referencia?.id || null;
       let primeiroCriado: any = null;
       for (let i = 0; i < validasCri.length; i++) {
         const c = validasCri[i];
-        // 1ª criança de um cadastro NOVO cria a família + responsáveis; as demais
-        // (e todas no modo "adicionar à família") herdam via amigo_de_crianca_id.
-        const body = (props.referencia || primeiroCriado)
+        // Juntando (família existente/sugerida) OU já criei a 1ª → herda via
+        // amigo_de_crianca_id. Senão, a 1ª cria família + responsáveis.
+        const body = (juntando || primeiroCriado)
           ? { crianca: montarCrianca(c), amigo_de_crianca_id: primeiroId }
           : { crianca: montarCrianca(c), permitir_sem_cpf: dispensaCpf || undefined, responsaveis: validos.map(x => ({ nome: x.nome.trim(), telefone: x.telefone.trim(), cpf: x.cpf?.trim() || null, parentesco: x.parentesco, autorizado_buscar: x.autorizado_buscar })) };
         const r = await totemKids.criancas.create(body);
         const cid = r?.crianca?.id;
         if (cid && c.foto) { try { await totemKids.criancas.uploadFoto(cid, c.foto); } catch { /* noop */ } }
-        if (i === 0 && !props.referencia) {
+        if (i === 0 && !juntando) {
           primeiroId = cid; primeiroCriado = r?.crianca;
           const retResps = Array.isArray(r?.responsaveis) ? r.responsaveis : [];
           for (let j = 0; j < retResps.length; j++) {
@@ -2816,10 +3033,14 @@ function ModalNovaCrianca(props: {
           primeiroCriado = r?.crianca;
         }
       }
+      // Recusou a sugestão de família → deixa um rastro pra revisão (best-effort).
+      if (revisar?.membroId && primeiroCriado?.id) {
+        totemKids.criancas.familiaRevisar({ crianca_id: primeiroCriado.id, responsavel_membro_id: revisar.membroId, familia_existente_nome: revisar.familiaNome }).catch(() => {});
+      }
       toast.success(validasCri.length > 1 ? `${validasCri.length} crianças cadastradas` : `${primeiroCriado?.nome || 'Criança'} cadastrada`);
-      // Sem referência (família nova) o fluxo segue com a 1ª criança (já com
-      // família → cai no painel da família). Com referência, o pai recarrega a família.
-      if (props.referencia) {
+      // Juntando (à família existente/sugerida) → segue com a 1ª criança nova (cai
+      // no painel da família). Família nova → recarrega pela busca.
+      if (juntando) {
         props.onCadastrado(primeiroCriado as Crianca);
       } else {
         const detalhe = await totemKids.criancas.buscar(validasCri[0].nome.trim());
@@ -2841,6 +3062,7 @@ function ModalNovaCrianca(props: {
   const { tentarFechar } = useConfirmarSaida(temAlteracoes, props.onClose);
 
   return (
+    <>
     <Dialog open={props.open} onOpenChange={(o) => { if (!o) tentarFechar(); }}>
       <DialogContent className="max-w-lg max-h-[90vh] flex flex-col">
         <DialogHeader>
@@ -2994,6 +3216,43 @@ function ModalNovaCrianca(props: {
         />
       )}
     </Dialog>
+
+    {/* Preview: adicionar à FAMÍLIA EXISTENTE (Marcos 2026-07-22) — o CPF do
+        responsável já é de um pai/mãe com filhos. O operador CONFIRMA o nome da
+        família + os irmãos antes de juntar (evita cadastro na família errada).
+        Recusar cria cadastro novo e deixa rastro pra revisão. Gatilho só por CPF. */}
+    {familiaSugerida && (
+      <Dialog open onOpenChange={(o) => { if (!o) setFamiliaSugerida(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Users className="h-5 w-5 text-pink-600" /> É dessa família?
+            </DialogTitle>
+            <DialogDescription>
+              O CPF de <b>{familiaSugerida.membro.nome}</b> já é responsável na{' '}
+              <b>{familiaSugerida.familia_nome || 'família cadastrada'}</b>. Confira se é a mesma família antes de juntar.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="rounded-lg border border-border p-3">
+            <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">Filhos já cadastrados</div>
+            <ul className="text-sm font-medium space-y-0.5">
+              {familiaSugerida.criancas.map((f) => <li key={f.id}>• {f.nome}</li>)}
+            </ul>
+          </div>
+          <div className="flex flex-col gap-2 pt-1">
+            <Button className="w-full bg-pink-600 hover:bg-pink-700" disabled={salvando}
+              onClick={() => { const ref = familiaSugerida.ref_crianca_id; setFamiliaSugerida(null); executarCadastro(ref); }}>
+              <CheckCircle2 className="h-4 w-4 mr-1" /> Sim, adicionar a esta família
+            </Button>
+            <Button variant="outline" className="w-full" disabled={salvando}
+              onClick={() => { const info = familiaSugerida; setFamiliaSugerida(null); executarCadastro(null, { membroId: info.membro.id, familiaNome: info.familia_nome }); }}>
+              Não é a mesma — criar cadastro novo
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    )}
+    </>
   );
 }
 // ── Modal: cadastrar responsável rápido (auto-abre se criança sem responsável) ──
@@ -3016,6 +3275,9 @@ function ModalCadastrarResponsavel(props: {
       setNome(''); setTelefone(''); setCpf(''); setParentesco('mae'); setDispensaCpf(false);
     }
   }, [props.open]);
+
+  // Clicar fora com algo preenchido pergunta antes de descartar (Marcos 2026-07-22).
+  const { tentarFechar } = useConfirmarSaida(!!(nome.trim() || telefone.trim() || cpf.trim()), props.onClose);
 
   async function salvar() {
     if (!nome.trim()) return toast.error('Nome obrigatório');
@@ -3041,7 +3303,7 @@ function ModalCadastrarResponsavel(props: {
   }
 
   return (
-    <Dialog open={props.open} onOpenChange={(o) => !o && props.onClose()}>
+    <Dialog open={props.open} onOpenChange={(o) => { if (!o) tentarFechar(); }}>
       <DialogContent className="max-w-md max-h-[95vh] flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
@@ -3053,12 +3315,25 @@ function ModalCadastrarResponsavel(props: {
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3 flex-1 overflow-y-auto min-h-0">
-          <Input placeholder="Nome do responsável *" value={nome} onChange={e => setNome(e.target.value)} autoFocus />
-          <div className="grid grid-cols-2 gap-2">
-            <Input placeholder="Telefone *" value={telefone} onChange={e => setTelefone(e.target.value)} />
-            <Input placeholder="CPF do responsável *" value={cpf} onChange={e => setCpf(e.target.value)} />
+          {/* Campos com TÍTULO acima (Marcos 2026-07-22): o placeholder some quando
+              a pessoa começa a digitar; o label fixo mostra o que é cada campo. */}
+          <div>
+            <label className="text-xs font-medium text-muted-foreground block mb-1">Nome do responsável <span className="text-pink-600">*</span></label>
+            <Input placeholder="Nome completo" value={nome} onChange={e => setNome(e.target.value)} autoFocus />
           </div>
-          <Select value={parentesco} onValueChange={setParentesco}>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">Telefone <span className="text-pink-600">*</span></label>
+              <Input placeholder="(21) 90000-0000" value={telefone} onChange={e => setTelefone(e.target.value)} />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">CPF do responsável <span className="text-pink-600">*</span></label>
+              <Input placeholder="000.000.000-00" value={cpf} onChange={e => setCpf(e.target.value)} />
+            </div>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-muted-foreground block mb-1">Parentesco</label>
+            <Select value={parentesco} onValueChange={setParentesco}>
             <SelectTrigger><SelectValue placeholder="Parentesco" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="mae">Mãe</SelectItem>
@@ -3071,7 +3346,8 @@ function ModalCadastrarResponsavel(props: {
               <SelectItem value="tutor">Tutor</SelectItem>
               <SelectItem value="outro">Outro</SelectItem>
             </SelectContent>
-          </Select>
+            </Select>
+          </div>
           <DispensaCpfInline dispensado={dispensaCpf} onDispensar={() => setDispensaCpf(true)} onCancelar={() => setDispensaCpf(false)} />
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="outline" onClick={props.onClose} disabled={salvando}>

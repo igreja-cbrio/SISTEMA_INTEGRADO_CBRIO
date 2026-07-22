@@ -296,6 +296,59 @@ function _dataLimiteVisitante() {
   return d.toISOString().slice(0, 10);
 }
 
+// ── Ensaio (Marcos 2026-07-21/22 · design v5) ────────────────────────────────
+// Invariante: check-in só é dado REAL se o dia (BRT) do check-in for o dia do
+// culto. Sessão aberta de culto de dia FUTURO = ENSAIO (testar etiqueta/código/
+// checkout antes do dia real) — usa o fluxo real de propósito. Quem protege os
+// números é o conjunto: guarda no POST /checkin (check-in real nunca cai em
+// culto de outro dia), limpeza automática abaixo e a consolidação ignorando
+// deleted_at (migration 20260722120000).
+
+// Início do culto em ms (data + horário do service type · BRT). Sem horário,
+// assume meio-dia (só entra no corte de limpeza · conservador).
+function _inicioCultoMs(culto) {
+  const hhmm = String(culto?.service_type?.recurrence_time || '12:00').slice(0, 5);
+  return new Date(`${String(culto?.data).slice(0, 10)}T${hhmm}:00-03:00`).getTime();
+}
+
+// Corte da limpeza AUTOMÁTICA: check-in anterior a min(meia-noite BRT do dia do
+// culto, início − 2h) é registro de ensaio por definição. O termo das 2h
+// protege culto de virada (ex.: vigília 00:30 — check-in real de 23h do dia
+// anterior fica DEPOIS do corte e é preservado).
+function _corteEnsaioAutoISO(culto) {
+  const meiaNoite = new Date(`${String(culto?.data).slice(0, 10)}T00:00:00-03:00`).getTime();
+  const duasHorasAntes = _inicioCultoMs(culto) - 2 * 3600 * 1000;
+  return new Date(Math.min(meiaNoite, duasHorasAntes)).toISOString();
+}
+
+// Soft-deleta (deleted_at) os check-ins de ensaio das sessões dadas — SEMPRE
+// antes do flip pra 'encerrada' (a consolidação conta o que sobrou). Leitores
+// já filtram deleted_at (radar/frequência/cron/checkout) e a trava de código
+// ignora deletados (20260717160000) → o código volta pro pool sozinho.
+async function limparCheckinsEnsaio(sessoes) {
+  let total = 0;
+  for (const s of sessoes || []) {
+    if (!s?.id || !s?.culto?.data) continue;
+    const { data, error } = await supabase.from('kids_checkins')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('sessao_id', s.id).is('deleted_at', null)
+      .lt('checkin_at', _corteEnsaioAutoISO(s.culto))
+      .select('id');
+    if (error) { console.error('[totemKids/limparCheckinsEnsaio]', error.message); continue; }
+    total += (data || []).length;
+  }
+  return total;
+}
+
+// Há sessão aberta de culto de HOJE? (guarda do POST /checkin: com culto ao
+// vivo hoje, check-in em sessão de outro dia é sempre engano.)
+async function temSessaoAoVivoHoje() {
+  const hoje = _hojeBRT();
+  const { data } = await supabase.from('kids_sessoes')
+    .select('id, culto:cultos(data)').eq('status', 'aberta');
+  return (data || []).some((s) => String(s.culto?.data || '').slice(0, 10) === hoje);
+}
+
 // Encerra sessões ABERTAS cujo culto é de um dia ANTERIOR a hoje (BRT) e dá
 // checkout automático em quem ficou aberto nelas — mesmo efeito do "Encerrar"
 // manual (#1758a). É o fechamento LAZY (SEM cron · pedido do Marcos): roda na
@@ -326,13 +379,48 @@ async function encerrarSessoesVencidas(userId) {
   const hoje = _hojeBRT();
   const { data: abertas, error } = await supabase
     .from('kids_sessoes')
-    .select('id, culto:cultos(data)')
+    .select('id, abrir_em, culto:cultos(id, data, service_type:vol_service_types(recurrence_time))')
     .eq('status', 'aberta');
   if (error) throw error;
+  const diaBRT = (iso) => (iso
+    ? new Date(iso).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' })
+    : null);
+
+  // (i) Culto de dia PASSADO → encerra + baixa (comportamento original).
   const vencidas = (abertas || [])
-    .filter((s) => s.culto?.data && String(s.culto.data).slice(0, 10) < hoje)
-    .map((s) => s.id);
-  return _fecharSessoes(vencidas, userId, 'Baixa automática (sessão de outro dia)');
+    .filter((s) => s.culto?.data && String(s.culto.data).slice(0, 10) < hoje);
+
+  // (ii) ENSAIO vencido: culto de dia FUTURO cuja sessão foi ativada em dia
+  // ANTERIOR a hoje — ensaio vale só no dia em que foi ativado (Marcos
+  // 2026-07-21). Limpa os check-ins de teste ANTES de encerrar, pra
+  // consolidação não contar ensaio.
+  const ensaiosVencidos = (abertas || [])
+    .filter((s) => s.culto?.data && String(s.culto.data).slice(0, 10) > hoje
+      && diaBRT(s.abrir_em) && diaBRT(s.abrir_em) < hoje);
+  await limparCheckinsEnsaio(ensaiosVencidos);
+
+  // (iii) Sessões de cultos de HOJE (qualquer status): se sobrou check-in de
+  // ensaio de dias anteriores (ninguém carregou o totem entre o ensaio e o dia
+  // do culto — o sweep é lazy), limpa AGORA, antes da operação real. A sessão
+  // em si não é tocada (é a sessão real do dia).
+  try {
+    const { data: cultosHoje } = await supabase.from('cultos')
+      .select('id, data, service_type:vol_service_types(recurrence_time)').eq('data', hoje);
+    if ((cultosHoje || []).length) {
+      const { data: sessoesHoje } = await supabase.from('kids_sessoes')
+        .select('id, culto_id').in('culto_id', cultosHoje.map((c) => c.id));
+      const byCulto = Object.fromEntries(cultosHoje.map((c) => [c.id, c]));
+      const limposHoje = await limparCheckinsEnsaio(
+        (sessoesHoje || []).map((s) => ({ id: s.id, culto: byCulto[s.culto_id] })));
+      if (limposHoje) console.warn(`[totemKids/sweep] ${limposHoje} check-in(s) de ensaio limpos das sessões de hoje`);
+    }
+  } catch (e) { console.error('[totemKids/sweep] limpeza de hoje:', e.message); }
+
+  return _fecharSessoes(
+    [...vencidas, ...ensaiosVencidos].map((s) => s.id),
+    userId,
+    'Baixa automática (sessão de outro dia)'
+  );
 }
 
 // Inativa (LAZY · SEM cron · Marcos 2026-07-20) as crianças VISITANTES cujo
@@ -493,9 +581,42 @@ router.post('/sessoes/:id/abrir', authorizeModule('kids', 3), async (req, res) =
   }
 });
 
-// POST /api/totem-kids/sessoes/:id/encerrar · status → encerrada (consolida cultos.presencial_kids)
+// POST /api/totem-kids/sessoes/:id/encerrar · status → encerrada (consolida cultos.presencial_kids).
+// Body opcional `limpar_testes` (design v5 · Marcos 2026-07-22): check-in a mais
+// de 2h do início do culto é SUSPEITO de ensaio (pega teste no mesmo dia; ensaio
+// de outro dia é subconjunto). Sem o campo e com suspeitos → 409
+// { precisa_confirmar_limpeza, suspeitos } e o front pergunta (humano decide —
+// culto atípico pode ter check-in legítimo cedo); true → soft-deleta ANTES de
+// encerrar (não conta no KPI · migration 20260722120000); false → mantém tudo.
 router.post('/sessoes/:id/encerrar', authorizeModule('kids', 3), async (req, res) => {
   try {
+    const { limpar_testes } = req.body || {};
+    let testes_limpos = 0;
+    const { data: sess } = await supabase.from('kids_sessoes')
+      .select('id, culto:cultos(id, data, service_type:vol_service_types(recurrence_time))')
+      .eq('id', req.params.id).maybeSingle();
+    if (!sess) return res.status(404).json({ error: 'Sessão não encontrada' });
+    if (sess.culto?.data) {
+      const corte = new Date(_inicioCultoMs(sess.culto) - 2 * 3600 * 1000).toISOString();
+      const { data: suspeitos } = await supabase.from('kids_checkins')
+        .select('id').eq('sessao_id', sess.id).is('deleted_at', null).lt('checkin_at', corte);
+      const n = (suspeitos || []).length;
+      if (n && limpar_testes === undefined) {
+        return res.status(409).json({
+          error: `${n} check-in(s) fora do horário do culto parecem teste.`,
+          precisa_confirmar_limpeza: true,
+          suspeitos: n,
+        });
+      }
+      if (n && limpar_testes === true) {
+        const { data: del, error: eDel } = await supabase.from('kids_checkins')
+          .update({ deleted_at: new Date().toISOString() })
+          .eq('sessao_id', sess.id).is('deleted_at', null).lt('checkin_at', corte)
+          .select('id');
+        if (eDel) console.error('[totemKids/sessoes/encerrar] limpar testes:', eDel.message);
+        testes_limpos = (del || []).length;
+      }
+    }
     const { data, error } = await supabase
       .from('kids_sessoes')
       .update({
@@ -517,12 +638,12 @@ router.post('/sessoes/:id/encerrar', authorizeModule('kids', 3), async (req, res
         checkout_por: req.user.userId,
         responsavel_checkout_nome: 'Baixa automática (sessão encerrada)',
       })
-      .eq('sessao_id', req.params.id).is('checkout_at', null);
+      .eq('sessao_id', req.params.id).is('checkout_at', null).is('deleted_at', null);
     if (eCk) console.error('[totemKids/sessoes/encerrar] auto-checkout:', eCk.message);
     // O resumo do Kids pros líderes NÃO sai daqui: o cron /cron/resumo-kids é o
     // emissor ÚNICO (crianças únicas do totem · dedup por kids_resumo_enviado_at
     // + chaveDedup). Evita dois resumos pro mesmo culto (encerrar sessão × cron).
-    res.json(data);
+    res.json({ ...data, testes_limpos });
   } catch (e) {
     console.error('[totemKids/sessoes/encerrar]', e.message);
     res.status(500).json({ error: 'Erro ao encerrar sessão' });
@@ -551,13 +672,13 @@ router.get('/criancas/buscar', authorizeModule('kids', 1), async (req, res) => {
     let buscaQ = supabase
       .from('kids_criancas')
       .select(`
-        id, nome, data_nascimento, sexo, foto_url, foto_storage_path, foto_consentimento_em, observacoes_medicas,
+        id, nome, data_nascimento, sexo, foto_url, foto_storage_path, foto_consentimento_em, observacoes_medicas, consent_marketing,
         tem_espectro, espectro_qual, tem_alergia, alergia_qual, tem_limitacao_fisica, limitacao_fisica_qual,
         visitante, visitante_relacao, data_limite, ativo, motivo_inativacao, familia_id,
         familia:mem_familias(id, nome),
         responsaveis:kids_responsaveis(
           membro_id, parentesco, autorizado_buscar,
-          membro:mem_membros(id, nome, telefone, cpf, foto_url)
+          membro:mem_membros(id, nome, telefone, cpf, foto_url, deleted_at)
         )
       `)
       .is('deleted_at', null);
@@ -587,12 +708,12 @@ router.get('/criancas/buscar', authorizeModule('kids', 1), async (req, res) => {
           const { data: extras2 } = await supabase
             .from('kids_criancas')
             .select(`
-              id, nome, data_nascimento, sexo, foto_url, foto_storage_path, foto_consentimento_em, observacoes_medicas,
+              id, nome, data_nascimento, sexo, foto_url, foto_storage_path, foto_consentimento_em, observacoes_medicas, consent_marketing,
               visitante, visitante_relacao, data_limite, ativo, motivo_inativacao, familia_id,
               familia:mem_familias(id, nome),
               responsaveis:kids_responsaveis(
                 membro_id, parentesco, autorizado_buscar,
-                membro:mem_membros(id, nome, telefone, cpf, foto_url)
+                membro:mem_membros(id, nome, telefone, cpf, foto_url, deleted_at)
               )
             `)
             .in('id', criancaIds)
@@ -607,6 +728,10 @@ router.get('/criancas/buscar', authorizeModule('kids', 1), async (req, res) => {
     [...(criancas || []), ...extras].forEach(c => map.set(c.id, c));
     const lista = (await anexarFotosEmLote([...map.values()])).map(c => ({
       ...c,
+      // Responsável com cadastro soft-deletado fica FORA do totem (o embed não
+      // filtra deleted_at sozinho): não pode ser "quem está trazendo" nem
+      // editado — era o fantasma do caso Julliane Gaia (2026-07-22).
+      responsaveis: (c.responsaveis || []).filter((r) => r.membro && !r.membro.deleted_at),
       idade_meses: calcIdadeMeses(c.data_nascimento),
       idade_label: formatIdade(calcIdadeMeses(c.data_nascimento)),
     }));
@@ -634,13 +759,13 @@ router.get('/criancas/:id/irmaos', authorizeModule('kids', 1), async (req, res) 
     const { data: irmaos } = await supabase
       .from('kids_criancas')
       .select(`
-        id, nome, data_nascimento, sexo, foto_url, foto_storage_path, foto_consentimento_em, observacoes_medicas,
+        id, nome, data_nascimento, sexo, foto_url, foto_storage_path, foto_consentimento_em, observacoes_medicas, consent_marketing,
         tem_espectro, espectro_qual, tem_alergia, alergia_qual, tem_limitacao_fisica, limitacao_fisica_qual,
         visitante, visitante_relacao, data_limite, ativo, motivo_inativacao, familia_id,
         familia:mem_familias(id, nome),
         responsaveis:kids_responsaveis(
           membro_id, parentesco, autorizado_buscar,
-          membro:mem_membros(id, nome, telefone, cpf, foto_url)
+          membro:mem_membros(id, nome, telefone, cpf, foto_url, deleted_at)
         )
       `)
       .eq('familia_id', base.familia_id)
@@ -651,6 +776,8 @@ router.get('/criancas/:id/irmaos', authorizeModule('kids', 1), async (req, res) 
 
     const lista = (await anexarFotosEmLote(irmaos)).map(c => ({
       ...c,
+      // Mesmo filtro da busca: membro deletado não aparece como responsável.
+      responsaveis: (c.responsaveis || []).filter((r) => r.membro && !r.membro.deleted_at),
       idade_meses: calcIdadeMeses(c.data_nascimento),
       idade_label: formatIdade(calcIdadeMeses(c.data_nascimento)),
     }));
@@ -714,7 +841,7 @@ router.get('/criancas/:id', authorizeModule('kids', 1), async (req, res) => {
         *, familia:mem_familias(id, nome),
         responsaveis:kids_responsaveis(
           id, membro_id, parentesco, autorizado_buscar, contato_emergencia, observacao,
-          membro:mem_membros(id, nome, telefone, cpf, foto_url, email)
+          membro:mem_membros(id, nome, telefone, cpf, foto_url, email, deleted_at)
         )
       `)
       .eq('id', req.params.id)
@@ -724,6 +851,8 @@ router.get('/criancas/:id', authorizeModule('kids', 1), async (req, res) => {
 
     res.json({
       ...data,
+      // Mesmo filtro da busca: membro deletado não aparece como responsável.
+      responsaveis: (data.responsaveis || []).filter((r) => r.membro && !r.membro.deleted_at),
       foto_url: await fotoVisivelCrianca(data),
       idade_meses: calcIdadeMeses(data.data_nascimento),
       idade_label: formatIdade(calcIdadeMeses(data.data_nascimento)),
@@ -830,10 +959,15 @@ router.post('/criancas', authorizeModule('kids', 2), async (req, res) => {
       }
     }
 
-    // Resolve cada responsável (find-or-create membro) + resolve a família
-    // (compartilhada por todos · a do 1º que já tiver, senão cria uma nova).
+    // Resolve cada responsável (find-or-create membro).
+    // ⚠️ LEI (Marcos 2026-07-22 · caso Benjamin/Mariane Gaia): criança NOVA
+    // NUNCA entra automaticamente numa família já existente. Antes o fluxo
+    // herdava mem_membros.familia_id do responsável — a Mariane (tia do Samuel,
+    // agrupada na família da irmã pela Membresia) cadastrou o PRÓPRIO filho e
+    // ele nasceu dentro da família da irmã, com duas mães. Juntar núcleos é ato
+    // EXPLÍCITO: "Cadastrar criança na família" (fluxo amigo_de_crianca_id
+    // acima) ou Gestão/Entradas (Vincular famílias).
     const membros = [];
-    let familiaId = null;
     for (const resp of validos) {
       const tel = normalizarTelefone(resp.telefone);
       const cpf = normalizarCpf(resp.cpf);
@@ -842,16 +976,15 @@ router.post('/criancas', authorizeModule('kids', 2), async (req, res) => {
       });
       const { data: membro } = await supabase.from('mem_membros')
         .select('id, nome, familia_id').eq('id', rr.membro_id).single();
-      if (!familiaId) familiaId = membro.familia_id || null;
       membros.push({ membro, tel, cpf, parentesco: resp.parentesco || 'outro', autorizado_buscar: resp.autorizado_buscar !== false });
     }
-    if (!familiaId) {
-      const base = membros[0].membro;
-      const { data: f, error: fe } = await supabase.from('mem_familias')
-        .insert({ nome: `Familia ${base.nome.split(' ')[0]}` }).select('id').single();
-      if (fe) throw fe;
-      familiaId = f.id;
-    }
+    // Família SEMPRE nova pra criança nova — nome pelo sobrenome da criança
+    // (padrão do totem pra distinguir homônimas · fallback: 1º nome do resp.).
+    const sobrenomeCrianca = String(crianca.nome).trim().split(/\s+/).slice(1).join(' ');
+    const { data: f, error: fe } = await supabase.from('mem_familias')
+      .insert({ nome: `Família ${sobrenomeCrianca || membros[0].membro.nome.split(' ')[0]}` }).select('id').single();
+    if (fe) throw fe;
+    const familiaId = f.id;
     // Vincula à família quem ainda não tem
     for (const m of membros) {
       if (!m.membro.familia_id) {
@@ -1038,8 +1171,18 @@ router.patch('/membro/:id', authorizeModule('kids', 3), async (req, res) => {
       .eq('id', req.params.id)
       .is('deleted_at', null)
       .select('id, nome, telefone')
-      .single();
+      .maybeSingle();
     if (error) throw error;
+    if (!data) {
+      // Cadastro soft-deletado na Membresia (ex.: depuração PCO de 20/06 pegou
+      // responsáveis ativos do Kids) ou id inexistente — antes caía no .single()
+      // e virava 500 genérico ("não conseguimos editar" · caso da mãe do Samuel
+      // Gaia · 2026-07-22). Erro CLARO + flag pro front tratar se quiser.
+      return res.status(404).json({
+        error: 'O cadastro deste responsável está desativado na Membresia — não dá pra editar. Re-vincule o responsável pela ficha (Adicionar) ou peça a um administrador pra restaurar o cadastro.',
+        cadastro_desativado: true,
+      });
+    }
 
     // mem_membros é o cadastro CANÔNICO da pessoa — propaga a mudança pros
     // espelhos (best-effort · não falha a resposta): conta de usuário
@@ -1102,6 +1245,119 @@ router.post('/edit-senha/verificar', authorizeModule('kids', 1), async (req, res
     if (!data?.edit_senha_hash) return res.json({ ok: false, naoDefinida: true });
     res.json({ ok: bcrypt.compareSync(senha, data.edit_senha_hash) });
   } catch (e) { res.status(500).json({ error: 'Erro' }); }
+});
+
+// GET /api/totem-kids/criancas/:id/aniversario-impressoes · limite de 2 etiquetas
+// de aniversário por semana (Milena 2026-07-22 · antes saía Qua + Dom manhã +
+// Dom noite = 3). Conta VISITAS (não linhas de check-in) na janela do aniversário
+// mais próximo ([aniversário-6d, aniversário], a mesma do aniversarioSemana no
+// front). ⚠️ Conta VISITA, não linha: a etiqueta de aniversário sai UMA vez por
+// visita (imprimirEtiquetas roda 1× por criança), mas multi-culto/família gera
+// VÁRIAS linhas em kids_checkins que compartilham o checkin_grupo_id — contá-las
+// cru inflava a conta e fazia a etiqueta sair MENOS de 2× (fix 2026-07-22).
+// A contagem já inclui a visita atual (a impressão roda após o POST) →
+// imprimir = visitas <= 2. Fail-open (imprimir) se não der pra calcular.
+router.get('/criancas/:id/aniversario-impressoes', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const { data: c } = await supabase.from('kids_criancas')
+      .select('data_nascimento').eq('id', req.params.id).maybeSingle();
+    if (!c?.data_nascimento) return res.json({ imprimir: true, count: 0 });
+    const hoje = _hojeBRT();
+    const [, mm, dd] = String(c.data_nascimento).split('-');
+    if (!mm || !dd) return res.json({ imprimir: true, count: 0 });
+    // Ocorrência do aniversário mais próxima de hoje (trata virada de ano).
+    const anoAtual = Number(hoje.slice(0, 4));
+    const hojeMs = new Date(`${hoje}T12:00:00Z`).getTime();
+    let bdayMs = null;
+    for (const ano of [anoAtual - 1, anoAtual, anoAtual + 1]) {
+      const ms = new Date(`${ano}-${mm}-${dd}T12:00:00Z`).getTime();
+      if (bdayMs === null || Math.abs(ms - hojeMs) < Math.abs(bdayMs - hojeMs)) bdayMs = ms;
+    }
+    const inicio = new Date(bdayMs - 6 * 86400000).toISOString().slice(0, 10);
+    const fim = new Date(bdayMs + 1 * 86400000).toISOString().slice(0, 10); // inclui o dia do aniversário
+    const { data: cks } = await supabase.from('kids_checkins')
+      .select('checkin_grupo_id').eq('crianca_id', req.params.id).is('deleted_at', null)
+      .gte('checkin_at', `${inicio}T00:00:00-03:00`).lt('checkin_at', `${fim}T00:00:00-03:00`);
+    // 1 visita = 1 grupo de check-in (multi-culto/família compartilham o grupo);
+    // check-in avulso (grupo null) conta como 1 visita cada.
+    const grupos = new Set();
+    let visitas = 0;
+    for (const r of cks || []) {
+      if (r.checkin_grupo_id) { if (!grupos.has(r.checkin_grupo_id)) { grupos.add(r.checkin_grupo_id); visitas++; } }
+      else visitas++;
+    }
+    res.json({ imprimir: visitas <= 2, count: visitas });
+  } catch (e) {
+    console.error('[totemKids/aniversario-impressoes]', e.message);
+    res.json({ imprimir: true, count: 0 }); // fail-open: não perde o aniversário
+  }
+});
+
+// GET /api/totem-kids/responsavel-familia?cpf= · no "Nova criança", sugere
+// adicionar à FAMÍLIA EXISTENTE quando o CPF do responsável já é de um pai/mãe
+// com filhos (Marcos 2026-07-22). Gatilho SÓ por CPF (chave individual única) —
+// nunca por telefone/nome (família compartilha → falso-positivo). Read-only.
+// Retorna o nome da família + os filhos já cadastrados pro operador CONFIRMAR
+// visualmente que é a família certa antes de juntar (evita cadastro errado).
+router.get('/responsavel-familia', authorizeModule('kids', 2), async (req, res) => {
+  try {
+    const cpf11 = normalizarCpf(req.query.cpf);
+    if (!cpf11 || !cpfValido(cpf11)) return res.json({ encontrado: false });
+    const { data: membro } = await supabase.from('mem_membros')
+      .select('id, nome').eq('cpf', cpf11).is('deleted_at', null).maybeSingle();
+    if (!membro) return res.json({ encontrado: false });
+    // Filhos ATIVOS onde essa pessoa é responsável.
+    const { data: vincs } = await supabase.from('kids_responsaveis')
+      .select('crianca:kids_criancas(id, nome, familia_id, ativo, deleted_at)')
+      .eq('membro_id', membro.id);
+    const filhos = (vincs || []).map((v) => v.crianca)
+      .filter((c) => c && c.ativo !== false && !c.deleted_at && c.familia_id);
+    if (!filhos.length) return res.json({ encontrado: true, membro, criancas: [] });
+    // Se os filhos estão em famílias diferentes (split antigo), escolhe a família
+    // com MAIS filhos como alvo da sugestão.
+    const porFamilia = new Map();
+    for (const c of filhos) {
+      if (!porFamilia.has(c.familia_id)) porFamilia.set(c.familia_id, []);
+      porFamilia.get(c.familia_id).push(c);
+    }
+    let familiaId = null, grupo = [];
+    for (const [fid, cs] of porFamilia) if (cs.length > grupo.length) { familiaId = fid; grupo = cs; }
+    const { data: fam } = await supabase.from('mem_familias')
+      .select('nome').eq('id', familiaId).maybeSingle();
+    res.json({
+      encontrado: true,
+      membro,
+      familia_id: familiaId,
+      familia_nome: fam?.nome || null,
+      ref_crianca_id: grupo[0]?.id || null,
+      criancas: grupo.map((c) => ({ id: c.id, nome: c.nome })),
+    });
+  } catch (e) {
+    console.error('[totemKids/responsavel-familia]', e.message);
+    res.json({ encontrado: false }); // fail-safe: sem sugestão, segue o cadastro normal
+  }
+});
+
+// POST /api/totem-kids/familia-revisar · quando o operador RECUSA a sugestão de
+// família (cadastra a criança em família nova apesar do CPF já ter filhos),
+// registra um rastro pra revisão humana (unir famílias depois). Best-effort ·
+// NUNCA trava o check-in. Não cria duplicata de pessoa (o CPF já é reusado).
+router.post('/familia-revisar', authorizeModule('kids', 2), async (req, res) => {
+  try {
+    const { crianca_id, responsavel_membro_id, familia_existente_nome } = req.body || {};
+    if (responsavel_membro_id) {
+      await supabase.from('mem_historico').insert({
+        membro_id: responsavel_membro_id,
+        tipo: 'outro',
+        descricao: `[familia_revisar] Criança ${crianca_id || '?'} cadastrada em família NOVA apesar de o responsável já ter filhos${familia_existente_nome ? ` em "${familia_existente_nome}"` : ''} — revisar união de famílias (Entradas > Vincular famílias).`,
+        created_at: new Date().toISOString(),
+      }).then(() => {}, (e) => console.warn('[totemKids/familia-revisar]', e?.message));
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[totemKids/familia-revisar]', e.message);
+    res.json({ ok: false }); // best-effort · não propaga erro pro totem
+  }
 });
 
 // GET /api/totem-kids/criancas · listagem completa (admin)
@@ -1914,8 +2170,36 @@ router.get('/dashboard', authorizeModule('kids', 1), async (req, res) => {
     }
     const aniversariantes = (kids || [])
       .filter((k) => dias.includes(String(k.data_nascimento).slice(5, 10)))
-      .map((k) => ({ id: k.id, nome: k.nome, data_nascimento: k.data_nascimento, foto_url: k.foto_url }))
+      .map((k) => ({ id: k.id, nome: k.nome, data_nascimento: k.data_nascimento, foto_url: k.foto_url, responsaveis: [] }))
       .sort((a, b) => String(a.data_nascimento).slice(5).localeCompare(String(b.data_nascimento).slice(5)));
+
+    // Enriquece com o contato dos responsáveis (mãe/pai · nome+telefone do membro
+    // vinculado) — pra impressão da lista. Ordena mãe → pai → demais.
+    const anivIds = aniversariantes.map((a) => a.id);
+    if (anivIds.length) {
+      const { data: resps } = await supabase.from('kids_responsaveis')
+        .select('crianca_id, parentesco, membro_id').in('crianca_id', anivIds);
+      const memIds = [...new Set((resps || []).map((r) => r.membro_id).filter(Boolean))];
+      const memById = {};
+      if (memIds.length) {
+        const { data: mems } = await supabase.from('mem_membros')
+          .select('id, nome, telefone').in('id', memIds);
+        (mems || []).forEach((m) => { memById[m.id] = m; });
+      }
+      const ordemPar = { mae: 0, pai: 1 };
+      const byCrianca = {};
+      (resps || []).forEach((r) => {
+        const m = r.membro_id ? memById[r.membro_id] : null;
+        if (!m || (!m.nome && !m.telefone)) return;
+        (byCrianca[r.crianca_id] = byCrianca[r.crianca_id] || []).push({
+          parentesco: r.parentesco || 'responsavel', nome: m.nome || null, telefone: m.telefone || null,
+        });
+      });
+      aniversariantes.forEach((a) => {
+        a.responsaveis = (byCrianca[a.id] || [])
+          .sort((x, y) => (ordemPar[x.parentesco] ?? 9) - (ordemPar[y.parentesco] ?? 9));
+      });
+    }
     res.json({
       resumo: {
         criancas_ativas: ativas.count || 0,
@@ -2401,6 +2685,15 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
     if (sessao.culto?.data && String(sessao.culto.data).slice(0, 10) < _hojeBRT()) {
       return res.status(409).json({ error: 'Essa sessão é de um culto de outro dia e já foi encerrada. Recarregue o totem.' });
     }
+    // R1 parte 2 (design v5 · Marcos 2026-07-21): culto de dia FUTURO só recebe
+    // check-in em ENSAIO — e ensaio só existe quando NÃO há culto de hoje
+    // aberto. Com culto ao vivo, destino de outro dia é sempre engano (bloquear
+    // o destino errado ≠ bloquear o check-in — a criança entra no culto certo).
+    // Cobre totem-quiosque sem reload e corrida entre dois totens.
+    if (sessao.culto?.data && String(sessao.culto.data).slice(0, 10) > _hojeBRT()
+        && await temSessaoAoVivoHoje()) {
+      return res.status(409).json({ error: 'Essa sessão é ensaio de um culto de outro dia — escolha um culto de hoje.' });
+    }
 
     // Anti-duplicidade: bloqueia só quando há check-in ABERTO (sem check-out) na
     // sessão. Depois do check-out a criança PODE fazer novo check-in (saiu e
@@ -2511,9 +2804,19 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
     // Multi-culto: se a criança fica em mais de um culto, todas as linhas
     // (uma por culto) compartilham o mesmo código + checkin_grupo_id. A retirada
     // fecha o grupo; cada culto conta a presença (consolidação por sessao_id).
-    const cultosExtras = Array.isArray(cultos_extras)
+    let cultosExtras = Array.isArray(cultos_extras)
       ? [...new Set(cultos_extras.map(String))].filter(cid => cid && cid !== sessao.culto_id)
       : [];
+    // Multi-culto = outro horário do MESMO dia do culto primário. Extra de
+    // outro dia (ensaio aberto, toque errado) é descartado — nunca cruza dias.
+    if (cultosExtras.length) {
+      const dataPrimaria = String(sessao.culto?.data || '').slice(0, 10);
+      const { data: cxs } = await supabase.from('cultos').select('id, data').in('id', cultosExtras);
+      const validos = new Set((cxs || []).filter((c) => String(c.data).slice(0, 10) === dataPrimaria).map((c) => c.id));
+      const fora = cultosExtras.filter((cid) => !validos.has(cid));
+      if (fora.length) console.warn('[totemKids/checkin] cultos extras de outro dia ignorados:', fora.join(','));
+      cultosExtras = cultosExtras.filter((cid) => validos.has(cid));
+    }
     const grupoId = cultosExtras.length ? require('crypto').randomUUID() : null;
 
     const gerarCodigo = async () => {
@@ -2665,6 +2968,12 @@ router.post('/checkin/lote', authorizeModule('kids', 2), async (req, res) => {
     if (sessao.culto?.data && String(sessao.culto.data).slice(0, 10) < _hojeBRT()) {
       return res.status(409).json({ error: 'Essa sessão é de um culto de outro dia e já foi encerrada. Recarregue o totem.' });
     }
+    // R1 parte 2 (design v5): culto FUTURO só em ensaio — nunca com culto de
+    // hoje aberto (mesma guarda do /checkin individual).
+    if (sessao.culto?.data && String(sessao.culto.data).slice(0, 10) > _hojeBRT()
+        && await temSessaoAoVivoHoje()) {
+      return res.status(409).json({ error: 'Essa sessão é ensaio de um culto de outro dia — escolha um culto de hoje.' });
+    }
 
     // Valida o lote inteiro antes de resolver/vincular responsável ou inserir a
     // primeira linha. Assim uma idade ausente não produz operação parcial.
@@ -2729,8 +3038,17 @@ router.post('/checkin/lote', authorizeModule('kids', 2), async (req, res) => {
           .then(() => {}, (e) => console.error('[totemKids/checkin-lote] ligar responsável:', e?.message));
       }
     };
-    const cultosExtras = Array.isArray(cultos_extras)
+    let cultosExtras = Array.isArray(cultos_extras)
       ? [...new Set(cultos_extras.map(String))].filter((cid) => cid && cid !== sessao.culto_id) : [];
+    // Multi-culto = outro horário do MESMO dia (mesma regra do /checkin).
+    if (cultosExtras.length) {
+      const dataPrimaria = String(sessao.culto?.data || '').slice(0, 10);
+      const { data: cxs } = await supabase.from('cultos').select('id, data').in('id', cultosExtras);
+      const validos = new Set((cxs || []).filter((c) => String(c.data).slice(0, 10) === dataPrimaria).map((c) => c.id));
+      const fora = cultosExtras.filter((cid) => !validos.has(cid));
+      if (fora.length) console.warn('[totemKids/checkin-lote] cultos extras de outro dia ignorados:', fora.join(','));
+      cultosExtras = cultosExtras.filter((cid) => validos.has(cid));
+    }
     const codigoNovo = async () => {
       const { data } = await supabase.rpc('fn_kids_gerar_codigo_seguranca');
       return data || (() => { const a = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let c = ''; for (let i = 0; i < 4; i++) c += a[Math.floor(Math.random() * a.length)]; return c; })();

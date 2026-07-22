@@ -37,6 +37,58 @@ const idade = (d?: string | null) => {
   } catch { return ''; }
 };
 
+// Rótulo do parentesco pra impressão.
+const PARENTESCO_LABEL: Record<string, string> = { mae: 'Mãe', pai: 'Pai', avo: 'Avó/Avô', responsavel: 'Resp.' };
+// Número no formato wa.me (55 + DDD + número · mesmo padrão do NextConvite): só
+// dígitos, prefixa 55 quando não vier. Retorna null pra número fora do padrão BR.
+function waNum(raw?: string | null): string | null {
+  const d = String(raw || '').replace(/\D/g, '');
+  if (!d) return null;
+  if ((d.length === 12 || d.length === 13) && d.startsWith('55')) return d;
+  if (d.length === 10 || d.length === 11) return '55' + d;
+  return null;
+}
+// Contato dos responsáveis (mãe/pai · nome + telefone) formatado pra célula do PDF.
+// O telefone vira link wa.me clicável (o PDF é HTML impresso · abre a conversa direto).
+function contatoResponsaveis(a: any): string {
+  const esc = (s: any) => String(s ?? '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' } as any)[c]);
+  const resp = (a?.responsaveis || []).filter((r: any) => r.nome || r.telefone);
+  if (!resp.length) return '<span style="color:#999">—</span>';
+  return resp.map((r: any) => {
+    const par = PARENTESCO_LABEL[r.parentesco] || 'Resp.';
+    let tel = '';
+    if (r.telefone) {
+      const wa = waNum(r.telefone);
+      tel = wa
+        ? ` · <a href="https://wa.me/${wa}" style="color:#128C7E;text-decoration:none">${esc(r.telefone)} 💬</a>`
+        : ` · ${esc(r.telefone)}`;
+    }
+    return `<b>${par}:</b> ${esc(r.nome || '—')}${tel}`;
+  }).join('<br>');
+}
+
+// Abre uma janela imprimível com a lista de aniversariantes (Nome · Idade · Data · Responsável).
+function imprimirAniversariantes(lista: any[]) {
+  const esc = (s: any) => String(s ?? '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' } as any)[c]);
+  const linhas = (lista || []).map(a =>
+    `<tr><td>${esc(a.nome)}</td><td>${esc(idade(a.data_nascimento))}</td><td>${esc(fmtDiaMes(a.data_nascimento))}</td><td>${contatoResponsaveis(a)}</td></tr>`).join('');
+  const hoje = new Date().toLocaleDateString('pt-BR');
+  const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Aniversariantes CBKids</title>
+    <style>body{font-family:system-ui,-apple-system,Arial,sans-serif;margin:28px;color:#111}
+    h1{font-size:18px;margin:0 0 2px}p.sub{color:#666;font-size:12px;margin:0 0 14px}
+    table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #e5e5e5;font-size:13px;vertical-align:top}
+    th{background:#f6f6f6;font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:#555}
+    @media print{body{margin:0}}</style></head><body>
+    <h1>🎂 Aniversariantes da semana — CBKids</h1>
+    <p class="sub">${(lista || []).length} criança(s) · próximos 7 dias · impresso em ${hoje}</p>
+    <table><thead><tr><th>Nome</th><th>Idade</th><th>Aniversário</th><th>Responsável (contato)</th></tr></thead><tbody>${linhas}</tbody></table>
+    <script>window.onload=function(){window.print()}</script></body></html>`;
+  const w = window.open('', '_blank');
+  if (!w) return;
+  w.document.write(html);
+  w.document.close();
+}
+
 export default function KidsHub() {
   const navigate = useNavigate();
   const [d, setD] = useState<any>(null);
@@ -100,7 +152,15 @@ export default function KidsHub() {
       <div className="grid grid-cols-1 gap-4">
         {/* Aniversariantes da semana */}
         <Card className="glass-solid p-4">
-          <div className="font-semibold text-sm flex items-center gap-2 mb-3"><Cake className="h-4 w-4 text-pink-500" /> Aniversariantes da semana</div>
+          <div className="font-semibold text-sm flex items-center gap-2 mb-3">
+            <Cake className="h-4 w-4 text-pink-500" /> Aniversariantes da semana
+            {(d?.aniversariantes || []).length > 0 && (
+              <button onClick={() => imprimirAniversariantes(d.aniversariantes)}
+                className="ml-auto inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:opacity-80">
+                <Printer className="h-3.5 w-3.5" /> Imprimir lista
+              </button>
+            )}
+          </div>
           {loading ? (
             <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-primary" /></div>
           ) : (d?.aniversariantes || []).length === 0 ? (

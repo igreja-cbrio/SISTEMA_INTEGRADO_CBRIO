@@ -809,6 +809,7 @@ function EditModal({ pesquisa, onClose, onSaved }) {
 // Modal de detalhe
 // ════════════════════════════════════════════════════════════════════
 function DetalheModal({ id, onClose, onChanged, canWrite, onResponder }) {
+  const { user } = useAuth();
   const [pesquisa, setPesquisa] = useState(null);
   const [respostas, setRespostas] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -824,7 +825,7 @@ function DetalheModal({ id, onClose, onChanged, canWrite, onResponder }) {
     try {
       const p = await api.get(id);
       setPesquisa(p);
-      if (canWrite || p.criado_por) {
+      if (canWrite || (p.criado_por && p.criado_por === user?.id)) {
         try {
           const r = await api.respostas(id);
           setRespostas(r || []);
@@ -916,6 +917,9 @@ function DetalheModal({ id, onClose, onChanged, canWrite, onResponder }) {
   }
 
   const v = valorMeta(pesquisa.valor);
+  // O criador gerencia a própria pesquisa mesmo sem nível alto (o backend valida igual).
+  const souCriador = !!(pesquisa.criado_por && user?.id && pesquisa.criado_por === user.id);
+  const podeGerir = canWrite || souCriador;
   const stats = pesquisa.stats || { total_respostas: 0, score_medio: 0, nps_score: 0, promoters: 0, passives: 0, detractors: 0 };
   const perguntasMap = {};
   (pesquisa.perguntas?.perguntas_extras || []).forEach((p) => { if (p.tipo !== 'secao') perguntasMap[p.id] = p.texto; });
@@ -945,7 +949,7 @@ function DetalheModal({ id, onClose, onChanged, canWrite, onResponder }) {
       </div>
 
       {/* Ações */}
-      {canWrite && (
+      {podeGerir && (
         <div style={{ display: 'flex', gap: 8, marginBottom: 18, flexWrap: 'wrap' }}>
           {linkPublico && pesquisa.permite_publico && (
             <Btn variant="ghost" size="sm" onClick={copiarLink}>

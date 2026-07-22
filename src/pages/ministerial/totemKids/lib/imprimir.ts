@@ -16,6 +16,7 @@ import { totemKids } from '@/api';
 
 export interface DadosImpressao {
   checkinId: string;
+  criancaId?: string;                 // pra checar o limite de 2 etiquetas de aniversário/semana
   estacaoId?: string | null;
   crianca: {
     nome: string;
@@ -27,7 +28,7 @@ export interface DadosImpressao {
     observacoesMedicas?: string | null;
     alergia?: string | null;          // alergia em destaque (vermelho/preto)
     necessidade?: string | null;      // espectro/limitação/necessidade
-    fotoAutorizada?: boolean;         // ícone de câmera (com X se não autorizada)
+    fotoAutorizada?: boolean;         // AUTORIZAÇÃO DE USO DE IMAGEM (consent_marketing do cadastro) · câmera com X quando não autorizada
     aniversarioSemana?: boolean;      // dispara a 4ª etiqueta de aniversário
   };
   responsavel: {
@@ -38,6 +39,7 @@ export interface DadosImpressao {
   dataHora: string;                   // ISO ou label pronto
   cultoNome?: string;
   cultoDiaHora?: string;              // dia + horário do culto (etiqueta do responsável)
+  ensaio?: boolean;                   // sessão de culto de OUTRO dia (modo ensaio) → etiquetas saem marcadas TESTE
   layout?: EtiquetaLayout;           // ajustes de layout (tamanho/posição da logo…)
   logoAniversarioUrl?: string | null; // logo do Kids na etiqueta de aniversário (config global)
 }
@@ -108,24 +110,66 @@ function cssEtiqueta(layout: EtiquetaLayout = LAYOUT_ETIQUETA_PADRAO): string {
   /* Faixa de cor da sala (única marca visual da categoria — a logo saiu). */
   .faixa-cor { position: absolute; top: 0; bottom: 0; left: 0; width: 3mm; background: var(--cor, #EC4899); }
   .col-esq { flex: 1; display: flex; flex-direction: column; justify-content: center; padding-left: 3mm; overflow: hidden; }
-  .col-dir { width: 32mm; display: flex; flex-direction: column; align-items: center; justify-content: center; border-left: 1px solid #999; padding-left: 2mm; }
+  /* Divisor TRACEJADO antes do código (visual do sistema antigo · Milena 22/07). */
+  .col-dir { width: 30mm; display: flex; flex-direction: column; align-items: center; justify-content: center; border-left: 0.5mm dashed #444; padding-left: 2mm; flex-shrink: 0; }
+  /* Idade em destaque: número grande + legenda, como no sistema antigo. */
+  .col-idade { width: 11mm; display: flex; flex-direction: column; align-items: center; justify-content: center; flex-shrink: 0; }
+  .idade-num { font-size: ${pt(17)}; font-weight: 900; line-height: 1; }
+  .idade-num-p { font-size: ${pt(11)}; }
+  .idade-cap { font-size: ${pt(6.5)}; font-weight: 700; color: #333; margin-top: 0.5mm; }
 
-  .topo { display: flex; align-items: center; gap: 1.5mm; margin-bottom: 0.5mm; }
+  .topo { display: flex; align-items: center; gap: 1.5mm; }
   .foto-badge { display: inline-flex; align-items: center; justify-content: center; line-height: 0; flex-shrink: 0; }
   .foto-badge svg { display: block; }
 
-  .nome-grande {
-    font-size: calc(var(--nome-pt, 13) * var(--escala) * 1pt);
-    font-weight: 800; line-height: 1; margin-bottom: 1mm;
+  /* Primeiro nome em destaque + resto do nome completo menor embaixo. */
+  .nome-primeiro {
+    font-size: calc(var(--nome-pt, 16) * var(--escala) * 1pt);
+    font-weight: 800; line-height: 1;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .nome-resto {
+    font-size: ${pt(8.5)}; font-weight: 700; line-height: 1.05; margin-top: 0.3mm;
     word-break: break-word; overflow: hidden; text-overflow: ellipsis;
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
   }
-  .sala { font-size: ${pt(9)}; font-weight: 700; line-height: 1.1; }
+  .sala { font-size: ${pt(9)}; font-weight: 700; line-height: 1.1; margin-top: 0.4mm; }
+
+  /* Banda PRETA do código (branco no preto) + réguas finas em cima/embaixo —
+     eco da estética de barcode da etiqueta antiga; imprime bem na térmica. */
+  .band-wrap { width: 100%; }
+  .band-rule { height: 0.45mm; background: #000; border-radius: 0.2mm; margin: 0.35mm 0; }
+  .codigo-band {
+    background: #000; color: #fff; font-family: 'Courier New', monospace;
+    font-weight: 900; font-size: ${pt(16)}; letter-spacing: 2.5px;
+    text-align: center; line-height: 1; padding: 1mm 1mm 0.8mm; border-radius: 0.6mm;
+  }
+  .codigo-band-g { font-size: ${pt(21)}; letter-spacing: 3px; }
+  /* Etiqueta da criança (Mariane 2026-07-22): o código ocupa a coluna INTEIRA
+     da direita, sem legenda — identificação instantânea no salão/portão. */
+  .codigo-band-cheia { font-size: ${pt(24)}; letter-spacing: 2px; flex: 1; display: flex; align-items: center; justify-content: center; padding: 1mm 0.5mm; }
+  .col-dir-cheia { padding-top: 1mm; padding-bottom: 1mm; }
+  .col-dir-cheia .band-wrap { flex: 1; display: flex; flex-direction: column; }
+  /* Recibo do responsável (v2 · Marcos 22/07): nome + logo + culto à esquerda;
+     código na banda preta + barcode à direita, divisor tracejado no meio. */
+  .recibo-nome { font-size: ${pt(10)}; font-weight: 800; line-height: 1.05; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .recibo-logo { display: block; height: 6mm; max-width: 26mm; object-fit: contain; align-self: flex-start; margin: 0.6mm 0 0.4mm; }
+  .recibo-hint { font-size: ${pt(6.5)}; color: #555; line-height: 1.1; margin-top: 0.3mm; }
+  .recibo-dir { width: 42mm; justify-content: center; }
+  .recibo-dir .barcode-area svg { max-width: 34mm; height: 7mm; }
+  .recibo-culto { font-size: ${pt(8)}; font-weight: 800; line-height: 1.1; }
   .info-sec { font-size: ${pt(7.5)}; color: #444; line-height: 1.2; margin-top: 0.5mm; }
   .alerta {
     background: #000; color: #fff; padding: 0.7mm 1.5mm; margin-top: 1mm;
     font-size: ${pt(7)}; font-weight: 700; line-height: 1.1; border-radius: 0.5mm;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  /* Faixa de ENSAIO (modo teste · culto de outro dia): a etiqueta física não
+     pode ter cara de check-in real — ela sobrevive à tela. */
+  .ensaio-strip {
+    background: #000; color: #fff; padding: 0.6mm 1.5mm; margin-bottom: 0.6mm;
+    font-size: ${pt(6.5)}; font-weight: 800; letter-spacing: 0.6px; line-height: 1.1;
+    border-radius: 0.5mm; text-align: center; white-space: nowrap; overflow: hidden;
   }
 
   /* Código de segurança · sempre monoespaçado (evita confundir O/0, I/1). */
@@ -178,18 +222,36 @@ function nomeParaEtiqueta(nome: string): string {
   return String(nome || '').trim().replace(/\s+/g, ' ');
 }
 
-// Tamanho de fonte do nome em função do comprimento (pt) — nome completo cabe.
-// Se o layout fixar um tamanho (P/M/G), usa esse; senão calcula pelo comprimento.
-function fonteNome(nome: string, tamanho?: EtiquetaLayout['nomeTamanho']): number {
-  if (tamanho === 'P') return 9;
-  if (tamanho === 'M') return 11;
-  if (tamanho === 'G') return 13;
-  const n = nomeParaEtiqueta(nome).length;
-  if (n <= 16) return 13;
-  if (n <= 22) return 11.5;
-  if (n <= 30) return 10;
-  if (n <= 40) return 8.5;
-  return 7.5;
+// Nome em duas linhas de peso diferente (visual do sistema antigo · Milena
+// 2026-07-22): PRIMEIRO nome grande + resto do nome menor embaixo — continua
+// saindo o nome COMPLETO (regra do Matheus 2026-07-09), só muda a hierarquia.
+function partesNome(nome: string): { primeiro: string; resto: string } {
+  const p = nomeParaEtiqueta(nome).split(' ');
+  return { primeiro: p[0] || '', resto: p.slice(1).join(' ') };
+}
+
+// Fonte do PRIMEIRO nome pelo comprimento (pt) — preset P/M/G da config vence.
+function fontePrimeiroNome(primeiro: string, tamanho?: EtiquetaLayout['nomeTamanho']): number {
+  if (tamanho === 'P') return 11;
+  if (tamanho === 'M') return 13;
+  if (tamanho === 'G') return 15;
+  const n = primeiro.length;
+  if (n <= 8) return 16;
+  if (n <= 12) return 14;
+  if (n <= 16) return 12;
+  return 10;
+}
+
+// Banda PRETA do código (branco no preto · visual do sistema antigo que a
+// equipe conhecia — o código salta aos olhos no salão/portão), com as réguas
+// finas em cima/embaixo ecoando a estética de barcode da etiqueta do PCO.
+function bandaCodigo(codigo: string, variante?: 'g' | 'cheia'): string {
+  const extra = variante === 'g' ? ' codigo-band-g' : variante === 'cheia' ? ' codigo-band-cheia' : '';
+  return `<div class="band-wrap">
+    <div class="band-rule"></div>
+    <div class="codigo-band${extra}">${codigo}</div>
+    <div class="band-rule"></div>
+  </div>`;
 }
 
 // Ícone SVG (não emoji — emoji sai quebrado na Brother). Câmera OK / câmera
@@ -218,20 +280,30 @@ function htmlEtiquetaCrianca(d: DadosImpressao): string {
   // Selo de foto: câmera OK / câmera cortada (sem autorização) — nunca texto/emoji.
   const foto = `<span class="foto-badge">${d.crianca.fotoAutorizada ? ICONE_CAMERA_OK : ICONE_CAMERA_NAO}</span>`;
 
-  // Tamanho-base do nome (pt) pelo comprimento/preset; a escala global multiplica no CSS.
-  const nomePt = fonteNome(d.crianca.nome, layout.nomeTamanho);
-  const nome = `<div class="nome-grande" style="--nome-pt:${nomePt}">${escapeHtml(nomeParaEtiqueta(d.crianca.nome))}</div>`;
+  // Primeiro nome em destaque + resto menor (nome completo sempre sai).
+  const { primeiro, resto } = partesNome(d.crianca.nome);
+  const nomePt = fontePrimeiroNome(primeiro, layout.nomeTamanho);
+
+  // Idade em destaque (Milena 2026-07-22 · como no sistema antigo): número
+  // grande + legenda. Bebê (<1 ano) mostra os meses ("8m") no lugar do número.
+  const anos = d.crianca.idadeAnos;
+  const idadeValor = anos != null && anos >= 1 ? String(anos) : (d.crianca.idadeLabel || '—');
 
   return `<div class="etiqueta" style="--cor:${d.crianca.salaCor || '#EC4899'}">
     <div class="faixa-cor"></div>
     <div class="col-esq">
-      <div class="topo">${nome}${foto}</div>
-      <div class="sala">${escapeHtml(d.crianca.salaNome)} · ${escapeHtml(d.crianca.idadeLabel)}</div>
+      ${d.ensaio ? '<div class="ensaio-strip">TESTE / ENSAIO — NÃO VALE COMO PRESENÇA</div>' : ''}
+      <div class="topo"><div class="nome-primeiro" style="--nome-pt:${nomePt}">${escapeHtml(primeiro)}</div>${foto}</div>
+      ${resto ? `<div class="nome-resto">${escapeHtml(resto)}</div>` : ''}
+      <div class="sala">${escapeHtml(d.crianca.salaNome)}</div>
       ${alerta}
     </div>
-    <div class="col-dir">
-      <div class="codigo">${d.codigoSeguranca}</div>
-      <div class="cod-label">Código</div>
+    <div class="col-idade">
+      <div class="idade-num${String(idadeValor).length > 2 ? ' idade-num-p' : ''}">${escapeHtml(idadeValor)}</div>
+      <div class="idade-cap">idade</div>
+    </div>
+    <div class="col-dir col-dir-cheia">
+      ${bandaCodigo(d.codigoSeguranca, 'cheia')}
     </div>
   </div>`;
 }
@@ -266,17 +338,26 @@ function documento(fragmentos: string[], layout?: EtiquetaLayout): string {
 // a etiqueta perdida não descobre de qual criança é) — mostra o nome do
 // RESPONSÁVEL; o vínculo com a criança fica só pelo código, no sistema.
 function htmlEtiquetaResponsavel(d: DadosImpressao, barcodeSvg: string): string {
+  // v2 (Marcos 2026-07-22, depois do teste impresso — o v1 ficou confuso):
+  // ESQUERDA = nome do responsável + logo do CBKids + nome do culto;
+  // DIREITA = código na banda preta + código de barras, separados pelo divisor
+  // tracejado no meio. SEM hora de check-in (ficava pequeno demais). Segue SEM
+  // o nome da criança (etiqueta perdida não identifica a criança). A logo é a
+  // mesma configurada no admin (logo_aniversario_url · pré-carregada antes de
+  // imprimir); sem logo configurada, a linha simplesmente não sai.
+  const logo = d.logoAniversarioUrl
+    ? `<img class="recibo-logo" src="${escapeHtml(d.logoAniversarioUrl)}" alt="" />`
+    : '';
   return `<div class="etiqueta">
     <div class="col-esq" style="padding-left:0">
-      <div class="header-resp">CB Rio · Recibo Kids</div>
-      <div class="nome-grande" style="--nome-pt:11">${escapeHtml(nomeParaEtiqueta(d.responsavel.nome))}</div>
-      <div class="sala" style="font-size:8pt;color:#555">${escapeHtml(d.cultoDiaHora || d.crianca.salaNome)}</div>
-      <div class="data-hora" style="text-align:left;margin-top:auto">
-        ${escapeHtml(d.dataHora)} · Apresente este código para buscar
-      </div>
+      ${d.ensaio ? '<div class="ensaio-strip">TESTE / ENSAIO — NÃO VALE COMO PRESENÇA</div>' : ''}
+      <div class="recibo-nome">${escapeHtml(nomeParaEtiqueta(d.responsavel.nome))}</div>
+      ${logo}
+      <div class="recibo-culto">${escapeHtml(d.cultoDiaHora || d.crianca.salaNome)}</div>
+      <div class="recibo-hint">Apresente este código para buscar</div>
     </div>
-    <div class="col-dir">
-      <div class="codigo">${d.codigoSeguranca}</div>
+    <div class="col-dir recibo-dir">
+      ${bandaCodigo(d.codigoSeguranca, 'g')}
       <div class="barcode-area">${barcodeSvg}</div>
     </div>
   </div>`;
@@ -393,15 +474,31 @@ export function gerarHtmlPreviewAniversario(d: DadosImpressao): string {
 export async function imprimirEtiquetas(d: DadosImpressao, preview = false, incluirRecibo = true): Promise<void> {
   const [barcodeSvg] = await Promise.all([
     gerarBarcodeSvg(d.codigoBarras),
-    d.crianca.aniversarioSemana ? preloadImg(d.logoAniversarioUrl) : Promise.resolve(),
+    // Logo do CBKids sai no recibo (v2) e na etiqueta de aniversário —
+    // pré-carrega sempre que houver (preloadImg tolera null e não trava).
+    preloadImg(d.logoAniversarioUrl),
   ]);
+
+  // Etiqueta de aniversário: máximo 2 por semana de aniversário (Milena
+  // 2026-07-22 · antes saía Qua + Dom manhã + Dom noite = 3). O backend conta os
+  // check-ins da criança na janela do aniversário (já inclui o atual, pois a
+  // impressão roda após o POST) e diz se ainda pode. Fail-open: se a checagem
+  // falhar, imprime (não perde o aniversário). Só no check-in — a reimpressão
+  // repete o que estava na etiqueta.
+  let comAniversario = !!d.crianca.aniversarioSemana;
+  if (comAniversario && d.criancaId) {
+    try {
+      const r = await totemKids.criancas.aniversarioImpressoes(d.criancaId);
+      comAniversario = r?.imprimir !== false;
+    } catch { /* fail-open */ }
+  }
 
   // No CHECK-IN: 2 etiquetas da criança (uma na criança, outra na sacola/
   // pertences) + 1 do responsável (recibo) + 1 de aniversário (na semana).
   const fragCrianca = htmlEtiquetaCrianca(d);
   const fragmentos = [fragCrianca, fragCrianca];
   if (incluirRecibo) fragmentos.push(htmlEtiquetaResponsavel(d, barcodeSvg));
-  if (d.crianca.aniversarioSemana) fragmentos.push(htmlEtiquetaAniversario(d));
+  if (comAniversario) fragmentos.push(htmlEtiquetaAniversario(d));
 
   const resultado = await imprimirHtml(documento(fragmentos, d.layout), preview);
   if (preview) return;  // não loga impressão em modo preview
@@ -417,7 +514,7 @@ export async function imprimirEtiquetas(d: DadosImpressao, preview = false, incl
       codigo: d.codigoSeguranca,
       observacoes_medicas: d.crianca.observacoesMedicas,
       copias: 2,
-      aniversario: !!d.crianca.aniversarioSemana,
+      aniversario: comAniversario,
     },
     status: resultado.status,
   }).catch(() => {});
@@ -434,7 +531,10 @@ export async function imprimirEtiquetas(d: DadosImpressao, preview = false, incl
 
 // Reimpressao (etiqueta rasgou ou impressora falhou) — 1 etiqueta, 1 job.
 export async function reimprimirEtiqueta(d: DadosImpressao, tipo: 'crianca' | 'responsavel', motivo: string): Promise<void> {
-  const barcodeSvg = await gerarBarcodeSvg(d.codigoBarras);
+  const [barcodeSvg] = await Promise.all([
+    gerarBarcodeSvg(d.codigoBarras),
+    tipo === 'responsavel' ? preloadImg(d.logoAniversarioUrl) : Promise.resolve(),
+  ]);
   const frag = tipo === 'crianca' ? htmlEtiquetaCrianca(d) : htmlEtiquetaResponsavel(d, barcodeSvg);
   const resultado = await imprimirHtml(documento([frag], d.layout));
   totemKids.etiquetas.log({
@@ -455,7 +555,7 @@ export async function reimprimirEtiquetasCompletas(d: DadosImpressao, motivo: st
   const [barcodeSvg] = await Promise.all([
     gerarBarcodeSvg(d.codigoBarras),
     preloadImg(d.crianca.salaLogoUrl),
-    d.crianca.aniversarioSemana ? preloadImg(d.logoAniversarioUrl) : Promise.resolve(),
+    preloadImg(d.logoAniversarioUrl),
   ]);
   const fragCrianca = htmlEtiquetaCrianca(d, barcodeSvg);
   const fragmentos = [fragCrianca, fragCrianca, htmlEtiquetaResponsavel(d, barcodeSvg)];

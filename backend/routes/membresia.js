@@ -22,6 +22,68 @@ const uploadMw = multer({
 
 router.use(authenticate);
 
+// Quem pode aprovar/rejeitar cadastros pendentes:
+//   admin/diretor · toda a área "Integração" (responsabilidade dela) · e
+//   aprovadores extras cadastrados (ex.: Marcelo · Cuidados) em membresia_aprovadores.
+async function usuarioPodeAprovarMembresia(req) {
+  if (['admin', 'diretor'].includes(req.user?.role)) return true;
+  if ((req.user?.granular?.areas || []).includes('Integração')) return true;
+  const ids = [req.user?.userId, req.user?.id].filter(Boolean);
+  if (ids.length) {
+    const { data } = await supabase.from('membresia_aprovadores').select('profile_id').in('profile_id', ids).limit(1);
+    if (data && data.length) return true;
+  }
+  return false;
+}
+async function podeAprovarMembresia(req, res, next) {
+  try {
+    if (!req.user) return res.status(401).json({ error: 'Não autenticado' });
+    if (await usuarioPodeAprovarMembresia(req)) return next();
+    return res.status(403).json({ error: 'Você não tem permissão para aprovar/rejeitar cadastros.' });
+  } catch (e) { return res.status(500).json({ error: 'Erro ao checar permissão' }); }
+}
+
+// GET /api/membresia/cadastros/pode-aprovar — o front usa pra mostrar os botões
+router.get('/cadastros/pode-aprovar', async (req, res) => {
+  try { res.json({ pode: await usuarioPodeAprovarMembresia(req) }); }
+  catch { res.json({ pode: false }); }
+});
+
+// POST /api/membresia/cadastros/:id/confirmar-whatsapp — dispara o template de
+// confirmação de cadastro pela API oficial (funciona mesmo fora da janela de 24h).
+// Precisa do template aprovado na Meta + env WHATSAPP_TEMPLATE_CADASTRO.
+router.post('/cadastros/:id/confirmar-whatsapp', podeAprovarMembresia, async (req, res) => {
+  try {
+    const nomeTemplate = process.env.WHATSAPP_TEMPLATE_CADASTRO;
+    if (!nomeTemplate) {
+      return res.status(400).json({
+        error: "Template de confirmação ainda não configurado. Crie o modelo 'cadastro_confirmado' na Meta (Utility, pt_BR) e configure a env WHATSAPP_TEMPLATE_CADASTRO.",
+        code: 'sem_template',
+      });
+    }
+    const { data: cad } = await supabase.from('mem_cadastros_pendentes')
+      .select('id, nome, telefone').eq('id', req.params.id).maybeSingle();
+    if (!cad) return res.status(404).json({ error: 'Cadastro não encontrado' });
+    const tel = String(cad.telefone || '').replace(/\D+/g, '');
+    if (!tel) return res.status(400).json({ error: 'Cadastro sem telefone.' });
+
+    const primeiro = String(cad.nome || '').trim().split(/\s+/)[0] || 'tudo bem';
+    const wpp = require('../services/whatsappService');
+    const r = await wpp.sendTemplate(tel, nomeTemplate, 'pt_BR', [primeiro]);
+    if (!r?.sent) return res.status(502).json({ error: 'O WhatsApp não aceitou o envio.', detail: r?.reason || r?.detail || null });
+    try {
+      await require('../services/waInbox').registrarOutbound({
+        telefone: tel, texto: `Confirmação de cadastro (template: ${nomeTemplate})`, tipo: 'template',
+        autorId: req.user.userId || req.user.id,
+      });
+    } catch { /* best-effort */ }
+    res.json({ ok: true, messageId: r.messageId || null });
+  } catch (e) {
+    console.error('[cadastros] confirmar-whatsapp:', e.message);
+    res.status(500).json({ error: 'Erro ao enviar confirmação' });
+  }
+});
+
 // Autoriza edicao de um membro especifico pelas rotas "totem":
 //   - staff de membresia (nivel >= 3) ou admin/diretor → qualquer membro
 //   - o proprio usuario logado → so o seu proprio cadastro (req.user.membro_id)
@@ -2175,7 +2237,7 @@ router.get('/cadastros/kpis', async (req, res) => {
 });
 
 // POST /api/membresia/cadastros/:id/aprovar — cria mem_membros e marca aprovado
-router.post('/cadastros/:id/aprovar', authorize('admin', 'diretor'), async (req, res) => {
+router.post('/cadastros/:id/aprovar', podeAprovarMembresia, async (req, res) => {
   try {
     const { id } = req.params;
     const { familia_id: reqFamiliaId, parentesco, observacoes } = req.body || {};
@@ -2340,7 +2402,7 @@ router.post('/cadastros/:id/aprovar', authorize('admin', 'diretor'), async (req,
 });
 
 // POST /api/membresia/cadastros/:id/rejeitar — marca rejeitado com motivo
-router.post('/cadastros/:id/rejeitar', authorize('admin', 'diretor'), async (req, res) => {
+router.post('/cadastros/:id/rejeitar', podeAprovarMembresia, async (req, res) => {
   try {
     const { id } = req.params;
     const { motivo } = req.body || {};
