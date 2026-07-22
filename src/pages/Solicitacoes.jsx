@@ -2168,7 +2168,7 @@ function MLTrackingBlock({ item, canEdit, onChanged }) {
           ) : (
             <div className="space-y-2">
               <Label className="text-xs text-muted-foreground">
-                Cole a URL ou o numero do pedido do Mercado Livre
+                Cole a URL ou o número do pedido do Mercado Livre
               </Label>
               <div className="flex gap-2">
                 <Input
@@ -2186,7 +2186,7 @@ function MLTrackingBlock({ item, canEdit, onChanged }) {
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground">
-                O solicitante e voce passarao a receber atualizacoes automaticas (in-app + WhatsApp se configurado).
+                O solicitante e você passarão a receber atualizações automáticas (in-app + WhatsApp se configurado).
               </p>
             </div>
           )}
