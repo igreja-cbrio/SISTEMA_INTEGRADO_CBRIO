@@ -553,6 +553,14 @@ export default function TotemKidsPainel() {
                       <div className="min-w-0">
                         <p className="text-lg font-bold leading-tight">{criancaDet.nome}</p>
                         <p className="text-sm text-muted-foreground">{criancaDet.idade_label}</p>
+                        {/* Horário do check-in (Marcos 2026-07-22): útil pra procurar
+                            a criança nas câmeras. Mostra a saída também quando já saiu. */}
+                        {criancaSelCheckin?.checkin_at && (
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            Check-in às <b>{format(new Date(criancaSelCheckin.checkin_at), 'HH:mm', { locale: ptBR })}</b>
+                            {criancaSelCheckin.checkout_at && <> · saída às <b>{format(new Date(criancaSelCheckin.checkout_at), 'HH:mm', { locale: ptBR })}</b></>}
+                          </p>
+                        )}
                       </div>
                     </div>
 

@@ -7,7 +7,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Baby, Users, Printer, AlertTriangle, Plus, ArrowLeft, Loader2, CheckCircle2, Phone, Settings, LogOut, Sparkles, UserPlus, ShieldCheck, Maximize, Lock, Check, Camera, Pencil, X } from 'lucide-react';
+import { Search, Baby, Users, Printer, AlertTriangle, Plus, ArrowLeft, Loader2, CheckCircle2, Phone, Settings, LogOut, Sparkles, UserPlus, ShieldCheck, Maximize, Lock, Check, Camera, Pencil, X, BellRing } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
@@ -175,6 +175,8 @@ function ModalCpfResponsavel({ respNome, onConfirmar, onDispensar, onCancelar }:
   const [motivo, setMotivo] = useState('');
   const [erro, setErro] = useState('');
   const ok = cpfValido(cpf);
+  // Clicar fora com algo digitado pergunta antes de descartar (Marcos 2026-07-22).
+  const { tentarFechar } = useConfirmarSaida(!!(cpf || pin || motivo), onCancelar);
 
   function confirmarDispensa() {
     if (pin.trim() !== DISPENSA_PIN) { setErro('PIN incorreto'); return; }
@@ -182,7 +184,7 @@ function ModalCpfResponsavel({ respNome, onConfirmar, onDispensar, onCancelar }:
   }
 
   return (
-    <Dialog open onOpenChange={(o) => { if (!o) onCancelar(); }}>
+    <Dialog open onOpenChange={(o) => { if (!o) tentarFechar(); }}>
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2"><ShieldCheck className="h-5 w-5 text-pink-600" /> CPF do responsável</DialogTitle>
@@ -269,6 +271,14 @@ function DispensaCpfInline({ dispensado, onDispensar, onCancelar }: {
       </div>
     </div>
   );
+}
+
+// Pager no balcão (sugestão da equipe · 2026-07-22): criança pequena (< 4 anos =
+// < 48 meses) OU com espectro/limitação física → a equipe entrega um pager ao
+// responsável. Ao concluir o check-in, o totem avisa pra pegar no balcão.
+function precisaPager(c: { idade_meses?: number | null; tem_espectro?: boolean | null; tem_limitacao_fisica?: boolean | null }): boolean {
+  const menor4 = c.idade_meses != null && c.idade_meses < 48;
+  return menor4 || !!c.tem_espectro || !!c.tem_limitacao_fisica;
 }
 
 export default function TotemKidsCheckin() {
@@ -366,6 +376,8 @@ export default function TotemKidsCheckin() {
 
   // Última etiqueta impressa · permite REIMPRIMIR sem novo check-in (se borrou/falhou).
   const [ultimaEtiqueta, setUltimaEtiqueta] = useState<Parameters<typeof imprimirEtiquetas>[0] | null>(null);
+  // Nomes (1º nome) das crianças recém-check-in que precisam de pager no balcão.
+  const [pagerNomes, setPagerNomes] = useState<string[]>([]);
 
   // Layout configurável da etiqueta (fonte, tamanho da fonte, tamanho do nome)
   const [etqLayout, setEtqLayout] = useState<Parameters<typeof imprimirEtiquetas>[0]['layout']>(undefined);
@@ -420,6 +432,7 @@ export default function TotemKidsCheckin() {
     const ensaio = !!(args.cultoData && String(args.cultoData).slice(0, 10) > hojeBRTStr());
     return {
       checkinId: args.checkinId,
+      criancaId: c.id,
       estacaoId: null,
       crianca: {
         nome: c.nome,
@@ -550,9 +563,11 @@ export default function TotemKidsCheckin() {
       // Família compartilha o código → o recibo do responsável (genérico, sem nome de
       // criança) sai UMA vez só. Etiquetas de cada criança saem normalmente.
       let reciboImpresso = false;
+      const pagerFam: string[] = []; // filhos que precisam de pager no balcão
       for (const s of saidas) {
         if (s?.ok) {
           const cr = porId.get(s.crianca_id);
+          if (cr && precisaPager(cr)) pagerFam.push(cr.nome.split(' ')[0]);
           if (cr) {
             const dados = montarDadosEtiqueta(cr, {
               checkinId: s.checkin.id, salaNome: s.sala.nome, salaCor: s.sala.cor, salaLogoUrl: s.sala.logo_url,
@@ -577,6 +592,7 @@ export default function TotemKidsCheckin() {
       + (falhou ? ` · ${falhou} não deu` : ''),
       { duration: 5000 },
     );
+    setPagerNomes(pagerFam);
     setCrianca(null); setBusca(''); setSalaSelecionada(''); setResponsavelSelecionado('');
     setUsarRespManual(false); setRespManualNome(''); setRespManualTel(''); setCultosSel(new Set());
     setResultados([]); setIrmaos([]);
@@ -1097,6 +1113,8 @@ export default function TotemKidsCheckin() {
 
       toast.success(`${r.crianca.nome} · check-in OK · código ${r.codigo_seguranca}`, { duration: 4000 });
       dispararConfete();
+      // Pager pra criança pequena (< 4 anos) ou com espectro/limitação (avisa antes do reset).
+      setPagerNomes(crianca && precisaPager(crianca) ? [crianca.nome.split(' ')[0]] : []);
 
       // Reset
       setCrianca(null);
@@ -1251,6 +1269,34 @@ export default function TotemKidsCheckin() {
               <DialogDescription>Aponte a câmera pro QR do pré-check-in do responsável.</DialogDescription>
             </DialogHeader>
             <QrScanner onScan={onScanQR} onError={(e) => toast.error(e || 'Erro ao abrir a câmera')} />
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {/* Pager no balcão (sugestão da equipe · 2026-07-22): criança < 4 anos ou
+          com espectro/limitação física → a equipe entrega um pager ao
+          responsável. Aparece logo após o check-in (individual ou família). */}
+      {pagerNomes.length > 0 && (
+        <Dialog open onOpenChange={(o) => { if (!o) setPagerNomes([]); }}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-amber-600">
+                <BellRing className="h-6 w-6" /> Pegue o pager no balcão
+              </DialogTitle>
+              <DialogDescription>
+                {pagerNomes.length === 1
+                  ? <>Entregue um <b>pager</b> ao responsável de <b>{pagerNomes[0]}</b> — criança pequena (até 3 anos) ou que precisa de atenção especial.</>
+                  : <>Entregue um <b>pager</b> ao responsável destas crianças (pequenas ou com atenção especial):</>}
+              </DialogDescription>
+            </DialogHeader>
+            {pagerNomes.length > 1 && (
+              <ul className="list-disc pl-6 text-sm font-semibold space-y-0.5">
+                {pagerNomes.map((n, i) => <li key={i}>{n}</li>)}
+              </ul>
+            )}
+            <Button className="w-full bg-amber-600 hover:bg-amber-700 text-white h-12 text-base" onClick={() => setPagerNomes([])}>
+              Ok, peguei o pager
+            </Button>
           </DialogContent>
         </Dialog>
       )}
@@ -2114,8 +2160,26 @@ function ModalDetalhesCrianca({ crianca, atualizarCrianca, onClose, onAdicionarI
     } catch (e: unknown) { toast.error((e as { message?: string })?.message || 'Erro ao remover'); }
   }
 
+  // Clicar fora com a ficha editada pergunta antes de descartar (Marcos 2026-07-22).
+  // Só na fase de edição (a tela de senha não tem o que perder).
+  const respsMudou = JSON.stringify(resps.map(r => ({ m: r.membro_id, n: r.nome.trim(), t: String(r.telefone).trim(), p: r.parentesco })))
+    !== JSON.stringify(crianca.responsaveis.map(r => ({ m: r.membro_id, n: (r.membro?.nome || '').trim(), t: String(r.membro?.telefone || '').trim(), p: r.parentesco || 'outro' })));
+  const temAlteracoes = fase === 'edit' && (
+    form.nome !== (crianca.nome || '')
+    || form.data_nascimento !== (crianca.data_nascimento || '')
+    || form.observacoes_medicas !== (crianca.observacoes_medicas || '')
+    || form.visitante !== !!crianca.visitante
+    || (form.visitante && form.visitante_relacao !== (crianca.visitante_relacao || 'amigo'))
+    || form.tem_alergia !== !!crianca.tem_alergia || form.alergia_qual !== (crianca.alergia_qual || '')
+    || form.tem_espectro !== !!crianca.tem_espectro || form.espectro_qual !== (crianca.espectro_qual || '')
+    || form.tem_limitacao_fisica !== !!crianca.tem_limitacao_fisica || form.limitacao_fisica_qual !== (crianca.limitacao_fisica_qual || '')
+    || consentTocado
+    || respsMudou
+  );
+  const { tentarFechar } = useConfirmarSaida(temAlteracoes, onClose);
+
   return (
-    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+    <Dialog open onOpenChange={(o) => { if (!o) tentarFechar(); }}>
       <DialogContent className="max-w-lg max-h-[92vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{fase === 'edit' ? `Editar ficha · ${crianca.nome.split(' ')[0]}` : 'Editar ficha da criança'}</DialogTitle>
@@ -2888,7 +2952,9 @@ function ModalNovaCrianca(props: {
     <div className="flex items-center justify-between rounded-md border border-border px-3 py-2">
       <span className="text-sm">{label}</span>
       <div className="inline-flex rounded-md border border-border overflow-hidden text-xs">
-        <button type="button" onClick={() => set(false)} className={`px-3 py-1 ${!on ? 'bg-muted font-medium' : ''}`}>Não</button>
+        {/* "Não" também fica ROSA quando selecionado (Marcos 2026-07-22): antes
+            ficava só cinza-claro e a equipe não percebia que já estava marcado. */}
+        <button type="button" onClick={() => set(false)} className={`px-3 py-1 ${!on ? 'bg-pink-600 text-white font-medium' : ''}`}>Não</button>
         <button type="button" onClick={() => set(true)} className={`px-3 py-1 ${on ? 'bg-pink-600 text-white font-medium' : ''}`}>Sim</button>
       </div>
     </div>
@@ -3140,6 +3206,9 @@ function ModalCadastrarResponsavel(props: {
     }
   }, [props.open]);
 
+  // Clicar fora com algo preenchido pergunta antes de descartar (Marcos 2026-07-22).
+  const { tentarFechar } = useConfirmarSaida(!!(nome.trim() || telefone.trim() || cpf.trim()), props.onClose);
+
   async function salvar() {
     if (!nome.trim()) return toast.error('Nome obrigatório');
     if (!telefone.trim()) return toast.error('Telefone obrigatório');
@@ -3164,7 +3233,7 @@ function ModalCadastrarResponsavel(props: {
   }
 
   return (
-    <Dialog open={props.open} onOpenChange={(o) => !o && props.onClose()}>
+    <Dialog open={props.open} onOpenChange={(o) => { if (!o) tentarFechar(); }}>
       <DialogContent className="max-w-md max-h-[95vh] flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
@@ -3176,12 +3245,25 @@ function ModalCadastrarResponsavel(props: {
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3 flex-1 overflow-y-auto min-h-0">
-          <Input placeholder="Nome do responsável *" value={nome} onChange={e => setNome(e.target.value)} autoFocus />
-          <div className="grid grid-cols-2 gap-2">
-            <Input placeholder="Telefone *" value={telefone} onChange={e => setTelefone(e.target.value)} />
-            <Input placeholder="CPF do responsável *" value={cpf} onChange={e => setCpf(e.target.value)} />
+          {/* Campos com TÍTULO acima (Marcos 2026-07-22): o placeholder some quando
+              a pessoa começa a digitar; o label fixo mostra o que é cada campo. */}
+          <div>
+            <label className="text-xs font-medium text-muted-foreground block mb-1">Nome do responsável <span className="text-pink-600">*</span></label>
+            <Input placeholder="Nome completo" value={nome} onChange={e => setNome(e.target.value)} autoFocus />
           </div>
-          <Select value={parentesco} onValueChange={setParentesco}>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">Telefone <span className="text-pink-600">*</span></label>
+              <Input placeholder="(21) 90000-0000" value={telefone} onChange={e => setTelefone(e.target.value)} />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">CPF do responsável <span className="text-pink-600">*</span></label>
+              <Input placeholder="000.000.000-00" value={cpf} onChange={e => setCpf(e.target.value)} />
+            </div>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-muted-foreground block mb-1">Parentesco</label>
+            <Select value={parentesco} onValueChange={setParentesco}>
             <SelectTrigger><SelectValue placeholder="Parentesco" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="mae">Mãe</SelectItem>
@@ -3194,7 +3276,8 @@ function ModalCadastrarResponsavel(props: {
               <SelectItem value="tutor">Tutor</SelectItem>
               <SelectItem value="outro">Outro</SelectItem>
             </SelectContent>
-          </Select>
+            </Select>
+          </div>
           <DispensaCpfInline dispensado={dispensaCpf} onDispensar={() => setDispensaCpf(true)} onCancelar={() => setDispensaCpf(false)} />
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="outline" onClick={props.onClose} disabled={salvando}>
