@@ -944,12 +944,15 @@ router.post('/batismos', authorizeBatismo, async (req, res) => {
   // com backoff se o TIER_250 estourar). No-op gracioso até o template
   // `WHATSAPP_TEMPLATE_BATISMO_CONF` existir/ser aprovado na Meta. Só no totem.
   const telConf = telefone || inscricao.telefone;
-  if (origem === 'totem' && telConf && process.env.WHATSAPP_TEMPLATE_BATISMO_CONF) {
+  if (origem === 'totem' && telConf) {
     try {
       const { enfileirar } = require('../services/whatsappFila');
       enfileirar({
         telefone: telConf,
-        template: process.env.WHATSAPP_TEMPLATE_BATISMO_CONF,
+        // Nome do template FIXO (padrão de grupos · gruposWhatsapp.js) · env só
+        // override. A equipe cria o template na Meta com este nome e NÃO precisa
+        // mexer no Vercel. Se ainda não existir na Meta, a fila registra o erro.
+        template: process.env.WHATSAPP_TEMPLATE_BATISMO_CONF || 'cbrio_batismo_confirmado',
         params: [
           String(nome).split(' ')[0] || 'Olá',
           dataBatismo ? dataBatismo.split('-').reverse().join('/') : 'a confirmar',
