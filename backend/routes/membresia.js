@@ -1245,22 +1245,79 @@ router.get('/geocode-cep', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao geocodificar' }); }
 });
 
-// POST /api/membresia/totem/grupos/:id/entrar — qualquer staff autenticado (via totem)
+// POST /api/membresia/totem/grupos/:id/entrar — pedido de entrada via totem.
+// NÃO insere direto em mem_grupo_membros: cria mem_grupo_pedidos e o líder
+// aprova na caixa de entrada (lei do módulo Grupos — pedido = a própria pessoa
+// pediu → líder aprova). Aceita membro real OU cadastro ainda pendente.
 router.post('/totem/grupos/:id/entrar', async (req, res) => {
   try {
     const grupoId = req.params.id;
-    const { membro_id } = req.body;
-    if (!membro_id) return res.status(400).json({ error: 'membro_id obrigatorio' });
-    const hoje = new Date().toISOString().slice(0, 10);
-    await supabase.from('mem_grupo_membros')
-      .update({ saiu_em: hoje, motivo_saida: 'Transferido via totem' })
-      .eq('membro_id', membro_id).is('saiu_em', null);
-    const { data, error } = await supabase.from('mem_grupo_membros')
-      .insert({ grupo_id: grupoId, membro_id, entrou_em: hoje })
-      .select().single();
+    const { membro_id, cadastro_pendente_id, nome, telefone, email } = req.body || {};
+    if (!membro_id && !cadastro_pendente_id) {
+      return res.status(400).json({ error: 'membro_id ou cadastro_pendente_id obrigatório' });
+    }
+
+    // Idempotente: pedido pendente do mesmo solicitante pro mesmo grupo não duplica.
+    let dedupQ = supabase.from('mem_grupo_pedidos')
+      .select('id').eq('grupo_id', grupoId).eq('status', 'pendente').limit(1);
+    dedupQ = membro_id
+      ? dedupQ.eq('membro_id', membro_id)
+      : dedupQ.eq('cadastro_pendente_id', cadastro_pendente_id);
+    const { data: existente } = await dedupQ.maybeSingle();
+    if (existente) return res.json({ ok: true, pedido_id: existente.id, ja_existia: true });
+
+    // Snapshot de contato (nome é NOT NULL na tabela)
+    let pessoa = {
+      nome: nome ? String(nome).trim() : null,
+      telefone: telefone || null,
+      email: email ? String(email).trim().toLowerCase() : null,
+    };
+    if (membro_id && !pessoa.nome) {
+      const { data: m } = await supabase.from('mem_membros')
+        .select('nome, telefone, email').eq('id', membro_id).maybeSingle();
+      if (m) pessoa = { nome: m.nome, telefone: m.telefone, email: m.email };
+    }
+    if (!pessoa.nome && cadastro_pendente_id) {
+      const { data: c } = await supabase.from('mem_cadastros_pendentes')
+        .select('nome, telefone, email').eq('id', cadastro_pendente_id).maybeSingle();
+      if (c) pessoa = { nome: c.nome, telefone: c.telefone, email: c.email };
+    }
+    if (!pessoa.nome) return res.status(400).json({ error: 'Não foi possível identificar o solicitante' });
+
+    const { data: pedido, error } = await supabase.from('mem_grupo_pedidos')
+      .insert({
+        grupo_id: grupoId,
+        membro_id: membro_id || null,
+        cadastro_pendente_id: membro_id ? null : (cadastro_pendente_id || null),
+        nome: pessoa.nome,
+        telefone: pessoa.telefone,
+        email: pessoa.email,
+        // CHECK de origem só aceita cadastro_interno/formulario_publico/manual —
+        // a proveniência real fica na observação (sem migration).
+        origem: 'manual',
+        observacao: 'Pedido feito pelo totem do lounge',
+        status: 'pendente',
+      })
+      .select('id').single();
     if (error) throw error;
-    res.status(201).json(data);
-  } catch (e) { res.status(500).json({ error: 'Erro ao entrar no grupo' }); }
+
+    const { data: grupo } = await supabase.from('mem_grupos')
+      .select('nome').eq('id', grupoId).maybeSingle();
+    notificar({
+      modulo: 'grupos',
+      tipo: 'pedido_grupo',
+      titulo: `Novo pedido para ${grupo?.nome || 'grupo'}`,
+      mensagem: `${pessoa.nome} pediu para entrar no grupo pelo totem.`,
+      link: '/grupos?tab=entrada',
+      severidade: 'aviso',
+      chaveDedup: `pedido_grupo_${pedido.id}`,
+    }).catch(() => {});
+
+    res.status(201).json({ ok: true, pedido_id: pedido.id, grupo_nome: grupo?.nome || null });
+  } catch (e) {
+    console.error('[TOTEM] pedido grupo error:', e.message);
+    res.status(500).json({ error: 'Erro ao registrar pedido' });
+  }
 });
 
 // PUT /api/membresia/totem/membros/:id — self-update pelo totem (campos seguros)
@@ -1561,15 +1618,23 @@ router.post('/totem/apresentacao-bebe', async (req, res) => {
     const proxima = _proximoSegundoDomingo();
     const proximaStr = _fmtDate(proxima);
 
-    // Tenta vincular ao culto de domingo de manha (primeiro do dia)
+    // Culto da cerimônia: o totem manda o culto_id ESCOLHIDO pela família
+    // (validado contra os cultos do dia); sem escolha, cai no primeiro por
+    // horário (fallback legado).
     let culto_id = null;
-    const { data: cultos } = await supabase
+    const { data: cultosDia } = await supabase
       .from('cultos')
-      .select('id')
-      .eq('data', proximaStr)
-      .order('id')
-      .limit(1);
-    if (cultos && cultos[0]) culto_id = cultos[0].id;
+      .select('id, service_type:vol_service_types(recurrence_time)')
+      .eq('data', proximaStr);
+    const idsDia = (cultosDia || []).map((c) => c.id);
+    const cultoEscolhido = req.body?.culto_id;
+    if (cultoEscolhido && idsDia.includes(cultoEscolhido)) {
+      culto_id = cultoEscolhido;
+    } else if (cultosDia && cultosDia.length) {
+      const ordenados = [...cultosDia].sort((a, b) =>
+        String(a.service_type?.recurrence_time || '99:99').localeCompare(String(b.service_type?.recurrence_time || '99:99')));
+      culto_id = ordenados[0].id;
+    }
 
     const { data, error } = await supabase
       .from('apresentacao_bebes')

@@ -1525,6 +1525,8 @@ export const totemKids = {
     removeResponsavel: (responsavelId) => del(`/totem-kids/responsaveis/${responsavelId}`),
     inativar: (id, body) => patch(`/totem-kids/criancas/${id}/inativar`, body),
     tornarFrequentador: (id) => post(`/totem-kids/criancas/${id}/tornar-frequentador`, {}),
+    // Limite de 2 etiquetas de aniversário por semana (Milena 2026-07-22).
+    aniversarioImpressoes: (id) => get(`/totem-kids/criancas/${id}/aniversario-impressoes`),
     jornada: (id) => get(`/totem-kids/criancas/${id}/jornada`),
     analiseFrequencia: (id) => get(`/totem-kids/criancas/${id}/analise-frequencia`),
     // Atendimentos (histórico de contatos da equipe Kids com a criança)
@@ -1938,7 +1940,10 @@ export const membresia = {
     sairMembro: (participacaoId, data) => patch(`/membresia/grupo-membros/${participacaoId}/sair`, data),
   },
   totem: {
-    entrarGrupo: (grupoId, membroId) => post(`/membresia/totem/grupos/${grupoId}/entrar`, { membro_id: membroId }),
+    // Cria um PEDIDO de entrada (mem_grupo_pedidos · líder aprova) — aceita
+    // { membro_id } ou { cadastro_pendente_id } + snapshot nome/telefone/email.
+    pedirGrupo: (grupoId, data) => post(`/membresia/totem/grupos/${grupoId}/entrar`, data),
+    batismoHorarios: () => get('/public/batismo/horarios'),
     geocodeCep: (cep) => get(`/membresia/geocode-cep?cep=${encodeURIComponent(cep)}`),
     updateMembro: (id, data) => put(`/membresia/totem/membros/${id}`, data),
     uploadFoto: (id, formData) => requestFile(`/membresia/totem/membros/${id}/foto`, formData),

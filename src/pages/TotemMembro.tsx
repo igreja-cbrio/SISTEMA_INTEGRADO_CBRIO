@@ -42,11 +42,38 @@ interface MemberData {
   email?: string;
   telefone?: string;
   pending?: boolean;
+  guest?: boolean;
   raw?: any;
 }
 
 const PIN_KEY = 'cbrio-totem-pin';
 const THEME_KEY = 'cbrio-totem-theme';
+// Flags one-shot gravadas pelo /cadastro-membresia?from=totem (consumidas no mount):
+// RESUME = token do QR recém-criado → reabre a sessão da própria pessoa;
+// UNLOCK = só pula a tela de PIN do operador e cai na tela inicial.
+const RESUME_KEY = 'cbrio-totem-resume';
+const UNLOCK_KEY = 'cbrio-totem-unlocked';
+
+// Inatividade: menu/saudação/CPF 120s · dentro dos fluxos (formulários) 180s.
+// 20s antes de expirar aparece o aviso "Você ainda está aí?".
+const IDLE_MENU_MS = 120_000;
+const IDLE_FLOW_MS = 180_000;
+const IDLE_WARN_MS = 20_000;
+
+const GUEST_MEMBER: MemberData = { nome: 'Visitante', guest: true };
+
+// DV de CPF (mesma regra do cadastro público) — o batismo pelo totem exige CPF válido.
+function cpfDvOk(v: string | undefined | null): boolean {
+  const d = String(v || '').replace(/\D/g, '');
+  if (d.length !== 11 || /^(\d)\1{10}$/.test(d)) return false;
+  const calc = (base: string, fator: number) => {
+    let soma = 0;
+    for (let i = 0; i < base.length; i += 1) soma += parseInt(base[i], 10) * (fator - i);
+    const resto = (soma * 10) % 11;
+    return resto === 10 ? 0 : resto;
+  };
+  return calc(d.slice(0, 9), 10) === parseInt(d[9], 10) && calc(d.slice(0, 10), 11) === parseInt(d[10], 10);
+}
 
 // ── Root component ────────────────────────────────────────────────────────────
 
@@ -75,13 +102,36 @@ export default function TotemMembro() {
   const scanBuf = useRef('');
   const scanTimer = useRef<ReturnType<typeof setTimeout>>();
   const inactivityTimer = useRef<ReturnType<typeof setTimeout>>();
+  const warnTimer = useRef<ReturnType<typeof setTimeout>>();
+  const countdownTimer = useRef<ReturnType<typeof setInterval>>();
+
+  // Aviso de inatividade ("Você ainda está aí?")
+  const [idleWarning, setIdleWarning] = useState(false);
+  const [idleSeconds, setIdleSeconds] = useState(IDLE_WARN_MS / 1000);
+  const stateRef = useRef(state);
+  useEffect(() => { stateRef.current = state; }, [state]);
 
   // ── Init ────────────────────────────────────────────────────────────────────
 
   useEffect(() => {
     const p = localStorage.getItem(PIN_KEY) || '';
     setStoredPin(p);
-    setState(p ? 'locked' : 'setup');
+    let resume: string | null = null;
+    let unlocked = false;
+    try {
+      resume = sessionStorage.getItem(RESUME_KEY);
+      unlocked = sessionStorage.getItem(UNLOCK_KEY) === '1';
+      sessionStorage.removeItem(RESUME_KEY);
+      sessionStorage.removeItem(UNLOCK_KEY);
+    } catch { /* sem sessionStorage — segue o fluxo normal */ }
+    if (!p) { setState('setup'); return; }
+    if (resume) {
+      // Volta do cadastro feito no próprio totem: reabre a sessão da pessoa
+      // sem pedir o PIN do operador (o token é one-shot e acabou de ser criado).
+      handleQrTokenRef.current?.(resume);
+      return;
+    }
+    setState(unlocked ? 'idle' : 'locked');
   }, []);
 
   useEffect(() => {
@@ -125,6 +175,11 @@ export default function TotemMembro() {
     }
   }, [applyLookupResult]);
 
+  // Ref estável pro efeito de mount consumir o resume-token sem problema de
+  // ordem de declaração (handleQrToken é definido depois do efeito de init).
+  const handleQrTokenRef = useRef(handleQrToken);
+  useEffect(() => { handleQrTokenRef.current = handleQrToken; }, [handleQrToken]);
+
   const handleCpfLookup = useCallback(async (cpf: string) => {
     const digits = cpf.replace(/\D/g, '');
     if (digits.length !== 11) return { ok: false, error: 'CPF incompleto' };
@@ -164,20 +219,63 @@ export default function TotemMembro() {
   }, [state, handleQrToken]);
 
   // ── Inactivity ──────────────────────────────────────────────────────────────
+  // Dois estágios: aviso 20s antes (com contagem) e encerramento no limite.
+  // O reset acontece em QUALQUER interação (listener global cobre toque,
+  // teclado e rolagem — antes só clique contava e rolar a lista expirava).
 
-  const resetInactivity = useCallback(() => {
+  const limparTimersIdle = useCallback(() => {
     clearTimeout(inactivityTimer.current);
-    inactivityTimer.current = setTimeout(() => {
-      setState('idle');
-      setMember(null);
-      setSelectedOption(null);
-    }, 60_000);
+    clearTimeout(warnTimer.current);
+    clearInterval(countdownTimer.current);
   }, []);
 
+  const encerrarSessao = useCallback(() => {
+    limparTimersIdle();
+    setIdleWarning(false);
+    setState('idle');
+    setMember(null);
+    setSelectedOption(null);
+  }, [limparTimersIdle]);
+
+  const resetInactivity = useCallback(() => {
+    limparTimersIdle();
+    setIdleWarning(false);
+    const limite = stateRef.current === 'option' ? IDLE_FLOW_MS : IDLE_MENU_MS;
+    warnTimer.current = setTimeout(() => {
+      setIdleSeconds(IDLE_WARN_MS / 1000);
+      setIdleWarning(true);
+      countdownTimer.current = setInterval(
+        () => setIdleSeconds((s) => Math.max(0, s - 1)),
+        1000,
+      );
+    }, limite - IDLE_WARN_MS);
+    inactivityTimer.current = setTimeout(encerrarSessao, limite);
+  }, [limparTimersIdle, encerrarSessao]);
+
+  const idleAtivo = state === 'greeting' || state === 'option' || state === 'done'
+    || state === 'cpf_input' || showNovoCadastro;
+
   useEffect(() => {
-    if (state === 'greeting' || state === 'option' || state === 'done') resetInactivity();
-    return () => clearTimeout(inactivityTimer.current);
-  }, [state, resetInactivity]);
+    if (idleAtivo) {
+      resetInactivity();
+    } else {
+      limparTimersIdle();
+      setIdleWarning(false);
+    }
+    return limparTimersIdle;
+  }, [idleAtivo, state, resetInactivity, limparTimersIdle]);
+
+  useEffect(() => {
+    if (!idleAtivo) return undefined;
+    const onAtividade = () => resetInactivity();
+    const evs: (keyof DocumentEventMap)[] = ['pointerdown', 'keydown', 'wheel', 'touchmove'];
+    evs.forEach((e) => document.addEventListener(e, onAtividade, { passive: true }));
+    document.addEventListener('scroll', onAtividade, { passive: true, capture: true });
+    return () => {
+      evs.forEach((e) => document.removeEventListener(e, onAtividade));
+      document.removeEventListener('scroll', onAtividade, true);
+    };
+  }, [idleAtivo, resetInactivity]);
 
   // ── Fullscreen ──────────────────────────────────────────────────────────────
 
@@ -223,6 +321,58 @@ export default function TotemMembro() {
     setState('option');
     resetInactivity();
   };
+
+  const entrarSemCadastro = () => {
+    setMember({ ...GUEST_MEMBER });
+    setState('greeting');
+  };
+
+  // Sai da sessão atual e abre a tela de novo cadastro (usado pelo convidado
+  // quando uma ação exige identificação — ex.: pedir entrada em grupo).
+  const irParaNovoCadastro = () => {
+    limparTimersIdle();
+    setIdleWarning(false);
+    setState('idle');
+    setMember(null);
+    setSelectedOption(null);
+    setShowNovoCadastro(true);
+  };
+
+  // Overlay "Você ainda está aí?" — aparece 20s antes do encerramento em
+  // qualquer tela ativa; qualquer toque continua a sessão.
+  const idleOverlay = idleWarning ? (
+    <div
+      className="fixed inset-0 z-[100] bg-black/75 backdrop-blur-sm flex items-center justify-center p-6"
+      onClick={resetInactivity}
+    >
+      <div className="w-full max-w-md rounded-3xl bg-gray-900 border border-white/15 p-8 text-center space-y-5 text-white">
+        <Clock className="h-12 w-12 mx-auto text-[#00B39D]" />
+        <div>
+          <h2 className="text-2xl font-bold">Você ainda está aí?</h2>
+          <p className="text-white/60 mt-2 text-sm">
+            A sessão será encerrada em{' '}
+            <span className="font-mono font-bold text-white text-base">{idleSeconds}s</span>{' '}
+            por inatividade.
+          </p>
+        </div>
+        <div className="flex gap-3">
+          <Button
+            onClick={(e) => { e.stopPropagation(); encerrarSessao(); }}
+            variant="outline"
+            className="flex-1 border-white/20 text-white hover:bg-white/10 py-6 text-base rounded-2xl"
+          >
+            Encerrar
+          </Button>
+          <Button
+            onClick={(e) => { e.stopPropagation(); resetInactivity(); }}
+            className="flex-1 bg-[#00B39D] hover:bg-[#00B39D]/90 py-6 text-base rounded-2xl"
+          >
+            Continuar
+          </Button>
+        </div>
+      </div>
+    </div>
+  ) : null;
 
   // ══════════════════════════════════════════════════════════════════════════
   // RENDER
@@ -339,14 +489,19 @@ export default function TotemMembro() {
 
   // ── Option flow ───────────────────────────────────────────────────────────
   if (state === 'option' && selectedOption && member) return (
-    <OptionFlow
-      optionId={selectedOption}
-      member={member}
-      isDark={isDark}
-      onBack={() => { setState('greeting'); setSelectedOption(null); resetInactivity(); }}
-      onDone={() => { setState('greeting'); setSelectedOption(null); resetInactivity(); }}
-      onActivity={resetInactivity}
-    />
+    <>
+      <OptionFlow
+        optionId={selectedOption}
+        member={member}
+        isDark={isDark}
+        onBack={() => { setState('greeting'); setSelectedOption(null); resetInactivity(); }}
+        onDone={() => { setState('greeting'); setSelectedOption(null); resetInactivity(); }}
+        onEndSession={encerrarSessao}
+        onNovoCadastro={irParaNovoCadastro}
+        onActivity={resetInactivity}
+      />
+      {idleOverlay}
+    </>
   );
 
   // ── Done ──────────────────────────────────────────────────────────────────
@@ -362,6 +517,7 @@ export default function TotemMembro() {
           Concluir
         </Button>
       </div>
+      {idleOverlay}
     </div>
   );
 
@@ -383,7 +539,7 @@ export default function TotemMembro() {
             </div>
           )}
           <div>
-            <p className={`${greetMuted} text-sm`}>Que bom te ver!</p>
+            <p className={`${greetMuted} text-sm`}>{member.guest ? 'Fique à vontade!' : 'Que bom te ver!'}</p>
             <h2 className="text-2xl font-bold">{member.nome.split(' ')[0]}</h2>
           </div>
         </div>
@@ -402,7 +558,9 @@ export default function TotemMembro() {
         <div className="w-full max-w-2xl">
           <p className={`text-center ${greetMuted} text-base mb-6`}>O que você gostaria de fazer?</p>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            {MENU_OPTIONS.map(opt => {
+            {/* Meus Dados edita mem_membros — some pra convidado e pra cadastro
+                ainda pendente de aprovação (o PUT do totem não alcança pendentes) */}
+            {MENU_OPTIONS.filter(opt => !((member.guest || member.pending) && opt.id === 'membresia')).map(opt => {
               const Icon = opt.icon;
               return (
                 <button
@@ -419,7 +577,11 @@ export default function TotemMembro() {
               );
             })}
           </div>
-          <p className={`text-center ${isDark ? 'text-white/20' : 'text-gray-400'} text-xs mt-5`}>Toque em uma opção para continuar</p>
+          <p className={`text-center ${isDark ? 'text-white/20' : 'text-gray-400'} text-xs mt-5`}>
+            {member.guest
+              ? 'Explore à vontade — pediremos seus dados só se você se inscrever em algo'
+              : 'Toque em uma opção para continuar'}
+          </p>
         </div>
       </div>
 
@@ -438,15 +600,19 @@ export default function TotemMembro() {
           <LogOut className="h-3.5 w-3.5" /> Sair do totem
         </button>
       </div>
+      {idleOverlay}
     </div>
   );
 
   // ── CPF input ─────────────────────────────────────────────────────────────
   if (state === 'cpf_input') return (
-    <CpfInputScreen
-      onBack={() => setState('idle')}
-      onLookup={handleCpfLookup}
-    />
+    <>
+      <CpfInputScreen
+        onBack={() => setState('idle')}
+        onLookup={handleCpfLookup}
+      />
+      {idleOverlay}
+    </>
   );
 
   // ── Check-in de batismo (quiosque · equipe) ─────────────────────────────────
@@ -456,7 +622,10 @@ export default function TotemMembro() {
 
   // ── Idle (default) ────────────────────────────────────────────────────────
   if (showNovoCadastro) return (
-    <NovoCadastroScreen onBack={() => setShowNovoCadastro(false)} />
+    <>
+      <NovoCadastroScreen onBack={() => setShowNovoCadastro(false)} />
+      {idleOverlay}
+    </>
   );
 
   return (
@@ -475,16 +644,9 @@ export default function TotemMembro() {
       </div>
 
       <div className="flex-1 flex flex-col items-center justify-center gap-8 p-6">
-        <div className="relative">
-          <div className="absolute inset-0 rounded-3xl bg-[#00B39D]/10 animate-ping" style={{ animationDuration: '2s' }} />
-          <div className="relative h-36 w-36 rounded-3xl bg-[#00B39D]/10 border-2 border-[#00B39D]/30 flex items-center justify-center">
-            <QrCode className="h-20 w-20 text-[#00B39D]" />
-          </div>
-        </div>
-
-        <div className="text-center space-y-3">
-          <h1 className="text-5xl md:text-6xl font-bold tracking-tight">Bem-vindo!</h1>
-          <p className="text-xl text-white/60">Aproxime o QR Code da sua carteirinha</p>
+        <div className="text-center space-y-2">
+          <h1 className="text-4xl md:text-5xl font-bold tracking-tight">Bem-vindo à CBRio!</h1>
+          <p className="text-lg text-white/50">Como você quer começar?</p>
         </div>
 
         {scanError && (
@@ -493,23 +655,49 @@ export default function TotemMembro() {
           </div>
         )}
 
-        <div className="flex flex-col items-center gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 w-full max-w-4xl">
           <button
             onClick={() => setShowNovoCadastro(true)}
-            className="px-6 py-3 rounded-2xl border border-white/15 bg-white/5 hover:bg-white/10 transition-all text-sm text-white/60 hover:text-white/90"
+            className="flex flex-col items-center gap-3 p-7 rounded-3xl border border-[#00B39D]/40 bg-[#00B39D]/10 hover:bg-[#00B39D]/20 transition-all hover:scale-[1.02] active:scale-[0.98]"
           >
-            Novo na CBRio? Faça seu cadastro aqui
+            <div className="h-14 w-14 rounded-2xl bg-[#00B39D]/25 flex items-center justify-center">
+              <UserCheck className="h-7 w-7 text-[#00B39D]" />
+            </div>
+            <p className="font-bold text-lg leading-tight">Novo na CBRio</p>
+            <p className="text-white/50 text-sm leading-snug">Faça seu cadastro aqui</p>
           </button>
+
           <button
             onClick={() => setState('cpf_input')}
-            className="flex items-center gap-2 text-xs text-white/30 hover:text-white/60 transition-colors py-1 px-3"
+            className="flex flex-col items-center gap-3 p-7 rounded-3xl border border-[#3B82F6]/40 bg-[#3B82F6]/10 hover:bg-[#3B82F6]/20 transition-all hover:scale-[1.02] active:scale-[0.98]"
           >
-            <KeyRound className="h-3.5 w-3.5" />
-            Não tem a carteirinha? Entrar com CPF
+            <div className="h-14 w-14 rounded-2xl bg-[#3B82F6]/25 flex items-center justify-center">
+              <KeyRound className="h-7 w-7 text-[#3B82F6]" />
+            </div>
+            <p className="font-bold text-lg leading-tight">Sou membro, tenho cadastro</p>
+            <p className="text-white/50 text-sm leading-snug">Entre com seu CPF</p>
           </button>
+
+          <button
+            onClick={entrarSemCadastro}
+            className="flex flex-col items-center gap-3 p-7 rounded-3xl border border-white/15 bg-white/5 hover:bg-white/10 transition-all hover:scale-[1.02] active:scale-[0.98]"
+          >
+            <div className="h-14 w-14 rounded-2xl bg-white/10 flex items-center justify-center">
+              <Search className="h-7 w-7 text-white/70" />
+            </div>
+            <p className="font-bold text-lg leading-tight">Entrar sem cadastro</p>
+            <p className="text-white/50 text-sm leading-snug">Explorar grupos, batismo e Next</p>
+          </button>
+        </div>
+
+        <div className="flex flex-col items-center gap-2">
+          <p className="flex items-center gap-2 text-white/40 text-sm">
+            <QrCode className="h-4 w-4 text-[#00B39D]" />
+            Tem a carteirinha digital? Aproxime o QR Code a qualquer momento
+          </p>
           <button
             onClick={() => setState('checkin_batismo')}
-            className="flex items-center gap-2 text-xs text-[#6366F1]/70 hover:text-[#6366F1] transition-colors py-1 px-3 mt-1"
+            className="flex items-center gap-2 text-xs text-[#6366F1]/70 hover:text-[#6366F1] transition-colors py-1 px-3"
             title="Fluxo assistido pela equipe no dia do batismo"
           >
             <Droplets className="h-3.5 w-3.5" />
@@ -736,32 +924,71 @@ function NovoCadastroScreen({ onBack }: { onBack: () => void }) {
   );
 }
 
+// ── Ações pós-inscrição (compartilhado pelos fluxos) ─────────────────────────
+// "Continuar navegando" volta ao menu; "Encerrar sessão" volta à tela inicial.
+// Sem toque, encerra sozinho em 20s (quiosque público não pode segurar sessão).
+
+function SuccessActions({ onDone, onEndSession, accent = '#00B39D' }: {
+  onDone: () => void;
+  onEndSession: () => void;
+  accent?: string;
+}) {
+  const [restante, setRestante] = useState(20);
+  useEffect(() => {
+    const t = setInterval(() => setRestante((s) => s - 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+  useEffect(() => {
+    if (restante <= 0) onEndSession();
+  }, [restante, onEndSession]);
+  return (
+    <div className="w-full max-w-sm mx-auto space-y-3 pt-4">
+      <Button
+        onClick={onDone}
+        className="w-full py-6 text-base rounded-2xl text-white hover:opacity-90"
+        style={{ backgroundColor: accent }}
+      >
+        Continuar navegando
+      </Button>
+      <Button
+        onClick={onEndSession}
+        variant="outline"
+        className="w-full py-5 rounded-2xl border-white/20 text-white hover:bg-white/10"
+      >
+        Encerrar sessão <span className="text-white/40 ml-1">({restante}s)</span>
+      </Button>
+    </div>
+  );
+}
+
 // ── Option Flow router ────────────────────────────────────────────────────────
 
-function OptionFlow({ optionId, member, isDark, onBack, onDone, onActivity }: {
+function OptionFlow({ optionId, member, isDark, onBack, onDone, onEndSession, onNovoCadastro, onActivity }: {
   optionId: OptionId;
   member: MemberData;
   isDark: boolean;
   onBack: () => void;
   onDone: () => void;
+  onEndSession: () => void;
+  onNovoCadastro: () => void;
   onActivity: () => void;
 }) {
   const opt = MENU_OPTIONS.find(o => o.id === optionId)!;
 
   if (optionId === 'grupos') {
-    return <GruposFlow opt={opt} member={member} onBack={onBack} onDone={onDone} onActivity={onActivity} />;
+    return <GruposFlow opt={opt} member={member} onBack={onBack} onDone={onDone} onEndSession={onEndSession} onNovoCadastro={onNovoCadastro} onActivity={onActivity} />;
   }
   if (optionId === 'membresia') {
     return <MeusDadosFlow opt={opt} member={member} isDark={isDark} onBack={onBack} onDone={onDone} onActivity={onActivity} />;
   }
   if (optionId === 'batismo') {
-    return <BatismoFlow opt={opt} member={member} onBack={onBack} onDone={onDone} onActivity={onActivity} />;
+    return <BatismoFlow opt={opt} member={member} onBack={onBack} onDone={onDone} onEndSession={onEndSession} onActivity={onActivity} />;
   }
   if (optionId === 'next') {
-    return <NextFlow opt={opt} member={member} onBack={onBack} onDone={onDone} onActivity={onActivity} />;
+    return <NextFlow opt={opt} member={member} onBack={onBack} onDone={onDone} onEndSession={onEndSession} onActivity={onActivity} />;
   }
   if (optionId === 'apresentacao_bebe') {
-    return <ApresentacaoBebeFlow opt={opt} member={member} onBack={onBack} onDone={onDone} onActivity={onActivity} />;
+    return <ApresentacaoBebeFlow opt={opt} member={member} onBack={onBack} onDone={onDone} onEndSession={onEndSession} onActivity={onActivity} />;
   }
 
   // Demais opções — placeholder até implementação
@@ -1142,11 +1369,13 @@ function fmtDist(km: number) {
 
 const DIAS_MAP: Record<number, string> = { 0:'Dom', 1:'Seg', 2:'Ter', 3:'Qua', 4:'Qui', 5:'Sex', 6:'Sáb' };
 
-function GruposFlow({ opt, member, onBack, onDone, onActivity }: {
+function GruposFlow({ opt, member, onBack, onDone, onEndSession, onNovoCadastro, onActivity }: {
   opt: (typeof MENU_OPTIONS)[number];
   member: MemberData;
   onBack: () => void;
   onDone: () => void;
+  onEndSession: () => void;
+  onNovoCadastro: () => void;
   onActivity: () => void;
 }) {
   const [grupos, setGrupos] = useState<any[]>([]);
@@ -1156,6 +1385,7 @@ function GruposFlow({ opt, member, onBack, onDone, onActivity }: {
   const [showMap, setShowMap] = useState(false);
   const [selected, setSelected] = useState<any>(null);
   const [saving, setSaving] = useState(false);
+  const [pedidoEnviado, setPedidoEnviado] = useState(false);
   const [error, setError] = useState('');
 
   const grupoAtualId: string | undefined =
@@ -1204,18 +1434,40 @@ function GruposFlow({ opt, member, onBack, onDone, onActivity }: {
     if (!selected || !member.id) return;
     setSaving(true); setError('');
     try {
-      await membresia.totem.entrarGrupo(selected.id, member.id);
-      onDone();
+      await membresia.totem.pedirGrupo(selected.id, {
+        ...(member.pending ? { cadastro_pendente_id: member.id } : { membro_id: member.id }),
+        nome: member.nome,
+        telefone: member.telefone || null,
+        email: member.email || null,
+      });
+      setPedidoEnviado(true);
     } catch {
       setError('Não foi possível registrar. Tente novamente.');
-      setSaving(false);
     }
+    setSaving(false);
   };
+
+  // ── Pedido enviado ────────────────────────────────────────────────────────
+  if (pedidoEnviado && selected) {
+    return (
+      <div className="min-h-screen bg-gray-950 text-white flex flex-col items-center justify-center gap-6 p-8" onClick={onActivity}>
+        <CheckCircle2 className="h-20 w-20 text-[#00B39D]" />
+        <div className="text-center max-w-md">
+          <h2 className="text-3xl font-bold">Pedido enviado!</h2>
+          <p className="text-white/70 mt-3">
+            Você pediu para entrar no grupo <span className="text-[#00B39D] font-semibold">{selected.nome}</span>.
+          </p>
+          <p className="text-white/50 mt-2 text-sm">
+            O líder vai receber seu pedido e te chamar no WhatsApp para confirmar.
+          </p>
+        </div>
+        <SuccessActions onDone={onDone} onEndSession={onEndSession} />
+      </div>
+    );
+  }
 
   // ── Confirmation screen ──────────────────────────────────────────────────────
   if (selected) {
-    const isChanging = !!grupoAtualId && grupoAtualId !== selected.id;
-    const grupoAtual = grupos.find(g => g.id === grupoAtualId);
     return (
       <div className="min-h-screen bg-gray-950 text-white flex flex-col" onClick={onActivity}>
         <OptionHeader opt={opt} member={member} onBack={() => { setSelected(null); setError(''); }} />
@@ -1225,10 +1477,8 @@ function GruposFlow({ opt, member, onBack, onDone, onActivity }: {
               <div className="h-16 w-16 rounded-2xl bg-[#00B39D]/20 flex items-center justify-center mx-auto mb-4">
                 <Users className="h-8 w-8 text-[#00B39D]" />
               </div>
-              <h3 className="text-2xl font-bold">Confirmar inscrição</h3>
-              {isChanging && grupoAtual && (
-                <p className="text-white/50 text-sm mt-1">Você sairá de <span className="text-white/80">{grupoAtual.nome}</span></p>
-              )}
+              <h3 className="text-2xl font-bold">{member.guest ? 'Quero participar' : 'Pedir para entrar'}</h3>
+              <p className="text-white/50 text-sm mt-1">O líder do grupo aprova o pedido e te chama no WhatsApp.</p>
             </div>
             <div className="rounded-2xl border border-white/20 bg-white/5 p-5 space-y-2">
               <p className="text-lg font-semibold">{selected.nome}</p>
@@ -1244,12 +1494,26 @@ function GruposFlow({ opt, member, onBack, onDone, onActivity }: {
               </div>
             </div>
             {error && <p className="text-red-400 text-sm text-center">{error}</p>}
-            <div className="flex gap-3">
-              <Button variant="outline" onClick={() => { setSelected(null); setError(''); }} className="flex-1 border-white/20 text-white hover:bg-white/10" disabled={saving}>Cancelar</Button>
-              <Button onClick={handleConfirm} disabled={saving} className="flex-1 bg-[#00B39D] hover:bg-[#00B39D]/90">
-                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Confirmar'}
-              </Button>
-            </div>
+            {member.guest ? (
+              <div className="space-y-3">
+                <p className="text-white/60 text-sm text-center">
+                  Para o líder saber quem você é, faça seu cadastro rápido — leva menos de 2 minutos.
+                </p>
+                <Button onClick={onNovoCadastro} className="w-full bg-[#00B39D] hover:bg-[#00B39D]/90 py-6 text-base rounded-2xl">
+                  Fazer meu cadastro
+                </Button>
+                <Button variant="outline" onClick={() => { setSelected(null); setError(''); }} className="w-full border-white/20 text-white hover:bg-white/10 rounded-2xl">
+                  Voltar aos grupos
+                </Button>
+              </div>
+            ) : (
+              <div className="flex gap-3">
+                <Button variant="outline" onClick={() => { setSelected(null); setError(''); }} className="flex-1 border-white/20 text-white hover:bg-white/10" disabled={saving}>Cancelar</Button>
+                <Button onClick={handleConfirm} disabled={saving} className="flex-1 bg-[#00B39D] hover:bg-[#00B39D]/90">
+                  {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Enviar pedido'}
+                </Button>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -1366,24 +1630,44 @@ function GruposFlow({ opt, member, onBack, onDone, onActivity }: {
 
 // ── Batismo Flow ──────────────────────────────────────────────────────────────
 
-function BatismoFlow({ opt, member, onBack, onDone, onActivity }: {
+function BatismoFlow({ opt, member, onBack, onDone, onEndSession, onActivity }: {
   opt: (typeof MENU_OPTIONS)[number];
   member: MemberData;
   onBack: () => void;
   onDone: () => void;
+  onEndSession: () => void;
   onActivity: () => void;
 }) {
-  const [step, setStep] = useState<'info' | 'form' | 'success'>('info');
+  const guest = !!member.guest;
+  const memberSrc = member.raw?.membro || member.raw?.cadastro || {};
+  const [step, setStep] = useState<'info' | 'horario' | 'dados' | 'success'>('info');
+  // Próximo batismo + horários com vaga (mesma fonte do formulário público)
+  const [agenda, setAgenda] = useState<{ data_batismo: string | null; horarios: any[]; grupo_url: string | null }>({
+    data_batismo: null, horarios: [], grupo_url: null,
+  });
+  const [agendaLoading, setAgendaLoading] = useState(true);
+  const [horarioSel, setHorarioSel] = useState<any>(null);
   const [form, setForm] = useState({
-    nome: (member.nome || '').split(' ')[0] || '',
-    sobrenome: (member.nome || '').split(' ').slice(1).join(' ') || '',
+    nome: guest ? '' : ((member.nome || '').split(' ')[0] || ''),
+    sobrenome: guest ? '' : ((member.nome || '').split(' ').slice(1).join(' ') || ''),
     cpf: member.cpf || '',
-    data_nascimento: '',
-    telefone: '',
+    data_nascimento: memberSrc.data_nascimento || '',
+    telefone: member.telefone || '',
     email: member.email || '',
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    membresia.totem.batismoHorarios()
+      .then((r: any) => setAgenda({
+        data_batismo: r?.data_batismo || null,
+        horarios: r?.horarios || [],
+        grupo_url: r?.grupo_url || null,
+      }))
+      .catch(() => {})
+      .finally(() => setAgendaLoading(false));
+  }, []);
 
   const maskCpf = (v: string) => {
     const d = v.replace(/\D/g, '').slice(0, 11);
@@ -1396,14 +1680,27 @@ function BatismoFlow({ opt, member, onBack, onDone, onActivity }: {
   const setField = (k: string) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm(f => ({ ...f, [k]: k === 'cpf' ? maskCpf(e.target.value) : e.target.value }));
 
+  // Sessão com dados completos pula a tela de dados (pedido do redesenho):
+  // o totem exige CPF válido (mesma lei do formulário público de batismo)
+  // e um telefone de contato.
+  const dadosCompletos = !guest
+    && !!form.nome && !!form.sobrenome
+    && cpfDvOk(form.cpf)
+    && form.telefone.replace(/\D/g, '').length >= 10;
+
   const handleSubmit = async () => {
-    if (!form.nome || !form.sobrenome) { setError('Nome e sobrenome são obrigatórios'); return; }
+    if (!form.nome || !form.sobrenome) { setError('Nome e sobrenome são obrigatórios'); setStep('dados'); return; }
+    if (!cpfDvOk(form.cpf)) { setError('CPF é obrigatório e precisa ser válido'); setStep('dados'); return; }
+    if (form.telefone.replace(/\D/g, '').length < 10) { setError('Informe um telefone com DDD'); setStep('dados'); return; }
     setSaving(true); setError('');
     onActivity();
     try {
-      await kpisApi.batismos.create({ ...form, origem: 'totem' });
+      await kpisApi.batismos.create({
+        ...form,
+        origem: 'totem',
+        ...(horarioSel ? { horario_culto: horarioSel.horario } : {}),
+      });
       setStep('success');
-      setTimeout(onDone, 4000);
     } catch (e: any) {
       setError(e.message || 'Não foi possível registrar. Tente novamente.');
     }
@@ -1414,12 +1711,29 @@ function BatismoFlow({ opt, member, onBack, onDone, onActivity }: {
 
   if (step === 'success') {
     return (
-      <div className="min-h-screen bg-gray-950 text-white flex flex-col items-center justify-center gap-6 p-8">
+      <div className="min-h-screen bg-gray-950 text-white flex flex-col items-center justify-center gap-6 p-8" onClick={onActivity}>
         <CheckCircle2 className="h-20 w-20 text-[#00B39D]" />
-        <div className="text-center">
-          <h2 className="text-3xl font-bold">Inscrição realizada!</h2>
-          <p className="text-white/60 mt-2">Nossa equipe entrará em contato, {form.nome}!</p>
+        <div className="text-center max-w-md">
+          <h2 className="text-3xl font-bold">Inscrição confirmada!</h2>
+          {agenda.data_batismo ? (
+            <p className="text-white/70 mt-3 text-lg">
+              Seu batismo será em <span className="text-[#6366F1] font-semibold">{fmtDateBR(agenda.data_batismo)}</span>
+              {horarioSel ? <> · culto das <span className="text-[#6366F1] font-semibold">{horarioSel.label || horarioSel.horario}</span></> : null}
+            </p>
+          ) : (
+            <p className="text-white/60 mt-2">Nossa equipe entrará em contato, {form.nome}!</p>
+          )}
+          <p className="text-white/50 mt-2 text-sm">Nossa equipe vai te chamar no WhatsApp com as orientações.</p>
         </div>
+        {agenda.grupo_url && (
+          <div className="text-center">
+            <p className="text-white/60 text-sm mb-2">Entre agora no grupo de WhatsApp do batismo:</p>
+            <div className="inline-block bg-white p-2.5 rounded-xl">
+              <QRCodeSVG value={agenda.grupo_url} size={110} level="M" includeMargin={false} />
+            </div>
+          </div>
+        )}
+        <SuccessActions onDone={onDone} onEndSession={onEndSession} accent="#6366F1" />
       </div>
     );
   }
@@ -1439,9 +1753,15 @@ function BatismoFlow({ opt, member, onBack, onDone, onActivity }: {
                 O batismo é um passo importante na jornada de fé. Se você aceitou Jesus e quer dar esse próximo passo, registre seu interesse aqui!
               </p>
             </div>
+            {agenda.data_batismo && (
+              <div className="rounded-2xl border border-[#6366F1]/30 bg-[#6366F1]/10 p-4">
+                <p className="text-white/60 text-xs uppercase tracking-wider">Próximo batismo</p>
+                <p className="text-xl font-bold text-[#6366F1] mt-1">{fmtDateBR(agenda.data_batismo)}</p>
+              </div>
+            )}
             <div className="space-y-3">
               <Button
-                onClick={() => setStep('form')}
+                onClick={() => setStep('horario')}
                 className="w-full bg-[#6366F1] hover:bg-[#6366F1]/90 text-white py-3 text-base rounded-2xl gap-2"
               >
                 Quero me batizar <ChevronRight className="h-5 w-5" />
@@ -1456,14 +1776,89 @@ function BatismoFlow({ opt, member, onBack, onDone, onActivity }: {
     );
   }
 
+  if (step === 'horario') {
+    return (
+      <div className="min-h-screen bg-gray-950 text-white flex flex-col" onClick={onActivity}>
+        <OptionHeader opt={opt} member={member} onBack={() => setStep('info')} />
+        <div className="flex-1 flex items-center justify-center p-6">
+          <div className="w-full max-w-md space-y-5">
+            <div className="text-center">
+              <h2 className="text-xl font-bold">Escolha o horário</h2>
+              {agenda.data_batismo && (
+                <p className="text-white/50 text-sm mt-1">
+                  Próximo batismo: <span className="text-[#6366F1] font-semibold">{fmtDateBR(agenda.data_batismo)}</span>
+                </p>
+              )}
+            </div>
+            {agendaLoading ? (
+              <div className="flex justify-center py-10"><Loader2 className="h-8 w-8 animate-spin text-[#6366F1]" /></div>
+            ) : agenda.horarios.length === 0 ? (
+              <div className="text-center space-y-4 py-6">
+                <p className="text-white/60">As vagas deste batismo se esgotaram.</p>
+                <p className="text-white/40 text-sm">Procure nossa equipe no lounge para entrar na lista do próximo.</p>
+                <Button onClick={onBack} variant="outline" className="border-white/20 text-white hover:bg-white/10">
+                  Voltar ao menu
+                </Button>
+              </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-1 gap-3">
+                  {agenda.horarios.map((h: any) => {
+                    const sel = horarioSel?.horario === h.horario;
+                    return (
+                      <button
+                        key={h.horario}
+                        onClick={() => setHorarioSel(h)}
+                        className={`flex items-center justify-between px-5 py-4 rounded-2xl border text-left transition-all ${
+                          sel ? 'border-[#6366F1] bg-[#6366F1]/15' : 'border-white/15 bg-white/5 hover:bg-white/10'
+                        }`}
+                      >
+                        <span className="text-lg font-semibold">{h.label || h.horario}</span>
+                        {h.vagas_restantes != null && (
+                          <span className={`text-xs ${sel ? 'text-[#6366F1]' : 'text-white/40'}`}>
+                            {h.vagas_restantes} vaga{h.vagas_restantes === 1 ? '' : 's'}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+                {error && <p className="text-red-400 text-sm text-center">{error}</p>}
+                <Button
+                  onClick={() => { if (!horarioSel) return; if (dadosCompletos) handleSubmit(); else setStep('dados'); }}
+                  disabled={!horarioSel || saving}
+                  className="w-full bg-[#6366F1] hover:bg-[#6366F1]/90 text-white py-3 text-base rounded-2xl gap-2"
+                >
+                  {saving ? <Loader2 className="h-5 w-5 animate-spin" /> : <Droplets className="h-5 w-5" />}
+                  {saving ? 'Registrando...' : dadosCompletos ? 'Confirmar inscrição' : 'Continuar'}
+                </Button>
+                {dadosCompletos && (
+                  <p className="text-center text-white/30 text-xs">
+                    Vamos usar os dados do seu cadastro, {form.nome} — nada para digitar.
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // step === 'dados' — só aparece quando falta algo (CPF/telefone) ou pra
+  // convidado; quem tem cadastro completo confirma direto na tela de horário.
   return (
     <div className="min-h-screen bg-gray-950 text-white flex flex-col" onClick={onActivity}>
-      <OptionHeader opt={opt} member={member} onBack={() => setStep('info')} />
+      <OptionHeader opt={opt} member={member} onBack={() => setStep('horario')} />
       <div className="flex-1 flex items-center justify-center p-6">
         <div className="w-full max-w-md space-y-4">
           <div className="text-center mb-2">
-            <h2 className="text-xl font-bold">Confirme seus dados</h2>
-            <p className="text-white/40 text-sm mt-1">Seus dados serão usados para registrar o batismo</p>
+            <h2 className="text-xl font-bold">Complete seus dados</h2>
+            <p className="text-white/40 text-sm mt-1">
+              {agenda.data_batismo
+                ? <>Batismo em <span className="text-[#6366F1]">{fmtDateBR(agenda.data_batismo)}</span>{horarioSel ? <> · {horarioSel.label || horarioSel.horario}</> : null}</>
+                : 'Seus dados serão usados para registrar o batismo'}
+            </p>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -1478,7 +1873,7 @@ function BatismoFlow({ opt, member, onBack, onDone, onActivity }: {
           </div>
 
           <div>
-            <label className="block text-xs text-white/40 mb-1">CPF</label>
+            <label className="block text-xs text-white/40 mb-1">CPF *</label>
             <input value={form.cpf} onChange={setField('cpf')} className={inputCls} placeholder="000.000.000-00" inputMode="numeric" />
           </div>
 
@@ -1488,8 +1883,8 @@ function BatismoFlow({ opt, member, onBack, onDone, onActivity }: {
               <input type="date" value={form.data_nascimento} onChange={setField('data_nascimento')} className={inputCls} />
             </div>
             <div>
-              <label className="block text-xs text-white/40 mb-1">Telefone</label>
-              <input value={form.telefone} onChange={setField('telefone')} className={inputCls} placeholder="(21) 9..." />
+              <label className="block text-xs text-white/40 mb-1">Telefone *</label>
+              <input value={form.telefone} onChange={setField('telefone')} className={inputCls} placeholder="(21) 9..." inputMode="numeric" />
             </div>
           </div>
 
@@ -1924,21 +2319,23 @@ function maskPhoneInput(v: string): string {
 
 // ── NEXT Flow ─────────────────────────────────────────────────────────────────
 
-function NextFlow({ opt, member, onBack, onDone, onActivity }: {
+function NextFlow({ opt, member, onBack, onDone, onEndSession, onActivity }: {
   opt: (typeof MENU_OPTIONS)[number];
   member: MemberData;
   onBack: () => void;
   onDone: () => void;
+  onEndSession: () => void;
   onActivity: () => void;
 }) {
+  const guest = !!member.guest;
   const [loading, setLoading] = useState(true);
   const [inscrito, setInscrito] = useState(false);
   const [inscricao, setInscricao] = useState<any>(null);
   const [proximoEvento, setProximoEvento] = useState<any>(null);
   const [step, setStep] = useState<'check' | 'form' | 'success'>('check');
   const [form, setForm] = useState({
-    nome: (member.nome || '').split(' ')[0] || '',
-    sobrenome: (member.nome || '').split(' ').slice(1).join(' ') || '',
+    nome: guest ? '' : ((member.nome || '').split(' ')[0] || ''),
+    sobrenome: guest ? '' : ((member.nome || '').split(' ').slice(1).join(' ') || ''),
     cpf: member.cpf || '',
     telefone: member.telefone ? maskPhoneInput(member.telefone) : '',
     email: member.email || '',
@@ -1979,7 +2376,9 @@ function NextFlow({ opt, member, onBack, onDone, onActivity }: {
     onActivity();
     try {
       const payload: any = {
-        membro_id: member.id || null,
+        // Cadastro pendente ainda não tem linha em mem_membros — o matcher do
+        // backend resolve/cria o vínculo na hora da inscrição.
+        membro_id: member.pending || member.guest ? null : member.id || null,
         nome: form.nome.trim(),
         sobrenome: form.sobrenome.trim() || null,
         telefone: form.telefone.replace(/\D/g, ''),
@@ -1991,7 +2390,6 @@ function NextFlow({ opt, member, onBack, onDone, onActivity }: {
       const r = await membresia.totem.next.inscrever(payload);
       if (r.evento) setProximoEvento(r.evento);
       setStep('success');
-      setTimeout(onDone, 5000);
     } catch (e: any) {
       setError(e?.message || 'Erro ao inscrever. Tente novamente.');
     }
@@ -2015,7 +2413,7 @@ function NextFlow({ opt, member, onBack, onDone, onActivity }: {
   // ── Success ──
   if (step === 'success') {
     return (
-      <div className="min-h-screen bg-gray-950 text-white flex flex-col items-center justify-center gap-6 p-8">
+      <div className="min-h-screen bg-gray-950 text-white flex flex-col items-center justify-center gap-6 p-8" onClick={onActivity}>
         <CheckCircle2 className="h-20 w-20 text-[#00B39D]" />
         <div className="text-center max-w-md">
           <h2 className="text-3xl font-bold">Inscrição confirmada!</h2>
@@ -2026,6 +2424,7 @@ function NextFlow({ opt, member, onBack, onDone, onActivity }: {
           )}
           <p className="text-white/50 mt-2 text-sm">Você receberá detalhes por e-mail e WhatsApp.</p>
         </div>
+        <SuccessActions onDone={onDone} onEndSession={onEndSession} accent="#10B981" />
       </div>
     );
   }
@@ -2193,15 +2592,19 @@ function NextFlow({ opt, member, onBack, onDone, onActivity }: {
 
 // ── Apresentação de Bebês Flow ────────────────────────────────────────────────
 
-function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onActivity }: {
+function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onEndSession, onActivity }: {
   opt: (typeof MENU_OPTIONS)[number];
   member: MemberData;
   onBack: () => void;
   onDone: () => void;
+  onEndSession: () => void;
   onActivity: () => void;
 }) {
+  const guest = !!member.guest;
   const [loading, setLoading] = useState(true);
   const [proximaData, setProximaData] = useState<string | null>(null);
+  const [cultosDia, setCultosDia] = useState<any[]>([]);
+  const [cultoSel, setCultoSel] = useState<any>(null);
   const [existente, setExistente] = useState<any>(null);
   const [step, setStep] = useState<'check' | 'form' | 'success'>('check');
   const [form, setForm] = useState({
@@ -2210,7 +2613,7 @@ function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onActivity }: {
     bebe_sexo: '',
     nome_pai: '',
     nome_mae: '',
-    responsavel_nome: member.nome || '',
+    responsavel_nome: guest ? '' : member.nome || '',
     responsavel_telefone: member.telefone ? maskPhoneInput(member.telefone) : '',
     responsavel_email: member.email || '',
     observacoes: '',
@@ -2220,15 +2623,19 @@ function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onActivity }: {
 
   useEffect(() => {
     const params: any = {};
-    if (member.id) params.membro_id = member.id;
+    if (member.id && !member.pending && !member.guest) params.membro_id = member.id;
     membresia.totem.apresentacaoBebe.status(params)
       .then((r: any) => {
         setProximaData(r.proxima_data);
         setExistente(r.apresentacao_existente);
+        const ordenados = [...(r.cultos || [])].sort((a: any, b: any) =>
+          String(a.service_type?.recurrence_time || '99:99').localeCompare(String(b.service_type?.recurrence_time || '99:99')));
+        setCultosDia(ordenados);
+        if (ordenados.length === 1) setCultoSel(ordenados[0]);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [member.id]);
+  }, [member.id, member.pending, member.guest]);
 
   const setField = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     let v = e.target.value;
@@ -2242,11 +2649,13 @@ function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onActivity }: {
     if (!form.bebe_data_nascimento) { setError('Data de nascimento do bebê obrigatória'); return; }
     if (!form.responsavel_nome.trim()) { setError('Nome do responsável obrigatório'); return; }
     if (form.responsavel_telefone.replace(/\D/g, '').length < 10) { setError('Telefone inválido'); return; }
+    if (cultosDia.length > 0 && !cultoSel) { setError('Escolha o horário do culto da cerimônia'); return; }
     setSaving(true); setError('');
     onActivity();
     try {
       await membresia.totem.apresentacaoBebe.create({
-        responsavel_membro_id: member.id || null,
+        responsavel_membro_id: member.pending || member.guest ? null : member.id || null,
+        culto_id: cultoSel?.id || null,
         responsavel_nome: form.responsavel_nome.trim(),
         responsavel_telefone: form.responsavel_telefone.replace(/\D/g, ''),
         responsavel_email: form.responsavel_email.trim() || null,
@@ -2258,12 +2667,13 @@ function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onActivity }: {
         observacoes: form.observacoes.trim() || null,
       });
       setStep('success');
-      setTimeout(onDone, 5000);
     } catch (e: any) {
       setError(e?.message || 'Erro ao agendar. Tente novamente.');
     }
     setSaving(false);
   };
+
+  const horaCulto = (c: any) => String(c?.service_type?.recurrence_time || '').slice(0, 5);
 
   const inputCls = 'w-full px-4 py-3 rounded-2xl border border-gray-700 bg-gray-800 text-white placeholder:text-gray-500 text-sm outline-none focus:border-[#EC4899] focus:ring-1 focus:ring-[#EC4899]/30 transition-colors';
 
@@ -2280,19 +2690,23 @@ function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onActivity }: {
 
   if (step === 'success') {
     return (
-      <div className="min-h-screen bg-gray-950 text-white flex flex-col items-center justify-center gap-6 p-8">
+      <div className="min-h-screen bg-gray-950 text-white flex flex-col items-center justify-center gap-6 p-8" onClick={onActivity}>
         <CheckCircle2 className="h-20 w-20 text-[#00B39D]" />
         <div className="text-center max-w-md">
           <h2 className="text-3xl font-bold">Apresentação agendada!</h2>
           {proximaData && (
             <p className="text-white/70 mt-3 text-lg">
               {fmtDateBR(proximaData).replace(/^(\w)/, c => c.toUpperCase())}
+              {cultoSel && horaCulto(cultoSel) ? (
+                <> · culto das <span className="text-[#EC4899] font-semibold">{horaCulto(cultoSel)}</span></>
+              ) : null}
             </p>
           )}
           <p className="text-white/50 mt-2 text-sm">
             Nossa equipe entrará em contato para confirmar os detalhes da cerimônia.
           </p>
         </div>
+        <SuccessActions onDone={onDone} onEndSession={onEndSession} accent="#EC4899" />
       </div>
     );
   }
@@ -2371,6 +2785,31 @@ function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onActivity }: {
               <p className="text-white/50 text-sm mt-1">Cerimônia em <span className="text-[#EC4899]">{fmtDateBR(proximaData)}</span></p>
             )}
           </div>
+
+          {cultosDia.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-white/40 mb-2">
+                Horário do culto {cultosDia.length > 1 ? '*' : ''}
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {cultosDia.map((c: any) => {
+                  const sel = cultoSel?.id === c.id;
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => setCultoSel(c)}
+                      className={`px-4 py-2.5 rounded-2xl border text-sm font-semibold transition-all ${
+                        sel ? 'border-[#EC4899] bg-[#EC4899]/15 text-[#EC4899]' : 'border-white/15 bg-white/5 text-white/70 hover:bg-white/10'
+                      }`}
+                    >
+                      {horaCulto(c) || c.service_type?.name || 'Culto'}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           <p className="text-xs font-semibold uppercase tracking-wider text-white/40">Bebê</p>
 
