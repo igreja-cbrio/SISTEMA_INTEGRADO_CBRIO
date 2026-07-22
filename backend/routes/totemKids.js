@@ -1249,10 +1249,14 @@ router.post('/edit-senha/verificar', authorizeModule('kids', 1), async (req, res
 
 // GET /api/totem-kids/criancas/:id/aniversario-impressoes · limite de 2 etiquetas
 // de aniversário por semana (Milena 2026-07-22 · antes saía Qua + Dom manhã +
-// Dom noite = 3). Conta os check-ins da criança na janela do aniversário mais
-// próximo ([aniversário-6d, aniversário], a mesma do aniversarioSemana no front).
-// A contagem já inclui o check-in atual (a impressão roda após o POST) →
-// imprimir = count <= 2. Fail-open (imprimir) se não der pra calcular.
+// Dom noite = 3). Conta VISITAS (não linhas de check-in) na janela do aniversário
+// mais próximo ([aniversário-6d, aniversário], a mesma do aniversarioSemana no
+// front). ⚠️ Conta VISITA, não linha: a etiqueta de aniversário sai UMA vez por
+// visita (imprimirEtiquetas roda 1× por criança), mas multi-culto/família gera
+// VÁRIAS linhas em kids_checkins que compartilham o checkin_grupo_id — contá-las
+// cru inflava a conta e fazia a etiqueta sair MENOS de 2× (fix 2026-07-22).
+// A contagem já inclui a visita atual (a impressão roda após o POST) →
+// imprimir = visitas <= 2. Fail-open (imprimir) se não der pra calcular.
 router.get('/criancas/:id/aniversario-impressoes', authorizeModule('kids', 1), async (req, res) => {
   try {
     const { data: c } = await supabase.from('kids_criancas')
@@ -1272,10 +1276,17 @@ router.get('/criancas/:id/aniversario-impressoes', authorizeModule('kids', 1), a
     const inicio = new Date(bdayMs - 6 * 86400000).toISOString().slice(0, 10);
     const fim = new Date(bdayMs + 1 * 86400000).toISOString().slice(0, 10); // inclui o dia do aniversário
     const { data: cks } = await supabase.from('kids_checkins')
-      .select('id').eq('crianca_id', req.params.id).is('deleted_at', null)
+      .select('checkin_grupo_id').eq('crianca_id', req.params.id).is('deleted_at', null)
       .gte('checkin_at', `${inicio}T00:00:00-03:00`).lt('checkin_at', `${fim}T00:00:00-03:00`);
-    const count = (cks || []).length;
-    res.json({ imprimir: count <= 2, count });
+    // 1 visita = 1 grupo de check-in (multi-culto/família compartilham o grupo);
+    // check-in avulso (grupo null) conta como 1 visita cada.
+    const grupos = new Set();
+    let visitas = 0;
+    for (const r of cks || []) {
+      if (r.checkin_grupo_id) { if (!grupos.has(r.checkin_grupo_id)) { grupos.add(r.checkin_grupo_id); visitas++; } }
+      else visitas++;
+    }
+    res.json({ imprimir: visitas <= 2, count: visitas });
   } catch (e) {
     console.error('[totemKids/aniversario-impressoes]', e.message);
     res.json({ imprimir: true, count: 0 }); // fail-open: não perde o aniversário
