@@ -91,6 +91,18 @@ function getUrgMeta(urg) {
 function getStatusMeta(status) {
   return STATUS_LABELS[status] || { label: status, color: 'bg-muted text-muted-foreground' };
 }
+// Normaliza pra comparar texto sem se importar com acento/caixa (ex.: "Produção" ~ "Produção de Culto").
+function normalizarTxt(s) {
+  return (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+}
+// A badge de área é redundante quando o nome da área é igual (ou está contido) no nome da
+// categoria — ex.: categoria "Compras" · área "Compras", ou "Produção de Culto" · "Produção".
+// Nesses casos as duas badges mostravam a mesma palavra lado a lado.
+function areaBadgeRedundante(catLabel, areaLabel) {
+  const a = normalizarTxt(catLabel), b = normalizarTxt(areaLabel);
+  if (!a || !b) return false;
+  return a === b || a.includes(b) || b.includes(a);
+}
 
 
 export default function Solicitacoes() {
@@ -1275,7 +1287,7 @@ function ListaSolicitacoes({ items, onOpen, profileId, emptyMsg, comTracker = fa
                   {ML_STATUS_META[item.ml_last_status].emoji} {ML_STATUS_META[item.ml_last_status].label}
                 </Badge>
               )}
-              {item.area_responsavel && (
+              {item.area_responsavel && !areaBadgeRedundante(cat.label, AREA_LABELS[item.area_responsavel] || item.area_responsavel) && (
                 <Badge className="text-xs bg-muted text-muted-foreground hidden sm:inline-flex">{AREA_LABELS[item.area_responsavel] || item.area_responsavel}</Badge>
               )}
               {sla && <Badge className={`text-xs ${sla.color}`}>{sla.label}</Badge>}
