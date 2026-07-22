@@ -1225,11 +1225,64 @@ router.get('/aniversariantes-semana', async (req, res) => {
       aniversario: r.aniversario, // a data do aniversário nesta semana
       dow: r.dow,
       hoje: r.aniversario === new Date().toISOString().slice(0, 10),
+      parabenizado: false,
     }));
+    // marca quem já foi parabenizado neste ano (controle do líder)
+    const anoAtual = new Date().getFullYear();
+    const ids = rows.map((r) => r.vol_profile_id).filter(Boolean);
+    if (ids.length) {
+      const { data: pb } = await supabase.from('vol_parabens')
+        .select('vol_profile_id').eq('ano', anoAtual).in('vol_profile_id', ids);
+      const enviados = new Set((pb || []).map((p) => p.vol_profile_id));
+      rows.forEach((r) => { r.parabenizado = enviados.has(r.vol_profile_id); });
+    }
     res.json({ rows });
   } catch (e) {
     console.error('[vol] aniversariantes-semana', e.message);
     res.status(500).json({ error: 'Erro ao carregar aniversariantes' });
+  }
+});
+
+// POST /voluntariado/aniversariantes/:volProfileId/parabenizar — envia o template
+// de aniversário pela API (respeita opt-in · Marketing) e marca como enviado.
+const MSG_RESULTADO = {
+  sem_optin: 'A pessoa não deu consentimento (opt-in) para receber mensagens no WhatsApp. Use o botão de abrir no WhatsApp para falar manualmente.',
+  sem_cadastro: 'Voluntário sem cadastro de membro (sem opt-in registrado). Use o WhatsApp manual.',
+  sem_membro: 'Voluntário sem cadastro de membro vinculado.',
+  sem_telefone: 'Voluntário sem telefone.',
+  telefone_invalido: 'Telefone inválido.',
+  template_nao_configurado: 'Template de aniversário não configurado na Meta/env.',
+  wpp_nao_configurado: 'WhatsApp não configurado.',
+};
+router.post('/aniversariantes/:volProfileId/parabenizar', async (req, res) => {
+  try {
+    const volId = req.params.volProfileId;
+    const { data: vp } = await supabase.from('vol_profiles')
+      .select('id, full_name, membresia_id').eq('id', volId).maybeSingle();
+    if (!vp) return res.status(404).json({ error: 'Voluntário não encontrado' });
+
+    const primeiro = String(vp.full_name || '').trim().split(/\s+/)[0] || '';
+    let resultado = 'sem_cadastro';
+    let sent = false;
+    if (vp.membresia_id) {
+      const wpp = require('../services/whatsappService');
+      const r = await wpp.notificarMembro(vp.membresia_id, 'aniversario', [primeiro]);
+      if (r?.sent) { sent = true; resultado = 'enviado'; }
+      else resultado = r?.skipped || r?.reason || 'falhou';
+    }
+
+    if (sent) {
+      const ano = new Date().getFullYear();
+      await supabase.from('vol_parabens').upsert({
+        vol_profile_id: volId, ano, enviado_em: new Date().toISOString(),
+        enviado_por: req.user.userId || req.user.id, resultado,
+      }, { onConflict: 'vol_profile_id,ano' });
+      return res.json({ ok: true, resultado });
+    }
+    return res.status(400).json({ ok: false, resultado, error: MSG_RESULTADO[resultado] || 'Não foi possível enviar pela API. Use o WhatsApp manual.' });
+  } catch (e) {
+    console.error('[vol] parabenizar', e.message);
+    res.status(500).json({ error: 'Erro ao parabenizar' });
   }
 });
 
