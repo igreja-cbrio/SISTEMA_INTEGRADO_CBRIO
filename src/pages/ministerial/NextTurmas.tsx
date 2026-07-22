@@ -11,10 +11,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import {
   Loader2, Plus, Users, GraduationCap, CalendarDays, Search,
   CheckCircle2, AlertTriangle, X, UserPlus, UserCheck, Sparkles, RotateCcw,
-  Share2, Copy, MessageCircle,
+  Share2, Copy, MessageCircle, Monitor,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import QRCode from 'qrcode';
+import TotemNext from './next/TotemNext';
 
 const C = { primary: '#00B39D', warn: '#f59e0b', danger: '#ef4444', info: '#3b82f6', gray: '#737373' };
 
@@ -86,6 +87,7 @@ export default function NextTurmas() {
   const [view, setView] = useState<'turmas' | 'pessoas'>('turmas');
   const [shareOpen, setShareOpen] = useState(false);
   const [qrDirecOpen, setQrDirecOpen] = useState(false);
+  const [totemOpen, setTotemOpen] = useState(false);
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -101,6 +103,9 @@ export default function NextTurmas() {
           ))}
         </div>
         <div className="flex gap-2 flex-wrap">
+          <Button size="sm" onClick={() => setTotemOpen(true)} className="gap-2" style={{ background: C.primary, color: '#fff' }}>
+            <Monitor className="h-4 w-4" /> Totem
+          </Button>
           <Button variant="outline" size="sm" onClick={() => setQrDirecOpen(true)} className="gap-2">
             <Share2 className="h-4 w-4" /> QR de direcionamento
           </Button>
@@ -112,6 +117,7 @@ export default function NextTurmas() {
       {view === 'turmas' ? <TurmasView /> : <PessoasView />}
       {shareOpen && <ModalCompartilhar onClose={() => setShareOpen(false)} />}
       {qrDirecOpen && <QrDirecionarModal onClose={() => setQrDirecOpen(false)} />}
+      {totemOpen && <TotemNext onClose={() => setTotemOpen(false)} />}
     </div>
   );
 }
@@ -274,6 +280,20 @@ function NovaTurmaModal({ onClose, onCreated }: { onClose: () => void; onCreated
   );
 }
 
+// Card de resumo amigável (usado na contabilização da turma).
+function StatCard({ label, value, sub, color, icon: Icon }: { label: string; value: number; sub?: string; color: string; icon?: any }) {
+  return (
+    <div className="rounded-xl border border-border p-3 flex flex-col gap-0.5" style={{ background: color + '0f' }}>
+      <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+        {Icon && <Icon className="h-3.5 w-3.5" style={{ color }} />}
+        <span className="truncate">{label}</span>
+      </div>
+      <div className="text-2xl font-bold leading-none" style={{ color }}>{value}</div>
+      {sub && <div className="text-[10px] text-muted-foreground">{sub}</div>}
+    </div>
+  );
+}
+
 function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; onClose: () => void; onChanged: () => void }) {
   const [det, setDet] = useState<TurmaDetalhe | null>(null);
   const [loading, setLoading] = useState(true);
@@ -338,6 +358,16 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
               </DialogTitle>
             </DialogHeader>
             <div className="flex-1 overflow-y-auto min-h-0">
+            {/* Cards de contabilização · inscritos, presença por semana e únicos (veio ≥1x) */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+              <StatCard label="Inscritos" value={det.matriculas.length} color={C.info} icon={Users} />
+              {[...det.encontros].sort((a, b) => (a.numero || 0) - (b.numero || 0)).map(e => (
+                <StatCard key={e.id} label={`Semana ${e.numero}`} sub={e.data ? ymdLocal(e.data) : 'sem data'}
+                  value={present[e.id]?.size || 0} color={C.primary} icon={CalendarDays} />
+              ))}
+              <StatCard label="Vieram ao menos 1x" value={det.matriculas.filter(m => presCount(m.id) >= 1).length}
+                color={C.warn} icon={CheckCircle2} />
+            </div>
             <div className="flex flex-wrap gap-3">
               {det.encontros.map(e => (
                 <div key={e.id} className="rounded-lg border border-border p-2.5 flex items-center gap-2">

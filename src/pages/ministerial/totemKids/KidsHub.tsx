@@ -39,14 +39,30 @@ const idade = (d?: string | null) => {
 
 // Rótulo do parentesco pra impressão.
 const PARENTESCO_LABEL: Record<string, string> = { mae: 'Mãe', pai: 'Pai', avo: 'Avó/Avô', responsavel: 'Resp.' };
+// Número no formato wa.me (55 + DDD + número · mesmo padrão do NextConvite): só
+// dígitos, prefixa 55 quando não vier. Retorna null pra número fora do padrão BR.
+function waNum(raw?: string | null): string | null {
+  const d = String(raw || '').replace(/\D/g, '');
+  if (!d) return null;
+  if ((d.length === 12 || d.length === 13) && d.startsWith('55')) return d;
+  if (d.length === 10 || d.length === 11) return '55' + d;
+  return null;
+}
 // Contato dos responsáveis (mãe/pai · nome + telefone) formatado pra célula do PDF.
+// O telefone vira link wa.me clicável (o PDF é HTML impresso · abre a conversa direto).
 function contatoResponsaveis(a: any): string {
   const esc = (s: any) => String(s ?? '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' } as any)[c]);
   const resp = (a?.responsaveis || []).filter((r: any) => r.nome || r.telefone);
   if (!resp.length) return '<span style="color:#999">—</span>';
   return resp.map((r: any) => {
     const par = PARENTESCO_LABEL[r.parentesco] || 'Resp.';
-    const tel = r.telefone ? ` · ${esc(r.telefone)}` : '';
+    let tel = '';
+    if (r.telefone) {
+      const wa = waNum(r.telefone);
+      tel = wa
+        ? ` · <a href="https://wa.me/${wa}" style="color:#128C7E;text-decoration:none">${esc(r.telefone)} 💬</a>`
+        : ` · ${esc(r.telefone)}`;
+    }
     return `<b>${par}:</b> ${esc(r.nome || '—')}${tel}`;
   }).join('<br>');
 }
