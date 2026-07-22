@@ -49,6 +49,41 @@ router.get('/cadastros/pode-aprovar', async (req, res) => {
   catch { res.json({ pode: false }); }
 });
 
+// POST /api/membresia/cadastros/:id/confirmar-whatsapp — dispara o template de
+// confirmação de cadastro pela API oficial (funciona mesmo fora da janela de 24h).
+// Precisa do template aprovado na Meta + env WHATSAPP_TEMPLATE_CADASTRO.
+router.post('/cadastros/:id/confirmar-whatsapp', podeAprovarMembresia, async (req, res) => {
+  try {
+    const nomeTemplate = process.env.WHATSAPP_TEMPLATE_CADASTRO;
+    if (!nomeTemplate) {
+      return res.status(400).json({
+        error: "Template de confirmação ainda não configurado. Crie o modelo 'cadastro_confirmado' na Meta (Utility, pt_BR) e configure a env WHATSAPP_TEMPLATE_CADASTRO.",
+        code: 'sem_template',
+      });
+    }
+    const { data: cad } = await supabase.from('mem_cadastros_pendentes')
+      .select('id, nome, telefone').eq('id', req.params.id).maybeSingle();
+    if (!cad) return res.status(404).json({ error: 'Cadastro não encontrado' });
+    const tel = String(cad.telefone || '').replace(/\D+/g, '');
+    if (!tel) return res.status(400).json({ error: 'Cadastro sem telefone.' });
+
+    const primeiro = String(cad.nome || '').trim().split(/\s+/)[0] || 'tudo bem';
+    const wpp = require('../services/whatsappService');
+    const r = await wpp.sendTemplate(tel, nomeTemplate, 'pt_BR', [primeiro]);
+    if (!r?.sent) return res.status(502).json({ error: 'O WhatsApp não aceitou o envio.', detail: r?.reason || r?.detail || null });
+    try {
+      await require('../services/waInbox').registrarOutbound({
+        telefone: tel, texto: `Confirmação de cadastro (template: ${nomeTemplate})`, tipo: 'template',
+        autorId: req.user.userId || req.user.id,
+      });
+    } catch { /* best-effort */ }
+    res.json({ ok: true, messageId: r.messageId || null });
+  } catch (e) {
+    console.error('[cadastros] confirmar-whatsapp:', e.message);
+    res.status(500).json({ error: 'Erro ao enviar confirmação' });
+  }
+});
+
 // Autoriza edicao de um membro especifico pelas rotas "totem":
 //   - staff de membresia (nivel >= 3) ou admin/diretor → qualquer membro
 //   - o proprio usuario logado → so o seu proprio cadastro (req.user.membro_id)

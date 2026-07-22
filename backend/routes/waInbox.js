@@ -50,6 +50,7 @@ const TEMPLATES_ABERTURA = [
   { key: 'next_convite', rotulo: 'Convite NEXT', nome: process.env.WHATSAPP_TEMPLATE_NEXT_CONVITE, params: [{ label: 'Primeiro nome' }] },
   { key: 'aniversario', rotulo: 'Aniversário', nome: process.env.WHATSAPP_TEMPLATE_ANIVERSARIO2 || process.env.WHATSAPP_TEMPLATE_ANIVERSARIO, params: [{ label: 'Nome' }] },
   { key: 'batismo_lembrete', rotulo: 'Lembrete de batismo', nome: process.env.WHATSAPP_TEMPLATE_BATISMO, params: [{ label: 'Data' }, { label: 'Hora' }] },
+  { key: 'cadastro_confirmado', rotulo: 'Cadastro confirmado', nome: process.env.WHATSAPP_TEMPLATE_CADASTRO, params: [{ label: 'Primeiro nome' }] },
 ].filter(t => t.nome);
 
 // GET /templates — templates de abertura disponíveis p/ nova conversa
