@@ -1953,7 +1953,10 @@ export const membresia = {
     sairMembro: (participacaoId, data) => patch(`/membresia/grupo-membros/${participacaoId}/sair`, data),
   },
   totem: {
-    entrarGrupo: (grupoId, membroId) => post(`/membresia/totem/grupos/${grupoId}/entrar`, { membro_id: membroId }),
+    // Cria um PEDIDO de entrada (mem_grupo_pedidos · líder aprova) — aceita
+    // { membro_id } ou { cadastro_pendente_id } + snapshot nome/telefone/email.
+    pedirGrupo: (grupoId, data) => post(`/membresia/totem/grupos/${grupoId}/entrar`, data),
+    batismoHorarios: () => get('/public/batismo/horarios'),
     geocodeCep: (cep) => get(`/membresia/geocode-cep?cep=${encodeURIComponent(cep)}`),
     updateMembro: (id, data) => put(`/membresia/totem/membros/${id}`, data),
     uploadFoto: (id, formData) => requestFile(`/membresia/totem/membros/${id}/foto`, formData),

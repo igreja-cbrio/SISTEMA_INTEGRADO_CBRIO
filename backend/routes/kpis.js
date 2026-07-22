@@ -838,6 +838,7 @@ router.post('/batismos', authorizeBatismo, async (req, res) => {
     cpf, nome, sobrenome, data_nascimento, telefone, email,
     origem = 'manual', observacoes, area_kpi,
     tamanho_camisa, eh_crianca, possui_deficiencia, deficiencia_descricao, endereco,
+    horario_culto,
   } = req.body;
   if (!nome || !sobrenome) return res.status(400).json({ error: 'nome e sobrenome são obrigatórios' });
   const AREAS_OK = ['kids', 'sede', 'bridge', 'ami', 'online'];
@@ -846,6 +847,42 @@ router.post('/batismos', authorizeBatismo, async (req, res) => {
   const cpfClean = cpf ? cpf.replace(/\D/g, '') : null;
   if (cpfClean && (cpfClean.length !== 11 || !cpfValido(cpfClean))) {
     return res.status(400).json({ error: 'CPF inválido — confira os dígitos' });
+  }
+  // Totem é porta pública self-service: segue a mesma lei do formulário público
+  // de batismo (CPF com DV obrigatório). O cadastro interno da equipe continua
+  // sendo a exceção operacional (origem manual).
+  if (origem === 'totem' && !cpfClean) {
+    return res.status(400).json({ error: 'CPF é obrigatório para se inscrever pelo totem' });
+  }
+
+  // Data/horário escolhidos no totem: a data é SEMPRE a do próximo batismo
+  // (server-side — não confia na data do cliente) e o horário precisa estar
+  // aberto e com vaga no momento do insert.
+  let dataBatismo = null;
+  let horarioCulto = null;
+  if (horario_culto) {
+    const { data: h } = await supabase
+      .from('batismo_horarios')
+      .select('horario, label, limite')
+      .eq('horario', String(horario_culto))
+      .eq('aberto', true)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (!h) return res.status(400).json({ error: 'Horário indisponível — escolha outro' });
+    dataBatismo = _proximo4Domingo();
+    if (h.limite != null) {
+      const { count } = await supabase
+        .from('batismo_inscricoes')
+        .select('id', { count: 'exact', head: true })
+        .eq('data_batismo', dataBatismo)
+        .eq('horario_culto', h.horario)
+        .is('deleted_at', null)
+        .not('status', 'in', '(cancelado,rejeitado)');
+      if ((count || 0) >= h.limite) {
+        return res.status(409).json({ error: 'Esse horário acabou de lotar — escolha outro' });
+      }
+    }
+    horarioCulto = h.horario;
   }
 
   // Guarda na origem (membroMatch · 2026-06-19): resolve-ou-cria UM membro
@@ -885,6 +922,7 @@ router.post('/batismos', authorizeBatismo, async (req, res) => {
       deficiencia_descricao: possui_deficiencia && deficiencia_descricao
         ? String(deficiencia_descricao).trim() : null,
       endereco: endereco ? String(endereco).trim() : null,
+      ...(dataBatismo ? { data_batismo: dataBatismo, horario_culto: horarioCulto } : {}),
     })
     .select('*, membro:membro_id(id, nome, foto_url)')
     .single();

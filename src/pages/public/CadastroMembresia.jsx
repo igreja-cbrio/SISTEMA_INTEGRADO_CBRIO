@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { cadastroPublico } from '../../api';
 import { useHomeScreenMeta } from '@/hooks/useHomeScreenMeta';
 import AnimatedBackground from './AnimatedBackground';
@@ -173,6 +174,11 @@ function SelectField({ id, label, value, onChange, options, required }) {
 const TEXTO_CONSENTIMENTO =
   'Declaro que li e concordo com o tratamento dos meus dados pessoais pela CBRio para fins de acolhimento e acompanhamento pastoral, conforme a Lei Geral de Proteção de Dados (LGPD - Lei 13.709/2018). Meus dados serão mantidos em ambiente seguro e não serão compartilhados com terceiros sem minha autorização.';
 
+// Consentimento único de comunicação (grava aceita_contato E whatsapp_optin —
+// o texto precisa nomear os canais pro opt-in de WhatsApp ter lastro).
+const TEXTO_COMUNICACAO =
+  'Autorizo a CBRio a entrar em contato comigo por WhatsApp e e-mail sobre minha caminhada na igreja (inscrições, eventos, avisos e felicitações). Posso cancelar quando quiser.';
+
 const ESTADO_CIVIL_OPTS = [
   { value: 'solteiro', label: 'Solteiro(a)' },
   { value: 'casado', label: 'Casado(a)' },
@@ -234,6 +240,7 @@ function CheckboxField({ id, checked, onChange, label }) {
 
 export default function CadastroMembresia() {
   const { C } = usePublicTheme();
+  const navigate = useNavigate();
   useHomeScreenMeta('membresia');
   const searchParams = new URLSearchParams(window.location.search);
   const fromTotem = searchParams.get('from') === 'totem';
@@ -247,14 +254,61 @@ export default function CadastroMembresia() {
     website: '', // honeypot
   });
   const [aceitaTermos, setAceitaTermos] = useState(false);
-  const [aceitaContato, setAceitaContato] = useState(true);
-  const [optinWhats, setOptinWhats] = useState(false);
+  const [aceitaComunicacao, setAceitaComunicacao] = useState(false);
   const [estaEmGrupo, setEstaEmGrupo] = useState(null); // null | true | false
   const [grupoEscolhido, setGrupoEscolhido] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [sent, setSent] = useState(false);
   const [walletDialogOpen, setWalletDialogOpen] = useState(false);
+
+  // ── Loop com o totem (from=totem) ──
+  // O QR do membro sai NA HORA (o form já tem CPF + nascimento) e a volta pro
+  // totem nunca cai na tela de PIN do operador: flags one-shot em sessionStorage
+  // que o TotemMembro consome no mount — 'resume' abre a sessão da própria
+  // pessoa (via qr-lookup, que aceita cadastro pendente), 'unlocked' só pula o
+  // PIN e cai na tela inicial.
+  const [totemQr, setTotemQr] = useState(null);
+  const [totemQrErro, setTotemQrErro] = useState('');
+
+  const voltarAoTotem = useCallback((resumeToken) => {
+    try {
+      if (resumeToken) sessionStorage.setItem('cbrio-totem-resume', resumeToken);
+      else sessionStorage.setItem('cbrio-totem-unlocked', '1');
+    } catch { /* modo privado — cai na tela de PIN como antes */ }
+    navigate('/totem');
+  }, [navigate]);
+
+  useEffect(() => {
+    if (!sent || !fromTotem) return undefined;
+    let alive = true;
+    cadastroPublico.walletQrToken(soDigitos(form.cpf), form.data_nascimento)
+      .then((r) => { if (alive && r?.qr) setTotemQr(r.qr); })
+      .catch(() => {
+        if (alive) setTotemQrErro('Não foi possível gerar seu QR agora — você pode pegá-lo depois no seu celular.');
+      });
+    return () => { alive = false; };
+    // form.cpf/data_nascimento não mudam depois do envio
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sent, fromTotem]);
+
+  // Totem abandonado no meio do cadastro não pode ficar preso nesta página:
+  // 120s sem interação → volta pro totem destravado (NUNCA com sessão ativa).
+  useEffect(() => {
+    if (!fromTotem) return undefined;
+    let t;
+    const arm = () => {
+      clearTimeout(t);
+      t = setTimeout(() => {
+        try { sessionStorage.setItem('cbrio-totem-unlocked', '1'); } catch { /* ok */ }
+        navigate('/totem');
+      }, 120_000);
+    };
+    const evs = ['pointerdown', 'keydown', 'touchstart'];
+    evs.forEach((e) => document.addEventListener(e, arm, { passive: true }));
+    arm();
+    return () => { clearTimeout(t); evs.forEach((e) => document.removeEventListener(e, arm)); };
+  }, [fromTotem, navigate]);
 
   // Foto
   const [fotoPreview, setFotoPreview] = useState(null);
@@ -484,9 +538,11 @@ export default function CadastroMembresia() {
         cpf: soDigitos(form.cpf),
         origem,
         aceita_termos: aceitaTermos,
-        aceita_contato: aceitaContato,
-        whatsapp_optin: optinWhats,
-        consentimento_texto: TEXTO_CONSENTIMENTO,
+        aceita_contato: aceitaComunicacao,
+        whatsapp_optin: aceitaComunicacao,
+        consentimento_texto: aceitaComunicacao
+          ? `${TEXTO_CONSENTIMENTO}\n\n${TEXTO_COMUNICACAO}`
+          : TEXTO_CONSENTIMENTO,
         familia_sugerida_id: familiaId || null,
         foto_url,
         grupo_id: grupoEscolhido?.id || null,
@@ -555,7 +611,7 @@ export default function CadastroMembresia() {
       }}>
         {fromTotem && (
           <button
-            onClick={() => window.location.href = '/totem'}
+            onClick={() => voltarAoTotem(null)}
             style={{
               display: 'flex', alignItems: 'center', gap: 6,
               background: 'transparent', border: 'none',
@@ -597,31 +653,38 @@ export default function CadastroMembresia() {
             </p>
 
             {fromTotem ? (
-              /* Modo totem: exibe QR para o membro escanear com o celular e pegar a wallet */
+              /* Modo totem: o QR do membro sai na hora (sem repedir CPF/nascimento)
+                 e a volta já ativa a sessão da pessoa no totem. */
               <div style={{ marginTop: 24, paddingTop: 20, borderTop: '1px solid rgba(255,255,255,0.08)' }}>
-                <p style={{ fontSize: 13, color: C.text3, marginBottom: 16 }}>
-                  Escaneie o QR Code com seu celular para adicionar seu QR de membro na carteira digital:
-                </p>
-                <div style={{ display: 'inline-block', background: '#fff', padding: 12, borderRadius: 12, marginBottom: 16 }}>
-                  <QRCodeSVG
-                    value={`${window.location.origin}/wallet`}
-                    size={180}
-                    level="M"
-                    includeMargin={false}
-                  />
-                </div>
-                <p style={{ fontSize: 11, color: '#525252', marginBottom: 20 }}>
-                  {window.location.origin}/wallet
-                </p>
+                {totemQr ? (
+                  <>
+                    <p style={{ fontSize: 14, fontWeight: 600, color: C.text, margin: '0 0 4px' }}>
+                      Seu QR de membro está pronto!
+                    </p>
+                    <p style={{ fontSize: 12, color: C.text3, marginBottom: 16 }}>
+                      Ele é a sua carteirinha digital e identifica você no totem.
+                    </p>
+                    <div style={{ display: 'inline-block', background: '#fff', padding: 12, borderRadius: 12, marginBottom: 12 }}>
+                      <QRCodeSVG value={totemQr} size={180} level="M" includeMargin={false} />
+                    </div>
+                    <p style={{ fontSize: 11, color: C.textDim, marginBottom: 20 }}>
+                      No celular, acesse {window.location.origin}/wallet para guardar na sua carteira digital.
+                    </p>
+                  </>
+                ) : (
+                  <p style={{ fontSize: 12, color: C.text3, marginBottom: 20 }}>
+                    {totemQrErro || 'Gerando seu QR de membro...'}
+                  </p>
+                )}
                 <button
-                  onClick={() => window.location.href = '/totem'}
+                  onClick={() => voltarAoTotem(totemQr)}
                   style={{
-                    padding: '10px 24px', borderRadius: 10, background: 'transparent',
-                    border: '1px solid rgba(255,255,255,0.2)', color: C.text3,
-                    fontSize: 14, cursor: 'pointer',
+                    padding: '14px 28px', borderRadius: 12, border: 'none',
+                    background: '#00B39D', color: '#fff',
+                    fontSize: 15, fontWeight: 700, cursor: 'pointer',
                   }}
                 >
-                  ← Voltar ao Totem
+                  {totemQr ? 'Continuar no totem já identificado' : '← Voltar ao Totem'}
                 </button>
               </div>
             ) : (
@@ -1073,16 +1136,10 @@ export default function CadastroMembresia() {
                       label="Li e concordo com o tratamento dos meus dados pessoais. *"
                     />
                     <CheckboxField
-                      id="aceita_contato"
-                      checked={aceitaContato}
-                      onChange={setAceitaContato}
-                      label="Autorizo o contato da equipe de acolhimento por e-mail, telefone ou WhatsApp."
-                    />
-                    <CheckboxField
-                      id="whatsapp_optin"
-                      checked={optinWhats}
-                      onChange={setOptinWhats}
-                      label="Aceito receber mensagens da CBRio no WhatsApp (avisos, lembretes e felicitações). Posso cancelar quando quiser."
+                      id="aceita_comunicacao"
+                      checked={aceitaComunicacao}
+                      onChange={setAceitaComunicacao}
+                      label={TEXTO_COMUNICACAO}
                     />
                   </div>
                 </div>
