@@ -905,6 +905,26 @@ router.post('/batismos', authorizeBatismo, async (req, res) => {
   res.json(inscricaoPub);
 });
 
+// PUT /batismos/em-massa — muda o status de VÁRIAS inscrições de uma vez (ex.:
+// marcar os presentes como 'realizado'). body { ids: [...], status }. Precisa vir
+// ANTES de '/batismos/:id' (senão o :id captura "em-massa").
+router.put('/batismos/em-massa', authorizeBatismo, async (req, res) => {
+  const { ids, status } = req.body || {};
+  const STATUS_VALIDOS = ['pendente', 'confirmado', 'realizado', 'cancelado'];
+  const lista = Array.isArray(ids) ? [...new Set(ids.filter(Boolean).map(String))] : [];
+  if (!lista.length) return res.status(400).json({ error: 'Selecione ao menos uma pessoa.' });
+  if (!STATUS_VALIDOS.includes(status)) return res.status(400).json({ error: 'Status inválido.' });
+  if (lista.length > 500) return res.status(400).json({ error: 'Máximo de 500 por vez.' });
+  const { data, error } = await supabase
+    .from('batismo_inscricoes')
+    .update({ status, updated_at: new Date().toISOString() })
+    .in('id', lista)
+    .is('deleted_at', null)
+    .select('id');
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true, atualizados: (data || []).length });
+});
+
 router.put('/batismos/:id', authorizeBatismo, async (req, res) => {
   const {
     status, data_batismo, observacoes, area_kpi,

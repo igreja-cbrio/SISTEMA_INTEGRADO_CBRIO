@@ -878,6 +878,7 @@ export default function Batismos() {
           labelHorario={labelHorario}
           onClose={() => setTurmaAberta(null)}
           onSelectPessoa={(b) => { setTurmaAberta(null); setSelected(b); }}
+          onChanged={load}
         />
       )}
 
@@ -942,19 +943,40 @@ function imprimirUmCulto(
 }
 
 function ModalTurmaBatismo({
-  data, pessoas, labelHorario, onClose, onSelectPessoa,
+  data, pessoas, labelHorario, onClose, onSelectPessoa, onChanged,
 }: {
   data: string;
   pessoas: BatismoInscricao[];
   labelHorario: (hc?: string | null) => string;
   onClose: () => void;
   onSelectPessoa: (b: BatismoInscricao) => void;
+  onChanged: () => void;
 }) {
   const titulo = data === 'sem-data' ? 'Sem data definida' : ymdLocal(data);
   // Agrupa por culto (horário) dentro da turma · "Sem horário" no fim.
   const porCulto = new Map<string, BatismoInscricao[]>();
   pessoas.forEach(b => { const k = b.horario_culto || ''; if (!porCulto.has(k)) porCulto.set(k, []); porCulto.get(k)!.push(b); });
   const cultos = [...porCulto.entries()].sort(([a], [b]) => (!a ? 1 : !b ? -1 : labelHorario(a).localeCompare(labelHorario(b))));
+
+  // Seleção múltipla · marcar status em massa (ex.: os que vieram → Realizado).
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const [salvando, setSalvando] = useState<Status | null>(null);
+  const toggle = (id: string) => setSel(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const toggleCulto = (lista: BatismoInscricao[], marcar: boolean) => setSel(s => {
+    const n = new Set(s); lista.forEach(b => (marcar ? n.add(b.id) : n.delete(b.id))); return n;
+  });
+  async function aplicar(status: Status) {
+    if (!sel.size) return;
+    setSalvando(status);
+    try {
+      const r = await kpisApi.batismos.updateEmMassa([...sel], status);
+      toast.success(`${r?.atualizados ?? sel.size} pessoa(s) → ${STATUS_LABEL[status]}`);
+      setSel(new Set());
+      onChanged();
+    } catch (e: any) { toast.error(e?.message || 'Erro ao atualizar em massa'); }
+    finally { setSalvando(null); }
+  }
+
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
@@ -983,6 +1005,13 @@ function ModalTurmaBatismo({
                 <Table>
                   <TableHeader>
                     <TableRow>
+                      <TableHead className="w-10">
+                        <Checkbox
+                          checked={lista.length > 0 && lista.every(b => sel.has(b.id))}
+                          onCheckedChange={(v) => toggleCulto(lista, !!v)}
+                          aria-label="Selecionar todos deste culto"
+                        />
+                      </TableHead>
                       <TableHead>Nome</TableHead>
                       <TableHead className="text-center hidden sm:table-cell">Categoria</TableHead>
                       <TableHead className="text-center">Status</TableHead>
@@ -996,9 +1025,12 @@ function ModalTurmaBatismo({
                       return (
                         <TableRow
                           key={b.id}
-                          className="cursor-pointer hover:bg-muted/40 transition-colors"
+                          className={`cursor-pointer hover:bg-muted/40 transition-colors ${sel.has(b.id) ? 'bg-primary/5' : ''}`}
                           onClick={() => onSelectPessoa(b)}
                         >
+                          <TableCell className="w-10" onClick={(e) => e.stopPropagation()}>
+                            <Checkbox checked={sel.has(b.id)} onCheckedChange={() => toggle(b.id)} aria-label={`Selecionar ${b.nome}`} />
+                          </TableCell>
                           <TableCell>
                             <p className="font-medium">{b.nome} {b.sobrenome}</p>
                             {b.telefone && <p className="text-xs text-muted-foreground">{b.telefone}</p>}
@@ -1028,6 +1060,19 @@ function ModalTurmaBatismo({
             </div>
           ))}
         </div>
+        {sel.size > 0 && (
+          <div className="border-t border-border pt-3 flex flex-wrap items-center gap-2">
+            <span className="text-sm font-medium">{sel.size} selecionada(s) · marcar como:</span>
+            {(['realizado', 'confirmado', 'pendente', 'cancelado'] as Status[]).map(st => (
+              <Button key={st} size="sm" variant={st === 'realizado' ? 'default' : 'outline'} disabled={!!salvando}
+                onClick={() => aplicar(st)} className="gap-1.5">
+                {salvando === st ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                {STATUS_LABEL[st]}
+              </Button>
+            ))}
+            <Button size="sm" variant="ghost" onClick={() => setSel(new Set())} className="ml-auto">Limpar</Button>
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   );

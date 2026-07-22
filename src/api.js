@@ -2753,6 +2753,8 @@ export const kpis = {
     list: (params) => get('/kpis/batismos' + (params ? '?' + new URLSearchParams(params) : '')),
     create: (data) => post('/kpis/batismos', data),
     update: (id, data) => put(`/kpis/batismos/${id}`, data),
+    // Muda o status de várias inscrições de uma vez (ex.: marcar presentes → realizado).
+    updateEmMassa: (ids, status) => put('/kpis/batismos/em-massa', { ids, status }),
     coberturaConvertidos: () => get('/kpis/batismos/cobertura-convertidos'),
     // Horários do batismo (abrir/fechar + limite de vagas)
     horarios: {
