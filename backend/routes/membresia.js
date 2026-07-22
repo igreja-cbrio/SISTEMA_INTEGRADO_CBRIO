@@ -1603,6 +1603,23 @@ router.post('/totem/next/inscrever', async (req, res) => {
       console.error('[TOTEM] next notificar error:', e.message);
     }
 
+    // Confirmação por WhatsApp (fila · no-op até WHATSAPP_TEMPLATE_NEXT_CONF).
+    if (cleanTel && process.env.WHATSAPP_TEMPLATE_NEXT_CONF) {
+      try {
+        const { enfileirar } = require('../services/whatsappFila');
+        const dataFmt = proxima.data ? String(proxima.data).split('-').reverse().join('/') : 'a confirmar';
+        enfileirar({
+          telefone: cleanTel,
+          template: process.env.WHATSAPP_TEMPLATE_NEXT_CONF,
+          // {{1}} nome · {{2}} data · {{3}} horário (horário entra na 2B-2 · até
+          // lá manda "a confirmar" — o template já nasce com as 3 variáveis).
+          params: [String(nome).split(' ')[0] || 'Olá', dataFmt, 'a confirmar'],
+          contexto: 'next_totem',
+          refId: proxima.id,
+        }).catch(() => {});
+      } catch { /* fila indisponível · não bloqueia */ }
+    }
+
     res.status(201).json({ ok: true, evento: proxima });
   } catch (e) {
     console.error('[TOTEM] next/inscrever error:', e.message);
@@ -1752,6 +1769,28 @@ router.post('/totem/apresentacao-bebe', async (req, res) => {
       });
     } catch (e) {
       console.error('[TOTEM] apresentacao-bebe notificar error:', e.message);
+    }
+
+    // Confirmação por WhatsApp (fila · no-op até WHATSAPP_TEMPLATE_BEBE_CONF).
+    if (cleanTel && process.env.WHATSAPP_TEMPLATE_BEBE_CONF) {
+      try {
+        const { enfileirar } = require('../services/whatsappFila');
+        const cultoDoDia = (cultosDia || []).find((c) => c.id === culto_id);
+        const horaCulto = String(cultoDoDia?.service_type?.recurrence_time || '').slice(0, 5);
+        enfileirar({
+          telefone: cleanTel,
+          template: process.env.WHATSAPP_TEMPLATE_BEBE_CONF,
+          // {{1}} responsável · {{2}} bebê · {{3}} data · {{4}} horário
+          params: [
+            String(responsavel_nome).split(' ')[0] || 'Olá',
+            String(bebe_nome).trim(),
+            proximaStr.split('-').reverse().join('/'),
+            horaCulto || 'a confirmar',
+          ],
+          contexto: 'apresentacao_bebe_totem',
+          refId: data.id,
+        }).catch(() => {});
+      } catch { /* fila indisponível · não bloqueia */ }
     }
 
     res.status(201).json({ ok: true, apresentacao: data, data_apresentacao: proximaStr });
