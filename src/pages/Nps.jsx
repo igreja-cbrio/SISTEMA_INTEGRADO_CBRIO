@@ -6,7 +6,7 @@ import { nps as api, next as nextApi } from '../api';
 import { toast } from 'sonner';
 import {
   Plus, X, MessageSquare, Sparkles, Users, Link2, Copy, Check, Loader2,
-  TrendingUp, TrendingDown, Minus, BarChart3, Search, Send, BrainCircuit, Pencil, Trash2, Upload,
+  TrendingUp, TrendingDown, Minus, BarChart3, Search, Send, BrainCircuit, Pencil, Trash2, Upload, GripVertical,
 } from 'lucide-react';
 
 const C = {
@@ -944,6 +944,17 @@ function EditModal({ pesquisa, onClose, onSaved }) {
   const novoId = () => 'q' + Math.random().toString(36).slice(2, 9);
   const COM_OPCOES = ['opcao_unica', 'multipla'];
   const patchExtra = (i, patch) => setExtras(extras.map((x, j) => j === i ? { ...x, ...patch } : x));
+  // Reordenar por arrastar (a ordem do array = ordem de exibição no formulário).
+  const [dragIdx, setDragIdx] = useState(null);
+  const [overIdx, setOverIdx] = useState(null);
+  const [dragOn, setDragOn] = useState(false); // só arrasta quando pega na alça
+  const moverExtra = (from, to) => setExtras(prev => {
+    if (from == null || to == null || from === to) return prev;
+    const arr = [...prev];
+    const [it] = arr.splice(from, 1);
+    arr.splice(to, 0, it);
+    return arr;
+  });
 
   async function salvar() {
     if (!titulo.trim()) return toast.error('Defina um título.');
@@ -1042,8 +1053,23 @@ function EditModal({ pesquisa, onClose, onSaved }) {
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {extras.map((ex, i) => (
-              <div key={ex.id || i} style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div key={ex.id || i}
+                draggable={dragOn}
+                onDragStart={() => setDragIdx(i)}
+                onDragOver={e => { e.preventDefault(); if (overIdx !== i) setOverIdx(i); }}
+                onDrop={() => { moverExtra(dragIdx, i); setDragIdx(null); setOverIdx(null); setDragOn(false); }}
+                onDragEnd={() => { setDragIdx(null); setOverIdx(null); setDragOn(false); }}
+                style={{
+                  border: `1px solid ${overIdx === i && dragIdx !== null && dragIdx !== i ? C.cyan : C.border}`,
+                  borderRadius: 8, padding: 10, display: 'flex', flexDirection: 'column', gap: 8,
+                  background: overIdx === i && dragIdx !== null && dragIdx !== i ? C.cyanBg : 'transparent',
+                  opacity: dragIdx === i ? 0.5 : 1,
+                }}>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                  <div onMouseDown={() => setDragOn(true)} onMouseUp={() => setDragOn(false)} title="Arraste para reordenar"
+                    style={{ cursor: 'grab', color: C.t3, padding: '10px 2px', flex: 'none', touchAction: 'none' }}>
+                    <GripVertical size={16} />
+                  </div>
                   <input value={ex.texto} onChange={e => patchExtra(i, { texto: e.target.value })}
                     placeholder={ex.tipo === 'secao' ? 'Título da seção' : `Pergunta ${i + 1}`} style={{ ...inp, flex: 1 }} />
                   <select value={ex.tipo} onChange={e => patchExtra(i, { tipo: e.target.value })}
