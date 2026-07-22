@@ -96,7 +96,7 @@ export default function VolMeuPerfil() {
   };
 
   const handleSave = () => {
-    if (!fullName.trim()) return toast.error('Nome obrigatorio');
+    if (!fullName.trim()) return toast.error('Nome obrigatório');
     updateMe.mutate(
       { full_name: fullName.trim(), phone: phone.replace(/\D/g, '') || undefined, cpf: cpf.replace(/\D/g, '') || undefined },
       {
@@ -113,12 +113,12 @@ export default function VolMeuPerfil() {
   };
 
   const handleRegisterMember = () => {
-    if (!regNome.trim()) return toast.error('Nome obrigatorio');
-    if (!regSobrenome.trim()) return toast.error('Sobrenome obrigatorio');
+    if (!regNome.trim()) return toast.error('Nome obrigatório');
+    if (!regSobrenome.trim()) return toast.error('Sobrenome obrigatório');
     const cleanCpf = regCpf.replace(/\D/g, '');
-    if (cleanCpf.length !== 11) return toast.error('CPF invalido');
+    if (cleanCpf.length !== 11) return toast.error('CPF inválido');
     const cleanCel = regCelular.replace(/\D/g, '');
-    if (cleanCel.length < 10) return toast.error('Celular invalido');
+    if (cleanCel.length < 10) return toast.error('Celular inválido');
 
     registerMember.mutate(
       { nome: regNome.trim(), sobrenome: regSobrenome.trim(), cpf: cleanCpf, celular: cleanCel },
@@ -171,7 +171,7 @@ export default function VolMeuPerfil() {
     return (
       <Card>
         <CardContent className="py-10 text-center text-muted-foreground">
-          Perfil de voluntario nao encontrado.
+          Perfil de voluntário não encontrado.
         </CardContent>
       </Card>
     );
@@ -321,15 +321,15 @@ export default function VolMeuPerfil() {
               <UserPlus className="h-5 w-5 text-[#00B39D]" /> Cadastro de membro
             </DialogTitle>
             <DialogDescription>
-              Esse CPF ainda nao esta cadastrado na membresia da CBRio. Preencha os dados
-              abaixo para concluir o cadastro e vincular ao seu perfil de voluntario.
+              Esse CPF ainda não está cadastrado na membresia da CBRio. Preencha os dados
+              abaixo para concluir o cadastro e vincular ao seu perfil de voluntário.
             </DialogDescription>
           </DialogHeader>
 
           <div className="flex items-start gap-2 rounded-md border border-yellow-200 bg-yellow-50 dark:border-yellow-900/40 dark:bg-yellow-900/10 p-3 text-sm">
             <AlertCircle className="h-4 w-4 text-yellow-600 mt-0.5 shrink-0" />
             <p className="text-yellow-800 dark:text-yellow-300">
-              Todos os campos sao obrigatorios.
+              Todos os campos são obrigatórios.
             </p>
           </div>
 

@@ -8,7 +8,7 @@
  */
 export function averageDescriptors(descriptors: Float32Array[]): Float32Array {
   if (descriptors.length === 0) {
-    throw new Error('Nenhum descritor para calcular media');
+    throw new Error('Nenhum descritor para calcular média');
   }
   if (descriptors.length === 1) {
     return descriptors[0];

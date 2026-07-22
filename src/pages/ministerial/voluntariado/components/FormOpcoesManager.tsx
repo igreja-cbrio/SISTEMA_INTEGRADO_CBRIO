@@ -46,7 +46,7 @@ export default function FormOpcoesManager() {
   });
   const remove = useMutation({
     mutationFn: (id: string) => voluntariado.formOpcoes.remove(id),
-    onSuccess: () => { invalidate(); toast.success('Opcao removida'); },
+    onSuccess: () => { invalidate(); toast.success('Opção removida'); },
     onError: (e: any) => toast.error(e?.message || 'Erro ao remover'),
   });
 
@@ -54,17 +54,17 @@ export default function FormOpcoesManager() {
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <ClipboardList className="h-5 w-5" /> Opcoes do formulario publico
+          <ClipboardList className="h-5 w-5" /> Opções do formulário público
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
         <p className="text-sm text-muted-foreground">
-          Controla o que aparece em "Onde você quer servir" no formulario publico de inscricao.
-          Desative uma opcao (ex: Online) quando as vagas encherem — ela some do formulario sem
-          ser apagada. Kids e Bridge pedem CPF + nome da mae e mostram o aviso de antecedentes.
+          Controla o que aparece em "Onde você quer servir" no formulário público de inscrição.
+          Desative uma opção (ex: Online) quando as vagas encherem — ela some do formulário sem
+          ser apagada. Kids e Bridge pedem CPF + nome da mãe e mostram o aviso de antecedentes.
         </p>
         <Button size="sm" onClick={() => setShowForm(true)} className="gap-1.5 bg-[#00B39D] hover:bg-[#00B39D]/90">
-          <Plus className="h-4 w-4" /> Nova opcao
+          <Plus className="h-4 w-4" /> Nova opção
         </Button>
 
         {isLoading ? (
@@ -82,11 +82,11 @@ export default function FormOpcoesManager() {
                     {!o.ativo && <Badge variant="outline" className="text-[10px]">Oculto</Badge>}
                     {o.exige_dados_menor && (
                       <Badge variant="outline" className="text-[10px] border-amber-500/40 text-amber-600">
-                        pede CPF + mae
+                        pede CPF + mãe
                       </Badge>
                     )}
                   </div>
-                  <div className="text-[11px] text-muted-foreground capitalize">area: {o.area_canonica}</div>
+                  <div className="text-[11px] text-muted-foreground capitalize">área: {o.area_canonica}</div>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                   <Button
@@ -143,7 +143,7 @@ function OpcaoFormDialog({ onClose, onSaved }: { onClose: () => void; onSaved: (
         aviso_titulo: exigeMenor && avisoTitulo.trim() ? avisoTitulo.trim() : null,
         aviso_texto: exigeMenor && avisoTexto.trim() ? avisoTexto.trim() : null,
       });
-      toast.success('Opcao criada');
+      toast.success('Opção criada');
       onSaved();
       onClose();
     } catch (e: any) {
@@ -173,12 +173,12 @@ function OpcaoFormDialog({ onClose, onSaved }: { onClose: () => void; onSaved: (
               </SelectContent>
             </Select>
             <p className="text-[11px] text-muted-foreground mt-1">
-              Define a area da inscricao. Use "Sede" se nao for Kids/AMI/Bridge/Online.
+              Define a área da inscrição. Use "Sede" se não for Kids/AMI/Bridge/Online.
             </p>
           </div>
           <label className="flex items-center gap-2 text-sm cursor-pointer">
             <input type="checkbox" checked={exigeMenor} onChange={e => setExigeMenor(e.target.checked)} />
-            Exige dados de menor (CPF + nome da mae + aviso de antecedentes)
+            Exige dados de menor (CPF + nome da mãe + aviso de antecedentes)
           </label>
           {exigeMenor && (
             <div className="space-y-2 pl-1 border-l-2 border-[#00B39D]/30">

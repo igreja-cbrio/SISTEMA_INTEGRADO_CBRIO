@@ -116,7 +116,7 @@ export default function VolEquipes() {
                           {memberCount}
                         </span>
                         {positionCount > 0 && (
-                          <span className="hidden sm:flex items-center gap-1" title="Posicoes">
+                          <span className="hidden sm:flex items-center gap-1" title="Posições">
                             <Briefcase className="h-3.5 w-3.5" />
                             {positionCount}
                           </span>
@@ -183,7 +183,7 @@ function SyncMembersButton() {
       onClick={() => {
         syncMut.mutate(undefined, {
           onSuccess: (data: any) =>
-            toast.success(`${data.assigned} atribuicoes sincronizadas (${data.volunteers} voluntarios)`),
+            toast.success(`${data.assigned} atribuições sincronizadas (${data.volunteers} voluntários)`),
           onError: () => toast.error('Erro ao sincronizar membros'),
         });
       }}
@@ -204,7 +204,7 @@ function TeamFormDialog({ team, areas = [], onClose }: { team: VolTeam | null; a
   const [area, setArea] = useState(team?.area || '');
 
   const handleSave = () => {
-    if (!name.trim()) return toast.error('Nome obrigatorio');
+    if (!name.trim()) return toast.error('Nome obrigatório');
     const data = { name: name.trim(), description: description.trim() || null, color, area: area.trim() || null };
     if (team) {
       updateTeam.mutate({ id: team.id, data }, { onSuccess: () => { toast.success('Equipe atualizada'); onClose(); }, onError: () => toast.error('Erro ao atualizar') });
@@ -228,7 +228,7 @@ function TeamFormDialog({ team, areas = [], onClose }: { team: VolTeam | null; a
         <div className="space-y-4 py-2">
           <div>
             <Label>Nome</Label>
-            <Input value={name} onChange={e => setName(e.target.value)} placeholder="Ex: Louvor, Midia, Recepcao" />
+            <Input value={name} onChange={e => setName(e.target.value)} placeholder="Ex: Louvor, Mídia, Recepção" />
           </div>
           <div>
             <Label>Área</Label>
@@ -427,15 +427,15 @@ function PositionsList({ teamId, positions }: { teamId: string; positions: VolPo
   const handleCreate = () => {
     if (!posName.trim()) return;
     createPosition.mutate({ team_id: teamId, name: posName.trim() } as any, {
-      onSuccess: () => { toast.success('Posicao criada'); setPosName(''); setShowAdd(false); },
+      onSuccess: () => { toast.success('Posição criada'); setPosName(''); setShowAdd(false); },
       onError: (err: any) => toast.error(err.message || 'Erro ao criar'),
     });
   };
 
   const handleDelete = (id: string, name: string) => {
-    if (!confirm(`Remover posicao "${name}"?`)) return;
+    if (!confirm(`Remover posição "${name}"?`)) return;
     deletePosition.mutate(id, {
-      onSuccess: () => toast.success('Posicao removida'),
+      onSuccess: () => toast.success('Posição removida'),
       onError: () => toast.error('Erro ao remover'),
     });
   };
@@ -444,14 +444,14 @@ function PositionsList({ teamId, positions }: { teamId: string; positions: VolPo
     <div className="space-y-3">
       <div className="flex justify-end">
         <Button size="sm" onClick={() => setShowAdd(!showAdd)} className="gap-1.5">
-          <Plus className="h-4 w-4" /> Nova Posicao
+          <Plus className="h-4 w-4" /> Nova Posição
         </Button>
       </div>
 
       {showAdd && (
         <div className="flex gap-2">
           <Input
-            placeholder="Ex: Vocalista, Camera 1, Recepcionista..."
+            placeholder="Ex: Vocalista, Câmera 1, Recepcionista..."
             value={posName}
             onChange={e => setPosName(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && handleCreate()}

@@ -171,7 +171,7 @@ function MySchedulesTab() {
       {pendingSchedules.length > 0 && (
         <div className="space-y-3">
           <h3 className="text-sm font-semibold text-yellow-600 flex items-center gap-1.5">
-            <Clock className="h-4 w-4" /> Aguardando sua confirmacao ({pendingSchedules.length})
+            <Clock className="h-4 w-4" /> Aguardando sua confirmação ({pendingSchedules.length})
           </h3>
           {pendingSchedules.map(s => (
             <Card key={s.id} className="border-yellow-200 dark:border-yellow-900/30">
@@ -325,7 +325,7 @@ function MyAvailabilityTab() {
     toggle.mutate(
       { serviceId: service.id, isUnavailable: service.is_unavailable, availabilityId: service.availability_id },
       {
-        onSuccess: () => toast.success(service.is_unavailable ? 'Disponibilidade restaurada' : 'Ausencia registrada'),
+        onSuccess: () => toast.success(service.is_unavailable ? 'Disponibilidade restaurada' : 'Ausência registrada'),
         onError: (err: any) => toast.error(err.message || 'Erro ao atualizar'),
       }
     );
@@ -383,7 +383,7 @@ function MyAvailabilityTab() {
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
-        Toque nos cultos que voce <strong>não pode comparecer</strong>
+        Toque nos cultos que você <strong>não pode comparecer</strong>
       </p>
 
       {/* Busca por data */}

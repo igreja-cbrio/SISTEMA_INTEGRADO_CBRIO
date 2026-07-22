@@ -39,7 +39,7 @@ export default function VolTiposCulto() {
           <CardContent className="flex flex-col items-center justify-center py-16 text-center">
             <Calendar className="h-12 w-12 text-muted-foreground/30 mb-4" />
             <p className="text-lg font-medium text-muted-foreground">Nenhum tipo de culto cadastrado</p>
-            <p className="text-sm text-muted-foreground/60 mt-1">Crie tipos com recorrencia para gerar cultos automaticamente</p>
+            <p className="text-sm text-muted-foreground/60 mt-1">Crie tipos com recorrência para gerar cultos automaticamente</p>
           </CardContent>
         </Card>
       ) : (
@@ -128,7 +128,7 @@ function ServiceTypeFormDialog({ serviceType, onClose }: { serviceType: VolServi
   const [color, setColor] = useState(serviceType?.color || '#00B39D');
 
   const handleSave = () => {
-    if (!name.trim()) return toast.error('Nome obrigatorio');
+    if (!name.trim()) return toast.error('Nome obrigatório');
     const data = {
       name: name.trim(),
       description: description.trim() || null,
@@ -167,11 +167,11 @@ function ServiceTypeFormDialog({ serviceType, onClose }: { serviceType: VolServi
         <div className="space-y-4 py-2">
           <div>
             <Label>Nome</Label>
-            <Input value={name} onChange={e => setName(e.target.value)} placeholder="Ex: Culto Domingo Manha" />
+            <Input value={name} onChange={e => setName(e.target.value)} placeholder="Ex: Culto Domingo Manhã" />
           </div>
           <div>
             <Label>Descrição</Label>
-            <Input value={description} onChange={e => setDescription(e.target.value)} placeholder="Descricao (opcional)" />
+            <Input value={description} onChange={e => setDescription(e.target.value)} placeholder="Descrição (opcional)" />
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
