@@ -1991,6 +1991,7 @@ export const membresia = {
   cadastros: {
     list: (params) => get('/membresia/cadastros' + (params ? '?' + new URLSearchParams(params) : '')),
     kpis: () => get('/membresia/cadastros/kpis'),
+    podeAprovar: () => get('/membresia/cadastros/pode-aprovar'),
     aprovar: (id, data) => post(`/membresia/cadastros/${id}/aprovar`, data || {}),
     rejeitar: (id, motivo) => post(`/membresia/cadastros/${id}/rejeitar`, { motivo }),
     update: (id, data) => patch(`/membresia/cadastros/${id}`, data),
