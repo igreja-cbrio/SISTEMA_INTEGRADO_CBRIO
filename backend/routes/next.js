@@ -385,9 +385,11 @@ router.post('/inscricoes/:id/indicacoes', async (req, res) => {
 // ----------------------------------------------------------------------------
 router.post('/matriculas/:id/direcionar', async (req, res) => {
   try {
+    const b = req.body || {};
     const r = await direcionarMatricula({
       matriculaId: req.params.id,
-      destinos: (req.body || {}).destinos || [],
+      destinos: b.destinos || [],
+      areas: b.areas || [], // "Servir" abre a escolha de áreas (Totem / self-service)
       userId: req.user?.id || null,
     });
     recalcularKpisNext();
@@ -674,6 +676,31 @@ router.put('/encontros/:id/presencas', async (req, res) => {
   await recomputarStatusTurma(enc.turma_id);
   recalcularKpisNext();
   res.json({ ok: true });
+});
+
+// POST /encontros/:id/presenca — marca/desmarca UMA pessoa { matricula_id, presente }
+// sem apagar o resto do conjunto (usado pelo Totem, onde cada um toca 1 por vez).
+// Também carimba next_matriculas.check_in_at (compatível com o self-service público).
+router.post('/encontros/:id/presenca', async (req, res) => {
+  const encontroId = req.params.id;
+  const matriculaId = req.body?.matricula_id;
+  const presente = req.body?.presente !== false; // default true
+  if (!matriculaId) return res.status(400).json({ error: 'matricula_id obrigatório' });
+  const { data: enc } = await supabase.from('next_encontros').select('id, turma_id').eq('id', encontroId).maybeSingle();
+  if (!enc) return res.status(404).json({ error: 'Encontro não encontrado' });
+  // idempotente: remove o par e reinsere só quando presente (evita depender de UNIQUE)
+  await supabase.from('next_presencas').delete().eq('encontro_id', encontroId).eq('matricula_id', matriculaId);
+  if (presente) {
+    const { error: insErr } = await supabase.from('next_presencas')
+      .insert({ encontro_id: encontroId, matricula_id: matriculaId, presente: true });
+    if (insErr) return res.status(500).json({ error: insErr.message });
+  }
+  await supabase.from('next_matriculas')
+    .update({ check_in_at: presente ? new Date().toISOString() : null, updated_at: new Date().toISOString() })
+    .eq('id', matriculaId);
+  await recomputarStatusTurma(enc.turma_id);
+  recalcularKpisNext();
+  res.json({ ok: true, presente });
 });
 
 // GET /matriculas?turma_id=&fila=true&search= — lista

@@ -390,6 +390,8 @@ export const next = {
   encontros: {
     update: (id, data) => patch(`/next/encontros/${id}`, data),
     setPresencas: (id, matriculaIds) => put(`/next/encontros/${id}/presencas`, { matricula_ids: matriculaIds }),
+    // Marca/desmarca UMA pessoa no encontro (Totem · presente=false desmarca).
+    setPresenca: (id, matriculaId, presente = true) => post(`/next/encontros/${id}/presenca`, { matricula_id: matriculaId, presente }),
   },
   matriculas: {
     list: (params) => get('/next/matriculas' + (params ? '?' + new URLSearchParams(params) : '')),
@@ -400,7 +402,7 @@ export const next = {
     setContato: (id, feito) => patch(`/next/matriculas/${id}/contato`, { feito }),
     // Direcionar pros valores (grupos/voluntarios/batismo/devocional) · cria encaminhamento
     // origem='next' (grupos/voluntarios), inscrição pendente (batismo), registra (devocional).
-    direcionar: (id, destinos) => post(`/next/matriculas/${id}/direcionar`, { destinos }),
+    direcionar: (id, destinos, areas) => post(`/next/matriculas/${id}/direcionar`, { destinos, areas }),
     // Liga as matrículas órfãs (sem membro_id) via matcher forte (fecha o funil).
     backfillMembros: () => post('/next/matriculas/backfill-membros', {}),
   },
