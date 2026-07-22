@@ -399,7 +399,23 @@ router.get('/frequencia', async (req, res) => {
     // divergentes entre "Todos" e "Ativos").
     const { count: total } = await supabase.from('vw_vol_frequencia').select('chave', { count: 'exact', head: true });
     const { count: ativos } = await supabase.from('vw_vol_frequencia').select('chave', { count: 'exact', head: true }).eq('ativo', true);
-    res.json({ resumo: { total: total || 0, ativos: ativos || 0, inativos: (total || 0) - (ativos || 0) }, itens: data });
+
+    // Enriquece com o motivo de inatividade (por chave · tabela vol_inatividade)
+    const chaves = [...new Set(data.map(r => r.chave).filter(Boolean))];
+    const motivoByChave = {};
+    for (let i = 0; i < chaves.length; i += 500) {
+      const lote = chaves.slice(i, i + 500);
+      const { data: ms } = await supabase.from('vol_inatividade')
+        .select('chave, motivo, detalhe, registrado_em').in('chave', lote);
+      (ms || []).forEach(m => { motivoByChave[m.chave] = m; });
+    }
+    const itens = data.map(r => ({
+      ...r,
+      inatividade_motivo: motivoByChave[r.chave]?.motivo || null,
+      inatividade_detalhe: motivoByChave[r.chave]?.detalhe || null,
+      inatividade_em: motivoByChave[r.chave]?.registrado_em || null,
+    }));
+    res.json({ resumo: { total: total || 0, ativos: ativos || 0, inativos: (total || 0) - (ativos || 0) }, itens });
   } catch (e) {
     console.error('[vol] frequencia', e.message);
     res.status(500).json({ error: 'Erro ao carregar frequência' });
@@ -419,6 +435,31 @@ router.get('/frequencia/detalhe', async (req, res) => {
     res.json(data || []);
   } catch (e) {
     res.status(500).json({ error: 'Erro ao carregar detalhe' });
+  }
+});
+
+// PUT /api/voluntariado/frequencia/inatividade  body { chave, motivo, detalhe }
+// Registra/edita o MOTIVO pelo qual o voluntário está inativo. motivo vazio = limpa.
+// Guardado por `chave` da vw_vol_frequencia (cpf:/membresia:/id:).
+router.put('/frequencia/inatividade', authorizeModule('membresia', 2), async (req, res) => {
+  try {
+    const chave = String(req.body?.chave || '').trim();
+    if (!chave) return res.status(400).json({ error: 'chave obrigatória' });
+    const motivo = String(req.body?.motivo || '').trim().slice(0, 60);
+    const detalhe = req.body?.detalhe != null ? String(req.body.detalhe).trim().slice(0, 1000) : null;
+    if (!motivo) {
+      await supabase.from('vol_inatividade').delete().eq('chave', chave);
+      return res.json({ ok: true, cleared: true });
+    }
+    const { data, error } = await supabase.from('vol_inatividade')
+      .upsert({ chave, motivo, detalhe: detalhe || null, registrado_por: req.user?.id ?? null, updated_at: new Date().toISOString() },
+        { onConflict: 'chave' })
+      .select('chave, motivo, detalhe, registrado_em').single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true, motivo: data });
+  } catch (e) {
+    console.error('[vol] inatividade', e.message);
+    res.status(500).json({ error: 'Erro ao salvar o motivo' });
   }
 });
 
