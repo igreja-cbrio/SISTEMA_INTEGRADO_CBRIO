@@ -5,6 +5,7 @@ const { notificar } = require('../services/notificar');
 const { enqueueSync } = require('../services/cerebroSync');
 const { mountWhatsappAuto } = require('./whatsappAutoRoutes');
 const { acharOuCriarGuardado } = require('../services/membroMatch');
+const { registrarPedidoCuidado } = require('../services/cuidadosPedidos');
 
 router.use(authenticate);
 
@@ -1630,6 +1631,143 @@ router.delete('/atendimento-comentarios/:id', authorizeModule('cuidados', 3), as
     if (error) throw error;
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─────────────────────────────────────────────────────────────
+// Caixa de entrada · pedidos de cuidado (cui_pedidos) · 2026-07-22
+// Fila unificada de triagem. Lê cui_pedidos (whatsapp/plataforma/manual) +
+// app_inscricoes (canal app · endpoints /pedidos-app já existentes). Ao ATENDER,
+// o líder escolhe o tipo → cria o atendimento na trilha (cui_visitas/cui_acompanhamentos).
+// ─────────────────────────────────────────────────────────────
+const PEDIDO_STATUS = ['pendente', 'em_andamento', 'concluido'];
+
+router.get('/pedidos', authorizeModule('cuidados', 1), async (req, res) => {
+  try {
+    const { status } = req.query;
+    let q = supabase.from('cui_pedidos').select('*').is('deleted_at', null)
+      .order('created_at', { ascending: false }).limit(500);
+    if (status && PEDIDO_STATUS.includes(status)) q = q.eq('status', status);
+    const { data, error } = await q;
+    if (error) throw error;
+    const ids = [...new Set((data || []).map(r => r.atribuido_a).filter(Boolean))];
+    let profs = {};
+    if (ids.length) {
+      const { data: ps } = await supabase.from('profiles').select('id, name').in('id', ids);
+      profs = Object.fromEntries((ps || []).map(p => [p.id, p.name]));
+    }
+    res.json((data || []).map(r => ({ ...r, atribuido_nome: r.atribuido_a ? (profs[r.atribuido_a] || null) : null })));
+  } catch (e) {
+    console.error('[CUIDADOS] pedidos:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post('/pedidos', authorizeModule('cuidados', 2), async (req, res) => {
+  try {
+    const d = req.body || {};
+    if (!d.nome && !d.telefone && !d.membro_id) return res.status(400).json({ error: 'Informe ao menos nome ou telefone.' });
+    let membro_id = d.membro_id || null;
+    if (!membro_id && d.cpf) { const m = await findMembroByCpf(d.cpf); if (m) membro_id = m.id; }
+    const pedido = await registrarPedidoCuidado({
+      canal: 'manual', tipo: d.tipo, membro_id, nome: d.nome, telefone: d.telefone,
+      email: d.email, mensagem: d.mensagem, criado_por: req.user?.id || req.user?.userId || null,
+    });
+    res.status(201).json(pedido);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.patch('/pedidos/:id', authorizeModule('cuidados', 3), async (req, res) => {
+  try {
+    const b = req.body || {};
+    const patch = { updated_at: new Date().toISOString() };
+    if (b.status !== undefined) {
+      if (!PEDIDO_STATUS.includes(b.status)) return res.status(400).json({ error: 'Status inválido' });
+      patch.status = b.status;
+      patch.tratado_por = req.user?.id || req.user?.userId || null;
+      patch.tratado_em = b.status === 'pendente' ? null : new Date().toISOString();
+    }
+    if ('atribuido_a' in b) patch.atribuido_a = b.atribuido_a || null;
+    const { data, error } = await supabase.from('cui_pedidos').update(patch)
+      .eq('id', req.params.id).is('deleted_at', null).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete('/pedidos/:id', authorizeModule('cuidados', 3), async (req, res) => {
+  try {
+    const { error } = await supabase.from('cui_pedidos')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('id', req.params.id).is('deleted_at', null);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /cuidados/pedidos/atender — o líder escolhe o TIPO de atendimento/visita e
+// isso cria o atendimento na TRILHA da pessoa (aba Visitas e Atendimentos).
+// Roteia: aconselhamento/capelania → cui_acompanhamentos (alimenta os KPIs de
+// capelania/aconselhamento) · demais → cui_visitas. fonte 'cui' (cui_pedidos) ou 'app'.
+router.post('/pedidos/atender', authorizeModule('cuidados', 2), async (req, res) => {
+  try {
+    const { fonte, id, atendimento } = req.body || {};
+    const a = atendimento || {};
+    if (!['cui', 'app'].includes(fonte) || !id) return res.status(400).json({ error: 'fonte/id inválidos' });
+
+    let pessoa = { nome: null, telefone: null, membro_id: null };
+    if (fonte === 'cui') {
+      const { data: p } = await supabase.from('cui_pedidos').select('*').eq('id', id).is('deleted_at', null).maybeSingle();
+      if (!p) return res.status(404).json({ error: 'Pedido não encontrado' });
+      pessoa = { nome: p.nome, telefone: p.telefone, membro_id: p.membro_id };
+    } else {
+      const { data: ins } = await supabase.from('app_inscricoes').select('id, dados, membro_id').eq('id', id).maybeSingle();
+      if (!ins) return res.status(404).json({ error: 'Pedido não encontrado' });
+      const dd = ins.dados || {};
+      let m = null;
+      if (ins.membro_id) { const { data: mm } = await supabase.from('mem_membros').select('nome, telefone').eq('id', ins.membro_id).maybeSingle(); m = mm; }
+      pessoa = { nome: m?.nome || dd.nome || null, telefone: m?.telefone || dd.telefone || null, membro_id: ins.membro_id || null };
+    }
+
+    const tipo = a.tipo || 'aconselhamento';
+    const uid = req.user?.id || req.user?.userId || null;
+    const hoje = new Date().toISOString().slice(0, 10);
+    const nome = pessoa.nome || 'Sem nome';
+    let ref = null;
+
+    if (['aconselhamento', 'capelania'].includes(tipo)) {
+      const { data: ins, error } = await supabase.from('cui_acompanhamentos').insert({
+        nome, telefone: pessoa.telefone, membro_id: pessoa.membro_id, tipo,
+        motivo: a.motivo || null, observacoes: a.observacao || null,
+        agendamento_data: a.data || null, agendamento_hora: a.hora || null,
+        agendamento_responsavel_id: a.responsavel_id || null,
+        agendamento_responsavel_nome: a.responsavel || null,
+        status: a.status || 'ativo', created_by: uid,
+      }).select('id').single();
+      if (error) throw error;
+      ref = { tabela: 'cui_acompanhamentos', id: ins.id };
+    } else {
+      const VT = ['visita_domiciliar', 'visita_hospitalar', 'funeral', 'casamento', 'outro'];
+      const tv = VT.includes(tipo) ? tipo : 'visita_domiciliar';
+      const { data: ins, error } = await supabase.from('cui_visitas').insert({
+        nome, telefone: pessoa.telefone, membro_id: pessoa.membro_id,
+        data_visita: a.data || hoje, tipo: tv, tipo_outro: tv === 'outro' ? (a.tipo_outro || null) : null,
+        responsavel: a.responsavel || null, status: a.status || 'agendada',
+        observacao: a.observacao || null, created_by: uid,
+      }).select('id').single();
+      if (error) throw error;
+      ref = { tabela: 'cui_visitas', id: ins.id };
+    }
+
+    if (fonte === 'cui') {
+      await supabase.from('cui_pedidos').update({ status: 'em_andamento', atendimento_ref: ref, tratado_por: uid, tratado_em: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', id);
+    } else {
+      await supabase.from('app_inscricoes').update({ tratamento_status: 'em_andamento', tratado_por: uid, tratado_em: new Date().toISOString() }).eq('id', id);
+    }
+    res.status(201).json({ ok: true, atendimento_ref: ref });
+  } catch (e) {
+    console.error('[CUIDADOS] atender pedido:', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // GET /api/cuidados/visitas-pendentes

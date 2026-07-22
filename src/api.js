@@ -2911,6 +2911,14 @@ export const cuidados = {
     list: (params) => get('/cuidados/pedidos-app' + (params ? '?' + new URLSearchParams(params) : '')),
     updateStatus: (id, tratamento_status) => patch(`/cuidados/pedidos-app/${id}`, { tratamento_status }),
   },
+  // Caixa de entrada · pedidos de cuidado canônicos (cui_pedidos · whatsapp/plataforma/manual)
+  pedidos: {
+    list: (params) => get('/cuidados/pedidos' + (params ? '?' + new URLSearchParams(params) : '')),
+    create: (data) => post('/cuidados/pedidos', data),
+    update: (id, data) => patch(`/cuidados/pedidos/${id}`, data),
+    remove: (id) => del(`/cuidados/pedidos/${id}`),
+    atender: (fonte, id, atendimento) => post('/cuidados/pedidos/atender', { fonte, id, atendimento }),
+  },
   oracoes: {
     list: () => get('/cuidados/oracoes'),
     insights: () => get('/cuidados/oracoes/insights'),

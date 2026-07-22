@@ -1776,6 +1776,48 @@ Follow-ups (próximas PRs): "engajou" cruzar com o sinal real do valor (grupo/vo
 fechar-o-loop (aceite na área cria o pedido de grupo / inscrição de voluntário nativos),
 funil de analytics encaminhados→aderiram.
 
+## Cuidados · Caixa de entrada (intake de pedidos) (2026-07-22)
+
+A aba **"Aconselhamento" virou "Caixa de entrada"**: fila única de triagem de
+todo pedido de cuidado (aconselhamento, capelania, oração, SOS, visita), no
+estilo da caixa de entrada do Grupos. Ponte com a trilha: ao **Atender**, o líder
+escolhe o TIPO de atendimento/visita → cria o atendimento na trilha da pessoa
+(aba Visitas e Atendimentos).
+- **Migration `20260722190000`**: tabela **canônica `cui_pedidos`** (canal
+  app|whatsapp|plataforma|manual · tipo aconselhamento|capelania|oracao|sos|visita|
+  outro · status pendente|em_andamento|concluido · membro/nome/telefone/email ·
+  mensagem · atribuido_a · `origem_ref` · `atendimento_ref`) + RLS módulo cuidados.
+  Soft-delete via UPDATE `deleted_at` (padrão do módulo · sem whitelist).
+- **Contrato** = `backend/services/cuidadosPedidos.js` `registrarPedidoCuidado({canal,
+  tipo,membro_id,nome,telefone,email,mensagem,origem_ref})` — **alvo único pro
+  WhatsApp do Matheus e pra plataforma/app** plugarem (normaliza telefone/e-mail +
+  notifica). O canal `app` já entra por `app_inscricoes` (a Caixa lê de lá também
+  via `/pedidos-app`) — não precisa chamar o contrato. ⚠️ Ligar o canal WhatsApp em
+  si é do lado do Matheus (ele chama `registrarPedidoCuidado`) — alinhar a forma
+  com ele; o resto funciona sem depender disso.
+- **Multi-fonte por decisão** (não trigger-espelho): a Caixa lê `cui_pedidos`
+  (whatsapp/plataforma/manual) + `app_inscricoes` (canal app · endpoints
+  `/pedidos-app` já existentes) e mescla numa fila só. `cui_pedidos` é a canônica
+  pros canais novos; o app segue na sua tabela (fluxo/push intactos). Consolidar o
+  app em `cui_pedidos` por trigger fica pra uma futura, se quisermos tabela física
+  única.
+- **Backend** (`routes/cuidados.js`): `GET /cuidados/pedidos` (fila cui_pedidos +
+  nome de quem atribuiu) · `POST /cuidados/pedidos` (manual) · `PATCH
+  /cuidados/pedidos/:id` (status/atribuir) · `DELETE` (soft) · **`POST
+  /cuidados/pedidos/atender`** (`{fonte:'cui'|'app', id, atendimento:{tipo,...}}` →
+  roteia por tipo: aconselhamento/capelania → `cui_acompanhamentos` (mantém os KPIs
+  de capelania/aconselhamento) · demais → `cui_visitas` · marca o pedido
+  em_andamento + guarda `atendimento_ref`). `/pedidos-app` (canal app) intocado.
+- **Frontend** (`Cuidados.tsx`): `CaixaEntrada` (filtros canal/tipo/status + busca ·
+  cards de pedido com tel/WhatsApp · status inline · "Atender" · "Registrar pedido"
+  manual) + `AtenderPedidoModal` + `RegistrarPedidoModal`. Badge de pendentes na aba.
+  OracaoPanel + WhatsappAutoConfig continuam recolhidos embaixo. `api.js`:
+  `cuidados.pedidos.{list,create,update,remove,atender}`.
+- **`AcompanhamentoModal` ficou dormente** (sem render) — criar aconselhamento/
+  capelania novo agora é pelo fluxo "Atender" (ou registrar pedido manual + atender).
+  A tabela `cui_acompanhamentos` segue viva (KPIs + trilha).
+- ⚠️ Aplicar a migration `20260722190000` antes do merge.
+
 ## Cuidados · trilha por pessoa na aba "Visitas e Atendimentos" (2026-07-22)
 
 Parte do redesenho do Cuidados (aprovado pelo Marcos). A aba deixou de ser uma

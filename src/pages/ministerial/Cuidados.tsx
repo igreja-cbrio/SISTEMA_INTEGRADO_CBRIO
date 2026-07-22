@@ -1138,6 +1138,325 @@ function TrilhaPessoas({ canEdit, reloadKey, onNova, onEditVisita, onNovoParaPes
   );
 }
 
+// ── Caixa de entrada · pedidos de cuidado ─────────────────────────────
+// Fila única de triagem: junta cui_pedidos (whatsapp/plataforma/manual) +
+// app_inscricoes (canal app · /pedidos-app). O líder escolhe o TIPO ao atender
+// → cria o atendimento na trilha da pessoa (aba Visitas e Atendimentos).
+const PEDIDO_TIPO_META: Record<string, { label: string; color: string }> = {
+  aconselhamento: { label: 'Aconselhamento', color: '#f59e0b' },
+  capelania: { label: 'Capelania', color: '#8b5cf6' },
+  oracao: { label: 'Oração', color: '#00B39D' },
+  sos: { label: 'SOS', color: '#ef4444' },
+  visita: { label: 'Visita', color: '#3b82f6' },
+  outro: { label: 'Outro', color: '#64748b' },
+};
+const CANAL_LABEL: Record<string, string> = { app: 'App', whatsapp: 'WhatsApp', plataforma: 'Plataforma', manual: 'Manual' };
+const PEDIDO_STATUS_UI: { v: string; l: string }[] = [
+  { v: 'pendente', l: 'Pendente' }, { v: 'em_andamento', l: 'Em andamento' }, { v: 'concluido', l: 'Concluído' },
+];
+// pedido.tipo → tipo de atendimento sugerido ao atender
+const TIPO_ATEND_SUGERIDO: Record<string, string> = {
+  aconselhamento: 'aconselhamento', capelania: 'capelania', visita: 'visita_domiciliar',
+  oracao: 'aconselhamento', sos: 'aconselhamento', outro: 'aconselhamento',
+};
+
+// Modal "Atender" · o líder escolhe o tipo de atendimento/visita → cria a trilha
+function AtenderPedidoModal({ pedido, canEdit, onClose, onSaved }: {
+  pedido: any | null; canEdit: boolean; onClose: () => void; onSaved: () => void;
+}) {
+  const [tipo, setTipo] = useState('aconselhamento');
+  const [responsavel, setResponsavel] = useState('');
+  const [data, setData] = useState(new Date().toISOString().slice(0, 10));
+  const [hora, setHora] = useState('');
+  const [tipoOutro, setTipoOutro] = useState('');
+  const [observacao, setObservacao] = useState('');
+  const [salvando, setSalvando] = useState(false);
+
+  useEffect(() => {
+    if (!pedido) return;
+    setTipo(TIPO_ATEND_SUGERIDO[pedido.tipo] || 'aconselhamento');
+    setResponsavel(''); setData(new Date().toISOString().slice(0, 10)); setHora('');
+    setTipoOutro(''); setObservacao(pedido.mensagem || '');
+  }, [pedido]);
+
+  const ehSessao = tipo === 'aconselhamento' || tipo === 'capelania';
+  async function salvar() {
+    if (!pedido) return;
+    if (tipo === 'outro' && !tipoOutro.trim()) { toast.error('Descreva o tipo (Outro)'); return; }
+    setSalvando(true);
+    try {
+      await cuidadosApi.pedidos.atender(pedido.fonte, pedido.id, {
+        tipo, tipo_outro: tipoOutro || null, responsavel: responsavel || null,
+        data: data || null, hora: ehSessao ? (hora || null) : null,
+        observacao: observacao || null,
+        status: ehSessao ? 'ativo' : 'agendada',
+      });
+      toast.success('Atendimento criado na trilha da pessoa.');
+      onSaved(); onClose();
+    } catch (e: any) { toast.error(e.message); }
+    finally { setSalvando(false); }
+  }
+
+  return (
+    <Dialog open={!!pedido} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent>
+        <DialogHeader><DialogTitle>Atender · {pedido?.nome || 'pessoa'}</DialogTitle></DialogHeader>
+        <div className="space-y-3">
+          <p className="text-xs text-muted-foreground">Escolha o tipo de atendimento/visita. Isso cria o atendimento na trilha da pessoa (aba Visitas e Atendimentos).</p>
+          <div>
+            <Label>Tipo de atendimento *</Label>
+            <Select value={tipo} onValueChange={setTipo}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {['aconselhamento', 'capelania', 'visita_domiciliar', 'visita_hospitalar', 'funeral', 'casamento', 'outro'].map(t => (
+                  <SelectItem key={t} value={t}>{ATEND_TIPO_LABEL[t] || t}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          {tipo === 'outro' && (
+            <div><Label>Qual? *</Label><Input value={tipoOutro} onChange={e => setTipoOutro(e.target.value)} placeholder="Descreva o tipo" /></div>
+          )}
+          <div className="grid grid-cols-2 gap-3">
+            <div><Label>Data</Label><Input type="date" value={data} onChange={e => setData(e.target.value)} /></div>
+            {ehSessao && <div><Label>Hora</Label><Input type="time" value={hora} onChange={e => setHora(e.target.value)} /></div>}
+          </div>
+          <div><Label>Quem vai atender</Label><Input value={responsavel} onChange={e => setResponsavel(e.target.value)} placeholder="Pastor / líder" /></div>
+          <div>
+            <Label>Observação</Label>
+            <textarea className="w-full min-h-[70px] rounded-md border border-border p-2 text-sm" style={{ background: 'var(--cbrio-input-bg)' }}
+              value={observacao} onChange={e => setObservacao(e.target.value)} placeholder="Contexto, motivo, próximos passos..." />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancelar</Button>
+          <Button onClick={salvar} disabled={salvando || !canEdit}>{salvando ? 'Salvando...' : 'Criar atendimento'}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Modal "Registrar pedido" · pedido manual na Caixa (canal manual)
+function RegistrarPedidoModal({ open, onClose, onSaved }: { open: boolean; onClose: () => void; onSaved: () => void }) {
+  const [tipo, setTipo] = useState('aconselhamento');
+  const [nome, setNome] = useState('');
+  const [telefone, setTelefone] = useState('');
+  const [mensagem, setMensagem] = useState('');
+  const [salvando, setSalvando] = useState(false);
+  useEffect(() => { if (open) { setTipo('aconselhamento'); setNome(''); setTelefone(''); setMensagem(''); } }, [open]);
+  async function salvar() {
+    if (!nome.trim() && !telefone.trim()) { toast.error('Informe ao menos nome ou telefone.'); return; }
+    setSalvando(true);
+    try {
+      await cuidadosApi.pedidos.create({ tipo, nome, telefone, mensagem });
+      toast.success('Pedido registrado na Caixa de entrada.');
+      onSaved(); onClose();
+    } catch (e: any) { toast.error(e.message); }
+    finally { setSalvando(false); }
+  }
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent>
+        <DialogHeader><DialogTitle>Registrar pedido de cuidado</DialogTitle></DialogHeader>
+        <div className="space-y-3">
+          <div>
+            <Label>Tipo *</Label>
+            <Select value={tipo} onValueChange={setTipo}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {Object.keys(PEDIDO_TIPO_META).map(t => <SelectItem key={t} value={t}>{PEDIDO_TIPO_META[t].label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div><Label>Nome</Label><Input value={nome} onChange={e => setNome(e.target.value)} /></div>
+            <div><Label>Telefone</Label><Input value={telefone} onChange={e => setTelefone(e.target.value)} /></div>
+          </div>
+          <div>
+            <Label>Mensagem / motivo</Label>
+            <textarea className="w-full min-h-[70px] rounded-md border border-border p-2 text-sm" style={{ background: 'var(--cbrio-input-bg)' }}
+              value={mensagem} onChange={e => setMensagem(e.target.value)} placeholder="O que a pessoa precisa?" />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancelar</Button>
+          <Button onClick={salvar} disabled={salvando}>{salvando ? 'Salvando...' : 'Registrar'}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Aba "Caixa de entrada" (ex-Aconselhamento) · fila unificada de pedidos.
+function CaixaEntrada({ canEdit, onAtendido, onPendentes }: {
+  canEdit: boolean; onAtendido: () => void; onPendentes?: (n: number) => void;
+}) {
+  const [itens, setItens] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [fCanal, setFCanal] = useState('todos');
+  const [fTipo, setFTipo] = useState('todos');
+  const [fStatus, setFStatus] = useState('abertos');
+  const [busca, setBusca] = useState('');
+  const [atender, setAtender] = useState<any | null>(null);
+  const [registrar, setRegistrar] = useState(false);
+
+  async function carregar() {
+    setLoading(true);
+    try {
+      const [cui, app] = await Promise.all([
+        cuidadosApi.pedidos.list().catch(() => []),
+        cuidadosApi.pedidosApp.list().catch(() => []),
+      ]);
+      const norm: any[] = [];
+      for (const p of (cui || [])) norm.push({
+        fonte: 'cui', id: p.id, canal: p.canal || 'manual', tipo: p.tipo || 'outro',
+        nome: p.nome, telefone: p.telefone, email: p.email, mensagem: p.mensagem,
+        status: p.status || 'pendente', membro_id: p.membro_id, atribuido_nome: p.atribuido_nome || null,
+        atendido: !!p.atendimento_ref, created_at: p.created_at,
+      });
+      for (const p of (app || [])) norm.push({
+        fonte: 'app', id: p.id, canal: 'app', tipo: p.tipo || 'outro',
+        nome: p.nome, telefone: p.telefone, email: p.email, mensagem: p.mensagem,
+        status: p.tratamento_status || 'pendente', membro_id: p.membro_id, atribuido_nome: null,
+        atendido: false, created_at: p.created_at,
+      });
+      norm.sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
+      setItens(norm);
+      if (onPendentes) onPendentes(norm.filter(x => x.status === 'pendente').length);
+    } catch { setItens([]); }
+    finally { setLoading(false); }
+  }
+  useEffect(() => { carregar(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+
+  async function mudarStatus(it: any, status: string) {
+    // otimista
+    setItens(prev => prev.map(x => (x.fonte === it.fonte && x.id === it.id) ? { ...x, status } : x));
+    try {
+      if (it.fonte === 'cui') await cuidadosApi.pedidos.update(it.id, { status });
+      else await cuidadosApi.pedidosApp.updateStatus(it.id, status);
+      if (onPendentes) setItens(prev => { const n = prev.filter(x => x.status === 'pendente').length; onPendentes(n); return prev; });
+    } catch (e: any) { toast.error(e.message); carregar(); }
+  }
+  async function remover(it: any) {
+    if (it.fonte !== 'cui') return;
+    if (!confirm('Remover este pedido da Caixa de entrada?')) return;
+    try { await cuidadosApi.pedidos.remove(it.id); carregar(); }
+    catch (e: any) { toast.error(e.message); }
+  }
+
+  const filtrados = useMemo(() => {
+    const q = busca.trim().toLowerCase();
+    return itens.filter(it => {
+      if (fCanal !== 'todos' && it.canal !== fCanal) return false;
+      if (fTipo !== 'todos' && it.tipo !== fTipo) return false;
+      if (fStatus === 'abertos' && it.status === 'concluido') return false;
+      else if (fStatus !== 'abertos' && fStatus !== 'todos' && it.status !== fStatus) return false;
+      if (q && !(`${it.nome || ''} ${it.telefone || ''} ${it.mensagem || ''}`.toLowerCase().includes(q))) return false;
+      return true;
+    });
+  }, [itens, fCanal, fTipo, fStatus, busca]);
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-lg border border-border bg-card p-4">
+        <div className="flex items-center gap-2 mb-1"><HeartHandshake className="h-4 w-4 text-primary" /><h3 className="font-semibold text-sm">Caixa de entrada</h3></div>
+        <p className="text-xs text-muted-foreground">Todos os pedidos de cuidado num lugar — app, WhatsApp, plataforma e registro manual. Atenda escolhendo o tipo; vira atendimento na trilha da pessoa.</p>
+      </div>
+
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="relative flex-1 min-w-[200px]">
+          <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
+          <Input placeholder="Buscar por nome, telefone, mensagem..." value={busca} onChange={e => setBusca(e.target.value)} className="pl-8" />
+        </div>
+        <Select value={fCanal} onValueChange={setFCanal}>
+          <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="todos">Todos os canais</SelectItem>
+            {Object.keys(CANAL_LABEL).map(c => <SelectItem key={c} value={c}>{CANAL_LABEL[c]}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <Select value={fTipo} onValueChange={setFTipo}>
+          <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="todos">Todos os tipos</SelectItem>
+            {Object.keys(PEDIDO_TIPO_META).map(t => <SelectItem key={t} value={t}>{PEDIDO_TIPO_META[t].label}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <Select value={fStatus} onValueChange={setFStatus}>
+          <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="abertos">Em aberto</SelectItem>
+            <SelectItem value="pendente">Pendente</SelectItem>
+            <SelectItem value="em_andamento">Em andamento</SelectItem>
+            <SelectItem value="concluido">Concluído</SelectItem>
+            <SelectItem value="todos">Todos</SelectItem>
+          </SelectContent>
+        </Select>
+        {canEdit && <Button onClick={() => setRegistrar(true)}><Plus className="h-4 w-4 mr-2" />Registrar pedido</Button>}
+      </div>
+
+      {loading ? (
+        <div className="text-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground inline" /></div>
+      ) : filtrados.length === 0 ? (
+        <div className="rounded-lg border border-border bg-card p-8 text-center text-muted-foreground text-sm">{itens.length === 0 ? 'Nenhum pedido na caixa de entrada.' : 'Nenhum pedido nos filtros atuais.'}</div>
+      ) : (
+        <div className="space-y-2">
+          {filtrados.map(it => {
+            const meta = PEDIDO_TIPO_META[it.tipo] || { label: it.tipo, color: '#64748b' };
+            const tel = String(it.telefone || '').replace(/\D/g, '');
+            const urgente = it.tipo === 'sos' && it.status === 'pendente';
+            return (
+              <div key={it.fonte + it.id} className={`rounded-lg border p-3 bg-card ${urgente ? 'border-red-400/60' : 'border-border'}`}>
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                  <div className="min-w-0">
+                    <div className="font-medium flex items-center gap-1.5">
+                      {it.tipo === 'sos' && <AlertTriangle className="h-3.5 w-3.5 text-red-500 shrink-0" />}
+                      {it.nome || '—'}
+                      {it.membro_id && <Badge variant="secondary" className="text-[10px]">membro</Badge>}
+                    </div>
+                    <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                      <span className="text-[11px] px-2 py-0.5 rounded-full font-medium" style={{ background: meta.color + '22', color: meta.color, border: `1px solid ${meta.color}40` }}>{meta.label}</span>
+                      <span className="text-[11px] text-muted-foreground">{CANAL_LABEL[it.canal] || it.canal}</span>
+                      <span className="text-[11px] text-muted-foreground">{it.created_at ? new Date(it.created_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''}</span>
+                    </div>
+                    {it.telefone && (
+                      <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
+                        <a href={`tel:${tel}`} className="flex items-center gap-1 hover:text-primary"><Phone className="h-3 w-3" />{it.telefone}</a>
+                        {tel && <Link to={hrefConversa(`55${tel}`)} className="flex items-center gap-1 hover:text-primary"><MessageSquare className="h-3 w-3" />WhatsApp</Link>}
+                      </div>
+                    )}
+                    {it.mensagem && <p className="text-sm text-muted-foreground mt-1 whitespace-pre-wrap">{it.mensagem}</p>}
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {canEdit ? (
+                      <Select value={it.status} onValueChange={(v) => mudarStatus(it, v)}>
+                        <SelectTrigger className="h-8 w-[140px]"><SelectValue /></SelectTrigger>
+                        <SelectContent>{PEDIDO_STATUS_UI.map(s => <SelectItem key={s.v} value={s.v}>{s.l}</SelectItem>)}</SelectContent>
+                      </Select>
+                    ) : (
+                      <Badge variant={it.status === 'concluido' ? 'secondary' : 'default'}>{PEDIDO_STATUS_UI.find(s => s.v === it.status)?.l || it.status}</Badge>
+                    )}
+                    {canEdit && it.status !== 'concluido' && (
+                      <Button size="sm" onClick={() => setAtender(it)}><HeartHandshake className="h-3.5 w-3.5 mr-1" />Atender</Button>
+                    )}
+                    {canEdit && it.fonte === 'cui' && (
+                      <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => remover(it)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <AtenderPedidoModal pedido={atender} canEdit={canEdit} onClose={() => setAtender(null)} onSaved={() => { carregar(); onAtendido(); }} />
+      <RegistrarPedidoModal open={registrar} onClose={() => setRegistrar(false)} onSaved={carregar} />
+    </div>
+  );
+}
+
 // ──────────────────────────────────────────────────────────────────
 // Página principal
 // ──────────────────────────────────────────────────────────────────
@@ -1163,14 +1482,11 @@ export default function Cuidados() {
   const [dashDias, setDashDias] = useState(90);
   const [dashLoading, setDashLoading] = useState(true);
 
-  const [acomp, setAcomp] = useState<any[]>([]);
-  const [pedidosApp, setPedidosApp] = useState<any[]>([]);
   const [convertidos, setConvertidos] = useState<any[]>([]);
   const [jornadaData, setJornadaData] = useState<any>(null); // /jornada-convertidos · status contato/batismo/Next por pessoa
   const navigate = useNavigate();
 
-  const [modalAcomp, setModalAcomp] = useState(false);
-  const [editAcomp, setEditAcomp] = useState<any | null>(null);
+  const [caixaPendentes, setCaixaPendentes] = useState(0); // badge da aba Caixa de entrada
   const [modalConvert, setModalConvert] = useState(false);
   const [editConvert, setEditConvert] = useState<any | null>(null);
   const [detailConvert, setDetailConvert] = useState<any | null>(null);
@@ -1187,16 +1503,13 @@ export default function Cuidados() {
   const [convertFilter, setConvertFilter] = useState<'todos' | 'sem_responsavel' | 'sem_direcionamento' | 'atrasados'>('todos');
   const [convertFilterStatus, setConvertFilterStatus] = useState<string>(''); // primeiro_contato_status ('' = todos · 'sem' = sem status)
   const [convertPeriodo, setConvertPeriodo] = useState<string>('tudo'); // 30/60/90/180/365/tudo (por data_culto)
-  const [search, setSearch] = useState('');
 
   async function loadAll() {
-    const [a, pa, c, jd] = await Promise.all([
-      cuidadosApi.acompanhamentos.list().catch(() => []),
-      cuidadosApi.pedidosApp.list().catch(() => []),
+    const [c, jd] = await Promise.all([
       cuidadosApi.convertidos.list().catch(() => []),
       cuidadosApi.jornadaConvertidos().catch(() => null),
     ]);
-    setAcomp(a); setPedidosApp(pa); setConvertidos(c); setJornadaData(jd);
+    setConvertidos(c); setJornadaData(jd);
     // Recarrega as séries do dashboard após mudanças nos dados
     setVisitasVersion(v => v + 1);
   }
@@ -1384,16 +1697,6 @@ export default function Cuidados() {
     [convertidos]
   );
 
-  const acompFiltrados = useMemo(() => {
-    if (!search) return acomp;
-    return acomp.filter(a => (a.nome || '').toLowerCase().includes(search.toLowerCase()));
-  }, [acomp, search]);
-
-  const pedidosPendentes = useMemo(
-    () => pedidosApp.filter((p: any) => p.tratamento_status === 'pendente').length,
-    [pedidosApp]
-  );
-
   return (
     <div className="p-6 space-y-6">
       <ModuleHeader
@@ -1405,7 +1708,10 @@ export default function Cuidados() {
       <Tabs value={tab} onValueChange={handleTabChange}>
         <TabsList className="flex-wrap h-auto">
           <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
-          <TabsTrigger value="acomp">Aconselhamento</TabsTrigger>
+          <TabsTrigger value="acomp" className="gap-1.5">
+            Caixa de entrada
+            {caixaPendentes > 0 && <Badge variant="destructive" className="h-4 px-1.5 text-[10px]">{caixaPendentes > 99 ? '99+' : caixaPendentes}</Badge>}
+          </TabsTrigger>
           <TabsTrigger value="convertidos">Próximos passos</TabsTrigger>
           <TabsTrigger value="devocional">Devocional</TabsTrigger>
           <TabsTrigger value="visitas">Visitas e Atendimentos</TabsTrigger>
@@ -1551,122 +1857,7 @@ export default function Cuidados() {
 
         {/* Acompanhamentos */}
         <TabsContent value="acomp" className="space-y-4">
-          {/* Pedidos pelo app · "Quero conversar com um pastor" / oração / SOS */}
-          <div className="rounded-lg border border-border bg-card p-4">
-            <div className="flex items-center gap-2 mb-1">
-              <HeartHandshake className="h-4 w-4 text-primary" />
-              <h3 className="font-semibold text-sm">Pedidos pelo app</h3>
-              {pedidosPendentes > 0 && (
-                <Badge variant="destructive" className="ml-1">{pedidosPendentes} pendente{pedidosPendentes > 1 ? 's' : ''}</Badge>
-              )}
-            </div>
-            <p className="text-xs text-muted-foreground mb-3">"Quero conversar com um pastor", pedidos de oração e SOS enviados pelo aplicativo de membros.</p>
-            <div className="rounded-lg border border-border overflow-hidden">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Pessoa</TableHead><TableHead>Tipo</TableHead><TableHead>Mensagem</TableHead><TableHead>Quando</TableHead><TableHead>Status</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {pedidosApp.length === 0 ? (
-                    <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-6">Nenhum pedido pelo app.</TableCell></TableRow>
-                  ) : pedidosApp.map(p => {
-                    const meta = PEDIDO_META[p.tipo] || { label: p.tipo, color: '#64748b' };
-                    const tel = String(p.telefone || '').replace(/\D/g, '');
-                    const urgentePend = p.tipo === 'sos' && p.tratamento_status === 'pendente';
-                    return (
-                      <TableRow key={p.id} className={urgentePend ? 'bg-red-50/60 dark:bg-red-950/20' : ''}>
-                        <TableCell>
-                          <div className="font-medium flex items-center gap-1.5">
-                            {p.tipo === 'sos' && <AlertTriangle className="h-3.5 w-3.5 text-red-500 shrink-0" />}
-                            {p.membro_id ? (
-                              <Link to={`/ministerial/membresia?q=${encodeURIComponent(p.nome || '')}`} className="text-primary hover:underline">{p.nome || 'Membro'}</Link>
-                            ) : (p.nome || '—')}
-                            {p.membro_id && <Badge variant="secondary" className="text-[10px]">membro</Badge>}
-                          </div>
-                          {p.telefone && (
-                            <div className="flex items-center gap-3 mt-0.5 text-xs text-muted-foreground">
-                              <a href={`tel:${tel}`} className="flex items-center gap-1 hover:text-primary"><Phone className="h-3 w-3" />{p.telefone}</a>
-                              {tel && <Link to={hrefConversa(`55${tel}`)} className="flex items-center gap-1 hover:text-primary"><MessageSquare className="h-3 w-3" />WhatsApp</Link>}
-                            </div>
-                          )}
-                        </TableCell>
-                        <TableCell><Badge style={{ backgroundColor: meta.color, color: '#fff' }}>{meta.label}</Badge></TableCell>
-                        <TableCell className="max-w-[260px]"><span className="text-sm text-muted-foreground line-clamp-2">{p.mensagem || '—'}</span></TableCell>
-                        <TableCell className="whitespace-nowrap text-sm">{new Date(p.created_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</TableCell>
-                        <TableCell>
-                          {podeEditarCuidados ? (
-                            <Select value={p.tratamento_status} onValueChange={async (v) => { await cuidadosApi.pedidosApp.updateStatus(p.id, v); loadAll(); }}>
-                              <SelectTrigger className="h-8 w-[150px]"><SelectValue /></SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="pendente">Pendente</SelectItem>
-                                <SelectItem value="em_andamento">Em andamento</SelectItem>
-                                <SelectItem value="concluido">Concluído</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          ) : (
-                            <Badge variant={p.tratamento_status === 'concluido' ? 'secondary' : 'default'}>{TRAT_LABEL[p.tratamento_status] || p.tratamento_status}</Badge>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between gap-3">
-            <div className="relative flex-1 max-w-sm">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input placeholder="Buscar nome..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
-            </div>
-            {podeEditarCuidados && (
-              <Button onClick={() => { setEditAcomp(null); setModalAcomp(true); }}><Plus className="h-4 w-4 mr-2" />Novo atendimento</Button>
-            )}
-          </div>
-          <div className="rounded-lg border border-border bg-card overflow-hidden">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Nome</TableHead><TableHead>Tipo</TableHead><TableHead>Motivo</TableHead><TableHead>Sessão agendada</TableHead><TableHead>Status</TableHead><TableHead></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {acompFiltrados.length === 0 ? (
-                  <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">Nenhum atendimento.</TableCell></TableRow>
-                ) : acompFiltrados.map(a => (
-                  <TableRow key={a.id}>
-                    <TableCell className="font-medium">{a.nome}{a.membro_id && <Badge variant="secondary" className="ml-2 text-[10px]">membro</Badge>}</TableCell>
-                    <TableCell>
-                      <Badge style={{ background: (a.tipo === 'capelania' ? C.warn : C.info) + '20', color: a.tipo === 'capelania' ? C.warn : C.info, border: `1px solid ${(a.tipo === 'capelania' ? C.warn : C.info)}40` }}>
-                        {a.tipo === 'capelania' ? 'Capelania' : 'Aconselhamento'}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>{a.motivo || '—'}</TableCell>
-                    <TableCell className="whitespace-nowrap text-sm">
-                      {a.agendamento_data ? (
-                        <span className="text-primary flex items-center gap-1"><CalendarCheck className="h-3.5 w-3.5" />{new Date(a.agendamento_data + 'T12:00:00').toLocaleDateString('pt-BR')}{a.agendamento_hora ? ' · ' + String(a.agendamento_hora).slice(0, 5) : ''}</span>
-                      ) : <span className="text-xs text-muted-foreground">—</span>}
-                    </TableCell>
-                    <TableCell><Badge variant={a.status === 'ativo' ? 'default' : 'secondary'}>{a.status}</Badge></TableCell>
-                    <TableCell className="text-right whitespace-nowrap">
-                      {podeEditarCuidados && (
-                        <Button variant="ghost" size="sm" onClick={() => { setEditAcomp(a); setModalAcomp(true); }}>Editar</Button>
-                      )}
-                      {podeEditarCuidados && a.status === 'ativo' && (
-                        <Button variant="ghost" size="sm" onClick={async () => { await cuidadosApi.acompanhamentos.update(a.id, { status: 'concluido', data_encerramento: new Date().toISOString().slice(0, 10) }); loadAll(); }}>Concluir</Button>
-                      )}
-                      {podeEditarCuidados && (
-                        <Button variant="ghost" size="sm" onClick={async () => { if (confirm('Remover?')) { await cuidadosApi.acompanhamentos.remove(a.id); loadAll(); } }}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
+          <CaixaEntrada canEdit={podeEditarCuidados} onAtendido={recarregarTrilha} onPendentes={setCaixaPendentes} />
 
           {/* Técnico · oração (insights por IA) + configuração de WhatsApp · recolhido embaixo */}
           <details className="rounded-lg border border-border bg-card">
@@ -1995,13 +2186,6 @@ export default function Cuidados() {
         </TabsContent>
       </Tabs>
 
-      <AcompanhamentoModal
-        open={modalAcomp}
-        onClose={() => { setModalAcomp(false); setEditAcomp(null); }}
-        onSaved={loadAll}
-        atendentes={atendentes}
-        initial={editAcomp}
-      />
       <ConvertidoModal
         open={modalConvert}
         onClose={() => { setModalConvert(false); setEditConvert(null); }}
