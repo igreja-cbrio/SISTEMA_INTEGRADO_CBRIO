@@ -144,6 +144,11 @@ function cssEtiqueta(layout: EtiquetaLayout = LAYOUT_ETIQUETA_PADRAO): string {
     text-align: center; line-height: 1; padding: 1mm 1mm 0.8mm; border-radius: 0.6mm;
   }
   .codigo-band-g { font-size: ${pt(21)}; letter-spacing: 3px; }
+  /* Etiqueta da criança (Mariane 2026-07-22): o código ocupa a coluna INTEIRA
+     da direita, sem legenda — identificação instantânea no salão/portão. */
+  .codigo-band-cheia { font-size: ${pt(24)}; letter-spacing: 2px; flex: 1; display: flex; align-items: center; justify-content: center; padding: 1mm 0.5mm; }
+  .col-dir-cheia { padding-top: 1mm; padding-bottom: 1mm; }
+  .col-dir-cheia .band-wrap { flex: 1; display: flex; flex-direction: column; }
   /* Recibo do responsável (v2 · Marcos 22/07): nome + logo + culto à esquerda;
      código na banda preta + barcode à direita, divisor tracejado no meio. */
   .recibo-nome { font-size: ${pt(10)}; font-weight: 800; line-height: 1.05; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -239,10 +244,11 @@ function fontePrimeiroNome(primeiro: string, tamanho?: EtiquetaLayout['nomeTaman
 // Banda PRETA do código (branco no preto · visual do sistema antigo que a
 // equipe conhecia — o código salta aos olhos no salão/portão), com as réguas
 // finas em cima/embaixo ecoando a estética de barcode da etiqueta do PCO.
-function bandaCodigo(codigo: string, grande = false): string {
+function bandaCodigo(codigo: string, variante?: 'g' | 'cheia'): string {
+  const extra = variante === 'g' ? ' codigo-band-g' : variante === 'cheia' ? ' codigo-band-cheia' : '';
   return `<div class="band-wrap">
     <div class="band-rule"></div>
-    <div class="codigo-band${grande ? ' codigo-band-g' : ''}">${codigo}</div>
+    <div class="codigo-band${extra}">${codigo}</div>
     <div class="band-rule"></div>
   </div>`;
 }
@@ -295,9 +301,8 @@ function htmlEtiquetaCrianca(d: DadosImpressao): string {
       <div class="idade-num${String(idadeValor).length > 2 ? ' idade-num-p' : ''}">${escapeHtml(idadeValor)}</div>
       <div class="idade-cap">idade</div>
     </div>
-    <div class="col-dir">
-      ${bandaCodigo(d.codigoSeguranca)}
-      <div class="cod-label">Código</div>
+    <div class="col-dir col-dir-cheia">
+      ${bandaCodigo(d.codigoSeguranca, 'cheia')}
     </div>
   </div>`;
 }
@@ -351,7 +356,7 @@ function htmlEtiquetaResponsavel(d: DadosImpressao, barcodeSvg: string): string 
       <div class="recibo-hint">Apresente este código para buscar</div>
     </div>
     <div class="col-dir recibo-dir">
-      ${bandaCodigo(d.codigoSeguranca, true)}
+      ${bandaCodigo(d.codigoSeguranca, 'g')}
       <div class="barcode-area">${barcodeSvg}</div>
     </div>
   </div>`;

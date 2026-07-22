@@ -17,8 +17,7 @@ import { totemKids } from '@/api';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { useAuth } from '@/contexts/AuthContext';
-import { useNavigate, Link } from 'react-router-dom';
-import { hrefConversa } from '@/lib/conversas';
+import { useNavigate } from 'react-router-dom';
 
 type CultoDia = {
   culto_id: string;
@@ -596,9 +595,12 @@ export default function TotemKidsPainel() {
                                       <a href={`tel:+${tel}`} className="inline-flex items-center justify-center h-9 w-9 rounded-full bg-muted hover:bg-accent" title="Ligar">
                                         <Phone className="h-4 w-4" />
                                       </a>
-                                      <Link to={hrefConversa(tel)} className="inline-flex items-center justify-center h-9 w-9 rounded-full bg-emerald-500 text-white hover:bg-emerald-600" title="WhatsApp">
+                                      {/* WhatsApp DIRETO (wa.me), de propósito — aqui é a líder do Kids
+                                          acionando o pai/mãe durante o culto; não passa pelo inbox
+                                          interno (Conversas) pra não parecer bot (Marcos 2026-07-22). */}
+                                      <a href={`https://wa.me/${tel}`} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center h-9 w-9 rounded-full bg-emerald-500 text-white hover:bg-emerald-600" title="WhatsApp">
                                         <MessageCircle className="h-4 w-4" />
-                                      </Link>
+                                      </a>
                                     </div>
                                   )}
                                 </div>
