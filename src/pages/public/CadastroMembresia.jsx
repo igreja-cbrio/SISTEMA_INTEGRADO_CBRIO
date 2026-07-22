@@ -260,6 +260,7 @@ export default function CadastroMembresia() {
   });
   const [aceitaTermos, setAceitaTermos] = useState(false);
   const [aceitaComunicacao, setAceitaComunicacao] = useState(false);
+  const [converteuCbrio, setConverteuCbrio] = useState(false);
   const [estaEmGrupo, setEstaEmGrupo] = useState(null); // null | true | false
   const [grupoEscolhido, setGrupoEscolhido] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -545,6 +546,7 @@ export default function CadastroMembresia() {
         aceita_termos: aceitaTermos,
         aceita_contato: aceitaComunicacao,
         whatsapp_optin: aceitaComunicacao,
+        converteu_na_cbrio: converteuCbrio || undefined,
         consentimento_texto: aceitaComunicacao
           ? `${TEXTO_CONSENTIMENTO}\n\n${TEXTO_COMUNICACAO}`
           : TEXTO_CONSENTIMENTO,
@@ -1045,6 +1047,14 @@ export default function CadastroMembresia() {
                     rows={3}
                     maxLength={500}
                   />
+                  <div style={{ marginTop: 4 }}>
+                    <CheckboxField
+                      id="converteu_na_cbrio"
+                      checked={converteuCbrio}
+                      onChange={setConverteuCbrio}
+                      label="Eu me converti / aceitei Jesus aqui na CBRio."
+                    />
+                  </div>
                 </div>
               )}
 

@@ -2558,6 +2558,10 @@ function NextFlow({ opt, member, onBack, onDone, onEndSession, onActivity }: {
   const [inscrito, setInscrito] = useState(false);
   const [inscricao, setInscricao] = useState<any>(null);
   const [proximoEvento, setProximoEvento] = useState<any>(null);
+  const [proximasTurmas, setProximasTurmas] = useState<any[]>([]);
+  const [turmaSel, setTurmaSel] = useState<any>(null);
+  const [infoEnviado, setInfoEnviado] = useState(false);
+  const [enviandoInfo, setEnviandoInfo] = useState(false);
   const [step, setStep] = useState<'check' | 'form' | 'success'>('check');
   const [form, setForm] = useState({
     nome: guest ? '' : ((member.nome || '').split(' ')[0] || ''),
@@ -2581,10 +2585,28 @@ function NextFlow({ opt, member, onBack, onDone, onEndSession, onActivity }: {
         setInscrito(!!r.inscrito);
         setInscricao(r.inscricao);
         setProximoEvento(r.proximo_evento);
+        const turmas = r.proximas_turmas || (r.proximo_evento ? [r.proximo_evento] : []);
+        setProximasTurmas(turmas);
+        setTurmaSel(r.proximo_evento || turmas[0] || null);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [member.id, member.email, member.cpf]);
+
+  const fmtHora = (t: any) => (t?.horario ? String(t.horario).slice(0, 5) : null);
+
+  const enviarInfo = async () => {
+    const tel = (form.telefone || member.telefone || '').replace(/\D/g, '');
+    if (tel.length < 10) { setError('Informe um telefone com DDD para receber o material'); return; }
+    setEnviandoInfo(true); setError(''); onActivity();
+    try {
+      await membresia.totem.next.informacoes({ telefone: tel, nome: form.nome || member.nome });
+      setInfoEnviado(true);
+    } catch (e: any) {
+      setError(e?.message || 'Não foi possível enviar agora');
+    }
+    setEnviandoInfo(false);
+  };
 
   const setField = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) => {
     let v = e.target.value;
@@ -2612,6 +2634,7 @@ function NextFlow({ opt, member, onBack, onDone, onEndSession, onActivity }: {
         cpf: form.cpf.replace(/\D/g, '') || null,
         data_nascimento: form.data_nascimento || null,
         observacoes: form.observacoes || null,
+        turma_id: turmaSel?.id || null,   // turma escolhida no calendário
       };
       const r = await membresia.totem.next.inscrever(payload);
       if (r.evento) setProximoEvento(r.evento);
@@ -2643,9 +2666,10 @@ function NextFlow({ opt, member, onBack, onDone, onEndSession, onActivity }: {
         <CheckCircle2 className="h-20 w-20 text-[#00B39D]" />
         <div className="text-center max-w-md">
           <h2 className="text-3xl font-bold">Inscrição confirmada!</h2>
-          {proximoEvento?.data && (
+          {(turmaSel?.data || proximoEvento?.data) && (
             <p className="text-white/70 mt-3 text-lg">
-              Te esperamos no NEXT em <span className="text-[#10B981] font-semibold">{fmtDateBR(proximoEvento.data)}</span>
+              Te esperamos no NEXT em <span className="text-[#10B981] font-semibold">{fmtDateBR(turmaSel?.data || proximoEvento.data)}</span>
+              {fmtHora(turmaSel || proximoEvento) ? <> às <span className="text-[#10B981] font-semibold">{fmtHora(turmaSel || proximoEvento)}</span></> : null}
             </p>
           )}
           <p className="text-white/50 mt-2 text-sm">Você receberá detalhes por e-mail e WhatsApp.</p>
@@ -2675,6 +2699,11 @@ function NextFlow({ opt, member, onBack, onDone, onEndSession, onActivity }: {
               {inscricao.evento.data ? (
                 <>
                   <p className="text-3xl font-bold text-[#10B981]">{fmtDateBR(inscricao.evento.data)}</p>
+                  {fmtHora(inscricao.evento) && (
+                    <p className="text-white/70 text-sm mt-1 flex items-center justify-center gap-1">
+                      <Clock className="h-3.5 w-3.5" /> às {fmtHora(inscricao.evento)}
+                    </p>
+                  )}
                   {inscricao.evento.titulo && (
                     <p className="text-white/70 text-sm mt-1">{inscricao.evento.titulo}</p>
                   )}
@@ -2720,11 +2749,12 @@ function NextFlow({ opt, member, onBack, onDone, onEndSession, onActivity }: {
 
   // ── Info ──
   if (step === 'check') {
+    const multiplas = proximasTurmas.length > 1;
     return (
       <div className="min-h-screen bg-gray-950 text-white flex flex-col" onClick={onActivity}>
         <OptionHeader opt={opt} member={member} onBack={onBack} />
-        <div className="flex-1 flex items-center justify-center p-8">
-          <div className="max-w-md text-center space-y-6">
+        <div className="flex-1 overflow-y-auto p-8">
+          <div className="max-w-md mx-auto text-center space-y-6">
             <div className="h-20 w-20 rounded-3xl bg-[#10B981]/20 flex items-center justify-center mx-auto">
               <ArrowRight className="h-10 w-10 text-[#10B981]" />
             </div>
@@ -2734,18 +2764,72 @@ function NextFlow({ opt, member, onBack, onDone, onEndSession, onActivity }: {
                 O NEXT é a porta de entrada da CBRio · conheça nossa visão, valores e como dar os próximos passos.
               </p>
             </div>
-            {proximoEvento?.data && (
+
+            {/* Calendário de turmas: escolha quando várias abertas; senão card único */}
+            {multiplas ? (
+              <div className="space-y-2 text-left">
+                <p className="text-white/60 text-xs uppercase tracking-wider text-center">Escolha a turma</p>
+                {proximasTurmas.map((t) => {
+                  const sel = turmaSel?.id === t.id;
+                  return (
+                    <button
+                      key={t.id}
+                      onClick={() => { setTurmaSel(t); onActivity(); }}
+                      className={`w-full flex items-center justify-between px-4 py-3 rounded-2xl border transition-all ${
+                        sel ? 'border-[#10B981] bg-[#10B981]/15' : 'border-white/15 bg-white/5 hover:bg-white/10'
+                      }`}
+                    >
+                      <span className="font-semibold">{t.data ? fmtDateBR(t.data) : (t.titulo || 'Turma')}</span>
+                      {fmtHora(t) && <span className={`text-sm ${sel ? 'text-[#10B981]' : 'text-white/50'}`}>{fmtHora(t)}</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : turmaSel && (turmaSel.data || fmtHora(turmaSel)) ? (
               <div className="rounded-2xl border border-[#10B981]/30 bg-[#10B981]/10 p-4">
                 <p className="text-white/60 text-xs uppercase tracking-wider">Próximo encontro</p>
-                <p className="text-xl font-bold text-[#10B981] mt-1">{fmtDateBR(proximoEvento.data)}</p>
+                {turmaSel.data && <p className="text-xl font-bold text-[#10B981] mt-1">{fmtDateBR(turmaSel.data)}</p>}
+                {fmtHora(turmaSel) && (
+                  <p className="text-white/70 text-sm mt-1 flex items-center justify-center gap-1">
+                    <Clock className="h-3.5 w-3.5" /> às {fmtHora(turmaSel)}
+                  </p>
+                )}
               </div>
-            )}
+            ) : null}
+
             <Button
               onClick={() => setStep('form')}
               className="w-full bg-[#10B981] hover:bg-[#10B981]/90 text-white py-3 text-base rounded-2xl gap-2"
             >
               Quero me inscrever <ChevronRight className="h-5 w-5" />
             </Button>
+
+            {/* Receber material do NEXT no WhatsApp (não precisa se inscrever) */}
+            {infoEnviado ? (
+              <p className="text-sm text-[#10B981] flex items-center justify-center gap-2">
+                <CheckCircle2 className="h-4 w-4" /> Enviamos o material no seu WhatsApp!
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {(guest || !member.telefone) && (
+                  <input
+                    value={form.telefone}
+                    onChange={setField('telefone')}
+                    placeholder="Seu WhatsApp com DDD"
+                    inputMode="numeric"
+                    className={inputCls}
+                  />
+                )}
+                <button
+                  onClick={enviarInfo}
+                  disabled={enviandoInfo}
+                  className="w-full text-[#10B981] hover:text-[#10B981]/80 text-sm font-medium py-2 disabled:opacity-50"
+                >
+                  {enviandoInfo ? 'Enviando...' : 'Quero saber mais — receber no WhatsApp'}
+                </button>
+              </div>
+            )}
+            {error && <p className="text-red-400 text-sm">{error}</p>}
             <button onClick={onBack} className="w-full text-white/30 hover:text-white/60 text-sm transition-colors py-2">
               Voltar ao menu
             </button>

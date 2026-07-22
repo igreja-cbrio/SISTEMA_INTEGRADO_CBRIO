@@ -1965,6 +1965,7 @@ export const membresia = {
     next: {
       status: (params = {}) => get('/membresia/totem/next/status?' + new URLSearchParams(params).toString()),
       inscrever: (data) => post('/membresia/totem/next/inscrever', data),
+      informacoes: (data) => post('/membresia/totem/next/informacoes', data),
     },
     apresentacaoBebe: {
       status: (params = {}) => get('/membresia/totem/apresentacao-bebe/status?' + new URLSearchParams(params).toString()),

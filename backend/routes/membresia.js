@@ -1434,22 +1434,38 @@ router.put('/totem/membros/:id', async (req, res) => {
 // recente aberta). Devolve um objeto "evento-like" { id, data, titulo } pra UI do
 // totem seguir funcionando (data = 1º encontro da turma, se já marcado).
 async function _turmaAbertaTotem() {
-  const { data: turma } = await supabase
+  const [t] = await _turmasAbertasTotem();
+  return t || null;
+}
+
+// Todas as turmas abertas (calendário do totem), da mais próxima pra frente.
+// Cada uma vira "evento-like" { id, titulo, data (1º encontro), horario }.
+// `horario` da turma (coluna 20260722240000) — tolera ausência (só some).
+async function _turmasAbertasTotem() {
+  const { data: turmas } = await supabase
     .from('next_turmas')
-    .select('id, nome')
+    .select('id, nome, horario')
     .eq('status', 'aberta')
     .is('deleted_at', null)
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (!turma) return null;
-  const { data: enc } = await supabase
+    .order('created_at', { ascending: false });
+  if (!turmas || !turmas.length) return [];
+  const ids = turmas.map((t) => t.id);
+  const { data: encs } = await supabase
     .from('next_encontros')
-    .select('data')
-    .eq('turma_id', turma.id)
-    .eq('numero', 1)
-    .maybeSingle();
-  return { id: turma.id, data: enc?.data || null, titulo: turma.nome };
+    .select('turma_id, data')
+    .in('turma_id', ids)
+    .eq('numero', 1);
+  const dataPorTurma = {};
+  (encs || []).forEach((e) => { dataPorTurma[e.turma_id] = e.data; });
+  return turmas
+    .map((t) => ({ id: t.id, titulo: t.nome, data: dataPorTurma[t.id] || null, horario: t.horario || null }))
+    // Datas definidas primeiro (ordenadas), depois turmas sem data marcada.
+    .sort((a, b) => {
+      if (a.data && b.data) return String(a.data).localeCompare(String(b.data));
+      if (a.data) return -1;
+      if (b.data) return 1;
+      return 0;
+    });
 }
 
 // GET /api/membresia/totem/next/status?membro_id=X&email=Y&cpf=Z
@@ -1460,12 +1476,13 @@ async function _turmaAbertaTotem() {
 router.get('/totem/next/status', async (req, res) => {
   try {
     const { membro_id, email, cpf } = req.query;
-    const proxima = await _turmaAbertaTotem();
+    const turmas = await _turmasAbertasTotem();     // calendário (todas as abertas)
+    const proxima = turmas[0] || null;              // a mais próxima
 
     // Matrícula mais recente da pessoa (identidade membro_id/email/cpf)
     let q = supabase
       .from('next_matriculas')
-      .select('id, nome, sobrenome, email, cpf, status, turma_id, turma:next_turmas(id, nome, status)')
+      .select('id, nome, sobrenome, email, cpf, status, turma_id, turma:next_turmas(id, nome, status, horario)')
       .is('deleted_at', null)
       .order('created_at', { ascending: false })
       .limit(1);
@@ -1475,7 +1492,7 @@ router.get('/totem/next/status', async (req, res) => {
     if (email) filtros.push(`email.eq.${escapePostgrestValue(String(email).toLowerCase().trim())}`);
     if (cpf) filtros.push(`cpf.eq.${String(cpf).replace(/\D/g, '')}`);
     if (filtros.length === 0) {
-      return res.json({ inscrito: false, proximo_evento: proxima });
+      return res.json({ inscrito: false, proximo_evento: proxima, proximas_turmas: turmas });
     }
     q = q.or(filtros.join(','));
 
@@ -1494,10 +1511,10 @@ router.get('/totem/next/status', async (req, res) => {
           .select('data').eq('turma_id', mat.turma_id).eq('numero', 1).maybeSingle();
         data = enc?.data || null;
       }
-      inscricao = { evento: { id: mat.turma_id, data, titulo: mat.turma?.nome || 'Lista de espera' } };
+      inscricao = { evento: { id: mat.turma_id, data, titulo: mat.turma?.nome || 'Lista de espera', horario: mat.turma?.horario || null } };
     }
 
-    return res.json({ inscrito: ativo, inscricao, proximo_evento: proxima });
+    return res.json({ inscrito: ativo, inscricao, proximo_evento: proxima, proximas_turmas: turmas });
   } catch (e) {
     console.error('[TOTEM] next/status error:', e.message);
     res.status(500).json({ error: 'Erro ao consultar status do NEXT' });
@@ -1513,7 +1530,7 @@ router.post('/totem/next/inscrever', async (req, res) => {
   try {
     const {
       membro_id, nome, sobrenome, cpf, telefone, email,
-      data_nascimento, observacoes,
+      data_nascimento, observacoes, turma_id,
     } = req.body || {};
 
     if (!nome || String(nome).trim().length < 2) {
@@ -1529,10 +1546,12 @@ router.post('/totem/next/inscrever', async (req, res) => {
     const cleanCpf = cpf ? String(cpf).replace(/\D/g, '') : null;
     const cleanEmail = String(email).toLowerCase().trim();
 
-    const proxima = await _turmaAbertaTotem();
-    if (!proxima) {
+    // Turma: a escolhida no calendário (validada contra as abertas) ou a mais próxima.
+    const turmas = await _turmasAbertasTotem();
+    if (!turmas.length) {
       return res.status(400).json({ error: 'Nenhuma turma do NEXT aberta no momento' });
     }
+    const proxima = (turma_id && turmas.find((t) => t.id === turma_id)) || turmas[0];
 
     // Porta guardada · garante membro_id (matcher forte) quando o totem não manda
     let membroId = membro_id || null;
@@ -1611,9 +1630,8 @@ router.post('/totem/next/inscrever', async (req, res) => {
         enfileirar({
           telefone: cleanTel,
           template: process.env.WHATSAPP_TEMPLATE_NEXT_CONF,
-          // {{1}} nome · {{2}} data · {{3}} horário (horário entra na 2B-2 · até
-          // lá manda "a confirmar" — o template já nasce com as 3 variáveis).
-          params: [String(nome).split(' ')[0] || 'Olá', dataFmt, 'a confirmar'],
+          // {{1}} nome · {{2}} data · {{3}} horário
+          params: [String(nome).split(' ')[0] || 'Olá', dataFmt, proxima.horario || 'a confirmar'],
           contexto: 'next_totem',
           refId: proxima.id,
         }).catch(() => {});
@@ -1624,6 +1642,44 @@ router.post('/totem/next/inscrever', async (req, res) => {
   } catch (e) {
     console.error('[TOTEM] next/inscrever error:', e.message);
     res.status(500).json({ error: 'Erro ao inscrever no NEXT: ' + e.message });
+  }
+});
+
+// POST /api/membresia/totem/next/informacoes
+// Body: { telefone, nome? } — quem não quer se inscrever agora pode pedir o
+// material do NEXT no WhatsApp (template WHATSAPP_TEMPLATE_NEXT_INFO · header de
+// documento com o PDF explicativo, aprovado na Meta). Via fila; no-op gracioso
+// até o template existir. NÃO cria matrícula — é só o envio do material.
+router.post('/totem/next/informacoes', async (req, res) => {
+  try {
+    const cleanTel = String(req.body?.telefone || '').replace(/\D/g, '');
+    if (!cleanTel || cleanTel.length < 10) {
+      return res.status(400).json({ error: 'Telefone invalido' });
+    }
+    const primeiroNome = String(req.body?.nome || '').trim().split(' ')[0] || 'Olá';
+    const template = process.env.WHATSAPP_TEMPLATE_NEXT_INFO;
+    if (!template) {
+      // Sem template aprovado ainda: responde ok (a UI mostra "vamos te enviar")
+      // sem prometer o que não sai. O material segue como no-op até ligar o env.
+      return res.json({ ok: true, enviado: false, motivo: 'template_pendente' });
+    }
+    let enviado = false;
+    try {
+      const { enfileirar } = require('../services/whatsappFila');
+      const r = await enfileirar({
+        telefone: cleanTel,
+        template,
+        params: [primeiroNome],   // {{1}} nome · o PDF vai no header do template
+        contexto: 'next_info_totem',
+      });
+      enviado = r.sent === true || r.queued === true;
+    } catch (e) {
+      console.error('[TOTEM] next/informacoes fila:', e.message);
+    }
+    res.json({ ok: true, enviado });
+  } catch (e) {
+    console.error('[TOTEM] next/informacoes error:', e.message);
+    res.status(500).json({ error: 'Erro ao enviar informações do NEXT' });
   }
 });
 

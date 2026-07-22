@@ -282,6 +282,7 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
       aceita_contato,
       whatsapp_optin, // consentimento p/ mensagens no WhatsApp (Marketing · LGPD)
       consentimento_texto,
+      converteu_na_cbrio, // autodeclarado (checkbox) · NUNCA vira convertido/NSM
       familia_sugerida_id,
       foto_url,
       // grupo de conexão opcional — cria pedido após cadastro
@@ -391,6 +392,9 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
       whatsapp_optin: !!whatsapp_optin,
       whatsapp_optin_em: whatsapp_optin ? new Date().toISOString() : null,
       consentimento_texto: consentimento_texto ? String(consentimento_texto).slice(0, 2000) : null,
+      // Só inclui a coluna quando a pessoa marcou (tolera a migration ainda não
+      // aplicada · flow antigo sem o checkbox não toca a coluna).
+      ...(converteu_na_cbrio ? { converteu_na_cbrio: true } : {}),
       familia_sugerida_id: familia_sugerida_id || null,
       foto_url: foto_url || null,
       status: duplicadoDeId ? 'duplicado' : 'pendente',
