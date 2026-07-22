@@ -352,6 +352,44 @@ export default function TotemMembro() {
     setShowNovoCadastro(true);
   };
 
+  // ── Gate de identificação do convidado (ponto 8) ──
+  // Ao tentar uma inscrição, o convidado informa CPF + nascimento: achou →
+  // PROMOVE a sessão pra identificada e o fluxo continua de onde estava; não
+  // achou → completar cadastro. Reusa a tela de CPF do "Sou membro".
+  const [identGate, setIdentGate] = useState(false);
+  const solicitarIdentificacao = useCallback(() => setIdentGate(true), []);
+  const handleGateLookup = useCallback(async (cpf: string, nascimento: string) => {
+    const digits = cpf.replace(/\D/g, '');
+    if (digits.length !== 11) return { ok: false, error: 'CPF incompleto' };
+    if (!nascimento) return { ok: false, error: 'Informe a data de nascimento' };
+    try {
+      const data = await membresia.cpfLookup(digits, nascimento);
+      if (data.found) {
+        const src = data.membro || data.cadastro || {};
+        setMember({
+          nome: src.nome || 'Membro', foto_url: src.foto_url, id: src.id,
+          cpf: src.cpf, email: src.email, telefone: src.telefone,
+          pending: !!data.pending, raw: data,
+        });
+        setIdentGate(false);
+        return { ok: true };
+      }
+      return { ok: false, notFound: true };
+    } catch (e: any) {
+      if (e?.status === 404) return { ok: false, notFound: true };
+      return { ok: false, error: e?.message || 'Erro ao consultar CPF' };
+    }
+  }, []);
+  const gateOverlay = identGate ? (
+    <div className="fixed inset-0 z-[90]">
+      <CpfInputScreen
+        onBack={() => setIdentGate(false)}
+        onLookup={handleGateLookup}
+        onCompletarCadastro={(cpf, nascimento) => { setIdentGate(false); irCompletarCadastro(cpf, nascimento); }}
+      />
+    </div>
+  ) : null;
+
   // Overlay "Você ainda está aí?" — aparece 20s antes do encerramento em
   // qualquer tela ativa; qualquer toque continua a sessão.
   const idleOverlay = idleWarning ? (
@@ -512,8 +550,10 @@ export default function TotemMembro() {
         onDone={() => { setState('greeting'); setSelectedOption(null); resetInactivity(); }}
         onEndSession={encerrarSessao}
         onNovoCadastro={irParaNovoCadastro}
+        onNeedIdentify={solicitarIdentificacao}
         onActivity={resetInactivity}
       />
+      {gateOverlay}
       {idleOverlay}
     </>
   );
@@ -1048,7 +1088,7 @@ function SuccessActions({ onDone, onEndSession, accent = '#00B39D' }: {
 
 // ── Option Flow router ────────────────────────────────────────────────────────
 
-function OptionFlow({ optionId, member, isDark, onBack, onDone, onEndSession, onNovoCadastro, onActivity }: {
+function OptionFlow({ optionId, member, isDark, onBack, onDone, onEndSession, onNovoCadastro, onNeedIdentify, onActivity }: {
   optionId: OptionId;
   member: MemberData;
   isDark: boolean;
@@ -1056,12 +1096,13 @@ function OptionFlow({ optionId, member, isDark, onBack, onDone, onEndSession, on
   onDone: () => void;
   onEndSession: () => void;
   onNovoCadastro: () => void;
+  onNeedIdentify: () => void;
   onActivity: () => void;
 }) {
   const opt = MENU_OPTIONS.find(o => o.id === optionId)!;
 
   if (optionId === 'grupos') {
-    return <GruposFlow opt={opt} member={member} onBack={onBack} onDone={onDone} onEndSession={onEndSession} onNovoCadastro={onNovoCadastro} onActivity={onActivity} />;
+    return <GruposFlow opt={opt} member={member} onBack={onBack} onDone={onDone} onEndSession={onEndSession} onNovoCadastro={onNovoCadastro} onNeedIdentify={onNeedIdentify} onActivity={onActivity} />;
   }
   if (optionId === 'membresia') {
     return <MeusDadosFlow opt={opt} member={member} isDark={isDark} onBack={onBack} onDone={onDone} onActivity={onActivity} />;
@@ -1454,13 +1495,14 @@ function fmtDist(km: number) {
 
 const DIAS_MAP: Record<number, string> = { 0:'Dom', 1:'Seg', 2:'Ter', 3:'Qua', 4:'Qui', 5:'Sex', 6:'Sáb' };
 
-function GruposFlow({ opt, member, onBack, onDone, onEndSession, onNovoCadastro, onActivity }: {
+function GruposFlow({ opt, member, onBack, onDone, onEndSession, onNovoCadastro, onNeedIdentify, onActivity }: {
   opt: (typeof MENU_OPTIONS)[number];
   member: MemberData;
   onBack: () => void;
   onDone: () => void;
   onEndSession: () => void;
   onNovoCadastro: () => void;
+  onNeedIdentify: () => void;
   onActivity: () => void;
 }) {
   const [grupos, setGrupos] = useState<any[]>([]);
@@ -1611,10 +1653,11 @@ function GruposFlow({ opt, member, onBack, onDone, onEndSession, onNovoCadastro,
             {member.guest ? (
               <div className="space-y-3">
                 <p className="text-white/60 text-sm text-center">
-                  Para o líder saber quem você é, faça seu cadastro rápido — leva menos de 2 minutos.
+                  Pra enviar seu pedido, informe seu CPF e data de nascimento — se você já
+                  tem cadastro, é só isso; se não, criamos rapidinho.
                 </p>
-                <Button onClick={onNovoCadastro} className="w-full bg-[#00B39D] hover:bg-[#00B39D]/90 py-6 text-base rounded-2xl">
-                  Fazer meu cadastro
+                <Button onClick={onNeedIdentify} className="w-full bg-[#00B39D] hover:bg-[#00B39D]/90 py-6 text-base rounded-2xl">
+                  Continuar
                 </Button>
                 <Button variant="outline" onClick={() => { setSelected(null); setError(''); }} className="w-full border-white/20 text-white hover:bg-white/10 rounded-2xl">
                   Voltar aos grupos

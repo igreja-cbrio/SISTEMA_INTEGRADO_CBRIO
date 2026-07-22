@@ -860,6 +860,7 @@ router.post('/batismos', authorizeBatismo, async (req, res) => {
   // aberto e com vaga no momento do insert.
   let dataBatismo = null;
   let horarioCulto = null;
+  let horarioLabel = null;
   if (horario_culto) {
     const { data: h } = await supabase
       .from('batismo_horarios')
@@ -869,6 +870,7 @@ router.post('/batismos', authorizeBatismo, async (req, res) => {
       .is('deleted_at', null)
       .maybeSingle();
     if (!h) return res.status(400).json({ error: 'Horário indisponível — escolha outro' });
+    horarioLabel = h.label || h.horario;
     dataBatismo = _proximo4Domingo();
     if (h.limite != null) {
       const { count } = await supabase
@@ -937,6 +939,27 @@ router.post('/batismos', authorizeBatismo, async (req, res) => {
     severidade: 'info',
     chaveDedup: `batismo_${inscricao.id}`,
   }).catch(() => {});
+
+  // Confirmação por WhatsApp (via FILA · caminho feliz em tempo real, reenvio
+  // com backoff se o TIER_250 estourar). No-op gracioso até o template
+  // `WHATSAPP_TEMPLATE_BATISMO_CONF` existir/ser aprovado na Meta. Só no totem.
+  const telConf = telefone || inscricao.telefone;
+  if (origem === 'totem' && telConf && process.env.WHATSAPP_TEMPLATE_BATISMO_CONF) {
+    try {
+      const { enfileirar } = require('../services/whatsappFila');
+      enfileirar({
+        telefone: telConf,
+        template: process.env.WHATSAPP_TEMPLATE_BATISMO_CONF,
+        params: [
+          String(nome).split(' ')[0] || 'Olá',
+          dataBatismo ? dataBatismo.split('-').reverse().join('/') : 'a confirmar',
+          horarioLabel || 'a confirmar',
+        ],
+        contexto: 'batismo_totem',
+        refId: inscricao.id,
+      }).catch(() => {});
+    } catch { /* fila indisponível · não bloqueia a inscrição */ }
+  }
 
   // Exposição mínima: o token de acesso só sai pelo fluxo de check-in (impressão).
   const { codigo_acesso: _ca, codigo_conferencia: _cc, ...inscricaoPub } = inscricao;
