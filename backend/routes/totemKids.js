@@ -1293,6 +1293,73 @@ router.get('/criancas/:id/aniversario-impressoes', authorizeModule('kids', 1), a
   }
 });
 
+// GET /api/totem-kids/responsavel-familia?cpf= · no "Nova criança", sugere
+// adicionar à FAMÍLIA EXISTENTE quando o CPF do responsável já é de um pai/mãe
+// com filhos (Marcos 2026-07-22). Gatilho SÓ por CPF (chave individual única) —
+// nunca por telefone/nome (família compartilha → falso-positivo). Read-only.
+// Retorna o nome da família + os filhos já cadastrados pro operador CONFIRMAR
+// visualmente que é a família certa antes de juntar (evita cadastro errado).
+router.get('/responsavel-familia', authorizeModule('kids', 2), async (req, res) => {
+  try {
+    const cpf11 = normalizarCpf(req.query.cpf);
+    if (!cpf11 || !cpfValido(cpf11)) return res.json({ encontrado: false });
+    const { data: membro } = await supabase.from('mem_membros')
+      .select('id, nome').eq('cpf', cpf11).is('deleted_at', null).maybeSingle();
+    if (!membro) return res.json({ encontrado: false });
+    // Filhos ATIVOS onde essa pessoa é responsável.
+    const { data: vincs } = await supabase.from('kids_responsaveis')
+      .select('crianca:kids_criancas(id, nome, familia_id, ativo, deleted_at)')
+      .eq('membro_id', membro.id);
+    const filhos = (vincs || []).map((v) => v.crianca)
+      .filter((c) => c && c.ativo !== false && !c.deleted_at && c.familia_id);
+    if (!filhos.length) return res.json({ encontrado: true, membro, criancas: [] });
+    // Se os filhos estão em famílias diferentes (split antigo), escolhe a família
+    // com MAIS filhos como alvo da sugestão.
+    const porFamilia = new Map();
+    for (const c of filhos) {
+      if (!porFamilia.has(c.familia_id)) porFamilia.set(c.familia_id, []);
+      porFamilia.get(c.familia_id).push(c);
+    }
+    let familiaId = null, grupo = [];
+    for (const [fid, cs] of porFamilia) if (cs.length > grupo.length) { familiaId = fid; grupo = cs; }
+    const { data: fam } = await supabase.from('mem_familias')
+      .select('nome').eq('id', familiaId).maybeSingle();
+    res.json({
+      encontrado: true,
+      membro,
+      familia_id: familiaId,
+      familia_nome: fam?.nome || null,
+      ref_crianca_id: grupo[0]?.id || null,
+      criancas: grupo.map((c) => ({ id: c.id, nome: c.nome })),
+    });
+  } catch (e) {
+    console.error('[totemKids/responsavel-familia]', e.message);
+    res.json({ encontrado: false }); // fail-safe: sem sugestão, segue o cadastro normal
+  }
+});
+
+// POST /api/totem-kids/familia-revisar · quando o operador RECUSA a sugestão de
+// família (cadastra a criança em família nova apesar do CPF já ter filhos),
+// registra um rastro pra revisão humana (unir famílias depois). Best-effort ·
+// NUNCA trava o check-in. Não cria duplicata de pessoa (o CPF já é reusado).
+router.post('/familia-revisar', authorizeModule('kids', 2), async (req, res) => {
+  try {
+    const { crianca_id, responsavel_membro_id, familia_existente_nome } = req.body || {};
+    if (responsavel_membro_id) {
+      await supabase.from('mem_historico').insert({
+        membro_id: responsavel_membro_id,
+        tipo: 'outro',
+        descricao: `[familia_revisar] Criança ${crianca_id || '?'} cadastrada em família NOVA apesar de o responsável já ter filhos${familia_existente_nome ? ` em "${familia_existente_nome}"` : ''} — revisar união de famílias (Entradas > Vincular famílias).`,
+        created_at: new Date().toISOString(),
+      }).then(() => {}, (e) => console.warn('[totemKids/familia-revisar]', e?.message));
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[totemKids/familia-revisar]', e.message);
+    res.json({ ok: false }); // best-effort · não propaga erro pro totem
+  }
+});
+
 // GET /api/totem-kids/criancas · listagem completa (admin)
 router.get('/criancas', authorizeModule('kids', 1), async (req, res) => {
   try {
