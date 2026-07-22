@@ -6,10 +6,8 @@ import { cuidados as cuidadosApi } from '../../api';
 import Paginacao, { usePaginacaoLocal } from '../../components/Paginacao';
 import useConfirmarSaida from '../../hooks/useConfirmarSaida';
 import DevocionalAdmin from '../../components/DevocionalAdmin';
-import EncaminhamentosInbox from '../../components/EncaminhamentosInbox';
 import WhatsappAutoConfig from '../../components/WhatsappAutoConfig';
 import OracaoPanel from '../../components/OracaoPanel';
-import CuidadosJ180 from '../../components/CuidadosJ180';
 import AgentePrimeiroContato from '../../components/AgentePrimeiroContato';
 import AgenteBatismoNext from '../../components/AgenteBatismoNext';
 import NextConvite from '../../components/NextConvite';
@@ -23,7 +21,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { Switch } from '../../components/ui/switch';
 import { Badge } from '../../components/ui/badge';
 import { StatisticsCard } from '../../components/ui/statistics-card';
-import { Heart, Users, UserCheck, CheckCircle2, Plus, Trash2, Loader2, Search, Sparkles, CalendarCheck, CalendarPlus, ArrowRight, Phone, MessageSquare, AlertTriangle, HeartHandshake, Pencil, Check, X } from 'lucide-react';
+import { Heart, Users, UserCheck, CheckCircle2, Plus, Trash2, Loader2, Search, Sparkles, CalendarCheck, CalendarPlus, Phone, MessageSquare, AlertTriangle, HeartHandshake, Pencil, Check, X } from 'lucide-react';
 import { ResponsiveContainer, LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 import { toast } from 'sonner';
 import { useAuth } from '../../contexts/AuthContext';
@@ -1037,6 +1035,7 @@ export default function Cuidados() {
     const t = searchParams.get('tab') || 'dashboard';
     if (t === 'tarefas') return 'visitas'; // legado · aba renomeada pra "Visitas agendadas"
     if (t === 'primeiros-passos') return 'convertidos'; // legado · fundida em "Próximos passos"
+    if (t === 'jornada') return 'dashboard'; // legado · Jornada 180 saiu do Cuidados (é do módulo Grupos)
     return t;
   });
 
@@ -1290,14 +1289,13 @@ export default function Cuidados() {
       <ModuleHeader
         icon={Heart}
         title="Cuidados"
-        subtitle="Acompanhamentos pastorais, Jornada 180, capelania, aconselhamento e convertidos pós-culto."
+        subtitle="Acompanhamentos pastorais, capelania, aconselhamento e convertidos pós-culto."
       />
 
       <Tabs value={tab} onValueChange={handleTabChange}>
         <TabsList className="flex-wrap h-auto">
           <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
           <TabsTrigger value="acomp">Aconselhamento</TabsTrigger>
-          <TabsTrigger value="jornada">Jornada 180</TabsTrigger>
           <TabsTrigger value="convertidos">Próximos passos</TabsTrigger>
           <TabsTrigger value="devocional">Devocional</TabsTrigger>
           <TabsTrigger value="visitas">Visitas e atendimentos</TabsTrigger>
@@ -1334,7 +1332,7 @@ export default function Cuidados() {
               <div className="rounded-lg border border-border bg-card p-4">
                 <h3 className="font-semibold text-sm mb-1">Convertidos → 1º contato → engajados em +1 valor</h3>
                 <p className="text-xs text-muted-foreground mb-3">
-                  O gargalo do cuidado: de quem se converteu, com quantos a gente falou e quantos seguiram pra outro valor (grupo, voluntário, Jornada 180).
+                  O gargalo do cuidado: de quem se converteu, com quantos a gente falou e quantos seguiram pra outro valor (grupo, voluntário, Next).
                 </p>
                 <ResponsiveContainer width="100%" height={300}>
                   <LineChart data={dashSeries.funil} margin={{ top: 8, right: 16, left: -10, bottom: 0 }}>
@@ -1570,16 +1568,6 @@ export default function Cuidados() {
               {podeEditarCuidados && <WhatsappAutoConfig api={cuidadosApi.whatsappAuto} />}
             </div>
           </details>
-        </TabsContent>
-
-        {/* Jornada 180 */}
-        <TabsContent value="jornada" className="space-y-4">
-          <div className="rounded-lg border border-border bg-card p-4">
-            <h3 className="font-semibold text-sm flex items-center gap-2 mb-1"><ArrowRight className="h-4 w-4 text-primary" />Encaminhados pra firmar</h3>
-            <p className="text-xs text-muted-foreground mb-3">Pessoas que o cuidado pastoral encaminhou pra Jornada 180. Faça o primeiro contato e registre a devolutiva.</p>
-            <EncaminhamentosInbox destino="jornada180" canWrite={podeEditarCuidados} />
-          </div>
-          <CuidadosJ180 canWrite={podeEditarCuidados} />
         </TabsContent>
 
         {/* Próximos passos · lista operacional dos convertidos + jornada (contato/batismo/Next) */}

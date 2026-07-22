@@ -192,6 +192,16 @@ serverless functions via `api/index.js`).
 > ⚠️ O PCO do VOLUNTARIADO (Planning Center Services · vol_*) é outro produto e
 > segue vivo — não confundir.
 
+> **Cuidados · Jornada 180 saiu do módulo (2026-07-22)**: decisão do Marcos — quem
+> gerencia os grupos de Jornada 180 é o módulo **Grupos** (J180 é um tipo de grupo lá,
+> `TIPOS_GRUPO`). Removida a aba "Jornada 180" do `/cuidados` (o `CuidadosJ180` + o
+> `EncaminhamentosInbox destino="jornada180"`). Deep-link `?tab=jornada` redireciona
+> pro dashboard. NÃO apaguei nada no banco: `cui_jornada180`/`j180_*` + rotas
+> `/cuidados/j180/*`/`/jornada180` + `api.cuidados.j180`/`jornada180` ficam DORMENTES
+> (alimentam o dashboard-series e KPIs · dropar só numa limpeza futura com aval). O
+> `DESTINO_META.jornada180` (backend) fica só pra rotular encaminhamentos legados; o
+> desfecho do convertido não oferece mais esse destino (só Next direciona hoje).
+
 ## Mapa do sistema · o que cada módulo faz, quem usa e o que alimenta
 
 Visão de helicóptero (formato: o que faz · quem usa · **impacto** = o que
