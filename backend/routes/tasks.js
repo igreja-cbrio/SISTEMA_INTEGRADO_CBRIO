@@ -5,6 +5,21 @@ const { notificar } = require('../services/notificar');
 
 router.use(authenticate);
 
+// Guard transversal: esta rota lê/edita tarefas de eventos, ciclos, projetos
+// e PE, então não cabe um authorizeModule único. Guarda pela MESMA régua das
+// telas consumidoras (Projetos/Eventos): leitura >= 1 em qualquer módulo-fonte.
+// Nunca `authenticate` solto — a rota tem PATCH de status (lição dos guards de
+// Grupos). admin/diretor = nível 5 (mesmo padrão de encaminhamentos.js).
+function nivel(req, slug) {
+  if (['admin', 'diretor'].includes(req.user?.role)) return 5;
+  return req.user?.granular?.modulePerms?.[slug]?.leitura ?? 0;
+}
+router.use((req, res, next) => {
+  const podeVer = ['projetos', 'eventos', 'expansao'].some(s => nivel(req, s) >= 1);
+  if (!podeVer) return res.status(403).json({ error: 'Sem acesso a tarefas' });
+  next();
+});
+
 // GET /api/tasks/all — todas as tarefas de todos os módulos
 // Query params:
 //   source: filtra por tipo (evento | ciclo | projeto | planejamento)
@@ -18,18 +33,38 @@ router.get('/all', async (req, res) => {
     const { source, area } = req.query;
     const finalized = req.query.finalized || 'hide'; // hide | show | only
 
+    // project_tasks (2.7k) e cycle_task_subtasks (2.7k) passam do cap de 1000
+    // do PostgREST — sem paginar, o Kanban truncava em silêncio (o MESMO bug
+    // que a auditoria de performance corrigiu no resto do sistema). Ramo
+    // resiliente: erro numa página devolve o acumulado (o /all nunca 500 por
+    // uma fonte só, mantendo o comportamento original tolerante a erro).
+    const PAGE = 1000;
+    const fetchAll = async (build) => {
+      const out = []; let from = 0;
+      for (;;) {
+        const { data, error } = await build().range(from, from + PAGE - 1);
+        if (error) break;
+        out.push(...(data || []));
+        if (!data || data.length < PAGE) break;
+        from += PAGE;
+      }
+      return out;
+    };
+
     const results = [];
 
     // Tarefas de eventos
     if (!source || source === 'evento') {
-      let q = supabase.from('event_tasks')
-        .select('id, name, responsible, responsible_id, area, deadline, status, priority, is_milestone, event_id, created_at, closed_with_event_at, events(name)')
-        .order('deadline', { nullsFirst: false });
-      if (area) q = q.eq('area', area);
-      if (finalized === 'hide') q = q.is('closed_with_event_at', null);
-      if (finalized === 'only') q = q.not('closed_with_event_at', 'is', null);
-      const { data } = await q;
-      (data || []).forEach(t => results.push({
+      const data = await fetchAll(() => {
+        let q = supabase.from('event_tasks')
+          .select('id, name, responsible, responsible_id, area, deadline, status, priority, is_milestone, event_id, created_at, closed_with_event_at, events(name)')
+          .order('deadline', { nullsFirst: false });
+        if (area) q = q.eq('area', area);
+        if (finalized === 'hide') q = q.is('closed_with_event_at', null);
+        if (finalized === 'only') q = q.not('closed_with_event_at', 'is', null);
+        return q;
+      });
+      data.forEach(t => results.push({
         ...t, source: 'evento', parent_name: t.events?.name || '—', parent_id: t.event_id,
         is_finalized_with_event: !!t.closed_with_event_at,
       }));
@@ -37,23 +72,29 @@ router.get('/all', async (req, res) => {
 
     // Tarefas do ciclo criativo (com subtarefas)
     if (!source || source === 'ciclo') {
-      let q = supabase.from('cycle_phase_tasks')
-        .select('id, titulo, responsavel_nome, responsavel_id, area, prazo, status, prioridade, event_id, observacoes, created_at, closed_with_event_at, events(name), event_cycle_phases(nome_fase)')
-        .order('prazo', { nullsFirst: false });
-      if (area) q = q.eq('area', area);
-      if (finalized === 'hide') q = q.is('closed_with_event_at', null);
-      if (finalized === 'only') q = q.not('closed_with_event_at', 'is', null);
-      const { data } = await q;
+      const data = await fetchAll(() => {
+        let q = supabase.from('cycle_phase_tasks')
+          .select('id, titulo, responsavel_nome, responsavel_id, area, prazo, status, prioridade, event_id, observacoes, created_at, closed_with_event_at, events(name), event_cycle_phases(nome_fase)')
+          .order('prazo', { nullsFirst: false });
+        if (area) q = q.eq('area', area);
+        if (finalized === 'hide') q = q.is('closed_with_event_at', null);
+        if (finalized === 'only') q = q.not('closed_with_event_at', 'is', null);
+        return q;
+      });
 
-      // Buscar subtarefas de todas as tarefas do ciclo
-      const cycleTaskIds = (data || []).map(t => t.id);
-      const { data: allSubs } = cycleTaskIds.length > 0
-        ? await supabase.from('cycle_task_subtasks').select('*').in('task_id', cycleTaskIds).order('sort_order')
-        : { data: [] };
+      // Subtarefas em lotes de 200 ids (o .in() estoura a URL do PostgREST
+      // acima de ~200 uuids · lição postgrest-in-limite) + paginado.
+      const cycleTaskIds = data.map(t => t.id);
+      const allSubs = [];
+      for (let i = 0; i < cycleTaskIds.length; i += 200) {
+        const lote = cycleTaskIds.slice(i, i + 200);
+        const subs = await fetchAll(() => supabase.from('cycle_task_subtasks').select('*').in('task_id', lote).order('sort_order'));
+        allSubs.push(...subs);
+      }
       const subsMap = {};
-      (allSubs || []).forEach(s => { if (!subsMap[s.task_id]) subsMap[s.task_id] = []; subsMap[s.task_id].push(s); });
+      allSubs.forEach(s => { if (!subsMap[s.task_id]) subsMap[s.task_id] = []; subsMap[s.task_id].push(s); });
 
-      (data || []).forEach(t => results.push({
+      data.forEach(t => results.push({
         id: t.id, name: t.titulo,
         responsible: t.responsavel_nome,
         responsible_id: t.responsavel_id,
@@ -70,24 +111,28 @@ router.get('/all', async (req, res) => {
 
     // Tarefas de projetos
     if (!source || source === 'projeto') {
-      let q = supabase.from('project_tasks')
-        .select('id, name, responsible, responsible_id, area, deadline, status, priority, is_milestone, project_id, created_at, projects(name)')
-        .order('deadline', { nullsFirst: false });
-      if (area) q = q.eq('area', area);
-      const { data } = await q;
-      (data || []).forEach(t => results.push({
+      const data = await fetchAll(() => {
+        let q = supabase.from('project_tasks')
+          .select('id, name, responsible, responsible_id, area, deadline, status, priority, is_milestone, project_id, created_at, projects(name)')
+          .order('deadline', { nullsFirst: false });
+        if (area) q = q.eq('area', area);
+        return q;
+      });
+      data.forEach(t => results.push({
         ...t, source: 'projeto', parent_name: t.projects?.name || '—', parent_id: t.project_id,
       }));
     }
 
     // Tarefas de planejamento estratégico
     if (!source || source === 'planejamento') {
-      let q = supabase.from('strategic_tasks')
-        .select('id, name, responsible, area, deadline, status, priority, is_milestone, plan_id, created_at, strategic_plans(name)')
-        .order('deadline', { nullsFirst: false });
-      if (area) q = q.eq('area', area);
-      const { data } = await q;
-      (data || []).forEach(t => results.push({
+      const data = await fetchAll(() => {
+        let q = supabase.from('strategic_tasks')
+          .select('id, name, responsible, area, deadline, status, priority, is_milestone, plan_id, created_at, strategic_plans(name)')
+          .order('deadline', { nullsFirst: false });
+        if (area) q = q.eq('area', area);
+        return q;
+      });
+      data.forEach(t => results.push({
         ...t, source: 'planejamento', parent_name: t.strategic_plans?.name || '—', parent_id: t.plan_id,
       }));
     }
