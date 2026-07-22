@@ -272,12 +272,6 @@ const SETOR_GESTAO = 'Gestao';
 const COMPRA_COTACAO_DIRETA_LIMITE = 1000;
 const COMPRA_COTACAO_DIRETA_MOTIVO = 'Compra de até R$ 1.000 · direto para cotação';
 
-// Fluxo de COMPRAS redefinido (2026-07-22, Matheus): toda compra vai DIRETO pra
-// cotação (Amaury) → financeiro (Alberto), SEM Gestão e SEM mérito. Único filtro
-// de origem: Criativo (Pedro Menezes) aprova TODAS as compras do setor;
-// Ministerial (Arthur Serpa) aprova SÓ compras ACIMA deste limite.
-const COMPRA_FILTRO_MINISTERIAL_LIMITE = 1000;
-
 // Override do 2º portão POR CATEGORIA (migration 20260708180000). Ex.: TI →
 // Diego + Matheus (substitui a Diretoria de Gestão). Best-effort: tabela
 // ausente/categoria sem linha → null (cai no padrão de Gestão).
@@ -382,9 +376,16 @@ function proximoStatusPosAprovacao(sol) {
 // Não-planejado com custo → julgamento de mérito. Só no fluxo novo
 // (eh_planejado=false) · linha legada (NULL) segue o fluxo antigo.
 function precisaMerito(sol) {
-  // Julgamento de mérito (Pastor Presidente) DESLIGADO por enquanto (decisão do
-  // Matheus · 2026-07-22) até redefinirem o fluxo correto. NADA vai pra mérito.
-  return false;
+  // Julgamento de mérito (Pastor Presidente) · só em COMPRAS, por valor + planejado
+  // (fluxo definido pelo Matheus · 2026-07-22):
+  //   planejado      → mérito quando o pedido passa de R$ 5.000
+  //   não planejado  → mérito quando o pedido passa de R$ 1.000
+  // Faixa pelo valor ESTIMADO (a aprovação é antes da cotação). Outras categorias
+  // seguem sem mérito por ora.
+  if (sol.categoria !== 'compras') return false;
+  if (sol.merito_status != null) return false; // já decidido
+  const valor = Number(sol.valor_estimado) || 0;
+  return sol.eh_planejado === true ? valor > 5000 : valor > 1000;
 }
 
 // Evento explícito na timeline com o ATOR correto (o trigger genérico registra
@@ -1057,39 +1058,23 @@ router.post('/', async (req, res) => {
       console.error('[SOLICITAÇÕES] roteamento de origem falhou (fallback trigger):', rerr.message);
     }
 
-    // ── COMPRAS · fluxo redefinido (2026-07-22, Matheus) ──────────────────────
-    // Toda compra vai DIRETO pro Amaury (cotação) → financeiro (Alberto). O ÚNICO
-    // filtro de origem:
-    //   • Criativo (Pedro Menezes)  → aprova TODAS as compras do setor.
-    //   • Ministerial (Arthur Serpa) → aprova SÓ compras ACIMA de R$ 1.000.
-    // Qualquer outro setor (Gestão etc.) ou solicitante já dispensado pela RPC
-    // (diretor/diretoria/super) → dispensada, direto pra cotação. Gestão e mérito
-    // NÃO se aplicam a compras (ver bloco de Gestão + precisaMerito desligado).
+    // ── COMPRAS · fluxo por valor + planejado (2026-07-22, Matheus) ───────────
+    //   Planejado ≤ R$ 1.000            → direto pra cotação (sem diretor/presidente)
+    //   Planejado R$ 1.000–5.000        → diretor da área aprova
+    //   Planejado > R$ 5.000            → diretor da área + Pastor Presidente
+    //   Não planejado ≤ R$ 1.000        → diretor da área aprova
+    //   Não planejado > R$ 1.000        → diretor da área + Pastor Presidente
+    // A origem é o DIRETOR DA ÁREA (rota do RPC · já vem 'dispensada' quando o
+    // solicitante é diretor/diretoria/super). O mérito (presidente) é decidido
+    // DEPOIS, por valor (precisaMerito). Gestão (2º carimbo) segue dispensada.
+    // Depois de tudo: cotação (Amaury) → financeiro (Alberto).
     if (categoria === 'compras') {
       const valorCompra = Number(valorEstimadoFinal) || 0;
-      const dirs = {};
-      try {
-        const { data: sd } = await supabase.from('setor_diretor')
-          .select('setor, diretor_id').in('setor', ['Criativo', 'Ministerial']);
-        (sd || []).forEach(r => { if (r.diretor_id) dirs[r.setor] = r.diretor_id; });
-      } catch (e) { console.warn('[SOLICITAÇÕES] setor_diretor (compras):', e.message); }
-
-      const jaDispensada = rota?.aprovacao_status === 'dispensada';
-      const origemDir = jaDispensada ? null : (rota?.diretor_id || null);
-
-      if (!jaDispensada && dirs.Criativo && origemDir === dirs.Criativo) {
-        rota = { diretor_id: dirs.Criativo, aprovacao_status: 'pendente',
-          status: 'aguardando_aprovacao_origem',
-          motivo: 'Compra do Criativo · aprovação de origem com Pedro Menezes' };
-      } else if (!jaDispensada && dirs.Ministerial && origemDir === dirs.Ministerial
-                 && valorCompra > COMPRA_FILTRO_MINISTERIAL_LIMITE) {
-        rota = { diretor_id: dirs.Ministerial, aprovacao_status: 'pendente',
-          status: 'aguardando_aprovacao_origem',
-          motivo: `Compra do Ministerial acima de R$ ${COMPRA_FILTRO_MINISTERIAL_LIMITE} · aprovação de origem com Arthur Serpa` };
-      } else {
+      if (planejado && valorCompra <= 1000) {
         rota = { diretor_id: null, aprovacao_status: 'dispensada', status: 'pendente',
-          motivo: 'Compra vai direto pra cotação (Amaury)' };
+          motivo: 'Compra planejada até R$ 1.000 · direto para cotação' };
       }
+      // demais casos: mantém a rota do RPC (diretor da área aprova).
     }
 
     // Reserva de espaço vai DIRETO pro Amaury (coordenador de operações) — sem
@@ -1277,13 +1262,12 @@ router.post('/', async (req, res) => {
       .single();
     if (error) throw error;
 
-    // ⚠️ Fluxo BPMN · se AMBOS os carimbos nasceram dispensados e o pedido TEM
-    // CUSTO (precisa_aprovacao_financeira calculado pelo trigger no insert),
-    // ele já nasce no julgamento de mérito (não-planejado com custo → Pastor
-    // Presidente). Planejado nunca passa por aqui.
-    if (!planejado
-        && data.aprovacao_origem_status === 'dispensada'
-        && data.aprovacao_gestao_status === 'dispensada'
+    // ⚠️ Fluxo BPMN · se a ORIGEM nasceu dispensada (ex.: o próprio diretor pede)
+    // mas o pedido ainda precisa do Pastor Presidente pela faixa de valor, já nasce
+    // no julgamento de mérito. Vale planejado e não-planejado (a régua de valor
+    // está em precisaMerito). Gestão nula = planejado (2º carimbo não se aplica).
+    if (data.aprovacao_origem_status === 'dispensada'
+        && (data.aprovacao_gestao_status === 'dispensada' || data.aprovacao_gestao_status == null)
         && precisaMerito(data)) {
       const statusAntes = data.status;
       const { data: up, error: upErr } = await supabase
