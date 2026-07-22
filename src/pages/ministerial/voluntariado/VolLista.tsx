@@ -244,7 +244,7 @@ function TodosList() {
           const rec = data.reconciliacao;
           const recMsg = rec && !rec.skipped && (rec.arquivados || rec.desarquivados)
             ? ` · ${rec.arquivados} arquivado(s), ${rec.desarquivados} reativado(s)` : '';
-          toast.success(`Sincronizado: ${data.volunteersSynced ?? 0} voluntarios, ${data.services ?? 0} cultos, ${data.newSchedules ?? 0} escalas${recMsg}`);
+          toast.success(`Sincronizado: ${data.volunteersSynced ?? 0} voluntários, ${data.services ?? 0} cultos, ${data.newSchedules ?? 0} escalas${recMsg}`);
         }
       },
       onError: (err: any) => toast.error(err.message || 'Erro ao sincronizar'),
@@ -260,7 +260,7 @@ function TodosList() {
         <div>
           <h1 className="text-xl font-bold text-foreground">Voluntários</h1>
           <p className="text-sm text-muted-foreground">
-            {ativos.length} voluntario(s) ativo(s)
+            {ativos.length} voluntário(s) ativo(s)
             {arquivados.length > 0 && ` · ${arquivados.length} arquivado(s) (saíram do PCO)`}
           </p>
         </div>
@@ -319,7 +319,7 @@ function TodosList() {
           <CardContent className="flex flex-col items-center justify-center py-16 text-center">
             <Users className="h-10 w-10 text-muted-foreground/30 mb-3" />
             <p className="font-medium text-muted-foreground">
-              {pool.length === 0 ? 'Nenhum voluntario sincronizado' : 'Nenhum resultado para esse filtro'}
+              {pool.length === 0 ? 'Nenhum voluntário sincronizado' : 'Nenhum resultado para esse filtro'}
             </p>
             {pool.length === 0 && <p className="text-sm text-muted-foreground/60 mt-1">Clique em Sincronizar para importar do Planning Center</p>}
           </CardContent>
@@ -495,9 +495,9 @@ function FilaAlocacao() {
   return (
     <>
       <div>
-        <h1 className="text-xl font-bold text-foreground">Fila de Alocacao</h1>
+        <h1 className="text-xl font-bold text-foreground">Fila de Alocação</h1>
         <p className="text-sm text-muted-foreground">
-          {queue.length} voluntario(s) aguardando designacao de equipe
+          {queue.length} voluntário(s) aguardando designação de equipe
         </p>
       </div>
 
@@ -509,7 +509,7 @@ function FilaAlocacao() {
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-16 text-center">
             <CheckCircle2 className="h-10 w-10 text-[#00B39D]/50 mb-3" />
-            <p className="font-medium text-muted-foreground">Nenhum voluntário aguardando alocacao</p>
+            <p className="font-medium text-muted-foreground">Nenhum voluntário aguardando alocação</p>
             <p className="text-sm text-muted-foreground/60 mt-1">Quando um membro indicar que quer servir, aparecerá aqui</p>
           </CardContent>
         </Card>
@@ -524,7 +524,7 @@ function FilaAlocacao() {
                 <div className="flex items-center gap-2 flex-wrap">
                   <p className="text-sm font-medium">{vol.full_name}</p>
                   <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-amber-300 text-amber-700 dark:text-amber-300">
-                    Aguardando alocacao
+                    Aguardando alocação
                   </Badge>
                   {vol.origem === 'membresia' && (
                     <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-[#00B39D]/30 text-[#00B39D]">

@@ -234,7 +234,7 @@ export default function VolSelfCheckin() {
       return;
     }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(regEmail)) {
-      setErrorMsg('Informe um email valido.');
+      setErrorMsg('Informe um email válido.');
       return;
     }
     setErrorMsg('');
@@ -286,11 +286,11 @@ export default function VolSelfCheckin() {
                     <AlertTriangle className="h-5 w-5 text-yellow-300 shrink-0 mt-0.5" />
                     <div className="space-y-1">
                       <p className="font-semibold text-yellow-200 text-sm">
-                        Voce nao estava escalado para hoje.
+                        Você não estava escalado para hoje.
                       </p>
                       <p className="text-xs text-yellow-100/90 leading-relaxed">
-                        A lideranca aconselha que voce se escale nas proximas vezes
-                        para ajudar na gestao dos voluntarios da CBRio.
+                        A liderança aconselha que você se escale nas próximas vezes
+                        para ajudar na gestão dos voluntários da CBRio.
                       </p>
                     </div>
                   </div>
@@ -457,7 +457,7 @@ export default function VolSelfCheckin() {
                 <span className="text-white font-medium">{maskedEmail}</span>
               </p>
               <p className="text-xs text-white/40 mt-4">
-                Abra o email, clique no link e voce sera redirecionado para o check-in.
+                Abra o email, clique no link e você será redirecionado para o check-in.
               </p>
             </>
           )}

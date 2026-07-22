@@ -84,7 +84,7 @@ export default function VolProfileComplete({ onComplete, initialData }: Props) {
           </div>
           <CardTitle className="text-xl">Complete seu perfil</CardTitle>
           <p className="text-sm text-muted-foreground mt-1">
-            Precisamos de algumas informacoes para continuar
+            Precisamos de algumas informações para continuar
           </p>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -106,7 +106,7 @@ export default function VolProfileComplete({ onComplete, initialData }: Props) {
               inputMode="numeric"
             />
             <p className="text-xs text-muted-foreground mt-1">
-              Se voce ja e membro da CBRio, o CPF vincula seu cadastro automaticamente
+              Se você já é membro da CBRio, o CPF vincula seu cadastro automaticamente
             </p>
           </div>
 

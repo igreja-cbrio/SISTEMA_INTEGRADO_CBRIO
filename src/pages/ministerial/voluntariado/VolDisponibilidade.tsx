@@ -61,7 +61,7 @@ export default function VolDisponibilidade() {
         <div>
           <h1 className="text-xl font-bold text-foreground">Disponibilidade</h1>
           <p className="text-sm text-muted-foreground">
-            Cultos do mes com ausencias registradas pelos voluntarios
+            Cultos do mês com ausências registradas pelos voluntários
           </p>
         </div>
         {/* Navegacao de mês */}
@@ -90,7 +90,7 @@ export default function VolDisponibilidade() {
           <span>{totalCultos} culto(s)</span>
           <span>·</span>
           <span className={totalAusencias > 0 ? 'text-red-500 font-medium' : ''}>
-            {totalAusencias} ausencia(s) registrada(s)
+            {totalAusencias} ausência(s) registrada(s)
           </span>
         </div>
       )}

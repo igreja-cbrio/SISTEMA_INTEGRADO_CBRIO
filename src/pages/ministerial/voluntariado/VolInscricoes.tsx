@@ -35,9 +35,9 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 const ORIGEM_LABELS: Record<string, string> = {
-  formulario_publico: 'Formulario publico',
-  form_google: 'Formulario Google',
-  form_google_backfill: 'Importacao (Google)',
+  formulario_publico: 'Formulário público',
+  form_google: 'Formulário Google',
+  form_google_backfill: 'Importação (Google)',
   membresia: 'Membresia',
   manual: 'Manual',
 };
@@ -375,7 +375,7 @@ export default function VolInscricoes() {
             <Link2 className="h-4 w-4 text-[#00B39D] shrink-0" />
             <div className="min-w-0">
               <p className="text-xs font-semibold uppercase tracking-wide text-[#00B39D]">
-                Link do formulario publico
+                Link do formulário público
               </p>
               <p className="text-sm font-mono truncate text-foreground">{formUrl}</p>
             </div>
@@ -521,7 +521,7 @@ export default function VolInscricoes() {
         <CardContent>
           {chartData.length === 0 ? (
             <div className="py-12 text-center text-sm text-muted-foreground">
-              Sem dados no periodo.
+              Sem dados no período.
             </div>
           ) : (
             <div className="h-[320px]">
@@ -727,12 +727,12 @@ export default function VolInscricoes() {
                       </Button>
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3 text-sm">
-                      <Info label="Inscricao" value={new Date(selected.data_inscricao).toLocaleDateString('pt-BR')} />
+                      <Info label="Inscrição" value={new Date(selected.data_inscricao).toLocaleDateString('pt-BR')} />
                       <Info label="Telefone" value={fmtTel(selected.telefone)} />
                       <Info label="E-mail" value={selected.email || '-'} />
                       <Info label="CPF" value={fmtCpf(selected.cpf)} />
                       <Info label="Data de nascimento" value={fmtDataNasc(selected.data_nascimento)} />
-                      <Info label="Nome da mae" value={selected.nome_mae || '-'} />
+                      <Info label="Nome da mãe" value={selected.nome_mae || '-'} />
                       <Info label="Participou do NEXT" value={selected.participou_next || '-'} />
                       <Info label="Dom predominante" value={selected.dom_predominante || '-'} />
                       <Info label="Origem" value={origemLabel(selected.origem)} />
@@ -752,7 +752,7 @@ export default function VolInscricoes() {
                         />
                       </div>
                       <Info
-                        label="Vinculo de membro"
+                        label="Vínculo de membro"
                         value={selected.membro_id
                           ? <span className="text-green-600 font-medium">Vinculado</span>
                           : 'Não vinculado'}
@@ -760,7 +760,7 @@ export default function VolInscricoes() {
                       {selected.integrado_em && <Info label="Integrado em" value={selected.integrado_em} />}
                       {selected.feedback && (
                         <div className="sm:col-span-2">
-                          <Info label="Observacoes" value={selected.feedback} />
+                          <Info label="Observações" value={selected.feedback} />
                         </div>
                       )}
                     </div>

@@ -9,7 +9,7 @@ export default function PeriodFilter({ value, onChange }: PeriodFilterProps) {
   return (
     <Select value={value} onValueChange={onChange}>
       <SelectTrigger className="w-full sm:w-[180px] min-h-[40px]">
-        <SelectValue placeholder="Periodo" />
+        <SelectValue placeholder="Período" />
       </SelectTrigger>
       <SelectContent>
         <SelectItem value="week">Última Semana</SelectItem>
