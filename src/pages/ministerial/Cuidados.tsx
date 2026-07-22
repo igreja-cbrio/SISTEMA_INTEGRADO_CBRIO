@@ -1067,6 +1067,12 @@ function TrilhaPessoas({ canEdit, reloadKey, onNova, onEditVisita, onNovoParaPes
   const [loading, setLoading] = useState(true);
   const [busca, setBusca] = useState('');
   const [sel, setSel] = useState<any | null>(null);
+  // Filtros da trilha (tipo · status · quem atendeu · período)
+  const [fTipo, setFTipo] = useState('todos');
+  const [fStatus, setFStatus] = useState('todos');
+  const [fResp, setFResp] = useState('todos');
+  const [fDe, setFDe] = useState('');
+  const [fAte, setFAte] = useState('');
 
   useEffect(() => {
     setLoading(true);
@@ -1079,11 +1085,36 @@ function TrilhaPessoas({ canEdit, reloadKey, onNova, onEditVisita, onNovoParaPes
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pessoas]);
 
+  // Opções dos filtros derivadas dos atendimentos carregados
+  const { tiposDisp, statusDisp, respDisp } = useMemo(() => {
+    const t = new Set<string>(), s = new Set<string>(), r = new Set<string>();
+    for (const p of pessoas) for (const a of (p.atendimentos || [])) {
+      if (a.tipo) t.add(a.tipo);
+      if (a.status) s.add(a.status);
+      if (a.responsavel) r.add(a.responsavel);
+    }
+    return { tiposDisp: [...t].sort(), statusDisp: [...s].sort(), respDisp: [...r].sort((a, b) => a.localeCompare(b, 'pt-BR')) };
+  }, [pessoas]);
+
+  const temFiltro = fTipo !== 'todos' || fStatus !== 'todos' || fResp !== 'todos' || !!fDe || !!fAte;
+  const limparFiltros = () => { setFTipo('todos'); setFStatus('todos'); setFResp('todos'); setFDe(''); setFAte(''); };
+
   const filtradas = useMemo(() => {
     const q = busca.trim().toLowerCase();
-    if (!q) return pessoas;
-    return pessoas.filter(p => `${p.nome || ''} ${p.telefone || ''}`.toLowerCase().includes(q));
-  }, [pessoas, busca]);
+    return pessoas.filter(p => {
+      if (q && !`${p.nome || ''} ${p.telefone || ''}`.toLowerCase().includes(q)) return false;
+      if (!temFiltro) return true;
+      // pessoa entra se tiver PELO MENOS UM atendimento que casa todos os filtros ativos
+      return (p.atendimentos || []).some((a: any) => {
+        if (fTipo !== 'todos' && a.tipo !== fTipo) return false;
+        if (fStatus !== 'todos' && a.status !== fStatus) return false;
+        if (fResp !== 'todos' && a.responsavel !== fResp) return false;
+        if (fDe && (!a.data || a.data < fDe)) return false;
+        if (fAte && (!a.data || a.data > fAte)) return false;
+        return true;
+      });
+    });
+  }, [pessoas, busca, fTipo, fStatus, fResp, fDe, fAte, temFiltro]);
   const { pageItems, paginacaoProps } = usePaginacaoLocal(filtradas, 30);
 
   return (
@@ -1099,10 +1130,51 @@ function TrilhaPessoas({ canEdit, reloadKey, onNova, onEditVisita, onNovoParaPes
         </div>
         {canEdit && <Button onClick={onNova}><Plus className="h-4 w-4 mr-2" />Registrar atendimento</Button>}
       </div>
+      <div className="flex items-end gap-2 flex-wrap">
+        <div className="space-y-1">
+          <Label className="text-[11px] text-muted-foreground">Tipo</Label>
+          <Select value={fTipo} onValueChange={setFTipo}>
+            <SelectTrigger className="h-9 w-[170px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="todos">Todos os tipos</SelectItem>
+              {tiposDisp.map(t => <SelectItem key={t} value={t}>{ATEND_TIPO_LABEL[t] || t}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1">
+          <Label className="text-[11px] text-muted-foreground">Status</Label>
+          <Select value={fStatus} onValueChange={setFStatus}>
+            <SelectTrigger className="h-9 w-[160px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="todos">Todos os status</SelectItem>
+              {statusDisp.map(s => <SelectItem key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1">
+          <Label className="text-[11px] text-muted-foreground">Quem atendeu</Label>
+          <Select value={fResp} onValueChange={setFResp}>
+            <SelectTrigger className="h-9 w-[180px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="todos">Todos</SelectItem>
+              {respDisp.map(r => <SelectItem key={r} value={r}>{r}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1">
+          <Label className="text-[11px] text-muted-foreground">De</Label>
+          <Input type="date" value={fDe} onChange={e => setFDe(e.target.value)} className="h-9 w-[150px]" />
+        </div>
+        <div className="space-y-1">
+          <Label className="text-[11px] text-muted-foreground">Até</Label>
+          <Input type="date" value={fAte} onChange={e => setFAte(e.target.value)} className="h-9 w-[150px]" />
+        </div>
+        {temFiltro && <Button variant="ghost" size="sm" className="h-9" onClick={limparFiltros}><X className="h-3.5 w-3.5 mr-1" />Limpar filtros</Button>}
+      </div>
       {loading ? (
         <div className="text-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground inline" /></div>
       ) : filtradas.length === 0 ? (
-        <div className="rounded-lg border border-border bg-card p-8 text-center text-muted-foreground text-sm">{pessoas.length === 0 ? 'Nenhum atendimento registrado ainda.' : 'Ninguém com esse nome/telefone.'}</div>
+        <div className="rounded-lg border border-border bg-card p-8 text-center text-muted-foreground text-sm">{pessoas.length === 0 ? 'Nenhum atendimento registrado ainda.' : (busca.trim() || temFiltro) ? 'Ninguém encontrado com esses filtros.' : 'Ninguém com esse nome/telefone.'}</div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {pageItems.map((p: any) => (

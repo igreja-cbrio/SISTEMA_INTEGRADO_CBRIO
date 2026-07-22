@@ -1845,7 +1845,16 @@ histórico de cada pessoa vira um fio contínuo, com **comentários por atendime
   `carregarAtendimentosTrilha` + `_fetchTudoCui` paginado p/ o cap de 1000) ·
   `GET/POST /cuidados/atendimentos/:refTipo/:refId/comentarios` ·
   `DELETE /cuidados/atendimento-comentarios/:id`.
-- **Frontend** (`Cuidados.tsx`): `TrilhaPessoas` (cards de pessoa · busca · paginação)
+- **Filtros da aba (2026-07-22 · client-side, sem backend/migration):** `TrilhaPessoas`
+  tem filtros por **tipo**, **status**, **quem atendeu** (`responsavel`) e **período**
+  (De/Até por `data` do atendimento). As opções de tipo/status/responsável são
+  derivadas dos atendimentos JÁ carregados por `trilha()` (distinct no `useMemo`), então
+  não precisou de endpoint novo. Regra de match: a pessoa aparece se tiver **≥1
+  atendimento** que casa TODOS os filtros ativos (busca por nome/telefone continua no
+  nível da pessoa). Botão "Limpar filtros" some quando nada está ativo. O
+  `TrilhaPessoaDialog` segue mostrando o histórico completo da pessoa (filtro serve pra
+  ACHAR, não pra recortar a timeline).
+- **Frontend** (`Cuidados.tsx`): `TrilhaPessoas` (cards de pessoa · busca · filtros · paginação)
   → `TrilhaPessoaDialog` (timeline) → `ComentariosAtendimento` (lazy). "Registrar
   atendimento" reusa o `VisitaModal` (cui_visitas); editar/prefill por pessoa idem.
   Capelania só é EXIBIDA na trilha (vem de `cui_acompanhamentos`) — criar capelania/
