@@ -2453,6 +2453,8 @@ export const voluntariado = {
     importar: (file) => { const fd = new FormData(); fd.append('arquivo', file); return requestFile('/voluntariado/frequencia/importar', fd); },
     // Motivo de inatividade (motivo vazio limpa). chave = identidade da linha.
     setInatividade: (chave, motivo, detalhe) => put('/voluntariado/frequencia/inatividade', { chave, motivo, detalhe }),
+    // Saiu da igreja: marca no voluntariado + status 'inativo' na Membresia (se vinculado).
+    saiuIgreja: (chave, membro_id, detalhe) => post('/voluntariado/frequencia/saiu-igreja', { chave, membro_id, detalhe }),
   },
   // Mensagem automática de WhatsApp (boas-vindas ao se inscrever pra servir)
   whatsappAuto: {
