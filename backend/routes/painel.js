@@ -9,7 +9,7 @@
 
 const router = require('express').Router();
 const { authenticate } = require('../middleware/auth');
-const { supabase, query } = require('../utils/supabase');
+const { supabase } = require('../utils/supabase');
 
 router.use(authenticate);
 

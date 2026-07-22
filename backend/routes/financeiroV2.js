@@ -19,7 +19,7 @@
 const router = require('express').Router();
 const multer = require('multer');
 const { authenticate, authorizeModule } = require('../middleware/auth');
-const { supabase, query } = require('../utils/supabase');
+const { supabase } = require('../utils/supabase');
 const { parseOfx } = require('../services/ofxParser');
 const { parsePixExtrato } = require('../services/pixExtratoParser');
 const {
