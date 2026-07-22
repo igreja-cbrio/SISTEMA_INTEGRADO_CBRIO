@@ -1622,14 +1622,16 @@ router.post('/totem/next/inscrever', async (req, res) => {
       console.error('[TOTEM] next notificar error:', e.message);
     }
 
-    // Confirmação por WhatsApp (fila · no-op até WHATSAPP_TEMPLATE_NEXT_CONF).
-    if (cleanTel && process.env.WHATSAPP_TEMPLATE_NEXT_CONF) {
+    // Confirmação por WhatsApp (fila). Nome do template FIXO no código (padrão
+    // de grupos · gruposWhatsapp.js) com a env só como override — a equipe cria
+    // o template na Meta com este nome e NÃO precisa mexer no Vercel.
+    if (cleanTel) {
       try {
         const { enfileirar } = require('../services/whatsappFila');
         const dataFmt = proxima.data ? String(proxima.data).split('-').reverse().join('/') : 'a confirmar';
         enfileirar({
           telefone: cleanTel,
-          template: process.env.WHATSAPP_TEMPLATE_NEXT_CONF,
+          template: process.env.WHATSAPP_TEMPLATE_NEXT_CONF || 'cbrio_next_confirmado',
           // {{1}} nome · {{2}} data · {{3}} horário
           params: [String(nome).split(' ')[0] || 'Olá', dataFmt, proxima.horario || 'a confirmar'],
           contexto: 'next_totem',
@@ -1657,12 +1659,10 @@ router.post('/totem/next/informacoes', async (req, res) => {
       return res.status(400).json({ error: 'Telefone invalido' });
     }
     const primeiroNome = String(req.body?.nome || '').trim().split(' ')[0] || 'Olá';
-    const template = process.env.WHATSAPP_TEMPLATE_NEXT_INFO;
-    if (!template) {
-      // Sem template aprovado ainda: responde ok (a UI mostra "vamos te enviar")
-      // sem prometer o que não sai. O material segue como no-op até ligar o env.
-      return res.json({ ok: true, enviado: false, motivo: 'template_pendente' });
-    }
+    // Nome FIXO no código (padrão de grupos) · env só override. Se o template
+    // ainda não existir na Meta, a fila registra o erro e não reenvia além do
+    // backoff — não quebra o fluxo do totem.
+    const template = process.env.WHATSAPP_TEMPLATE_NEXT_INFO || 'cbrio_next_material';
     let enviado = false;
     try {
       const { enfileirar } = require('../services/whatsappFila');
