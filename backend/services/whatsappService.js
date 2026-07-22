@@ -116,6 +116,33 @@ async function sendText(toRaw, texto) {
   } catch (err) { console.error('[WPP] text exception:', err.message); return { sent: false, reason: 'exception' }; }
 }
 
+// Envia mensagem INTERATIVA com botões de resposta (Aprovar/Recusar). Só funciona
+// DENTRO da janela de 24h (fora dela a Meta exige template). botoes = [{id,title}]
+// (máx 3 · title <= 20 chars · id <= 256, volta em interactive.button_reply.id).
+async function sendButtons(toRaw, corpo, botoes) {
+  const to = normalizarTelefone(toRaw);
+  if (!to) return { sent: false, reason: 'invalid_phone' };
+  if (!configurado()) { console.log('[WPP][DRY-RUN] buttons to=%s: %s', to, corpo); return { sent: false, reason: 'disabled', to }; }
+  const buttons = (botoes || []).slice(0, 3).map(b => ({
+    type: 'reply', reply: { id: String(b.id).slice(0, 256), title: String(b.title).slice(0, 20) },
+  }));
+  const url = `https://graph.facebook.com/${GRAPH_VERSION}/${PHONE_NUMBER_ID}/messages`;
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp', to, type: 'interactive',
+        interactive: { type: 'button', body: { text: String(corpo).slice(0, 1024) }, action: { buttons } },
+      }),
+      signal: AbortSignal.timeout(15000),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) { console.error('[WPP] buttons erro %d: %s', res.status, JSON.stringify(json)); return { sent: false, status: res.status }; }
+    return { sent: true, to, messageId: json.messages?.[0]?.id };
+  } catch (err) { console.error('[WPP] buttons exception:', err.message); return { sent: false, reason: 'exception' }; }
+}
+
 // Envia mídia (imagem/documento) por LINK público. `kind` = 'image'|'document'.
 async function sendMedia(toRaw, kind, link, { filename, caption } = {}) {
   const to = normalizarTelefone(toRaw);
@@ -272,6 +299,7 @@ module.exports = {
   normalizarTelefone,
   sendTemplate,
   sendText,
+  sendButtons,
   sendMedia,
   baixarMedia,
   sendPedidoAtualizado,

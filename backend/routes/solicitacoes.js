@@ -1285,6 +1285,7 @@ router.post('/', async (req, res) => {
           observacao: 'Carimbos dispensados · pedido com custo enviado ao julgamento de mérito',
         });
         notificarMeritoPendente(data);
+        require('../services/solicitacaoWpp').enviarMeritoWpp(data).catch(() => {});
       } else if (upErr) {
         console.error('[SOLICITACOES] mover pra mérito no create:', upErr.message);
       }
@@ -1613,6 +1614,7 @@ async function aprovarOrigemHandler(req, res) {
         targetIds: [data.solicitante_id].filter(Boolean),
       }).catch(err => console.error('[SOLICITACOES] notify merito solicitante:', err.message));
       notificarMeritoPendente(data);
+      require('../services/solicitacaoWpp').enviarMeritoWpp(data).catch(() => {});
       notificarPedidoWhatsapp(data.id, 'aguardando julgamento de mérito', null);
       return res.json(data);
     }
@@ -2262,7 +2264,7 @@ async function podeJulgarMerito(req) {
   return isAdminFallback(req); // fallback super-admin/admin
 }
 
-router.post('/:id/aprovar-merito', async (req, res) => {
+async function aprovarMeritoHandler(req, res) {
   try {
     const userId = req.user.userId;
     const userName = req.user.name;
@@ -2348,11 +2350,12 @@ router.post('/:id/aprovar-merito', async (req, res) => {
     console.error('[SOLICITACOES] aprovar-merito:', e.message);
     res.status(500).json({ error: e.message || 'Erro ao aprovar o mérito' });
   }
-});
+}
+router.post('/:id/aprovar-merito', aprovarMeritoHandler);
 
 // Reprovação de mérito é IMUTÁVEL (como a rejeição de origem · não reabre ·
 // cria-se nova solicitação). Motivo obrigatório (mínimo 5 caracteres).
-router.post('/:id/reprovar-merito', async (req, res) => {
+async function reprovarMeritoHandler(req, res) {
   try {
     const userId = req.user.userId;
     const userName = req.user.name;
@@ -2414,7 +2417,23 @@ router.post('/:id/reprovar-merito', async (req, res) => {
     console.error('[SOLICITACOES] reprovar-merito:', e.message);
     res.status(500).json({ error: e.message || 'Erro ao reprovar o mérito' });
   }
-});
+}
+router.post('/:id/reprovar-merito', reprovarMeritoHandler);
+
+// Wrappers internos (aprovação/reprovação de mérito pelo WhatsApp · mesmo padrão
+// do origem). aprovadorId = profile do aprovador de mérito (passa no podeJulgarMerito).
+async function aprovarMeritoInterno({ solicitacaoId, aprovadorId, aprovadorNome, aprovadorEmail }) {
+  const req = { params: { id: solicitacaoId }, body: {}, user: { userId: aprovadorId, name: aprovadorNome || null, email: aprovadorEmail || '', role: 'assistente' } };
+  const res = _fakeRes();
+  await aprovarMeritoHandler(req, res);
+  return { ok: res.statusCode < 400, status: res.statusCode, data: res.body };
+}
+async function rejeitarMeritoInterno({ solicitacaoId, aprovadorId, aprovadorNome, aprovadorEmail, motivo }) {
+  const req = { params: { id: solicitacaoId }, body: { motivo: motivo || 'Reprovada pelo WhatsApp' }, user: { userId: aprovadorId, name: aprovadorNome || null, email: aprovadorEmail || '', role: 'assistente' } };
+  const res = _fakeRes();
+  await reprovarMeritoHandler(req, res);
+  return { ok: res.statusCode < 400, status: res.statusCode, data: res.body };
+}
 
 // ══════════════════════════════════════════════════════════════════════════
 // SOBRESTAR / RETOMAR (fluxo BPMN 2026-07-02) · "em espera" com motivo + data
@@ -3758,3 +3777,6 @@ router.post('/:id/atender-estoque', async (req, res) => {
 module.exports = router;
 module.exports.aprovarOrigemInterno = aprovarOrigemInterno;
 module.exports.rejeitarOrigemInterno = rejeitarOrigemInterno;
+module.exports.aprovarMeritoInterno = aprovarMeritoInterno;
+module.exports.rejeitarMeritoInterno = rejeitarMeritoInterno;
+module.exports.aprovadoresMeritoIds = aprovadoresMeritoIds;

@@ -81,10 +81,12 @@ async function processarEvento(req) {
       for (const m of mensagens) {
         const ehTexto = m.type === 'text';
         const ehFlowReply = m.type === 'interactive' && m.interactive?.type === 'nfm_reply';
+        // Botão interativo (Aprovar/Recusar da aprovação de solicitação).
+        const ehBotao = m.type === 'interactive' && m.interactive?.type === 'button_reply';
         // Áudio e foto são aceitos pro fluxo de GRUPOS (relato do encontro ·
         // transcrição/foto tratadas em services/whatsappGrupos).
         const ehMidia = m.type === 'audio' || m.type === 'image' || m.type === 'document';
-        if (!ehTexto && !ehFlowReply && !ehMidia) continue;
+        if (!ehTexto && !ehFlowReply && !ehMidia && !ehBotao) continue;
         if (++processadas > MAX_MSGS) {
           console.warn('[whatsapp webhook] limite de mensagens por evento atingido · ignorando excedente');
           return;
@@ -92,6 +94,9 @@ async function processarEvento(req) {
         if (ehFlowReply) {
           await processarFlowReply(m).catch(err =>
             console.error('[whatsapp webhook] flow:', err.message));
+        } else if (ehBotao) {
+          await processarBotaoAprovacao(m).catch(err =>
+            console.error('[whatsapp webhook] botao:', err.message));
         } else {
           await processarMensagem(m, cfg).catch(err =>
             console.error('[whatsapp webhook] mensagem:', err.message));
@@ -99,6 +104,23 @@ async function processarEvento(req) {
       }
     }
   }
+}
+
+// Resposta por BOTÃO (Aprovar/Recusar) da aprovação de solicitação. O id do botão
+// ('aprovar'/'rejeitar') é interpretado pelo tratarRespostaAprovacao igual ao número.
+async function processarBotaoAprovacao(m) {
+  const messageId = m.id;
+  const telefone = normalizarTelefone(m.from);
+  const botaoId = m.interactive?.button_reply?.id || '';
+  const { data: jaVisto } = await supabase
+    .from('whatsapp_coletas').select('id').eq('whatsapp_message_id', messageId).maybeSingle();
+  if (jaVisto) return;
+  await require('../services/solicitacaoWpp')
+    .tratarRespostaAprovacao({ telefone, texto: botaoId })
+    .catch(err => console.error('[whatsapp webhook] botao aprovacao:', err.message));
+  await supabase.from('whatsapp_coletas').insert({
+    whatsapp_message_id: messageId, telefone, raw_text: botaoId, status: 'ignorado',
+  }).catch(() => {});
 }
 
 async function processarMensagem(m, cfg) {

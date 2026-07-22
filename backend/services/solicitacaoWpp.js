@@ -1,16 +1,16 @@
 // Aprovação de solicitação pelo WhatsApp.
-// - enviarAprovacaoWpp(sol): enfileira e despacha o convite pro diretor de origem.
-// - tratarRespostaAprovacao({telefone, texto}): interpreta 1/2 e aplica a decisão
-//   reusando a MESMA lógica dos handlers (aprovarOrigemInterno/rejeitarOrigemInterno).
+// - enviarAprovacaoWpp(sol): enfileira+despacha o convite pro diretor de ORIGEM.
+// - enviarMeritoWpp(sol): idem pro(s) aprovador(es) de MÉRITO (Pastor Presidente).
+// - tratarRespostaAprovacao({telefone, texto}): interpreta a resposta (botão ou
+//   número) e aplica reusando os handlers internos (origem/mérito).
 //
-// Duas melhorias (2026-07-13, pedido do Matheus):
-//  1) DETALHES na mensagem: título, solicitante, categoria, valor e descrição.
-//     Fora da janela de 24h a Meta só deixa TEMPLATE (4 variáveis) — então a 1ª
-//     leva os detalhes possíveis nos parâmetros; as seguintes (já dentro da
-//     janela, após ele responder) vão em texto livre COMPLETO.
-//  2) VÁRIAS de uma vez: as solicitações são despachadas UMA POR VEZ. O aprovador
-//     sempre tem no máx. 1 aguardando resposta; ao responder, a próxima é enviada.
-//     Assim ele nunca fica confuso sobre "qual estou respondendo".
+// Melhorias:
+//  1) BOTÕES interativos Aprovar/Recusar (dentro da janela de 24h). Fora da janela
+//     a Meta só deixa TEMPLATE (com "responda 1/2") — a 1ª leva os detalhes nos
+//     parâmetros; ao responder abre a janela e as próximas vão com botões.
+//  2) VÁRIAS de uma vez: despacho UMA POR VEZ por telefone (serial) · o aprovador
+//     nunca tem >1 aguardando resposta, então botão/número nunca ficam ambíguos.
+//  3) MÉRITO: o Pastor Presidente recebe o julgamento pelo WhatsApp igual ao diretor.
 const { supabase } = require('../utils/supabase');
 const wpp = require('./whatsappService');
 
@@ -29,15 +29,14 @@ function fmtBRL(v) {
   return n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
 
-// Resolve o telefone do aprovador: RH (cadastro do colaborador) → membro.
+// Resolve o telefone do aprovador: RH (colaborador) → membro → perfil.
 async function telefoneDoAprovador(profileId) {
   if (!profileId) return { telefone: null, nome: null, email: null };
   const { data: prof } = await supabase.from('profiles')
-    .select('name, email, membro_id').eq('id', profileId).maybeSingle();
+    .select('name, email, membro_id, telefone').eq('id', profileId).maybeSingle();
   if (!prof) return { telefone: null, nome: null, email: null };
   let telefone = null;
   if (prof.email) {
-    // rh_funcionarios só tem `telefone` (não `celular`).
     const { data: rh } = await supabase.from('rh_funcionarios')
       .select('telefone').ilike('email', prof.email).maybeSingle();
     telefone = rh?.telefone || null;
@@ -47,6 +46,7 @@ async function telefoneDoAprovador(profileId) {
       .select('telefone').eq('id', prof.membro_id).maybeSingle();
     telefone = m?.telefone || null;
   }
+  if (!telefone) telefone = prof.telefone || null; // fallback: telefone do próprio perfil
   return { telefone, nome: prof.name, email: prof.email };
 }
 
@@ -56,21 +56,28 @@ async function nomeSolicitante(solicitanteId) {
   return data?.name || 'Colaborador';
 }
 
-// Carrega os detalhes da solicitação (pro texto rico e pra revalidar se segue pendente).
 async function carregarSol(solicitacaoId) {
   const { data } = await supabase.from('solicitacoes')
-    .select('id, titulo, categoria, valor_estimado, descricao, justificativa, data_necessaria, solicitante_id, aprovacao_origem_status')
+    .select('id, titulo, categoria, valor_estimado, descricao, justificativa, data_necessaria, solicitante_id, status, aprovacao_origem_status, merito_status')
     .eq('id', solicitacaoId).maybeSingle();
   return data || null;
 }
 
-// Texto RICO (livre · só dentro da janela de 24h) — com todos os detalhes.
-async function montarTextoRico(sol) {
+// A solicitação ainda precisa da decisão deste tipo?
+function aindaPendente(sol, tipo) {
+  if (!sol) return false;
+  if (tipo === 'merito') return sol.merito_status === 'pendente' && sol.status === 'aguardando_merito';
+  return sol.aprovacao_origem_status === 'pendente';
+}
+
+// Corpo da mensagem (detalhes). comNumero=true acrescenta a instrução "responda 1/2"
+// (texto puro · fallback quando não dá pra usar botões).
+async function montarCorpo(sol, tipo, comNumero) {
   const solicitante = await nomeSolicitante(sol.solicitante_id);
   const catLabel = CATEGORIA_LABEL[sol.categoria] || sol.categoria || '—';
   const valor = fmtBRL(sol.valor_estimado);
   const linhas = [
-    '🟡 *Solicitação para aprovar*',
+    tipo === 'merito' ? '🟠 *Julgamento de mérito (Pastor Presidente)*' : '🟡 *Solicitação para aprovar*',
     `*${sol.titulo || 'Solicitação'}*`,
     `👤 Solicitante: ${solicitante}`,
     `🏷️ Categoria: ${catLabel}`,
@@ -78,16 +85,17 @@ async function montarTextoRico(sol) {
   if (valor) linhas.push(`💰 Valor estimado: ${valor}`);
   if (sol.descricao) linhas.push(`📝 ${String(sol.descricao).slice(0, 600)}`);
   if (sol.justificativa) linhas.push(`ℹ️ Justificativa: ${String(sol.justificativa).slice(0, 300)}`);
-  linhas.push('');
-  linhas.push('Responda *1* para APROVAR ou *2* para RECUSAR.');
+  if (comNumero) {
+    linhas.push('');
+    linhas.push('Responda *1* para APROVAR ou *2* para RECUSAR.');
+  }
   return linhas.join('\n');
 }
 
 // Despacha a PRÓXIMA da fila pra esse telefone, se ninguém está aguardando resposta
-// (serializa · uma de cada vez). janelaAberta=true → texto rico (ex.: logo após ele
+// (serializa · uma de cada vez). janelaAberta=true → botões (após o aprovador
 // responder); senão → template (fora da janela de 24h a Meta exige template).
 async function despacharProximo(tel, janelaAberta = false) {
-  // Já tem uma aguardando resposta? Não manda outra (evita "várias de uma vez").
   const { data: emAndamento } = await supabase.from('solicitacao_wpp_fila')
     .select('id').eq('telefone', tel).eq('status', 'aguardando').limit(1);
   if (emAndamento && emAndamento.length) return;
@@ -99,26 +107,32 @@ async function despacharProximo(tel, janelaAberta = false) {
   if (!item) return;
 
   const sol = await carregarSol(item.solicitacao_id);
-  // Já não está mais pendente (resolvida no sistema)? descarta e tenta a próxima.
-  if (!sol || sol.aprovacao_origem_status !== 'pendente') {
+  if (!aindaPendente(sol, item.tipo)) {
     await supabase.from('solicitacao_wpp_fila')
       .update({ status: 'cancelada', respondido_em: new Date().toISOString() }).eq('id', item.id);
     return despacharProximo(tel, janelaAberta);
   }
 
   const { nome } = await telefoneDoAprovador(item.aprovador_id);
-  const primeiroNome = (nome || 'Diretor').split(' ')[0];
+  const primeiroNome = (nome || (item.tipo === 'merito' ? 'Pastor' : 'Diretor')).split(' ')[0];
 
   let enviouOk = false;
   try {
     if (janelaAberta) {
-      await wpp.sendText(tel, await montarTextoRico(sol));
-      enviouOk = true;
+      const r = await wpp.sendButtons(tel, await montarCorpo(sol, item.tipo, false), [
+        { id: 'aprovar', title: '✅ Aprovar' },
+        { id: 'rejeitar', title: '❌ Recusar' },
+      ]);
+      enviouOk = !!r?.sent;
+      if (!enviouOk) { // fallback texto+número se os botões falharem
+        const r2 = await wpp.sendText(tel, await montarCorpo(sol, item.tipo, true));
+        enviouOk = !!r2?.sent;
+      }
     } else if (TEMPLATE_APROVACAO) {
       const solicitante = await nomeSolicitante(sol.solicitante_id);
       const catLabel = CATEGORIA_LABEL[sol.categoria] || sol.categoria || '—';
       const valor = fmtBRL(sol.valor_estimado);
-      const param4 = valor ? `${catLabel} · ${valor}` : catLabel; // + valor no template
+      const param4 = valor ? `${catLabel} · ${valor}` : catLabel;
       await wpp.sendTemplate(tel, TEMPLATE_APROVACAO, TEMPLATE_LANG,
         [primeiroNome, sol.titulo || 'Solicitação', solicitante, param4]);
       enviouOk = true;
@@ -131,31 +145,43 @@ async function despacharProximo(tel, janelaAberta = false) {
   }
 }
 
-// Enfileira o convite de aprovação e tenta despachar (respeita a serialização).
-// No-op gracioso se não houver template/telefone (não quebra a criação da solic).
+// Enfileira 1 aprovador (idempotente por unique) e tenta despachar.
+async function enfileirar(sol, aprovadorId, tipo) {
+  const { telefone } = await telefoneDoAprovador(aprovadorId);
+  const tel = wpp.normalizarTelefone(telefone);
+  if (!tel) return;
+  const { error } = await supabase.from('solicitacao_wpp_fila').insert({
+    solicitacao_id: sol.id, aprovador_id: aprovadorId, telefone: tel, tipo, status: 'na_fila',
+  });
+  if (error) { if (error.code === '23505') return; throw error; }
+  await despacharProximo(tel, false);
+}
+
+// ORIGEM · convite pro diretor da área. No-op gracioso sem template/telefone.
 async function enviarAprovacaoWpp(sol) {
   try {
-    if (!TEMPLATE_APROVACAO) return;                       // template não configurado
+    if (!TEMPLATE_APROVACAO) return;
     if (sol?.aprovacao_origem_status !== 'pendente') return;
     if (!sol?.aprovacao_origem_diretor_id) return;
-    const { telefone } = await telefoneDoAprovador(sol.aprovacao_origem_diretor_id);
-    const tel = wpp.normalizarTelefone(telefone);
-    if (!tel) return;
-
-    // Enfileira como 'na_fila' (idempotente por unique) — despacharProximo decide
-    // se envia agora (ninguém aguardando) ou deixa na fila.
-    const { error: insErr } = await supabase.from('solicitacao_wpp_fila').insert({
-      solicitacao_id: sol.id,
-      aprovador_id: sol.aprovacao_origem_diretor_id,
-      telefone: tel,
-      tipo: 'origem',
-      status: 'na_fila',
-    });
-    if (insErr) { if (insErr.code === '23505') return; throw insErr; }
-
-    await despacharProximo(tel, false);
+    await enfileirar(sol, sol.aprovacao_origem_diretor_id, 'origem');
   } catch (e) {
-    console.error('[solicitacaoWpp] enviar:', e.message);
+    console.error('[solicitacaoWpp] enviar origem:', e.message);
+  }
+}
+
+// MÉRITO · julgamento do(s) aprovador(es) de mérito (Pr. Juninho).
+async function enviarMeritoWpp(sol) {
+  try {
+    if (!TEMPLATE_APROVACAO) return;
+    if (sol?.status !== 'aguardando_merito' || sol?.merito_status !== 'pendente') return;
+    const solic = require('../routes/solicitacoes');
+    const ids = (await solic.aprovadoresMeritoIds()) || [];
+    for (const aprovadorId of ids) {
+      await enfileirar(sol, aprovadorId, 'merito').catch(e =>
+        console.error('[solicitacaoWpp] enfileirar merito:', e.message));
+    }
+  } catch (e) {
+    console.error('[solicitacaoWpp] enviar merito:', e.message);
   }
 }
 
@@ -166,7 +192,7 @@ function interpretar(texto) {
   return null;
 }
 
-// Trata a resposta do aprovador. Retorna true se assumiu a mensagem.
+// Trata a resposta do aprovador (botão ou número). Retorna true se assumiu a mensagem.
 async function tratarRespostaAprovacao({ telefone, texto }) {
   try {
     const tel = wpp.normalizarTelefone(telefone);
@@ -175,19 +201,27 @@ async function tratarRespostaAprovacao({ telefone, texto }) {
     const { data: pend } = await supabase.from('solicitacao_wpp_fila')
       .select('*').eq('telefone', tel).eq('status', 'aguardando')
       .order('created_at', { ascending: true }).limit(1);
-    if (!pend || !pend.length) return false;      // nada aguardando deste número
+    if (!pend || !pend.length) return false;
 
     const fila = pend[0];
     const acao = interpretar(texto);
     if (!acao) {
-      await wpp.sendText(tel, 'Não entendi 🙂 Responda *1* para APROVAR ou *2* para RECUSAR esta solicitação.');
+      await wpp.sendText(tel, 'Não entendi 🙂 Toque em *Aprovar* ou *Recusar* (ou responda *1* / *2*).');
       return true;
     }
 
     const solic = require('../routes/solicitacoes');
-    const res = acao === 'aprovar'
-      ? await solic.aprovarOrigemInterno({ solicitacaoId: fila.solicitacao_id, aprovadorId: fila.aprovador_id })
-      : await solic.rejeitarOrigemInterno({ solicitacaoId: fila.solicitacao_id, aprovadorId: fila.aprovador_id, motivo: 'Rejeitada pelo WhatsApp' });
+    const ehMerito = fila.tipo === 'merito';
+    let res;
+    if (ehMerito) {
+      res = acao === 'aprovar'
+        ? await solic.aprovarMeritoInterno({ solicitacaoId: fila.solicitacao_id, aprovadorId: fila.aprovador_id })
+        : await solic.rejeitarMeritoInterno({ solicitacaoId: fila.solicitacao_id, aprovadorId: fila.aprovador_id, motivo: 'Reprovada pelo WhatsApp' });
+    } else {
+      res = acao === 'aprovar'
+        ? await solic.aprovarOrigemInterno({ solicitacaoId: fila.solicitacao_id, aprovadorId: fila.aprovador_id })
+        : await solic.rejeitarOrigemInterno({ solicitacaoId: fila.solicitacao_id, aprovadorId: fila.aprovador_id, motivo: 'Rejeitada pelo WhatsApp' });
+    }
 
     const titulo = res?.data?.titulo || 'a solicitação';
     if (!res.ok) {
@@ -200,7 +234,6 @@ async function tratarRespostaAprovacao({ telefone, texto }) {
       await wpp.sendText(tel, acao === 'aprovar' ? `✅ Aprovada: ${titulo}` : `❌ Recusada: ${titulo}`);
     }
 
-    // Quantas ainda faltam na fila + manda a próxima (janela aberta agora).
     const { count } = await supabase.from('solicitacao_wpp_fila')
       .select('id', { count: 'exact', head: true }).eq('telefone', tel).eq('status', 'na_fila');
     if (count && count > 0) {
@@ -214,4 +247,4 @@ async function tratarRespostaAprovacao({ telefone, texto }) {
   }
 }
 
-module.exports = { enviarAprovacaoWpp, tratarRespostaAprovacao };
+module.exports = { enviarAprovacaoWpp, enviarMeritoWpp, tratarRespostaAprovacao };
