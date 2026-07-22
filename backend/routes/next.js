@@ -23,6 +23,7 @@
 // ============================================================================
 
 const express = require('express');
+const crypto = require('crypto');
 const router = express.Router();
 const { authenticate } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
@@ -542,6 +543,84 @@ router.get('/turmas', async (req, res) => {
     return String(a.nome || '').localeCompare(String(b.nome || ''), 'pt');
   });
   res.json(lista);
+});
+
+// GET /satisfacao — pesquisa NPS canônica do Next (Satisfação do Next).
+// UMA pesquisa única (contexto_kpi='nps_next', area='next') servida por QR por
+// turma (mesmo link + ?turma=<id>). Provisiona a pesquisa na 1ª chamada.
+// Declarada ANTES de /turmas/:id — mas '/satisfacao' não colide com rotas
+// prefixadas, então é seguro aqui.
+router.get('/satisfacao', async (req, res) => {
+  try {
+    // Sempre pega a MAIS ANTIGA (se uma corrida criar duplicata, o GET converge
+    // sempre pra mesma pesquisa canônica).
+    const buscar = () => supabase
+      .from('nps_pesquisas')
+      .select('id, titulo, link_publico_token, status, permite_publico')
+      .eq('contexto_kpi', 'nps_next')
+      .eq('area', 'next')
+      .is('deleted_at', null)
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    let { data: pesquisa, error } = await buscar();
+    if (error) throw error;
+
+    if (!pesquisa) {
+      // Cria a pesquisa canônica (mesma forma do POST /nps em routes/nps.js).
+      const token = crypto.randomBytes(18).toString('base64url');
+      const insert = {
+        titulo: 'Satisfação do Next',
+        valor: null,
+        objetivo: 'Medir a satisfação de quem passou pelo Next, por turma.',
+        contexto_kpi: 'nps_next',
+        area: 'next',
+        perguntas: {
+          descricao_curta: 'Conta pra gente como foi sua experiência no Next.',
+          pergunta_nps: {
+            id: 'nps',
+            tipo: 'nps',
+            texto: 'De 0 a 10, o quanto você recomendaria o Next para um amigo?',
+          },
+          perguntas_extras: [
+            { id: crypto.randomUUID(), tipo: 'escala_5', texto: 'Como você avalia os encontros?' },
+            { id: crypto.randomUUID(), tipo: 'texto_longo', texto: 'O que podemos melhorar?' },
+          ],
+        },
+        link_publico_token: token,
+        permite_publico: true,
+        data_inicio: new Date().toISOString().slice(0, 10),
+        data_fim: null,
+        status: 'ativa',
+        criado_por: req.user?.id || null,
+      };
+      const { data: criada, error: insErr } = await supabase
+        .from('nps_pesquisas')
+        .insert(insert)
+        .select('id, titulo, link_publico_token, status, permite_publico')
+        .single();
+      if (insErr) {
+        // Corrida: outra requisição criou ao mesmo tempo → re-busca a canônica.
+        const { data: reBusca } = await buscar();
+        if (reBusca) pesquisa = reBusca;
+        else throw insErr;
+      } else {
+        pesquisa = criada;
+      }
+    }
+
+    res.json({
+      id: pesquisa.id,
+      titulo: pesquisa.titulo,
+      link_publico_token: pesquisa.link_publico_token,
+      status: pesquisa.status,
+      permite_publico: pesquisa.permite_publico,
+    });
+  } catch (e) {
+    console.error('[next] satisfacao:', e.message);
+    res.status(500).json({ error: 'Erro ao obter a pesquisa de satisfação' });
+  }
 });
 
 // GET /lista-espera — contagem de inscritos SEM turma (aguardando a próxima
