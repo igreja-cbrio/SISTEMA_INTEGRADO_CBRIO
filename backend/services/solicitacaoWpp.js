@@ -15,6 +15,11 @@ const { supabase } = require('../utils/supabase');
 const wpp = require('./whatsappService');
 
 const TEMPLATE_APROVACAO = process.env.WHATSAPP_TEMPLATE_APROVACAO_SOLIC;
+// Template COM botões (quick-reply Aprovar/Recusar) · usado na 1ª mensagem fria,
+// pra ter botões já de cara (a resposta volta como m.type='button' no webhook).
+// Mesmas 4 variáveis do template de texto. Fallback pro texto se não configurado.
+const TEMPLATE_BOTOES = process.env.WHATSAPP_TEMPLATE_APROVACAO_BOTOES;
+const TEMPLATE_COLD = TEMPLATE_BOTOES || TEMPLATE_APROVACAO;
 const TEMPLATE_LANG = process.env.WHATSAPP_TEMPLATE_LANG || 'pt_BR';
 const CATEGORIA_LABEL = {
   ti: 'TI', compras: 'Compras', reembolso: 'Reembolso', pagamento: 'Pagamento',
@@ -128,14 +133,14 @@ async function despacharProximo(tel, janelaAberta = false) {
         const r2 = await wpp.sendText(tel, await montarCorpo(sol, item.tipo, true));
         enviouOk = !!r2?.sent;
       }
-    } else if (TEMPLATE_APROVACAO) {
+    } else if (TEMPLATE_COLD) {
       const solicitante = await nomeSolicitante(sol.solicitante_id);
       const catLabel = CATEGORIA_LABEL[sol.categoria] || sol.categoria || '—';
       const valor = fmtBRL(sol.valor_estimado);
       const param4 = valor ? `${catLabel} · ${valor}` : catLabel;
-      await wpp.sendTemplate(tel, TEMPLATE_APROVACAO, TEMPLATE_LANG,
+      const r = await wpp.sendTemplate(tel, TEMPLATE_COLD, TEMPLATE_LANG,
         [primeiroNome, sol.titulo || 'Solicitação', solicitante, param4]);
-      enviouOk = true;
+      enviouOk = !!r?.sent; // só marca aguardando se a Meta aceitou o envio
     }
   } catch (e) {
     console.error('[solicitacaoWpp] despachar:', e.message);
@@ -160,7 +165,7 @@ async function enfileirar(sol, aprovadorId, tipo) {
 // ORIGEM · convite pro diretor da área. No-op gracioso sem template/telefone.
 async function enviarAprovacaoWpp(sol) {
   try {
-    if (!TEMPLATE_APROVACAO) return;
+    if (!TEMPLATE_COLD) return;
     if (sol?.aprovacao_origem_status !== 'pendente') return;
     if (!sol?.aprovacao_origem_diretor_id) return;
     await enfileirar(sol, sol.aprovacao_origem_diretor_id, 'origem');
@@ -172,7 +177,7 @@ async function enviarAprovacaoWpp(sol) {
 // MÉRITO · julgamento do(s) aprovador(es) de mérito (Pr. Juninho).
 async function enviarMeritoWpp(sol) {
   try {
-    if (!TEMPLATE_APROVACAO) return;
+    if (!TEMPLATE_COLD) return;
     if (sol?.status !== 'aguardando_merito' || sol?.merito_status !== 'pendente') return;
     const solic = require('../routes/solicitacoes');
     const ids = (await solic.aprovadoresMeritoIds()) || [];
