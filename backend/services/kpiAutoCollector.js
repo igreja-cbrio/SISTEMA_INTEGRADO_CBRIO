@@ -738,6 +738,19 @@ const COLLECTORS = {
     return { valor: pct, observacao: `${recorrentes} de ${totalDoadores} doadores com 3+ meses` };
   },
 
+  // GEN-05: valor total arrecadado no ciclo (dízimo + oferta + demais doações).
+  // Fonte viva = vw_doacoes_unificada (fin_transacoes classificado por código de
+  // plano de contas · o balanço que o financeiro alimenta toda semana).
+  // Empréstimo/receita geral ficam FORA (a view é escopada a doações).
+  'generosidade.valor_total': async ({ inicio, fim }) => {
+    // Um mês de doações passa de 1000 linhas (cap PostgREST) — paginado.
+    const rows = await fetchAll('vw_doacoes_unificada', 'valor',
+      q => q.gte('data', inicio).lt('data', fim).order('id'));
+    const total = rows.reduce((s, r) => s + Number(r.valor || 0), 0);
+    if (!rows.length) return { valor: 0, observacao: 'Sem doações no período' };
+    return { valor: Math.round(total), observacao: `R$ ${Math.round(total).toLocaleString('pt-BR')} em ${rows.length} doações` };
+  },
+
   // GEN-04: % participantes Next convertidos em doadores
   'generosidade.next_doadores': async ({ inicio, fim }) => {
     const { data: indicacoes } = await supabase.from('next_indicacoes').select('id, status')
