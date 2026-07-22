@@ -2560,6 +2560,7 @@ function NextFlow({ opt, member, onBack, onDone, onEndSession, onActivity }: {
   const [proximoEvento, setProximoEvento] = useState<any>(null);
   const [proximasTurmas, setProximasTurmas] = useState<any[]>([]);
   const [turmaSel, setTurmaSel] = useState<any>(null);
+  const [materialAtivo, setMaterialAtivo] = useState(false);
   const [infoEnviado, setInfoEnviado] = useState(false);
   const [enviandoInfo, setEnviandoInfo] = useState(false);
   const [step, setStep] = useState<'check' | 'form' | 'success'>('check');
@@ -2588,6 +2589,7 @@ function NextFlow({ opt, member, onBack, onDone, onEndSession, onActivity }: {
         const turmas = r.proximas_turmas || (r.proximo_evento ? [r.proximo_evento] : []);
         setProximasTurmas(turmas);
         setTurmaSel(r.proximo_evento || turmas[0] || null);
+        setMaterialAtivo(!!r.material_ativo);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -2804,8 +2806,9 @@ function NextFlow({ opt, member, onBack, onDone, onEndSession, onActivity }: {
               Quero me inscrever <ChevronRight className="h-5 w-5" />
             </Button>
 
-            {/* Receber material do NEXT no WhatsApp (não precisa se inscrever) */}
-            {infoEnviado ? (
+            {/* Receber material do NEXT no WhatsApp — só aparece quando o
+                material (PDF) está ligado (opt-in do Marcos · validar c/ líderes) */}
+            {materialAtivo && (infoEnviado ? (
               <p className="text-sm text-[#10B981] flex items-center justify-center gap-2">
                 <CheckCircle2 className="h-4 w-4" /> Enviamos o material no seu WhatsApp!
               </p>
@@ -2828,7 +2831,7 @@ function NextFlow({ opt, member, onBack, onDone, onEndSession, onActivity }: {
                   {enviandoInfo ? 'Enviando...' : 'Quero saber mais — receber no WhatsApp'}
                 </button>
               </div>
-            )}
+            ))}
             {error && <p className="text-red-400 text-sm">{error}</p>}
             <button onClick={onBack} className="w-full text-white/30 hover:text-white/60 text-sm transition-colors py-2">
               Voltar ao menu

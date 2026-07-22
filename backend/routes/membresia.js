@@ -1478,6 +1478,8 @@ router.get('/totem/next/status', async (req, res) => {
     const { membro_id, email, cpf } = req.query;
     const turmas = await _turmasAbertasTotem();     // calendário (todas as abertas)
     const proxima = turmas[0] || null;              // a mais próxima
+    // Material do Next (PDF) é opt-in do Marcos · botão só aparece quando ligado.
+    const materialAtivo = !!process.env.WHATSAPP_TEMPLATE_NEXT_INFO;
 
     // Matrícula mais recente da pessoa (identidade membro_id/email/cpf)
     let q = supabase
@@ -1492,7 +1494,7 @@ router.get('/totem/next/status', async (req, res) => {
     if (email) filtros.push(`email.eq.${escapePostgrestValue(String(email).toLowerCase().trim())}`);
     if (cpf) filtros.push(`cpf.eq.${String(cpf).replace(/\D/g, '')}`);
     if (filtros.length === 0) {
-      return res.json({ inscrito: false, proximo_evento: proxima, proximas_turmas: turmas });
+      return res.json({ inscrito: false, proximo_evento: proxima, proximas_turmas: turmas, material_ativo: materialAtivo });
     }
     q = q.or(filtros.join(','));
 
@@ -1514,7 +1516,7 @@ router.get('/totem/next/status', async (req, res) => {
       inscricao = { evento: { id: mat.turma_id, data, titulo: mat.turma?.nome || 'Lista de espera', horario: mat.turma?.horario || null } };
     }
 
-    return res.json({ inscrito: ativo, inscricao, proximo_evento: proxima, proximas_turmas: turmas });
+    return res.json({ inscrito: ativo, inscricao, proximo_evento: proxima, proximas_turmas: turmas, material_ativo: materialAtivo });
   } catch (e) {
     console.error('[TOTEM] next/status error:', e.message);
     res.status(500).json({ error: 'Erro ao consultar status do NEXT' });
@@ -1659,10 +1661,15 @@ router.post('/totem/next/informacoes', async (req, res) => {
       return res.status(400).json({ error: 'Telefone invalido' });
     }
     const primeiroNome = String(req.body?.nome || '').trim().split(' ')[0] || 'Olá';
-    // Nome FIXO no código (padrão de grupos) · env só override. Se o template
-    // ainda não existir na Meta, a fila registra o erro e não reenvia além do
-    // backoff — não quebra o fluxo do totem.
-    const template = process.env.WHATSAPP_TEMPLATE_NEXT_INFO || 'cbrio_next_material';
+    // ⚠️ EXCEÇÃO ao padrão de nome fixo: o material do Next (PDF) é ideia do
+    // Marcos ainda NÃO validada com os líderes da área. Fica atrás da env
+    // WHATSAPP_TEMPLATE_NEXT_INFO — enquanto vazia, o botão nem aparece no totem
+    // (ver next_material_ativo no /status) e aqui é no-op. Pra ligar: aprovar o
+    // template na Meta e setar a env com o nome dele.
+    const template = process.env.WHATSAPP_TEMPLATE_NEXT_INFO;
+    if (!template) {
+      return res.json({ ok: true, enviado: false, motivo: 'material_desativado' });
+    }
     let enviado = false;
     try {
       const { enfileirar } = require('../services/whatsappFila');
