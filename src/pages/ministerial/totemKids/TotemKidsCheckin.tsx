@@ -1818,8 +1818,13 @@ function PainelFamilia(props: {
                     </div>
                     <div className="text-xs text-muted-foreground">{formatIdade(m.idade_meses) || 'idade não informada'}</div>
                   </div>
+                  {/* Botão com RÓTULO (Marcos 2026-07-22 · o lápis solto passava
+                      batido — "não tinha opção de edição"): abre a ficha completa
+                      (dados + responsáveis: parentesco/remover/adicionar). */}
                   <button type="button" onClick={() => setDetalheId(m.id)} title="Ver/editar a ficha (exige senha do Kids)"
-                    className="text-muted-foreground hover:text-pink-600 shrink-0 p-1"><Pencil className="h-4 w-4" /></button>
+                    className="shrink-0 inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:text-pink-600 hover:border-pink-300">
+                    <Pencil className="h-3.5 w-3.5" /> Editar
+                  </button>
                 </div>
                 {temSaude ? (
                   <div className="mt-2 pl-9 text-xs space-y-0.5">
@@ -2494,7 +2499,9 @@ function CheckinSelecao(props: {
             <h2 className="text-2xl font-bold flex items-center gap-2">
               <span className="truncate">{crianca.nome}</span>
               <button type="button" onClick={() => setDetalhesOpen(true)} title="Editar ficha da criança (exige senha do Kids)"
-                className="text-muted-foreground hover:text-pink-600 shrink-0"><Pencil className="h-4 w-4" /></button>
+                className="shrink-0 inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:text-pink-600 hover:border-pink-300">
+                <Pencil className="h-3.5 w-3.5" /> Editar ficha
+              </button>
             </h2>
             <p className="text-muted-foreground">
               {formatIdade(crianca.idade_meses) || 'idade não informada'}
