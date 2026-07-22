@@ -112,6 +112,7 @@ app.use('/api/staff', require('./routes/staff'));           // App CBRio Staff (
 app.use('/api/revisoes', require('./routes/revisoes'));
 app.use('/api/events', require('./routes/events'));
 app.use('/api/projects', require('./routes/projects'));
+app.use('/api/tasks', require('./routes/tasks'));  // Kanban de tarefas transversal (Projetos/Eventos) · guard por módulo dentro do router
 app.use('/api/expansion', require('./routes/expansion'));
 app.use('/api/strategic', require('./routes/strategic'));
 app.use('/api/meetings', require('./routes/meetings'));

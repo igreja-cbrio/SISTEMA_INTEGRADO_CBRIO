@@ -5,6 +5,21 @@ const { notificar } = require('../services/notificar');
 
 router.use(authenticate);
 
+// Guard transversal: esta rota lê/edita tarefas de eventos, ciclos, projetos
+// e PE, então não cabe um authorizeModule único. Guarda pela MESMA régua das
+// telas consumidoras (Projetos/Eventos): leitura >= 1 em qualquer módulo-fonte.
+// Nunca `authenticate` solto — a rota tem PATCH de status (lição dos guards de
+// Grupos). admin/diretor = nível 5 (mesmo padrão de encaminhamentos.js).
+function nivel(req, slug) {
+  if (['admin', 'diretor'].includes(req.user?.role)) return 5;
+  return req.user?.granular?.modulePerms?.[slug]?.leitura ?? 0;
+}
+router.use((req, res, next) => {
+  const podeVer = ['projetos', 'eventos', 'expansao'].some(s => nivel(req, s) >= 1);
+  if (!podeVer) return res.status(403).json({ error: 'Sem acesso a tarefas' });
+  next();
+});
+
 // GET /api/tasks/all — todas as tarefas de todos os módulos
 // Query params:
 //   source: filtra por tipo (evento | ciclo | projeto | planejamento)
