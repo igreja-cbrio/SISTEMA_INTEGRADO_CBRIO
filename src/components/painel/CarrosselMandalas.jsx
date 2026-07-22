@@ -61,7 +61,7 @@ export default function CarrosselMandalas() {
 
   // Slides: [geral, seguir, conectar, investir, servir, generosidade]
   const slides = data ? [
-    { tipo: 'geral', titulo: 'Visao Geral', sub: '5 valores · pessoas engajadas neste mês' },
+    { tipo: 'geral', titulo: 'Visão Geral', sub: '5 valores · pessoas engajadas neste mês' },
     ...VALORES_ORDEM.map(v => ({
       tipo: 'por_valor',
       key: v,

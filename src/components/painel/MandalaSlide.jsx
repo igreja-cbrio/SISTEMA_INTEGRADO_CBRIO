@@ -151,7 +151,7 @@ export default function MandalaSlide({ modo, data, onPetalClick, mes }) {
                 height: '100%', width: '100%',
                 display: 'flex', flexDirection: 'column',
                 alignItems: 'center', justifyContent: 'center',
-                color: s.opacity > 0.45 ? 'white' : '#1f2937',
+                color: s.opacity > 0.45 ? 'white' : 'var(--cbrio-text)',
                 textAlign: 'center', padding: '0 4px',
               }}>
                 <div style={{
