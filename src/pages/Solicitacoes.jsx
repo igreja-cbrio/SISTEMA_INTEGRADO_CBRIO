@@ -1789,6 +1789,12 @@ function tempoAtras(iso) {
 function ehUrgente(item) {
   return item.eh_urgente === true || item.urgencia === 'critica' || item.urgencia === 'alta';
 }
+// Encerrada = status terminal · não conta mais como aberta/ativa (some da visão
+// por solicitante e não aparece nos urgentes). 'aprovado' segue ativo (falta concluir).
+const STATUS_ENCERRADOS = ['concluido', 'cancelado', 'rejeitado', 'avaliado'];
+function ehEncerrada(item) {
+  return STATUS_ENCERRADOS.includes(item.status);
+}
 function dotUrg(item) {
   if (item.urgencia === 'critica' || item.eh_urgente) return 'bg-rose-500';
   if (item.urgencia === 'alta') return 'bg-amber-500';
@@ -1870,9 +1876,12 @@ function SolicitanteCard({ grupo, maxCarga, onOpen }) {
 }
 
 function PainelPorSolicitante({ items, onOpen }) {
+  // Só solicitações ABERTAS (não encerradas) · com o tempo o histórico acumula
+  // e polui a visão por solicitante (pedido do Matheus 2026-07-22).
+  const ativos = useMemo(() => (items || []).filter(i => !ehEncerrada(i)), [items]);
   const grupos = useMemo(() => {
     const map = new Map();
-    for (const it of items) {
+    for (const it of ativos) {
       const key = it.solicitante_id || it.solicitante?.id || `nome:${(it.solicitante_nome || it.solicitante?.name || 'desconhecido').toLowerCase()}`;
       if (!map.has(key)) {
         map.set(key, { key, nome: it.solicitante?.name || it.solicitante_nome || 'Desconhecido', email: it.solicitante?.email || '', demandas: [] });
@@ -1888,23 +1897,23 @@ function PainelPorSolicitante({ items, onOpen }) {
     });
     arr.sort((a, b) => (b.urgentes - a.urgentes) || (b.demandas.length - a.demandas.length) || a.nome.localeCompare(b.nome));
     return arr;
-  }, [items]);
+  }, [ativos]);
 
   const maxCarga = Math.max(1, ...grupos.map(g => g.demandas.length));
   const urgentesGlobais = useMemo(
-    () => items.filter(ehUrgente).sort((a, b) => new Date(b.created_at) - new Date(a.created_at)),
-    [items]
+    () => ativos.filter(ehUrgente).sort((a, b) => new Date(b.created_at) - new Date(a.created_at)),
+    [ativos]
   );
-  const totalSla = items.filter(i => { const s = getSlaBadge(i); return !!s && s.color.includes('rose'); }).length;
+  const totalSla = ativos.filter(i => { const s = getSlaBadge(i); return !!s && s.color.includes('rose'); }).length;
 
-  if (items.length === 0) {
-    return <Card className="p-8 text-center text-muted-foreground">Nenhuma solicitação na fila para os filtros atuais.</Card>;
+  if (ativos.length === 0) {
+    return <Card className="p-8 text-center text-muted-foreground">Nenhuma solicitação aberta para os filtros atuais. 🎉</Card>;
   }
 
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <StatMini label="Solicitações ativas" valor={items.length} />
+        <StatMini label="Solicitações ativas" valor={ativos.length} />
         <StatMini label="Solicitantes" valor={grupos.length} />
         <StatMini label="Urgentes" valor={urgentesGlobais.length} tom="rose" />
         <StatMini label="SLA atrasado" valor={totalSla} tom="amber" />
