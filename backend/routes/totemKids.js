@@ -2103,8 +2103,36 @@ router.get('/dashboard', authorizeModule('kids', 1), async (req, res) => {
     }
     const aniversariantes = (kids || [])
       .filter((k) => dias.includes(String(k.data_nascimento).slice(5, 10)))
-      .map((k) => ({ id: k.id, nome: k.nome, data_nascimento: k.data_nascimento, foto_url: k.foto_url }))
+      .map((k) => ({ id: k.id, nome: k.nome, data_nascimento: k.data_nascimento, foto_url: k.foto_url, responsaveis: [] }))
       .sort((a, b) => String(a.data_nascimento).slice(5).localeCompare(String(b.data_nascimento).slice(5)));
+
+    // Enriquece com o contato dos responsáveis (mãe/pai · nome+telefone do membro
+    // vinculado) — pra impressão da lista. Ordena mãe → pai → demais.
+    const anivIds = aniversariantes.map((a) => a.id);
+    if (anivIds.length) {
+      const { data: resps } = await supabase.from('kids_responsaveis')
+        .select('crianca_id, parentesco, membro_id').in('crianca_id', anivIds);
+      const memIds = [...new Set((resps || []).map((r) => r.membro_id).filter(Boolean))];
+      const memById = {};
+      if (memIds.length) {
+        const { data: mems } = await supabase.from('mem_membros')
+          .select('id, nome, telefone').in('id', memIds);
+        (mems || []).forEach((m) => { memById[m.id] = m; });
+      }
+      const ordemPar = { mae: 0, pai: 1 };
+      const byCrianca = {};
+      (resps || []).forEach((r) => {
+        const m = r.membro_id ? memById[r.membro_id] : null;
+        if (!m || (!m.nome && !m.telefone)) return;
+        (byCrianca[r.crianca_id] = byCrianca[r.crianca_id] || []).push({
+          parentesco: r.parentesco || 'responsavel', nome: m.nome || null, telefone: m.telefone || null,
+        });
+      });
+      aniversariantes.forEach((a) => {
+        a.responsaveis = (byCrianca[a.id] || [])
+          .sort((x, y) => (ordemPar[x.parentesco] ?? 9) - (ordemPar[y.parentesco] ?? 9));
+      });
+    }
     res.json({
       resumo: {
         criancas_ativas: ativas.count || 0,
