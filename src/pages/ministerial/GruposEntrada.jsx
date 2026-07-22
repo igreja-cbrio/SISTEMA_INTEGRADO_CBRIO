@@ -110,6 +110,22 @@ const DEVOLUTIVAS = [
 
 const CANAIS = ['WhatsApp', 'Ligação', 'Pessoalmente'];
 
+// Origem do pedido de inscrição (mem_grupo_pedidos.origem) → rótulo legível.
+// A pessoa se inscreveu por algum canal; a coluna Origem mostra qual. Fallback
+// humaniza qualquer valor novo (capitaliza + troca _ por espaço).
+const ORIGEM_PEDIDO = {
+  formulario_publico: 'Formulário',
+  cadastro_interno: 'Cadastro manual',
+  app: 'App',
+  membresia_totem: 'Totem',
+  totem: 'Totem',
+  mapa: 'Mapa',
+};
+const labelOrigemPedido = (o) => {
+  if (!o) return null;
+  return ORIGEM_PEDIDO[o] || (o.charAt(0).toUpperCase() + o.slice(1).replace(/_/g, ' '));
+};
+
 const selStyle = {
   padding: '7px 10px', borderRadius: 8, border: `1px solid ${C.border}`,
   fontSize: 12.5, background: 'var(--cbrio-input-bg)', color: C.text, minWidth: 150,
@@ -217,6 +233,7 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
         // Cancelado porque a pessoa entrou em OUTRO grupo → "Aprovada em outro grupo"
         statusKey: p.status === 'cancelado' && p.resolvido_grupo_id ? 'resolvido' : p.status,
         veioNext: p.veio_next === true,
+        origem: p.origem || null,
         grupoNome: p.mem_grupos?.nome || null, grupoCodigo: p.mem_grupos?.codigo || null,
         raw: p,
       });
@@ -660,6 +677,8 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
                             <span style={{ fontSize: 10.5, padding: '2px 9px', borderRadius: 99, background: C.violetBg, color: C.violet, fontWeight: 700 }}>Next</span>
                           ) : r.tipo === 'enc' ? (
                             <span style={{ fontSize: 10.5, padding: '2px 9px', borderRadius: 99, background: C.bg, color: C.t3, fontWeight: 600 }}>{r.origemLabel}</span>
+                          ) : r.tipo === 'pedido' && labelOrigemPedido(r.origem) ? (
+                            <span style={{ fontSize: 10.5, padding: '2px 9px', borderRadius: 99, background: C.bg, color: C.t3, fontWeight: 600 }}>{labelOrigemPedido(r.origem)}</span>
                           ) : (
                             <span style={{ color: C.t3 }}>—</span>
                           )}
