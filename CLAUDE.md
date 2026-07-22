@@ -1809,10 +1809,15 @@ escolhe o TIPO de atendimento/visita → cria o atendimento na trilha da pessoa
   de capelania/aconselhamento) · demais → `cui_visitas` · marca o pedido
   em_andamento + guarda `atendimento_ref`). `/pedidos-app` (canal app) intocado.
 - **Frontend** (`Cuidados.tsx`): `CaixaEntrada` (filtros canal/tipo/status + busca ·
-  cards de pedido com tel/WhatsApp · status inline · "Atender" · "Registrar pedido"
-  manual) + `AtenderPedidoModal` + `RegistrarPedidoModal`. Badge de pendentes na aba.
-  OracaoPanel + WhatsappAutoConfig continuam recolhidos embaixo. `api.js`:
-  `cuidados.pedidos.{list,create,update,remove,atender}`.
+  cards de pedido com telefone + botão **"Conversas"** (link `hrefConversa` → o pastor
+  vê/responde no módulo Conversas, NÃO gerencia aqui) · status inline · "Atender" ·
+  "Registrar pedido" manual) + `AtenderPedidoModal` + `RegistrarPedidoModal`. Badge de
+  pendentes na aba. `api.js`: `cuidados.pedidos.{list,create,update,remove,atender}`.
+  ⚠️ **Insights de oração + config de WhatsApp SAÍRAM da Caixa de entrada (2026-07-22)** —
+  aquele bloco `<details>` (OracaoPanel + WhatsappAutoConfig) foi removido: gerenciamento
+  de WhatsApp é do módulo de WhatsApp/Conversas (do Matheus). Cada pedido tem só o link
+  pro Conversas. Componentes `OracaoPanel`/`WhatsappAutoConfig` seguem no repo (usados
+  em outro lugar), só não são mais montados no Cuidados.
 - **`AcompanhamentoModal` ficou dormente** (sem render) — criar aconselhamento/
   capelania novo agora é pelo fluxo "Atender" (ou registrar pedido manual + atender).
   A tabela `cui_acompanhamentos` segue viva (KPIs + trilha).
