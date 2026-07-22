@@ -25,19 +25,36 @@ function fmtData(s) {
 }
 
 // Chama o Claude (streaming + finalMessage) e devolve o markdown gerado.
+// Resiliente: 1) modelo principal com thinking; 2) sem thinking; 3) modelo
+// de fallback (sonnet, que já roda em outros serviços) — cobre modelo não
+// provisionado na conta ou config de thinking não aceita, evitando 500 seco.
+const MODELO_FALLBACK = process.env.GOVERNANCA_IA_MODEL_FALLBACK || 'claude-sonnet-4-6';
 async function gerarTexto({ system, user, maxTokens = 16000 }) {
   if (!process.env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY não configurada no ambiente');
   const client = new Anthropic();
-  const stream = client.messages.stream({
-    model: MODEL,
-    max_tokens: maxTokens,
-    thinking: { type: 'adaptive' },
-    system,
-    messages: [{ role: 'user', content: user }],
-  });
-  const msg = await stream.finalMessage();
-  const texto = (msg.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
-  return { texto, modelo: msg.model || MODEL };
+  const tentativas = [
+    { model: MODEL, thinking: { type: 'enabled', budget_tokens: Math.min(8000, maxTokens - 1024) } },
+    { model: MODEL },
+    { model: MODELO_FALLBACK },
+  ];
+  let ultimoErro;
+  for (const t of tentativas) {
+    try {
+      const stream = client.messages.stream({
+        model: t.model, max_tokens: maxTokens, system,
+        messages: [{ role: 'user', content: user }],
+        ...(t.thinking ? { thinking: t.thinking } : {}),
+      });
+      const msg = await stream.finalMessage();
+      const texto = (msg.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
+      if (texto) return { texto, modelo: msg.model || t.model };
+      ultimoErro = new Error('resposta vazia');
+    } catch (e) {
+      ultimoErro = e;
+      console.warn('[govIA] tentativa falhou · modelo=%s thinking=%s · %s', t.model, !!t.thinking, e.message);
+    }
+  }
+  throw ultimoErro || new Error('Falha ao gerar texto com IA');
 }
 
 // Baixa um documento (Plaud) do SharePoint e extrai o texto pra alimentar a IA.
