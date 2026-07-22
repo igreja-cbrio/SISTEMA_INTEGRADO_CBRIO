@@ -38,13 +38,12 @@ export function useWeeklyReport(period: Period = 'month', teamName?: string) {
   return useQuery({
     queryKey: ['vol', 'weekly-report', period, teamName],
     queryFn: async () => {
-      const [services, schedules, checkIns] = await Promise.all([
-        voluntariado.services.list() as Promise<VolService[]>,
-        voluntariado.schedules.list({}) as Promise<VolSchedule[]>,
-        voluntariado.checkIns.list({}) as Promise<VolCheckIn[]>,
-      ]);
-
+      // Busca por PERÍODO no servidor (paginação interna) · buscar tudo e filtrar
+      // no cliente estourava o cap de 1000 do PostgREST (bug 06/07).
       const range = getPeriodRange(period);
+      const { services, schedules, checkIns } = await voluntariado.relatorioDados(
+        range.start.slice(0, 10), range.end.slice(0, 10)
+      ) as { services: VolService[]; schedules: VolSchedule[]; checkIns: VolCheckIn[] };
       const startDate = new Date(range.start);
       const endDate = new Date(range.end);
 
@@ -86,11 +85,14 @@ export function useInactiveVolunteers(period = '3months', teamName?: string, mod
   return useQuery({
     queryKey: ['vol', 'inactive', period, teamName, mode],
     queryFn: async () => {
-      const [schedules, checkIns, services] = await Promise.all([
-        voluntariado.schedules.list({}) as Promise<VolSchedule[]>,
-        voluntariado.checkIns.list({}) as Promise<VolCheckIn[]>,
-        voluntariado.services.list() as Promise<VolService[]>,
-      ]);
+      // Precisa do histórico COMPLETO (não só do período) pra achar a ÚLTIMA
+      // atividade de cada voluntário e comparar com o cutoff. Busca tudo via
+      // /relatorio-dados (paginação interna · sem o cap de 1000 do PostgREST,
+      // que truncava as escalas · vol_schedules tem 4k+ linhas).
+      const hoje = new Date().toISOString().slice(0, 10);
+      const { services, schedules, checkIns } = await voluntariado.relatorioDados('2000-01-01', hoje) as {
+        services: VolService[]; schedules: VolSchedule[]; checkIns: VolCheckIn[];
+      };
 
       const periodMonths: Record<string, number> = { week: 0.25, month: 1, '2months': 2, '3months': 3, '4months': 4, '6months': 6 };
       const months = periodMonths[period] || 3;
@@ -162,13 +164,14 @@ export function useVolunteerThermometer(period: Period = 'month', teamName?: str
   return useQuery({
     queryKey: ['vol', 'thermometer', period, teamName],
     queryFn: async () => {
-      const [schedules, checkIns, services] = await Promise.all([
-        voluntariado.schedules.list({}) as Promise<VolSchedule[]>,
-        voluntariado.checkIns.list({}) as Promise<VolCheckIn[]>,
-        voluntariado.services.list() as Promise<VolService[]>,
-      ]);
-
+      // Busca por PERÍODO no servidor (paginação interna) · o fetch antigo
+      // (schedules/checkIns .list) estourava o cap de 1000 do PostgREST e o
+      // termômetro contava sobre dados truncados — mostrava ~204 escalados
+      // quando eram ~615 em 3 meses (bug 22/07).
       const range = getPeriodRange(period);
+      const { services, schedules, checkIns } = await voluntariado.relatorioDados(
+        range.start.slice(0, 10), range.end.slice(0, 10)
+      ) as { services: VolService[]; schedules: VolSchedule[]; checkIns: VolCheckIn[] };
       const startDate = new Date(range.start);
       const endDate = new Date(range.end);
 
