@@ -6,8 +6,6 @@ import { cuidados as cuidadosApi } from '../../api';
 import Paginacao, { usePaginacaoLocal } from '../../components/Paginacao';
 import useConfirmarSaida from '../../hooks/useConfirmarSaida';
 import DevocionalAdmin from '../../components/DevocionalAdmin';
-import WhatsappAutoConfig from '../../components/WhatsappAutoConfig';
-import OracaoPanel from '../../components/OracaoPanel';
 import AgentePrimeiroContato from '../../components/AgentePrimeiroContato';
 import AgenteBatismoNext from '../../components/AgenteBatismoNext';
 import NextConvite from '../../components/NextConvite';
@@ -1423,7 +1421,6 @@ function CaixaEntrada({ canEdit, onAtendido, onPendentes }: {
                     {it.telefone && (
                       <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
                         <a href={`tel:${tel}`} className="flex items-center gap-1 hover:text-primary"><Phone className="h-3 w-3" />{it.telefone}</a>
-                        {tel && <Link to={hrefConversa(`55${tel}`)} className="flex items-center gap-1 hover:text-primary"><MessageSquare className="h-3 w-3" />WhatsApp</Link>}
                       </div>
                     )}
                     {it.mensagem && <p className="text-sm text-muted-foreground mt-1 whitespace-pre-wrap">{it.mensagem}</p>}
@@ -1436,6 +1433,11 @@ function CaixaEntrada({ canEdit, onAtendido, onPendentes }: {
                       </Select>
                     ) : (
                       <Badge variant={it.status === 'concluido' ? 'secondary' : 'default'}>{PEDIDO_STATUS_UI.find(s => s.v === it.status)?.l || it.status}</Badge>
+                    )}
+                    {tel && (
+                      <Button asChild variant="outline" size="sm" title="Ver e responder no módulo Conversas">
+                        <Link to={hrefConversa(`55${tel}`)}><MessageSquare className="h-3.5 w-3.5 mr-1" />Conversas</Link>
+                      </Button>
                     )}
                     {canEdit && it.status !== 'concluido' && (
                       <Button size="sm" onClick={() => setAtender(it)}><HeartHandshake className="h-3.5 w-3.5 mr-1" />Atender</Button>
@@ -1855,20 +1857,9 @@ export default function Cuidados() {
           )}
         </TabsContent>
 
-        {/* Acompanhamentos */}
+        {/* Caixa de entrada · fila única de pedidos de cuidado */}
         <TabsContent value="acomp" className="space-y-4">
           <CaixaEntrada canEdit={podeEditarCuidados} onAtendido={recarregarTrilha} onPendentes={setCaixaPendentes} />
-
-          {/* Técnico · oração (insights por IA) + configuração de WhatsApp · recolhido embaixo */}
-          <details className="rounded-lg border border-border bg-card">
-            <summary className="cursor-pointer select-none px-4 py-3 text-sm font-medium flex items-center gap-2">
-              <Sparkles className="h-4 w-4 text-primary" />Oração (insights) e configuração de WhatsApp
-            </summary>
-            <div className="p-4 pt-0 space-y-4">
-              <OracaoPanel canWrite={podeEditarCuidados} />
-              {podeEditarCuidados && <WhatsappAutoConfig api={cuidadosApi.whatsappAuto} />}
-            </div>
-          </details>
         </TabsContent>
 
         {/* Próximos passos · lista operacional dos convertidos + jornada (contato/batismo/Next) */}
