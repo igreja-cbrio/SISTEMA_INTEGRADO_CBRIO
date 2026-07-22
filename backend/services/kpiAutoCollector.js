@@ -739,13 +739,16 @@ const COLLECTORS = {
   },
 
   // GEN-05: valor total arrecadado no ciclo (dízimo + oferta + demais doações).
-  // Fonte viva = vw_doacoes_unificada (fin_transacoes classificado por código de
-  // plano de contas · o balanço que o financeiro alimenta toda semana).
-  // Empréstimo/receita geral ficam FORA (a view é escopada a doações).
+  // Fonte = SÓ o balanço (fonte='fin_transacoes' na vw_doacoes_unificada · doações
+  // 3.01% do plano de contas · o balanço que o financeiro importa toda semana).
+  // ⚠️ NÃO somar mem_contribuicoes (nominal) por cima: é a MESMA verba já contida
+  // no balanço agregado → somava dobrado (~R$1,5M inflado no período de sobreposição).
+  // Empréstimo/receita geral ficam FORA (o ramo fin_transacoes da view é escopado
+  // a 3.01% = dízimo/oferta). O nominal segue só pra "quem doou/recorrência" (GEN-02).
   'generosidade.valor_total': async ({ inicio, fim }) => {
     // Um mês de doações passa de 1000 linhas (cap PostgREST) — paginado.
     const rows = await fetchAll('vw_doacoes_unificada', 'valor',
-      q => q.gte('data', inicio).lt('data', fim).order('id'));
+      q => q.eq('fonte', 'fin_transacoes').gte('data', inicio).lt('data', fim).order('id'));
     const total = rows.reduce((s, r) => s + Number(r.valor || 0), 0);
     if (!rows.length) return { valor: 0, observacao: 'Sem doações no período' };
     return { valor: Math.round(total), observacao: `R$ ${Math.round(total).toLocaleString('pt-BR')} em ${rows.length} doações` };
