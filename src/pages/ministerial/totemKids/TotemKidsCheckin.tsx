@@ -7,7 +7,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Baby, Users, Printer, AlertTriangle, Plus, ArrowLeft, Loader2, CheckCircle2, Phone, Settings, LogOut, Sparkles, UserPlus, ShieldCheck, Maximize, Lock, Check, Camera, Pencil, X } from 'lucide-react';
+import { Search, Baby, Users, Printer, AlertTriangle, Plus, ArrowLeft, Loader2, CheckCircle2, Phone, Settings, LogOut, Sparkles, UserPlus, ShieldCheck, Maximize, Lock, Check, Camera, Pencil, X, BellRing } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
@@ -271,6 +271,14 @@ function DispensaCpfInline({ dispensado, onDispensar, onCancelar }: {
   );
 }
 
+// Pager no balcão (sugestão da equipe · 2026-07-22): criança pequena (< 4 anos =
+// < 48 meses) OU com espectro/limitação física → a equipe entrega um pager ao
+// responsável. Ao concluir o check-in, o totem avisa pra pegar no balcão.
+function precisaPager(c: { idade_meses?: number | null; tem_espectro?: boolean | null; tem_limitacao_fisica?: boolean | null }): boolean {
+  const menor4 = c.idade_meses != null && c.idade_meses < 48;
+  return menor4 || !!c.tem_espectro || !!c.tem_limitacao_fisica;
+}
+
 export default function TotemKidsCheckin() {
   const navigate = useNavigate();
   const [sessao, setSessao] = useState<Sessao | null>(null);
@@ -366,6 +374,8 @@ export default function TotemKidsCheckin() {
 
   // Última etiqueta impressa · permite REIMPRIMIR sem novo check-in (se borrou/falhou).
   const [ultimaEtiqueta, setUltimaEtiqueta] = useState<Parameters<typeof imprimirEtiquetas>[0] | null>(null);
+  // Nomes (1º nome) das crianças recém-check-in que precisam de pager no balcão.
+  const [pagerNomes, setPagerNomes] = useState<string[]>([]);
 
   // Layout configurável da etiqueta (fonte, tamanho da fonte, tamanho do nome)
   const [etqLayout, setEtqLayout] = useState<Parameters<typeof imprimirEtiquetas>[0]['layout']>(undefined);
@@ -420,6 +430,7 @@ export default function TotemKidsCheckin() {
     const ensaio = !!(args.cultoData && String(args.cultoData).slice(0, 10) > hojeBRTStr());
     return {
       checkinId: args.checkinId,
+      criancaId: c.id,
       estacaoId: null,
       crianca: {
         nome: c.nome,
@@ -550,9 +561,11 @@ export default function TotemKidsCheckin() {
       // Família compartilha o código → o recibo do responsável (genérico, sem nome de
       // criança) sai UMA vez só. Etiquetas de cada criança saem normalmente.
       let reciboImpresso = false;
+      const pagerFam: string[] = []; // filhos que precisam de pager no balcão
       for (const s of saidas) {
         if (s?.ok) {
           const cr = porId.get(s.crianca_id);
+          if (cr && precisaPager(cr)) pagerFam.push(cr.nome.split(' ')[0]);
           if (cr) {
             const dados = montarDadosEtiqueta(cr, {
               checkinId: s.checkin.id, salaNome: s.sala.nome, salaCor: s.sala.cor, salaLogoUrl: s.sala.logo_url,
@@ -577,6 +590,7 @@ export default function TotemKidsCheckin() {
       + (falhou ? ` · ${falhou} não deu` : ''),
       { duration: 5000 },
     );
+    setPagerNomes(pagerFam);
     setCrianca(null); setBusca(''); setSalaSelecionada(''); setResponsavelSelecionado('');
     setUsarRespManual(false); setRespManualNome(''); setRespManualTel(''); setCultosSel(new Set());
     setResultados([]); setIrmaos([]);
@@ -1097,6 +1111,8 @@ export default function TotemKidsCheckin() {
 
       toast.success(`${r.crianca.nome} · check-in OK · código ${r.codigo_seguranca}`, { duration: 4000 });
       dispararConfete();
+      // Pager pra criança pequena (< 4 anos) ou com espectro/limitação (avisa antes do reset).
+      setPagerNomes(crianca && precisaPager(crianca) ? [crianca.nome.split(' ')[0]] : []);
 
       // Reset
       setCrianca(null);
@@ -1251,6 +1267,34 @@ export default function TotemKidsCheckin() {
               <DialogDescription>Aponte a câmera pro QR do pré-check-in do responsável.</DialogDescription>
             </DialogHeader>
             <QrScanner onScan={onScanQR} onError={(e) => toast.error(e || 'Erro ao abrir a câmera')} />
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {/* Pager no balcão (sugestão da equipe · 2026-07-22): criança < 4 anos ou
+          com espectro/limitação física → a equipe entrega um pager ao
+          responsável. Aparece logo após o check-in (individual ou família). */}
+      {pagerNomes.length > 0 && (
+        <Dialog open onOpenChange={(o) => { if (!o) setPagerNomes([]); }}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-amber-600">
+                <BellRing className="h-6 w-6" /> Pegue o pager no balcão
+              </DialogTitle>
+              <DialogDescription>
+                {pagerNomes.length === 1
+                  ? <>Entregue um <b>pager</b> ao responsável de <b>{pagerNomes[0]}</b> — criança pequena (até 3 anos) ou que precisa de atenção especial.</>
+                  : <>Entregue um <b>pager</b> ao responsável destas crianças (pequenas ou com atenção especial):</>}
+              </DialogDescription>
+            </DialogHeader>
+            {pagerNomes.length > 1 && (
+              <ul className="list-disc pl-6 text-sm font-semibold space-y-0.5">
+                {pagerNomes.map((n, i) => <li key={i}>{n}</li>)}
+              </ul>
+            )}
+            <Button className="w-full bg-amber-600 hover:bg-amber-700 text-white h-12 text-base" onClick={() => setPagerNomes([])}>
+              Ok, peguei o pager
+            </Button>
           </DialogContent>
         </Dialog>
       )}
@@ -2888,7 +2932,9 @@ function ModalNovaCrianca(props: {
     <div className="flex items-center justify-between rounded-md border border-border px-3 py-2">
       <span className="text-sm">{label}</span>
       <div className="inline-flex rounded-md border border-border overflow-hidden text-xs">
-        <button type="button" onClick={() => set(false)} className={`px-3 py-1 ${!on ? 'bg-muted font-medium' : ''}`}>Não</button>
+        {/* "Não" também fica ROSA quando selecionado (Marcos 2026-07-22): antes
+            ficava só cinza-claro e a equipe não percebia que já estava marcado. */}
+        <button type="button" onClick={() => set(false)} className={`px-3 py-1 ${!on ? 'bg-pink-600 text-white font-medium' : ''}`}>Não</button>
         <button type="button" onClick={() => set(true)} className={`px-3 py-1 ${on ? 'bg-pink-600 text-white font-medium' : ''}`}>Sim</button>
       </div>
     </div>
