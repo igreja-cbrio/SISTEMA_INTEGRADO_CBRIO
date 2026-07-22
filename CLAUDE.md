@@ -2400,6 +2400,31 @@ via `window.print` na Brother QL-820NWB default do Windows).
   `20260717160000_kids_codigo_seguranca_integridade.sql` (**aplicada em produção
   manualmente em 2026-07-17**); irmãos/multi-culto do mesmo `checkin_grupo_id`
   podem compartilhar o código, famílias diferentes não.
+- **⚠️ Check-in v5 · destino do culto + modo ensaio (2026-07-22 · decisão do
+  Marcos, validada por conselho deliberativo — não regredir)**: invariante =
+  *check-in só é dado real se o dia (BRT) do check-in for o dia do culto*.
+  3 camadas: (1) TELA — chip **"Registrando em: <culto>"** sempre visível
+  (mesmo com 1 sessão, quando o seletor some); o seletor lista SÓ cultos de
+  HOJE do **período atual** (manhã = os 3 da manhã; o das 19h e ensaios ficam
+  fora do fluxo da criança); o culto da janela do relógio vem **PRÉ-MARCADO
+  por criança** (recalculado na hora, não pelo poll · "automático com
+  confirmação visível" — revisa o seletor-vazio de 14/07; voltar ao 100%
+  manual = 1 linha no effect de `crianca?.id`); sem culto de hoje aberto,
+  sessão de culto FUTURO destrava a tela em **MODO ENSAIO** explícito (banner
+  âmbar + rótulo `TESTE ·` + etiqueta/recibo com faixa TESTE + botão "Encerrar
+  ensaio e limpar testes"). (2) SERVIDOR — `POST /checkin`(/lote) recusa 409
+  sessão de culto futuro quando há culto de hoje aberto; `cultos_extras` só do
+  MESMO dia do primário. (3) DADOS — sweep lazy fecha ensaio ativado em dia
+  anterior e **soft-deleta check-ins de ensaio** (corte = min(meia-noite do
+  dia do culto, início−2h) — nunca pega culto de virada); sessões de cultos de
+  HOJE são limpas de resíduo de ensaio na carga; Encerrar manual com check-ins
+  a +2h do início → 409 `precisa_confirmar_limpeza` e o front pergunta (humano
+  decide · Painel/AbaSessoes). Migration `20260722120000` (idempotente ·
+  consolidação passa a ignorar `deleted_at` — sem ela a limpeza não afeta o
+  KPI consolidado — e o radar de ausentes ignora culto de dia futuro).
+  Decisão do conselho: **Painel ao vivo NÃO ganha botão Ativar** (superfície
+  de monitoramento). Residual documentado: ensaio no MESMO dia do culto conta
+  como real até o Encerrar perguntar (ensaie com culto de outro dia).
 - **Saneamento da base Kids (2026-07-17 · `scripts/kids_integridade_auto.cjs
   --auto`)**: executado com backup JSON antes das mutações. Foram fundidos 2
   responsáveis realmente duplicados (mesmo telefone + grafia quase idêntica),

@@ -38,6 +38,7 @@ export interface DadosImpressao {
   dataHora: string;                   // ISO ou label pronto
   cultoNome?: string;
   cultoDiaHora?: string;              // dia + horário do culto (etiqueta do responsável)
+  ensaio?: boolean;                   // sessão de culto de OUTRO dia (modo ensaio) → etiquetas saem marcadas TESTE
   layout?: EtiquetaLayout;           // ajustes de layout (tamanho/posição da logo…)
   logoAniversarioUrl?: string | null; // logo do Kids na etiqueta de aniversário (config global)
 }
@@ -126,6 +127,13 @@ function cssEtiqueta(layout: EtiquetaLayout = LAYOUT_ETIQUETA_PADRAO): string {
     background: #000; color: #fff; padding: 0.7mm 1.5mm; margin-top: 1mm;
     font-size: ${pt(7)}; font-weight: 700; line-height: 1.1; border-radius: 0.5mm;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  /* Faixa de ENSAIO (modo teste · culto de outro dia): a etiqueta física não
+     pode ter cara de check-in real — ela sobrevive à tela. */
+  .ensaio-strip {
+    background: #000; color: #fff; padding: 0.6mm 1.5mm; margin-bottom: 0.6mm;
+    font-size: ${pt(6.5)}; font-weight: 800; letter-spacing: 0.6px; line-height: 1.1;
+    border-radius: 0.5mm; text-align: center; white-space: nowrap; overflow: hidden;
   }
 
   /* Código de segurança · sempre monoespaçado (evita confundir O/0, I/1). */
@@ -225,6 +233,7 @@ function htmlEtiquetaCrianca(d: DadosImpressao): string {
   return `<div class="etiqueta" style="--cor:${d.crianca.salaCor || '#EC4899'}">
     <div class="faixa-cor"></div>
     <div class="col-esq">
+      ${d.ensaio ? '<div class="ensaio-strip">TESTE / ENSAIO — NÃO VALE COMO PRESENÇA</div>' : ''}
       <div class="topo">${nome}${foto}</div>
       <div class="sala">${escapeHtml(d.crianca.salaNome)} · ${escapeHtml(d.crianca.idadeLabel)}</div>
       ${alerta}
@@ -268,6 +277,7 @@ function documento(fragmentos: string[], layout?: EtiquetaLayout): string {
 function htmlEtiquetaResponsavel(d: DadosImpressao, barcodeSvg: string): string {
   return `<div class="etiqueta">
     <div class="col-esq" style="padding-left:0">
+      ${d.ensaio ? '<div class="ensaio-strip">TESTE / ENSAIO — NÃO VALE COMO PRESENÇA</div>' : ''}
       <div class="header-resp">CB Rio · Recibo Kids</div>
       <div class="nome-grande" style="--nome-pt:11">${escapeHtml(nomeParaEtiqueta(d.responsavel.nome))}</div>
       <div class="sala" style="font-size:8pt;color:#555">${escapeHtml(d.cultoDiaHora || d.crianca.salaNome)}</div>

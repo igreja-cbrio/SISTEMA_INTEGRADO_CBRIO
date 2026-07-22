@@ -296,6 +296,59 @@ function _dataLimiteVisitante() {
   return d.toISOString().slice(0, 10);
 }
 
+// ── Ensaio (Marcos 2026-07-21/22 · design v5) ────────────────────────────────
+// Invariante: check-in só é dado REAL se o dia (BRT) do check-in for o dia do
+// culto. Sessão aberta de culto de dia FUTURO = ENSAIO (testar etiqueta/código/
+// checkout antes do dia real) — usa o fluxo real de propósito. Quem protege os
+// números é o conjunto: guarda no POST /checkin (check-in real nunca cai em
+// culto de outro dia), limpeza automática abaixo e a consolidação ignorando
+// deleted_at (migration 20260722120000).
+
+// Início do culto em ms (data + horário do service type · BRT). Sem horário,
+// assume meio-dia (só entra no corte de limpeza · conservador).
+function _inicioCultoMs(culto) {
+  const hhmm = String(culto?.service_type?.recurrence_time || '12:00').slice(0, 5);
+  return new Date(`${String(culto?.data).slice(0, 10)}T${hhmm}:00-03:00`).getTime();
+}
+
+// Corte da limpeza AUTOMÁTICA: check-in anterior a min(meia-noite BRT do dia do
+// culto, início − 2h) é registro de ensaio por definição. O termo das 2h
+// protege culto de virada (ex.: vigília 00:30 — check-in real de 23h do dia
+// anterior fica DEPOIS do corte e é preservado).
+function _corteEnsaioAutoISO(culto) {
+  const meiaNoite = new Date(`${String(culto?.data).slice(0, 10)}T00:00:00-03:00`).getTime();
+  const duasHorasAntes = _inicioCultoMs(culto) - 2 * 3600 * 1000;
+  return new Date(Math.min(meiaNoite, duasHorasAntes)).toISOString();
+}
+
+// Soft-deleta (deleted_at) os check-ins de ensaio das sessões dadas — SEMPRE
+// antes do flip pra 'encerrada' (a consolidação conta o que sobrou). Leitores
+// já filtram deleted_at (radar/frequência/cron/checkout) e a trava de código
+// ignora deletados (20260717160000) → o código volta pro pool sozinho.
+async function limparCheckinsEnsaio(sessoes) {
+  let total = 0;
+  for (const s of sessoes || []) {
+    if (!s?.id || !s?.culto?.data) continue;
+    const { data, error } = await supabase.from('kids_checkins')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('sessao_id', s.id).is('deleted_at', null)
+      .lt('checkin_at', _corteEnsaioAutoISO(s.culto))
+      .select('id');
+    if (error) { console.error('[totemKids/limparCheckinsEnsaio]', error.message); continue; }
+    total += (data || []).length;
+  }
+  return total;
+}
+
+// Há sessão aberta de culto de HOJE? (guarda do POST /checkin: com culto ao
+// vivo hoje, check-in em sessão de outro dia é sempre engano.)
+async function temSessaoAoVivoHoje() {
+  const hoje = _hojeBRT();
+  const { data } = await supabase.from('kids_sessoes')
+    .select('id, culto:cultos(data)').eq('status', 'aberta');
+  return (data || []).some((s) => String(s.culto?.data || '').slice(0, 10) === hoje);
+}
+
 // Encerra sessões ABERTAS cujo culto é de um dia ANTERIOR a hoje (BRT) e dá
 // checkout automático em quem ficou aberto nelas — mesmo efeito do "Encerrar"
 // manual (#1758a). É o fechamento LAZY (SEM cron · pedido do Marcos): roda na
@@ -326,13 +379,48 @@ async function encerrarSessoesVencidas(userId) {
   const hoje = _hojeBRT();
   const { data: abertas, error } = await supabase
     .from('kids_sessoes')
-    .select('id, culto:cultos(data)')
+    .select('id, abrir_em, culto:cultos(id, data, service_type:vol_service_types(recurrence_time))')
     .eq('status', 'aberta');
   if (error) throw error;
+  const diaBRT = (iso) => (iso
+    ? new Date(iso).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' })
+    : null);
+
+  // (i) Culto de dia PASSADO → encerra + baixa (comportamento original).
   const vencidas = (abertas || [])
-    .filter((s) => s.culto?.data && String(s.culto.data).slice(0, 10) < hoje)
-    .map((s) => s.id);
-  return _fecharSessoes(vencidas, userId, 'Baixa automática (sessão de outro dia)');
+    .filter((s) => s.culto?.data && String(s.culto.data).slice(0, 10) < hoje);
+
+  // (ii) ENSAIO vencido: culto de dia FUTURO cuja sessão foi ativada em dia
+  // ANTERIOR a hoje — ensaio vale só no dia em que foi ativado (Marcos
+  // 2026-07-21). Limpa os check-ins de teste ANTES de encerrar, pra
+  // consolidação não contar ensaio.
+  const ensaiosVencidos = (abertas || [])
+    .filter((s) => s.culto?.data && String(s.culto.data).slice(0, 10) > hoje
+      && diaBRT(s.abrir_em) && diaBRT(s.abrir_em) < hoje);
+  await limparCheckinsEnsaio(ensaiosVencidos);
+
+  // (iii) Sessões de cultos de HOJE (qualquer status): se sobrou check-in de
+  // ensaio de dias anteriores (ninguém carregou o totem entre o ensaio e o dia
+  // do culto — o sweep é lazy), limpa AGORA, antes da operação real. A sessão
+  // em si não é tocada (é a sessão real do dia).
+  try {
+    const { data: cultosHoje } = await supabase.from('cultos')
+      .select('id, data, service_type:vol_service_types(recurrence_time)').eq('data', hoje);
+    if ((cultosHoje || []).length) {
+      const { data: sessoesHoje } = await supabase.from('kids_sessoes')
+        .select('id, culto_id').in('culto_id', cultosHoje.map((c) => c.id));
+      const byCulto = Object.fromEntries(cultosHoje.map((c) => [c.id, c]));
+      const limposHoje = await limparCheckinsEnsaio(
+        (sessoesHoje || []).map((s) => ({ id: s.id, culto: byCulto[s.culto_id] })));
+      if (limposHoje) console.warn(`[totemKids/sweep] ${limposHoje} check-in(s) de ensaio limpos das sessões de hoje`);
+    }
+  } catch (e) { console.error('[totemKids/sweep] limpeza de hoje:', e.message); }
+
+  return _fecharSessoes(
+    [...vencidas, ...ensaiosVencidos].map((s) => s.id),
+    userId,
+    'Baixa automática (sessão de outro dia)'
+  );
 }
 
 // Inativa (LAZY · SEM cron · Marcos 2026-07-20) as crianças VISITANTES cujo
@@ -493,9 +581,42 @@ router.post('/sessoes/:id/abrir', authorizeModule('kids', 3), async (req, res) =
   }
 });
 
-// POST /api/totem-kids/sessoes/:id/encerrar · status → encerrada (consolida cultos.presencial_kids)
+// POST /api/totem-kids/sessoes/:id/encerrar · status → encerrada (consolida cultos.presencial_kids).
+// Body opcional `limpar_testes` (design v5 · Marcos 2026-07-22): check-in a mais
+// de 2h do início do culto é SUSPEITO de ensaio (pega teste no mesmo dia; ensaio
+// de outro dia é subconjunto). Sem o campo e com suspeitos → 409
+// { precisa_confirmar_limpeza, suspeitos } e o front pergunta (humano decide —
+// culto atípico pode ter check-in legítimo cedo); true → soft-deleta ANTES de
+// encerrar (não conta no KPI · migration 20260722120000); false → mantém tudo.
 router.post('/sessoes/:id/encerrar', authorizeModule('kids', 3), async (req, res) => {
   try {
+    const { limpar_testes } = req.body || {};
+    let testes_limpos = 0;
+    const { data: sess } = await supabase.from('kids_sessoes')
+      .select('id, culto:cultos(id, data, service_type:vol_service_types(recurrence_time))')
+      .eq('id', req.params.id).maybeSingle();
+    if (!sess) return res.status(404).json({ error: 'Sessão não encontrada' });
+    if (sess.culto?.data) {
+      const corte = new Date(_inicioCultoMs(sess.culto) - 2 * 3600 * 1000).toISOString();
+      const { data: suspeitos } = await supabase.from('kids_checkins')
+        .select('id').eq('sessao_id', sess.id).is('deleted_at', null).lt('checkin_at', corte);
+      const n = (suspeitos || []).length;
+      if (n && limpar_testes === undefined) {
+        return res.status(409).json({
+          error: `${n} check-in(s) fora do horário do culto parecem teste.`,
+          precisa_confirmar_limpeza: true,
+          suspeitos: n,
+        });
+      }
+      if (n && limpar_testes === true) {
+        const { data: del, error: eDel } = await supabase.from('kids_checkins')
+          .update({ deleted_at: new Date().toISOString() })
+          .eq('sessao_id', sess.id).is('deleted_at', null).lt('checkin_at', corte)
+          .select('id');
+        if (eDel) console.error('[totemKids/sessoes/encerrar] limpar testes:', eDel.message);
+        testes_limpos = (del || []).length;
+      }
+    }
     const { data, error } = await supabase
       .from('kids_sessoes')
       .update({
@@ -517,12 +638,12 @@ router.post('/sessoes/:id/encerrar', authorizeModule('kids', 3), async (req, res
         checkout_por: req.user.userId,
         responsavel_checkout_nome: 'Baixa automática (sessão encerrada)',
       })
-      .eq('sessao_id', req.params.id).is('checkout_at', null);
+      .eq('sessao_id', req.params.id).is('checkout_at', null).is('deleted_at', null);
     if (eCk) console.error('[totemKids/sessoes/encerrar] auto-checkout:', eCk.message);
     // O resumo do Kids pros líderes NÃO sai daqui: o cron /cron/resumo-kids é o
     // emissor ÚNICO (crianças únicas do totem · dedup por kids_resumo_enviado_at
     // + chaveDedup). Evita dois resumos pro mesmo culto (encerrar sessão × cron).
-    res.json(data);
+    res.json({ ...data, testes_limpos });
   } catch (e) {
     console.error('[totemKids/sessoes/encerrar]', e.message);
     res.status(500).json({ error: 'Erro ao encerrar sessão' });
@@ -2401,6 +2522,15 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
     if (sessao.culto?.data && String(sessao.culto.data).slice(0, 10) < _hojeBRT()) {
       return res.status(409).json({ error: 'Essa sessão é de um culto de outro dia e já foi encerrada. Recarregue o totem.' });
     }
+    // R1 parte 2 (design v5 · Marcos 2026-07-21): culto de dia FUTURO só recebe
+    // check-in em ENSAIO — e ensaio só existe quando NÃO há culto de hoje
+    // aberto. Com culto ao vivo, destino de outro dia é sempre engano (bloquear
+    // o destino errado ≠ bloquear o check-in — a criança entra no culto certo).
+    // Cobre totem-quiosque sem reload e corrida entre dois totens.
+    if (sessao.culto?.data && String(sessao.culto.data).slice(0, 10) > _hojeBRT()
+        && await temSessaoAoVivoHoje()) {
+      return res.status(409).json({ error: 'Essa sessão é ensaio de um culto de outro dia — escolha um culto de hoje.' });
+    }
 
     // Anti-duplicidade: bloqueia só quando há check-in ABERTO (sem check-out) na
     // sessão. Depois do check-out a criança PODE fazer novo check-in (saiu e
@@ -2511,9 +2641,19 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
     // Multi-culto: se a criança fica em mais de um culto, todas as linhas
     // (uma por culto) compartilham o mesmo código + checkin_grupo_id. A retirada
     // fecha o grupo; cada culto conta a presença (consolidação por sessao_id).
-    const cultosExtras = Array.isArray(cultos_extras)
+    let cultosExtras = Array.isArray(cultos_extras)
       ? [...new Set(cultos_extras.map(String))].filter(cid => cid && cid !== sessao.culto_id)
       : [];
+    // Multi-culto = outro horário do MESMO dia do culto primário. Extra de
+    // outro dia (ensaio aberto, toque errado) é descartado — nunca cruza dias.
+    if (cultosExtras.length) {
+      const dataPrimaria = String(sessao.culto?.data || '').slice(0, 10);
+      const { data: cxs } = await supabase.from('cultos').select('id, data').in('id', cultosExtras);
+      const validos = new Set((cxs || []).filter((c) => String(c.data).slice(0, 10) === dataPrimaria).map((c) => c.id));
+      const fora = cultosExtras.filter((cid) => !validos.has(cid));
+      if (fora.length) console.warn('[totemKids/checkin] cultos extras de outro dia ignorados:', fora.join(','));
+      cultosExtras = cultosExtras.filter((cid) => validos.has(cid));
+    }
     const grupoId = cultosExtras.length ? require('crypto').randomUUID() : null;
 
     const gerarCodigo = async () => {
@@ -2665,6 +2805,12 @@ router.post('/checkin/lote', authorizeModule('kids', 2), async (req, res) => {
     if (sessao.culto?.data && String(sessao.culto.data).slice(0, 10) < _hojeBRT()) {
       return res.status(409).json({ error: 'Essa sessão é de um culto de outro dia e já foi encerrada. Recarregue o totem.' });
     }
+    // R1 parte 2 (design v5): culto FUTURO só em ensaio — nunca com culto de
+    // hoje aberto (mesma guarda do /checkin individual).
+    if (sessao.culto?.data && String(sessao.culto.data).slice(0, 10) > _hojeBRT()
+        && await temSessaoAoVivoHoje()) {
+      return res.status(409).json({ error: 'Essa sessão é ensaio de um culto de outro dia — escolha um culto de hoje.' });
+    }
 
     // Valida o lote inteiro antes de resolver/vincular responsável ou inserir a
     // primeira linha. Assim uma idade ausente não produz operação parcial.
@@ -2729,8 +2875,17 @@ router.post('/checkin/lote', authorizeModule('kids', 2), async (req, res) => {
           .then(() => {}, (e) => console.error('[totemKids/checkin-lote] ligar responsável:', e?.message));
       }
     };
-    const cultosExtras = Array.isArray(cultos_extras)
+    let cultosExtras = Array.isArray(cultos_extras)
       ? [...new Set(cultos_extras.map(String))].filter((cid) => cid && cid !== sessao.culto_id) : [];
+    // Multi-culto = outro horário do MESMO dia (mesma regra do /checkin).
+    if (cultosExtras.length) {
+      const dataPrimaria = String(sessao.culto?.data || '').slice(0, 10);
+      const { data: cxs } = await supabase.from('cultos').select('id, data').in('id', cultosExtras);
+      const validos = new Set((cxs || []).filter((c) => String(c.data).slice(0, 10) === dataPrimaria).map((c) => c.id));
+      const fora = cultosExtras.filter((cid) => !validos.has(cid));
+      if (fora.length) console.warn('[totemKids/checkin-lote] cultos extras de outro dia ignorados:', fora.join(','));
+      cultosExtras = cultosExtras.filter((cid) => validos.has(cid));
+    }
     const codigoNovo = async () => {
       const { data } = await supabase.rpc('fn_kids_gerar_codigo_seguranca');
       return data || (() => { const a = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let c = ''; for (let i = 0; i < 4; i++) c += a[Math.floor(Math.random() * a.length)]; return c; })();
