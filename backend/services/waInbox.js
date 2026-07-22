@@ -15,29 +15,57 @@ function dentroJanela24h(lastInboundAt) {
 }
 
 // Acha um membro pelo telefone (best-effort · casa pelos últimos dígitos). Não bloqueia.
-async function acharMembro(telefone) {
+// Resolve o contato pelo telefone: primeiro em mem_membros, senão em vol_profiles
+// (voluntário) — muita gente do voluntariado ainda não tem cadastro de membro,
+// mas o nome deve aparecer na conversa. Se o voluntário tiver membresia_id,
+// também vincula o membro_id.
+async function acharContato(telefone) {
   const dig = soDigitos(telefone);
-  if (dig.length < 8) return null;
+  if (dig.length < 8) return { membro_id: null, nome: null };
   const suf = dig.slice(-8);
+  const alvo = dig.slice(-9);
   try {
     const { data } = await supabase.from('mem_membros')
       .select('id, nome, telefone').is('deleted_at', null)
       .ilike('telefone', `%${suf}%`).limit(8);
-    const alvo = dig.slice(-9);
-    return (data || []).find(m => soDigitos(m.telefone).endsWith(alvo)) || (data || [])[0] || null;
-  } catch { return null; }
+    const m = (data || []).find(x => soDigitos(x.telefone).endsWith(alvo)) || (data || [])[0];
+    if (m) return { membro_id: m.id, nome: m.nome };
+  } catch { /* segue pro voluntariado */ }
+  try {
+    const { data } = await supabase.from('vol_profiles')
+      .select('id, full_name, phone, membresia_id').eq('arquivado', false)
+      .ilike('phone', `%${suf}%`).limit(8);
+    const v = (data || []).find(x => soDigitos(x.phone).endsWith(alvo)) || (data || [])[0];
+    if (v) return { membro_id: v.membresia_id || null, nome: v.full_name };
+  } catch { /* nada */ }
+  return { membro_id: null, nome: null };
 }
 
-// Acha-ou-cria a conversa do número (1 por telefone).
+// Acha-ou-cria a conversa do número (1 por telefone). Faz backfill do nome/cadastro
+// quando a conversa já existe mas nasceu sem contato resolvido (ex.: criada antes
+// do match, ou voluntário que virou membro depois).
 async function acharOuCriarConversa(telefone) {
   const tel = wpp.normalizarTelefone(telefone) || soDigitos(telefone);
   if (!tel) return null;
   const { data: existente } = await supabase.from('wa_conversas')
     .select('*').eq('telefone', tel).maybeSingle();
-  if (existente) return existente;
-  const membro = await acharMembro(tel);
+  if (existente) {
+    if (!existente.membro_id || !existente.nome) {
+      const c = await acharContato(tel);
+      const patch = {};
+      if (!existente.membro_id && c.membro_id) patch.membro_id = c.membro_id;
+      if (!existente.nome && c.nome) patch.nome = c.nome;
+      if (Object.keys(patch).length) {
+        const { data: up } = await supabase.from('wa_conversas')
+          .update(patch).eq('id', existente.id).select('*').single();
+        return up || { ...existente, ...patch };
+      }
+    }
+    return existente;
+  }
+  const c = await acharContato(tel);
   const { data } = await supabase.from('wa_conversas')
-    .insert({ telefone: tel, nome: membro?.nome || null, membro_id: membro?.id || null })
+    .insert({ telefone: tel, nome: c.nome || null, membro_id: c.membro_id || null })
     .select('*').single();
   return data;
 }

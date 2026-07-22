@@ -175,12 +175,18 @@ router.delete('/setores/:id', authorizeModule('conversas', 3), async (req, res) 
   }
 });
 
-// GET /colaboradores — todos os colaboradores ativos (p/ atribuir responsável a qualquer um)
+// GET /colaboradores — colaboradores REAIS (p/ atribuir responsável). Exclui:
+//   - contas de AGENTE/BOT (name "Agente X" ou email agente.*@cbrio.org)
+//   - membros do app (is_membro_only) — não são staff da inbox
 router.get('/colaboradores', authorizeModule('conversas', 1), async (req, res) => {
   try {
     const { data } = await supabase.from('profiles')
-      .select('id, name, avatar_url').eq('active', true).order('name');
-    res.json({ colaboradores: (data || []).filter(p => p.name).map(p => ({ id: p.id, name: p.name, avatar_url: p.avatar_url || null })) });
+      .select('id, name, avatar_url, email, is_membro_only').eq('active', true).order('name');
+    const ehAgente = (p) => /^\s*agente\s/i.test(p.name || '') || /^agente\.[^@]+@cbrio\.org$/i.test(p.email || '');
+    const colaboradores = (data || [])
+      .filter(p => p.name && !p.is_membro_only && !ehAgente(p))
+      .map(p => ({ id: p.id, name: p.name, avatar_url: p.avatar_url || null }));
+    res.json({ colaboradores });
   } catch (e) {
     console.error('[wa-inbox] colaboradores:', e.message);
     res.status(500).json({ error: 'Erro ao listar colaboradores' });
