@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import { membresia } from '../../api';
 import { useAuth } from '../../contexts/AuthContext';
+import { hrefConversa } from '../../lib/conversas';
 import { toast } from 'sonner';
 import {
   Inbox, Check, X, Search, User, Mail, Phone,
   MapPin, Calendar, Copy, ExternalLink, Trash2, CheckCircle2,
-  CreditCard, RefreshCw,
+  CreditCard, RefreshCw, MessageSquare,
 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
@@ -72,6 +74,8 @@ function Badge({ status }) {
 
 export default function TabCadastros({ onMembrosChange }) {
   const { isDiretor } = useAuth();
+  const [podeAprovar, setPodeAprovar] = useState(false);
+  useEffect(() => { membresia.cadastros.podeAprovar().then((r) => setPodeAprovar(!!r?.pode)).catch(() => {}); }, []);
 
   const [cadastros, setCadastros] = useState([]);
   const [kpis, setKpis] = useState({ pendente: 0, aprovado: 0, rejeitado: 0, duplicado: 0 });
@@ -175,12 +179,13 @@ export default function TabCadastros({ onMembrosChange }) {
         parentesco: (familia_id && parentesco) ? parentesco : undefined,
       });
       setAcao(null);
-      setSelecionado(null);
       setObservacoesAprov('');
+      // mantém o modal aberto no estado "aprovado" → aparece o botão de confirmar no WhatsApp
+      setSelecionado((s) => (s ? { ...s, status: 'aprovado' } : s));
       toast.success(
         ehAtualizacao
           ? `Cadastro de ${nome} atualizado com sucesso!`
-          : `${nome} aprovado(a) como novo membro!`,
+          : `${nome} aprovado(a)! Confirme pelo WhatsApp abaixo.`,
       );
       await load();
       onMembrosChange?.();
@@ -189,7 +194,6 @@ export default function TabCadastros({ onMembrosChange }) {
     } finally {
       setSalvando(false);
       setAcao(null);
-      setSelecionado(null);
     }
   }
 
@@ -500,8 +504,19 @@ export default function TabCadastros({ onMembrosChange }) {
                 )}
               </div>
 
+              {/* Aprovado: abrir a conversa já com a confirmação pré-preenchida */}
+              {selecionado.status === 'aprovado' && (selecionado.telefone || '').replace(/\D/g, '') && (
+                <div style={{ marginTop: 22 }}>
+                  <Link to={hrefConversa(selecionado.telefone, `Olá, ${(selecionado.nome || '').trim().split(/\s+/)[0]}! 🎉 Seu cadastro na CBRio foi confirmado. Que alegria ter você com a gente! Qualquer coisa, é só chamar por aqui. 🙏`)}>
+                    <Button style={{ background: C.green, color: '#fff', width: '100%' }}>
+                      <MessageSquare style={{ width: 16, height: 16 }} /> Confirmar cadastro no WhatsApp
+                    </Button>
+                  </Link>
+                </div>
+              )}
+
               {/* Ações — só se ainda estiver pendente/duplicado */}
-              {isDiretor && ['pendente', 'duplicado'].includes(selecionado.status) && (
+              {podeAprovar && ['pendente', 'duplicado'].includes(selecionado.status) && (
                 <div style={{ display: 'flex', gap: 10, marginTop: 22, flexWrap: 'wrap' }}>
                   <Button
                     onClick={() => { setAcao('aprovar'); setObservacoesAprov(''); }}

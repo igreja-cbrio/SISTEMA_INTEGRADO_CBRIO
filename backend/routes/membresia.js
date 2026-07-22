@@ -22,6 +22,33 @@ const uploadMw = multer({
 
 router.use(authenticate);
 
+// Quem pode aprovar/rejeitar cadastros pendentes:
+//   admin/diretor · toda a área "Integração" (responsabilidade dela) · e
+//   aprovadores extras cadastrados (ex.: Marcelo · Cuidados) em membresia_aprovadores.
+async function usuarioPodeAprovarMembresia(req) {
+  if (['admin', 'diretor'].includes(req.user?.role)) return true;
+  if ((req.user?.granular?.areas || []).includes('Integração')) return true;
+  const ids = [req.user?.userId, req.user?.id].filter(Boolean);
+  if (ids.length) {
+    const { data } = await supabase.from('membresia_aprovadores').select('profile_id').in('profile_id', ids).limit(1);
+    if (data && data.length) return true;
+  }
+  return false;
+}
+async function podeAprovarMembresia(req, res, next) {
+  try {
+    if (!req.user) return res.status(401).json({ error: 'Não autenticado' });
+    if (await usuarioPodeAprovarMembresia(req)) return next();
+    return res.status(403).json({ error: 'Você não tem permissão para aprovar/rejeitar cadastros.' });
+  } catch (e) { return res.status(500).json({ error: 'Erro ao checar permissão' }); }
+}
+
+// GET /api/membresia/cadastros/pode-aprovar — o front usa pra mostrar os botões
+router.get('/cadastros/pode-aprovar', async (req, res) => {
+  try { res.json({ pode: await usuarioPodeAprovarMembresia(req) }); }
+  catch { res.json({ pode: false }); }
+});
+
 // Autoriza edicao de um membro especifico pelas rotas "totem":
 //   - staff de membresia (nivel >= 3) ou admin/diretor → qualquer membro
 //   - o proprio usuario logado → so o seu proprio cadastro (req.user.membro_id)
@@ -2110,7 +2137,7 @@ router.get('/cadastros/kpis', async (req, res) => {
 });
 
 // POST /api/membresia/cadastros/:id/aprovar — cria mem_membros e marca aprovado
-router.post('/cadastros/:id/aprovar', authorize('admin', 'diretor'), async (req, res) => {
+router.post('/cadastros/:id/aprovar', podeAprovarMembresia, async (req, res) => {
   try {
     const { id } = req.params;
     const { familia_id: reqFamiliaId, parentesco, observacoes } = req.body || {};
@@ -2275,7 +2302,7 @@ router.post('/cadastros/:id/aprovar', authorize('admin', 'diretor'), async (req,
 });
 
 // POST /api/membresia/cadastros/:id/rejeitar — marca rejeitado com motivo
-router.post('/cadastros/:id/rejeitar', authorize('admin', 'diretor'), async (req, res) => {
+router.post('/cadastros/:id/rejeitar', podeAprovarMembresia, async (req, res) => {
   try {
     const { id } = req.params;
     const { motivo } = req.body || {};
