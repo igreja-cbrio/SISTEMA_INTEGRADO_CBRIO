@@ -27,7 +27,7 @@ export interface DadosImpressao {
     observacoesMedicas?: string | null;
     alergia?: string | null;          // alergia em destaque (vermelho/preto)
     necessidade?: string | null;      // espectro/limitação/necessidade
-    fotoAutorizada?: boolean;         // ícone de câmera (com X se não autorizada)
+    fotoAutorizada?: boolean;         // AUTORIZAÇÃO DE USO DE IMAGEM (consent_marketing do cadastro) · câmera com X quando não autorizada
     aniversarioSemana?: boolean;      // dispara a 4ª etiqueta de aniversário
   };
   responsavel: {

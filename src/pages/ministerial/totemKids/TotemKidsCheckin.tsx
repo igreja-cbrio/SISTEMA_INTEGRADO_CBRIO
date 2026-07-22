@@ -32,6 +32,7 @@ type Crianca = {
   nome: string;
   data_nascimento: string | null;
   foto_url: string | null;
+  consent_marketing?: boolean | null;
   observacoes_medicas: string | null;
   tem_espectro: boolean | null;
   espectro_qual: string | null;
@@ -430,7 +431,11 @@ export default function TotemKidsCheckin() {
         observacoesMedicas: c.observacoes_medicas,
         alergia: alergiaLabel,
         necessidade: necessidadeLabel,
-        fotoAutorizada: !!c.foto_url,
+        // Selo da câmera = AUTORIZAÇÃO DE USO DE IMAGEM do cadastro
+        // (kids_criancas.consent_marketing · Marcos 2026-07-22). Só a marcação
+        // explícita tira a câmera cortada; null/false = cortada (hoje a base
+        // vem sem autorização — a campanha de coleta preenche aos poucos).
+        fotoAutorizada: c.consent_marketing === true,
         aniversarioSemana,
       },
       responsavel: { nome: args.respNome },
