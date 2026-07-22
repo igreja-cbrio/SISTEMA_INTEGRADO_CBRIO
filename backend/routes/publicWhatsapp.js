@@ -81,8 +81,9 @@ async function processarEvento(req) {
       for (const m of mensagens) {
         const ehTexto = m.type === 'text';
         const ehFlowReply = m.type === 'interactive' && m.interactive?.type === 'nfm_reply';
-        // Botão interativo (Aprovar/Recusar da aprovação de solicitação).
-        const ehBotao = m.type === 'interactive' && m.interactive?.type === 'button_reply';
+        // Botão de Aprovar/Recusar da aprovação de solicitação: interativo
+        // (mensagem de sessão) OU quick-reply de TEMPLATE (m.type === 'button').
+        const ehBotao = (m.type === 'interactive' && m.interactive?.type === 'button_reply') || m.type === 'button';
         // Áudio e foto são aceitos pro fluxo de GRUPOS (relato do encontro ·
         // transcrição/foto tratadas em services/whatsappGrupos).
         const ehMidia = m.type === 'audio' || m.type === 'image' || m.type === 'document';
@@ -111,7 +112,11 @@ async function processarEvento(req) {
 async function processarBotaoAprovacao(m) {
   const messageId = m.id;
   const telefone = normalizarTelefone(m.from);
-  const botaoId = m.interactive?.button_reply?.id || '';
+  // Botão interativo (session) → interactive.button_reply.id · quick-reply de
+  // TEMPLATE → m.button.text/payload (ex.: "Aprovar"/"Recusar"). interpretar() casa os dois.
+  const botaoId = m.type === 'button'
+    ? (m.button?.text || m.button?.payload || '')
+    : (m.interactive?.button_reply?.id || '');
   const { data: jaVisto } = await supabase
     .from('whatsapp_coletas').select('id').eq('whatsapp_message_id', messageId).maybeSingle();
   if (jaVisto) return;
