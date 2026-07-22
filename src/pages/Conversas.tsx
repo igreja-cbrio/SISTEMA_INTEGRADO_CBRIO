@@ -6,7 +6,10 @@ import { waInbox } from '../api';
 import ConversasInbox from '../components/waInbox/ConversasInbox';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
 import { Card } from '../components/ui/card';
-import { Loader2, Inbox, LayoutGrid, RefreshCw, Users } from 'lucide-react';
+import { Button } from '../components/ui/button';
+import { Input } from '../components/ui/input';
+import { toast } from 'sonner';
+import { Loader2, Inbox, LayoutGrid, RefreshCw, Users, Zap, Plus, Trash2, Pencil } from 'lucide-react';
 
 type ResumoArea = { area: string | null; entrada?: boolean; novas: number; ativos: number; pendentes: number };
 
@@ -81,6 +84,75 @@ function Contador({ n, cor }: { n: number; cor: 'verde' | 'azul' | 'ambar' }) {
   return <span className={`inline-flex min-w-[28px] items-center justify-center rounded-md px-2 py-0.5 text-xs font-bold tabular-nums ${c}`}>{n}</span>;
 }
 
+type Pronta = { id: string; titulo: string; texto: string };
+function MensagensProntas() {
+  const [lista, setLista] = useState<Pronta[] | null>(null);
+  const [titulo, setTitulo] = useState('');
+  const [texto, setTexto] = useState('');
+  const [salvando, setSalvando] = useState(false);
+  const [editId, setEditId] = useState<string | null>(null);
+
+  const carregar = useCallback(() => {
+    waInbox.mensagensProntas().then((r: any) => setLista(r?.mensagens || [])).catch(() => setLista([]));
+  }, []);
+  useEffect(() => { carregar(); }, [carregar]);
+
+  async function salvar() {
+    if (!titulo.trim() || !texto.trim()) { toast.error('Preencha título e texto.'); return; }
+    setSalvando(true);
+    try {
+      if (editId) { await waInbox.atualizarMensagemPronta(editId, { titulo: titulo.trim(), texto: texto.trim() }); toast.success('Mensagem atualizada'); }
+      else { await waInbox.criarMensagemPronta({ titulo: titulo.trim(), texto: texto.trim() }); toast.success('Mensagem criada'); }
+      setTitulo(''); setTexto(''); setEditId(null); carregar();
+    } catch (e: any) { toast.error(e?.message || 'Erro ao salvar'); }
+    finally { setSalvando(false); }
+  }
+  function editar(m: Pronta) { setEditId(m.id); setTitulo(m.titulo); setTexto(m.texto); }
+  function cancelar() { setEditId(null); setTitulo(''); setTexto(''); }
+  async function remover(id: string) {
+    if (!window.confirm('Remover esta mensagem pronta?')) return;
+    try { await waInbox.removerMensagemPronta(id); if (editId === id) cancelar(); carregar(); }
+    catch (e: any) { toast.error(e?.message || 'Erro ao remover'); }
+  }
+
+  return (
+    <div className="grid gap-4 md:grid-cols-[1fr_360px]">
+      <Card className="overflow-hidden p-0">
+        <div className="border-b border-border px-4 py-3">
+          <p className="text-sm font-semibold">Mensagens prontas</p>
+          <p className="text-[11px] text-muted-foreground">Respostas rápidas que aparecem no ⚡ do campo de mensagem, na conversa.</p>
+        </div>
+        <div className="max-h-[520px] divide-y divide-border/60 overflow-y-auto">
+          {lista === null ? (
+            <div className="flex justify-center p-8"><Loader2 className="h-5 w-5 animate-spin text-primary" /></div>
+          ) : lista.length === 0 ? (
+            <div className="p-8 text-center text-sm text-muted-foreground">Nenhuma mensagem pronta ainda. Crie ao lado. →</div>
+          ) : lista.map(m => (
+            <div key={m.id} className="flex items-start gap-2 px-4 py-3 hover:bg-muted/40">
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-medium">{m.titulo}</div>
+                <div className="line-clamp-3 whitespace-pre-wrap text-xs text-muted-foreground">{m.texto}</div>
+              </div>
+              <button onClick={() => editar(m)} className="shrink-0 text-muted-foreground hover:text-primary" title="Editar"><Pencil className="h-4 w-4" /></button>
+              <button onClick={() => remover(m.id)} className="shrink-0 text-muted-foreground hover:text-destructive" title="Remover"><Trash2 className="h-4 w-4" /></button>
+            </div>
+          ))}
+        </div>
+      </Card>
+      <Card className="space-y-3 self-start p-4">
+        <p className="flex items-center gap-1.5 text-sm font-semibold"><Zap className="h-4 w-4 text-primary" />{editId ? 'Editar mensagem' : 'Nova mensagem pronta'}</p>
+        <Input value={titulo} onChange={e => setTitulo(e.target.value)} placeholder="Título (ex.: Boas-vindas)" />
+        <textarea value={texto} onChange={e => setTexto(e.target.value)} rows={6} placeholder="Texto da mensagem…"
+          className="w-full resize-none rounded-lg border border-border bg-background p-2 text-sm outline-none focus:border-primary" />
+        <div className="flex gap-2">
+          {editId && <Button variant="outline" className="flex-1" onClick={cancelar}>Cancelar</Button>}
+          <Button className="flex-1 gap-1.5" disabled={salvando} onClick={salvar}>{salvando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}{editId ? 'Salvar' : 'Adicionar'}</Button>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
 export default function Conversas() {
   const { user, userAreas, isAdmin } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -106,6 +178,7 @@ export default function Conversas() {
         <TabsList>
           <TabsTrigger value="inbox"><Inbox className="h-3.5 w-3.5 mr-1.5" />Conversas</TabsTrigger>
           <TabsTrigger value="painel"><LayoutGrid className="h-3.5 w-3.5 mr-1.5" />Painel</TabsTrigger>
+          <TabsTrigger value="prontas"><Zap className="h-3.5 w-3.5 mr-1.5" />Mensagens prontas</TabsTrigger>
         </TabsList>
         <TabsContent value="inbox">
           <ConversasInbox
@@ -118,6 +191,9 @@ export default function Conversas() {
         </TabsContent>
         <TabsContent value="painel">
           <PainelAreas />
+        </TabsContent>
+        <TabsContent value="prontas">
+          <MensagensProntas />
         </TabsContent>
       </Tabs>
     </div>
