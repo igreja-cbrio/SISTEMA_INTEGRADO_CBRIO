@@ -180,20 +180,34 @@ export default function TotemMembro() {
   const handleQrTokenRef = useRef(handleQrToken);
   useEffect(() => { handleQrTokenRef.current = handleQrToken; }, [handleQrToken]);
 
-  const handleCpfLookup = useCallback(async (cpf: string) => {
+  const handleCpfLookup = useCallback(async (cpf: string, nascimento: string) => {
     const digits = cpf.replace(/\D/g, '');
     if (digits.length !== 11) return { ok: false, error: 'CPF incompleto' };
+    if (!nascimento) return { ok: false, error: 'Informe a data de nascimento' };
     try {
-      const data = await membresia.cpfLookup(digits);
+      const data = await membresia.cpfLookup(digits, nascimento);
       if (data.found) {
         applyLookupResult(data);
         return { ok: true };
       }
-      return { ok: false, error: 'CPF não encontrado' };
+      // Não achou: nunca é erro — leva a "completar cadastro" (regra do Marcos).
+      return { ok: false, notFound: true };
     } catch (e: any) {
+      if (e?.status === 404) return { ok: false, notFound: true };
       return { ok: false, error: e?.message || 'Erro ao consultar CPF' };
     }
   }, [applyLookupResult]);
+
+  // "Completar cadastro": abre o formulário já com CPF + nascimento preenchidos
+  // (o loop de volta ao totem já identificado é o mesmo da Fase 1).
+  const irCompletarCadastro = useCallback((cpf: string, nascimento: string) => {
+    const qs = new URLSearchParams({
+      from: 'totem',
+      cpf: String(cpf).replace(/\D/g, ''),
+      ...(nascimento ? { nasc: nascimento } : {}),
+    });
+    navigate(`/cadastro-membresia?${qs.toString()}`);
+  }, [navigate]);
 
   useEffect(() => {
     if (state !== 'idle') return;
@@ -610,6 +624,7 @@ export default function TotemMembro() {
       <CpfInputScreen
         onBack={() => setState('idle')}
         onLookup={handleCpfLookup}
+        onCompletarCadastro={irCompletarCadastro}
       />
       {idleOverlay}
     </>
@@ -722,16 +737,20 @@ export default function TotemMembro() {
 
 // ── CPF Input screen ───────────────────────────────────────────────────────
 
-function CpfInputScreen({ onBack, onLookup }: {
+function CpfInputScreen({ onBack, onLookup, onCompletarCadastro }: {
   onBack: () => void;
-  onLookup: (cpf: string) => Promise<{ ok: boolean; error?: string }>;
+  onLookup: (cpf: string, nascimento: string) => Promise<{ ok: boolean; error?: string; notFound?: boolean }>;
+  onCompletarCadastro: (cpf: string, nascimento: string) => void;
 }) {
+  // Dois passos: CPF (numpad) → data de nascimento (2º fator · 2026-07-22).
+  const [step, setStep] = useState<'cpf' | 'nascimento' | 'nao_achou'>('cpf');
   const [cpf, setCpf] = useState('');
+  const [nascimento, setNascimento] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const maskCpf = (digits: string) => {
-    const d = digits.slice(0, 11);
+  const maskCpf = (raw: string) => {
+    const d = raw.replace(/\D/g, '').slice(0, 11);
     if (d.length <= 3) return d;
     if (d.length <= 6) return `${d.slice(0,3)}.${d.slice(3)}`;
     if (d.length <= 9) return `${d.slice(0,3)}.${d.slice(3,6)}.${d.slice(6)}`;
@@ -739,7 +758,7 @@ function CpfInputScreen({ onBack, onLookup }: {
   };
 
   const digits = cpf.replace(/\D/g, '');
-  const canSubmit = digits.length === 11 && !loading;
+  const cpfCompleto = digits.length === 11;
 
   const pressDigit = (d: string) => {
     if (loading) return;
@@ -754,39 +773,115 @@ function CpfInputScreen({ onBack, onLookup }: {
   const pressBackspace = () => {
     if (loading) return;
     setError('');
-    setCpf(prev => {
-      const cur = prev.replace(/\D/g, '');
-      if (cur.length === 0) return '';
-      return maskCpf(cur.slice(0, -1));
-    });
+    setCpf(prev => maskCpf(prev.replace(/\D/g, '').slice(0, -1)));
   };
 
-  const submit = async () => {
-    if (!canSubmit) return;
+  const buscar = async () => {
+    if (!cpfCompleto || !nascimento || loading) return;
     setLoading(true);
     setError('');
-    const r = await onLookup(digits);
-    if (!r.ok) {
-      setError(r.error || 'Não foi possível identificar');
-      setLoading(false);
-    }
-  };
-
-  const handleHwKey = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') { e.preventDefault(); submit(); }
+    const r = await onLookup(digits, nascimento);
+    setLoading(false);
+    if (r.ok) return;               // applyLookupResult já trocou de tela
+    if (r.notFound) { setStep('nao_achou'); return; }
+    setError(r.error || 'Não foi possível identificar');
   };
 
   const KEYS = ['1','2','3','4','5','6','7','8','9'];
+  const cabecalho = (titulo: string) => (
+    <div className="flex items-center gap-3 px-6 py-4 border-b border-white/10">
+      <button
+        onClick={step === 'cpf' ? onBack : () => { setStep('cpf'); setError(''); }}
+        className="text-white/40 hover:text-white transition-colors p-1 -ml-1"
+      >
+        <ChevronLeft className="h-6 w-6" />
+      </button>
+      <h2 className="text-xl font-semibold">{titulo}</h2>
+    </div>
+  );
 
+  // ── Não encontrou: sem erro, oferece completar o cadastro (regra do Marcos) ──
+  if (step === 'nao_achou') {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-gray-950 via-gray-900 to-gray-950 text-white flex flex-col select-none">
+        {cabecalho('Vamos te cadastrar')}
+        <div className="flex-1 flex items-center justify-center p-6">
+          <div className="w-full max-w-md text-center space-y-6">
+            <div className="h-16 w-16 rounded-2xl bg-[#00B39D]/15 border border-[#00B39D]/30 flex items-center justify-center mx-auto">
+              <UserCheck className="h-8 w-8 text-[#00B39D]" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold">Não achamos seu cadastro</h1>
+              <p className="text-white/60 mt-2 leading-relaxed">
+                Sem problema! Vamos completar seu cadastro agora — seu CPF e a data de
+                nascimento já vão preenchidos.
+              </p>
+            </div>
+            <div className="space-y-3">
+              <Button
+                onClick={() => onCompletarCadastro(digits, nascimento)}
+                className="w-full bg-[#00B39D] hover:bg-[#00B39D]/90 text-white py-6 text-base rounded-2xl"
+              >
+                Completar meu cadastro
+              </Button>
+              <button
+                onClick={() => { setStep('cpf'); setNascimento(''); setError(''); }}
+                className="w-full text-white/40 hover:text-white/70 text-sm py-2"
+              >
+                Digitei algo errado — tentar de novo
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Passo 2: data de nascimento ──
+  if (step === 'nascimento') {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-gray-950 via-gray-900 to-gray-950 text-white flex flex-col select-none">
+        {cabecalho('Sua data de nascimento')}
+        <div className="flex-1 flex flex-col items-center justify-center p-6">
+          <div className="w-full max-w-md space-y-6 text-center">
+            <div className="h-16 w-16 rounded-2xl bg-[#00B39D]/15 border border-[#00B39D]/30 flex items-center justify-center mx-auto">
+              <CalendarDays className="h-8 w-8 text-[#00B39D]" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold">Confirme quem é você</h1>
+              <p className="text-white/50 text-sm mt-1">Informe sua data de nascimento para entrar com segurança.</p>
+            </div>
+            <input
+              type="date"
+              value={nascimento}
+              onChange={(e) => { setError(''); setNascimento(e.target.value); }}
+              max={format(new Date(), 'yyyy-MM-dd')}
+              autoFocus
+              className="w-full px-4 py-5 rounded-2xl border border-white/15 bg-white/5 text-white text-center text-2xl outline-none focus:border-[#00B39D] [color-scheme:dark]"
+            />
+            {error && (
+              <p className="text-center text-red-300 text-sm bg-red-500/10 border border-red-500/20 rounded-xl py-2 px-4">
+                {error}
+              </p>
+            )}
+            <Button
+              onClick={buscar}
+              disabled={!nascimento || loading}
+              className="w-full bg-[#00B39D] hover:bg-[#00B39D]/90 text-white py-6 text-base rounded-2xl gap-2 disabled:opacity-40"
+            >
+              {loading ? <Loader2 className="h-5 w-5 animate-spin" /> : <ArrowRight className="h-5 w-5" />}
+              {loading ? 'Procurando...' : 'Entrar'}
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Passo 1: CPF (numpad) ──
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-950 via-gray-900 to-gray-950 text-white flex flex-col select-none">
-      <div className="flex items-center gap-3 px-6 py-4 border-b border-white/10">
-        <button onClick={onBack} className="text-white/40 hover:text-white transition-colors p-1 -ml-1">
-          <ChevronLeft className="h-6 w-6" />
-        </button>
-        <h2 className="text-xl font-semibold">Entrar com CPF</h2>
-      </div>
-
+      {cabecalho('Entrar com CPF')}
       <div className="flex-1 flex flex-col items-center justify-center p-6">
         <div className="w-full max-w-md space-y-6">
           <div className="text-center space-y-2">
@@ -794,19 +889,18 @@ function CpfInputScreen({ onBack, onLookup }: {
               <KeyRound className="h-8 w-8 text-[#00B39D]" />
             </div>
             <h1 className="text-2xl font-bold">Digite seu CPF</h1>
-            <p className="text-white/50 text-sm">Use o teclado para informar seu CPF</p>
+            <p className="text-white/50 text-sm">Depois vamos pedir sua data de nascimento.</p>
           </div>
 
           <input
             value={cpf}
-            onChange={e => { setError(''); setCpf(maskCpf(e.target.value.replace(/\D/g, ''))); }}
-            onKeyDown={handleHwKey}
+            onChange={e => { setError(''); setCpf(maskCpf(e.target.value)); }}
+            onKeyDown={(e) => { if (e.key === 'Enter' && cpfCompleto) { setStep('nascimento'); } }}
             placeholder="000.000.000-00"
             inputMode="numeric"
             autoFocus
             className="w-full px-4 py-4 rounded-2xl border border-white/15 bg-white/5 text-white text-center text-2xl font-mono tracking-widest placeholder:text-white/20 outline-none focus:border-[#00B39D]"
             maxLength={14}
-            disabled={loading}
           />
 
           {/* Numpad */}
@@ -816,8 +910,7 @@ function CpfInputScreen({ onBack, onLookup }: {
                 key={k}
                 type="button"
                 onClick={() => pressDigit(k)}
-                disabled={loading}
-                className="py-5 rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 active:bg-white/20 transition-colors text-2xl font-semibold disabled:opacity-40"
+                className="py-5 rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 active:bg-white/20 transition-colors text-2xl font-semibold"
               >
                 {k}
               </button>
@@ -825,8 +918,7 @@ function CpfInputScreen({ onBack, onLookup }: {
             <button
               type="button"
               onClick={pressBackspace}
-              disabled={loading}
-              className="py-5 rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 active:bg-white/20 transition-colors flex items-center justify-center disabled:opacity-40"
+              className="py-5 rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 active:bg-white/20 transition-colors flex items-center justify-center"
               aria-label="Apagar"
             >
               <Delete className="h-6 w-6 text-white/60" />
@@ -834,30 +926,23 @@ function CpfInputScreen({ onBack, onLookup }: {
             <button
               type="button"
               onClick={() => pressDigit('0')}
-              disabled={loading}
-              className="py-5 rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 active:bg-white/20 transition-colors text-2xl font-semibold disabled:opacity-40"
+              className="py-5 rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 active:bg-white/20 transition-colors text-2xl font-semibold"
             >
               0
             </button>
             <button
               type="button"
-              onClick={submit}
-              disabled={!canSubmit}
+              onClick={() => cpfCompleto && setStep('nascimento')}
+              disabled={!cpfCompleto}
               className="py-5 rounded-2xl bg-[#00B39D] hover:bg-[#00B39D]/90 active:bg-[#00B39D]/80 transition-colors flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed"
-              aria-label="Confirmar"
+              aria-label="Avançar"
             >
-              {loading ? <Loader2 className="h-6 w-6 animate-spin" /> : <ArrowRight className="h-6 w-6" />}
+              <ArrowRight className="h-6 w-6" />
             </button>
           </div>
 
-          {error && (
-            <p className="text-center text-red-300 text-sm bg-red-500/10 border border-red-500/20 rounded-xl py-2 px-4">
-              {error}
-            </p>
-          )}
-
           <p className="text-center text-white/30 text-xs">
-            Seus dados são protegidos. Usamos o CPF apenas para identificar seu cadastro.
+            Seus dados são protegidos. Usamos o CPF e a data de nascimento apenas para identificar seu cadastro.
           </p>
         </div>
       </div>
@@ -1382,6 +1467,14 @@ function GruposFlow({ opt, member, onBack, onDone, onEndSession, onNovoCadastro,
   const [loading, setLoading] = useState(true);
   const [memberCoords, setMemberCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [filterCat, setFilterCat] = useState<string>('');
+  // Filtros em paridade com a inscrição pública (busca grupo|líder, dia,
+  // frequência, bairro) — mantendo a ordenação por distância e o mapa do totem.
+  const [busca, setBusca] = useState('');
+  const [searchMode, setSearchMode] = useState<'grupo' | 'lider'>('grupo');
+  const [fDia, setFDia] = useState<string>('');
+  const [fRecorrencia, setFRecorrencia] = useState<string>('');
+  const [fBairro, setFBairro] = useState<string>('');
+  const [showFiltros, setShowFiltros] = useState(false);
   const [showMap, setShowMap] = useState(false);
   const [selected, setSelected] = useState<any>(null);
   const [saving, setSaving] = useState(false);
@@ -1427,8 +1520,29 @@ function GruposFlow({ opt, member, onBack, onDone, onEndSession, onNovoCadastro,
     return (a.nome || '').localeCompare(b.nome || '');
   });
 
+  // Opções data-driven (só aparecem quando há valor → sem filtro-fantasma)
   const categories = [...new Set(grupos.map(g => g.categoria).filter(Boolean))] as string[];
-  const filtered = filterCat ? gruposEnriched.filter(g => g.categoria === filterCat) : gruposEnriched;
+  const bairros = [...new Set(grupos.map(g => g.bairro).filter(Boolean))].sort() as string[];
+  const dias = [...new Set(grupos.map(g => g.dia_semana).filter((v) => v != null))].sort((a, b) => a - b) as number[];
+  const recorrencias = [...new Set(grupos.map(g => (g.recorrencia || '').toLowerCase().trim()).filter(Boolean))] as string[];
+  const RECORRENCIA_LABEL: Record<string, string> = { diario: 'Diário', semanal: 'Semanal', quinzenal: 'Quinzenal', mensal: 'Mensal' };
+
+  const buscaNorm = busca.trim().toLowerCase();
+  const filtered = gruposEnriched.filter((g) => {
+    if (filterCat && g.categoria !== filterCat) return false;
+    if (fBairro && g.bairro !== fBairro) return false;
+    if (fDia !== '' && String(g.dia_semana) !== fDia) return false;
+    if (fRecorrencia && (g.recorrencia || '').toLowerCase().trim() !== fRecorrencia) return false;
+    if (buscaNorm) {
+      const alvo = searchMode === 'lider'
+        ? String(g.lider?.nome || '').toLowerCase()
+        : String(g.nome || '').toLowerCase();
+      if (!alvo.includes(buscaNorm)) return false;
+    }
+    return true;
+  });
+  const filtrosAtivos = [filterCat, fBairro, fDia !== '' ? fDia : '', fRecorrencia, buscaNorm].filter(Boolean).length;
+  const limparFiltros = () => { setFilterCat(''); setFBairro(''); setFDia(''); setFRecorrencia(''); setBusca(''); };
 
   const handleConfirm = async () => {
     if (!selected || !member.id) return;
@@ -1526,39 +1640,108 @@ function GruposFlow({ opt, member, onBack, onDone, onEndSession, onNovoCadastro,
       <OptionHeader opt={opt} member={member} onBack={onBack} />
 
       {/* Filters bar */}
-      <div className="px-5 py-3 border-b border-white/10 flex items-center gap-2 flex-wrap shrink-0">
-        {/* Category chips */}
-        <button
-          onClick={() => setFilterCat('')}
-          className={`px-3 py-1.5 rounded-full text-sm transition-colors ${!filterCat ? 'bg-[#00B39D] text-white' : 'bg-white/10 text-white/60 hover:bg-white/15'}`}
-        >
-          Todos
-        </button>
-        {categories.map(cat => (
+      <div className="px-5 py-3 border-b border-white/10 flex flex-col gap-3 shrink-0">
+        <div className="flex items-center gap-2">
+          {/* Busca por grupo | líder */}
+          <div className="flex items-center gap-1 rounded-full bg-white/5 border border-white/10 p-1 shrink-0">
+            <button
+              onClick={() => setSearchMode('grupo')}
+              className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${searchMode === 'grupo' ? 'bg-[#00B39D] text-white' : 'text-white/50 hover:text-white/80'}`}
+            >
+              Grupo
+            </button>
+            <button
+              onClick={() => setSearchMode('lider')}
+              className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${searchMode === 'lider' ? 'bg-[#00B39D] text-white' : 'text-white/50 hover:text-white/80'}`}
+            >
+              Líder
+            </button>
+          </div>
+          <div className="relative flex-1 min-w-0">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-white/30" />
+            <input
+              value={busca}
+              onChange={(e) => setBusca(e.target.value)}
+              placeholder={searchMode === 'lider' ? 'Buscar por líder...' : 'Buscar por grupo...'}
+              className="w-full pl-9 pr-3 py-2 rounded-full bg-white/5 border border-white/10 text-white text-sm placeholder:text-white/30 outline-none focus:border-[#00B39D]"
+            />
+          </div>
           <button
-            key={cat}
-            onClick={() => setFilterCat(cat === filterCat ? '' : cat)}
-            className={`px-3 py-1.5 rounded-full text-sm transition-colors ${filterCat === cat ? 'bg-[#00B39D] text-white' : 'bg-white/10 text-white/60 hover:bg-white/15'}`}
+            onClick={() => setShowFiltros(v => !v)}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-full text-sm transition-colors shrink-0 ${showFiltros || filtrosAtivos ? 'bg-[#00B39D] text-white' : 'bg-white/10 text-white/60 hover:bg-white/15'}`}
           >
-            {cat}
+            <List className="h-3.5 w-3.5" /> Filtros{filtrosAtivos ? ` (${filtrosAtivos})` : ''}
           </button>
-        ))}
-
-        <div className="ml-auto flex items-center gap-2">
-          {memberCoords && (
-            <span className="text-xs text-white/30 flex items-center gap-1">
-              <Navigation className="h-3 w-3 text-[#00B39D]" /> ordenado por distância
-            </span>
-          )}
-          {/* Map/List toggle */}
           <button
             onClick={() => setShowMap(v => !v)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm transition-colors ${showMap ? 'bg-[#00B39D] text-white' : 'bg-white/10 text-white/60 hover:bg-white/15'}`}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-full text-sm transition-colors shrink-0 ${showMap ? 'bg-[#00B39D] text-white' : 'bg-white/10 text-white/60 hover:bg-white/15'}`}
           >
             {showMap ? <List className="h-3.5 w-3.5" /> : <Map className="h-3.5 w-3.5" />}
             {showMap ? 'Lista' : 'Mapa'}
           </button>
         </div>
+
+        {/* Painel de filtros (dia · frequência · bairro · categoria) */}
+        {showFiltros && (
+          <div className="flex flex-col gap-2.5 rounded-2xl bg-white/[0.03] border border-white/10 p-3">
+            {dias.length > 0 && (
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs text-white/40 w-20 shrink-0">Dia</span>
+                {dias.map((d) => (
+                  <button key={d} onClick={() => setFDia(String(d) === fDia ? '' : String(d))}
+                    className={`px-3 py-1 rounded-full text-xs transition-colors ${fDia === String(d) ? 'bg-[#00B39D] text-white' : 'bg-white/10 text-white/60 hover:bg-white/15'}`}>
+                    {DIAS_MAP[d]}
+                  </button>
+                ))}
+              </div>
+            )}
+            {recorrencias.length > 0 && (
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs text-white/40 w-20 shrink-0">Frequência</span>
+                {recorrencias.map((r) => (
+                  <button key={r} onClick={() => setFRecorrencia(r === fRecorrencia ? '' : r)}
+                    className={`px-3 py-1 rounded-full text-xs transition-colors ${fRecorrencia === r ? 'bg-[#00B39D] text-white' : 'bg-white/10 text-white/60 hover:bg-white/15'}`}>
+                    {RECORRENCIA_LABEL[r] || r}
+                  </button>
+                ))}
+              </div>
+            )}
+            {bairros.length > 0 && (
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs text-white/40 w-20 shrink-0">Bairro</span>
+                {bairros.map((b) => (
+                  <button key={b} onClick={() => setFBairro(b === fBairro ? '' : b)}
+                    className={`px-3 py-1 rounded-full text-xs transition-colors ${fBairro === b ? 'bg-[#00B39D] text-white' : 'bg-white/10 text-white/60 hover:bg-white/15'}`}>
+                    {b}
+                  </button>
+                ))}
+              </div>
+            )}
+            {categories.length > 0 && (
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs text-white/40 w-20 shrink-0">Categoria</span>
+                {categories.map((cat) => (
+                  <button key={cat} onClick={() => setFilterCat(cat === filterCat ? '' : cat)}
+                    className={`px-3 py-1 rounded-full text-xs transition-colors ${filterCat === cat ? 'bg-[#00B39D] text-white' : 'bg-white/10 text-white/60 hover:bg-white/15'}`}>
+                    {cat}
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="flex items-center justify-between pt-1">
+              {memberCoords ? (
+                <span className="text-xs text-white/30 flex items-center gap-1">
+                  <Navigation className="h-3 w-3 text-[#00B39D]" /> ordenado por distância
+                </span>
+              ) : <span />}
+              {filtrosAtivos > 0 && (
+                <button onClick={limparFiltros} className="text-xs text-white/50 hover:text-white/80 underline">
+                  Limpar filtros
+                </button>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {loading ? (
