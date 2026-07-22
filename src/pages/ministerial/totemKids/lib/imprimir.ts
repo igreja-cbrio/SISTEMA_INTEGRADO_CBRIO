@@ -16,6 +16,7 @@ import { totemKids } from '@/api';
 
 export interface DadosImpressao {
   checkinId: string;
+  criancaId?: string;                 // pra checar o limite de 2 etiquetas de aniversário/semana
   estacaoId?: string | null;
   crianca: {
     nome: string;
@@ -478,12 +479,26 @@ export async function imprimirEtiquetas(d: DadosImpressao, preview = false, incl
     preloadImg(d.logoAniversarioUrl),
   ]);
 
+  // Etiqueta de aniversário: máximo 2 por semana de aniversário (Milena
+  // 2026-07-22 · antes saía Qua + Dom manhã + Dom noite = 3). O backend conta os
+  // check-ins da criança na janela do aniversário (já inclui o atual, pois a
+  // impressão roda após o POST) e diz se ainda pode. Fail-open: se a checagem
+  // falhar, imprime (não perde o aniversário). Só no check-in — a reimpressão
+  // repete o que estava na etiqueta.
+  let comAniversario = !!d.crianca.aniversarioSemana;
+  if (comAniversario && d.criancaId) {
+    try {
+      const r = await totemKids.criancas.aniversarioImpressoes(d.criancaId);
+      comAniversario = r?.imprimir !== false;
+    } catch { /* fail-open */ }
+  }
+
   // No CHECK-IN: 2 etiquetas da criança (uma na criança, outra na sacola/
   // pertences) + 1 do responsável (recibo) + 1 de aniversário (na semana).
   const fragCrianca = htmlEtiquetaCrianca(d);
   const fragmentos = [fragCrianca, fragCrianca];
   if (incluirRecibo) fragmentos.push(htmlEtiquetaResponsavel(d, barcodeSvg));
-  if (d.crianca.aniversarioSemana) fragmentos.push(htmlEtiquetaAniversario(d));
+  if (comAniversario) fragmentos.push(htmlEtiquetaAniversario(d));
 
   const resultado = await imprimirHtml(documento(fragmentos, d.layout), preview);
   if (preview) return;  // não loga impressão em modo preview
@@ -499,7 +514,7 @@ export async function imprimirEtiquetas(d: DadosImpressao, preview = false, incl
       codigo: d.codigoSeguranca,
       observacoes_medicas: d.crianca.observacoesMedicas,
       copias: 2,
-      aniversario: !!d.crianca.aniversarioSemana,
+      aniversario: comAniversario,
     },
     status: resultado.status,
   }).catch(() => {});
