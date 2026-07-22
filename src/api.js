@@ -2878,6 +2878,11 @@ export const waInbox = {
   areas: () => get('/wa-inbox/areas'),
   templates: () => get('/wa-inbox/templates'),
   colaboradores: () => get('/wa-inbox/colaboradores'),
+  // Mensagens prontas (respostas rápidas reutilizáveis)
+  mensagensProntas: () => get('/wa-inbox/mensagens-prontas'),
+  criarMensagemPronta: (body) => post('/wa-inbox/mensagens-prontas', body),
+  atualizarMensagemPronta: (id, body) => patch(`/wa-inbox/mensagens-prontas/${id}`, body),
+  removerMensagemPronta: (id) => del(`/wa-inbox/mensagens-prontas/${id}`),
   perfil: (id) => get(`/wa-inbox/conversas/${id}/perfil`),
   naoLidas: () => get('/wa-inbox/nao-lidas'),
   resumoAreas: () => get('/wa-inbox/resumo-areas'),

@@ -193,6 +193,59 @@ router.get('/colaboradores', authorizeModule('conversas', 1), async (req, res) =
   }
 });
 
+// ── Mensagens prontas (respostas rápidas reutilizáveis) ───────────────────
+// GET lista (todos que podem usar a inbox) · POST/PATCH/DELETE (quem edita, >=2)
+router.get('/mensagens-prontas', authorizeModule('conversas', 1), async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('wa_mensagens_prontas')
+      .select('id, titulo, texto').eq('ativo', true).order('titulo');
+    if (error) throw error;
+    res.json({ mensagens: data || [] });
+  } catch (e) {
+    console.error('[wa-inbox] mensagens-prontas list:', e.message);
+    res.status(500).json({ error: 'Erro ao listar mensagens prontas' });
+  }
+});
+router.post('/mensagens-prontas', authorizeModule('conversas', 2), async (req, res) => {
+  try {
+    const titulo = String(req.body?.titulo || '').trim().slice(0, 80);
+    const texto = String(req.body?.texto || '').trim().slice(0, 4000);
+    if (!titulo || !texto) return res.status(400).json({ error: 'Título e texto são obrigatórios.' });
+    const { data, error } = await supabase.from('wa_mensagens_prontas')
+      .insert({ titulo, texto, criado_por: uid(req) }).select('id, titulo, texto').single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) {
+    console.error('[wa-inbox] mensagens-prontas create:', e.message);
+    res.status(500).json({ error: 'Erro ao salvar a mensagem pronta' });
+  }
+});
+router.patch('/mensagens-prontas/:id', authorizeModule('conversas', 2), async (req, res) => {
+  try {
+    const patch = { updated_at: new Date().toISOString() };
+    if ('titulo' in (req.body || {})) patch.titulo = String(req.body.titulo || '').trim().slice(0, 80);
+    if ('texto' in (req.body || {})) patch.texto = String(req.body.texto || '').trim().slice(0, 4000);
+    const { data, error } = await supabase.from('wa_mensagens_prontas')
+      .update(patch).eq('id', req.params.id).select('id, titulo, texto').maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Mensagem não encontrada' });
+    res.json(data);
+  } catch (e) {
+    console.error('[wa-inbox] mensagens-prontas patch:', e.message);
+    res.status(500).json({ error: 'Erro ao atualizar a mensagem pronta' });
+  }
+});
+router.delete('/mensagens-prontas/:id', authorizeModule('conversas', 2), async (req, res) => {
+  try {
+    const { error } = await supabase.from('wa_mensagens_prontas').delete().eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[wa-inbox] mensagens-prontas delete:', e.message);
+    res.status(500).json({ error: 'Erro ao remover a mensagem pronta' });
+  }
+});
+
 // GET /conversas/:id/perfil — resumo da pessoa (grupo, batismo, serve+onde, NEXT)
 router.get('/conversas/:id/perfil', authorizeModule('conversas', 1), async (req, res) => {
   try {
