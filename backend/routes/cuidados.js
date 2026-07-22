@@ -1495,6 +1495,143 @@ router.delete('/visitas/:id', authorizeModule('cuidados', 3), async (req, res) =
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ─────────────────────────────────────────────────────────────
+// Trilha por pessoa (aba "Visitas e Atendimentos") · 2026-07-22
+// Agrupa os atendimentos por PESSOA num histórico contínuo. JUNTA na leitura
+// cui_visitas (visitas/atendimentos) + cui_acompanhamentos (aconselhamento/
+// capelania) — NÃO mexe no cui_acompanhamentos (ele alimenta KPIs/painel/notif/
+// cérebro/LGPD). Âncora da pessoa: membro_id > telefone(dígitos) > nome
+// normalizado. Comentários por atendimento em cui_atendimento_comentarios.
+// ─────────────────────────────────────────────────────────────
+async function _fetchTudoCui(table, columns, applyFilter) {
+  let all = [], from = 0; const page = 1000;
+  for (;;) {
+    let q = supabase.from(table).select(columns).range(from, from + page - 1);
+    if (applyFilter) q = applyFilter(q);
+    const { data, error } = await q;
+    if (error) throw error;
+    all = all.concat(data || []);
+    if (!data || data.length < page) break;
+    from += page;
+  }
+  return all;
+}
+const _cuiDigs = (v) => String(v || '').replace(/\D/g, '');
+const _cuiNorm = (v) => String(v || '').trim().toLowerCase().normalize('NFD')
+  .split('').filter((ch) => { const c = ch.charCodeAt(0); return c < 0x300 || c > 0x36f; }).join('')
+  .replace(/\s+/g, ' ');
+function _pessoaChave(r) {
+  if (r.membro_id) return 'm:' + r.membro_id;
+  const tel = _cuiDigs(r.telefone);
+  if (tel.length >= 10) return 't:' + tel;
+  const n = _cuiNorm(r.nome);
+  return n ? ('n:' + n) : ('x:' + r.fonte + ':' + r.id);
+}
+
+async function carregarAtendimentosTrilha() {
+  const [visitas, acomp] = await Promise.all([
+    _fetchTudoCui('cui_visitas',
+      'id, membro_id, nome, telefone, data_visita, tipo, tipo_outro, responsavel, status, observacao, created_at',
+      (q) => q.is('deleted_at', null)),
+    _fetchTudoCui('cui_acompanhamentos',
+      'id, membro_id, nome, telefone, tipo, motivo, observacoes, agendamento_data, agendamento_hora, agendamento_responsavel_nome, status, created_at',
+      (q) => q.is('deleted_at', null)),
+  ]);
+  const itens = [];
+  for (const v of visitas) itens.push({
+    fonte: 'visita', id: v.id, membro_id: v.membro_id || null, nome: v.nome || null, telefone: v.telefone || null,
+    data: v.data_visita || (v.created_at ? String(v.created_at).slice(0, 10) : null),
+    tipo: v.tipo, tipo_outro: v.tipo_outro || null, responsavel: v.responsavel || null,
+    status: v.status || null, texto: v.observacao || null, hora: null, created_at: v.created_at,
+  });
+  for (const a of acomp) itens.push({
+    fonte: 'acompanhamento', id: a.id, membro_id: a.membro_id || null, nome: a.nome || null, telefone: a.telefone || null,
+    data: a.agendamento_data || (a.created_at ? String(a.created_at).slice(0, 10) : null),
+    tipo: a.tipo || 'aconselhamento', tipo_outro: null, responsavel: a.agendamento_responsavel_nome || null,
+    status: a.status || null, texto: [a.motivo, a.observacoes].filter(Boolean).join(' — ') || null,
+    hora: a.agendamento_hora || null, created_at: a.created_at,
+  });
+  return itens;
+}
+
+router.get('/trilha', authorizeModule('cuidados', 1), async (req, res) => {
+  try {
+    const itens = await carregarAtendimentosTrilha();
+    const { data: coments } = await supabase
+      .from('cui_atendimento_comentarios').select('ref_tipo, ref_id').is('deleted_at', null).limit(5000);
+    const cCount = {};
+    for (const c of (coments || [])) { const k = c.ref_tipo + ':' + c.ref_id; cCount[k] = (cCount[k] || 0) + 1; }
+
+    const mapa = new Map();
+    for (const it of itens) {
+      const chave = _pessoaChave(it);
+      if (!mapa.has(chave)) mapa.set(chave, { chave, membro_id: it.membro_id || null, nome: it.nome || null, telefone: it.telefone || null, total: 0, ultimo_em: null, tipos: new Set(), atendimentos: [] });
+      const p = mapa.get(chave);
+      if (!p.membro_id && it.membro_id) p.membro_id = it.membro_id;
+      if (!p.nome && it.nome) p.nome = it.nome;
+      if (!p.telefone && it.telefone) p.telefone = it.telefone;
+      p.total += 1;
+      p.tipos.add(it.tipo);
+      const quando = it.data || (it.created_at ? String(it.created_at).slice(0, 10) : null);
+      if (quando && (!p.ultimo_em || quando > p.ultimo_em)) p.ultimo_em = quando;
+      p.atendimentos.push({ ...it, comentarios_count: cCount[it.fonte + ':' + it.id] || 0 });
+    }
+    const pessoas = [...mapa.values()].map((p) => {
+      p.atendimentos.sort((a, b) => String(b.data || b.created_at || '').localeCompare(String(a.data || a.created_at || '')));
+      return { ...p, tipos: [...p.tipos] };
+    }).sort((a, b) => String(b.ultimo_em || '').localeCompare(String(a.ultimo_em || '')));
+    res.json(pessoas);
+  } catch (e) {
+    console.error('[CUIDADOS] trilha:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.get('/atendimentos/:refTipo/:refId/comentarios', authorizeModule('cuidados', 1), async (req, res) => {
+  try {
+    const { refTipo, refId } = req.params;
+    if (!['visita', 'acompanhamento'].includes(refTipo)) return res.status(400).json({ error: 'ref inválido' });
+    const { data, error } = await supabase
+      .from('cui_atendimento_comentarios')
+      .select('id, texto, autor_id, autor_nome, created_at')
+      .eq('ref_tipo', refTipo).eq('ref_id', refId).is('deleted_at', null)
+      .order('created_at', { ascending: true });
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/atendimentos/:refTipo/:refId/comentarios', authorizeModule('cuidados', 2), async (req, res) => {
+  try {
+    const { refTipo, refId } = req.params;
+    if (!['visita', 'acompanhamento'].includes(refTipo)) return res.status(400).json({ error: 'ref inválido' });
+    const texto = String(req.body?.texto || '').trim();
+    if (!texto) return res.status(400).json({ error: 'Comentário vazio' });
+    const autorId = req.user?.id || req.user?.userId || null;
+    let autorNome = null;
+    if (autorId) {
+      const { data: prof } = await supabase.from('profiles').select('name').eq('id', autorId).maybeSingle();
+      autorNome = prof?.name || null;
+    }
+    const { data, error } = await supabase
+      .from('cui_atendimento_comentarios')
+      .insert({ ref_tipo: refTipo, ref_id: refId, texto, autor_id: autorId, autor_nome: autorNome })
+      .select('id, texto, autor_id, autor_nome, created_at').single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete('/atendimento-comentarios/:id', authorizeModule('cuidados', 3), async (req, res) => {
+  try {
+    const { error } = await supabase.from('cui_atendimento_comentarios')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('id', req.params.id).is('deleted_at', null);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // GET /api/cuidados/visitas-pendentes
 // Visitas passadas (data_encontro < hoje) cuja pessoa ainda não saiu "completa":
 // toda pessoa visitada precisa ter desfecho registrado, ≥1 tag pastoral e

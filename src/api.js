@@ -2979,6 +2979,13 @@ export const cuidados = {
     update: (id, data) => patch(`/cuidados/visitas/${id}`, data),
     remove: (id) => del(`/cuidados/visitas/${id}`),
   },
+  // Trilha por pessoa (aba Visitas e Atendimentos) · agrupa visitas + acompanhamentos
+  trilha: () => get('/cuidados/trilha'),
+  atendimentoComentarios: {
+    list: (refTipo, refId) => get(`/cuidados/atendimentos/${refTipo}/${refId}/comentarios`),
+    create: (refTipo, refId, texto) => post(`/cuidados/atendimentos/${refTipo}/${refId}/comentarios`, { texto }),
+    remove: (id) => del(`/cuidados/atendimento-comentarios/${id}`),
+  },
   agregado: {
     list: (mes) => get(`/cuidados/agregado${mes ? `?mes=${mes}` : ''}`),
     upsert: (data) => post('/cuidados/agregado', data),

@@ -1776,6 +1776,37 @@ Follow-ups (próximas PRs): "engajou" cruzar com o sinal real do valor (grupo/vo
 fechar-o-loop (aceite na área cria o pedido de grupo / inscrição de voluntário nativos),
 funil de analytics encaminhados→aderiram.
 
+## Cuidados · trilha por pessoa na aba "Visitas e Atendimentos" (2026-07-22)
+
+Parte do redesenho do Cuidados (aprovado pelo Marcos). A aba deixou de ser uma
+lista solta de atendimentos independentes e virou uma **trilha por PESSOA**: o
+histórico de cada pessoa vira um fio contínuo, com **comentários por atendimento**.
+- **Migration `20260722180000`**: `cui_atendimento_comentarios` (comentário
+  polimórfico · `ref_tipo` visita|acompanhamento + `ref_id`) + RLS módulo cuidados +
+  service_role. Soft-delete via UPDATE `deleted_at` no backend (mesmo padrão do
+  `cui_visitas` · não usa `app_soft_delete`/whitelist).
+- **A trilha JUNTA na leitura `cui_visitas` (visitas/atendimentos) +
+  `cui_acompanhamentos` (aconselhamento/capelania)** — decisão consciente de **NÃO
+  migrar/mexer no `cui_acompanhamentos`**: ele alimenta 6 leitores (KPIs de
+  capelania/aconselhamento em `kpiAutoCollector`, `painel.js`, `notificacaoGenerator`,
+  `agentContext`, `cerebroSync`, `lgpd`). Unificar por leitura preserva os KPIs e evita
+  a armadilha "não é swap de 1 linha".
+- **Âncora da pessoa** (chave): `membro_id` > telefone (só dígitos, ≥10) > nome
+  normalizado (sem acento/caixa). Contrato de porta.
+- **Backend** (`routes/cuidados.js`): `GET /cuidados/trilha` (pessoas agrupadas ·
+  cada uma com `atendimentos[]` já ordenados + `comentarios_count`; helper
+  `carregarAtendimentosTrilha` + `_fetchTudoCui` paginado p/ o cap de 1000) ·
+  `GET/POST /cuidados/atendimentos/:refTipo/:refId/comentarios` ·
+  `DELETE /cuidados/atendimento-comentarios/:id`.
+- **Frontend** (`Cuidados.tsx`): `TrilhaPessoas` (cards de pessoa · busca · paginação)
+  → `TrilhaPessoaDialog` (timeline) → `ComentariosAtendimento` (lazy). "Registrar
+  atendimento" reusa o `VisitaModal` (cui_visitas); editar/prefill por pessoa idem.
+  Capelania só é EXIBIDA na trilha (vem de `cui_acompanhamentos`) — criar capelania/
+  aconselhamento novo segue na aba Aconselhamento (até a Caixa de entrada ligar a
+  ponte "atender → cria atendimento na trilha", próxima PR). `api.js`:
+  `cuidados.trilha()` + `cuidados.atendimentoComentarios.{list,create,remove}`.
+- ⚠️ Aplicar a migration `20260722180000` antes do merge.
+
 ## Cuidados · responsáveis do atendimento gerenciáveis (2026-07-21)
 
 Pedido do Marcos: a lista de responsáveis da aba **Próximos passos** do

@@ -929,97 +929,211 @@ function VisitaModal({ open, onClose, onSaved, initial }: {
   );
 }
 
-// Lista da aba "Visitas e atendimentos" · visitas pastorais e atendimentos avulsos
-// (cui_visitas), fora do funil de novos convertidos. Substituiu o calendário.
-function VisitasList({ itens, loading, canEdit, onNova, onEdit, onRemove }: {
-  itens: any[]; loading: boolean; canEdit: boolean; onNova: () => void; onEdit: (v: any) => void; onRemove: (v: any) => void;
-}) {
-  const [busca, setBusca] = useState('');
-  const [statusF, setStatusF] = useState('todos');
-  const fmtData = (d: string | null) => d ? new Date(d + 'T12:00:00').toLocaleDateString('pt-BR') : '—';
-  const filtrados = useMemo(() => {
-    const q = busca.trim().toLowerCase();
-    return itens.filter((v: any) => {
-      if (statusF !== 'todos' && v.status !== statusF) return false;
-      if (q && !(`${v.nome || ''} ${v.responsavel || ''} ${v.observacao || ''}`.toLowerCase().includes(q))) return false;
-      return true;
-    });
-  }, [itens, busca, statusF]);
+// ── Trilha por pessoa (aba "Visitas e Atendimentos") ──────────────────
+// Agrupa os atendimentos por PESSOA (cui_visitas + cui_acompanhamentos, unidos
+// no backend GET /cuidados/trilha). Cada pessoa abre uma trilha com o histórico
+// de atendimentos + comentários por atendimento. Substituiu a lista solta.
+const ATEND_TIPO_LABEL: Record<string, string> = {
+  visita_domiciliar: 'Visita domiciliar', visita_hospitalar: 'Visita hospitalar',
+  funeral: 'Funeral', casamento: 'Casamento', aconselhamento: 'Aconselhamento',
+  capelania: 'Capelania', outro: 'Outro',
+};
+const ATEND_TIPO_COR: Record<string, string> = {
+  visita_domiciliar: '#00B39D', visita_hospitalar: '#3b82f6', funeral: '#6b7280',
+  casamento: '#ec4899', aconselhamento: '#f59e0b', capelania: '#8b5cf6', outro: '#64748b',
+};
+function tipoAtendLabel(t: any) {
+  if (t?.tipo === 'outro' && t.tipo_outro) return `Outro · ${t.tipo_outro}`;
+  return ATEND_TIPO_LABEL[t?.tipo] || t?.tipo || '—';
+}
+function fmtDataBR(d: string | null) { return d ? new Date(d + 'T12:00:00').toLocaleDateString('pt-BR') : '—'; }
 
-  const { pageItems: filtradosPag, paginacaoProps: visitasPagProps } = usePaginacaoLocal(filtrados, 25);
+// Comentários de um atendimento (lazy · abre ao clicar). refTipo = visita|acompanhamento
+function ComentariosAtendimento({ refTipo, refId, count, canWrite }: { refTipo: string; refId: string; count: number; canWrite: boolean }) {
+  const [aberto, setAberto] = useState(false);
+  const [itens, setItens] = useState<any[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [texto, setTexto] = useState('');
+  const [salvando, setSalvando] = useState(false);
+
+  async function carregar() {
+    setLoading(true);
+    try { setItens(await cuidadosApi.atendimentoComentarios.list(refTipo, refId)); }
+    catch { setItens([]); }
+    finally { setLoading(false); }
+  }
+  function toggle() { const n = !aberto; setAberto(n); if (n && itens === null) carregar(); }
+  async function adicionar() {
+    const t = texto.trim();
+    if (!t) return;
+    setSalvando(true);
+    try {
+      const novo = await cuidadosApi.atendimentoComentarios.create(refTipo, refId, t);
+      setItens(prev => [...(prev || []), novo]);
+      setTexto('');
+    } catch (e: any) { toast.error(e.message); }
+    finally { setSalvando(false); }
+  }
+  async function remover(id: string) {
+    if (!confirm('Remover comentário?')) return;
+    try { await cuidadosApi.atendimentoComentarios.remove(id); setItens(prev => (prev || []).filter(c => c.id !== id)); }
+    catch (e: any) { toast.error(e.message); }
+  }
+  const total = itens ? itens.length : count;
+  return (
+    <div className="mt-2">
+      <button type="button" onClick={toggle} className="text-xs text-primary hover:underline flex items-center gap-1">
+        <MessageSquare className="h-3 w-3" />{total > 0 ? `${total} comentário${total > 1 ? 's' : ''}` : 'Comentar'}
+      </button>
+      {aberto && (
+        <div className="mt-2 space-y-2 pl-3 border-l-2 border-border">
+          {loading ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /> : (itens || []).map(c => (
+            <div key={c.id} className="text-xs">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-medium">{c.autor_nome || 'Equipe'}</span>
+                <span className="text-muted-foreground">
+                  {new Date(c.created_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                  {canWrite && <button type="button" onClick={() => remover(c.id)} className="ml-2 text-muted-foreground hover:text-destructive">×</button>}
+                </span>
+              </div>
+              <p className="whitespace-pre-wrap text-muted-foreground">{c.texto}</p>
+            </div>
+          ))}
+          {itens && itens.length === 0 && !loading && <p className="text-xs text-muted-foreground italic">Sem comentários.</p>}
+          {canWrite && (
+            <div className="flex gap-2">
+              <Input className="h-8 text-xs" placeholder="Adicionar comentário..." value={texto}
+                onChange={e => setTexto(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); adicionar(); } }} />
+              <Button size="sm" className="h-8" disabled={salvando || !texto.trim()} onClick={adicionar}>
+                {salvando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Enviar'}
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Painel da trilha de uma pessoa (timeline de atendimentos + comentários)
+function TrilhaPessoaDialog({ pessoa, canEdit, onClose, onEditVisita, onNovoParaPessoa }: {
+  pessoa: any | null; canEdit: boolean; onClose: () => void; onEditVisita: (a: any) => void; onNovoParaPessoa: (p: any) => void;
+}) {
+  if (!pessoa) return null;
+  return (
+    <Dialog open={!!pessoa} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-xl flex flex-col max-h-[85vh]">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><HeartHandshake className="h-4 w-4 text-primary" />{pessoa.nome || 'Pessoa'}</DialogTitle>
+          {pessoa.telefone && <p className="text-xs text-muted-foreground">{pessoa.telefone}{pessoa.membro_id ? ' · membro' : ''}</p>}
+        </DialogHeader>
+        <div className="flex-1 overflow-y-auto min-h-0 space-y-3">
+          <p className="text-xs text-muted-foreground">{pessoa.total} atendimento{pessoa.total > 1 ? 's' : ''} · do mais recente ao mais antigo.</p>
+          {(pessoa.atendimentos || []).map((a: any) => {
+            const cor = ATEND_TIPO_COR[a.tipo] || '#64748b';
+            return (
+              <div key={a.fonte + a.id} className="rounded-lg border border-border p-3" style={{ background: 'var(--cbrio-input-bg)' }}>
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] px-2 py-0.5 rounded-full font-medium" style={{ background: cor + '22', color: cor, border: `1px solid ${cor}40` }}>{tipoAtendLabel(a)}</span>
+                    <span className="text-sm font-medium">{fmtDataBR(a.data)}{a.hora ? ' · ' + String(a.hora).slice(0, 5) : ''}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {a.status && <span className="text-[11px] text-muted-foreground">{a.status}</span>}
+                    {canEdit && a.fonte === 'visita' && (
+                      <Button variant="ghost" size="icon" className="h-6 w-6" title="Editar atendimento" onClick={() => onEditVisita(a)}><Pencil className="h-3 w-3" /></Button>
+                    )}
+                  </div>
+                </div>
+                {a.responsavel && <p className="text-xs text-muted-foreground mt-1">Quem atendeu: {a.responsavel}</p>}
+                {a.texto && <p className="text-sm mt-1 whitespace-pre-wrap">{a.texto}</p>}
+                <ComentariosAtendimento refTipo={a.fonte} refId={a.id} count={a.comentarios_count || 0} canWrite={canEdit} />
+              </div>
+            );
+          })}
+        </div>
+        <DialogFooter className="flex-row justify-between sm:justify-between">
+          <div>{canEdit && <Button variant="outline" size="sm" onClick={() => onNovoParaPessoa(pessoa)}><Plus className="h-4 w-4 mr-1.5" />Novo atendimento</Button>}</div>
+          <Button variant="outline" onClick={onClose}>Fechar</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Aba "Visitas e Atendimentos" · trilha por pessoa (cui_visitas + cui_acompanhamentos)
+function TrilhaPessoas({ canEdit, reloadKey, onNova, onEditVisita, onNovoParaPessoa }: {
+  canEdit: boolean; reloadKey: number; onNova: () => void; onEditVisita: (a: any) => void; onNovoParaPessoa: (p: any) => void;
+}) {
+  const [pessoas, setPessoas] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busca, setBusca] = useState('');
+  const [sel, setSel] = useState<any | null>(null);
+
+  useEffect(() => {
+    setLoading(true);
+    cuidadosApi.trilha().then((p: any[]) => setPessoas(Array.isArray(p) ? p : [])).catch(() => setPessoas([])).finally(() => setLoading(false));
+  }, [reloadKey]);
+
+  // Sincroniza o painel aberto após recarregar (comentários, nome novo, etc.)
+  useEffect(() => {
+    if (sel) { const atual = pessoas.find(p => p.chave === sel.chave); setSel(atual || null); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pessoas]);
+
+  const filtradas = useMemo(() => {
+    const q = busca.trim().toLowerCase();
+    if (!q) return pessoas;
+    return pessoas.filter(p => `${p.nome || ''} ${p.telefone || ''}`.toLowerCase().includes(q));
+  }, [pessoas, busca]);
+  const { pageItems, paginacaoProps } = usePaginacaoLocal(filtradas, 30);
 
   return (
     <div className="space-y-4">
       <div className="rounded-lg border border-border bg-card p-4">
-        <div className="flex items-center gap-2 mb-1">
-          <CalendarCheck className="h-4 w-4 text-primary" />
-          <h3 className="font-semibold text-sm">Visitas e atendimentos</h3>
-        </div>
-        <p className="text-xs text-muted-foreground">Visitas pastorais e atendimentos avulsos — fora do funil de novos convertidos.</p>
+        <div className="flex items-center gap-2 mb-1"><CalendarCheck className="h-4 w-4 text-primary" /><h3 className="font-semibold text-sm">Visitas e Atendimentos</h3></div>
+        <p className="text-xs text-muted-foreground">Histórico por pessoa — cada atendimento (visita, aconselhamento, capelania) na trilha da pessoa, com comentários.</p>
       </div>
       <div className="flex items-center gap-3 flex-wrap">
         <div className="relative flex-1 min-w-[220px]">
           <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
-          <Input placeholder="Buscar por pessoa, responsável ou observação..." value={busca} onChange={e => setBusca(e.target.value)} className="pl-8" />
+          <Input placeholder="Buscar pessoa por nome ou telefone..." value={busca} onChange={e => setBusca(e.target.value)} className="pl-8" />
         </div>
-        <Select value={statusF} onValueChange={setStatusF}>
-          <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="todos">Todos os status</SelectItem>
-            {VISITA_STATUS_UI.map(s => <SelectItem key={s.v} value={s.v}>{s.l}</SelectItem>)}
-          </SelectContent>
-        </Select>
-        {canEdit && <Button onClick={onNova}><Plus className="h-4 w-4 mr-2" />Registrar visita</Button>}
+        {canEdit && <Button onClick={onNova}><Plus className="h-4 w-4 mr-2" />Registrar atendimento</Button>}
       </div>
-      <div className="rounded-lg border border-border bg-card overflow-hidden">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Pessoa</TableHead>
-              <TableHead>Data</TableHead>
-              <TableHead>Tipo</TableHead>
-              <TableHead>Quem atendeu</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Observação</TableHead>
-              <TableHead></TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loading ? (
-              <TableRow><TableCell colSpan={7} className="text-center py-8"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground inline" /></TableCell></TableRow>
-            ) : filtrados.length === 0 ? (
-              <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">{itens.length === 0 ? 'Nenhuma visita registrada ainda.' : 'Nenhum resultado nos filtros.'}</TableCell></TableRow>
-            ) : filtradosPag.map((v: any) => {
-              const st = VISITA_STATUS_UI.find(s => s.v === v.status);
-              const cor = st?.color || '#94a3b8';
-              return (
-                <TableRow key={v.id}>
-                  <TableCell className="font-medium">
-                    {v.nome}
-                    {v.telefone && <div className="text-xs text-muted-foreground">{v.telefone}</div>}
-                  </TableCell>
-                  <TableCell className="whitespace-nowrap text-sm">{fmtData(v.data_visita)}</TableCell>
-                  <TableCell className="text-sm">{v.tipo === 'outro' && v.tipo_outro ? `Outro · ${v.tipo_outro}` : (VISITA_TIPO_LABEL[v.tipo] || v.tipo)}</TableCell>
-                  <TableCell className="text-sm">{v.responsavel || '—'}</TableCell>
-                  <TableCell>
-                    <span className="text-[11px] px-2 py-0.5 rounded-full font-medium whitespace-nowrap" style={{ background: cor + '22', color: cor, border: `1px solid ${cor}40` }}>{st?.l || v.status}</span>
-                  </TableCell>
-                  <TableCell className="max-w-[260px]"><span className="text-sm text-muted-foreground line-clamp-2">{v.observacao || '—'}</span></TableCell>
-                  <TableCell className="text-right whitespace-nowrap">
-                    {canEdit && (
-                      <>
-                        <Button variant="ghost" size="sm" onClick={() => onEdit(v)}>Editar</Button>
-                        <Button variant="ghost" size="sm" onClick={() => onRemove(v)}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button>
-                      </>
-                    )}
-                  </TableCell>
-                </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
-      </div>
-      <Paginacao {...visitasPagProps} itemLabel="visitas" />
+      {loading ? (
+        <div className="text-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground inline" /></div>
+      ) : filtradas.length === 0 ? (
+        <div className="rounded-lg border border-border bg-card p-8 text-center text-muted-foreground text-sm">{pessoas.length === 0 ? 'Nenhum atendimento registrado ainda.' : 'Ninguém com esse nome/telefone.'}</div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {pageItems.map((p: any) => (
+            <button key={p.chave} type="button" onClick={() => setSel(p)}
+              className="text-left rounded-lg border border-border bg-card p-3 hover:border-primary/50 transition-colors">
+              <div className="font-medium flex items-center gap-1.5">{p.nome || 'Sem nome'}{p.membro_id && <Badge variant="secondary" className="text-[10px]">membro</Badge>}</div>
+              {p.telefone && <div className="text-xs text-muted-foreground">{p.telefone}</div>}
+              <div className="flex items-center justify-between mt-2">
+                <span className="text-xs text-muted-foreground">{p.total} atendimento{p.total > 1 ? 's' : ''}</span>
+                <span className="text-[11px] text-muted-foreground">{p.ultimo_em ? fmtDataBR(p.ultimo_em) : ''}</span>
+              </div>
+              <div className="flex flex-wrap gap-1 mt-1.5">
+                {(p.tipos || []).slice(0, 4).map((t: string) => {
+                  const cor = ATEND_TIPO_COR[t] || '#64748b';
+                  return <span key={t} className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: cor + '20', color: cor }}>{ATEND_TIPO_LABEL[t] || t}</span>;
+                })}
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+      <Paginacao {...paginacaoProps} itemLabel="pessoas" />
+      <TrilhaPessoaDialog
+        pessoa={sel}
+        canEdit={canEdit}
+        onClose={() => setSel(null)}
+        onEditVisita={(a) => { setSel(null); onEditVisita(a); }}
+        onNovoParaPessoa={(p) => { setSel(null); onNovoParaPessoa(p); }}
+      />
     </div>
   );
 }
@@ -1064,11 +1178,10 @@ export default function Cuidados() {
   // Responsáveis do atendimento (cui_responsaveis) · fallback = lista fixa antiga
   const [responsaveis, setResponsaveis] = useState<any[]>(RESPONSAVEIS_FALLBACK);
   const [modalResponsaveis, setModalResponsaveis] = useState(false);
-  const [visitas, setVisitas] = useState<any[]>([]);
-  const [visitasLoading, setVisitasLoading] = useState(true);
   const [modalVisita, setModalVisita] = useState(false);
   const [editVisita, setEditVisita] = useState<any | null>(null);
   const [visitasVersion, setVisitasVersion] = useState(0);
+  const [trilhaVersion, setTrilhaVersion] = useState(0);
   const [convertTags, setConvertTags] = useState<string[]>([]);
   const [convertSearch, setConvertSearch] = useState('');
   const [convertFilter, setConvertFilter] = useState<'todos' | 'sem_responsavel' | 'sem_direcionamento' | 'atrasados'>('todos');
@@ -1088,13 +1201,10 @@ export default function Cuidados() {
     setVisitasVersion(v => v + 1);
   }
 
-  // Lista de visitas/atendimentos avulsos (aba "Visitas e atendimentos")
-  function loadVisitas() {
-    setVisitasLoading(true);
-    cuidadosApi.visitas.list().then(setVisitas).catch(() => setVisitas([])).finally(() => setVisitasLoading(false));
-  }
+  // Recarrega a trilha (aba Visitas e Atendimentos) + as séries do dashboard.
+  function recarregarTrilha() { setTrilhaVersion(v => v + 1); setVisitasVersion(v => v + 1); }
 
-  useEffect(() => { loadAll(); loadVisitas(); }, []);
+  useEffect(() => { loadAll(); }, []);
 
   // Catalogo de tags pastorais · fonte de verdade no backend
   useEffect(() => {
@@ -1298,7 +1408,7 @@ export default function Cuidados() {
           <TabsTrigger value="acomp">Aconselhamento</TabsTrigger>
           <TabsTrigger value="convertidos">Próximos passos</TabsTrigger>
           <TabsTrigger value="devocional">Devocional</TabsTrigger>
-          <TabsTrigger value="visitas">Visitas e atendimentos</TabsTrigger>
+          <TabsTrigger value="visitas">Visitas e Atendimentos</TabsTrigger>
         </TabsList>
 
         {/* Dashboard */}
@@ -1870,15 +1980,17 @@ export default function Cuidados() {
           <DevocionalAdmin />
         </TabsContent>
 
-        {/* Visitas e atendimentos · lista de visitas pastorais e atendimentos avulsos */}
+        {/* Visitas e Atendimentos · trilha por pessoa (cui_visitas + cui_acompanhamentos) */}
         <TabsContent value="visitas" className="space-y-4">
-          <VisitasList
-            itens={visitas}
-            loading={visitasLoading}
+          <TrilhaPessoas
             canEdit={podeEditarCuidados}
+            reloadKey={trilhaVersion}
             onNova={() => { setEditVisita(null); setModalVisita(true); }}
-            onEdit={(v: any) => { setEditVisita(v); setModalVisita(true); }}
-            onRemove={async (v: any) => { if (confirm(`Remover a visita de ${v.nome}?`)) { await cuidadosApi.visitas.remove(v.id); loadVisitas(); } }}
+            onEditVisita={(a: any) => {
+              setEditVisita({ id: a.id, nome: a.nome, telefone: a.telefone, data_visita: a.data, tipo: a.tipo, tipo_outro: a.tipo_outro, responsavel: a.responsavel, status: a.status, observacao: a.texto });
+              setModalVisita(true);
+            }}
+            onNovoParaPessoa={(p: any) => { setEditVisita({ nome: p.nome, telefone: p.telefone }); setModalVisita(true); }}
           />
         </TabsContent>
       </Tabs>
@@ -1917,7 +2029,7 @@ export default function Cuidados() {
       <VisitaModal
         open={modalVisita}
         onClose={() => { setModalVisita(false); setEditVisita(null); }}
-        onSaved={loadVisitas}
+        onSaved={recarregarTrilha}
         initial={editVisita}
       />
       <GerenciarResponsaveisModal
