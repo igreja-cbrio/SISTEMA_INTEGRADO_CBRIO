@@ -31,8 +31,8 @@ export default function VolDashboard() {
     { label: 'Modo Totem', icon: Monitor, path: '/voluntariado/totem', color: 'text-teal-600' },
     { label: 'Escalas', icon: Calendar, path: '/ministerial/voluntariado/escalas', color: 'text-blue-600' },
     { label: 'QR Codes', icon: QrCode, path: '/ministerial/voluntariado/qrcodes', color: 'text-purple-600' },
-    { label: 'Relatorios', icon: BarChart3, path: '/ministerial/voluntariado/relatorios', color: 'text-orange-600' },
-    { label: 'Administracao', icon: Users, path: '/ministerial/voluntariado/admin', color: 'text-red-600' },
+    { label: 'Relatórios', icon: BarChart3, path: '/ministerial/voluntariado/relatorios', color: 'text-orange-600' },
+    { label: 'Administração', icon: Users, path: '/ministerial/voluntariado/admin', color: 'text-red-600' },
   ];
 
   return (
