@@ -2451,6 +2451,8 @@ export const voluntariado = {
     sugerirVinculos: () => post('/voluntariado/frequencia/sugerir-vinculos', {}),
     vincularLote: (vinculos) => post('/voluntariado/frequencia/vincular-lote', { vinculos }),
     importar: (file) => { const fd = new FormData(); fd.append('arquivo', file); return requestFile('/voluntariado/frequencia/importar', fd); },
+    // Motivo de inatividade (motivo vazio limpa). chave = identidade da linha.
+    setInatividade: (chave, motivo, detalhe) => put('/voluntariado/frequencia/inatividade', { chave, motivo, detalhe }),
   },
   // Mensagem automática de WhatsApp (boas-vindas ao se inscrever pra servir)
   whatsappAuto: {

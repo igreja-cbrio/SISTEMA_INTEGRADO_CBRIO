@@ -28,7 +28,22 @@ type Row = {
   chave: string; vol_profile_id: string | null; nome_norm: string; nome: string;
   total_servicos: number; servicos_3m: number; ultimo_servico: string | null; ativo: boolean;
   telefone: string | null; membro_id: string | null;
+  inatividade_motivo?: string | null; inatividade_detalhe?: string | null; inatividade_em?: string | null;
 };
+
+// Motivos comuns pra inatividade (o valor é guardado · o rótulo é exibido).
+const MOTIVOS: { v: string; l: string }[] = [
+  { v: 'mudou_cidade', l: 'Mudou de cidade' },
+  { v: 'saude', l: 'Problema de saúde' },
+  { v: 'afastamento', l: 'Afastamento temporário' },
+  { v: 'estudos_trabalho', l: 'Estudos / trabalho' },
+  { v: 'familia', l: 'Questões familiares' },
+  { v: 'trocou_ministerio', l: 'Trocou de ministério' },
+  { v: 'desligou', l: 'Não quer mais servir' },
+  { v: 'sem_contato', l: 'Sem contato / não responde' },
+  { v: 'outro', l: 'Outro' },
+];
+const MOTIVO_LABEL: Record<string, string> = Object.fromEntries(MOTIVOS.map(m => [m.v, m.l]));
 
 function fmt(d: string | null) {
   if (!d) return '—';
@@ -169,6 +184,11 @@ export default function VolFrequencia() {
                     {r.ativo
                       ? <Badge className="bg-emerald-100 text-emerald-700">Ativo</Badge>
                       : <Badge className="bg-amber-100 text-amber-700">Inativo</Badge>}
+                    {!r.ativo && r.inatividade_motivo && (
+                      <div className="mt-1 text-[11px] text-muted-foreground truncate max-w-[170px]" title={r.inatividade_detalhe || ''}>
+                        {MOTIVO_LABEL[r.inatividade_motivo] || r.inatividade_motivo}
+                      </div>
+                    )}
                   </td>
                   <td className="px-4 py-2">
                     {waLink(r.telefone)
@@ -187,7 +207,7 @@ export default function VolFrequencia() {
         </div>
       </Card>
 
-      {detalhe && <DetalheModal row={detalhe} onClose={() => setDetalhe(null)} />}
+      {detalhe && <DetalheModal row={detalhe} onClose={() => setDetalhe(null)} onChanged={carregar} />}
       {vincular && <VincularModal row={vincular} onClose={() => setVincular(null)} onDone={() => { setVincular(null); carregar(); }} />}
       {iaOpen && <SugestoesIaModal onClose={() => setIaOpen(false)} onDone={() => { setIaOpen(false); carregar(); }} />}
     </div>
@@ -312,13 +332,25 @@ function SugestoesIaModal({ onClose, onDone }: { onClose: () => void; onDone: ()
   );
 }
 
-function DetalheModal({ row, onClose }: { row: Row; onClose: () => void }) {
+function DetalheModal({ row, onClose, onChanged }: { row: Row; onClose: () => void; onChanged: () => void }) {
   const [regs, setRegs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [motivo, setMotivo] = useState(row.inatividade_motivo || '');
+  const [detMotivo, setDetMotivo] = useState(row.inatividade_detalhe || '');
+  const [salvandoM, setSalvandoM] = useState(false);
   useEffect(() => {
     const params: any = row.vol_profile_id ? { profile_id: row.vol_profile_id } : { nome_norm: row.nome_norm };
     api.frequencia.detalhe(params).then(setRegs).catch(() => {}).finally(() => setLoading(false));
   }, [row]);
+  async function salvarMotivo() {
+    setSalvandoM(true);
+    try {
+      await api.frequencia.setInatividade(row.chave, motivo, detMotivo);
+      toast.success(motivo ? 'Motivo salvo' : 'Motivo removido');
+      onChanged();
+    } catch (e: any) { toast.error(e?.message || 'Erro ao salvar o motivo'); }
+    finally { setSalvandoM(false); }
+  }
   const porCulto = useMemo(() => {
     const m: Record<string, number> = {};
     for (const r of regs) m[r.culto_label] = (m[r.culto_label] || 0) + 1;
@@ -331,6 +363,28 @@ function DetalheModal({ row, onClose }: { row: Row; onClose: () => void }) {
           <DialogTitle>{row.nome}</DialogTitle>
           <DialogDescription>{row.servicos_3m} em 3 meses · {row.total_servicos} no total · {row.ativo ? 'Ativo' : 'Inativo'} · último em {fmt(row.ultimo_servico)}</DialogDescription>
         </DialogHeader>
+
+        {/* Motivo da inatividade · por que a pessoa parou de servir (candidato a contato) */}
+        <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-2">
+          <div className="text-xs font-semibold text-foreground">Motivo da inatividade</div>
+          <select value={motivo} onChange={(e) => setMotivo(e.target.value)}
+            className="w-full h-9 rounded-md border border-border bg-background px-2 text-sm">
+            <option value="">— Sem motivo registrado —</option>
+            {MOTIVOS.map(m => <option key={m.v} value={m.v}>{m.l}</option>)}
+          </select>
+          {motivo && (
+            <textarea value={detMotivo} onChange={(e) => setDetMotivo(e.target.value)} rows={2}
+              placeholder="Detalhe (opcional): o que foi conversado, previsão de retorno, etc."
+              className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm resize-none" />
+          )}
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] text-muted-foreground">{row.inatividade_em ? `Registrado em ${fmt(String(row.inatividade_em).slice(0, 10))}` : 'Não registrado'}</span>
+            <Button size="sm" onClick={salvarMotivo} disabled={salvandoM}
+              className="h-8 gap-1.5 bg-[#00B39D] hover:bg-[#00B39D]/90">
+              {salvandoM ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />} Salvar motivo
+            </Button>
+          </div>
+        </div>
         {Object.keys(porCulto).length > 0 && (
           <div className="flex flex-wrap gap-2">
             {Object.entries(porCulto).map(([c, n]) => (
