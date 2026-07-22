@@ -3295,6 +3295,15 @@ export const nps = {
   responder: (id, data) => post(`/nps/${id}/responder`, data),
   analisar: (id) => post(`/nps/${id}/analisar`, {}),
   notificar: (id) => post(`/nps/${id}/notificar`, {}),
+  // Importar de Google Forms: perguntas por link (preview → cria via create) e
+  // respostas por planilha (preview + commit).
+  importarForm: (url) => post('/nps/importar-form', { url }),
+  importarRespostas: (id, file, { preview = false, notaColuna } = {}) => {
+    const fd = new FormData();
+    fd.append('arquivo', file);
+    if (notaColuna) fd.append('nota_coluna', notaColuna);
+    return requestFile(`/nps/${id}/importar-respostas${preview ? '?preview=1' : ''}`, fd, { timeoutMs: 120_000 });
+  },
   // Públicas (sem auth) · com RETRY: num culto, a borda do Vercel pode dar um
   // soluço/challenge momentâneo sob pico. Em vez de perder a resposta, o celular
   // tenta de novo sozinho (backoff). Status "de borda" (403 challenge / 429 / 503)
