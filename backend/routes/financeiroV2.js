@@ -529,6 +529,105 @@ router.post('/importar/balanco', authorizeModule('financeiro', 4), upload.single
 });
 
 // ====================================================================
+// IMPORTAR CONTRIBUIÇÕES NOMINAIS (por pessoa · .xlsx/.csv)
+// ====================================================================
+// Sobe a planilha nominal de contribuições (uma linha por doação, com o nome/CPF
+// do contribuinte) direto pra mem_contribuicoes. Idempotente (dedup por
+// referencia_externa = sha256(membro|data|valor|tipo) · só entra o que é novo).
+// Casa cada linha a um membro EXISTENTE (nunca cria membro · linhas sem match
+// viram "sem vínculo" no relatório). Mesmo guard/nível do /importar/balanco.
+//
+// Duas rotas: /previa (commit=false · calcula o resumo sem gravar, pra tela
+// mostrar antes de confirmar) e a rota base (commit=true · grava).
+router.post('/importar/contribuicoes/previa', authorizeModule('financeiro', 4), upload.single('arquivo'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Arquivo de contribuições (.xlsx/.csv) obrigatório' });
+  const { parsePlanilha, processar } = require('../services/contribuicoesImporter');
+  try {
+    const { rows, colunas_detectadas, faltando } = parsePlanilha(req.file.buffer);
+    if (faltando.length) {
+      return res.status(400).json({
+        error: `Planilha não reconhecida · faltam colunas obrigatórias: ${faltando.join(', ')}`,
+        colunas_detectadas,
+        faltando,
+      });
+    }
+    const r = await processar(rows, { commit: false });
+    res.json({ ...r, colunas_detectadas });
+  } catch (e) {
+    console.error('[FIN-V2] contribuições prévia:', e);
+    res.status(500).json({ error: e.message || 'Erro ao pré-visualizar contribuições' });
+  }
+});
+
+router.post('/importar/contribuicoes', authorizeModule('financeiro', 4), upload.single('arquivo'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Arquivo de contribuições (.xlsx/.csv) obrigatório' });
+  const { parsePlanilha, processar } = require('../services/contribuicoesImporter');
+  try {
+    const { rows, colunas_detectadas, faltando } = parsePlanilha(req.file.buffer);
+    if (faltando.length) {
+      return res.status(400).json({
+        error: `Planilha não reconhecida · faltam colunas obrigatórias: ${faltando.join(', ')}`,
+        colunas_detectadas,
+        faltando,
+      });
+    }
+
+    // Registra no histórico de importações (fin_uploads · tipo 'contribuicoes'
+    // liberado na migration 20260722240000). A idempotência real vive na
+    // mem_contribuicoes (referencia_externa); o histórico é só rastro/auditoria.
+    let uploadRow = null;
+    try {
+      const { data: up } = await supabase
+        .from('fin_uploads')
+        .insert({
+          tipo: 'contribuicoes',
+          arquivo_nome: req.file.originalname,
+          arquivo_tamanho: req.file.size,
+          status: 'processando',
+          created_by: req.user.userId,
+        })
+        .select().single();
+      uploadRow = up;
+    } catch (_) { /* histórico é best-effort · não bloqueia a importação */ }
+
+    const r = await processar(rows, { userId: req.user.userId, commit: true });
+
+    if (uploadRow) {
+      try {
+        await supabase.from('fin_uploads')
+          .update({
+            total_registros: r.total,
+            total_novos: r.inseridos,
+            total_duplicados: r.duplicados,
+            status: r.erros.length ? 'erro' : 'concluido',
+            erro_msg: r.erros.length ? r.erros.map(e => `L${e.linha}: ${e.motivo}`).join(' | ').slice(0, 500) : null,
+            concluido_em: new Date().toISOString(),
+          })
+          .eq('id', uploadRow.id);
+      } catch (_) { /* ignore */ }
+    }
+
+    if (r.inseridos > 0) {
+      try {
+        await notificar({
+          modulo: 'financeiro',
+          tipo: 'contribuicoes_importadas',
+          titulo: 'Contribuições importadas',
+          mensagem: `${r.inseridos} nova(s) contribuição(ões) nominal(is) importada(s)`
+            + (r.sem_vinculo ? ` · ${r.sem_vinculo} sem vínculo` : ''),
+          link: '/financeiro-v2?tab=importar',
+        });
+      } catch (_) { /* notificação não é crítica */ }
+    }
+
+    res.json({ upload_id: uploadRow?.id, ...r, colunas_detectadas });
+  } catch (e) {
+    console.error('[FIN-V2] contribuições:', e);
+    res.status(500).json({ error: e.message || 'Erro ao importar contribuições' });
+  }
+});
+
+// ====================================================================
 // UPLOADS HISTÓRICO
 // ====================================================================
 router.get('/uploads', async (req, res) => {
