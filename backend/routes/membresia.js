@@ -1771,15 +1771,16 @@ router.post('/totem/apresentacao-bebe', async (req, res) => {
       console.error('[TOTEM] apresentacao-bebe notificar error:', e.message);
     }
 
-    // Confirmação por WhatsApp (fila · no-op até WHATSAPP_TEMPLATE_BEBE_CONF).
-    if (cleanTel && process.env.WHATSAPP_TEMPLATE_BEBE_CONF) {
+    // Confirmação por WhatsApp (fila). Nome do template FIXO no código (padrão
+    // de grupos) · env só override — sem precisar criar variável no Vercel.
+    if (cleanTel) {
       try {
         const { enfileirar } = require('../services/whatsappFila');
         const cultoDoDia = (cultosDia || []).find((c) => c.id === culto_id);
         const horaCulto = String(cultoDoDia?.service_type?.recurrence_time || '').slice(0, 5);
         enfileirar({
           telefone: cleanTel,
-          template: process.env.WHATSAPP_TEMPLATE_BEBE_CONF,
+          template: process.env.WHATSAPP_TEMPLATE_BEBE_CONF || 'cbrio_apresentacao_bebe',
           // {{1}} responsável · {{2}} bebê · {{3}} data · {{4}} horário
           params: [
             String(responsavel_nome).split(' ')[0] || 'Olá',
