@@ -481,13 +481,13 @@ export default function Batismos() {
           iconColor={C.info}
         />
         <StatisticsCard
-          title="Realizados (mes)"
+          title="Realizados (mês)"
           value={String(realizadosMes)}
           icon={Droplets}
           iconColor={C.primary}
         />
         <StatisticsCard
-          title="Proximo batismo"
+          title="Próximo batismo"
           value={proximaDataBatismo ? ymdLocal(proximaDataBatismo) : '—'}
           icon={Calendar}
           iconColor={C.purple}
@@ -611,7 +611,7 @@ export default function Batismos() {
         <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0">
           <CardTitle className="text-sm font-medium flex items-center gap-2">
             <BarChart3 className="h-4 w-4 text-muted-foreground" />
-            Batismos realizados por mes
+            Batismos realizados por mês
             <span className="text-xs text-muted-foreground font-normal">(últimos 12 meses)</span>
           </CardTitle>
           <span className="text-xs text-muted-foreground">
@@ -668,7 +668,7 @@ export default function Batismos() {
         </div>
         <Select value={mesFiltro} onValueChange={setMesFiltro}>
           <SelectTrigger className="w-[160px] h-9">
-            <SelectValue placeholder="Filtrar mes" />
+            <SelectValue placeholder="Filtrar mês" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="todos">Todos os meses</SelectItem>
