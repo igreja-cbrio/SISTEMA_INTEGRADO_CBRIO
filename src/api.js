@@ -1889,7 +1889,7 @@ export const nextBatismo = {
 export const membresia = {
   kpis: () => get('/membresia/kpis'),
   qrLookup: (token) => get(`/membresia/qr-lookup/${encodeURIComponent(token)}`),
-  cpfLookup: (cpf) => get(`/membresia/cpf-lookup/${encodeURIComponent(String(cpf).replace(/\D/g, ''))}`),
+  cpfLookup: (cpf, nascimento) => get(`/membresia/cpf-lookup/${encodeURIComponent(String(cpf).replace(/\D/g, ''))}?nascimento=${encodeURIComponent(nascimento || '')}`),
   orfaosStats: () => get('/membresia/orfaos-stats'),
   promoverOrfaos: () => post('/membresia/promover-orfaos', {}),
   // Fila de identidade (conflitos de CPF · identidade_pendencias)

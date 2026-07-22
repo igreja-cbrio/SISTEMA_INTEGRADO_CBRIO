@@ -245,11 +245,16 @@ export default function CadastroMembresia() {
   const searchParams = new URLSearchParams(window.location.search);
   const fromTotem = searchParams.get('from') === 'totem';
   const fromDevocional = searchParams.get('from') === 'devocional';
+  // "Completar cadastro" vindo do totem já traz CPF + nascimento (a pessoa
+  // digitou no totem e não achamos o cadastro) — pré-preenche pra não redigitar.
+  const prefCpf = fromTotem ? soDigitos(searchParams.get('cpf')) : '';
+  const prefNasc = fromTotem && /^\d{4}-\d{2}-\d{2}$/.test(searchParams.get('nasc') || '')
+    ? searchParams.get('nasc') : '';
   const [currentStep, setCurrentStep] = useState(0);
   const [form, setForm] = useState({
-    nome: '', sobrenome: '', cpf: '', email: '', confirmar_email: '', telefone: '',
+    nome: '', sobrenome: '', cpf: prefCpf ? mascaraCpf(prefCpf) : '', email: '', confirmar_email: '', telefone: '',
     senha: '', confirmar_senha: '',
-    data_nascimento: '', estado_civil: '', endereco: '', bairro: '',
+    data_nascimento: prefNasc || '', estado_civil: '', endereco: '', bairro: '',
     cidade: '', cep: '', profissao: '', como_conheceu: '',
     website: '', // honeypot
   });

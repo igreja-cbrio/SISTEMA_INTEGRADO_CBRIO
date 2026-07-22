@@ -270,18 +270,34 @@ router.get('/qr-lookup/:token', async (req, res) => {
   }
 });
 
-// ── CPF Lookup (identidade do membro por CPF) ──
+// ── CPF Lookup (identidade do membro por CPF + nascimento) ──
 //
-// GET /api/membresia/cpf-lookup/:cpf
-// Mesma lógica do qr-lookup, mas resolve direto pelo CPF (sem token).
-// Usado no totem como alternativa pra quem não tem a carteirinha digital.
-// CPF e' normalizado pra so digitos antes do match.
+// GET /api/membresia/cpf-lookup/:cpf?nascimento=YYYY-MM-DD
+// Resolve direto pelo CPF, com a DATA DE NASCIMENTO como 2º fator obrigatório
+// (2026-07-22): CPF sozinho é dado semi-vazado no Brasil — abrir a sessão de um
+// terceiro só com o CPF (nome/foto/telefone/Meus Dados) era risco de privacidade.
+// Regras (espelham o wallet/verify · resposta SEMPRE neutra quando não bate):
+//   • CPF precisa de DV válido;
+//   • nascimento no banco IGUAL ao digitado → identifica;
+//   • nascimento no banco NULL (legado sem a data) → identifica assim mesmo
+//     (não travar o legado · o nascimento digitado não sobrescreve o principal);
+//   • nascimento no banco DIVERGENTE → 404 neutro (nunca revela "existe com
+//     outra data" → sem oráculo de enumeração). O totem manda pra "completar
+//     cadastro" nesse caso.
+// Único consumidor é o totem (membresia.cpfLookup) — daí exigir o 2º fator aqui.
 router.get('/cpf-lookup/:cpf', authorizeModule('membros-totem', 1), async (req, res) => {
   try {
     const cpf = String(req.params.cpf || '').replace(/\D/g, '');
-    if (!cpf || cpf.length !== 11) {
+    if (!cpf || cpf.length !== 11 || !cpfValido(cpf)) {
       return res.status(400).json({ error: 'CPF invalido' });
     }
+    const nascimento = String(req.query.nascimento || '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(nascimento)) {
+      return res.status(400).json({ error: 'Data de nascimento obrigatória' });
+    }
+    // Nascimento compatível: igual OU ausente no banco (legado não pode travar).
+    const nascCompativel = (dbNasc) => !dbNasc || dbNasc === nascimento;
+    const NAO_ACHOU = { status: 404, body: { error: 'Cadastro não encontrado' } };
 
     // 1) Tenta membro ativo em mem_membros
     const { data: membro } = await supabase
@@ -294,6 +310,12 @@ router.get('/cpf-lookup/:cpf', authorizeModule('membros-totem', 1), async (req, 
       .eq('cpf', cpf)
       .eq('active', true)
       .maybeSingle();
+
+    // CPF existe num membro mas o nascimento não confere → resposta neutra
+    // (não cai pro pendente nem revela que o CPF existe).
+    if (membro && !nascCompativel(membro.data_nascimento)) {
+      return res.status(NAO_ACHOU.status).json(NAO_ACHOU.body);
+    }
 
     if (membro) {
       const [grupoAtualRes, ministeriosRes, ultContribRes, ultCheckinRes, trilhaRes] = await Promise.all([
@@ -372,7 +394,7 @@ router.get('/cpf-lookup/:cpf', authorizeModule('membros-totem', 1), async (req, 
       .eq('cpf', cpf)
       .maybeSingle();
 
-    if (pendente) {
+    if (pendente && nascCompativel(pendente.data_nascimento)) {
       return res.json({
         found: true,
         pending: true,
@@ -380,7 +402,7 @@ router.get('/cpf-lookup/:cpf', authorizeModule('membros-totem', 1), async (req, 
       });
     }
 
-    return res.status(404).json({ error: 'Cadastro não encontrado' });
+    return res.status(NAO_ACHOU.status).json(NAO_ACHOU.body);
   } catch (e) {
     console.error('[MEMBRESIA] cpf-lookup error:', e.message);
     res.status(500).json({ error: 'Erro ao consultar CPF' });
