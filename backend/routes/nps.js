@@ -49,6 +49,25 @@ async function guardArea(req, id) {
   const { data } = await supabase.from('nps_pesquisas').select('area').eq('id', id).single();
   return !!data && podeNaArea(req, data.area);
 }
+// Nível efetivo do módulo NPS do usuário (0-5).
+function nivelNps(req) {
+  const p = req.user?.granular?.modulePerms?.nps || {};
+  return Math.max(Number(p.leitura) || 0, Number(p.escrita) || 0);
+}
+// Pode GERENCIAR a pesquisa (editar/analisar/notificar/encerrar/excluir)?
+//   admin/diretor · o CRIADOR (mesmo sem nível alto · gerencia o que criou) ·
+//   coordenador da área (nps>=3 na área da pesquisa).
+function podeGerenciarPesquisa(req, pesquisa) {
+  if (!pesquisa) return false;
+  if (ehAdminDiretor(req)) return true;
+  if (pesquisa.criado_por && pesquisa.criado_por === req.user.userId) return true;
+  return nivelNps(req) >= 3 && podeNaArea(req, pesquisa.area);
+}
+async function podeGerenciar(req, id) {
+  if (ehAdminDiretor(req)) return true;
+  const { data } = await supabase.from('nps_pesquisas').select('criado_por, area').eq('id', id).single();
+  return podeGerenciarPesquisa(req, data);
+}
 
 // ────────────────────────────────────────────────────────────────────
 // Geração de perguntas (preview antes de criar)
@@ -224,12 +243,12 @@ router.post('/', async (req, res) => {
 });
 
 // PUT /api/nps/:id  → atualizar (encerrar, mudar título, etc)
-router.put('/:id', authorizeModule('nps', 3), async (req, res) => {
+router.put('/:id', authorizeModule('nps', 1), async (req, res) => {
   try {
     const d = req.body || {};
-    // Escopo por área: só mexe na NPS da própria área e não pode movê-la pra fora.
-    if (!(await guardArea(req, req.params.id))) {
-      return res.status(403).json({ error: 'Sem acesso à NPS desta área.' });
+    // Só o criador, coordenador da área (nps>=3) ou admin/diretor gerencia.
+    if (!(await podeGerenciar(req, req.params.id))) {
+      return res.status(403).json({ error: 'Sem acesso para editar esta pesquisa.' });
     }
     if (d.area !== undefined && !podeNaArea(req, d.area)) {
       return res.status(403).json({ error: 'Não pode mover a pesquisa para fora da sua área.' });
@@ -270,10 +289,10 @@ router.put('/:id', authorizeModule('nps', 3), async (req, res) => {
 // A pesquisa some de todas as listas/telas; as respostas ficam preservadas no
 // banco (deleted_at na pesquisa · reversível por super-admin), mas saem dos
 // KPIs. Diferente de "Encerrar" (status=encerrada · só trava novas respostas).
-router.delete('/:id', authorizeModule('nps', 3), async (req, res) => {
+router.delete('/:id', authorizeModule('nps', 1), async (req, res) => {
   try {
-    if (!(await guardArea(req, req.params.id))) {
-      return res.status(403).json({ error: 'Sem acesso à NPS desta área.' });
+    if (!(await podeGerenciar(req, req.params.id))) {
+      return res.status(403).json({ error: 'Sem acesso para excluir esta pesquisa.' });
     }
     const { error } = await supabase.rpc('app_soft_delete', {
       p_table_name: 'nps_pesquisas',
@@ -386,13 +405,13 @@ router.post('/:id/responder', async (req, res) => {
 });
 
 // POST /api/nps/:id/analisar  → roda análise IA (admin/diretor)
-router.post('/:id/analisar', authorizeModule('nps', 3), iaLimiter, async (req, res) => {
+router.post('/:id/analisar', authorizeModule('nps', 1), iaLimiter, async (req, res) => {
   try {
     const { data: pesquisa, error: pErr } = await supabase
       .from('nps_pesquisas').select('*').eq('id', req.params.id).is('deleted_at', null).single();
     if (pErr || !pesquisa) return res.status(404).json({ error: 'Pesquisa não encontrada' });
-    if (!podeNaArea(req, pesquisa.area)) {
-      return res.status(403).json({ error: 'Sem acesso à NPS desta área.' });
+    if (!podeGerenciarPesquisa(req, pesquisa)) {
+      return res.status(403).json({ error: 'Sem acesso para analisar esta pesquisa.' });
     }
 
     const { data: stats } = await supabase
@@ -418,13 +437,13 @@ router.post('/:id/analisar', authorizeModule('nps', 3), iaLimiter, async (req, r
 });
 
 // POST /api/nps/:id/notificar  → re-notifica colaboradores (admin/diretor)
-router.post('/:id/notificar', authorizeModule('nps', 3), async (req, res) => {
+router.post('/:id/notificar', authorizeModule('nps', 1), async (req, res) => {
   try {
     const { data: pesquisa } = await supabase
       .from('nps_pesquisas').select('*').eq('id', req.params.id).is('deleted_at', null).single();
     if (!pesquisa) return res.status(404).json({ error: 'Pesquisa não encontrada' });
-    if (!podeNaArea(req, pesquisa.area)) {
-      return res.status(403).json({ error: 'Sem acesso à NPS desta área.' });
+    if (!podeGerenciarPesquisa(req, pesquisa)) {
+      return res.status(403).json({ error: 'Sem acesso para notificar sobre esta pesquisa.' });
     }
 
     const { data: profiles } = await supabase
