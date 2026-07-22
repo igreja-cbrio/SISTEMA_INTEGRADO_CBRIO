@@ -95,7 +95,8 @@ router.get('/resumo-areas', authorizeModule('conversas', 1), async (req, res) =>
   try {
     const userId = uid(req);
     let query = supabase.from('wa_conversas')
-      .select('area, nao_lidas, resolvida, atribuido_a').is('deleted_at', null).limit(5000);
+      .select('area, nao_lidas, resolvida, atribuido_a').is('deleted_at', null)
+      .not('last_message_at', 'is', null).limit(5000);
     if (!ehAdmin(req)) {
       const vis = ['area.is.null', `atribuido_a.eq.${userId}`];
       const areas = minhasAreas(req);
@@ -260,6 +261,7 @@ router.get('/conversas', authorizeModule('conversas', 1), async (req, res) => {
 
     let query = supabase.from('wa_conversas').select(SEL)
       .is('deleted_at', null)
+      .not('last_message_at', 'is', null) // esconde conversas criadas só por clique (sem nenhuma mensagem)
       .order('last_message_at', { ascending: false, nullsFirst: false })
       .limit(200);
     if (status === 'abertas') query = query.eq('resolvida', false);
