@@ -102,7 +102,7 @@ function ProdutosView({ produtos, loading, filtro, setFiltro, totais, onChanged 
     if (!sel.size) return;
     try {
       await logistica.estoque.gerarCompra([...sel]);
-      toast.success('Solicitação de compra criada · está na fila da Logística (/solicitações).');
+      toast.success('Solicitação de compra criada · está na fila da Logística (/solicitacoes).');
       setSel(new Set());
     } catch (e) { toast.error(e.message); }
   }

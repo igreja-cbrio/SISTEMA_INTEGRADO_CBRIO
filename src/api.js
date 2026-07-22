@@ -1955,7 +1955,10 @@ export const membresia = {
     sairMembro: (participacaoId, data) => patch(`/membresia/grupo-membros/${participacaoId}/sair`, data),
   },
   totem: {
-    entrarGrupo: (grupoId, membroId) => post(`/membresia/totem/grupos/${grupoId}/entrar`, { membro_id: membroId }),
+    // Cria um PEDIDO de entrada (mem_grupo_pedidos · líder aprova) — aceita
+    // { membro_id } ou { cadastro_pendente_id } + snapshot nome/telefone/email.
+    pedirGrupo: (grupoId, data) => post(`/membresia/totem/grupos/${grupoId}/entrar`, data),
+    batismoHorarios: () => get('/public/batismo/horarios'),
     geocodeCep: (cep) => get(`/membresia/geocode-cep?cep=${encodeURIComponent(cep)}`),
     updateMembro: (id, data) => put(`/membresia/totem/membros/${id}`, data),
     uploadFoto: (id, formData) => requestFile(`/membresia/totem/membros/${id}/foto`, formData),
@@ -3297,6 +3300,15 @@ export const nps = {
   responder: (id, data) => post(`/nps/${id}/responder`, data),
   analisar: (id) => post(`/nps/${id}/analisar`, {}),
   notificar: (id) => post(`/nps/${id}/notificar`, {}),
+  // Importar de Google Forms: perguntas por link (preview → cria via create) e
+  // respostas por planilha (preview + commit).
+  importarForm: (url) => post('/nps/importar-form', { url }),
+  importarRespostas: (id, file, { preview = false, notaColuna } = {}) => {
+    const fd = new FormData();
+    fd.append('arquivo', file);
+    if (notaColuna) fd.append('nota_coluna', notaColuna);
+    return requestFile(`/nps/${id}/importar-respostas${preview ? '?preview=1' : ''}`, fd, { timeoutMs: 120_000 });
+  },
   // Públicas (sem auth) · com RETRY: num culto, a borda do Vercel pode dar um
   // soluço/challenge momentâneo sob pico. Em vez de perder a resposta, o celular
   // tenta de novo sozinho (backoff). Status "de borda" (403 challenge / 429 / 503)

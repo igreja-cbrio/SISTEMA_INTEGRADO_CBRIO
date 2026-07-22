@@ -5,9 +5,28 @@ const { authenticate, authorize, authorizeModule, getUserAreas } = require('../m
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const npsService = require('../services/npsService');
+const multer = require('multer');
+const XLSX = require('xlsx');
+const { parseGoogleForm, converterNota } = require('../services/googleFormsParser');
 // Sync do agregado da pesquisa → dados_brutos → KPIs (compartilhado com o
 // canal público em publicNps.js).
 const { sincronizarKpi, removerDadosBrutos } = require('../services/npsKpiSync');
+
+// Upload da planilha de respostas (molde do uploadPlanilha da logística).
+const SHEET_MIMES = [
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-excel',
+  'text/csv',
+  'application/csv',
+];
+const uploadPlanilha = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 15 * 1024 * 1024, files: 1 },
+  fileFilter: (_req, file, cb) => {
+    if (SHEET_MIMES.includes(file.mimetype) || /\.(xlsx?|csv)$/i.test(file.originalname || '')) cb(null, true);
+    else cb(new Error('Envie a planilha em .xlsx, .xls ou .csv.'));
+  },
+});
 
 const TIPOS_KPI_VALIDOS = ['nps_geral', 'nps_next', 'nps_lideres', 'nps_voluntarios', 'nps_culto'];
 
@@ -91,6 +110,24 @@ router.post('/gerar-perguntas', iaLimiter, async (req, res) => {
   } catch (e) {
     console.error('[nps] gerar-perguntas:', e.message);
     res.status(500).json({ error: e.message || 'Erro ao gerar perguntas' });
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────
+// Importar perguntas de um Google Forms (preview · não cria)
+// POST /api/nps/importar-form  body { url }
+// Lê a página pública do formulário e devolve as perguntas no formato NPS +
+// os candidatos a "nota" (escalas). A criação reusa o POST /api/nps (o front
+// monta pergunta_nps/perguntas_extras + import_meta e chama create).
+// ────────────────────────────────────────────────────────────────────
+router.post('/importar-form', async (req, res) => {
+  try {
+    const { url } = req.body || {};
+    const form = await parseGoogleForm(url);
+    res.json(form);
+  } catch (e) {
+    console.error('[nps] importar-form:', e.message);
+    res.status(400).json({ error: e.message || 'Não consegui ler o formulário' });
   }
 });
 
@@ -199,6 +236,7 @@ router.post('/', async (req, res) => {
       data_fim: d.data_fim || null,
       status: 'ativa',
       criado_por: req.user.userId,
+      import_meta: d.import_meta || null,
     };
 
     const { data: pesquisa, error } = await supabase
@@ -401,6 +439,140 @@ router.post('/:id/responder', async (req, res) => {
   } catch (e) {
     console.error('[nps] responder:', e.message);
     res.status(500).json({ error: 'Erro ao registrar resposta' });
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────
+// Importar respostas de uma planilha (export do Google Forms) → NPS existente
+// POST /api/nps/:id/importar-respostas  (multipart 'arquivo'; ?preview=1 = dry-run)
+// Mapeia colunas → perguntas por texto (usa import_meta quando existe), converte
+// a coluna-nota pra 0-10 e grava nps_respostas (origem 'importado').
+// ────────────────────────────────────────────────────────────────────
+function perguntasFlat(perguntas) {
+  const lista = [];
+  const nps = perguntas?.pergunta_nps;
+  if (nps) lista.push({ ...nps, id: nps.id || 'nps', _nps: true });
+  for (const p of (perguntas?.perguntas_extras || [])) {
+    if (p?.tipo === 'secao') continue;
+    if (p) lista.push(p);
+  }
+  return lista;
+}
+const _isCarimbo = (h) => /carimbo|timestamp|data\/?\s*hora/i.test(_norm(h));
+const _isEmail = (h) => /e-?mail|email/i.test(_norm(h));
+
+router.post('/:id/importar-respostas', uploadPlanilha.single('arquivo'), async (req, res) => {
+  try {
+    if (!(await podeGerenciar(req, req.params.id))) return res.status(403).json({ error: 'Sem permissão' });
+    if (!req.file) return res.status(400).json({ error: 'Nenhuma planilha enviada' });
+    const { data: pesquisa } = await supabase.from('nps_pesquisas')
+      .select('id, perguntas, import_meta').eq('id', req.params.id).is('deleted_at', null).single();
+    if (!pesquisa) return res.status(404).json({ error: 'Pesquisa não encontrada' });
+
+    const wb = XLSX.read(req.file.buffer, { type: 'buffer', cellDates: true });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null, raw: false });
+    if (!rows.length) return res.status(400).json({ error: 'Planilha vazia' });
+    const headers = (rows[0] || []).map(h => (h == null ? '' : String(h)));
+
+    const flat = perguntasFlat(pesquisa.perguntas);
+    const meta = pesquisa.import_meta || {};
+    const porTexto = {};
+    for (const p of flat) porTexto[_norm(p.texto)] = p;
+    const idPorTextoImport = {};
+    for (const [id, txt] of Object.entries(meta.mapa_textos || {})) idPorTextoImport[_norm(txt)] = id;
+
+    const colDef = headers.map((h, idx) => {
+      if (!h) return { idx, papel: 'vazia' };
+      if (_isCarimbo(h)) return { idx, papel: 'carimbo', header: h };
+      if (_isEmail(h)) return { idx, papel: 'email', header: h };
+      const nh = _norm(h);
+      let p = porTexto[nh];
+      if (!p && idPorTextoImport[nh]) p = flat.find(x => x.id === idPorTextoImport[nh]);
+      if (!p) p = flat.find(x => _norm(x.texto) && (_norm(x.texto).includes(nh) || nh.includes(_norm(x.texto))));
+      return p ? { idx, papel: 'pergunta', header: h, pergunta: p } : { idx, papel: 'sem_mapa', header: h };
+    });
+
+    const notaHeaderOverride = req.body?.nota_coluna || req.query?.nota_coluna;
+    const notaPerguntaId = meta.nota?.pergunta_id || flat.find(p => p._nps)?.id || 'nps';
+    let notaCol = notaHeaderOverride ? colDef.find(c => c.header === notaHeaderOverride) : null;
+    if (!notaCol) notaCol = colDef.find(c => c.papel === 'pergunta' && c.pergunta.id === notaPerguntaId);
+    const escalaNota = meta.nota?.escala || { tipo: '0-10' };
+
+    const comentarioCol = colDef.find(c => c.papel === 'pergunta' &&
+      (c.pergunta.tipo === 'texto_longo' || /motivo|coment/i.test(c.pergunta.id) || /motivo|coment/i.test(c.pergunta.texto)));
+
+    const linhas = rows.slice(1).filter(r => (r || []).some(v => v != null && String(v).trim() !== ''));
+    const construir = (r) => {
+      const score = converterNota(notaCol ? r[notaCol.idx] : null, escalaNota);
+      if (score == null) return { erro: true };
+      const respostas = {};
+      for (const c of colDef) {
+        if (c.papel !== 'pergunta') continue;
+        if (notaCol && c.idx === notaCol.idx) continue; // a nota vira score, não resposta
+        const val = r[c.idx];
+        if (val == null || String(val).trim() === '') continue;
+        respostas[c.pergunta.id] = c.pergunta.tipo === 'multipla'
+          ? String(val).split(',').map(s => s.trim()).filter(Boolean)
+          : String(val);
+      }
+      const emailCol = colDef.find(c => c.papel === 'email');
+      const carimboCol = colDef.find(c => c.papel === 'carimbo');
+      const email = emailCol ? r[emailCol.idx] : null;
+      let created_at = null;
+      if (carimboCol && r[carimboCol.idx]) {
+        const d = new Date(r[carimboCol.idx]);
+        if (!isNaN(d.getTime())) created_at = d.toISOString();
+      }
+      return {
+        pesquisa_id: pesquisa.id,
+        profile_id: null,
+        nome_publico: email ? String(email).split('@')[0].slice(0, 120) : 'Importado',
+        email_publico: email ? String(email).toLowerCase().slice(0, 200) : null,
+        score,
+        respostas,
+        comentario: comentarioCol && r[comentarioCol.idx] ? String(r[comentarioCol.idx]).slice(0, 2000) : null,
+        origem: 'importado',
+        ...(created_at ? { created_at } : {}),
+      };
+    };
+
+    const construidas = linhas.map(construir);
+    const validas = construidas.filter(x => !x.erro);
+    const ignoradas = construidas.length - validas.length;
+
+    if (req.query.preview) {
+      return res.json({
+        total_linhas: linhas.length,
+        validas: validas.length,
+        ignoradas,
+        nota_coluna: notaCol?.header || null,
+        nota_ok: !!notaCol,
+        mapeamento: colDef.filter(c => c.papel !== 'vazia').map(c => ({
+          coluna: c.header, papel: c.papel,
+          pergunta: c.papel === 'pergunta' ? c.pergunta.texto : null,
+          eh_nota: !!(notaCol && c.idx === notaCol.idx),
+        })),
+        amostra: validas.slice(0, 5),
+        sem_mapa: colDef.filter(c => c.papel === 'sem_mapa').map(c => c.header),
+      });
+    }
+
+    if (!notaCol) return res.status(400).json({ error: 'Não identifiquei a coluna da nota. Escolha-a na prévia.' });
+    if (!validas.length) return res.status(400).json({ error: 'Nenhuma resposta com nota válida pra importar.' });
+
+    let inseridas = 0;
+    for (let i = 0; i < validas.length; i += 200) {
+      const lote = validas.slice(i, i + 200);
+      const { error } = await supabase.from('nps_respostas').insert(lote);
+      if (error) throw error;
+      inseridas += lote.length;
+    }
+    sincronizarKpi(pesquisa.id).catch(err => console.warn('[nps] sincronizarKpi:', err.message));
+    res.json({ inseridas, ignoradas });
+  } catch (e) {
+    console.error('[nps] importar-respostas:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao importar respostas' });
   }
 });
 

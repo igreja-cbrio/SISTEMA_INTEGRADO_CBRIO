@@ -154,6 +154,22 @@ mostra a posição de cada lente e as divergências.
   oráculo. Consenso do conselho **não é evidência**; para fatos, validar contra o
   código/banco/fontes, não contra o "consenso".
 
+## ⚠️ IA fora do ar = `ANTHROPIC_API_KEY` inválida na Vercel (2026-07-22)
+
+Sintoma: telas/crons que usam IA quebram todos ao mesmo tempo com **401
+`authentication_error` "API key is invalid"** — NPS (gerar perguntas), agente
+primeiro-contato, agente batismo-next, Central de Agentes, cérebro, nfScanner,
+parser do WhatsApp (todos compartilham a MESMA `ANTHROPIC_API_KEY`). Não é bug
+de código: a chave foi **rotacionada/revogada** e o valor na Vercel ficou velho
+(nesta ocorrência os 401 começaram ~18/07 nos agentes e apareceram no NPS em
+22/07 quando alguém apertou o botão). Diferenciar: chave **ausente** → o guard
+`clienteAnthropic()` lança "ANTHROPIC_API_KEY não configurada"; chave **inválida**
+→ 401 da Anthropic. Correção (NÃO é deploy de código): gerar nova key no console
+da Anthropic → atualizar `ANTHROPIC_API_KEY` (Production) na Vercel → **redeploy**
+(a Vercel só aplica env nova em deployment novo; não há ignored build step, então
+qualquer commit na main serve). Diagnóstico rápido: `get_runtime_errors` da Vercel
+agrupa por `authentication_error`.
+
 ## Contexto do projeto
 
 Sistema ERP interno da CBRio (Igreja). Stack: React 18 + Vite +
