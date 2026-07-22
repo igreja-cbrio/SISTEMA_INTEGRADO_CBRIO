@@ -175,6 +175,8 @@ function ModalCpfResponsavel({ respNome, onConfirmar, onDispensar, onCancelar }:
   const [motivo, setMotivo] = useState('');
   const [erro, setErro] = useState('');
   const ok = cpfValido(cpf);
+  // Clicar fora com algo digitado pergunta antes de descartar (Marcos 2026-07-22).
+  const { tentarFechar } = useConfirmarSaida(!!(cpf || pin || motivo), onCancelar);
 
   function confirmarDispensa() {
     if (pin.trim() !== DISPENSA_PIN) { setErro('PIN incorreto'); return; }
@@ -182,7 +184,7 @@ function ModalCpfResponsavel({ respNome, onConfirmar, onDispensar, onCancelar }:
   }
 
   return (
-    <Dialog open onOpenChange={(o) => { if (!o) onCancelar(); }}>
+    <Dialog open onOpenChange={(o) => { if (!o) tentarFechar(); }}>
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2"><ShieldCheck className="h-5 w-5 text-pink-600" /> CPF do responsável</DialogTitle>
@@ -2158,8 +2160,26 @@ function ModalDetalhesCrianca({ crianca, atualizarCrianca, onClose, onAdicionarI
     } catch (e: unknown) { toast.error((e as { message?: string })?.message || 'Erro ao remover'); }
   }
 
+  // Clicar fora com a ficha editada pergunta antes de descartar (Marcos 2026-07-22).
+  // Só na fase de edição (a tela de senha não tem o que perder).
+  const respsMudou = JSON.stringify(resps.map(r => ({ m: r.membro_id, n: r.nome.trim(), t: String(r.telefone).trim(), p: r.parentesco })))
+    !== JSON.stringify(crianca.responsaveis.map(r => ({ m: r.membro_id, n: (r.membro?.nome || '').trim(), t: String(r.membro?.telefone || '').trim(), p: r.parentesco || 'outro' })));
+  const temAlteracoes = fase === 'edit' && (
+    form.nome !== (crianca.nome || '')
+    || form.data_nascimento !== (crianca.data_nascimento || '')
+    || form.observacoes_medicas !== (crianca.observacoes_medicas || '')
+    || form.visitante !== !!crianca.visitante
+    || (form.visitante && form.visitante_relacao !== (crianca.visitante_relacao || 'amigo'))
+    || form.tem_alergia !== !!crianca.tem_alergia || form.alergia_qual !== (crianca.alergia_qual || '')
+    || form.tem_espectro !== !!crianca.tem_espectro || form.espectro_qual !== (crianca.espectro_qual || '')
+    || form.tem_limitacao_fisica !== !!crianca.tem_limitacao_fisica || form.limitacao_fisica_qual !== (crianca.limitacao_fisica_qual || '')
+    || consentTocado
+    || respsMudou
+  );
+  const { tentarFechar } = useConfirmarSaida(temAlteracoes, onClose);
+
   return (
-    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+    <Dialog open onOpenChange={(o) => { if (!o) tentarFechar(); }}>
       <DialogContent className="max-w-lg max-h-[92vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{fase === 'edit' ? `Editar ficha · ${crianca.nome.split(' ')[0]}` : 'Editar ficha da criança'}</DialogTitle>
@@ -3186,6 +3206,9 @@ function ModalCadastrarResponsavel(props: {
     }
   }, [props.open]);
 
+  // Clicar fora com algo preenchido pergunta antes de descartar (Marcos 2026-07-22).
+  const { tentarFechar } = useConfirmarSaida(!!(nome.trim() || telefone.trim() || cpf.trim()), props.onClose);
+
   async function salvar() {
     if (!nome.trim()) return toast.error('Nome obrigatório');
     if (!telefone.trim()) return toast.error('Telefone obrigatório');
@@ -3210,7 +3233,7 @@ function ModalCadastrarResponsavel(props: {
   }
 
   return (
-    <Dialog open={props.open} onOpenChange={(o) => !o && props.onClose()}>
+    <Dialog open={props.open} onOpenChange={(o) => { if (!o) tentarFechar(); }}>
       <DialogContent className="max-w-md max-h-[95vh] flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
@@ -3222,12 +3245,25 @@ function ModalCadastrarResponsavel(props: {
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3 flex-1 overflow-y-auto min-h-0">
-          <Input placeholder="Nome do responsável *" value={nome} onChange={e => setNome(e.target.value)} autoFocus />
-          <div className="grid grid-cols-2 gap-2">
-            <Input placeholder="Telefone *" value={telefone} onChange={e => setTelefone(e.target.value)} />
-            <Input placeholder="CPF do responsável *" value={cpf} onChange={e => setCpf(e.target.value)} />
+          {/* Campos com TÍTULO acima (Marcos 2026-07-22): o placeholder some quando
+              a pessoa começa a digitar; o label fixo mostra o que é cada campo. */}
+          <div>
+            <label className="text-xs font-medium text-muted-foreground block mb-1">Nome do responsável <span className="text-pink-600">*</span></label>
+            <Input placeholder="Nome completo" value={nome} onChange={e => setNome(e.target.value)} autoFocus />
           </div>
-          <Select value={parentesco} onValueChange={setParentesco}>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">Telefone <span className="text-pink-600">*</span></label>
+              <Input placeholder="(21) 90000-0000" value={telefone} onChange={e => setTelefone(e.target.value)} />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">CPF do responsável <span className="text-pink-600">*</span></label>
+              <Input placeholder="000.000.000-00" value={cpf} onChange={e => setCpf(e.target.value)} />
+            </div>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-muted-foreground block mb-1">Parentesco</label>
+            <Select value={parentesco} onValueChange={setParentesco}>
             <SelectTrigger><SelectValue placeholder="Parentesco" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="mae">Mãe</SelectItem>
@@ -3240,7 +3276,8 @@ function ModalCadastrarResponsavel(props: {
               <SelectItem value="tutor">Tutor</SelectItem>
               <SelectItem value="outro">Outro</SelectItem>
             </SelectContent>
-          </Select>
+            </Select>
+          </div>
           <DispensaCpfInline dispensado={dispensaCpf} onDispensar={() => setDispensaCpf(true)} onCancelar={() => setDispensaCpf(false)} />
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="outline" onClick={props.onClose} disabled={salvando}>
