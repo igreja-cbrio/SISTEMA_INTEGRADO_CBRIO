@@ -352,7 +352,13 @@ export default function Logistica() {
         ))}
       </div>
 
-      {tab === 0 && <DashboardTab dash={dash} onRefresh={() => fetchDash(true)} onNavigate={setTab} />}
+      {tab === 0 && (
+        <DashboardTab
+          dash={dash}
+          onRefresh={() => fetchDash(true)}
+          onNavigate={(t, status) => { if (status !== undefined) setFiltroPedStatus(status); setTab(t); }}
+        />
+      )}
       {tab === 1 && (
         <FornecedoresTab data={fornecedores} loading={loading} isDiretor={isDiretor}
           filtroAtivo={filtroFornAtivo} setFiltroAtivo={setFiltroFornAtivo}
@@ -512,15 +518,21 @@ function StatCard({ label, value, bg, svg, hint, onClick }) {
 
 function DashboardTab({ dash, onRefresh, onNavigate }) {
   if (!dash) return <div style={styles.empty}>Carregando dashboard...</div>;
-  // Tab índices: 1=Fornecedores, 2=Pedidos, 4=Compras ML
+  // Tab índices: 1=Fornecedores, 2=Pedidos, 5=Compras ML
   // Solicitações de compra agora vivem em /solicitacoes (categoria=compras) ·
   // KPIs de "Solic. Pendentes/Aprovadas" foram removidos daqui · aparecem na
   // tela unificada com SLA e NPS.
+  const mlEmTransito = dash.mlPedidosEmTransito ?? 0;
   const kpis = [
     { label: 'Fornecedores Ativos', value: dash.fornecedoresAtivos ?? 0, bg: '#00B39D', tab: 1 },
-    { label: 'Ped. Aguardando', value: dash.pedidosAguardando ?? 0, bg: '#3b82f6', tab: 2 },
-    { label: 'Ped. Em Trânsito', value: dash.pedidosEmTransito ?? 0, bg: '#8b5cf6', tab: 2 },
-    { label: 'Ped. Recebidos', value: dash.pedidosRecebidos ?? 0, bg: '#10b981', tab: 2 },
+    { label: 'Ped. Aguardando', value: dash.pedidosAguardando ?? 0, bg: '#3b82f6', tab: 2, status: 'aguardando' },
+    {
+      label: 'Ped. Em Trânsito', value: dash.pedidosEmTransito ?? 0, bg: '#8b5cf6', tab: 2, status: 'em_transito',
+      // O número soma pedidos internos + envios do Mercado Livre (que ficam na aba
+      // Compras ML, não em Pedidos) — avisa quando parte do total vive lá.
+      hint: mlEmTransito ? `Inclui ${mlEmTransito} do Mercado Livre · ver aba Compras ML` : undefined,
+    },
+    { label: 'Ped. Recebidos', value: dash.pedidosRecebidos ?? 0, bg: '#10b981', tab: 2, status: 'recebido' },
     { label: 'Compras do Mês', value: fmtMoney(dash.mlComprasMes ?? 0), bg: '#00B39D', hint: 'Apenas compras do Mercado Livre no mês corrente', tab: 5 },
   ];
   return (
@@ -533,7 +545,7 @@ function DashboardTab({ dash, onRefresh, onNavigate }) {
         <Button variant="ghost" size="sm" onClick={onRefresh} title="Atualizar (ignora cache)">🔄 Atualizar</Button>
       </div>
       <div className="cbrio-stagger" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginBottom: 24 }}>
-        {kpis.map((k, i) => <StatCard key={k.label} label={k.label} value={k.value} bg={k.bg} svg={STAT_SVGS[i % STAT_SVGS.length]} hint={k.hint} onClick={() => onNavigate(k.tab)} />)}
+        {kpis.map((k, i) => <StatCard key={k.label} label={k.label} value={k.value} bg={k.bg} svg={STAT_SVGS[i % STAT_SVGS.length]} hint={k.hint} onClick={() => onNavigate(k.tab, k.status)} />)}
       </div>
     </>
   );

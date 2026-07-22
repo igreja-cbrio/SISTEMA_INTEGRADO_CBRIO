@@ -135,6 +135,9 @@ router.get('/dashboard', async (req, res) => {
       solicitacoesAprovadas: solic.filter(s => s.status === 'aprovado').length,
       pedidosAguardando: ped.filter(p => p.status === 'aguardando').length,
       pedidosEmTransito: ped.filter(p => p.status === 'em_transito').length + mlEmTransito,
+      // Parcela do "Em Trânsito" que vem do Mercado Livre (aba Compras ML, não Pedidos) ·
+      // usado no front pra avisar quando o card mistura as 2 fontes.
+      mlPedidosEmTransito: mlEmTransito,
       pedidosRecebidos: ped.filter(p => p.status === 'recebido').length,
       valorTotalPedidos: ped.filter(p => p.status !== 'cancelado').reduce((s, p) => s + Number(p.valor_total), 0),
       mlComprasMes,
