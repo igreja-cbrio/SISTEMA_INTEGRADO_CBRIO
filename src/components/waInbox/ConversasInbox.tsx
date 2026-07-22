@@ -447,29 +447,47 @@ export default function ConversasInbox({
                 </div>
               </ScrollArea>
 
-              {foraJanela ? (
-                <div className="border-t border-border bg-amber-50 px-4 py-3 text-[12px] text-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
-                  ⚠️ Fora da janela de 24h do WhatsApp — só é possível enviar um <b>template aprovado</b> agora. Assim que a pessoa responder, o campo de texto libera.
-                </div>
-              ) : (
-                <div className="border-t border-border p-3">
-                  <div className="flex items-end gap-2 rounded-xl border border-border bg-background p-2">
-                    <input ref={fileRef} type="file" accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx" className="hidden"
-                      onChange={e => { const f = e.target.files?.[0]; if (f) enviarAnexo(f); e.target.value = ''; }} />
-                    <Button size="icon" variant="ghost" disabled={anexando} onClick={() => fileRef.current?.click()} className="h-9 w-9 shrink-0 text-muted-foreground" title="Anexar foto ou documento">
-                      {anexando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Paperclip className="h-4 w-4" />}
-                    </Button>
-                    <textarea value={texto} onChange={e => setTexto(e.target.value)}
-                      onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); responder(); } }}
-                      rows={1} placeholder="Escreva uma mensagem…  (Enter envia · Shift+Enter quebra linha)"
-                      className="max-h-32 min-h-[36px] flex-1 resize-none bg-transparent px-1 py-1.5 text-sm outline-none placeholder:text-muted-foreground" />
-                    <Button size="icon" disabled={enviando || !texto.trim()} onClick={responder} className="h-9 w-9 shrink-0">{enviando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}</Button>
+              {(() => {
+                // Caixa SEMPRE aberta. Dentro da janela de 24h → envia pela API do
+                // WhatsApp (texto livre). Fora da janela, a API não permite texto
+                // livre — então o envio abre o WhatsApp da pessoa (wa.me) com o
+                // texto pronto (bom pra parabenizar/proativo). Anexo só na janela.
+                const telDig = (conv.telefone || '').replace(/\D/g, '');
+                const waMe = `https://wa.me/${telDig}${texto.trim() ? `?text=${encodeURIComponent(texto.trim())}` : ''}`;
+                const enviarMsg = () => {
+                  if (!texto.trim()) return;
+                  if (foraJanela) { window.open(waMe, '_blank', 'noopener'); }
+                  else responder();
+                };
+                return (
+                  <div className="border-t border-border p-3">
+                    {foraJanela && (
+                      <div className="mb-2 rounded-lg bg-amber-50 px-3 py-2 text-[11px] text-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
+                        ⚠️ Fora da janela de 24h — a API do WhatsApp não envia texto livre. Escreva aqui e o envio abre o <b>WhatsApp da pessoa</b> com o texto pronto (ou use "Nova" pra um template aprovado).
+                      </div>
+                    )}
+                    <div className="flex items-end gap-2 rounded-xl border border-border bg-background p-2">
+                      <input ref={fileRef} type="file" accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx" className="hidden"
+                        onChange={e => { const f = e.target.files?.[0]; if (f) enviarAnexo(f); e.target.value = ''; }} />
+                      {!foraJanela && (
+                        <Button size="icon" variant="ghost" disabled={anexando} onClick={() => fileRef.current?.click()} className="h-9 w-9 shrink-0 text-muted-foreground" title="Anexar foto ou documento">
+                          {anexando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Paperclip className="h-4 w-4" />}
+                        </Button>
+                      )}
+                      <textarea value={texto} onChange={e => setTexto(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); enviarMsg(); } }}
+                        rows={1} placeholder={foraJanela ? 'Escreva a mensagem…  (Enter abre o WhatsApp da pessoa)' : 'Escreva uma mensagem…  (Enter envia · Shift+Enter quebra linha)'}
+                        className="max-h-32 min-h-[36px] flex-1 resize-none bg-transparent px-1 py-1.5 text-sm outline-none placeholder:text-muted-foreground" />
+                      <Button size="icon" disabled={enviando || !texto.trim()} onClick={enviarMsg} className="h-9 w-9 shrink-0" title={foraJanela ? 'Abrir no WhatsApp da pessoa' : 'Enviar'}>
+                        {enviando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                      </Button>
+                    </div>
+                    {!foraJanela && conv.janela_expira_em && janelaRestante(conv.janela_expira_em) && (
+                      <div className="mt-1.5 flex items-center gap-1 px-1 text-[11px] text-muted-foreground"><Clock className="h-3 w-3" />Janela de resposta livre expira em <span className="font-medium text-foreground">{janelaRestante(conv.janela_expira_em)}</span></div>
+                    )}
                   </div>
-                  {conv.janela_expira_em && janelaRestante(conv.janela_expira_em) && (
-                    <div className="mt-1.5 flex items-center gap-1 px-1 text-[11px] text-muted-foreground"><Clock className="h-3 w-3" />Janela de resposta livre expira em <span className="font-medium text-foreground">{janelaRestante(conv.janela_expira_em)}</span></div>
-                  )}
-                </div>
-              )}
+                );
+              })()}
             </>
           )}
         </div>
