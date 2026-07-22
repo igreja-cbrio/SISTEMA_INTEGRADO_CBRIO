@@ -53,6 +53,7 @@ export default function DashKpisAba() {
   const [areaFiltro, setAreaFiltro] = useState('todas');
   const [valorFiltro, setValorFiltro] = useState('todos');
   const [periodicidadeFiltro, setPeriodicidadeFiltro] = useState('todas');
+  const [dadosFiltro, setDadosFiltro] = useState('todos'); // todos | com | sem
   const [kpiSel, setKpiSel] = useState(null);
 
   const { data: kpis = [], isLoading: loadingList } = useQuery({
@@ -72,13 +73,15 @@ export default function DashKpisAba() {
         const valores = Array.isArray(k.valores) ? k.valores : [];
         if (!valores.includes(valorFiltro)) return false;
       }
+      if (dadosFiltro === 'com' && k.ultimo_valor == null) return false;
+      if (dadosFiltro === 'sem' && k.ultimo_valor != null) return false;
       if (termo) {
         const hay = `${k.indicador || ''} ${k.descricao || ''} ${k.area || ''}`.toLowerCase();
         if (!hay.includes(termo)) return false;
       }
       return true;
     });
-  }, [kpis, busca, areaFiltro, valorFiltro, periodicidadeFiltro]);
+  }, [kpis, busca, areaFiltro, valorFiltro, periodicidadeFiltro, dadosFiltro]);
 
   // Default · 1º KPI da lista filtrada quando muda o filtro/lista
   useEffect(() => {
@@ -111,7 +114,7 @@ export default function DashKpisAba() {
                 className="pl-8 h-9 text-sm"
               />
             </div>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-2">
               <Select value={areaFiltro} onValueChange={setAreaFiltro}>
                 <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Área" /></SelectTrigger>
                 <SelectContent>
@@ -119,6 +122,14 @@ export default function DashKpisAba() {
                   {areasDistintas.map(a => (
                     <SelectItem key={a} value={a} className="capitalize">{a}</SelectItem>
                   ))}
+                </SelectContent>
+              </Select>
+              <Select value={dadosFiltro} onValueChange={setDadosFiltro}>
+                <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Dados" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todos">Todos</SelectItem>
+                  <SelectItem value="com">Com dados</SelectItem>
+                  <SelectItem value="sem">Sem dados</SelectItem>
                 </SelectContent>
               </Select>
               <Select value={valorFiltro} onValueChange={setValorFiltro}>
