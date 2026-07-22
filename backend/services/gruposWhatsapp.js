@@ -35,6 +35,10 @@ const TPL_PEDIDO_APROVADO = process.env.WHATSAPP_TEMPLATE_GRUPOS_APROVADO || 'gr
 // de navegação + tom promocional); a UTILITY é mais barata e não é pausável.
 const TPL_SUGESTAO_GRUPO = process.env.WHATSAPP_TEMPLATE_GRUPOS_SUGESTAO || 'grupos_sugestao_grupo';
 const TPL_FREQUENCIA_MES = process.env.WHATSAPP_TEMPLATE_GRUPOS_FREQUENCIA || 'grupos_frequencia_mes';
+// grupos_renovacao_temporada (UTILITY · 4 variáveis · 1 link como variável de
+// body — lição do grupos_sugestao_grupo: 2º link/tom promocional reclassifica
+// como MARKETING). Renovação semestral: o líder diz se continua com o grupo.
+const TPL_RENOVACAO = process.env.WHATSAPP_TEMPLATE_GRUPOS_RENOVACAO || 'grupos_renovacao_temporada';
 // «Olá {{1}}! Recebemos sua inscrição em {{2}}. 💙 Em breve te damos os
 // próximos passos.» — mensagem 1 da inscrição (a 2 é o grupos_pedido_aprovado).
 const TPL_INSCRICAO_CONFIRMADA = process.env.WHATSAPP_TEMPLATE_INSCRICAO_CONFIRMADA || 'cbrio_inscricao_confirmada';
@@ -49,6 +53,11 @@ function rotuloMes(m) {
 
 const DIAS_SEMANA = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
 const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 dias
+// Renovação de temporada: a janela entre o fim de uma temporada e a abertura
+// da próxima passa de 7 dias (e a fila pode segurar o envio por dias no
+// backoff — o token é assinado no MONTAR, não no entregar). A revogação real
+// é server-side: geração do token × linha + inscrições abertas + triagem.
+const RENOV_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 dias
 
 function baseUrl() {
   return (process.env.FRONTEND_URL
@@ -57,9 +66,10 @@ function baseUrl() {
 }
 
 // ── Token ────────────────────────────────────────────────────────────────
-function assinarToken(tipo, pedidoId, extra) {
+// ttlMs opcional (default 7d) — a renovação de temporada usa 30d.
+function assinarToken(tipo, pedidoId, extra, ttlMs) {
   if (!SECRET) throw new Error('CRON_SECRET ausente — token de grupos não pode ser assinado');
-  const payload = { t: tipo, p: pedidoId, exp: Date.now() + TOKEN_TTL_MS, ...(extra || {}) };
+  const payload = { t: tipo, p: pedidoId, exp: Date.now() + (ttlMs || TOKEN_TTL_MS), ...(extra || {}) };
   const json = Buffer.from(JSON.stringify(payload)).toString('base64url');
   const sig = crypto.createHmac('sha256', SECRET).update(json).digest('base64url').slice(0, 24);
   return `${json}.${sig}`;
@@ -282,6 +292,42 @@ async function notificarLiderFrequencia({ grupo, lider, mes }) {
   }
 }
 
+// Template 6 · grupos_renovacao_temporada — 1×/semestre pergunta ao LÍDER se
+// continua com o grupo na próxima temporada, pelo link /g/r/<token>.
+// {{1}} primeiro nome do líder · {{2}} temporada (label) · {{3}} grupo · {{4}} link
+// Token 'renov' = { p: grupoId, r: renovacaoId, g: geração, l: liderId } ·
+// 30 dias — MAS a validade real é decidida no servidor a cada uso (geração ×
+// linha, liderança atual, inscrições da temporada ainda fechadas, não triada).
+// Monta SEM enviar (o disparo manual enfileira em lote); gate ANTES de assinar
+// (token não pode parar em log de dry-run).
+function montarEnvioRenovacao({ grupo, lider, temporada, renovacaoId, geracao }) {
+  if (!WHATSAPP_LIGADO()) return { erro: 'disabled' };
+  if (!lider?.telefone) return { erro: 'lider_sem_telefone' };
+  let link;
+  try {
+    link = `${baseUrl()}/g/r/${assinarToken('renov', grupo.id, {
+      r: renovacaoId, g: geracao || 1, l: grupo.lider_id,
+    }, RENOV_TTL_MS)}`;
+  } catch (e) {
+    console.error('[GruposWPP] token não assinado:', e.message);
+    return { erro: 'sem_secret' };
+  }
+  return {
+    envio: {
+      telefone: lider.telefone,
+      template: TPL_RENOVACAO,
+      params: [
+        (lider.nome || '').trim().split(/\s+/)[0] || 'Líder',
+        (temporada?.label || temporada?.id || 'nova temporada'),
+        (grupo.nome || '').trim() || 'seu grupo',
+        link,
+      ],
+      contexto: 'grupos.renovacao_temporada',
+      refId: renovacaoId,
+    },
+  };
+}
+
 // Template 5 · cbrio_inscricao_confirmada — mensagem 1 pra PESSOA no momento
 // da inscrição («recebemos, em breve os próximos passos» · a mensagem 2 é o
 // grupos_pedido_aprovado, na aprovação). {{1}} primeiro nome · {{2}} grupo.
@@ -317,5 +363,6 @@ module.exports = {
   notificarPessoaSugestao,
   montarEnvioFrequencia,
   notificarLiderFrequencia,
+  montarEnvioRenovacao,
   enviarInscricaoConfirmada,
 };

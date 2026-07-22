@@ -503,6 +503,11 @@ export const grupos = {
   removerEncontro: (encontroId) => del(`/grupos/encontros/${encontroId}`),
   metricas: (grupoId) => get(`/grupos/${grupoId}/metricas`),
   historicoAlteracoes: (grupoId) => get(`/grupos/${grupoId}/historico-alteracoes`),
+  renovacao: {
+    painel: (params) => get('/grupos/renovacao/painel' + (params ? '?' + new URLSearchParams(params) : '')),
+    disparar: (temporadaId) => post('/grupos/renovacao/disparar', { temporada_id: temporadaId }),
+    triar: (renId, body) => post(`/grupos/renovacao/${renId}/triar`, body),
+  },
   saudeAgregada: (params) => get('/grupos/saude/agregado' + (params ? '?' + new URLSearchParams(params) : '')),
   relatorioKpis: (params) => get('/grupos/kpis/relatorio' + (params ? '?' + new URLSearchParams(params) : '')),
   lideresTreinamento: (params) => get('/grupos/kpis/lideres-treinamento' + (params ? '?' + new URLSearchParams(params) : '')),
@@ -2119,6 +2124,22 @@ export const gruposPublic = {
     const j = await r.json().catch(() => ({}));
     if (!r.ok) { const e = new Error(j.error || 'Erro ao adicionar visitante'); Object.assign(e, j); throw e; }
     return j; // { ok, membro: { id, nome, foto_url } }
+  },
+  // Renovação de temporada · líder responde se continua com o grupo
+  renovacaoPorToken: async (token) => {
+    const r = await fetch(`${API}/public/grupos/grupo/renovacao?token=${encodeURIComponent(token)}`);
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || 'Erro ao carregar a renovação');
+    return j; // { grupo, temporada, status, motivo, ja_respondeu, membros }
+  },
+  responderRenovacao: async (token, body) => {
+    const r = await fetch(`${API}/public/grupos/grupo/renovacao`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, ...body }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { const e = new Error(j.error || 'Erro ao salvar a resposta'); Object.assign(e, j); throw e; }
+    return j; // { ok, status, confirmados?, removidos?, reativados? }
   },
 };
 

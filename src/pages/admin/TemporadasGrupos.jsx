@@ -9,7 +9,7 @@ import { useEffect, useState } from 'react';
 import { grupos as api } from '../../api';
 import { Button } from '../../components/ui/button';
 import { toast } from 'sonner';
-import { Calendar, Lock, Unlock, CheckCircle2, Archive, UserMinus, ClipboardX, ListChecks, AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react';
+import { Calendar, Lock, Unlock, CheckCircle2, Archive, UserMinus, ClipboardX, ListChecks, AlertTriangle, ChevronDown, ChevronRight, Send, HeartHandshake } from 'lucide-react';
 
 const fmtDT = (d) => { try { return new Date(d).toLocaleDateString('pt-BR'); } catch { return ''; } };
 
@@ -180,9 +180,195 @@ export default function TemporadasGrupos() {
         </ul>
       </div>
 
+      {!loading && temporadas.length > 0 && <RenovacaoTemporada temporadas={temporadas} />}
+
       {!loading && temporadas.length > 0 && <ProntidaoTemporada temporadas={temporadas} />}
 
       {!loading && temporadas.length > 0 && <RevisaoFimTemporada temporadas={temporadas} />}
+    </div>
+  );
+}
+
+// Renovação de temporada (Marcos · 21/07): 1×/semestre, com a temporada
+// fechada, a coordenação DISPARA daqui o WhatsApp pra cada líder de grupo
+// ativo perguntando se continua (link /g/r/<token> · sem login). Disparo é
+// SEMPRE manual (lei de 20/07 — nada automático pro líder). Re-executar o
+// botão reenvia SÓ pra quem não respondeu (link antigo morre · nova geração).
+// Os "não continuo" caem na Caixa de entrada pra triagem.
+const REN_STATUS = {
+  sem_envio: { label: 'Não enviada', cor: C.t3 },
+  enviada: { label: 'Sem resposta', cor: C.amber },
+  continua: { label: 'Continua', cor: C.green },
+  nao_continua: { label: 'Não continua', cor: C.red },
+  triada: { label: 'Triada', cor: C.primary },
+};
+
+function RenovacaoTemporada({ temporadas }) {
+  const [temporada, setTemporada] = useState(() => (temporadas.find(t => t.ativa)?.id || temporadas[0]?.id || ''));
+  const [dados, setDados] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [disparando, setDisparando] = useState(false);
+  const [mostrarGrupos, setMostrarGrupos] = useState(false);
+
+  async function load(temp) {
+    if (!temp) return;
+    setLoading(true);
+    try { setDados(await api.renovacao.painel({ temporada: temp })); }
+    catch (e) { toast.error(e.message || 'Erro ao carregar a renovação'); setDados(null); }
+    finally { setLoading(false); }
+  }
+  useEffect(() => { load(temporada); /* eslint-disable-next-line */ }, [temporada]);
+
+  const resumo = dados?.resumo || null;
+  const jaDisparou = (resumo?.enviadas || 0) > 0;
+
+  async function disparar() {
+    if (!dados) return;
+    if (dados.temporada?.inscricoes_abertas) {
+      toast.error('As inscrições desta temporada já estão abertas — a renovação é feita antes da abertura.');
+      return;
+    }
+    const alvo = jaDisparou ? resumo.sem_resposta : resumo.podem_receber;
+    const msg = jaDisparou
+      ? `Reenviar a renovação pros ${resumo.sem_resposta} líder(es) que ainda não responderam? O link antigo deles deixa de valer (quem já respondeu NÃO recebe de novo).`
+      : `Enviar a pergunta de renovação pros líderes de ${resumo.podem_receber} grupo(s) de ${dados.temporada?.label}? Cada líder recebe um WhatsApp com o link pra responder (sem login).`;
+    if (!alvo) { toast.info('Ninguém pra enviar agora.'); return; }
+    if (!confirm(msg)) return;
+    setDisparando(true);
+    try {
+      const r = await api.renovacao.disparar(temporada);
+      const p = r?.pulados || {};
+      const detalhes = [
+        p.sem_lider ? `${p.sem_lider} sem líder` : null,
+        p.sem_telefone ? `${p.sem_telefone} líder(es) sem telefone` : null,
+        p.ja_respondida ? `${p.ja_respondida} já respondida(s)` : null,
+        p.enviada_ha_pouco ? `${p.enviada_ha_pouco} enviada(s) há pouco` : null,
+      ].filter(Boolean).join(' · ');
+      toast.success(`${r?.enfileirados ?? 0} mensagem(ns) na fila de envio${detalhes ? ` · puladas: ${detalhes}` : ''}`);
+      load(temporada);
+    } catch (e) { toast.error(e.message || 'Erro ao disparar a renovação'); }
+    finally { setDisparando(false); }
+  }
+
+  const rows = dados?.rows || [];
+  // Sinal de anomalia (conferir com o líder): confirmou ≤20% de um grupo com 5+
+  const anomala = (r) => r.renovacao?.status === 'continua' && (r.renovacao.roster_total || 0) >= 5
+    && (r.renovacao.confirmados_count || 0) <= 0.2 * r.renovacao.roster_total;
+
+  return (
+    <div style={{ marginTop: 22, background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, overflow: 'hidden' }}>
+      <div style={{ padding: '14px 16px', borderBottom: `1px solid ${C.border}` }}>
+        <h2 style={{ fontSize: 15, fontWeight: 700, color: C.text, margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <HeartHandshake size={17} style={{ color: C.primary }} /> Renovação de temporada — líderes confirmam
+        </h2>
+        <p style={{ fontSize: 12, color: C.t3, margin: '6px 0 0', lineHeight: 1.6 }}>
+          1× por semestre, <strong>antes de abrir as inscrições</strong>, cada líder recebe no WhatsApp a
+          pergunta "você continua com o grupo?". Quem continua confirma no link quem deve seguir no grupo
+          (estimativa); quem não continua cai na <strong>Caixa de entrada</strong> pra triagem. Sem resposta,
+          nada muda no grupo. O disparo é sempre manual — reenviar cobre só quem não respondeu.
+        </p>
+        <select
+          value={temporada}
+          onChange={e => setTemporada(e.target.value)}
+          style={{ marginTop: 10, padding: '7px 10px', borderRadius: 8, border: `1px solid ${C.border}`, background: 'var(--cbrio-input-bg)', color: C.text, fontSize: 13 }}
+        >
+          {temporadas.map(t => <option key={t.id} value={t.id}>{t.label}{t.ativa ? ' (atual)' : ''}</option>)}
+        </select>
+      </div>
+
+      <div style={{ padding: 16 }}>
+        {loading ? (
+          <div style={{ padding: 24, textAlign: 'center', color: C.t3, fontSize: 13 }}>Carregando...</div>
+        ) : !dados ? (
+          <div style={{ padding: 24, textAlign: 'center', color: C.t3, fontSize: 13 }}>Não foi possível carregar.</div>
+        ) : (
+          <>
+            {!dados.whatsapp_ligado && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 12px', borderRadius: 10, marginBottom: 12, background: C.red + '15', border: `1px solid ${C.red}55`, fontSize: 12.5, color: C.text }}>
+                <AlertTriangle size={15} style={{ color: C.red, flexShrink: 0 }} />
+                O envio de WhatsApp não está configurado no servidor — o disparo não vai funcionar.
+              </div>
+            )}
+            {dados.temporada?.inscricoes_abertas && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 12px', borderRadius: 10, marginBottom: 12, background: C.amber + '15', border: `1px solid ${C.amber}55`, fontSize: 12.5, color: C.text }}>
+                <AlertTriangle size={15} style={{ color: C.amber, flexShrink: 0 }} />
+                As inscrições desta temporada já estão abertas — a janela da renovação passou (respostas pendentes foram bloqueadas).
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
+              {[
+                { rotulo: 'Grupos ativos', valor: resumo.grupos, cor: C.text },
+                { rotulo: 'Líderes alcançáveis', valor: resumo.podem_receber, cor: C.primary },
+                { rotulo: 'Sem líder / sem telefone', valor: resumo.sem_lider + resumo.lider_sem_telefone, cor: (resumo.sem_lider + resumo.lider_sem_telefone) ? C.amber : C.t3 },
+                { rotulo: 'Enviadas', valor: resumo.enviadas, cor: C.text },
+                { rotulo: 'Sem resposta', valor: resumo.sem_resposta, cor: resumo.sem_resposta ? C.amber : C.t3 },
+                { rotulo: 'Continuam', valor: resumo.continuam, cor: C.green },
+                { rotulo: 'Não continuam', valor: resumo.nao_continuam, cor: resumo.nao_continuam ? C.red : C.t3 },
+                { rotulo: 'Triadas', valor: resumo.triadas, cor: C.t3 },
+              ].map(c => (
+                <div key={c.rotulo} style={{ padding: '8px 12px', borderRadius: 10, border: `1px solid ${C.border}`, minWidth: 110 }}>
+                  <div style={{ fontSize: 18, fontWeight: 800, color: c.cor }}>{c.valor}</div>
+                  <div style={{ fontSize: 10.5, color: C.t3 }}>{c.rotulo}</div>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+              <Button onClick={disparar} disabled={disparando || !dados.whatsapp_ligado || dados.temporada?.inscricoes_abertas}>
+                <Send size={14} style={{ marginRight: 6 }} />
+                {disparando ? 'Enviando...' : jaDisparou
+                  ? `Reenviar aos sem resposta (${resumo.sem_resposta})`
+                  : `Enviar renovação aos líderes (${resumo.podem_receber})`}
+              </Button>
+              <button
+                type="button"
+                onClick={() => setMostrarGrupos(m => !m)}
+                style={{ background: 'none', border: 'none', color: C.t2, fontSize: 12.5, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}
+              >
+                {mostrarGrupos ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                {mostrarGrupos ? 'Esconder grupos' : `Ver grupo a grupo (${rows.length})`}
+              </button>
+            </div>
+
+            {mostrarGrupos && (
+              <div style={{ marginTop: 12, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden' }}>
+                {rows.map((r, i) => {
+                  const st = REN_STATUS[r.renovacao?.status || 'sem_envio'] || REN_STATUS.sem_envio;
+                  return (
+                    <div key={r.grupo_id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderTop: i ? `1px solid ${C.border}` : 'none', flexWrap: 'wrap' }}>
+                      <div style={{ flex: '1 1 220px', minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>
+                          {r.grupo_nome}
+                          {r.grupo_codigo && <code style={{ fontSize: 10, color: C.t3, marginLeft: 6 }}>{r.grupo_codigo}</code>}
+                        </div>
+                        <div style={{ fontSize: 11, color: C.t3 }}>
+                          {r.lider_nome || 'Sem líder'} · {r.membros_ativos} pessoa(s)
+                          {!r.pode_receber && <span style={{ color: C.amber }}> · sem WhatsApp</span>}
+                        </div>
+                      </div>
+                      {anomala(r) && (
+                        <span style={{ fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 99, background: C.amber + '18', color: C.amber }}
+                          title="Poucas pessoas confirmadas em relação ao tamanho do grupo — vale conferir com o líder">
+                          Conferir · {r.renovacao.confirmados_count}/{r.renovacao.roster_total}
+                        </span>
+                      )}
+                      {r.renovacao?.status === 'continua' && !anomala(r) && (
+                        <span style={{ fontSize: 11, color: C.t3 }}>
+                          {r.renovacao.confirmados_count} confirmadas{r.renovacao.removidos_count ? ` · ${r.renovacao.removidos_count} saíram` : ''}
+                        </span>
+                      )}
+                      <span style={{ fontSize: 10.5, fontWeight: 700, padding: '2px 9px', borderRadius: 99, background: st.cor + '18', color: st.cor, whiteSpace: 'nowrap' }}>
+                        {st.label}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }

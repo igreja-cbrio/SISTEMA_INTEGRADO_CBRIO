@@ -287,7 +287,9 @@ export default function Grupos() {
     try {
       const r = await api.contarPedidos();
       setPedidosCount(r?.pendentes || 0);
-      setLideresPendentes(r?.lideres_pendentes || 0);
+      // Candidaturas de líder + renovações "não continua" — ambas aguardam a
+      // triagem da coordenação na Caixa de entrada.
+      setLideresPendentes((r?.lideres_pendentes || 0) + (r?.renovacoes_triagem || 0));
     } catch {}
   }, []);
   useEffect(() => { loadPedidosCount(); }, [loadPedidosCount, pageTab]);
