@@ -30,6 +30,23 @@ function fmtPer(p) {
   if (m && String(p).includes('W')) return `Sem ${m[2]}/${m[1]}`;
   return String(p);
 }
+// Período EM CURSO (semana/mês corrente) na mesma notação dos registros. Serve
+// pra excluir o período incompleto: o "último valor" tem que ser o último período
+// CONCLUÍDO (semana/mês passado), não o corrente (que costuma estar zerado) nem o
+// mais antigo da lista.
+function periodoEmCurso(periodicidade) {
+  const now = new Date();
+  if (periodicidade === 'mensal' || periodicidade === 'trimestral' || periodicidade === 'semestral' || periodicidade === 'anual') {
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  }
+  // semanal (default) → semana ISO 'YYYY-Www'
+  const d = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+  const dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+  return `${d.getUTCFullYear()}-W${String(weekNo).padStart(2, '0')}`;
+}
 
 export default function KpiDetalheModal({ kpiId, onClose }) {
   const { data, isLoading } = useQuery({
@@ -41,14 +58,33 @@ export default function KpiDetalheModal({ kpiId, onClose }) {
   const traj = data?.trajetoria_atual || {};
   const hist = Array.isArray(data?.historico) ? data.historico : (data?.registros || []);
   const fonte = fonteInfo(kpi.fonte_auto);
-  const serie = [...hist]
-    .map(h => ({ periodo: h.periodo_referencia, valor: h.valor_realizado == null ? null : Number(h.valor_realizado) }))
-    .filter(h => h.valor != null)
-    .reverse();
-  // "Último valor" = última medição com dado real (a semana/mês em curso costuma
-  // estar zerada — mostrar ela como "último valor 0" confunde). Fallback: hist[0].
-  const ultimo = hist.find(h => h.valor_realizado != null && Number(h.valor_realizado) > 0) || hist[0];
-  const pct = traj.percentual_meta;
+  // Ordena SEMPRE por período desc (o endpoint pode vir asc ou desc) — sem isso o
+  // "último valor" pegava o período mais ANTIGO. Formatos 'YYYY-Wnn'/'YYYY-MM'
+  // comparam bem lexicograficamente.
+  const histDesc = [...hist].sort((a, b) => String(b.periodo_referencia).localeCompare(String(a.periodo_referencia)));
+  // "Último valor" = último período CONCLUÍDO (semana/mês passado), excluindo o
+  // período em curso. Pode ser 0 de verdade (ex.: 0 conversões na semana). O
+  // penúltimo concluído é a base da variação.
+  const emCurso = periodoEmCurso(kpi.periodicidade);
+  const concluidos = histDesc.filter(h => String(h.periodo_referencia) < emCurso);
+  const base = concluidos.length ? concluidos : histDesc;
+  const ultimo = base[0];
+  const anterior = base[1] || null;
+  const uv = ultimo?.valor_realizado != null ? Number(ultimo.valor_realizado) : null;
+  const av = anterior?.valor_realizado != null ? Number(anterior.valor_realizado) : null;
+  // Variação vs período anterior. 0→0 = 0% (crescimento nulo); 0→N não tem % (—).
+  const variacao = (uv == null || av == null) ? null : (av === 0 ? (uv === 0 ? 0 : null) : ((uv - av) / av) * 100);
+  // gráfico em ordem cronológica (antigo → recente), com os zeros (série real)
+  const serie = [...base]
+    .map(h => ({ periodo: h.periodo_referencia, valor: h.valor_realizado == null ? 0 : Number(h.valor_realizado) }))
+    .sort((a, b) => String(a.periodo).localeCompare(String(b.periodo)));
+  // % da meta calculado do MESMO último período concluído (mantém o popup coerente
+  // com o valor exibido) — só p/ KPI 'manual' (valor absoluto vs meta absoluta).
+  // Os de cálculo (razao/delta_pct) seguem o percentual da view.
+  const metaVal = traj.meta_periodo != null ? Number(traj.meta_periodo) : null;
+  const pct = (kpi.tipo_calculo === 'manual' && metaVal && metaVal > 0 && uv != null)
+    ? (uv / metaVal) * 100
+    : traj.percentual_meta;
   const corPct = pct == null ? 'text-muted-foreground' : pct >= 100 ? 'text-emerald-600' : pct >= 90 ? 'text-amber-600' : 'text-red-600';
 
   return (
@@ -86,11 +122,18 @@ export default function KpiDetalheModal({ kpiId, onClose }) {
             </div>
 
             {/* Mini-stats */}
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               <div className="rounded-lg border border-border p-2.5 text-center">
                 <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Último valor</p>
                 <p className="text-lg font-bold tabular-nums">{ultimo?.valor_realizado ?? '—'}</p>
                 <p className="text-[10px] text-muted-foreground">{fmtPer(ultimo?.periodo_referencia)}</p>
+              </div>
+              <div className="rounded-lg border border-border p-2.5 text-center">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Variação</p>
+                <p className={`text-lg font-bold tabular-nums ${variacao == null ? 'text-muted-foreground' : variacao >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                  {variacao == null ? '—' : `${variacao >= 0 ? '+' : ''}${variacao.toFixed(1)}%`}
+                </p>
+                <p className="text-[10px] text-muted-foreground">vs. {fmtPer(anterior?.periodo_referencia)}</p>
               </div>
               <div className="rounded-lg border border-border p-2.5 text-center">
                 <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Meta</p>
@@ -132,7 +175,7 @@ export default function KpiDetalheModal({ kpiId, onClose }) {
                       <th className="px-3 py-1.5 text-left font-medium">Origem</th>
                     </tr></thead>
                     <tbody>
-                      {hist.slice(0, 12).map((h, i) => (
+                      {histDesc.slice(0, 12).map((h, i) => (
                         <tr key={i} className="border-b border-border/50">
                           <td className="px-3 py-1.5">{fmtPer(h.periodo_referencia)}</td>
                           <td className="px-3 py-1.5 text-right tabular-nums">{h.valor_realizado ?? h.valor_texto ?? '—'}</td>
