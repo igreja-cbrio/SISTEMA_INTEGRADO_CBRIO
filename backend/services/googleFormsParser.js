@@ -92,6 +92,15 @@ function interpretar(data) {
       const max = pontos.length ? Math.max(...pontos) : 5;
       pergunta.escala = { min, max };
       candidatosNota.push({ id, texto: pergunta.texto, min, max });
+    } else if (tipoNps === 'opcao_unica' && pergunta.opcoes.length >= 2) {
+      // Múltipla escolha SÓ de números (ex.: "De 0 a 5" feito como opções 0..5,
+      // ou "recomendaria de 0 a 10") também pode ser a nota.
+      const nums = pergunta.opcoes.map(Number);
+      if (nums.every(v => Number.isFinite(v))) {
+        const min = Math.min(...nums), max = Math.max(...nums);
+        pergunta.escala = { min, max };
+        candidatosNota.push({ id, texto: pergunta.texto, min, max });
+      }
     }
 
     itens.push(pergunta);
