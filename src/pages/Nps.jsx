@@ -348,10 +348,17 @@ function ImportarFormModal({ onClose, onCreated }) {
   const [permitePublico, setPermitePublico] = useState(true);
   const [dataFim, setDataFim] = useState('');
   const [notaId, setNotaId] = useState('');
+  const [escalaSel, setEscalaSel] = useState('10'); // '10' | '5'
   const [salvando, setSalvando] = useState(false);
 
   const areaEspecifica = area && area.toLowerCase() !== 'geral';
   const escopoOk = !!valor || areaEspecifica;
+
+  // Escala default a partir do candidato escolhido (max<=5 → 0 a 5).
+  const escalaDoCandidato = (cands, id) => {
+    const c = (cands || []).find(x => x.id === id);
+    return c && c.max <= 5 ? '5' : '10';
+  };
 
   async function ler() {
     if (!url.trim()) return toast.error('Cole o link do Google Forms.');
@@ -360,7 +367,9 @@ function ImportarFormModal({ onClose, onCreated }) {
       const f = await api.importarForm(url.trim());
       setForm(f);
       setTitulo(f.titulo || 'Pesquisa importada');
-      setNotaId(f.candidatos_nota?.[0]?.id || '');
+      const primeiro = f.candidatos_nota?.[0]?.id || '';
+      setNotaId(primeiro);
+      setEscalaSel(escalaDoCandidato(f.candidatos_nota, primeiro));
     } catch (e) { toast.error(e.message || 'Erro ao ler o formulário'); }
     setLendo(false);
   }
@@ -379,9 +388,10 @@ function ImportarFormModal({ onClose, onCreated }) {
       const perguntas_extras = itens
         .filter(i => !notaItem || i.id !== notaItem.id)
         .map(({ escala, ...rest }) => rest);
-      const escalaNota = notaItem?.escala
-        ? (notaItem.escala.min === 0 && notaItem.escala.max === 10 ? { tipo: '0-10' } : { min: notaItem.escala.min, max: notaItem.escala.max })
-        : { tipo: '0-10' };
+      // Escala escolhida pelo usuário (0 a 10 · 0 a 5). Define como as respostas
+      // importadas são convertidas pra 0-10 (o score do NPS) e como a nota é exibida.
+      const escalaNota = escalaSel === '5' ? { min: 0, max: 5 } : { tipo: '0-10' };
+      pergunta_nps.max = escalaSel === '5' ? 5 : 10;
       const mapa_textos = {};
       itens.forEach(i => { mapa_textos[i.id] = i.texto; });
 
@@ -452,11 +462,21 @@ function ImportarFormModal({ onClose, onCreated }) {
             </select>
           </FieldRow>
           {!escopoOk && <p style={{ fontSize: 11, color: C.amber, margin: 0 }}>Escolha um valor OU uma área específica (diferente de "Geral").</p>}
-          <FieldRow label="Qual pergunta é a nota (0 a 10)?" hint="Se a escala não for 0–10, converto as respostas automaticamente na importação.">
-            <select value={notaId} onChange={e => setNotaId(e.target.value)} style={inp}>
+          <FieldRow label="Qual pergunta é a nota?" hint="Escalas 0–10 e 0–5 são aceitas; a nota é normalizada pra 0–10 (métrica do NPS).">
+            <select value={notaId} onChange={e => { setNotaId(e.target.value); setEscalaSel(escalaDoCandidato(form.candidatos_nota, e.target.value)); }} style={inp}>
               {(form.candidatos_nota || []).map(c => <option key={c.id} value={c.id}>{c.texto} (escala {c.min}–{c.max})</option>)}
               <option value="">+ Adicionar pergunta 0–10 padrão</option>
             </select>
+          </FieldRow>
+          <FieldRow label="Escala da nota">
+            <div style={{ display: 'flex', gap: 6 }}>
+              {[['10', '0 a 10'], ['5', '0 a 5']].map(([v, l]) => (
+                <button key={v} type="button" onClick={() => setEscalaSel(v)}
+                  style={{ flex: 1, padding: '8px 12px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', border: `1.5px solid ${escalaSel === v ? C.cyan : C.border}`, background: escalaSel === v ? C.cyanBg : 'transparent', color: escalaSel === v ? C.cyan : C.t3 }}>
+                  {l}
+                </button>
+              ))}
+            </div>
           </FieldRow>
           <div>
             <label style={{ fontSize: 12, fontWeight: 600, color: C.t2 }}>Perguntas lidas ({form.itens.length})</label>
