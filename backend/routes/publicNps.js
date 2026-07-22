@@ -82,13 +82,13 @@ router.post('/:token/responder', publicLimiter, async (req, res) => {
         return res.status(400).json({ error: 'E-mail inválido' });
       }
     }
-    if (score === undefined || score < 0 || score > 10) {
-      return res.status(400).json({ error: 'score deve estar entre 0 e 10' });
+    if (score === undefined || score === null) {
+      return res.status(400).json({ error: 'Selecione uma nota' });
     }
 
     const { data: pesquisa, error: pErr } = await supabase
       .from('nps_pesquisas')
-      .select('id, status, permite_publico, data_fim')
+      .select('id, status, permite_publico, data_fim, perguntas')
       .eq('link_publico_token', req.params.token)
       .is('deleted_at', null)
       .single();
@@ -98,6 +98,12 @@ router.post('/:token/responder', publicLimiter, async (req, res) => {
     if (pesquisa.data_fim && new Date(pesquisa.data_fim) < new Date()) {
       return res.status(400).json({ error: 'Pesquisa encerrada' });
     }
+    // Escala da nota (10 padrão · 5 nas pesquisas 0-5) → normaliza pra 0-10 no banco.
+    const maxNota = Number(pesquisa.perguntas?.pergunta_nps?.max) || 10;
+    if (score < 0 || score > maxNota) {
+      return res.status(400).json({ error: `score deve estar entre 0 e ${maxNota}` });
+    }
+    const score10 = Math.round((Number(score) / maxNota) * 10);
 
     const ip = (req.headers['x-forwarded-for']?.toString().split(',')[0] || req.ip || '').trim();
 
@@ -123,7 +129,7 @@ router.post('/:token/responder', publicLimiter, async (req, res) => {
         turma_id: turmaIdValida,
         nome_publico: anonimo ? 'Anônimo' : String(nome).slice(0, 120),
         email_publico: anonimo ? null : String(email).toLowerCase().slice(0, 200),
-        score: Math.round(score),
+        score: score10,
         // respostas: objeto JSONB · limita tamanho serializado pra evitar DoS
         respostas: (() => {
           if (!respostas || typeof respostas !== 'object') return {};

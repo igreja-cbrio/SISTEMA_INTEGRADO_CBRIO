@@ -401,22 +401,26 @@ router.get('/:id/respostas', async (req, res) => {
 router.post('/:id/responder', async (req, res) => {
   try {
     const { score, respostas, comentario } = req.body || {};
-    if (score === undefined || score < 0 || score > 10) {
-      return res.status(400).json({ error: 'score deve estar entre 0 e 10' });
-    }
     const { data: pesquisa } = await supabase
-      .from('nps_pesquisas').select('id, status').eq('id', req.params.id).is('deleted_at', null).single();
+      .from('nps_pesquisas').select('id, status, perguntas').eq('id', req.params.id).is('deleted_at', null).single();
     if (!pesquisa) return res.status(404).json({ error: 'Pesquisa não encontrada' });
     if (pesquisa.status !== 'ativa') {
       return res.status(400).json({ error: 'Pesquisa não está ativa' });
     }
+    // Escala da nota (10 padrão · 5 nas pesquisas 0-5). A nota é normalizada pra
+    // 0-10 no banco (métrica do NPS); o respondente escolhe na escala do form.
+    const maxNota = Number(pesquisa.perguntas?.pergunta_nps?.max) || 10;
+    if (score === undefined || score === null || score < 0 || score > maxNota) {
+      return res.status(400).json({ error: `score deve estar entre 0 e ${maxNota}` });
+    }
+    const score10 = Math.round((Number(score) / maxNota) * 10);
 
     const { data, error } = await supabase
       .from('nps_respostas')
       .insert({
         pesquisa_id: pesquisa.id,
         profile_id: req.user.userId,
-        score: Math.round(score),
+        score: score10,
         respostas: respostas || {},
         comentario: comentario || null,
         origem: 'logado',
