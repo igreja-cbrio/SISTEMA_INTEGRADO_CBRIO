@@ -334,6 +334,13 @@ export default function Solicitacoes() {
       if (timeout) clearTimeout(timeout);
       timeout = setTimeout(() => { loadRef.current?.(); }, 400);
     }
+    // Garante que o socket de realtime está autenticado com o JWT atual · sem
+    // isso o canal pode conectar como anon e a RLS (policies só de authenticated)
+    // descarta TODOS os eventos → o quadro não atualiza sozinho.
+    supabase.auth.getSession().then(({ data }) => {
+      const tk = data?.session?.access_token;
+      if (tk) { try { supabase.realtime.setAuth(tk); } catch { /* best-effort */ } }
+    }).catch(() => {});
     const channel = supabase
       .channel(`solicitacoes:${profile.id}`)
       .on(
@@ -347,6 +354,27 @@ export default function Solicitacoes() {
       supabase.removeChannel(channel);
     };
   }, [profile?.id, isResponsavel]);
+
+  // Rede de garantia do "tempo real" · além do canal Realtime (que pode perder
+  // eventos por RLS/reconexão do socket), um poll leve mantém o quadro fresco SEM
+  // recarregar a página. Pausa quando a aba está oculta; ao voltar ao foco,
+  // recarrega na hora. 12s é suave pra um ERP interno e imperceptível na UI
+  // (load() tem guarda de sequência · não pisca nem atropela ação em curso).
+  useEffect(() => {
+    function tick() {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      loadRef.current?.();
+    }
+    function onVisible() {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') loadRef.current?.();
+    }
+    const interval = setInterval(tick, 12000);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, []);
 
   // Opções dos filtros derivadas do conjunto carregado (sempre relevantes).
   const areasOpts = useMemo(
