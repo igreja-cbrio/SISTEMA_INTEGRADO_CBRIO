@@ -272,6 +272,12 @@ const SETOR_GESTAO = 'Gestao';
 const COMPRA_COTACAO_DIRETA_LIMITE = 1000;
 const COMPRA_COTACAO_DIRETA_MOTIVO = 'Compra de até R$ 1.000 · direto para cotação';
 
+// Fluxo de COMPRAS redefinido (2026-07-22, Matheus): toda compra vai DIRETO pra
+// cotação (Amaury) → financeiro (Alberto), SEM Gestão e SEM mérito. Único filtro
+// de origem: Criativo (Pedro Menezes) aprova TODAS as compras do setor;
+// Ministerial (Arthur Serpa) aprova SÓ compras ACIMA deste limite.
+const COMPRA_FILTRO_MINISTERIAL_LIMITE = 1000;
+
 // Override do 2º portão POR CATEGORIA (migration 20260708180000). Ex.: TI →
 // Diego + Matheus (substitui a Diretoria de Gestão). Best-effort: tabela
 // ausente/categoria sem linha → null (cai no padrão de Gestão).
@@ -376,13 +382,9 @@ function proximoStatusPosAprovacao(sol) {
 // Não-planejado com custo → julgamento de mérito. Só no fluxo novo
 // (eh_planejado=false) · linha legada (NULL) segue o fluxo antigo.
 function precisaMerito(sol) {
-  // Criativo não passa pelo julgamento de mérito (Pastor Presidente) — o
-  // controle é a aprovação de origem do Criativo + o financeiro (Yago).
-  if (CRIATIVO_CATEGORIAS.includes(sol.categoria)) return false;
-  return sol.eh_planejado === false
-    && sol.merito_status == null
-    && !!sol.precisa_aprovacao_financeira
-    && !sol.aprovado_financeiro_em;
+  // Julgamento de mérito (Pastor Presidente) DESLIGADO por enquanto (decisão do
+  // Matheus · 2026-07-22) até redefinirem o fluxo correto. NADA vai pra mérito.
+  return false;
 }
 
 // Evento explícito na timeline com o ATOR correto (o trigger genérico registra
@@ -1055,19 +1057,39 @@ router.post('/', async (req, res) => {
       console.error('[SOLICITAÇÕES] roteamento de origem falhou (fallback trigger):', rerr.message);
     }
 
-    // Compras NÃO passam pela aprovação de origem do diretor do Criativo (Pedro
-    // Menezes) — decisão do Matheus (2026-07-13). Se a origem cairia nele,
-    // dispensa (compras já têm cotação + aprovação financeira depois). Vale só
-    // pro Criativo; os outros setores seguem aprovando suas compras normalmente.
-    if (categoria === 'compras' && rota?.diretor_id) {
+    // ── COMPRAS · fluxo redefinido (2026-07-22, Matheus) ──────────────────────
+    // Toda compra vai DIRETO pro Amaury (cotação) → financeiro (Alberto). O ÚNICO
+    // filtro de origem:
+    //   • Criativo (Pedro Menezes)  → aprova TODAS as compras do setor.
+    //   • Ministerial (Arthur Serpa) → aprova SÓ compras ACIMA de R$ 1.000.
+    // Qualquer outro setor (Gestão etc.) ou solicitante já dispensado pela RPC
+    // (diretor/diretoria/super) → dispensada, direto pra cotação. Gestão e mérito
+    // NÃO se aplicam a compras (ver bloco de Gestão + precisaMerito desligado).
+    if (categoria === 'compras') {
+      const valorCompra = Number(valorEstimadoFinal) || 0;
+      const dirs = {};
       try {
-        const { data: criativo } = await supabase.from('setor_diretor')
-          .select('diretor_id').eq('setor', 'Criativo').maybeSingle();
-        if (criativo?.diretor_id && rota.diretor_id === criativo.diretor_id) {
-          rota = { diretor_id: null, aprovacao_status: 'dispensada', status: 'pendente',
-            motivo: 'Compras não passam pelo diretor do Criativo' };
-        }
-      } catch (e) { console.warn('[SOLICITAÇÕES] exceção compras/Criativo:', e.message); }
+        const { data: sd } = await supabase.from('setor_diretor')
+          .select('setor, diretor_id').in('setor', ['Criativo', 'Ministerial']);
+        (sd || []).forEach(r => { if (r.diretor_id) dirs[r.setor] = r.diretor_id; });
+      } catch (e) { console.warn('[SOLICITAÇÕES] setor_diretor (compras):', e.message); }
+
+      const jaDispensada = rota?.aprovacao_status === 'dispensada';
+      const origemDir = jaDispensada ? null : (rota?.diretor_id || null);
+
+      if (!jaDispensada && dirs.Criativo && origemDir === dirs.Criativo) {
+        rota = { diretor_id: dirs.Criativo, aprovacao_status: 'pendente',
+          status: 'aguardando_aprovacao_origem',
+          motivo: 'Compra do Criativo · aprovação de origem com Pedro Menezes' };
+      } else if (!jaDispensada && dirs.Ministerial && origemDir === dirs.Ministerial
+                 && valorCompra > COMPRA_FILTRO_MINISTERIAL_LIMITE) {
+        rota = { diretor_id: dirs.Ministerial, aprovacao_status: 'pendente',
+          status: 'aguardando_aprovacao_origem',
+          motivo: `Compra do Ministerial acima de R$ ${COMPRA_FILTRO_MINISTERIAL_LIMITE} · aprovação de origem com Arthur Serpa` };
+      } else {
+        rota = { diretor_id: null, aprovacao_status: 'dispensada', status: 'pendente',
+          motivo: 'Compra vai direto pra cotação (Amaury)' };
+      }
     }
 
     // Reserva de espaço vai DIRETO pro Amaury (coordenador de operações) — sem
@@ -1086,19 +1108,8 @@ router.post('/', async (req, res) => {
         motivo: 'Origem aprovada pelo responsável da categoria' };
     }
 
-    // Compra de até R$ 1.000 → direto pra cotação do Amaury, planejada ou não
-    // (decisão do Matheus · 2026-07-15). Sobrescreve a rota DEPOIS dos overrides
-    // de Criativo/reserva; o status 'pendente' vira 'em_cotacao' no trigger de
-    // SLA (compras no INSERT · migration 20260616160000). Number() explícito:
-    // valorEstimadoFinal pode chegar string/null — null/0/'' ficam de fora
-    // (fail-closed · sem valor conhecido, o pedido segue as aprovações normais).
-    const compraCotacaoDireta = categoria === 'compras'
-      && Number(valorEstimadoFinal) > 0
-      && Number(valorEstimadoFinal) <= COMPRA_COTACAO_DIRETA_LIMITE;
-    if (compraCotacaoDireta) {
-      rota = { diretor_id: null, aprovacao_status: 'dispensada', status: 'pendente',
-        motivo: COMPRA_COTACAO_DIRETA_MOTIVO };
-    }
+    // (Compras já roteadas no bloco unificado acima · o status 'pendente'
+    // dispensado vira 'em_cotacao' no trigger de SLA · migration 20260616160000.)
 
     // Criativo: a aprovação de ORIGEM é do diretor do Criativo (Pedro Paulo), por
     // CATEGORIA — venha de quem vier (pula o diretor do setor de quem pede, ex.:
@@ -1117,12 +1128,11 @@ router.post('/', async (req, res) => {
       } catch (e) { console.warn('[SOLICITAÇÕES] exceção origem Criativo:', e.message); }
     }
 
-    if (compraCotacaoDireta && !planejado) {
-      // Carimbo de Gestão explicitamente dispensado (trilha de auditoria) —
-      // NÃO cair no bloco abaixo, que recomputaria 'pendente' e devolveria o
-      // pedido pra aguardando_aprovacao_origem.
+    if (categoria === 'compras' && !planejado) {
+      // Compras NÃO passam pelo 2º carimbo de Gestão (2026-07-22): vão direto pra
+      // cotação; a origem, quando aplicável, é Pedro (Criativo) ou Arthur (>R$1k).
       gestaoStatus = 'dispensada';
-      gestaoMotivo = COMPRA_COTACAO_DIRETA_MOTIVO;
+      gestaoMotivo = 'Compras não passam pela Gestão · origem (quando aplicável) + cotação + financeiro';
     } else if (ehCriativo && !planejado) {
       // Criativo NÃO passa pelo 2º carimbo de Gestão (Eduardo/Juliana): o
       // controle é a aprovação de origem do Criativo + (com custo) financeiro.
@@ -1272,7 +1282,6 @@ router.post('/', async (req, res) => {
     // ele já nasce no julgamento de mérito (não-planejado com custo → Pastor
     // Presidente). Planejado nunca passa por aqui.
     if (!planejado
-        && !compraCotacaoDireta // compra ≤ R$ 1.000 também pula o mérito (2026-07-15)
         && data.aprovacao_origem_status === 'dispensada'
         && data.aprovacao_gestao_status === 'dispensada'
         && precisaMerito(data)) {
@@ -1339,22 +1348,23 @@ router.post('/', async (req, res) => {
       extraTargetIds: responsaveisDaArea,
     }).catch(err => console.error('[SOLICITACOES] notify error:', err.message));
 
-    // Compra ≤ R$ 1.000 nasceu direto em cotação → evento explícito na timeline
-    // + call-to-action "Cotar" pros responsáveis de compras (no fluxo normal esse
-    // aviso só sai no aprovar-origem, que aqui foi dispensado).
-    if (compraCotacaoDireta && data.status === 'em_cotacao') {
+    // Compra que nasceu direto em cotação (sem filtro de origem) → evento
+    // explícito na timeline + call-to-action "Cotar" pros responsáveis de compras
+    // (no fluxo com origem esse aviso sai no aprovar-origem).
+    if (categoria === 'compras' && data.status === 'em_cotacao'
+        && data.aprovacao_origem_status === 'dispensada') {
       registrarEvento(data.id, {
         statusAnterior: null,
         statusNovo: 'em_cotacao',
         atorId: userId,
-        observacao: COMPRA_COTACAO_DIRETA_MOTIVO,
+        observacao: 'Compra entrou direto na cotação (Amaury)',
       });
       if (responsaveisDaArea.length) {
         notificar({
           modulo,
           tipo: 'solicitacao_status',
           titulo: `Cotar: ${titulo}`,
-          mensagem: `Compra de até R$ ${COMPRA_COTACAO_DIRETA_LIMITE} entrou direto na cotação — registre a cotação (valor + fornecedor) pra seguir pra aprovação do financeiro.`,
+          mensagem: `Compra entrou direto na cotação — registre a cotação (valor + fornecedor) pra seguir pra aprovação financeira.`,
           link: '/solicitacoes',
           severidade: 'info',
           chaveDedup: `solicitacao_cotar_${data.id}`,
