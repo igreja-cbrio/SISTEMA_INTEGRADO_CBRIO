@@ -359,16 +359,28 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
               </DialogTitle>
             </DialogHeader>
             <div className="flex-1 overflow-y-auto min-h-0">
-            {/* Cards de contabilização · inscritos, presença por semana e únicos (veio ≥1x) */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
-              <StatCard label="Inscritos" value={det.matriculas.length} color={C.info} icon={Users} />
-              {[...det.encontros].sort((a, b) => (a.numero || 0) - (b.numero || 0)).map(e => (
-                <StatCard key={e.id} label={`Semana ${e.numero}`} sub={e.data ? ymdLocal(e.data) : 'sem data'}
-                  value={present[e.id]?.size || 0} color={C.primary} icon={CalendarDays} />
-              ))}
-              <StatCard label="Vieram ao menos 1x" value={det.matriculas.filter(m => presCount(m.id) >= 1).length}
-                color={C.warn} icon={CheckCircle2} />
-            </div>
+            {/* Cards de contabilização · inscritos, presença por semana e únicos (veio ≥1x).
+                O % é sempre sobre o total de inscritos (comparecimento). */}
+            {(() => {
+              const insc = det.matriculas.length;
+              const pct = (n: number) => insc > 0 ? Math.round((n / insc) * 100) : 0;
+              const unicos = det.matriculas.filter(m => presCount(m.id) >= 1).length;
+              return (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+                  <StatCard label="Inscritos" value={insc} color={C.info} icon={Users} />
+                  {[...det.encontros].sort((a, b) => (a.numero || 0) - (b.numero || 0)).map(e => {
+                    const n = present[e.id]?.size || 0;
+                    return (
+                      <StatCard key={e.id} label={`Semana ${e.numero}`}
+                        sub={`${e.data ? ymdLocal(e.data) : 'sem data'} · ${pct(n)}% dos inscritos`}
+                        value={n} color={C.primary} icon={CalendarDays} />
+                    );
+                  })}
+                  <StatCard label="Vieram ao menos 1x" value={unicos} sub={`${pct(unicos)}% dos inscritos`}
+                    color={C.warn} icon={CheckCircle2} />
+                </div>
+              );
+            })()}
             <div className="flex flex-wrap gap-3">
               {det.encontros.map(e => (
                 <div key={e.id} className="rounded-lg border border-border p-2.5 flex items-center gap-2">
