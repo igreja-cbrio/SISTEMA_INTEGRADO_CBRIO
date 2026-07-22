@@ -1170,7 +1170,7 @@ router.post('/meetings/:id/gerar-pauta', wr, async (req, res) => {
     const dadosVivos = await dadosVivosPorSigla(sigla, mes);
     const row = await govIA.gerarPauta({ meetingId: req.params.id, userId: req.user.userId, dadosVivos });
     res.status(201).json(row);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { console.error('[governanca] gerar-pauta:', e.message); res.status(500).json({ error: e.message }); }
 });
 
 // Edita o texto in-app de um documento gerado (pauta_ia · refinamento humano).
