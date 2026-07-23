@@ -1866,22 +1866,69 @@ router.post('/totem/apresentacao-bebe', async (req, res) => {
     if (cleanTel) {
       try {
         const { enfileirar } = require('../services/whatsappFila');
-        const cultoDoDia = (cultosDia || []).find((c) => c.id === culto_id);
-        const horaCulto = String(cultoDoDia?.service_type?.recurrence_time || '').slice(0, 5);
         enfileirar({
           telefone: cleanTel,
           template: process.env.WHATSAPP_TEMPLATE_BEBE_CONF || 'apresentacao_bebes_confirmacao',
-          // {{1}} responsável · {{2}} bebê · {{3}} data · {{4}} horário
+          // {{1}} responsável · {{2}} bebê · {{3}} data · {{4}} horário (10h fixo)
           params: [
             String(responsavel_nome).split(' ')[0] || 'Olá',
             String(bebe_nome).trim(),
             proximaStr.split('-').reverse().join('/'),
-            horaCulto || 'a confirmar',
+            '10:00',
           ],
           contexto: 'apresentacao_bebe_totem',
           refId: data.id,
         }).catch(() => {});
       } catch { /* fila indisponível · não bloqueia */ }
+    }
+
+    // ── Cadastro único: registra a criança no Kids e liga ao responsável ──
+    // Visão do Marcos: a apresentação já tem nome/nascimento da criança +
+    // responsável identificado pelo CPF → a criança já entra no Kids e a mãe a
+    // acha no totem Kids sem recadastrar. Presencial no lounge = mesmo modelo
+    // do check-in (nasce visitante · pastoral confirma depois). Exige membro
+    // real (o vínculo kids_responsaveis referencia mem_membros). NÃO herda
+    // família (familia_id null · lei "criança nova não herda família"). Dedup
+    // por responsável+nome+nascimento. Fail-open: nunca quebra a apresentação.
+    if (respMembroId) {
+      try {
+        const bebeNome = String(bebe_nome).trim();
+        const { data: jaResp } = await supabase
+          .from('kids_responsaveis')
+          .select('crianca:kids_criancas(id, nome, data_nascimento)')
+          .eq('membro_id', respMembroId);
+        const existente = (jaResp || [])
+          .map((r) => r.crianca)
+          .filter(Boolean)
+          .find((c) => String(c.nome || '').trim().toLowerCase() === bebeNome.toLowerCase()
+            && (!bebe_data_nascimento || !c.data_nascimento || c.data_nascimento === bebe_data_nascimento));
+        if (!existente) {
+          const PARENTESCO_KIDS = { mae: 'mae', pai: 'pai', avo: 'avo_a', tio: 'tio_a', responsavel: 'tutor', outro: 'outro' };
+          const { data: novaCrianca, error: eKid } = await supabase
+            .from('kids_criancas')
+            .insert({
+              nome: bebeNome,
+              data_nascimento: bebe_data_nascimento || null,
+              sexo: ['M', 'F', 'outro'].includes(bebe_sexo) ? bebe_sexo : null,
+              visitante: true,
+              created_by: req.user?.id || null,
+            })
+            .select('id')
+            .single();
+          if (!eKid && novaCrianca) {
+            await supabase.from('kids_responsaveis').insert({
+              crianca_id: novaCrianca.id,
+              membro_id: respMembroId,
+              parentesco: PARENTESCO_KIDS[responsavel_relacao] || 'outro',
+              autorizado_buscar: true,
+            });
+          } else if (eKid) {
+            console.error('[TOTEM] bebe→kids criança:', eKid.message);
+          }
+        }
+      } catch (e) {
+        console.error('[TOTEM] bebe→kids error:', e.message);
+      }
     }
 
     res.status(201).json({ ok: true, apresentacao: data, data_apresentacao: proximaStr });
