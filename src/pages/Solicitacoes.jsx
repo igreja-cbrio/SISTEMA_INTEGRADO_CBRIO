@@ -41,7 +41,8 @@ const URGENCIAS = [
 const KANBAN_COLUMNS = [
   { key: 'aguardando_aprovacao', label: 'Aguardando aprovação', icon: Clock, color: 'border-b-violet-500', match: ['aguardando_aprovacao_origem', 'aguardando_merito'], readOnly: true },
   { key: 'em_cotacao',     label: 'Em cotação',   icon: ClipboardList, color: 'border-b-cyan-500',    match: ['em_cotacao'] },
-  { key: 'pendente',       label: 'Pendente',     icon: Clock,        color: 'border-b-amber-500',   match: ['pendente', 'aguardando_aprovacao_financeira', 'aguardando_ajuste'] },
+  { key: 'no_financeiro',  label: 'No financeiro', icon: Clock,       color: 'border-b-orange-500',  match: ['aguardando_aprovacao_financeira'], readOnly: true, hint: 'Aguardando aprovação do financeiro (Alberto) — a decisão é feita na tela do Financeiro.' },
+  { key: 'pendente',       label: 'Pendente',     icon: Clock,        color: 'border-b-amber-500',   match: ['pendente', 'aguardando_ajuste'] },
   { key: 'em_analise',     label: 'Em Análise',   icon: SearchIcon,   color: 'border-b-blue-500',    match: ['em_analise'] },
   { key: 'em_atendimento', label: 'Em Andamento', icon: CheckCircle2, color: 'border-b-green-500',   match: ['aprovado', 'em_atendimento', 'aguardando_entrega'] },
   { key: 'sobrestada',     label: 'Em espera',    icon: Clock,        color: 'border-b-slate-400',   match: ['sobrestada'], readOnly: true, hint: 'Aguardando verba ou equipe — volta a andar quando for retomada.' },
@@ -991,13 +992,19 @@ function comQuemEsta(item) {
     case 'em_analise':
     case 'aprovado':
     case 'em_atendimento': {
+      // Pós-aprovação financeira de compra/serviço, o "com quem está" depende da
+      // forma de pagamento: cartão → o Amaury compra; demais → o financeiro paga.
+      if (item.aprovado_financeiro_em && ['compras', 'servico'].includes(item.categoria)) {
+        if (item.area_responsavel === 'logistica_compras') return `Aguardando compra · com o Amaury (cartão)${suf}`;
+        if (item.area_responsavel === 'financeiro') return `Aguardando pagamento · com o financeiro${suf}`;
+      }
       const area = item.area_responsavel
         ? (AREA_LABELS[item.area_responsavel] || item.area_responsavel)
         : 'área responsável';
       return `Com a equipe de ${area}${suf}`;
     }
     case 'aguardando_entrega':
-      return 'Compra a caminho';
+      return 'Comprado/pago · a caminho';
     case 'aguardando_ajuste':
       return 'Com você · precisa de ajuste';
     default:
@@ -2618,6 +2625,7 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
     aprovado: 'Aprovar',
     rejeitado: 'Rejeitar',
     concluido: 'Concluir',
+    aguardando_entrega: 'Confirmar',
   };
 
   function confirmAction() {
@@ -2920,18 +2928,30 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
             // Ponte estoque · só faz sentido em pedidos de material (logística) ativos
             const podeEstoque = ['compras', 'servico', 'infraestrutura', 'outro'].includes(item.categoria)
               && !['concluido', 'cancelado', 'rejeitado', 'avaliado', 'aguardando_aprovacao_origem', 'aguardando_merito', 'sobrestada'].includes(item.status);
-            const temAcoes = podeAprovar || podeRejeitar || item.status === 'pendente' || item.status === 'aprovado' || podeEstoque;
+            // Fluxo de compra EXPLÍCITO pós-aprovação financeira: cartão → Amaury
+            // COMPRA; demais → financeiro (Cristina) PAGA; depois confirma entrega.
+            // Comprado e pago caem no MESMO marco (aguardando_entrega).
+            const ehCompraServico = ['compras', 'servico'].includes(item.categoria);
+            const posAprov = ehCompraServico && !!item.aprovado_financeiro_em;
+            const ehAguardandoCompra = posAprov && item.status === 'pendente' && item.area_responsavel === 'logistica_compras';
+            const ehAguardandoPagamento = posAprov && item.status === 'em_atendimento' && item.area_responsavel === 'financeiro';
+            const ehAguardandoEntrega = item.status === 'aguardando_entrega';
+            const fluxoCompra = ehAguardandoCompra || ehAguardandoPagamento || ehAguardandoEntrega;
+            const temAcoes = podeAprovar || podeRejeitar || item.status === 'pendente' || item.status === 'aprovado' || podeEstoque || fluxoCompra;
             if (!temAcoes) return null;
             return (
               <div className="pt-3 border-t border-border space-y-2">
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Ações</p>
                 <div className="flex flex-wrap gap-2">
-                  {podeAprovar && (
+                  {ehAguardandoCompra && <Button size="sm" className="bg-teal-600 hover:bg-teal-700" onClick={() => setActionPending('aguardando_entrega')}>Marcar como comprado</Button>}
+                  {ehAguardandoPagamento && <Button size="sm" className="bg-teal-600 hover:bg-teal-700" onClick={() => setActionPending('aguardando_entrega')}>Marcar como pago</Button>}
+                  {ehAguardandoEntrega && <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" onClick={() => setActionPending('concluido')}>Confirmar entrega</Button>}
+                  {!fluxoCompra && podeAprovar && (
                     <Button size="sm" className="bg-green-600 hover:bg-green-700" onClick={() => setActionPending('aprovado')}>Aprovar</Button>
                   )}
-                  {item.status === 'aprovado' && <Button size="sm" className="bg-green-600 hover:bg-green-700" onClick={() => setActionPending('concluido')}>Concluir</Button>}
-                  {item.status === 'pendente' && <Button size="sm" variant="outline" onClick={() => setActionPending('em_analise')}>Analisar</Button>}
-                  {podeEstoque && <Button size="sm" variant="outline" onClick={() => setAtenderEstoque(true)}>Atender pelo estoque</Button>}
+                  {!fluxoCompra && item.status === 'aprovado' && <Button size="sm" className="bg-green-600 hover:bg-green-700" onClick={() => setActionPending('concluido')}>Concluir</Button>}
+                  {!fluxoCompra && item.status === 'pendente' && <Button size="sm" variant="outline" onClick={() => setActionPending('em_analise')}>Analisar</Button>}
+                  {!fluxoCompra && podeEstoque && <Button size="sm" variant="outline" onClick={() => setAtenderEstoque(true)}>Atender pelo estoque</Button>}
                   {podeRejeitar && (
                     <Button size="sm" variant="destructive" onClick={() => setActionPending('rejeitado')}>Rejeitar</Button>
                   )}
