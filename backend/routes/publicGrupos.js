@@ -14,6 +14,7 @@ const {
   montarEnvioFrequencia, rotuloMes, enviarInscricaoConfirmada,
 } = require('../services/gruposWhatsapp');
 const { processarFila, enfileirarLote } = require('../services/whatsappFila');
+const { enviosAutomaticosAtivos } = require('../services/gruposEnvios');
 const { registrarEventoPedido } = require('../services/grupoPedidoEventos');
 const { registrarObservacaoSegura } = require('../services/identidadeProgressiva');
 const { requireCron } = require('../utils/cronAuth');
@@ -1611,6 +1612,13 @@ router.post('/grupo/renovacao', async (req, res) => {
 // intenção (ex.: reenvio deliberado no fim do mês pra quem não respondeu).
 router.get('/cron/frequencia-mensal', requireCron, async (req, res) => {
   try {
+    // ⚠️ BARREIRA (Marcos 2026-07-23): kill-switch central dos envios
+    // automáticos. DESLIGADO por padrão — nenhum disparo automático sai até a
+    // coordenação ligar na aba Envios. Envio manual não passa por aqui.
+    if (!(await enviosAutomaticosAtivos())) {
+      console.log('[grupos frequencia cron] envios automáticos DESLIGADOS — nada enviado');
+      return res.json({ ok: true, enviados: 0, motivo: 'envios_automaticos_desligados' });
+    }
     const hoje = new Date().toISOString().slice(0, 10);
     const { data: temporadaEmCurso } = await supabase
       .from('mem_temporadas')

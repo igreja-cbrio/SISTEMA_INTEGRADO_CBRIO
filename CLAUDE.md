@@ -1199,6 +1199,34 @@ override `WHATSAPP_TEMPLATE_GRUPOS_RENOVACAO`) via fila `whatsapp_envios`.
 A pessoa removida NÃO é notificada (decisão pastoral) — o caminho de volta é o
 broadcast de abertura das inscrições.
 
+## ⚠️ Grupos · Envios (barreiras anti-disparo-indevido) + console (2026-07-23)
+
+Susto do Marcos (envios proativos a líderes). Auditoria do código vivo + barreiras
+(PR da branch `claude/grupos-audit-msgs`). **Estado dos envios de grupos:**
+- **2 mecanismos**: (a) **fila `whatsapp_envios` → só TEMPLATE aprovado** (seguro ·
+  novo pedido→líder, inscrição→pessoa, aprovado→pessoa [eventos], frequência
+  mensal [cron], renovação [manual], sugestão [manual]); (b) **`enviarComFallback`
+  (whatsappGrupos) = texto-livre-primeiro** (o que a Meta bloqueava fora da janela
+  24h) — usado só por webhook-reply (dentro da janela, ok) e pelo lembrete manual.
+- **Incidente das ~40 msgs (20/07)** = cobrança automática de relato →
+  **REMOVIDA** (#1865). **Estudo semanal automático** (cron, texto-livre, template
+  inexistente) → **REMOVIDO 2026-07-23** (só manual pela aba de estudos agora; o
+  `POST /whatsapp-grupos/enviar-estudo` e a chamada no cron/diario saíram).
+- **Kill-switch central** `whatsapp_config.grupos_auto_envios` (migration
+  `20260723180000` · **default false = SEGURO**): gateia o único cron proativo que
+  sobra (frequência mensal em `publicGrupos`). Desligado = nenhum disparo
+  automático sai. Envio MANUAL não depende dele.
+- **Aba Envios** (`GruposEnvios.jsx` · PAGE_TAB `envios` · soEditor/nível 5):
+  liga/desliga os automáticos + **disparo manual da chamada do mês** por
+  líder/bairro/rede/todos (prévia com contagem + exemplo + quem não recebe +
+  confirmação pelo número) + renovação + histórico (`whatsapp_envios`) + painel do
+  que dispara sozinho. Backend `services/gruposEnvios.js` (`enviosAutomaticosAtivos`,
+  resolver de audiência **respeitando `whatsapp_lideres.recebe_lembretes`** —
+  corrige a lacuna do `renovacao/disparar` que lia `lider_id` direto) + rotas
+  `/grupos/envios/*` em grupos.js. Só template (fila) — nada de texto livre proativo.
+- ⚠️ Aplicar `20260723180000` antes do merge (aditiva/idempotente · código tolera
+  ausência tratando como false).
+
 ## Grupos × Bot WhatsApp · estudo semanal + relato do encontro (2026-06-10)
 
 Marcos: o bot manda o ESTUDO DA SEMANA pros líderes de grupos e, no dia

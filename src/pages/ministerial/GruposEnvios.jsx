@@ -1,0 +1,312 @@
+// ============================================================================
+// Aba ENVIOS do /grupos (Marcos 2026-07-23)
+//
+// Uma tela só pra: (1) LIGAR/DESLIGAR os envios automáticos (kill-switch · o
+// "botão de pânico" que o Marcos pediu depois do susto), (2) disparar MANUAL a
+// chamada do mês pra um líder / bairro / rede / todos (com prévia + confirmação
+// pelo número), (3) disparar a renovação de temporada, e (4) ver o histórico +
+// o que dispara sozinho (transparência). Nada de texto livre — só template.
+// ============================================================================
+import { useState, useEffect, useCallback } from 'react';
+import { grupos as api } from '../../api';
+import { Button } from '../../components/ui/button';
+import { toast } from 'sonner';
+import { Send, Power, Users, CheckCircle2, AlertTriangle, RefreshCw, Zap, Info } from 'lucide-react';
+
+const C = {
+  bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
+  t2: 'var(--cbrio-text2)', t3: 'var(--cbrio-text3)', border: 'var(--cbrio-border)',
+  primary: '#00B39D', primaryBg: '#00B39D18',
+  green: '#10b981', greenBg: '#10b98120', red: '#ef4444', redBg: '#ef444420',
+  amber: '#f59e0b', amberBg: '#f59e0b20',
+};
+const selStyle = { padding: '8px 10px', borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 13, background: 'var(--cbrio-input-bg)', color: C.text, minWidth: 180 };
+const fmtDT = (d) => { try { return new Date(d).toLocaleString('pt-BR'); } catch { return ''; } };
+
+// Envios que disparam SOZINHOS por evento (transparência · não são botões)
+const AUTOMATICOS_EVENTO = [
+  ['Nova inscrição → líder', 'quando alguém se inscreve num grupo'],
+  ['Inscrição recebida → a pessoa', 'quando alguém se inscreve'],
+  ['Pedido aprovado → a pessoa', 'quando o líder aprova'],
+];
+
+export default function GruposEnvios({ podeEditar = false }) {
+  const [config, setConfig] = useState(null);
+  const [aux, setAux] = useState(null);
+  const [historico, setHistorico] = useState([]);
+  const [renPainel, setRenPainel] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [salvandoConfig, setSalvandoConfig] = useState(false);
+
+  const [tipoAud, setTipoAud] = useState('todos');
+  const [valorAud, setValorAud] = useState('');
+  const [preview, setPreview] = useState(null);
+  const [carregandoPreview, setCarregandoPreview] = useState(false);
+  const [enviando, setEnviando] = useState(false);
+  const [confirmando, setConfirmando] = useState(false);
+  const [dispRenov, setDispRenov] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [cfg, a, h, rp] = await Promise.all([
+        api.envios.getConfig().catch(() => ({ auto_envios: false })),
+        api.envios.aux().catch(() => ({ redes: [], bairros: [], grupos: [], temporada: null })),
+        api.envios.historico().then(r => r?.items || []).catch(() => []),
+        api.renovacao.painel().catch(() => null),
+      ]);
+      setConfig(cfg); setAux(a); setHistorico(h); setRenPainel(rp);
+    } catch { toast.error('Erro ao carregar a aba de envios'); }
+    finally { setLoading(false); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const toggleAuto = async () => {
+    if (!podeEditar) return;
+    const novo = !config?.auto_envios;
+    if (novo && !confirm('LIGAR os envios automáticos? A partir daí o sistema volta a disparar sozinho a chamada mensal de frequência pros líderes (respeitando temporada em curso e opt-out).')) return;
+    setSalvandoConfig(true);
+    try {
+      const r = await api.envios.setConfig(novo);
+      setConfig(r);
+      toast.success(novo ? 'Envios automáticos LIGADOS' : 'Envios automáticos DESLIGADOS');
+    } catch (e) { toast.error(e.message || 'Erro ao salvar'); }
+    finally { setSalvandoConfig(false); }
+  };
+
+  const audiencia = () => ({ tipo: tipoAud, valor: tipoAud === 'todos' ? null : valorAud });
+  const audienciaValida = () => tipoAud === 'todos' || !!valorAud;
+
+  const gerarPreview = async () => {
+    if (!audienciaValida()) { toast.error('Escolha o destino.'); return; }
+    setCarregandoPreview(true); setPreview(null);
+    try { setPreview(await api.envios.previewFrequencia(audiencia())); }
+    catch (e) { toast.error(e.message || 'Erro ao gerar prévia'); }
+    finally { setCarregandoPreview(false); }
+  };
+
+  const enviarFrequencia = async () => {
+    setEnviando(true); setConfirmando(false);
+    try {
+      const r = await api.envios.dispararFrequencia(audiencia());
+      toast.success(`${r.enfileirados} mensagem(ns) na fila de envio`);
+      setPreview(null); setValorAud('');
+      api.envios.historico().then(res => setHistorico(res?.items || [])).catch(() => {});
+    } catch (e) { toast.error(e.message || 'Erro ao enviar'); }
+    finally { setEnviando(false); }
+  };
+
+  const dispararRenovacao = async () => {
+    if (!renPainel?.temporada?.id) return;
+    const sem = renPainel?.resumo?.sem_resposta ?? 0;
+    const jaEnviou = (renPainel?.resumo?.enviadas ?? 0) > 0;
+    const alvo = jaEnviou ? sem : (renPainel?.resumo?.podem_receber ?? 0);
+    if (!alvo) { toast.info('Ninguém para enviar agora.'); return; }
+    if (!confirm(jaEnviou
+      ? `Reenviar a renovação pros ${sem} líder(es) que ainda não responderam?`
+      : `Enviar a pergunta de renovação pros líderes de ${alvo} grupo(s) de ${renPainel.temporada.label}?`)) return;
+    setDispRenov(true);
+    try {
+      const r = await api.renovacao.disparar(renPainel.temporada.id);
+      toast.success(`${r?.enfileirados ?? 0} na fila de envio`);
+      load();
+    } catch (e) { toast.error(e.message || 'Erro ao disparar a renovação'); }
+    finally { setDispRenov(false); }
+  };
+
+  if (loading) return <div style={{ padding: 60, textAlign: 'center', color: C.t3 }}>Carregando...</div>;
+  const auto = config?.auto_envios === true;
+
+  return (
+    <div style={{ paddingTop: 14, display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* 1) KILL-SWITCH */}
+      <div style={{
+        background: C.card, borderRadius: 16, border: `1px solid ${auto ? C.amber : C.green}`,
+        borderLeft: `4px solid ${auto ? C.amber : C.green}`, padding: 18,
+        display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap',
+      }}>
+        <Power size={26} style={{ color: auto ? C.amber : C.green, flexShrink: 0 }} />
+        <div style={{ flex: 1, minWidth: 240 }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>
+            Envios automáticos: {auto ? 'LIGADOS' : 'DESLIGADOS'}
+          </div>
+          <div style={{ fontSize: 12.5, color: C.t3, marginTop: 3, lineHeight: 1.5 }}>
+            {auto
+              ? 'O sistema pode disparar sozinho a chamada mensal de frequência (na temporada em curso, respeitando quem pediu pra não receber).'
+              : 'Nenhum disparo automático sai. O envio manual abaixo continua funcionando normalmente.'}
+          </div>
+        </div>
+        {podeEditar && (
+          <Button variant={auto ? 'outline' : 'default'} disabled={salvandoConfig} onClick={toggleAuto}>
+            {salvandoConfig ? 'Salvando...' : (auto ? 'Desligar' : 'Ligar')}
+          </Button>
+        )}
+      </div>
+
+      {/* 2) DISPARO MANUAL · FREQUÊNCIA */}
+      <div style={{ background: C.card, borderRadius: 16, border: `1px solid ${C.border}`, padding: 18 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+          <Send size={17} style={{ color: C.primary }} />
+          <h2 style={{ fontSize: 15, fontWeight: 700, color: C.text, margin: 0 }}>Pedir a chamada do mês (manual)</h2>
+        </div>
+        <p style={{ fontSize: 12.5, color: C.t3, margin: '0 0 12px', lineHeight: 1.5 }}>
+          Manda pro líder o link pra marcar quem participou. Escolha o destino, veja a prévia e confirme.
+          Só sai por template aprovado; quem pediu pra não receber fica de fora.
+        </p>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12 }}>
+          <select value={tipoAud} onChange={e => { setTipoAud(e.target.value); setValorAud(''); setPreview(null); }} style={selStyle}>
+            <option value="todos">Todos os líderes</option>
+            <option value="lider">Um líder específico</option>
+            <option value="bairro">Por bairro</option>
+            <option value="rede">Por rede</option>
+          </select>
+          {tipoAud === 'lider' && (
+            <select value={valorAud} onChange={e => { setValorAud(e.target.value); setPreview(null); }} style={{ ...selStyle, minWidth: 260 }}>
+              <option value="">Escolha o grupo/líder...</option>
+              {(aux?.grupos || []).map(g => <option key={g.id} value={g.id}>{g.nome}{g.lider_nome ? ` — ${g.lider_nome}` : ''}</option>)}
+            </select>
+          )}
+          {tipoAud === 'bairro' && (
+            <select value={valorAud} onChange={e => { setValorAud(e.target.value); setPreview(null); }} style={selStyle}>
+              <option value="">Escolha o bairro...</option>
+              {(aux?.bairros || []).map(b => <option key={b} value={b}>{b}</option>)}
+            </select>
+          )}
+          {tipoAud === 'rede' && (
+            <select value={valorAud} onChange={e => { setValorAud(e.target.value); setPreview(null); }} style={selStyle}>
+              <option value="">Escolha a rede...</option>
+              {(aux?.redes || []).map(r => <option key={r.id} value={r.id}>{r.nome}</option>)}
+            </select>
+          )}
+          <Button variant="outline" disabled={carregandoPreview || !audienciaValida()} onClick={gerarPreview}>
+            {carregandoPreview ? 'Calculando...' : 'Ver prévia'}
+          </Button>
+        </div>
+
+        {preview && (
+          <div style={{ border: `1px solid ${C.border}`, borderRadius: 12, padding: 14, background: C.bg }}>
+            <div style={{ fontSize: 13.5, color: C.text, fontWeight: 600, marginBottom: 8 }}>
+              <Users size={14} style={{ display: 'inline', verticalAlign: -2, marginRight: 6, color: C.primary }} />
+              {preview.total} líder(es) vão receber · chamada de {preview.mes}
+            </div>
+            {preview.exemplo && (
+              <div style={{ fontSize: 12.5, color: C.t2, fontStyle: 'italic', borderLeft: `3px solid ${C.primary}`, paddingLeft: 10, marginBottom: 10, lineHeight: 1.5 }}>
+                Ex. ({preview.exemplo.lider}): "{preview.exemplo.texto}"
+              </div>
+            )}
+            {preview.excluidos_total > 0 && (
+              <div style={{ fontSize: 12, color: C.t3, marginBottom: 10 }}>
+                🚫 {preview.excluidos_total} não recebem:
+                {preview.excluidos.sem_lider ? ` ${preview.excluidos.sem_lider} sem líder ·` : ''}
+                {preview.excluidos.sem_telefone ? ` ${preview.excluidos.sem_telefone} sem WhatsApp ·` : ''}
+                {preview.excluidos.opt_out ? ` ${preview.excluidos.opt_out} pediram pra não receber ·` : ''}
+                {preview.excluidos.sem_roster ? ` ${preview.excluidos.sem_roster} sem participantes` : ''}
+              </div>
+            )}
+            {preview.total > 0 ? (
+              <Button disabled={enviando || !podeEditar} onClick={() => setConfirmando(true)}>
+                <Send size={14} style={{ marginRight: 6 }} /> Enviar para {preview.total} líder(es)
+              </Button>
+            ) : (
+              <div style={{ fontSize: 13, color: C.amber }}>Ninguém para enviar com esse destino.</div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* 3) RENOVAÇÃO DE TEMPORADA */}
+      {renPainel?.temporada && (
+        <div style={{ background: C.card, borderRadius: 16, border: `1px solid ${C.border}`, padding: 18 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+            <RefreshCw size={16} style={{ color: C.primary }} />
+            <h2 style={{ fontSize: 15, fontWeight: 700, color: C.text, margin: 0 }}>Renovação de temporada (manual)</h2>
+          </div>
+          <p style={{ fontSize: 12.5, color: C.t3, margin: '0 0 10px', lineHeight: 1.5 }}>
+            Pergunta a cada líder se continua com o grupo na próxima temporada. Só funciona com as inscrições
+            da temporada FECHADAS. {renPainel.temporada.inscricoes_abertas && <strong style={{ color: C.amber }}>As inscrições da {renPainel.temporada.label} estão abertas — feche-as antes de disparar.</strong>}
+          </p>
+          <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 12.5, color: C.t2, marginBottom: 12 }}>
+            <span>Grupos: <strong style={{ color: C.text }}>{renPainel.resumo?.grupos ?? 0}</strong></span>
+            <span>Enviadas: <strong style={{ color: C.text }}>{renPainel.resumo?.enviadas ?? 0}</strong></span>
+            <span>Continuam: <strong style={{ color: C.green }}>{renPainel.resumo?.continuam ?? 0}</strong></span>
+            <span>Não continuam: <strong style={{ color: C.red }}>{renPainel.resumo?.nao_continuam ?? 0}</strong></span>
+            <span>Sem resposta: <strong style={{ color: C.amber }}>{renPainel.resumo?.sem_resposta ?? 0}</strong></span>
+          </div>
+          {podeEditar && (
+            <Button variant="outline" disabled={dispRenov || renPainel.temporada.inscricoes_abertas} onClick={dispararRenovacao}>
+              <RefreshCw size={14} style={{ marginRight: 6 }} />
+              {dispRenov ? 'Enviando...' : ((renPainel.resumo?.enviadas ?? 0) > 0 ? `Reenviar aos sem resposta (${renPainel.resumo?.sem_resposta ?? 0})` : `Enviar renovação (${renPainel.resumo?.podem_receber ?? 0})`)}
+            </Button>
+          )}
+        </div>
+      )}
+
+      {/* 4) O QUE DISPARA SOZINHO (transparência) */}
+      <div style={{ background: C.card, borderRadius: 16, border: `1px solid ${C.border}`, padding: 18 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+          <Zap size={16} style={{ color: C.amber }} />
+          <h2 style={{ fontSize: 15, fontWeight: 700, color: C.text, margin: 0 }}>O que o sistema envia sozinho</h2>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+          <Linha nome="Chamada mensal de frequência → líder" quando={auto ? 'automático · 1×/mês (temporada em curso)' : 'DESLIGADO agora'} cor={auto ? C.amber : C.t3} />
+          {AUTOMATICOS_EVENTO.map(([n, q]) => <Linha key={n} nome={n} quando={q} cor={C.t3} />)}
+          <div style={{ fontSize: 11.5, color: C.t3, marginTop: 4, lineHeight: 1.5, display: 'flex', gap: 6 }}>
+            <Info size={13} style={{ flexShrink: 0, marginTop: 1 }} />
+            Cobrança automática de relato e estudo automático foram <strong>removidos</strong>. Nada é enviado por texto livre — só templates aprovados pela Meta.
+          </div>
+        </div>
+      </div>
+
+      {/* 5) HISTÓRICO */}
+      <div style={{ background: C.card, borderRadius: 16, border: `1px solid ${C.border}`, padding: 18 }}>
+        <h2 style={{ fontSize: 15, fontWeight: 700, color: C.text, margin: '0 0 10px' }}>Últimos envios</h2>
+        {historico.length === 0 ? (
+          <div style={{ fontSize: 13, color: C.t3 }}>Nenhum envio de grupos registrado ainda.</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 320, overflowY: 'auto' }}>
+            {historico.map(h => {
+              const cor = h.status === 'enviado' ? C.green : h.status === 'erro' ? C.red : C.amber;
+              return (
+                <div key={h.id} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, padding: '6px 0', borderBottom: `1px solid ${C.border}` }}>
+                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: cor, flexShrink: 0 }} />
+                  <span style={{ color: C.t2, minWidth: 128 }}>{fmtDT(h.criado_em)}</span>
+                  <span style={{ color: C.t3, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.template} · {(h.contexto || '').replace('grupos.', '')}</span>
+                  <span style={{ color: cor, fontWeight: 600 }}>{h.status}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Confirmação do envio de frequência (número = o freio) */}
+      {confirmando && preview && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 1100, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.55)', padding: 16 }}>
+          <div style={{ width: '100%', maxWidth: 420, background: C.card, borderRadius: 16, border: `1px solid ${C.border}`, padding: 20 }}>
+            <h3 style={{ fontSize: 16, fontWeight: 800, color: C.text, margin: '0 0 10px' }}>Confirmar envio</h3>
+            <p style={{ fontSize: 13.5, color: C.t2, margin: '0 0 16px', lineHeight: 1.6 }}>
+              Vou mandar a chamada do mês para <strong style={{ color: C.primary }}>{preview.total} líder(es)</strong> agora.
+              {preview.total >= 20 && <> É um disparo grande — confirme que é isso.</>}
+            </p>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <Button variant="outline" style={{ flex: 1 }} onClick={() => setConfirmando(false)}>Cancelar</Button>
+              <Button style={{ flex: 1 }} disabled={enviando} onClick={enviarFrequencia}>
+                {enviando ? 'Enviando...' : `Enviar para ${preview.total}`}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Linha({ nome, quando, cor }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12.5 }}>
+      <CheckCircle2 size={13} style={{ color: cor, flexShrink: 0 }} />
+      <span style={{ color: 'var(--cbrio-text)', flex: 1 }}>{nome}</span>
+      <span style={{ color: cor, fontWeight: 600, whiteSpace: 'nowrap' }}>{quando}</span>
+    </div>
+  );
+}
