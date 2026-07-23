@@ -414,6 +414,12 @@ function DetalheDialog({ solicitacao: s, onClose, onAction }) {
                 <ExternalLink className="h-3 w-3" /> Ver comprovante
               </a>
             )}
+            {s.nota_fiscal_url && (
+              <a href={s.nota_fiscal_url} target="_blank" rel="noopener noreferrer"
+                 className="inline-flex items-center gap-1 text-xs text-primary hover:underline ml-3">
+                <ExternalLink className="h-3 w-3" /> Ver nota fiscal
+              </a>
+            )}
           </div>
         )}
 

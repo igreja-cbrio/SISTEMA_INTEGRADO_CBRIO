@@ -2319,6 +2319,13 @@ function CotacaoBlock({ item, canCotar, onChanged }) {
   const [salvando, setSalvando] = useState(false);
   const [editId, setEditId] = useState(null);
   const [form, setForm] = useState({ fornecedor: '', valor: '', prazo: '', link: '', observacao: '' });
+  // Classificação contábil (loop financeiro) — o Amaury preenche na cotação.
+  const [planos, setPlanos] = useState([]);
+  const [centros, setCentros] = useState([]);
+  const [planoId, setPlanoId] = useState(item.plano_contas_id || '');
+  const [centroId, setCentroId] = useState(item.centro_custo_id || '');
+  const [nfUrl, setNfUrl] = useState(item.nota_fiscal_url || '');
+  const [escaneando, setEscaneando] = useState(false);
 
   async function recarregar() {
     try {
@@ -2328,6 +2335,33 @@ function CotacaoBlock({ item, canCotar, onChanged }) {
     finally { setCarregando(false); }
   }
   useEffect(() => { recarregar(); /* eslint-disable-next-line */ }, [item.id]);
+  useEffect(() => {
+    api.classificacaoAux().then(d => {
+      setPlanos(d?.planos || []); setCentros(d?.centros || []);
+    }).catch(() => {});
+  }, []);
+
+  async function escanearNf(file) {
+    if (!file) return;
+    setEscaneando(true);
+    try {
+      const r = await api.escanearNotaFiscal(item.id, file);
+      if (r?.url) setNfUrl(r.url);
+      const ex = r?.extracao, sg = r?.sugestao;
+      if (ex) {
+        setForm(f => ({
+          ...f,
+          fornecedor: f.fornecedor || ex.emitente_nome || '',
+          valor: f.valor || (ex.valor_total != null ? String(ex.valor_total) : ''),
+        }));
+      }
+      if (sg?.plano_contas_id) setPlanoId(sg.plano_contas_id);
+      if (sg?.centro_custo_id) setCentroId(sg.centro_custo_id);
+      toast.success(ex ? 'Nota lida — confira os campos sugeridos.' : 'Nota anexada (não consegui ler automaticamente).');
+      onChanged?.();
+    } catch (e) { toast.error(e.message || 'Erro ao ler a nota fiscal.'); }
+    finally { setEscaneando(false); }
+  }
 
   function resetForm() { setForm({ fornecedor: '', valor: '', prazo: '', link: '', observacao: '' }); setEditId(null); }
 
@@ -2371,24 +2405,25 @@ function CotacaoBlock({ item, canCotar, onChanged }) {
   async function enviarFinanceiro() {
     // Fluxo "um botão": sem cotação formal na lista, manda o valor digitado
     // direto (o servidor cria a cotação na hora · fornecedor opcional).
-    let payload;
+    const payload = { plano_contas_id: planoId || undefined, centro_custo_id: centroId || undefined };
     if (!cotacoes.length) {
       const v = Number(form.valor);
       if (form.valor === '' || Number.isNaN(v) || v < 0) { toast.error('Informe o valor pra enviar ao financeiro.'); return; }
-      payload = {
+      Object.assign(payload, {
         valor: v,
         fornecedor: form.fornecedor.trim() || undefined,
         observacao: form.observacao.trim() || undefined,
         prazo: form.prazo.trim() || undefined,
         link: form.link.trim() || undefined,
-      };
+      });
     }
+    const enviouInline = !cotacoes.length;
     setEnviando(true);
     try {
       const r = await api.enviarCotacoesFinanceiro(item.id, payload);
       if (r?.email_ok) toast.success('Enviado ao financeiro (e-mail avisado).');
       else toast.warning(r?.motivo ? `Enviado ao financeiro no sistema, mas o e-mail não saiu — ${r.motivo}` : 'Enviado ao financeiro no sistema, mas o e-mail não saiu — verifique.');
-      if (payload) resetForm();
+      if (enviouInline) resetForm();
       onChanged?.();
       await recarregar();
     } catch (e) { toast.error(e.message || 'Erro ao enviar ao financeiro'); }
@@ -2479,6 +2514,39 @@ function CotacaoBlock({ item, canCotar, onChanged }) {
             {editId && <Button size="sm" variant="outline" onClick={resetForm} disabled={salvando}>Cancelar</Button>}
             <Button size="sm" onClick={salvar} disabled={salvando}>{salvando ? 'Salvando...' : editId ? 'Salvar' : 'Adicionar'}</Button>
           </div>
+        </div>
+      )}
+
+      {podeEditar && ['compras', 'servico'].includes(item.categoria) && (
+        <div className="space-y-2 rounded-md border border-dashed border-border p-3">
+          <p className="text-xs font-medium text-foreground">Classificação contábil + nota fiscal</p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <label className="text-xs px-3 py-1.5 rounded-md border border-border cursor-pointer hover:bg-muted/40">
+              {escaneando ? 'Lendo a nota…' : (nfUrl ? 'Trocar nota fiscal' : 'Anexar nota fiscal (a IA lê)')}
+              <input type="file" accept="image/*,application/pdf" className="hidden" disabled={escaneando}
+                onChange={e => { const f = e.target.files?.[0]; if (f) escanearNf(f); e.target.value = ''; }} />
+            </label>
+            {nfUrl && <a href={nfUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline">Ver nota anexada</a>}
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div>
+              <Label className="text-xs">Plano de contas</Label>
+              <select value={planoId} onChange={e => setPlanoId(e.target.value)}
+                className="w-full px-2 py-2 text-sm rounded-md border border-border bg-background">
+                <option value="">Selecione…</option>
+                {planos.map(p => <option key={p.id} value={p.id}>{p.codigo} · {p.nome}</option>)}
+              </select>
+            </div>
+            <div>
+              <Label className="text-xs">Centro de custo</Label>
+              <select value={centroId} onChange={e => setCentroId(e.target.value)}
+                className="w-full px-2 py-2 text-sm rounded-md border border-border bg-background">
+                <option value="">Selecione…</option>
+                {centros.map(c => <option key={c.id} value={c.id}>{c.codigo} · {c.nome}</option>)}
+              </select>
+            </div>
+          </div>
+          <p className="text-[11px] text-muted-foreground">Anexe a nota e a IA sugere o plano de contas, o fornecedor e o valor pra você confirmar. Salvo ao enviar ao financeiro.</p>
         </div>
       )}
 

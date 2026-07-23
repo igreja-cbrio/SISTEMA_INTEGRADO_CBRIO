@@ -10,6 +10,10 @@ const solicFluxo = require('../services/solicFluxo');
 const CRON_SECRET = process.env.CRON_SECRET;
 const { isAuthorizedCron } = require('../utils/cronAuth');
 const wpp = require('../services/whatsappService');
+const multer = require('multer');
+const crypto = require('crypto');
+const { extrairNotaFiscal, sugerirCategoria } = require('../services/nfScanner');
+const uploadNfSolic = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
 
 // Dispara o WhatsApp pro solicitante quando a solicitação muda de status
 // (template pedido_atualizado · 5 params). No-op se sem env / sem membro / sem
@@ -276,6 +280,67 @@ router.delete('/fluxos/transicoes/:id', async (req, res) => {
     solicFluxo.bustCache(t?.solic_fluxos?.categoria);
     res.json({ ok: true });
   } catch (e) { console.error('[SOLICITACOES] remover transicao:', e.message); res.status(500).json({ error: e.message }); }
+});
+
+// ── LOOP FINANCEIRO · classificação + NF (Fase 1 · não escreve no razão) ──────
+// Listas de plano de contas (despesa · folha) + centros de custo pra o Amaury
+// classificar na cotação (opcional ?area= pré-filtra centros por area_slug).
+router.get('/aux/classificacao', async (req, res) => {
+  try {
+    let centrosQ = supabase.from('fin_centros_custo').select('id, codigo, nome, area_slug')
+      .eq('ativo', true).eq('aceita_lancamento', true).order('codigo');
+    if (req.query.area) centrosQ = centrosQ.eq('area_slug', String(req.query.area));
+    const [planos, centros] = await Promise.all([
+      supabase.from('fin_plano_contas').select('id, codigo, nome')
+        .eq('tipo', 'despesa').eq('ativo', true).eq('aceita_lancamento', true).order('codigo'),
+      centrosQ,
+    ]);
+    if (planos.error) throw planos.error;
+    res.json({ planos: planos.data || [], centros: centros.data || [] });
+  } catch (e) { console.error('[SOLICITACOES] aux classificacao:', e.message); res.status(500).json({ error: e.message }); }
+});
+
+// Escanear a nota fiscal do pedido: sobe o arquivo + IA extrai + sugere plano/
+// centro/fornecedor/valor. NÃO cria transação (só anexa a NF e devolve sugestão
+// pra o Amaury confirmar). Guard = quem pode cotar.
+router.post('/:id/nota-fiscal/escanear', uploadNfSolic.single('arquivo'), async (req, res) => {
+  try {
+    const { data: sol } = await supabase.from('solicitacoes')
+      .select('*').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!sol) return res.status(404).json({ error: 'Solicitação não encontrada.' });
+    if (!(await podeCotar(req, sol))) return res.status(403).json({ error: 'Apenas a logística (ou admin) pode anexar a nota.' });
+    if (!req.file) return res.status(400).json({ error: 'Nenhum arquivo enviado.' });
+
+    const ext = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/pdf': 'pdf' }[req.file.mimetype] || 'bin';
+    const path = `notas-fiscais/${Date.now()}-${crypto.randomBytes(4).toString('hex')}.${ext}`;
+    const { error: upErr } = await supabase.storage.from('solicitacoes')
+      .upload(path, req.file.buffer, { contentType: req.file.mimetype, upsert: false });
+    if (upErr) return res.status(500).json({ error: `Erro ao salvar o arquivo: ${upErr.message}` });
+    const url = supabase.storage.from('solicitacoes').getPublicUrl(path).data.publicUrl;
+
+    let extraido = null, raw = null;
+    try { ({ extraido, raw } = await extrairNotaFiscal(req.file.buffer, req.file.mimetype)); }
+    catch (e) { console.error('[SOLICITACOES] NF extração:', e.message); }
+
+    let sugestao = null;
+    if (extraido?.valor_total) {
+      sugestao = await sugerirCategoria({
+        cnpj: extraido.emitente_cnpj, nome: extraido.emitente_nome,
+        valor: extraido.valor_total, descricao: extraido.descricao_resumo,
+      }).catch(() => null);
+    }
+
+    // Anexa a NF ao pedido já (arquivo + extração saneada). Plano/centro só são
+    // gravados quando o Amaury confirmar (no enviar-cotacoes-financeiro).
+    await supabase.from('solicitacoes')
+      .update({ nota_fiscal_url: url, nota_fiscal_extracao: extraido || null })
+      .eq('id', sol.id);
+
+    res.json({ url, extracao_ok: !!extraido, extracao: extraido, sugestao });
+  } catch (e) {
+    console.error('[SOLICITACOES] escanear NF:', e.message);
+    res.status(500).json({ error: 'Erro ao escanear a nota fiscal.' });
+  }
 });
 
 // Bust do cache do painel após mutacao (afeta matriz adm/criativo)
@@ -2371,6 +2436,17 @@ router.post('/:id/enviar-cotacoes-financeiro', async (req, res) => {
     const refCot = cotacoes.find(c => c.sugerida)
       || [...cotacoes].sort((a, b) => (Number(a.valor) || 0) - (Number(b.valor) || 0))[0];
 
+    // Classificação contábil (loop financeiro · o Amaury preenche na cotação).
+    const planoId = req.body?.plano_contas_id || null;
+    const centroId = req.body?.centro_custo_id || null;
+    if (planoId) {
+      const { data: plano } = await supabase.from('fin_plano_contas')
+        .select('tipo, aceita_lancamento, ativo').eq('id', planoId).maybeSingle();
+      if (!plano || plano.tipo !== 'despesa' || !plano.aceita_lancamento || plano.ativo === false) {
+        return res.status(400).json({ error: 'Plano de contas inválido (precisa ser uma conta de despesa que aceita lançamento).' });
+      }
+    }
+
     // Atualiza a solicitação (retrocompat inline + carimbo do e-mail).
     const updates = {
       valor_cotado: Number(refCot.valor),
@@ -2383,6 +2459,8 @@ router.post('/:id/enviar-cotacoes-financeiro', async (req, res) => {
       cotacoes_email_em: new Date().toISOString(),
       cotacoes_email_por: req.user.userId,
     };
+    if (planoId) updates.plano_contas_id = planoId;
+    if (centroId) updates.centro_custo_id = centroId;
     // Só muda o status na 1ª ida (em_cotacao); reenvio mantém o status atual.
     if (sol.status === 'em_cotacao') updates.status = 'aguardando_aprovacao_financeira';
 
