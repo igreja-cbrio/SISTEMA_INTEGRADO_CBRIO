@@ -485,8 +485,8 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
             <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 720 }}>
               <thead>
                 <tr style={{ borderBottom: `1px solid ${C.border}`, background: C.bg }}>
-                  {['Pessoa', 'Função', 'Status', 'Grupo', 'Última frequência', 'Presenças'].map((h, i) => (
-                    <th key={h} style={{ textAlign: i === 5 ? 'right' : 'left', padding: '8px 16px', fontSize: 10, fontWeight: 700, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.4, whiteSpace: 'nowrap' }}>{h}</th>
+                  {['Pessoa', 'Função', 'Status', 'Grupo', 'Última frequência', 'Último envio', 'Presenças'].map((h, i, arr) => (
+                    <th key={h} style={{ textAlign: i === arr.length - 1 ? 'right' : 'left', padding: '8px 16px', fontSize: 10, fontWeight: 700, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.4, whiteSpace: 'nowrap' }}>{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -535,6 +535,10 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
                       </td>
                       <td style={{ padding: '10px 16px', fontSize: 12, color: p.ultima_frequencia ? C.t2 : C.t3, whiteSpace: 'nowrap' }}>
                         {p.ultima_frequencia ? fmtData(p.ultima_frequencia) : '—'}
+                      </td>
+                      <td style={{ padding: '10px 16px', fontSize: 12, color: p.ultimo_envio ? C.t2 : C.t3, whiteSpace: 'nowrap' }}
+                          title={p.ultimo_envio ? `Último: ${p.ultimo_envio.template || 'mensagem'}` : 'Nenhum envio de grupos registrado'}>
+                        {p.ultimo_envio?.em ? fmtData(String(p.ultimo_envio.em).slice(0, 10)) : '—'}
                       </td>
                       <td style={{ padding: '10px 16px', fontSize: 12, color: C.t2, textAlign: 'right' }}>
                         {p.presencas_total || 0}

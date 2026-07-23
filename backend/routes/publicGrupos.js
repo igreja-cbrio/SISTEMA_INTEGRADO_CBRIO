@@ -14,7 +14,7 @@ const {
   montarEnvioFrequencia, rotuloMes, enviarInscricaoConfirmada,
 } = require('../services/gruposWhatsapp');
 const { processarFila, enfileirarLote } = require('../services/whatsappFila');
-const { enviosAutomaticosAtivos } = require('../services/gruposEnvios');
+const { enviosAutomaticosAtivos } = require('../services/gruposEnviosConfig');
 const { registrarEventoPedido } = require('../services/grupoPedidoEventos');
 const { registrarObservacaoSegura } = require('../services/identidadeProgressiva');
 const { requireCron } = require('../utils/cronAuth');
