@@ -99,6 +99,13 @@ const CATEGORIA_TO_AREA_RESP = {
   outro:           { area: null,                subcategoria: 'default' },
 };
 
+// A fila financeira fica no módulo Financeiro, não na lista operacional geral.
+// O parâmetro da solicitação permite abrir diretamente o item que acabou de sair
+// da cotação, sem expor a fila de logística ao aprovador financeiro.
+function linkFilaFinanceira(solicitacaoId) {
+  return `/admin/financeiro?aba=solicitacoes&solicitacao=${encodeURIComponent(solicitacaoId)}`;
+}
+
 // Categorias do setor CRIATIVO (pedido do Matheus · 2026-07-20): a aprovação de
 // ORIGEM é do diretor do Criativo (Pedro Paulo), por CATEGORIA — não pelo setor
 // de quem pede (pula Arthur Serpa/diretor do setor). Também pula o 2º carimbo de
@@ -570,6 +577,13 @@ router.get('/', async (req, res) => {
           .select('area')
           .eq('profile_id', userId);
         const responsavelAreas = new Set((respRows || []).map(r => r.area));
+
+        // Quem tem escopo financeiro individual decide pela fila financeira. Não
+        // mistura reembolsos/pagamentos da área geral com as Compras autorizadas.
+        const escopoFinanceiro = await obterCategoriasFinanceirasAutorizadas(userId);
+        if (escopoFinanceiro.disponivel && escopoFinanceiro.categorias.size > 0) {
+          responsavelAreas.delete('financeiro');
+        }
 
         const orParts = [`solicitante_id.eq.${encodeURIComponent(userId)}`];
         if (responsavelAreas.size > 0) {
@@ -1718,8 +1732,15 @@ router.post('/:id/registrar-cotacao', async (req, res) => {
       status: 'aguardando_aprovacao_financeira',
     };
     const { data, error } = await supabase
-      .from('solicitacoes').update(updates).eq('id', req.params.id).select('*').single();
+      .from('solicitacoes')
+      .update(updates)
+      .eq('id', req.params.id)
+      .eq('status', 'em_cotacao')
+      .is('deleted_at', null)
+      .select('*')
+      .maybeSingle();
     if (error) throw error;
+    if (!data) return res.status(409).json({ error: 'Esta solicitação saiu da etapa de cotação. Atualize a fila antes de registrar a cotação.' });
 
     // A dispensa ≤ R$ 1.000 foi decidida sobre a ESTIMATIVA — se a cotação real
     // estourou o limite, o financeiro precisa saber que o pedido pulou os
@@ -1735,16 +1756,22 @@ router.post('/:id/registrar-cotacao', async (req, res) => {
       });
     }
 
-    // Notifica o financeiro (Yago) que ha cotacao pra aprovar
-    resolverDestinatarios('financeiro').then(managers => {
-      const alvo = [...new Set((managers || []).filter(Boolean))];
+    // Notifica o financeiro que há uma cotação para aprovar.
+    resolverDestinatarios('financeiro').then(async managers => {
+      const finProfileIds = new Set((managers || []).filter(Boolean));
+      const { data: responsaveisFinanceiro } = await supabase
+        .from('area_solicitacoes_responsaveis')
+        .select('profile_id')
+        .eq('area', 'financeiro');
+      (responsaveisFinanceiro || []).forEach(item => item.profile_id && finProfileIds.add(item.profile_id));
+      const alvo = await filtrarAprovadoresFinanceirosPorCategoria(finProfileIds, data.categoria);
       if (alvo.length) {
         notificar({
           modulo: 'financeiro',
           tipo: 'solicitacao_status',
           titulo: `Cotação pronta: ${data.titulo}`,
           mensagem: `A logística cotou R$ ${valor.toFixed(2)}${fornecedor ? ` (${fornecedor})` : ''} · aguarda sua aprovação financeira.${cotacaoAcimaDaDispensa ? ` Atenção: o pedido entrou sem aprovações por ter sido estimado em até R$ ${COMPRA_COTACAO_DIRETA_LIMITE}, mas a cotação veio acima disso.` : ''}`,
-          link: '/solicitacoes',
+          link: linkFilaFinanceira(data.id),
           severidade: cotacaoAcimaDaDispensa ? 'alta' : 'info',
           chaveDedup: `solicitacao_cotacao_${data.id}`,
           targetIds: alvo,
@@ -1779,6 +1806,12 @@ async function carregarSolDaCotacao(cotacaoId) {
   return { cot, sol };
 }
 
+function cotacoesPodemSerGerenciadas(solicitacao) {
+  return ['compras', 'servico'].includes(solicitacao?.categoria)
+    && !solicitacao?.aprovado_financeiro_em
+    && ['em_cotacao', 'aguardando_aprovacao_financeira'].includes(solicitacao?.status);
+}
+
 function fmtBRLServer(n) {
   const v = Number(n);
   if (!Number.isFinite(v)) return 'R$ 0,00';
@@ -1790,9 +1823,29 @@ function escapeHtmlCot(s) {
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-// Lista as cotações de uma solicitação (qualquer um que já vê a solicitação).
+// Lista as cotações de uma solicitação. Logística e solicitante acompanham o
+// levantamento; o financeiro só acessa depois que a cotação entra na sua fila.
 router.get('/:id/cotacoes', async (req, res) => {
   try {
+    const { data: sol, error: solError } = await supabase
+      .from('solicitacoes')
+      .select('*')
+      .eq('id', req.params.id)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (solError) throw solError;
+    if (!sol) return res.status(404).json({ error: 'Solicitação não encontrada.' });
+
+    let podeVer = sol.solicitante_id === req.user.userId;
+    if (!podeVer) podeVer = await podeCotar(req, sol);
+    if (!podeVer) podeVer = await podeGerirSolicitacao(req, sol);
+    if (!podeVer && aguardandoAprovacaoFinanceira(sol)) {
+      podeVer = await podeAprovarFinanceiro(req, sol.categoria);
+    }
+    if (!podeVer) {
+      return res.status(403).json({ error: 'Sem permissão para ver as cotações desta solicitação.' });
+    }
+
     const { data, error } = await supabase
       .from('solicitacao_cotacoes')
       .select('*')
@@ -1826,6 +1879,9 @@ router.post('/:id/cotacoes', async (req, res) => {
     }
     if (!(await podeCotar(req, sol))) {
       return res.status(403).json({ error: 'Apenas a logística (ou admin) pode registrar cotações.' });
+    }
+    if (!cotacoesPodemSerGerenciadas(sol)) {
+      return res.status(400).json({ error: 'As cotações só podem ser alteradas antes da aprovação financeira.' });
     }
 
     // ordem = próxima posição
@@ -1864,6 +1920,9 @@ router.patch('/cotacoes/:cotacaoId', async (req, res) => {
     if (!(await podeCotar(req, sol))) {
       return res.status(403).json({ error: 'Apenas a logística (ou admin) pode editar cotações.' });
     }
+    if (!cotacoesPodemSerGerenciadas(sol)) {
+      return res.status(400).json({ error: 'As cotações só podem ser alteradas antes da aprovação financeira.' });
+    }
     const { fornecedor, valor, prazo, link, observacao, anexo_url } = req.body || {};
     const updates = {};
     if (fornecedor !== undefined) {
@@ -1900,6 +1959,9 @@ router.delete('/cotacoes/:cotacaoId', async (req, res) => {
     if (!(await podeCotar(req, sol))) {
       return res.status(403).json({ error: 'Apenas a logística (ou admin) pode remover cotações.' });
     }
+    if (!cotacoesPodemSerGerenciadas(sol)) {
+      return res.status(400).json({ error: 'As cotações só podem ser alteradas antes da aprovação financeira.' });
+    }
     const { error } = await supabase
       .from('solicitacao_cotacoes').delete().eq('id', req.params.cotacaoId);
     if (error) throw error;
@@ -1918,6 +1980,9 @@ router.post('/:id/cotacoes/:cotacaoId/sugerir', async (req, res) => {
     if (!sol) return res.status(404).json({ error: 'Solicitação não encontrada.' });
     if (!(await podeCotar(req, sol))) {
       return res.status(403).json({ error: 'Apenas a logística (ou admin) pode marcar a cotação sugerida.' });
+    }
+    if (!cotacoesPodemSerGerenciadas(sol)) {
+      return res.status(400).json({ error: 'As cotações só podem ser alteradas antes da aprovação financeira.' });
     }
     // Desmarca todas antes (respeita o índice único parcial) e marca a escolhida.
     const { error: e1 } = await supabase
@@ -2020,6 +2085,9 @@ router.post('/:id/enviar-cotacoes-financeiro', async (req, res) => {
     if (!(await podeCotar(req, sol))) {
       return res.status(403).json({ error: 'Apenas a logística (ou admin) pode enviar as cotações.' });
     }
+    if (!cotacoesPodemSerGerenciadas(sol)) {
+      return res.status(400).json({ error: 'As cotações só podem ser enviadas antes da aprovação financeira.' });
+    }
 
     const { data: cotacoes, error: cotErr } = await supabase
       .from('solicitacao_cotacoes').select('*')
@@ -2050,8 +2118,18 @@ router.post('/:id/enviar-cotacoes-financeiro', async (req, res) => {
     if (sol.status === 'em_cotacao') updates.status = 'aguardando_aprovacao_financeira';
 
     const { data: solAtualizada, error: upErr } = await supabase
-      .from('solicitacoes').update(updates).eq('id', sol.id).select('*').single();
+      .from('solicitacoes')
+      .update(updates)
+      .eq('id', sol.id)
+      .in('status', ['em_cotacao', 'aguardando_aprovacao_financeira'])
+      .is('aprovado_financeiro_em', null)
+      .is('deleted_at', null)
+      .select('*')
+      .maybeSingle();
     if (upErr) throw upErr;
+    if (!solAtualizada) {
+      return res.status(409).json({ error: 'Esta solicitação foi alterada por outra pessoa. Atualize antes de reenviar as cotações.' });
+    }
 
     // Itens do pedido (opcional no e-mail).
     const { data: itens } = await supabase
@@ -2075,7 +2153,7 @@ router.post('/:id/enviar-cotacoes-financeiro', async (req, res) => {
     const resolvidos = await resolverDestinatarios('financeiro').catch(() => []);
     (resolvidos || []).forEach(id => id && finProfileIds.add(id));
 
-    const idsArr = [...finProfileIds];
+    const idsArr = await filtrarAprovadoresFinanceirosPorCategoria(finProfileIds, sol.categoria);
     let emails = [];
     if (idsArr.length) {
       const { data: profs } = await supabase.from('profiles').select('email').in('id', idsArr);
@@ -2091,7 +2169,7 @@ router.post('/:id/enviar-cotacoes-financeiro', async (req, res) => {
 
     const catLabel = ({ compras: 'Compras', servico: 'Serviço' })[sol.categoria] || sol.categoria;
     const base = process.env.FRONTEND_URL || '';
-    const link = base ? `${base}/solicitacoes?id=${sol.id}` : '';
+    const link = base ? `${base}${linkFilaFinanceira(sol.id)}` : '';
     const html = montarHtmlCotacoes({ sol, cotacoes, itens, refCot, solicitanteNome, catLabel, link });
 
     let emailResultado = { ok: false, error: 'sem destinatários' };
@@ -2109,7 +2187,7 @@ router.post('/:id/enviar-cotacoes-financeiro', async (req, res) => {
       tipo: 'cotacao_financeiro',
       titulo: 'Cotações prontas para aprovação',
       mensagem: `${cotacoes.length} ${cotacoes.length === 1 ? 'cotação' : 'cotações'} de "${sol.titulo}" · sugerida ${fmtBRLServer(refCot.valor)} (${refCot.fornecedor}).`,
-      link: `/solicitacoes?id=${sol.id}`,
+      link: linkFilaFinanceira(sol.id),
       severidade: 'info',
       chaveDedup: `solicitacao_cotacoes_${sol.id}`,
       targetIds: idsArr,
@@ -2466,7 +2544,7 @@ router.post('/:id/sobrestar', async (req, res) => {
     if (!atual) return res.status(404).json({ error: 'Solicitação não encontrada.' });
 
     if (atual.status === 'aguardando_aprovacao_financeira') {
-      if (!(await podeAprovarFinanceiro(req))) {
+      if (!(await podeAprovarFinanceiro(req, atual.categoria))) {
         return res.status(403).json({ error: 'Apenas o financeiro pode sobrestar nesta etapa.' });
       }
     } else if (STATUS_SOBRESTAVEL_RESP.includes(atual.status)) {
@@ -2543,7 +2621,7 @@ router.post('/:id/retomar', async (req, res) => {
 
     // Quem pode retomar = quem pode sobrestar naquele contexto.
     if (atual.sobrestada_status_anterior === 'aguardando_aprovacao_financeira') {
-      if (!(await podeAprovarFinanceiro(req))) {
+      if (!(await podeAprovarFinanceiro(req, atual.categoria))) {
         return res.status(403).json({ error: 'Apenas o financeiro pode retomar nesta etapa.' });
       }
     } else if (!(await podeGerirSolicitacao(req, atual))) {
@@ -2635,11 +2713,12 @@ router.patch('/:id', async (req, res) => {
       .maybeSingle();
     if (!sol) return res.status(404).json({ error: 'Solicitação não encontrada' });
 
-    // Solicitação parada num portão (aprovação/mérito/sobrestada) não sai dele
-    // por PATCH · só pelo endpoint do portão.
+    // Solicitação parada num portão não sai dele por PATCH · só pelo endpoint
+    // específico. Inclui cotação e aprovação financeira para ninguém pular o
+    // encaminhamento Amaury → financeiro alterando o status manualmente.
     if (status && status !== sol.status
-        && ['aguardando_aprovacao_origem', 'aguardando_merito', 'sobrestada'].includes(sol.status)) {
-      return res.status(400).json({ error: 'Esta solicitação está num portão do fluxo (aprovação, mérito ou sobrestada) · use o endpoint próprio para movê-la.' });
+        && ['aguardando_aprovacao_origem', 'aguardando_merito', 'sobrestada', 'em_cotacao', 'aguardando_aprovacao_financeira'].includes(sol.status)) {
+      return res.status(400).json({ error: 'Esta solicitação está num portão do fluxo (aprovação, cotação, mérito, financeiro ou sobrestamento) · use o endpoint próprio para movê-la.' });
     }
 
     const isAdmin = ['admin', 'diretor'].includes(req.user.role);
@@ -3421,20 +3500,87 @@ router.post('/:id/atualizar-ml', async (req, res) => {
 // logística comprar / financeiro pagar
 // ══════════════════════════════════════════════════════════════════════════
 
-async function podeAprovarFinanceiro(req) {
+async function obterCategoriasFinanceirasAutorizadas(profileId) {
+  try {
+    const { data, error } = await supabase
+      .from('solicitacoes_financeiro_aprovadores')
+      .select('categoria')
+      .eq('profile_id', profileId);
+    if (error) {
+      console.warn('[SOLICITACOES] escopo financeiro indisponível:', error.message);
+      return { disponivel: false, categorias: new Set() };
+    }
+    return {
+      disponivel: true,
+      categorias: new Set((data || []).map(item => item.categoria).filter(Boolean)),
+    };
+  } catch (error) {
+    console.warn('[SOLICITACOES] falha ao consultar escopo financeiro:', error.message);
+    return { disponivel: false, categorias: new Set() };
+  }
+}
+
+async function filtrarAprovadoresFinanceirosPorCategoria(profileIds, categoria) {
+  const ids = [...new Set([...(profileIds || [])].filter(Boolean))];
+  if (!ids.length) return [];
+
+  try {
+    const { data, error } = await supabase
+      .from('solicitacoes_financeiro_aprovadores')
+      .select('profile_id, categoria')
+      .in('profile_id', ids);
+    if (error) throw error;
+
+    const categoriasPorPerfil = new Map();
+    (data || []).forEach(item => {
+      if (!categoriasPorPerfil.has(item.profile_id)) categoriasPorPerfil.set(item.profile_id, new Set());
+      categoriasPorPerfil.get(item.profile_id).add(item.categoria);
+    });
+
+    // Sem configuração individual, mantém o comportamento já existente. Quando
+    // há configuração, a pessoa recebe somente as categorias explicitamente liberadas.
+    return ids.filter(id => !categoriasPorPerfil.has(id) || categoriasPorPerfil.get(id).has(categoria));
+  } catch (error) {
+    console.warn('[SOLICITACOES] falha ao filtrar destinatários financeiros:', error.message);
+    return [];
+  }
+}
+
+async function podeAprovarFinanceiro(req, categoria = null) {
   const userId = req.user.userId;
   const role = req.user.role;
-  if (['admin', 'diretor'].includes(role)) return true;
-  const modulePerms = req.user.granular?.modulePerms || {};
-  const fin = modulePerms.financeiro || modulePerms.Financeiro;
-  if (fin && (fin.leitura >= 3 || fin.escrita >= 3)) return true;
-  const { data } = await supabase
-    .from('area_solicitacoes_responsaveis')
-    .select('profile_id')
-    .eq('area', 'financeiro')
-    .eq('profile_id', userId)
-    .maybeSingle();
-  return !!data;
+  let temPermissaoBase = ['admin', 'diretor'].includes(role);
+  if (!temPermissaoBase) {
+    const modulePerms = req.user.granular?.modulePerms || {};
+    const fin = modulePerms.financeiro || modulePerms.Financeiro;
+    temPermissaoBase = !!(fin && (fin.leitura >= 3 || fin.escrita >= 3));
+  }
+  if (!temPermissaoBase) {
+    const { data } = await supabase
+      .from('area_solicitacoes_responsaveis')
+      .select('profile_id')
+      .eq('area', 'financeiro')
+      .eq('profile_id', userId)
+      .maybeSingle();
+    temPermissaoBase = !!data;
+  }
+  if (!temPermissaoBase || !categoria) return temPermissaoBase;
+
+  const escopoFinanceiro = await obterCategoriasFinanceirasAutorizadas(userId);
+  return escopoFinanceiro.disponivel
+    && (escopoFinanceiro.categorias.size === 0 || escopoFinanceiro.categorias.has(categoria));
+}
+
+function aguardandoAprovacaoFinanceira(solicitacao) {
+  return solicitacao?.status === 'aguardando_aprovacao_financeira'
+    && solicitacao?.precisa_aprovacao_financeira === true
+    && !solicitacao?.aprovado_financeiro_em;
+}
+
+function cotacaoObrigatoriaRegistrada(solicitacao) {
+  if (!['compras', 'servico'].includes(solicitacao?.categoria)) return true;
+  const valor = Number(solicitacao?.valor_cotado);
+  return !!solicitacao?.cotacao_em && Number.isFinite(valor) && valor >= 0;
 }
 
 router.get('/pendentes-financeiro', async (req, res) => {
@@ -3442,23 +3588,23 @@ router.get('/pendentes-financeiro', async (req, res) => {
     if (!(await podeAprovarFinanceiro(req))) {
       return res.status(403).json({ error: 'Sem permissão pra ver pendências financeiras' });
     }
-    const { data, error } = await supabase
+    const escopoFinanceiro = await obterCategoriasFinanceirasAutorizadas(req.user.userId);
+    if (!escopoFinanceiro.disponivel) {
+      return res.status(503).json({ error: 'A configuração do escopo financeiro não está disponível.' });
+    }
+    let consulta = supabase
       .from('solicitacoes')
       .select('*')
       .eq('precisa_aprovacao_financeira', true)
       .is('aprovado_financeiro_em', null)
-      .neq('status', 'cancelado')
-      .neq('status', 'rejeitado')
-      // Ainda aguardando o diretor de origem · so cai no financeiro depois (Spec 001)
-      .neq('status', 'aguardando_aprovacao_origem')
-      // Compras/servico em cotacao · o Yago so ve depois que a logistica cotar (valor real)
-      .neq('status', 'em_cotacao')
-      // Fluxo BPMN · sobrestada (em espera) e mérito pendente ficam fora da fila
-      .neq('status', 'sobrestada')
-      .neq('status', 'aguardando_merito')
+      .eq('status', 'aguardando_aprovacao_financeira')
       .is('deleted_at', null)
       .order('eh_urgente', { ascending: false })
       .order('created_at', { ascending: true });
+    if (escopoFinanceiro.categorias.size) {
+      consulta = consulta.in('categoria', [...escopoFinanceiro.categorias]);
+    }
+    const { data, error } = await consulta;
     if (error) throw error;
 
     // Enriquece com nome/email/foto do solicitante (consulta separada em profiles
@@ -3486,15 +3632,18 @@ router.get('/pendentes-financeiro', async (req, res) => {
 
 router.post('/:id/aprovar-financeiro', async (req, res) => {
   try {
-    if (!(await podeAprovarFinanceiro(req))) {
-      return res.status(403).json({ error: 'Apenas financeiro pode aprovar' });
-    }
     const { observacao } = req.body || {};
     const { data: atual } = await supabase
-      .from('solicitacoes').select('*').eq('id', req.params.id).single();
+      .from('solicitacoes').select('*').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
     if (!atual) return res.status(404).json({ error: 'Solicitação não encontrada' });
-    if (atual.aprovado_financeiro_em) {
-      return res.status(400).json({ error: 'Já foi aprovada' });
+    if (!(await podeAprovarFinanceiro(req, atual.categoria))) {
+      return res.status(403).json({ error: 'Você não pode aprovar esta categoria de solicitação.' });
+    }
+    if (!aguardandoAprovacaoFinanceira(atual)) {
+      return res.status(400).json({ error: 'Esta solicitação não está aguardando aprovação financeira.' });
+    }
+    if (!cotacaoObrigatoriaRegistrada(atual)) {
+      return res.status(400).json({ error: 'A compra precisa ter uma cotação registrada antes da aprovação financeira.' });
     }
 
     // Pra onde vai depois do OK do Yago:
@@ -3520,8 +3669,17 @@ router.post('/:id/aprovar-financeiro', async (req, res) => {
     }
 
     const { data, error } = await supabase
-      .from('solicitacoes').update(updates).eq('id', req.params.id).select('*').single();
+      .from('solicitacoes')
+      .update(updates)
+      .eq('id', req.params.id)
+      .eq('status', 'aguardando_aprovacao_financeira')
+      .eq('precisa_aprovacao_financeira', true)
+      .is('aprovado_financeiro_em', null)
+      .is('deleted_at', null)
+      .select('*')
+      .maybeSingle();
     if (error) throw error;
+    if (!data) return res.status(409).json({ error: 'Esta solicitação foi alterada por outra pessoa. Atualize a fila antes de decidir.' });
 
     const acaoMsg = {
       compras:   'enviado pra logística comprar',
@@ -3533,7 +3691,7 @@ router.post('/:id/aprovar-financeiro', async (req, res) => {
       modulo: CATEGORIA_MODULO[atual.categoria] || 'financeiro',
       tipo: 'solicitacao_status',
       titulo: `Solicitação aprovada: ${atual.titulo}`,
-      mensagem: `Yago aprovou financeiramente · ${acaoMsg}`,
+      mensagem: `${req.user.name || 'O financeiro'} aprovou financeiramente · ${acaoMsg}`,
       link: '/solicitacoes',
       severidade: 'info',
       chaveDedup: `solicitacao_aprovada_fin_${data.id}`,
@@ -3552,15 +3710,21 @@ router.post('/:id/aprovar-financeiro', async (req, res) => {
 
 router.post('/:id/reprovar-financeiro', async (req, res) => {
   try {
-    if (!(await podeAprovarFinanceiro(req))) {
-      return res.status(403).json({ error: 'Apenas financeiro pode reprovar' });
-    }
     const { motivo } = req.body || {};
     if (!motivo) return res.status(400).json({ error: 'Motivo da reprovação é obrigatório' });
 
     const { data: atual } = await supabase
-      .from('solicitacoes').select('*').eq('id', req.params.id).single();
+      .from('solicitacoes').select('*').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
     if (!atual) return res.status(404).json({ error: 'Solicitação não encontrada' });
+    if (!(await podeAprovarFinanceiro(req, atual.categoria))) {
+      return res.status(403).json({ error: 'Você não pode reprovar esta categoria de solicitação.' });
+    }
+    if (!aguardandoAprovacaoFinanceira(atual)) {
+      return res.status(400).json({ error: 'Esta solicitação não está aguardando aprovação financeira.' });
+    }
+    if (!cotacaoObrigatoriaRegistrada(atual)) {
+      return res.status(400).json({ error: 'A compra precisa ter uma cotação registrada antes da reprovação financeira.' });
+    }
 
     const updates = {
       status: 'rejeitado',
@@ -3572,8 +3736,17 @@ router.post('/:id/reprovar-financeiro', async (req, res) => {
     };
 
     const { data, error } = await supabase
-      .from('solicitacoes').update(updates).eq('id', req.params.id).select('*').single();
+      .from('solicitacoes')
+      .update(updates)
+      .eq('id', req.params.id)
+      .eq('status', 'aguardando_aprovacao_financeira')
+      .eq('precisa_aprovacao_financeira', true)
+      .is('aprovado_financeiro_em', null)
+      .is('deleted_at', null)
+      .select('*')
+      .maybeSingle();
     if (error) throw error;
+    if (!data) return res.status(409).json({ error: 'Esta solicitação foi alterada por outra pessoa. Atualize a fila antes de decidir.' });
 
     notificar({
       modulo: 'financeiro',
