@@ -793,20 +793,12 @@ router.get('/', async (req, res) => {
           ...((granular?.areas) || []).map(a => String(a).toLowerCase()),
           ...((req.user.kpi_areas) || []).map(a => String(a).toLowerCase()),
         ])].filter(a => /^[a-z0-9_]+$/.test(a));
-        // Pessoal do FINANCEIRO — aprovador escopado (ex.: Alberto) OU responsável
-        // da área (ex.: Cristina, que executa pagamentos) — NÃO recebe as
-        // compartilhadas da área 'financeiro' aqui: viram ruído na aba "Minhas"
-        // (o canal de trabalho deles é a fila do financeiro).
-        let excluiFinanceiroMine = false;
-        const escopoFinanceiroMine = await obterCategoriasFinanceirasAutorizadas(userId);
-        if (escopoFinanceiroMine.disponivel && escopoFinanceiroMine.categorias.size > 0) excluiFinanceiroMine = true;
-        if (!excluiFinanceiroMine) {
-          const { data: respFinMine } = await supabase
-            .from('area_solicitacoes_responsaveis')
-            .select('id').eq('area', 'financeiro').eq('profile_id', userId).maybeSingle();
-          if (respFinMine) excluiFinanceiroMine = true;
-        }
-        if (excluiFinanceiroMine) areasView = areasView.filter(a => a !== 'financeiro');
+        // A área 'financeiro' NÃO entra no compartilhamento da aba "Minhas".
+        // O pessoal do financeiro (Alberto aprova, Cristina paga) recebia aqui
+        // pedidos de OUTRAS pessoas só porque batem a área do cadastro (ex.: um
+        // backdrop com area_cliente=financeiro) — puro ruído. Em "Minhas", cada um
+        // vê só o que ELE criou; o trabalho do financeiro é na fila do financeiro.
+        areasView = areasView.filter(a => a !== 'financeiro');
         if (areasView.length) {
           q = q.or(`solicitante_id.eq.${userId},and(compartilhar_area.eq.true,area_cliente.in.(${areasView.join(',')}))`);
         } else {
