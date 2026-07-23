@@ -824,7 +824,13 @@ router.get('/', async (req, res) => {
           responsavelAreas.delete('financeiro');
         }
 
-        const orParts = [`solicitante_id.eq.${encodeURIComponent(userId)}`];
+        // Vejo o que criei, o que está ATRIBUÍDO a mim (responsavel_id · ex.:
+        // pagamento não-cartão que a aprovação roteou pra Cristina executar) e o
+        // que é da minha área responsável.
+        const orParts = [
+          `solicitante_id.eq.${encodeURIComponent(userId)}`,
+          `responsavel_id.eq.${encodeURIComponent(userId)}`,
+        ];
         if (responsavelAreas.size > 0) {
           orParts.push(`area_responsavel.in.(${[...responsavelAreas].join(',')})`);
         }
@@ -3907,9 +3913,16 @@ router.get('/pendentes-financeiro', async (req, res) => {
   }
 });
 
+// Formas de pagamento que o Alberto escolhe ao aprovar compra/serviço · decide
+// quem executa: cartão → Amaury COMPRA; demais → Cristina PAGA.
+const FORMAS_PAGAMENTO_VALIDAS = ['boleto', 'pix', 'transferencia_bancaria', 'dinheiro', 'cartao_credito'];
+// Cristina (subordinada ao Alberto) executa os pagamentos não-cartão.
+const EXECUTOR_FINANCEIRO_ID = '7ab43fe2-cf03-45e1-b193-3c5f4d96f9a5';
+
 router.post('/:id/aprovar-financeiro', async (req, res) => {
   try {
     const { observacao } = req.body || {};
+    const formaPagamento = (req.body?.forma_pagamento || '').trim() || null;
     const { data: atual } = await supabase
       .from('solicitacoes').select('*').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
     if (!atual) return res.status(404).json({ error: 'Solicitação não encontrada' });
@@ -3923,15 +3936,23 @@ router.post('/:id/aprovar-financeiro', async (req, res) => {
       return res.status(400).json({ error: 'A compra precisa ter uma cotação registrada antes da aprovação financeira.' });
     }
 
-    // Pra onde vai depois do OK do Yago:
-    //   compras/servico  -> logistica_compras (Amaury compra/contrata) · status pendente
-    //   reembolso/pagto  -> financeiro (paga) · status em_atendimento
-    const mapaCat = {
-      compras: 'logistica_compras', servico: 'logistica_compras',
-      reembolso: 'financeiro',      pagamento: 'financeiro',
-    };
-    const novaAreaResp = mapaCat[atual.categoria] || atual.area_responsavel;
-    const novoStatus = ['reembolso', 'pagamento'].includes(atual.categoria) ? 'em_atendimento' : 'pendente';
+    // Compra/serviço EXIGEM a forma de pagamento — é ela que decide quem executa.
+    const ehCompraServico = ['compras', 'servico'].includes(atual.categoria);
+    if (formaPagamento && !FORMAS_PAGAMENTO_VALIDAS.includes(formaPagamento)) {
+      return res.status(400).json({ error: 'Forma de pagamento inválida.' });
+    }
+    if (ehCompraServico && !formaPagamento) {
+      return res.status(400).json({ error: 'Escolha a forma de pagamento (define se volta pro Amaury comprar ou vai pro financeiro pagar).' });
+    }
+
+    // Pra onde vai depois do OK do Alberto:
+    //   compra/serviço + CARTÃO  -> logistica_compras (Amaury COMPRA no cartão) · pendente
+    //   compra/serviço + demais  -> financeiro (Cristina PAGA) · em_atendimento
+    //   reembolso/pagamento      -> financeiro (Cristina paga) · em_atendimento
+    const noCartao = formaPagamento === 'cartao_credito';
+    const vaiProFinanceiro = !ehCompraServico || !noCartao;
+    const novaAreaResp = vaiProFinanceiro ? 'financeiro' : 'logistica_compras';
+    const novoStatus = vaiProFinanceiro ? 'em_atendimento' : 'pendente';
 
     const updates = {
       aprovado_financeiro_em: new Date().toISOString(),
@@ -3939,6 +3960,9 @@ router.post('/:id/aprovar-financeiro', async (req, res) => {
       area_responsavel: novaAreaResp,
       status: novoStatus,
     };
+    if (formaPagamento) updates.forma_pagamento = formaPagamento;
+    // Pagamento não-cartão vai pro executor (Cristina) — ela vê e marca como pago.
+    if (vaiProFinanceiro && EXECUTOR_FINANCEIRO_ID) updates.responsavel_id = EXECUTOR_FINANCEIRO_ID;
     if (observacao) {
       updates.observacoes = atual.observacoes
         ? `${atual.observacoes}\n[Aprovação financeira] ${observacao}`
@@ -3958,14 +3982,16 @@ router.post('/:id/aprovar-financeiro', async (req, res) => {
     if (error) throw error;
     if (!data) return res.status(409).json({ error: 'Esta solicitação foi alterada por outra pessoa. Atualize a fila antes de decidir.' });
 
-    const acaoMsg = {
-      compras:   'enviado pra logística comprar',
-      servico:   'enviado pra logística contratar o serviço',
-      reembolso: 'pode efetuar o reembolso',
-      pagamento: 'pode efetuar o pagamento',
-    }[atual.categoria] || 'liberado pra atendimento';
+    const acaoMsg = (noCartao && ehCompraServico)
+      ? 'liberado pro Amaury comprar no cartão'
+      : {
+          compras:   'enviado pro financeiro pagar a compra',
+          servico:   'enviado pro financeiro pagar o serviço',
+          reembolso: 'pode efetuar o reembolso',
+          pagamento: 'pode efetuar o pagamento',
+        }[atual.categoria] || 'liberado pra atendimento';
     notificar({
-      modulo: CATEGORIA_MODULO[atual.categoria] || 'financeiro',
+      modulo: vaiProFinanceiro ? 'financeiro' : (CATEGORIA_MODULO[atual.categoria] || 'logistica'),
       tipo: 'solicitacao_status',
       titulo: `Solicitação aprovada: ${atual.titulo}`,
       mensagem: `${req.user.name || 'O financeiro'} aprovou financeiramente · ${acaoMsg}`,

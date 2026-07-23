@@ -903,7 +903,7 @@ export const financeiro = {
     remove: (id) => del(`/financeiro/contas-pagar/${id}`),
   },
   solicitacoesPendentesFinanceiro: () => get('/solicitacoes/pendentes-financeiro'),
-  solicitacaoAprovarFinanceiro: (id, observacao) => post(`/solicitacoes/${id}/aprovar-financeiro`, { observacao }),
+  solicitacaoAprovarFinanceiro: (id, observacao, forma_pagamento) => post(`/solicitacoes/${id}/aprovar-financeiro`, { observacao, forma_pagamento }),
   solicitacaoReprovarFinanceiro: (id, motivo) => post(`/solicitacoes/${id}/reprovar-financeiro`, { motivo }),
   solicitacaoSobrestarFinanceiro: (id, motivo, revisao) => post(`/solicitacoes/${id}/sobrestar`, { motivo, revisao }),
   urgenciaFrequente: () => get('/solicitacoes/dashboard/urgencia-frequente'),

@@ -214,9 +214,13 @@ function DetalheDialog({ solicitacao: s, onClose, onAction }) {
   const [motivo, setMotivo] = useState('');
   const [revisao, setRevisao] = useState('');
   const [obs, setObs] = useState('');
+  const [formaPagamento, setFormaPagamento] = useState('');
   const [erro, setErro] = useState(null);
   const [cotacoes, setCotacoes] = useState([]);
   const [cotacoesLoading, setCotacoesLoading] = useState(false);
+  // Compra/serviço exige a forma de pagamento na aprovação: define quem executa
+  // (cartão → Amaury compra; demais → Cristina paga).
+  const ehCompraServico = ['compras', 'servico'].includes(s.categoria);
 
   useEffect(() => {
     let ativo = true;
@@ -235,9 +239,10 @@ function DetalheDialog({ solicitacao: s, onClose, onAction }) {
   }, [s.id, s.categoria, s.cotacao_em]);
 
   const aprovar = async () => {
+    if (ehCompraServico && !formaPagamento) { setErro('Escolha a forma de pagamento para aprovar.'); return; }
     setLoading(true); setErro(null);
     try {
-      await financeiro.solicitacaoAprovarFinanceiro(s.id, obs);
+      await financeiro.solicitacaoAprovarFinanceiro(s.id, obs, formaPagamento || undefined);
       onAction();
     } catch (e) { setErro(e.message); } finally { setLoading(false); }
   };
@@ -414,6 +419,23 @@ function DetalheDialog({ solicitacao: s, onClose, onAction }) {
 
         {!reprovaModal && !sobrestaModal ? (
           <>
+            {ehCompraServico && (
+              <div className="mb-3">
+                <label className="text-xs font-medium text-muted-foreground block mb-1">Forma de pagamento *</label>
+                <select
+                  value={formaPagamento} onChange={e => setFormaPagamento(e.target.value)}
+                  className="w-full px-3 py-2 text-sm rounded-md border border-border bg-background"
+                >
+                  <option value="">Selecione…</option>
+                  <option value="cartao_credito">Cartão de crédito — Amaury compra</option>
+                  <option value="boleto">Boleto — financeiro paga</option>
+                  <option value="pix">Pix — financeiro paga</option>
+                  <option value="transferencia_bancaria">Transferência — financeiro paga</option>
+                  <option value="dinheiro">Dinheiro — financeiro paga</option>
+                </select>
+                <p className="text-[11px] text-muted-foreground mt-1">Cartão → volta pro Amaury comprar. Demais → o financeiro (Cristina) executa o pagamento.</p>
+              </div>
+            )}
             <div className="mb-3">
               <label className="text-xs font-medium text-muted-foreground block mb-1">Observação (opcional)</label>
               <textarea
@@ -435,7 +457,7 @@ function DetalheDialog({ solicitacao: s, onClose, onAction }) {
                 className="flex-1 text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/30">
                 <Clock className="h-4 w-4 mr-1.5" /> Sobrestar
               </Button>
-              <Button onClick={aprovar} disabled={loading} className="flex-1">
+              <Button onClick={aprovar} disabled={loading || (ehCompraServico && !formaPagamento)} className="flex-1">
                 {loading ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <Check className="h-4 w-4 mr-1.5" />}
                 Aprovar
               </Button>
