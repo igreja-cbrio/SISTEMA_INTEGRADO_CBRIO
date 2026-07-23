@@ -18,6 +18,7 @@ import { toast } from 'sonner';
 import { totemKids } from '@/api';
 import { TotemKidsConfigTabs } from '@/pages/admin/totemKids/TotemKidsAdmin';
 import TotemKidsCheckout from './TotemKidsCheckout';
+import EditarEtiquetaModal from './EditarEtiquetaModal';
 import QrScanner from '@/pages/ministerial/voluntariado/components/checkin/QrScanner';
 import { calcIdadeMeses, formatIdade, formatIdadeShort } from './lib/idade';
 import { imprimirEtiquetas, reimprimirEtiqueta, reimprimirEtiquetasCompletas } from './lib/imprimir';
@@ -371,6 +372,8 @@ export default function TotemKidsCheckin() {
   // Ajustes do totem (engrenagem): Sessões / Config / Testar etiqueta — sem sair do totem.
   const [ajustesOpen, setAjustesOpen] = useState(false);
   const [ajustesAba, setAjustesAba] = useState('sessoes');
+  // Modal simples "Editar etiqueta" (tamanho + logo) · abre a partir dos Ajustes.
+  const [editarEtiquetaOpen, setEditarEtiquetaOpen] = useState(false);
   // Check-in ↔ Check-out sem recarregar: alterna só o corpo (mantém o totem).
   const [tela, setTela] = useState<'checkin' | 'checkout'>('checkin');
 
@@ -1263,12 +1266,23 @@ export default function TotemKidsCheckin() {
       <DialogContent className="max-w-4xl w-[95vw] max-h-[92vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Ajustes do totem</DialogTitle>
-          <DialogDescription>Sessões, estações e teste de etiqueta — sem sair do totem.</DialogDescription>
+          <DialogDescription>Sessões e estações — sem sair do totem.</DialogDescription>
         </DialogHeader>
+        {/* Aparência da etiqueta = modal SIMPLES (só tamanho + logo · Marcos 2026-07-23).
+            O editor avançado (fonte, tamanho do nome, dados de teste) fica no admin. */}
+        <div className="flex items-center justify-between gap-2 rounded-lg border bg-muted/40 px-3 py-2">
+          <div className="text-sm">
+            <div className="font-medium">Aparência da etiqueta</div>
+            <div className="text-[11px] text-muted-foreground">Tamanho e logo, com prévia de como sai na impressora.</div>
+          </div>
+          <Button size="sm" variant="outline" onClick={() => { setAjustesOpen(false); setEditarEtiquetaOpen(true); }}>
+            <Pencil className="h-4 w-4 mr-1" /> Editar etiqueta
+          </Button>
+        </div>
         {/* O "Ativar sessão de um culto (hoje)" vive DENTRO da aba Sessões
             (AbaSessoes · TotemKidsAdmin) — aparece aqui e na página de
             Configurações, sempre visível, com estado vazio em dia sem culto. */}
-        <TotemKidsConfigTabs aba={ajustesAba} onAba={setAjustesAba} abas={['sessoes', 'etiqueta']} />
+        <TotemKidsConfigTabs aba={ajustesAba} onAba={setAjustesAba} abas={['sessoes']} />
       </DialogContent>
     </Dialog>
   );
@@ -1303,7 +1317,7 @@ export default function TotemKidsCheckin() {
           <KidsZoneRelogio />
           <KidsZoneToggle ativo={tela} onCheckin={() => setTela('checkin')} onCheckout={() => setTela('checkout')} />
           {/* Engrenagem discreta · ajustes (sessões, config, etiqueta) sem sair do totem */}
-          <Button variant="ghost" size="icon" className="h-9 w-9 text-slate-400 hover:text-pink-600" onClick={() => abrirAjustes('sessoes')} title="Ajustes · sessões, configurações e testar etiqueta">
+          <Button variant="ghost" size="icon" className="h-9 w-9 text-slate-400 hover:text-pink-600" onClick={() => abrirAjustes('sessoes')} title="Ajustes · sessões, estações e editar etiqueta">
             <Settings className="h-5 w-5" />
           </Button>
           {totemMode ? (
@@ -1324,6 +1338,20 @@ export default function TotemKidsCheckin() {
       </div>
 
       {ajustesDialog}
+      <EditarEtiquetaModal
+        open={editarEtiquetaOpen}
+        onClose={() => {
+          setEditarEtiquetaOpen(false);
+          // Recarrega a config da etiqueta pro totem usar o novo tamanho/logo já na
+          // próxima impressão (o etqLayout é carregado uma vez no mount).
+          totemKids.etiquetaConfig.get().then((c: { fonte?: string; escala_fonte?: string; nome_tamanho?: string; logo_aniversario_url?: string | null } | null) => {
+            if (c) {
+              setEtqLayout({ fonte: c.fonte, escalaFonte: c.escala_fonte, nomeTamanho: c.nome_tamanho } as Parameters<typeof imprimirEtiquetas>[0]['layout']);
+              setLogoAniv(c.logo_aniversario_url || null);
+            }
+          }).catch(() => {});
+        }}
+      />
 
       {/* Destino SEMPRE visível (design v5 · conselho 21/07): mata o "caiu no
           culto errado sem ninguém ver" — inclusive quando há UMA sessão só e o
