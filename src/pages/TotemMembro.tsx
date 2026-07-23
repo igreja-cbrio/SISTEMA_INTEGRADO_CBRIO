@@ -8,7 +8,7 @@ import {
   Users, UserCheck, Droplets, Mountain, Heart, CalendarDays,
   ArrowRight, HandHeart, Lock, Eye, EyeOff, ChevronLeft,
   QrCode, Loader2, CheckCircle2, Maximize, Minimize,
-  MapPin, Clock, Star, Map, List, Navigation, Sun, Moon,
+  MapPin, Clock, Star, Map, List, Navigation,
   Camera, RotateCcw, Save, X, ChevronRight, Delete, KeyRound,
   Baby, LogOut, Search, Printer,
 } from 'lucide-react';
@@ -47,7 +47,6 @@ interface MemberData {
 }
 
 const PIN_KEY = 'cbrio-totem-pin';
-const THEME_KEY = 'cbrio-totem-theme';
 // Flags one-shot gravadas pelo /cadastro-membresia?from=totem (consumidas no mount):
 // RESUME = token do QR recém-criado → reabre a sessão da própria pessoa;
 // UNLOCK = só pula a tela de PIN do operador e cai na tela inicial.
@@ -85,9 +84,12 @@ export default function TotemMembro() {
   const [clock, setClock] = useState(new Date());
   const [scanError, setScanError] = useState('');
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [isDark, setIsDark] = useState(() => localStorage.getItem(THEME_KEY) !== 'light');
+  // Totem é sempre no tema ESCURO da marca (decisão Marcos 2026-07-23): quiosque
+  // não tem preferência de tema e o toggle antigo deixava telas inconsistentes
+  // (escolhia claro e virava escuro ao entrar num fluxo). isDark fica fixo → as
+  // condicionais isDark?dark:light dos componentes resolvem todas pro escuro.
+  const isDark = true;
   const [showNovoCadastro, setShowNovoCadastro] = useState(false);
-  const toggleTheme = () => setIsDark(v => { const n = !v; localStorage.setItem(THEME_KEY, n ? 'dark' : 'light'); return n; });
 
   // PIN
   const [storedPin, setStoredPin] = useState('');
@@ -598,9 +600,6 @@ export default function TotemMembro() {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <button onClick={toggleTheme} className={`p-2 rounded-lg transition-colors ${isDark ? 'text-white/40 hover:text-white/80 hover:bg-white/10' : 'text-gray-400 hover:text-gray-700 hover:bg-gray-200'}`}>
-            {isDark ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
-          </button>
           <div className="text-right">
             <p className={`${greetMuted} text-xs hidden sm:block`}>{format(clock, "EEEE, dd 'de' MMMM", { locale: ptBR })}</p>
             <p className="text-xl font-mono font-bold tabular-nums">{format(clock, 'HH:mm')}</p>
