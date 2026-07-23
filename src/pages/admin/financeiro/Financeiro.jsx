@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../../contexts/AuthContext';
 import { financeiro, financeiroV2 } from '../../../api';
 import { Button } from '../../../components/ui/button';
@@ -240,6 +241,7 @@ function StatCard({ label, value, bg, svg }) {
 // COMPONENTE PRINCIPAL
 // ═══════════════════════════════════════════════════════════
 export default function Financeiro() {
+  const [searchParams] = useSearchParams();
   const { isDiretor, getAccessLevel } = useAuth();
   const nivelFin = getAccessLevel(['financeiro']);
   const podeEditarFin = isDiretor || nivelFin >= 3;   // editar/lançar conta a pagar (write)
@@ -249,6 +251,15 @@ export default function Financeiro() {
   const [subGestao, setSubGestao] = useState(0);
   const [subDre, setSubDre] = useState(0);
   const [subBanco, setSubBanco] = useState(0);
+  const abrirSolicitacoes = searchParams.get('aba') === 'solicitacoes';
+  const solicitacaoId = searchParams.get('solicitacao') || null;
+
+  useEffect(() => {
+    if (abrirSolicitacoes) {
+      setTab(9);
+      setSubGestao(0);
+    }
+  }, [abrirSolicitacoes]);
 
   // Navegacao por string-id usada por DashboardOverview shortcuts
   const goTo = (id) => {
@@ -1170,7 +1181,7 @@ export default function Financeiro() {
       {tab === 9 && (
         <div>
           <SubTabBar items={SUBS_GESTAO} current={subGestao} onSelect={setSubGestao} />
-          {subGestao === 0 && <SolicitacoesFinanceiro />}
+          {subGestao === 0 && <SolicitacoesFinanceiro solicitacaoId={solicitacaoId} />}
           {subGestao === 1 && <Alertas />}
           {subGestao === 2 && <ClosingMensal />}
           {subGestao === 3 && <AuditLog />}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Check, X, AlertCircle, RefreshCw, Loader2, ShoppingCart, Wallet,
@@ -8,7 +8,7 @@ import { Card, CardContent } from '../../../components/ui/card';
 import { Button } from '../../../components/ui/button';
 import { Badge } from '../../../components/ui/badge';
 import { Avatar, AvatarImage, AvatarFallback } from '../../../components/ui/avatar';
-import { financeiro } from '../../../api';
+import { financeiro, solicitacoes } from '../../../api';
 
 const fmtMoney = (v) => v == null ? '—' : Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const fmtDate = (iso) => iso ? new Date(iso).toLocaleString('pt-BR') : '—';
@@ -34,7 +34,7 @@ const CAT_INFO = {
   reembolso:  { label: 'Reembolso', icon: Wallet,       cor: '#10b981' },
 };
 
-export default function SolicitacoesFinanceiro() {
+export default function SolicitacoesFinanceiro({ solicitacaoId = null }) {
   const [tab, setTab] = useState('pendentes');
   return (
     <div className="space-y-4">
@@ -59,27 +59,39 @@ export default function SolicitacoesFinanceiro() {
         ))}
       </div>
 
-      {tab === 'pendentes' && <AbaPendentes />}
+      {tab === 'pendentes' && <AbaPendentes solicitacaoId={solicitacaoId} />}
       {tab === 'urgencia-frequente' && <AbaUrgenciaFrequente />}
     </div>
   );
 }
 
-function AbaPendentes() {
+function AbaPendentes({ solicitacaoId }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [detalhe, setDetalhe] = useState(null);
   const [erro, setErro] = useState(null);
+  const [avisoLink, setAvisoLink] = useState(null);
+  const solicitacaoDoLinkAbertaRef = useRef(null);
 
   const reload = () => {
     setLoading(true);
     setErro(null);
     financeiro.solicitacoesPendentesFinanceiro()
-      .then(r => setItems(Array.isArray(r) ? r : []))
+      .then(r => {
+        const lista = Array.isArray(r) ? r : [];
+        setItems(lista);
+        if (solicitacaoId && solicitacaoDoLinkAbertaRef.current !== solicitacaoId) {
+          solicitacaoDoLinkAbertaRef.current = solicitacaoId;
+          setAvisoLink(null);
+          const item = lista.find(itemDaFila => itemDaFila.id === solicitacaoId);
+          if (item) setDetalhe(item);
+          else setAvisoLink('Esta solicitação não está mais aguardando a sua aprovação financeira.');
+        }
+      })
       .catch(e => setErro(e.message))
       .finally(() => setLoading(false));
   };
-  useEffect(() => { reload(); }, []);
+  useEffect(() => { reload(); }, [solicitacaoId]);
 
   return (
     <Card>
@@ -99,6 +111,12 @@ function AbaPendentes() {
         {erro && (
           <div className="text-xs text-rose-500 bg-rose-500/10 border border-rose-500/30 rounded px-3 py-2 mb-3">
             {erro}
+          </div>
+        )}
+
+        {avisoLink && (
+          <div className="text-xs text-amber-700 dark:text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded px-3 py-2 mb-3">
+            {avisoLink}
           </div>
         )}
 
@@ -197,6 +215,24 @@ function DetalheDialog({ solicitacao: s, onClose, onAction }) {
   const [revisao, setRevisao] = useState('');
   const [obs, setObs] = useState('');
   const [erro, setErro] = useState(null);
+  const [cotacoes, setCotacoes] = useState([]);
+  const [cotacoesLoading, setCotacoesLoading] = useState(false);
+
+  useEffect(() => {
+    let ativo = true;
+    if (!['compras', 'servico'].includes(s.categoria) || !s.cotacao_em) {
+      setCotacoes([]);
+      setCotacoesLoading(false);
+      return () => { ativo = false; };
+    }
+
+    setCotacoesLoading(true);
+    solicitacoes.listarCotacoes(s.id)
+      .then(resultado => { if (ativo) setCotacoes(Array.isArray(resultado) ? resultado : []); })
+      .catch(() => { if (ativo) setCotacoes([]); })
+      .finally(() => { if (ativo) setCotacoesLoading(false); });
+    return () => { ativo = false; };
+  }, [s.id, s.categoria, s.cotacao_em]);
 
   const aprovar = async () => {
     setLoading(true); setErro(null);
@@ -293,6 +329,40 @@ function DetalheDialog({ solicitacao: s, onClose, onAction }) {
             </div>
           )}
         </div>
+
+        {['compras', 'servico'].includes(s.categoria) && s.cotacao_em && (
+          <div className="mb-3 rounded-md border border-primary/20 bg-primary/5 p-3 text-sm">
+            <div className="mb-2 text-[10px] font-semibold uppercase text-primary">Cotações enviadas pela logística</div>
+            {cotacoesLoading ? (
+              <div className="text-xs text-muted-foreground">Carregando cotações...</div>
+            ) : cotacoes.length ? (
+              <div className="space-y-2">
+                {cotacoes.map(cotacao => (
+                  <div key={cotacao.id} className={`rounded border p-2 text-xs ${cotacao.sugerida ? 'border-primary/40 bg-primary/10' : 'border-border/70 bg-background/50'}`}>
+                    <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+                      <span className="font-semibold">{cotacao.fornecedor}</span>
+                      <span className="font-semibold tabular-nums">· {fmtMoney(cotacao.valor)}</span>
+                      {cotacao.sugerida && <Badge className="h-4 bg-primary/15 px-1.5 text-[9px] text-primary hover:bg-primary/15">Sugerida</Badge>}
+                      {cotacao.prazo && <span className="text-muted-foreground">· {cotacao.prazo}</span>}
+                    </div>
+                    {cotacao.link && (
+                      <a href={cotacao.link} target="_blank" rel="noopener noreferrer" className="mt-1 inline-flex items-center gap-1 text-primary hover:underline">
+                        <ExternalLink className="h-3 w-3" /> Abrir cotação
+                      </a>
+                    )}
+                    {cotacao.observacao && <p className="mt-1 whitespace-pre-wrap text-muted-foreground">{cotacao.observacao}</p>}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <>
+                <div className="font-semibold tabular-nums">{fmtMoney(s.valor_cotado ?? s.valor_estimado)}</div>
+                {s.cotacao_fornecedor && <div className="mt-1 text-xs text-muted-foreground">Fornecedor: {s.cotacao_fornecedor}</div>}
+                {s.cotacao_observacao && <div className="mt-1 text-xs text-muted-foreground">{s.cotacao_observacao}</div>}
+              </>
+            )}
+          </div>
+        )}
 
         {s.eh_urgente && (
           <div className="bg-rose-500/10 border border-rose-500/30 rounded-md p-3 mb-3">
