@@ -376,8 +376,79 @@ export default function TotemKidsCheckin() {
 
   // Última etiqueta impressa · permite REIMPRIMIR sem novo check-in (se borrou/falhou).
   const [ultimaEtiqueta, setUltimaEtiqueta] = useState<Parameters<typeof imprimirEtiquetas>[0] | null>(null);
-  // Nomes (1º nome) das crianças recém-check-in que precisam de pager no balcão.
-  const [pagerNomes, setPagerNomes] = useState<string[]>([]);
+  // Fluxo do PAGER (gate mole · Mari 2026-07-22): criança obrigada de pager
+  // (< 4 anos / espectro / limitação) → a IMPRESSÃO espera o voluntário digitar
+  // o número do pager entregue. O check-in JÁ está salvo (presença nunca é
+  // bloqueada); só a impressão fica pendente até o número — ou até o "sem pager".
+  type PagerFluxo = {
+    etiquetas: { dados: Parameters<typeof imprimirEtiquetas>[0]; precisa: boolean }[];
+    checkinId: string;   // representante da família — o PATCH propaga por checkin_grupo_id
+    nomes: string[];     // 1º nomes das obrigadas (texto do diálogo)
+  };
+  const [pagerFluxo, setPagerFluxo] = useState<PagerFluxo | null>(null);
+  const [pagerInput, setPagerInput] = useState('');
+  const [salvandoPager, setSalvandoPager] = useState(false);
+  const [pagerConflito, setPagerConflito] = useState<{ numero: string; emUso: string[] } | null>(null);
+
+  // Imprime o conjunto (criança(s) + recibo 1×), carimbando "Pager X" só nas
+  // obrigadas quando há número. Com pager, imprime a obrigada primeiro pra o
+  // recibo (genérico da família) também sair com o número.
+  async function imprimirEtiquetasComPager(
+    etiquetas: { dados: Parameters<typeof imprimirEtiquetas>[0]; precisa: boolean }[],
+    pagerNumero?: string,
+  ) {
+    const ordenadas = pagerNumero
+      ? [...etiquetas].sort((a, b) => Number(b.precisa) - Number(a.precisa))
+      : etiquetas;
+    let reciboFeito = false;
+    for (const e of ordenadas) {
+      const dados = pagerNumero && e.precisa ? { ...e.dados, pagerNumero } : e.dados;
+      try {
+        await imprimirEtiquetas(dados, false, !reciboFeito);
+        reciboFeito = true;
+      } catch { /* impressão falhou · não derruba o resto */ }
+    }
+  }
+
+  function fecharPagerFluxo() {
+    setPagerFluxo(null);
+    setPagerInput('');
+    setPagerConflito(null);
+  }
+
+  // Concluir COM pager: valida/grava o número (servidor é a autoridade) e imprime
+  // com "Pager X". Conflito → não imprime, pede outro número (nunca trava o
+  // check-in, que já existe). Erro de rede → imprime com o número mesmo assim.
+  async function concluirPagerComNumero() {
+    if (!pagerFluxo) return;
+    const numero = pagerInput.replace(/\D/g, '').replace(/^0+(?=\d)/, '');
+    if (!numero) { toast.error('Digite o número do pager, ou use "sem pager".'); return; }
+    setSalvandoPager(true);
+    setPagerConflito(null);
+    try {
+      const r = await totemKids.checkin.setPager(pagerFluxo.checkinId, numero);
+      if (r && r.ok === false && r.conflito) {
+        setPagerConflito({ numero, emUso: Array.isArray(r.em_uso) ? r.em_uso : [] });
+        setSalvandoPager(false);
+        return;
+      }
+    } catch {
+      toast.warning('Não deu pra registrar o pager no sistema, mas a etiqueta vai sair com o número.');
+    }
+    await imprimirEtiquetasComPager(pagerFluxo.etiquetas, numero);
+    setSalvandoPager(false);
+    fecharPagerFluxo();
+  }
+
+  // Válvula de escape: imprime SEM "Pager X" (pager acabou/quebrou). A criança
+  // fica marcada como "pager pendente" no painel ao vivo (deriva de sem número).
+  async function concluirSemPager() {
+    if (!pagerFluxo || salvandoPager) return;
+    setSalvandoPager(true);
+    await imprimirEtiquetasComPager(pagerFluxo.etiquetas, undefined);
+    setSalvandoPager(false);
+    fecharPagerFluxo();
+  }
 
   // Layout configurável da etiqueta (fonte, tamanho da fonte, tamanho do nome)
   const [etqLayout, setEtqLayout] = useState<Parameters<typeof imprimirEtiquetas>[0]['layout']>(undefined);
@@ -556,29 +627,41 @@ export default function TotemKidsCheckin() {
       payload.responsavel_parentesco = resp.parentesco || 'outro';
     }
     let ok = 0, jaTinha = 0, falhou = 0;
+    let fluxoPager: PagerFluxo | null = null;
     try {
       const r = await totemKids.checkin.lote(payload);
       const saidas = Array.isArray(r?.resultados) ? r.resultados : [];
       const porId = new Map(itens.map((it) => [it.crianca.id, it.crianca]));
-      // Família compartilha o código → o recibo do responsável (genérico, sem nome de
-      // criança) sai UMA vez só. Etiquetas de cada criança saem normalmente.
-      let reciboImpresso = false;
-      const pagerFam: string[] = []; // filhos que precisam de pager no balcão
+      // Família compartilha o código → o recibo (genérico, sem nome de criança)
+      // sai UMA vez só. Monto todas as etiquetas; se alguém é obrigado de pager,
+      // a impressão da família inteira espera o número (imprimirEtiquetasComPager).
+      const etiquetas: { dados: Parameters<typeof imprimirEtiquetas>[0]; precisa: boolean }[] = [];
+      const nomesPager: string[] = [];
+      let checkinRepId = '';
       for (const s of saidas) {
         if (s?.ok) {
           const cr = porId.get(s.crianca_id);
-          if (cr && precisaPager(cr)) pagerFam.push(cr.nome.split(' ')[0]);
           if (cr) {
             const dados = montarDadosEtiqueta(cr, {
               checkinId: s.checkin.id, salaNome: s.sala.nome, salaCor: s.sala.cor, salaLogoUrl: s.sala.logo_url,
               respNome: s.responsavel.nome, codigo: s.codigo_seguranca, codigoBarras: s.codigo_barras,
               cultoNome: s.sessao.culto?.nome || null, cultoData: s.sessao.culto?.data || null,
             });
-            try { await imprimirEtiquetas(dados, false, !reciboImpresso); reciboImpresso = true; } catch { /* impressão falhou · não derruba o resto */ }
+            const precisa = precisaPager(cr);
+            etiquetas.push({ dados, precisa });
+            if (precisa) nomesPager.push(cr.nome.split(' ')[0]);
+            if (!checkinRepId) checkinRepId = s.checkin.id;
           }
           ok++;
         } else if (s?.ja_aberto) jaTinha++;
         else falhou++;
+      }
+      if (nomesPager.length > 0 && etiquetas.length > 0) {
+        // Família com criança(s) obrigada(s): a impressão inteira espera o pager.
+        fluxoPager = { etiquetas, checkinId: checkinRepId, nomes: nomesPager };
+      } else {
+        // Ninguém obrigado → imprime tudo na hora (recibo 1×).
+        await imprimirEtiquetasComPager(etiquetas, undefined);
       }
     } catch (e: unknown) {
       falhou = itens.length;
@@ -592,7 +675,7 @@ export default function TotemKidsCheckin() {
       + (falhou ? ` · ${falhou} não deu` : ''),
       { duration: 5000 },
     );
-    setPagerNomes(pagerFam);
+    if (fluxoPager) setPagerFluxo(fluxoPager);
     setCrianca(null); setBusca(''); setSalaSelecionada(''); setResponsavelSelecionado('');
     setUsarRespManual(false); setRespManualNome(''); setRespManualTel(''); setCultosSel(new Set());
     setResultados([]); setIrmaos([]);
@@ -1108,13 +1191,22 @@ export default function TotemKidsCheckin() {
         cultoNome: r.sessao.culto?.nome || null,
         cultoData: r.sessao.culto?.data || null,
       });
-      await imprimirEtiquetas(dadosEtiqueta);
       setUltimaEtiqueta(dadosEtiqueta);
 
       toast.success(`${r.crianca.nome} · check-in OK · código ${r.codigo_seguranca}`, { duration: 4000 });
       dispararConfete();
-      // Pager pra criança pequena (< 4 anos) ou com espectro/limitação (avisa antes do reset).
-      setPagerNomes(crianca && precisaPager(crianca) ? [crianca.nome.split(' ')[0]] : []);
+      // Criança obrigada de pager (< 4 anos / espectro / limitação): a IMPRESSÃO
+      // espera o número do pager (gate mole — o check-in já está salvo). Senão,
+      // imprime na hora, como sempre.
+      if (crianca && precisaPager(crianca)) {
+        setPagerFluxo({
+          etiquetas: [{ dados: dadosEtiqueta, precisa: true }],
+          checkinId: r.checkin.id,
+          nomes: [crianca.nome.split(' ')[0]],
+        });
+      } else {
+        await imprimirEtiquetas(dadosEtiqueta);
+      }
 
       // Reset
       setCrianca(null);
@@ -1273,30 +1365,56 @@ export default function TotemKidsCheckin() {
         </Dialog>
       )}
 
-      {/* Pager no balcão (sugestão da equipe · 2026-07-22): criança < 4 anos ou
-          com espectro/limitação física → a equipe entrega um pager ao
-          responsável. Aparece logo após o check-in (individual ou família). */}
-      {pagerNomes.length > 0 && (
-        <Dialog open onOpenChange={(o) => { if (!o) setPagerNomes([]); }}>
+      {/* Pager no balcão (Mari 2026-07-22 · gate mole): criança < 4 anos ou com
+          espectro/limitação → a impressão espera o número do pager. Fechar por
+          fora = "sem pager" (nunca deixa a criança sem etiqueta). */}
+      {pagerFluxo && (
+        <Dialog open onOpenChange={(o) => { if (!o && !salvandoPager) concluirSemPager(); }}>
           <DialogContent className="max-w-md">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2 text-amber-600">
                 <BellRing className="h-6 w-6" /> Pegue o pager no balcão
               </DialogTitle>
               <DialogDescription>
-                {pagerNomes.length === 1
-                  ? <>Entregue um <b>pager</b> ao responsável de <b>{pagerNomes[0]}</b> — criança pequena (até 3 anos) ou que precisa de atenção especial.</>
-                  : <>Entregue um <b>pager</b> ao responsável destas crianças (pequenas ou com atenção especial):</>}
+                Pegue o pager e adicione o número dele abaixo — para{' '}
+                <b>{pagerFluxo.nomes.join(', ')}</b>{' '}
+                ({pagerFluxo.nomes.length === 1 ? 'criança pequena ou com atenção especial' : 'crianças pequenas ou com atenção especial'}).
               </DialogDescription>
             </DialogHeader>
-            {pagerNomes.length > 1 && (
-              <ul className="list-disc pl-6 text-sm font-semibold space-y-0.5">
-                {pagerNomes.map((n, i) => <li key={i}>{n}</li>)}
-              </ul>
-            )}
-            <Button className="w-full bg-amber-600 hover:bg-amber-700 text-white h-12 text-base" onClick={() => setPagerNomes([])}>
-              Ok, peguei o pager
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Número do pager</label>
+              <Input
+                autoFocus
+                inputMode="numeric"
+                pattern="[0-9]*"
+                value={pagerInput}
+                onChange={(e) => { setPagerInput(e.target.value.replace(/\D/g, '').slice(0, 4)); setPagerConflito(null); }}
+                onKeyDown={(e) => { if (e.key === 'Enter' && pagerInput.trim() && !salvandoPager) concluirPagerComNumero(); }}
+                placeholder="ex.: 12"
+                className="h-14 text-2xl text-center font-bold tracking-widest"
+              />
+              {pagerConflito && (
+                <p className="text-sm text-red-600 font-medium">
+                  Pager {pagerConflito.numero} já está em uso — pegue outro.
+                  {pagerConflito.emUso.length > 0 && <> Em uso agora: {pagerConflito.emUso.join(', ')}.</>}
+                </p>
+              )}
+            </div>
+            <Button
+              className="w-full bg-amber-600 hover:bg-amber-700 text-white h-14 text-lg font-bold"
+              disabled={!pagerInput.trim() || salvandoPager}
+              onClick={concluirPagerComNumero}
+            >
+              {salvandoPager ? 'Imprimindo…' : 'Concluir e imprimir'}
             </Button>
+            <button
+              type="button"
+              className="w-full text-sm text-muted-foreground underline underline-offset-4 hover:text-foreground disabled:opacity-50"
+              disabled={salvandoPager}
+              onClick={concluirSemPager}
+            >
+              Sem pager disponível — imprimir mesmo assim
+            </button>
           </DialogContent>
         </Dialog>
       )}

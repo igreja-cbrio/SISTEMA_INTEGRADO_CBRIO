@@ -162,6 +162,7 @@ export function EtiquetaTesteForm() {
   const [codigoSeguranca, setCodigoSeguranca] = useState('F8K3');
   const [processando, setProcessando] = useState(false);
   const [fotoOk, setFotoOk] = useState(true);
+  const [pagerTeste, setPagerTeste] = useState('');
 
   // Layout da etiqueta (config persistida · snake do backend)
   const [cfg, setCfg] = useState<{ nome_tamanho: string; fonte: string; escala_fonte: string; logo_aniversario_url?: string | null }>(
@@ -231,6 +232,7 @@ export function EtiquetaTesteForm() {
     responsavel: { nome: responsavelNome },
     codigoSeguranca, codigoBarras: codigoSeguranca,
     dataHora: '', cultoNome, cultoDiaHora: cultoNome, layout,
+    pagerNumero: pagerTeste || undefined,
     logoAniversarioUrl: cfg.logo_aniversario_url || null,
   };
 
@@ -263,6 +265,7 @@ export function EtiquetaTesteForm() {
         cultoNome,
         cultoDiaHora: cultoNome,
         layout,
+        pagerNumero: pagerTeste || undefined,
       }, preview);
 
       if (preview) {
@@ -325,6 +328,11 @@ export function EtiquetaTesteForm() {
             <div className="col-span-2 flex items-center gap-2">
               <input id="fotoOk" type="checkbox" checked={fotoOk} onChange={e => setFotoOk(e.target.checked)} />
               <label htmlFor="fotoOk" className="text-xs text-muted-foreground">Foto autorizada (desmarque pra ver o ícone de câmera cortada)</label>
+            </div>
+            <div className="col-span-2 flex items-center gap-2">
+              <label htmlFor="pagerTeste" className="text-xs text-muted-foreground shrink-0">Nº do pager (só pra ver o "Pager X" na etiqueta)</label>
+              <Input id="pagerTeste" value={pagerTeste} inputMode="numeric" placeholder="ex.: 12"
+                onChange={e => setPagerTeste(e.target.value.replace(/\D/g, '').slice(0, 4))} className="h-8 w-24" />
             </div>
           </div>
 
