@@ -1816,6 +1816,7 @@ export const solicitacoes = {
   enviarCotacoesFinanceiro: (id, payload) => post(`/solicitacoes/${id}/enviar-cotacoes-financeiro`, payload || {}),
   classificacaoAux: (area) => get(`/solicitacoes/aux/classificacao${area ? `?area=${encodeURIComponent(area)}` : ''}`),
   converterEmCompra: (id, payload) => post(`/solicitacoes/${id}/converter-em-compra`, payload),
+  lancarFinanceiro: (id, payload) => post(`/solicitacoes/${id}/lancar-financeiro`, payload || {}),
   escanearNotaFiscal: (id, file) => { const fd = new FormData(); fd.append('arquivo', file); return requestFile(`/solicitacoes/${id}/nota-fiscal/escanear`, fd, { timeoutMs: 120_000 }); },
   areaResponsaveis: {
     list:    () => get('/solicitacoes/area-responsaveis'),

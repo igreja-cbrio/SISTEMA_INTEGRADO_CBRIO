@@ -13,6 +13,8 @@ const wpp = require('../services/whatsappService');
 const multer = require('multer');
 const crypto = require('crypto');
 const { extrairNotaFiscal, sugerirCategoria } = require('../services/nfScanner');
+const { lancarDespesaConciliando } = require('../services/finLancamento');
+const { aprenderClassificacao } = require('../services/financeiroClassificador');
 const uploadNfSolic = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
 
 // Dispara o WhatsApp pro solicitante quando a solicitação muda de status
@@ -290,14 +292,87 @@ router.get('/aux/classificacao', async (req, res) => {
     let centrosQ = supabase.from('fin_centros_custo').select('id, codigo, nome, area_slug')
       .eq('ativo', true).eq('aceita_lancamento', true).order('codigo');
     if (req.query.area) centrosQ = centrosQ.eq('area_slug', String(req.query.area));
-    const [planos, centros] = await Promise.all([
+    const [planos, centros, contas] = await Promise.all([
       supabase.from('fin_plano_contas').select('id, codigo, nome')
         .eq('tipo', 'despesa').eq('ativo', true).eq('aceita_lancamento', true).order('codigo'),
       centrosQ,
+      supabase.from('fin_contas').select('id, nome, banco').eq('ativa', true).order('nome'),
     ]);
     if (planos.error) throw planos.error;
-    res.json({ planos: planos.data || [], centros: centros.data || [] });
+    res.json({ planos: planos.data || [], centros: centros.data || [], contas: contas.data || [] });
   } catch (e) { console.error('[SOLICITACOES] aux classificacao:', e.message); res.status(500).json({ error: e.message }); }
+});
+
+// LOOP FINANCEIRO Fase 2 · lançar a despesa da compra e conciliar com o extrato.
+// Só compra/serviço já aprovada no financeiro, ainda sem transação. Trava anti-
+// duplicação (fin_transacao_id). Reusa o helper compartilhado com o fluxo de NF.
+router.post('/:id/lancar-financeiro', async (req, res) => {
+  try {
+    const { conta_id, plano_contas_id, centro_custo_id, data_pagamento, observacoes } = req.body || {};
+    const { data: sol } = await supabase.from('solicitacoes')
+      .select('*').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!sol) return res.status(404).json({ error: 'Solicitação não encontrada.' });
+    if (!(await podeGerirSolicitacao(req, sol))) return res.status(403).json({ error: 'Você não pode lançar esta compra.' });
+    if (!['compras', 'servico'].includes(sol.categoria)) return res.status(400).json({ error: 'Só compra/serviço gera lançamento.' });
+    if (!sol.aprovado_financeiro_em) return res.status(400).json({ error: 'A compra ainda não foi aprovada no financeiro.' });
+    if (sol.fin_transacao_id) return res.status(409).json({ error: 'Esta compra já foi lançada no financeiro.' });
+
+    const finalPlano = plano_contas_id || sol.plano_contas_id;
+    if (!finalPlano) return res.status(400).json({ error: 'Informe o plano de contas antes de lançar.' });
+    const { data: plano } = await supabase.from('fin_plano_contas')
+      .select('tipo, aceita_lancamento, ativo').eq('id', finalPlano).maybeSingle();
+    if (!plano || plano.tipo !== 'despesa' || !plano.aceita_lancamento || plano.ativo === false) {
+      return res.status(400).json({ error: 'Plano de contas inválido (conta de despesa que aceita lançamento).' });
+    }
+    const finalCentro = centro_custo_id !== undefined ? (centro_custo_id || null) : sol.centro_custo_id;
+    const valor = Number(sol.valor_cotado ?? sol.valor_estimado) || 0;
+    if (!valor) return res.status(400).json({ error: 'Compra sem valor cotado.' });
+
+    const ex = sol.nota_fiscal_extracao || {};
+    const dataBase = ex.data_emissao || new Date().toISOString().slice(0, 10);
+
+    const r = await lancarDespesaConciliando({
+      descricao: sol.titulo || `Compra ${String(sol.id).slice(0, 8)}`,
+      valor, dataBase, dataPagamento: data_pagamento,
+      referencia: ex.numero ? `NF ${ex.numero}` : `Solicitação ${String(sol.id).slice(0, 8)}`,
+      observacoes,
+      plano_contas_id: finalPlano, centro_custo_id: finalCentro, conta_id,
+      classificacao_origem: 'manual', classificacao_confianca: 1.0,
+      createdBy: req.user.userId,
+      extras: { solicitacao_id: sol.id },
+    });
+    if (r.erro) return res.status(400).json({ error: r.erro, precisaConta: !!r.precisaConta });
+
+    // Trava de idempotência: grava o elo só se ainda estava null (anti-corrida).
+    const { data: upd } = await supabase.from('solicitacoes')
+      .update({
+        fin_transacao_id: r.transacao.id,
+        fin_vinculo_status: r.conciliada ? 'conciliado' : 'lancado',
+        plano_contas_id: finalPlano, centro_custo_id: finalCentro,
+      })
+      .eq('id', sol.id).is('fin_transacao_id', null).select('id').maybeSingle();
+    if (!upd) {
+      await supabase.from('fin_transacoes').update({ status: 'cancelado' }).eq('id', r.transacao.id);
+      return res.status(409).json({ error: 'Esta compra já foi lançada por outra pessoa.' });
+    }
+
+    if (ex.emitente_cnpj) {
+      aprenderClassificacao({ documento: ex.emitente_cnpj, nome: ex.emitente_nome, plano_contas_id: finalPlano, centro_custo_id: finalCentro })
+        .catch(e => console.error('[SOLICITACOES] aprender lançar:', e.message));
+    }
+    notificar({
+      modulo: 'financeiro', tipo: 'solicitacao_status',
+      titulo: `Compra lançada no financeiro: ${sol.titulo}`,
+      mensagem: `${r.conciliada ? 'Conciliada com o extrato' : 'Lançada como pendente'} · ${valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}.`,
+      link: '/solicitacoes', severidade: 'info', chaveDedup: `solic_lancada_${sol.id}`,
+      extraTargetIds: [sol.solicitante_id].filter(Boolean),
+    }).catch(() => {});
+
+    res.json({ transacao: r.transacao, conciliada: r.conciliada });
+  } catch (e) {
+    console.error('[SOLICITACOES] lancar-financeiro:', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // Escanear a nota fiscal do pedido: sobe o arquivo + IA extrai + sugere plano/
