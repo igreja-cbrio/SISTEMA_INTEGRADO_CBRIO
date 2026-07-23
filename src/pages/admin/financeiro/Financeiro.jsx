@@ -10,12 +10,8 @@ import ImportarExtratos from './ImportarExtratos';
 import FilaClassificacao from './FilaClassificacao';
 import NotasCompras from './NotasCompras';
 import DashboardOverview from './DashboardOverview';
-import CultoAoVivo from './CultoAoVivo';
 import DreAuto from './DreAuto';
 import Analises from './Analises';
-import PixCobranca from './PixCobranca';
-import PagamentosContas from './PagamentosContas';
-import BoletosEmitidos from './BoletosEmitidos';
 import SolicitacoesFinanceiro from './SolicitacoesFinanceiro';
 import Recorrentes from './Recorrentes';
 import Generosidade from './Generosidade';
@@ -171,7 +167,6 @@ const TABS = [
 const SUBS_OPERACIONAL = ['Contas', 'Recorrentes', 'Reembolsos', 'Importar extratos', 'Fila de classificação', 'Calendário', 'Notas de compras'];
 const SUBS_GESTAO = ['Solicitações', 'Alertas', 'Fechamento', 'Auditoria'];
 const SUBS_DRE = ['DRE Auto', 'Por Centro de Custo', 'Comparativo Temporal'];
-const SUBS_BANCO = ['Banco Santander', 'Culto ao Vivo', 'PIX Cobrança', 'Pagamentos', 'Boletos'];
 
 // ── KPI Cards (estilo unificado) ─────────────────────────────
 const FIN_STAT_SVGS = [
@@ -250,7 +245,6 @@ export default function Financeiro() {
   const [subOp, setSubOp] = useState(0);
   const [subGestao, setSubGestao] = useState(0);
   const [subDre, setSubDre] = useState(0);
-  const [subBanco, setSubBanco] = useState(0);
   const abrirSolicitacoes = searchParams.get('aba') === 'solicitacoes';
   const solicitacaoId = searchParams.get('solicitacao') || null;
 
@@ -273,11 +267,7 @@ export default function Financeiro() {
       case 'dre_centro':       setTab(5); setSubDre(1); break;
       case 'dre_comparativo':  setTab(5); setSubDre(2); break;
       case 'generosidade':     setTab(6); break;
-      case 'banco':            setTab(7); setSubBanco(0); break;
-      case 'culto_vivo':       setTab(7); setSubBanco(1); break;
-      case 'pix_cob':          setTab(7); setSubBanco(2); break;
-      case 'pagamentos':       setTab(7); setSubBanco(3); break;
-      case 'boletos':          setTab(7); setSubBanco(4); break;
+      case 'banco':            setTab(7); break;
       case 'contas':           setTab(8); setSubOp(0); break;
       case 'recorrentes':      setTab(8); setSubOp(1); break;
       case 'reembolsos':       setTab(8); setSubOp(2); break;
@@ -333,6 +323,11 @@ export default function Financeiro() {
   const [modalConta, setModalConta] = useState(null);
   const [modalTransacao, setModalTransacao] = useState(null);
   const [modalPagar, setModalPagar] = useState(null);
+  // Form do modal de Conta a Pagar · estado NO TOPO (antes ficava num useState
+  // dentro de renderModalPagar(), que é chamado condicionalmente → violava a
+  // regra dos hooks e quebrava com "Rendered more hooks" (React #310) ao editar).
+  const [formPagar, setFormPagar] = useState({});
+  useEffect(() => { setFormPagar(modalPagar || {}); }, [modalPagar]);
 
   // ── Loaders ──
   const loadDash = useCallback(async () => {
@@ -1056,8 +1051,8 @@ export default function Financeiro() {
   };
 
   const renderModalPagar = () => {
-    const [form, setForm] = useState(modalPagar || {});
-    const upd = (k, v) => setForm(f => ({ ...f, [k]: v }));
+    const form = formPagar;
+    const upd = (k, v) => setFormPagar(f => ({ ...f, [k]: v }));
     return (
       <Modal
         open={!!modalPagar}
@@ -1151,17 +1146,9 @@ export default function Financeiro() {
       {/* 6 · Generosidade */}
       {tab === 6 && <Generosidade />}
 
-      {/* 7 · Banco · sub-abas */}
-      {tab === 7 && (
-        <div>
-          <SubTabBar items={SUBS_BANCO} current={subBanco} onSelect={setSubBanco} />
-          {subBanco === 0 && <SantanderTab />}
-          {subBanco === 1 && <CultoAoVivo />}
-          {subBanco === 2 && <PixCobranca />}
-          {subBanco === 3 && <PagamentosContas />}
-          {subBanco === 4 && <BoletosEmitidos />}
-        </div>
-      )}
+      {/* 7 · Banco · só a visão do Santander (Culto ao Vivo, PIX Cobrança,
+          Pagamentos e Boletos removidos a pedido do Matheus · 2026-07-23) */}
+      {tab === 7 && <SantanderTab />}
 
       {/* 8 · Operacional · sub-abas (contas, recorrentes, reembolsos, importar, fila, calendário) */}
       {tab === 8 && (
