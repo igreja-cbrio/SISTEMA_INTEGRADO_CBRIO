@@ -1810,6 +1810,10 @@ export const solicitacoes = {
     list:    () => get('/solicitacoes/area-responsaveis'),
     save:    (area, profile_ids) => put('/solicitacoes/area-responsaveis', { area, profile_ids }),
   },
+  fluxos: {
+    list:    () => get('/solicitacoes/fluxos'),
+    get:     (categoria) => get(`/solicitacoes/fluxos/${categoria}`),
+  },
   // Vinculo com pedido Mercado Livre (compras)
   vincularML:   (id, mlInput) => post(`/solicitacoes/${id}/vincular-ml`, { ml_input: mlInput }),
   desvincularML: (id) => del(`/solicitacoes/${id}/vincular-ml`),

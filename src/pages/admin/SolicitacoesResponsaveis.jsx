@@ -292,6 +292,12 @@ export default function SolicitacoesResponsaveis() {
           Configure quem é responsável por cada área. Quem estiver listado aqui recebe notificação direta e vê
           todas as solicitações da área no kanban (independente das outras permissões).
         </div>
+        <a href="/admin/solicitacoes-fluxo" style={{
+          display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 10, fontSize: 13,
+          fontWeight: 600, color: C.primary, textDecoration: 'none',
+        }}>
+          Ver o fluxo das solicitações →
+        </a>
       </div>
 
       {dirtyAreas.length > 0 && (
