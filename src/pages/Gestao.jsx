@@ -76,7 +76,7 @@ export default function Gestao() {
   if (!isAdmin) {
     return (
       <div style={{ padding: 40, textAlign: 'center', color: C.t3 }}>
-        Acesso restrito. /gestao e exclusivo para admin/diretor (PMO).
+        Acesso restrito. /gestao é exclusivo para admin/diretor (PMO).
       </div>
     );
   }
@@ -86,10 +86,10 @@ export default function Gestao() {
       <header style={{ marginBottom: 18 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
           <Settings size={22} style={{ color: C.primary }} />
-          Gestao do Sistema OKR
+          Gestão do Sistema OKR
         </h1>
         <p style={{ fontSize: 13, color: C.t3, marginTop: 6 }}>
-          PMO · cobre lideres atrasados, configura estrutura, monitora a saude do sistema
+          PMO · cobre líderes atrasados, configura estrutura, monitora a saúde do sistema
         </p>
       </header>
 
@@ -168,7 +168,7 @@ function AbaDiagnostico() {
       {/* Stats globais · fusao Pulso + Saúde */}
       <Stats stats={[
         { label: 'KPIs ativos', value: pulso?.total_kpis_ativos ?? saude?.total_kpis_ativos ?? 0, cor: C.text },
-        { label: 'KPIs criticos', value: pulso?.cronicamente_vermelhos?.length || 0, cor: '#EF4444' },
+        { label: 'KPIs críticos', value: pulso?.cronicamente_vermelhos?.length || 0, cor: '#EF4444' },
         { label: 'Líderes com pendência', value: (pulso?.lideres || []).filter(l => l.criticos > 0 || l.atrasados > 0).length, cor: '#EF4444' },
         { label: 'Sem registro 60d', value: saude?.sem_registro_60d?.total || 0, cor: '#F59E0B' },
         { label: 'Sem meta', value: saude?.sem_meta?.total || 0, cor: '#9CA3AF' },
@@ -201,7 +201,7 @@ function AbaDiagnostico() {
                     </div>
                   </div>
                   <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
-                    {l.criticos > 0 && <Badge cor="#EF4444" label={`${l.criticos}c`} title={`${l.criticos} criticos`} />}
+                    {l.criticos > 0 && <Badge cor="#EF4444" label={`${l.criticos}c`} title={`${l.criticos} críticos`} />}
                     {l.atrasados > 0 && <Badge cor="#F59E0B" label={`${l.atrasados}a`} title={`${l.atrasados} atrasados`} />}
                     {l.sem_dado > 0 && <Badge cor="#9CA3AF" label={`${l.sem_dado}?`} title={`${l.sem_dado} sem dado`} />}
                   </div>
@@ -214,7 +214,7 @@ function AbaDiagnostico() {
           )}
         </Card>
 
-        <Card title="KPIs cronicamente criticos" subtitle="Indicadores em vermelho que precisam de atenção da diretoria">
+        <Card title="KPIs cronicamente críticos" subtitle="Indicadores em vermelho que precisam de atenção da diretoria">
           {!pulso?.cronicamente_vermelhos?.length ? (
             <Vazio>Nenhum KPI cronicamente vermelho.</Vazio>
           ) : (
@@ -283,7 +283,7 @@ function AbaDiagnostico() {
             subtitulo="KPIs que precisam de uma meta antes de poder cobrar"
             items={saude.sem_meta.items} cor="#EF4444" onAbrirKpi={setDetalheKpiId} />
           <ListaSaude titulo="Sem dono atribuído"
-            subtitulo="KPIs sem líder responsável — ninguém e cobrado"
+            subtitulo="KPIs sem líder responsável — ninguém é cobrado"
             items={saude.sem_dono.items} cor="#F59E0B" onAbrirKpi={setDetalheKpiId} />
           <ListaSaude titulo="Sem objetivo geral vinculado"
             subtitulo="Não alimentam cascata automática" items={saude.sem_objetivo.items} cor="#3B82F6" onAbrirKpi={setDetalheKpiId} />
@@ -579,7 +579,7 @@ function AbaMetasInstitucionais() {
         })}
 
         {okrsPorTipo.sem_tipo?.length > 0 && (
-          <Card title={<>⚠️ OKRs sem tipo classificado ({okrsPorTipo.sem_tipo.length})</>} subtitle="Use os botoes ⇄ acima para classificar" full>
+          <Card title={<>⚠️ OKRs sem tipo classificado ({okrsPorTipo.sem_tipo.length})</>} subtitle="Use os botões ⇄ acima para classificar" full>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
               {okrsPorTipo.sem_tipo.map(o => (
                 <span key={o.id} style={{

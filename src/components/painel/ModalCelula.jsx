@@ -24,8 +24,8 @@ const C = {
 
 const STATUS_VISUAL = {
   no_alvo:  { Icon: CheckCircle2,  cor: '#10B981', bg: '#10B98118', label: 'No alvo' },
-  atras:    { Icon: Clock,         cor: '#F59E0B', bg: '#F59E0B18', label: 'Atras' },
-  critico:  { Icon: TrendingDown,  cor: '#EF4444', bg: '#EF444418', label: 'Critico' },
+  atras:    { Icon: Clock,         cor: '#F59E0B', bg: '#F59E0B18', label: 'Atrás' },
+  critico:  { Icon: TrendingDown,  cor: '#EF4444', bg: '#EF444418', label: 'Crítico' },
   sem_dado: { Icon: MinusCircle,   cor: '#9CA3AF', bg: '#9CA3AF18', label: 'Sem dado' },
 };
 
@@ -90,7 +90,7 @@ export default function ModalCelula({ area, valor, cell, onClose }) {
               fontSize: 10, fontWeight: 700, letterSpacing: 1,
               color: C.t3, textTransform: 'uppercase',
             }}>
-              Intersecao da matriz
+              Interseção da matriz
             </div>
             <h3 style={{
               fontSize: 18, fontWeight: 700, color: C.text,
@@ -108,7 +108,7 @@ export default function ModalCelula({ area, valor, cell, onClose }) {
               </span>
             </h3>
             <p style={{ fontSize: 11, color: C.t3, marginTop: 6 }}>
-              {cell?.total_kpis || 0} indicadores · {cell?.em_dia || 0} em dia · {cell?.atras || 0} atras · {cell?.critico || 0} criticos · {cell?.sem_dado || 0} sem dado
+              {cell?.total_kpis || 0} indicadores · {cell?.em_dia || 0} em dia · {cell?.atras || 0} atrás · {cell?.critico || 0} críticos · {cell?.sem_dado || 0} sem dado
             </p>
           </div>
           <button
@@ -136,7 +136,7 @@ export default function ModalCelula({ area, valor, cell, onClose }) {
             </div>
           ) : !data?.kpis?.length ? (
             <div style={{ padding: 30, textAlign: 'center', color: C.t3, fontSize: 13 }}>
-              Nenhum KPI nesta intersecao.
+              Nenhum KPI nesta interseção.
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -228,7 +228,7 @@ function KpiRow({ kpi, onAbrir }) {
             )}
             {traj?.ultimo_valor !== null && traj?.ultimo_valor !== undefined && (
               <Info
-                label="Ultimo valor"
+                label="Último valor"
                 value={`${traj.ultimo_valor}${kpi.unidade ? ' ' + kpi.unidade : ''} (${traj.ultimo_periodo})`}
               />
             )}
@@ -237,7 +237,7 @@ function KpiRow({ kpi, onAbrir }) {
             )}
             <Info label="Periodicidade" value={kpi.periodicidade || '—'} />
             {kpi.lider && (
-              <Info label="Lider" value={kpi.lider.nome + (kpi.lider.cargo ? ` (${kpi.lider.cargo})` : '')} />
+              <Info label="Líder" value={kpi.lider.nome + (kpi.lider.cargo ? ` (${kpi.lider.cargo})` : '')} />
             )}
             <Info label="ID" value={kpi.id} />
           </div>

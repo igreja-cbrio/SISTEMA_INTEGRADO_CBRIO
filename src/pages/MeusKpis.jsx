@@ -221,8 +221,8 @@ export default function MeusKpis() {
         <Heart size={32} style={{ color: C.t3, marginBottom: 12 }} />
         <h1 style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 8 }}>Você ainda não lidera nenhuma área ou valor</h1>
         <p style={{ fontSize: 13, color: C.t3 }}>
-          Peca para um administrador atribuir suas areas e/ou valores da Jornada no modulo de Permissoes.
-          Depois, voce ve aqui apenas os KPIs que precisa preencher.
+          Peça para um administrador atribuir suas áreas e/ou valores da Jornada no módulo de Permissões.
+          Depois, você vê aqui apenas os KPIs que precisa preencher.
         </p>
       </div>
     );
@@ -241,7 +241,7 @@ export default function MeusKpis() {
           </p>
           <p style={{ fontSize: 13, color: C.t3, marginTop: 0, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
             {isAdmin ? (
-              <span>Você esta vendo <strong>todos os KPIs</strong> (admin/diretor).</span>
+              <span>Você está vendo <strong>todos os KPIs</strong> (admin/diretor).</span>
             ) : (
               <>
                 {kpiAreas.length > 0 && (
@@ -271,7 +271,7 @@ export default function MeusKpis() {
         </div>
         {canEditAny && (
           <Button onClick={() => setCreateOpen(true)} variant="outline">
-            <Plus size={14} style={{ marginRight: 4 }} /> Novo KPI da minha area
+            <Plus size={14} style={{ marginRight: 4 }} /> Novo KPI da minha área
           </Button>
         )}
       </div>
@@ -301,7 +301,7 @@ export default function MeusKpis() {
 
       {meusKpis.length === 0 ? (
         <div style={{ padding: 60, textAlign: 'center', color: C.t3, background: C.card, borderRadius: 16, border: `1px dashed ${C.border}`, boxShadow: 'var(--shadow)' }}>
-          Nenhum KPI ativo nas suas areas ainda. {canEditAny && 'Clique em "Novo KPI da minha área" para criar o primeiro.'}
+          Nenhum KPI ativo nas suas áreas ainda. {canEditAny && 'Clique em "Novo KPI da minha área" para criar o primeiro.'}
         </div>
       ) : (
         PERIODICIDADE_ORDER.filter(p => porPeriodicidade[p]?.length).map(p => (
@@ -448,7 +448,7 @@ const MODULO_POR_DADO_TIPO = {
   // Grupos
   frequencia_grupos: { titulo: 'Grupos',     path: '/grupos' },
   grupos_ativos:     { titulo: 'Grupos',     path: '/grupos' },
-  lideres_grupos:    { titulo: 'Supervisao Grupos', path: '/grupos/supervisao' },
+  lideres_grupos:    { titulo: 'Supervisão Grupos', path: '/grupos/supervisao' },
   // NPS · sempre via módulo NPS
   nps_geral:       { titulo: 'NPS', path: '/nps' },
   nps_next:        { titulo: 'NPS', path: '/nps' },
@@ -471,7 +471,7 @@ function OrigemDado({ kpi, podeEditar, onEditar }) {
       <div style={{ marginTop: 'auto', padding: '8px 10px', background: C.primaryBg, borderRadius: 6 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
           <div style={{ fontSize: 10, fontWeight: 700, color: C.primary, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-            Automatico
+            Automático
           </div>
           {moduloInfo && (
             <a href={moduloInfo.path} style={{ fontSize: 10, color: C.primary, fontWeight: 600, textDecoration: 'none' }}>
@@ -480,7 +480,7 @@ function OrigemDado({ kpi, podeEditar, onEditar }) {
           )}
         </div>
         <div style={{ fontSize: 10, color: C.t3, marginTop: 2 }}>
-          {moduloInfo ? `Sobe via modulo ${moduloInfo.titulo}` : 'Sobe via outro modulo'}
+          {moduloInfo ? `Sobe via módulo ${moduloInfo.titulo}` : 'Sobe via outro módulo'}
         </div>
         {podeEditar && (
           <button onClick={() => onEditar(kpi)}
@@ -505,7 +505,7 @@ function OrigemDado({ kpi, podeEditar, onEditar }) {
         </a>
       </div>
       <div style={{ fontSize: 10, color: C.t3, marginTop: 2 }}>
-        Preencha o dado no modulo · KPI calcula sozinho
+        Preencha o dado no módulo · KPI calcula sozinho
       </div>
       {podeEditar && (
         <button onClick={() => onEditar(kpi)}

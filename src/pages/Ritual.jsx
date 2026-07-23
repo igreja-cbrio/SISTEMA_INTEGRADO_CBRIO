@@ -24,8 +24,8 @@ const C = {
 };
 
 const STATUS_VISUAL = {
-  critico: { Icon: TrendingDown, cor: '#EF4444', bg: '#FEE2E2', label: 'Critico' },
-  atras:   { Icon: Clock,        cor: '#F59E0B', bg: '#FEF3C7', label: 'Atras' },
+  critico: { Icon: TrendingDown, cor: '#EF4444', bg: '#FEE2E2', label: 'Crítico' },
+  atras:   { Icon: Clock,        cor: '#F59E0B', bg: '#FEF3C7', label: 'Atrás' },
 };
 
 function periodoMensalAtual() {
@@ -35,7 +35,7 @@ function periodoMensalAtual() {
 
 function periodoLabel(p) {
   const [ano, mes] = (p || '').split('-');
-  const meses = ['Janeiro', 'Fevereiro', 'Marco', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+  const meses = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
   return `${meses[Number(mes) - 1] || mes} ${ano}`;
 }
 
@@ -108,7 +108,7 @@ export default function Ritual() {
           Ritual Mensal · {periodoLabel(periodo)}
         </h1>
         <p style={{ fontSize: 13, color: C.t3, marginTop: 6 }}>
-          Regra de ouro: todo desvio gera causa, decisao, responsavel e proximo passo.
+          Regra de ouro: todo desvio gera causa, decisão, responsável e próximo passo.
         </p>
       </header>
 
@@ -118,7 +118,7 @@ export default function Ritual() {
           <Stat label="Em alerta" value={resumo.total_em_alerta} cor={C.text} />
           <Stat label="Revisados" value={resumo.total_revisados} cor="#10B981" />
           <Stat label="Pendentes" value={resumo.total_pendentes} cor="#EF4444" />
-          <Stat label="Concluido" value={`${resumo.percentual_concluido}%`} cor={C.primary} />
+          <Stat label="Concluído" value={`${resumo.percentual_concluido}%`} cor={C.primary} />
           <Stat label="Dias até fim do mês" value={resumo.dias_restantes_mes} cor={C.t2} />
         </div>
       )}
@@ -134,7 +134,7 @@ export default function Ritual() {
       {!modoGuiado && pendentes.length > 0 && (
         <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           <p style={{ fontSize: 12, color: C.t3, margin: 0 }}>
-            Voce pode revisar 1 por 1 ou iniciar o modo guiado (passa por todos em sequencia, ~25min).
+            Você pode revisar 1 por 1 ou iniciar o modo guiado (passa por todos em sequência, ~25min).
           </p>
           <button
             onClick={iniciarGuiado}
@@ -144,7 +144,7 @@ export default function Ritual() {
               display: 'inline-flex', alignItems: 'center', gap: 6,
             }}
           >
-            <Play size={14} /> Iniciar revisao guiada ({pendentes.length})
+            <Play size={14} /> Iniciar revisão guiada ({pendentes.length})
           </button>
         </div>
       )}
@@ -233,10 +233,10 @@ function ListaPendentes({ pendentes, onRevisar, onDetalhe }) {
       }}>
         <CheckCircle2 size={32} style={{ color: '#10B981', marginBottom: 12 }} />
         <h3 style={{ fontSize: 16, fontWeight: 700, color: '#065F46', margin: 0 }}>
-          Tudo revisado este mes
+          Tudo revisado este mês
         </h3>
         <p style={{ fontSize: 12, color: '#065F46', marginTop: 6 }}>
-          Nenhum KPI em alerta sem revisao. Pode descansar.
+          Nenhum KPI em alerta sem revisão. Pode descansar.
         </p>
       </div>
     );
@@ -280,7 +280,7 @@ function KpiPendenteCard({ kpi, ordem, onRevisar, onDetalhe }) {
         <div style={{ fontSize: 10, color: C.t3, marginTop: 2 }}>
           {traj?.ultimo_valor != null ? (
             <>
-              Ultimo: <strong>{traj.ultimo_valor}{kpi.unidade ? ' ' + kpi.unidade : ''}</strong>
+              Último: <strong>{traj.ultimo_valor}{kpi.unidade ? ' ' + kpi.unidade : ''}</strong>
               {traj.checkpoint_meta != null && <> · meta {traj.checkpoint_meta}{kpi.unidade ? ' ' + kpi.unidade : ''}</>}
               {traj.percentual_meta != null && <> · <strong style={{ color: sv.cor }}>{traj.percentual_meta}% da meta</strong></>}
             </>
@@ -308,7 +308,7 @@ function ListaRevisados({ revisados }) {
   if (revisados.length === 0) {
     return (
       <div style={{ padding: 40, textAlign: 'center', color: C.t3, fontSize: 13 }}>
-        Nenhuma revisao registrada neste mes ainda.
+        Nenhuma revisão registrada neste mês ainda.
       </div>
     );
   }
@@ -325,7 +325,7 @@ function ListaRevisados({ revisados }) {
           <div style={{ fontSize: 11, color: C.t2, lineHeight: 1.5 }}>
             <div><strong>Causa:</strong> {r.causa_desvio}</div>
             <div><strong>Decisão:</strong> {r.decisao}</div>
-            {r.proximo_passo && <div><strong>Próximo passo:</strong> {r.proximo_passo}{r.prazo_proximo_passo ? ` (ate ${r.prazo_proximo_passo})` : ''}</div>}
+            {r.proximo_passo && <div><strong>Próximo passo:</strong> {r.proximo_passo}{r.prazo_proximo_passo ? ` (até ${r.prazo_proximo_passo})` : ''}</div>}
             {r.responsavel?.nome && <div><strong>Resp.:</strong> {r.responsavel.nome}</div>}
           </div>
         </div>

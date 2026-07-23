@@ -24,8 +24,8 @@ const C = {
 
 const STATUS_VISUAL = {
   no_alvo:  { Icon: CheckCircle2, cor: '#10B981', bg: '#10B98118', label: 'No alvo' },
-  atras:    { Icon: Clock,        cor: '#F59E0B', bg: '#F59E0B18', label: 'Atras' },
-  critico:  { Icon: TrendingDown, cor: '#EF4444', bg: '#EF444418', label: 'Critico' },
+  atras:    { Icon: Clock,        cor: '#F59E0B', bg: '#F59E0B18', label: 'Atrás' },
+  critico:  { Icon: TrendingDown, cor: '#EF4444', bg: '#EF444418', label: 'Crítico' },
   sem_dado: { Icon: MinusCircle,  cor: '#9CA3AF', bg: '#9CA3AF18', label: 'Sem dado' },
 };
 
@@ -173,12 +173,12 @@ export default function KpiDetalheModal({ open, kpiId, onClose, onUpdated, openI
                           {kpi.unidade && <span style={{ fontSize: 13, color: C.t3 }}>{kpi.unidade}</span>}
                         </div>
                         <div style={{ fontSize: 11, color: C.t3, marginTop: 4 }}>
-                          Periodo: <strong>{data.trajetoria_atual.ultimo_periodo}</strong>
+                          Período: <strong>{data.trajetoria_atual.ultimo_periodo}</strong>
                         </div>
                         {data.trajetoria_atual.checkpoint_meta != null && (
                           <div style={{ marginTop: 10 }}>
                             <div style={{ fontSize: 11, color: C.t3 }}>
-                              Meta do periodo: <strong>{data.trajetoria_atual.checkpoint_meta}{kpi.unidade ? ' ' + kpi.unidade : ''}</strong>
+                              Meta do período: <strong>{data.trajetoria_atual.checkpoint_meta}{kpi.unidade ? ' ' + kpi.unidade : ''}</strong>
                             </div>
                             {data.trajetoria_atual.percentual_meta != null && (
                               <>
@@ -219,21 +219,21 @@ export default function KpiDetalheModal({ open, kpiId, onClose, onUpdated, openI
                       <MiniGrafico registros={data.historico} cor={sv.cor} unidade={kpi.unidade} />
                     ) : (
                       <div style={{ padding: 12, textAlign: 'center', color: C.t3, fontSize: 11 }}>
-                        Sem registros para gerar grafico.
+                        Sem registros para gerar gráfico.
                       </div>
                     )}
                   </Section>
 
                   {/* Memória de calculo */}
                   {kpi.memoria_calculo && (
-                    <Section title="Memória de calculo" full>
+                    <Section title="Memória de cálculo" full>
                       <p style={{ fontSize: 12, color: C.t2, lineHeight: 1.5, margin: 0 }}>{kpi.memoria_calculo}</p>
                     </Section>
                   )}
 
                   {/* Trajetoria checkpoints */}
                   {data.checkpoints && data.checkpoints.length > 0 && (
-                    <Section title="Trajetoria (checkpoints)" full>
+                    <Section title="Trajetória (checkpoints)" full>
                       <div style={{ overflowX: 'auto' }}>
                         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
                           <thead>
@@ -262,7 +262,7 @@ export default function KpiDetalheModal({ open, kpiId, onClose, onUpdated, openI
                     <Section title="Revisões (regra de ouro)" full>
                       {!data.revisoes || data.revisoes.length === 0 ? (
                         <div style={{ padding: 12, textAlign: 'center', color: C.t3, fontSize: 11, fontStyle: 'italic' }}>
-                          Nenhuma revisao registrada.
+                          Nenhuma revisão registrada.
                         </div>
                       ) : (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -282,7 +282,7 @@ export default function KpiDetalheModal({ open, kpiId, onClose, onUpdated, openI
                 </button>
                 {podeRevisar && (
                   <button onClick={() => setRevisarOpen(true)} style={{ ...btnPrimary, background: sv.cor }}>
-                    <ClipboardCheck size={13} /> Registrar revisao
+                    <ClipboardCheck size={13} /> Registrar revisão
                   </button>
                 )}
               </footer>

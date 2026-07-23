@@ -494,7 +494,7 @@ function ResumoGerais({ detalhes, onAddKr, onEditKr, removerKr, onAbrirEspecific
 
       {krsGerais.length === 0 ? (
         <div style={{ fontSize: 11, color: C.t3, padding: 8 }}>
-          Nenhum KR ainda. Sugestao: 3 KRs por objetivo (volume, comparacao historica, threshold).
+          Nenhum KR ainda. Sugestão: 3 KRs por objetivo (volume, comparação histórica, threshold).
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -707,7 +707,7 @@ function TabelaCascataOkr({ detalhes, onAddKr, onEditKr, removerKr, semHeader = 
       {!semHeader && (
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
         <h4 style={hh4}>
-          <ListChecks size={11} /> Cascata · {krsGerais.length} KRs gerais &times; {cfg.AREAS.length} {detalhes.tipo_okr === 'operacional' ? 'areas adm' : 'areas'}
+          <ListChecks size={11} /> Cascata · {krsGerais.length} KRs gerais &times; {cfg.AREAS.length} {detalhes.tipo_okr === 'operacional' ? 'áreas adm' : 'áreas'}
           {detalhes.indicador_geral && (
             <span style={{ marginLeft: 8, fontWeight: 400, color: C.t3 }}>
               · KPI principal: <em>{detalhes.indicador_geral}</em>
@@ -720,7 +720,7 @@ function TabelaCascataOkr({ detalhes, onAddKr, onEditKr, removerKr, semHeader = 
 
       {krsGerais.length === 0 ? (
         <div style={{ fontSize: 11, color: C.t3, padding: 12, textAlign: 'center', background: 'var(--cbrio-card)', borderRadius: 6 }}>
-          Nenhum KR ainda. Sugestao: 3 KRs por objetivo (volume, comparacao historica, threshold).
+          Nenhum KR ainda. Sugestão: 3 KRs por objetivo (volume, comparação histórica, threshold).
         </div>
       ) : (
         <div style={{ overflowX: 'auto', background: 'var(--cbrio-card)', borderRadius: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)' }}>
@@ -874,7 +874,7 @@ function TabelaCascataOkr({ detalhes, onAddKr, onEditKr, removerKr, semHeader = 
       )}
 
       <p style={{ fontSize: 10, color: C.t3, marginTop: 8, fontStyle: 'italic' }}>
-        KR geral consolida via cascata (sum/avg/etc) os filhos por area · meta de cada area editavel individualmente.
+        KR geral consolida via cascata (sum/avg/etc) os filhos por área · meta de cada área editável individualmente.
       </p>
     </div>
   );
@@ -901,7 +901,7 @@ function ModalObjetivo({ objetivo, direcionadores, onClose, onSaved }) {
   );
 
   const submit = async () => {
-    if (!form.nome.trim()) return toast.error('Nome obrigatorio');
+    if (!form.nome.trim()) return toast.error('Nome obrigatório');
     setSaving(true);
     try {
       if (isNovo) {
@@ -924,7 +924,7 @@ function ModalObjetivo({ objetivo, direcionadores, onClose, onSaved }) {
       <Field label="Nome *">
         <input value={form.nome} onChange={e => set('nome', e.target.value)} style={inp} placeholder='Ex: "Aumentar batismos"' />
       </Field>
-      <Field label="Descricao">
+      <Field label="Descrição">
         <textarea value={form.descricao} onChange={e => set('descricao', e.target.value)} rows={2} style={{ ...inp, resize: 'vertical' }} />
       </Field>
       <Field label="Indicador Geral (como medir no agregado)">
@@ -985,7 +985,7 @@ function ModalKr({ kr, onClose, onSaved }) {
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   const submit = async () => {
-    if (!form.titulo.trim()) return toast.error('Titulo obrigatorio');
+    if (!form.titulo.trim()) return toast.error('Título obrigatório');
     setSaving(true);
     try {
       const payload = {
@@ -1012,7 +1012,7 @@ function ModalKr({ kr, onClose, onSaved }) {
 
   const tipoLabel = kr.objetivo_geral_id || kr._objetivoLabel
     ? `KR Geral · objetivo "${kr._objetivoLabel || ''}"`
-    : 'KR Especifico (do KPI)';
+    : 'KR Específico (do KPI)';
 
   return (
     <Modal onClose={onClose} title={isNovo ? 'Novo KR' : 'Editar KR'} onSubmit={submit} saving={saving}>
@@ -1022,20 +1022,20 @@ function ModalKr({ kr, onClose, onSaved }) {
       }}>
         {tipoLabel}
       </div>
-      <Field label="Titulo *">
+      <Field label="Título *">
         <input value={form.titulo} onChange={e => set('titulo', e.target.value)} style={inp}
-          placeholder='Ex: "Frequencia media mensal >= 2500"' />
+          placeholder='Ex: "Frequência média mensal >= 2500"' />
       </Field>
-      <Field label="Descricao">
+      <Field label="Descrição">
         <textarea value={form.descricao} onChange={e => set('descricao', e.target.value)} rows={2} style={{ ...inp, resize: 'vertical' }} />
       </Field>
-      <Field label="Formula de calculo">
+      <Field label="Fórmula de cálculo">
         <input value={form.formula_calculo} onChange={e => set('formula_calculo', e.target.value)} style={inp}
-          placeholder='Ex: "media(frequencia_diaria) no mês"' />
+          placeholder='Ex: "média(frequência_diária) no mês"' />
       </Field>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
         <Field label="Meta (valor)">
-          <input type="number" value={form.meta_valor} onChange={e => set('meta_valor', e.target.value)} style={inp} placeholder="Numero" />
+          <input type="number" value={form.meta_valor} onChange={e => set('meta_valor', e.target.value)} style={inp} placeholder="Número" />
         </Field>
         <Field label="Unidade">
           <input value={form.unidade} onChange={e => set('unidade', e.target.value)} style={inp} placeholder="ex: %, pessoas, R$" />

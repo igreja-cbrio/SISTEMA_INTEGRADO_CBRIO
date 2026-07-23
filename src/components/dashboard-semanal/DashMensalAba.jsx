@@ -17,7 +17,7 @@ const CORES_ANO = ['#1E3A8A', '#E97A3F', '#7C3AED', '#10b981', '#ef4444', '#f59e
 const MESES = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
 
 const TIPOS_GRAFICO = ['barra', 'linha', 'area', 'tendencia'];
-const TIPO_LABEL = { barra: 'Barra', linha: 'Linha', area: 'Area', tendencia: 'Tendência' };
+const TIPO_LABEL = { barra: 'Barra', linha: 'Linha', area: 'Área', tendencia: 'Tendência' };
 
 export default function DashMensalAba() {
   const anoAtual = new Date().getFullYear();

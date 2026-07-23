@@ -149,7 +149,7 @@ const AGENTES_DISPONIVEIS = [
     agentType: 'projetos_watcher',
     icon: '📁',
     titulo: 'Watcher Projetos',
-    descricao: 'Projetos atrasados (date_end passou), sem líder e sem atualização ha 30d+.',
+    descricao: 'Projetos atrasados (date_end passou), sem líder e sem atualização há 30d+.',
   },
 ];
 

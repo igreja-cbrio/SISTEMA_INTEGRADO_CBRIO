@@ -273,7 +273,7 @@ function ModalCelulaAdm({ cell, loadCelula, onClose }) {
         <header style={{ padding: '20px 24px', borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16 }}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 10, color: C.t3, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1 }}>
-              Intersecao da matriz
+              Interseção da matriz
             </div>
             <h3 style={{ fontSize: 18, fontWeight: 700, color: C.text, margin: '4px 0 0', display: 'flex', alignItems: 'center', gap: 10 }}>
               <span style={{ color: C.text }}>{cell.grupo_label}</span>
@@ -282,7 +282,7 @@ function ModalCelulaAdm({ cell, loadCelula, onClose }) {
             </h3>
             <p style={{ fontSize: 11, color: C.t3, marginTop: 6 }}>
               {cell.percentual != null ? `${cell.percentual}% no SLA · ` : ''}
-              {cell.total} solicitacoes · {cell.no_prazo} no prazo · {cell.atrasados} atrasadas · {cell.em_andamento} em andamento
+              {cell.total} solicitações · {cell.no_prazo} no prazo · {cell.atrasados} atrasadas · {cell.em_andamento} em andamento
             </p>
           </div>
           <button onClick={onClose} aria-label="Fechar" style={{
@@ -299,7 +299,7 @@ function ModalCelulaAdm({ cell, loadCelula, onClose }) {
             <section>
               <h4 style={{ fontSize: 11, fontWeight: 700, color: C.t3, margin: '0 0 8px', textTransform: 'uppercase', letterSpacing: 0.5 }}>
                 <Activity size={11} style={{ verticalAlign: -1, marginRight: 4 }} />
-                KPIs desta area · {kpis.length}
+                KPIs desta área · {kpis.length}
               </h4>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {kpis.map(k => (
@@ -312,13 +312,13 @@ function ModalCelulaAdm({ cell, loadCelula, onClose }) {
           {/* Solicitações */}
           <section>
             <h4 style={{ fontSize: 11, fontWeight: 700, color: C.t3, margin: '0 0 8px', textTransform: 'uppercase', letterSpacing: 0.5 }}>
-              Solicitacoes recentes · {solicitacoes.length}
+              Solicitações recentes · {solicitacoes.length}
             </h4>
             {loading ? (
               <div style={{ padding: 20, textAlign: 'center', color: C.t3, fontSize: 12 }}>Carregando...</div>
             ) : solicitacoes.length === 0 ? (
               <div style={{ padding: 20, textAlign: 'center', color: C.t3, fontSize: 12, border: `1px dashed ${C.border}`, borderRadius: 8 }}>
-                Sem solicitacoes no periodo.
+                Sem solicitações no período.
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -371,7 +371,7 @@ function KpiCard({ kpi, onAbrir }) {
         </div>
         <div style={{ fontSize: 10, color: C.t3, marginTop: 2 }}>
           {kpi.id} · meta {kpi.meta_descricao || (kpi.meta_valor != null ? `${kpi.meta_valor}${unidade ? ' ' + unidade : ''}` : '—')}
-          {kpi.area_responsavel && ` · area: ${kpi.area_responsavel.replace('_', ' ')}`}
+          {kpi.area_responsavel && ` · área: ${kpi.area_responsavel.replace('_', ' ')}`}
         </div>
       </div>
       <div style={{ textAlign: 'right' }}>
