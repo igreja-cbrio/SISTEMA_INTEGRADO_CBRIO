@@ -40,6 +40,7 @@ export interface DadosImpressao {
   cultoNome?: string;
   cultoDiaHora?: string;              // dia + horário do culto (etiqueta do responsável)
   ensaio?: boolean;                   // sessão de culto de OUTRO dia (modo ensaio) → etiquetas saem marcadas TESTE
+  pagerNumero?: string;               // pager físico entregue (só criança obrigada) → "Pager X" na etiqueta + recibo
   layout?: EtiquetaLayout;           // ajustes de layout (tamanho/posição da logo…)
   logoAniversarioUrl?: string | null; // logo do Kids na etiqueta de aniversário (config global)
 }
@@ -134,6 +135,15 @@ function cssEtiqueta(layout: EtiquetaLayout = LAYOUT_ETIQUETA_PADRAO): string {
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
   }
   .sala { font-size: ${pt(9)}; font-weight: 700; line-height: 1.1; margin-top: 0.4mm; }
+  /* Chip "Pager X" na linha da sala (só criança obrigada de pager · Marcos/Mari
+     2026-07-22) — emoldurado (preto no branco, legível na térmica), sem criar
+     linha nova: protege o código e o alerta de saúde nos 29mm. */
+  .pager-chip {
+    display: inline-block; margin-left: 1.2mm; padding: 0.2mm 1mm;
+    border: 0.35mm solid #000; border-radius: 0.8mm; vertical-align: baseline;
+    font-family: 'Courier New', monospace; font-weight: 900; font-size: ${pt(8.5)};
+    letter-spacing: 0.4px; white-space: nowrap;
+  }
 
   /* Banda PRETA do código (branco no preto) + réguas finas em cima/embaixo —
      eco da estética de barcode da etiqueta antiga; imprime bem na térmica. */
@@ -158,6 +168,13 @@ function cssEtiqueta(layout: EtiquetaLayout = LAYOUT_ETIQUETA_PADRAO): string {
   .recibo-dir { width: 42mm; justify-content: center; }
   .recibo-dir .barcode-area svg { max-width: 34mm; height: 7mm; }
   .recibo-culto { font-size: ${pt(8)}; font-weight: 800; line-height: 1.1; }
+  /* Recibo do pai: linha PAGER dedicada e grande — ele confere com o número
+     gravado no pager físico de restaurante (Marcos/Mari 2026-07-22). */
+  .recibo-pager {
+    font-family: 'Courier New', monospace; font-weight: 900; font-size: ${pt(13)};
+    letter-spacing: 0.6px; line-height: 1.1; margin-top: 0.7mm; align-self: flex-start;
+    border: 0.4mm solid #000; border-radius: 0.8mm; padding: 0.4mm 1.5mm;
+  }
   .info-sec { font-size: ${pt(7.5)}; color: #444; line-height: 1.2; margin-top: 0.5mm; }
   /* Alerta de saúde (alergia/necessidade): PRETO NO BRANCO (a tarja preta saía
      ilegível na térmica · Mari 2026-07-22), negrito, fonte maior (~9.5pt), uma
@@ -308,7 +325,7 @@ function htmlEtiquetaCrianca(d: DadosImpressao): string {
       ${d.ensaio ? '<div class="ensaio-strip">TESTE / ENSAIO — NÃO VALE COMO PRESENÇA</div>' : ''}
       <div class="topo"><div class="nome-primeiro" style="--nome-pt:${nomePt}">${escapeHtml(primeiro)}</div>${foto}</div>
       ${resto ? `<div class="nome-resto">${escapeHtml(resto)}</div>` : ''}
-      <div class="sala">${escapeHtml(d.crianca.salaNome)}</div>
+      <div class="sala">${escapeHtml(d.crianca.salaNome)}${d.pagerNumero ? `<span class="pager-chip">Pager ${escapeHtml(d.pagerNumero)}</span>` : ''}</div>
       ${alerta}
     </div>
     <div class="col-idade">
@@ -367,6 +384,7 @@ function htmlEtiquetaResponsavel(d: DadosImpressao, barcodeSvg: string): string 
       <div class="recibo-nome">${escapeHtml(nomeParaEtiqueta(d.responsavel.nome))}</div>
       ${logo}
       <div class="recibo-culto">${escapeHtml(d.cultoDiaHora || d.crianca.salaNome)}</div>
+      ${d.pagerNumero ? `<div class="recibo-pager">PAGER ${escapeHtml(d.pagerNumero)}</div>` : ''}
       <div class="recibo-hint">Apresente este código para buscar</div>
     </div>
     <div class="col-dir recibo-dir">

@@ -7,7 +7,7 @@
 // ============================================================================
 
 import { useEffect, useRef, useState } from 'react';
-import { Baby, Users, Loader2, CheckCircle2, ShieldAlert, RefreshCw, PowerOff, AlertTriangle, Heart, ChevronLeft, Phone, MessageCircle, ArrowRight, LogOut } from 'lucide-react';
+import { Baby, Users, Loader2, CheckCircle2, ShieldAlert, RefreshCw, PowerOff, AlertTriangle, Heart, ChevronLeft, Phone, MessageCircle, ArrowRight, LogOut, BellRing } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -107,6 +107,11 @@ export default function TotemKidsPainel() {
   const [cultosDia, setCultosDia] = useState<CultoDia[]>([]);
   const [dataDia, setDataDia] = useState<string>('');
   const [unicas, setUnicas] = useState<{ presentes: number; total: number } | null>(null);
+  // Pagers em uso + pendentes (Mari 2026-07-22) — recarrega junto do painel (15s).
+  const [pagers, setPagers] = useState<{
+    em_uso: { pager_numero: string; crianca_nome: string; sala_nome: string | null; responsavel_nome: string | null }[];
+    pendentes: { crianca_nome: string; sala_nome: string | null; responsavel_nome: string | null }[];
+  }>({ em_uso: [], pendentes: [] });
   const [cultoSel, setCultoSel] = useState<CultoDia | null>(null);
   const cultoSelRef = useRef<string | null>(null);
   const [dados, setDados] = useState<PainelSala[]>([]);
@@ -211,6 +216,11 @@ export default function TotemKidsPainel() {
       } else {
         setDados([]);
       }
+      // Pagers em uso + pendentes (card do painel) — falha não derruba o painel.
+      try {
+        const p = await totemKids.pagersEmUso();
+        setPagers({ em_uso: p?.em_uso || [], pendentes: p?.pendentes || [] });
+      } catch { /* mantém o último estado */ }
     } finally {
       setCarregando(false);
       setRefreshing(false);
@@ -449,6 +459,46 @@ export default function TotemKidsPainel() {
           })}
         </div>
       </div>
+
+      {/* Pagers em uso (Mari 2026-07-22) — substitui a folha de papel: a equipe vê
+          "pager 12 = criança X (sala)" e aperta 12 no transmissor. "Pendentes" =
+          criança obrigada de pager ainda SEM número (o sinal que faz a válvula de
+          escape ser segura). Só a equipe vê isto — nunca vai pro display público. */}
+      {(pagers.em_uso.length > 0 || pagers.pendentes.length > 0) && (
+        <div className="rounded-xl border bg-card p-3 space-y-2">
+          <div className="text-[11px] uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
+            <BellRing className="h-3.5 w-3.5" /> Pagers em uso
+          </div>
+          {pagers.em_uso.length > 0 ? (
+            <div className="flex flex-col gap-1.5">
+              {pagers.em_uso.map((p, i) => (
+                <div key={i} className="flex items-center gap-2 text-sm">
+                  <span className="shrink-0 inline-flex items-center justify-center min-w-[2.2rem] h-7 px-2 rounded-md bg-amber-600 text-white font-mono font-bold">{p.pager_numero}</span>
+                  <span className="font-medium truncate">{p.crianca_nome}</span>
+                  {p.sala_nome && <span className="text-muted-foreground truncate">· {p.sala_nome}</span>}
+                  {p.responsavel_nome && <span className="text-muted-foreground truncate ml-auto text-right">{p.responsavel_nome}</span>}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-xs text-muted-foreground">Nenhum pager em uso agora.</div>
+          )}
+          {pagers.pendentes.length > 0 && (
+            <div className="rounded-lg border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/30 p-2 space-y-1">
+              <div className="text-[11px] font-semibold text-red-600 flex items-center gap-1.5">
+                <AlertTriangle className="h-3.5 w-3.5" /> Precisam de pager e estão sem número
+              </div>
+              {pagers.pendentes.map((p, i) => (
+                <div key={i} className="text-sm flex items-center gap-2">
+                  <span className="font-medium truncate">{p.crianca_nome}</span>
+                  {p.sala_nome && <span className="text-muted-foreground truncate">· {p.sala_nome}</span>}
+                  {p.responsavel_nome && <span className="text-muted-foreground truncate ml-auto">{p.responsavel_nome}</span>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Totais do culto selecionado */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">

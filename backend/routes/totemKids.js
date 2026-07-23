@@ -2651,6 +2651,135 @@ router.get('/checkin/aberto', authorizeModule('kids', 1), async (req, res) => {
   }
 });
 
+// ==== Pager por NÚMERO (rastreio · Mari 2026-07-22) =========================
+// O pager redondo de restaurante (RF, acionado na mão no transmissor antigo) é
+// entregue à criança obrigada (< 4 anos / espectro / limitação). Guardamos só o
+// número digitado pra o painel ao vivo mostrar "pager X = criança Y". Gate MOLE:
+// isto NUNCA bloqueia o check-in/impressão (que já aconteceram) — só a atribuição
+// do pager. NÃO reviver kids_pagers/kids_pager_envios (scaffold dormente).
+
+// Normaliza o número: só dígitos, sem zero à esquerda (device "07" == "7"). O
+// canônico é o que se GRAVA e o que se COMPARA (senão duas famílias com "08"/"8"
+// achariam pagers diferentes). Vazio/sem dígito → null (limpa).
+function canonicalPager(v) {
+  const d = String(v == null ? '' : v).replace(/\D/g, '').replace(/^0+(?=\d)/, '');
+  return d === '' ? null : d;
+}
+
+// Espelha o precisaPager do front: < 4 anos (48 meses) OU espectro/limitação
+// física. Campos estruturados na criança (sem julgamento do voluntário).
+function precisaPagerServer(c) {
+  if (!c) return false;
+  if (c.tem_espectro === true || c.tem_limitacao_fisica === true) return true;
+  if (!c.data_nascimento) return false;
+  const nasc = new Date(c.data_nascimento);
+  if (isNaN(nasc.getTime())) return false;
+  const hoje = new Date();
+  const meses = (hoje.getFullYear() - nasc.getFullYear()) * 12
+    + (hoje.getMonth() - nasc.getMonth())
+    - (hoje.getDate() < nasc.getDate() ? 1 : 0);
+  return meses < 48;
+}
+
+// Números de pager em uso AGORA (check-ins abertos) — só os números, sem nome
+// (a tela do check-in é semipública; o mapa nominal fica no painel staff-only).
+async function numerosPagerEmUso() {
+  const { data } = await supabase.from('kids_checkins')
+    .select('pager_numero').not('pager_numero', 'is', null)
+    .is('checkout_at', null).is('deleted_at', null);
+  return [...new Set((data || []).map((r) => r.pager_numero).filter(Boolean))]
+    .sort((a, b) => (parseInt(a, 10) || 0) - (parseInt(b, 10) || 0));
+}
+
+// Todos os check-ins ABERTOS (paginado · pode passar de 1000 num domingo cheio).
+async function fetchCheckinsAbertosPager() {
+  const out = [];
+  const pageSize = 1000;
+  for (let offset = 0; ; offset += pageSize) {
+    const { data, error } = await supabase.from('kids_checkins')
+      .select('pager_numero, responsavel_checkin_nome, crianca:kids_criancas(nome, data_nascimento, tem_espectro, tem_limitacao_fisica), sala:kids_salas(nome)')
+      .is('checkout_at', null).is('deleted_at', null)
+      .range(offset, offset + pageSize - 1);
+    if (error) throw error;
+    if (!data || data.length === 0) break;
+    out.push(...data);
+    if (data.length < pageSize) break;
+  }
+  return out;
+}
+
+// PATCH /api/totem-kids/checkin/:id/pager · registra o número do pager entregue.
+// Propaga por FAMÍLIA (checkin_grupo_id) — um pager por família, o número fica na
+// linha até o ÚLTIMO da família sair (o checkout/cron liberam ao fechar a linha).
+// Conflito = número já em OUTRA família aberta → recusa gravar (sem revelar quem)
+// e devolve os números em uso pra a pessoa pegar outro pager. NUNCA bloqueia o
+// check-in em si (ele já existe); o botão "sem pager" no front limpa (null).
+router.patch('/checkin/:id/pager', authorizeModule('kids', 2), async (req, res) => {
+  try {
+    const { data: alvo } = await supabase.from('kids_checkins')
+      .select('id, checkin_grupo_id, deleted_at')
+      .eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!alvo) return res.status(404).json({ error: 'Check-in não encontrado' });
+
+    const numero = canonicalPager(req.body ? req.body.pager_numero : null);
+    const party = alvo.checkin_grupo_id;
+    const aplicarNaFamilia = (patch) => {
+      let q = supabase.from('kids_checkins').update(patch).is('checkout_at', null).is('deleted_at', null);
+      return party ? q.eq('checkin_grupo_id', party) : q.eq('id', alvo.id);
+    };
+
+    // Vazio → limpa (grava NULL, nunca '' — senão o índice parcial faria dois
+    // "sem pager" colidirem e a própria válvula de escape lançaria conflito).
+    if (numero == null) {
+      await aplicarNaFamilia({ pager_numero: null });
+      return res.json({ ok: true, pager_numero: null });
+    }
+
+    // Conflito: outro check-in ABERTO com o mesmo número, de OUTRA família.
+    // Irmãos/multi-culto compartilham checkin_grupo_id → nunca falso-conflito.
+    const { data: outros } = await supabase.from('kids_checkins')
+      .select('id, checkin_grupo_id')
+      .eq('pager_numero', numero).is('checkout_at', null).is('deleted_at', null);
+    const conflito = (outros || []).some((o) =>
+      party ? o.checkin_grupo_id !== party : o.id !== alvo.id);
+    if (conflito) {
+      return res.json({ ok: false, conflito: true, em_uso: await numerosPagerEmUso() });
+    }
+
+    await aplicarNaFamilia({ pager_numero: numero });
+    return res.json({ ok: true, pager_numero: numero });
+  } catch (e) {
+    console.error('[totemKids] set pager:', e.message);
+    res.status(500).json({ error: 'Erro ao registrar o pager' });
+  }
+});
+
+// GET /api/totem-kids/pagers-em-uso · painel ao vivo dos pagers (staff-only).
+//  - em_uso:    check-ins abertos COM número (com nome — nunca vai pro display público).
+//  - pendentes: criança obrigada de pager, aberta, SEM número (o sinal que torna a
+//    válvula de escape segura — a equipe vê "falta pager pra fulano" e resolve).
+router.get('/pagers-em-uso', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const abertos = await fetchCheckinsAbertosPager();
+    const em_uso = [];
+    const pendentes = [];
+    for (const c of abertos) {
+      const base = {
+        crianca_nome: (c.crianca && c.crianca.nome) || '—',
+        sala_nome: (c.sala && c.sala.nome) || null,
+        responsavel_nome: c.responsavel_checkin_nome || null,
+      };
+      if (c.pager_numero) em_uso.push({ pager_numero: c.pager_numero, ...base });
+      else if (precisaPagerServer(c.crianca)) pendentes.push(base);
+    }
+    em_uso.sort((a, b) => (parseInt(a.pager_numero, 10) || 0) - (parseInt(b.pager_numero, 10) || 0));
+    res.json({ em_uso, pendentes });
+  } catch (e) {
+    console.error('[totemKids] pagers em uso:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar os pagers' });
+  }
+});
+
 // POST /api/totem-kids/checkin · cria check-in + gera código + retorna pra impressão
 router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
   try {
