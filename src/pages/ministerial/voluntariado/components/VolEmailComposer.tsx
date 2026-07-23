@@ -70,7 +70,7 @@ type Props = { disparo: VolEmailDisparo | null; onVoltar: () => void };
 type SegTipo = 'todos' | 'equipe' | 'escala' | 'manual';
 type TeamOpt = { id: string; name: string };
 type ServiceOpt = { id: string; name: string; scheduled_at: string };
-type ResolucaoDest = { total: number; sem_email: number; lista: { nome: string | null; email: string }[] };
+type ResolucaoDest = { total: number; sem_email: number; lista: { nome: string | null; email: string }[]; sem_email_lista?: { nome: string | null; motivo: string }[] };
 type PoolVol = { id: string; full_name: string; email: string | null };
 
 function msgErro(e: unknown, fallback: string): string {
@@ -101,6 +101,8 @@ export default function VolEmailComposer({ disparo, onVoltar }: Props) {
   const [incluirAssinatura, setIncluirAssinatura] = useState(disparo?.incluir_assinatura !== false);
   const [verListaOpen, setVerListaOpen] = useState(false);
   const [buscaLista, setBuscaLista] = useState('');
+  const [verSemEmailOpen, setVerSemEmailOpen] = useState(false);
+  const [buscaSemEmail, setBuscaSemEmail] = useState('');
   const [selecionarOpen, setSelecionarOpen] = useState(false);
   const [buscaSelecao, setBuscaSelecao] = useState('');
   const [assinaturaOpen, setAssinaturaOpen] = useState(false);
@@ -562,9 +564,13 @@ export default function VolEmailComposer({ disparo, onVoltar }: Props) {
                       </button>
                     )}
                     {destinatarios.sem_email > 0 && (
-                      <span className="block text-xs text-muted-foreground mt-0.5">
+                      <button
+                        type="button"
+                        className="block text-xs text-muted-foreground underline underline-offset-2 mt-0.5 hover:text-foreground"
+                        onClick={() => { setBuscaSemEmail(''); setVerSemEmailOpen(true); }}
+                      >
                         {destinatarios.sem_email} sem e-mail cadastrado ficam de fora
-                      </span>
+                      </button>
                     )}
                   </>
                 ) : null}
@@ -776,6 +782,46 @@ export default function VolEmailComposer({ disparo, onVoltar }: Props) {
                   <span className="text-xs text-muted-foreground truncate">{d.email}</span>
                 </div>
               ))}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Dialog · quem ficou de fora (sem e-mail) ── */}
+      <Dialog open={verSemEmailOpen} onOpenChange={setVerSemEmailOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Sem e-mail cadastrado ({destinatarios?.sem_email ?? 0})</DialogTitle>
+          </DialogHeader>
+          <p className="text-xs text-muted-foreground -mt-1">
+            Estes voluntários não recebem o e-mail porque não têm um e-mail válido no cadastro.
+            Cadastre o e-mail no perfil (ou use "Buscar e-mails no Planning Center") pra incluí-los.
+          </p>
+          <div className="relative">
+            <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={buscaSemEmail}
+              onChange={(e) => setBuscaSemEmail(e.target.value)}
+              placeholder="Buscar por nome…"
+              className="pl-9"
+            />
+          </div>
+          <div className="max-h-[50vh] overflow-y-auto rounded-lg border border-border divide-y divide-border/60">
+            {(destinatarios?.sem_email_lista || [])
+              .filter((d) => {
+                const q = buscaSemEmail.trim().toLowerCase();
+                return !q || (d.nome || '').toLowerCase().includes(q);
+              })
+              .map((d, i) => (
+                <div key={`${d.nome ?? 'sem-nome'}-${i}`} className="px-3 py-2 text-sm flex items-center justify-between gap-3">
+                  <span className="truncate">{d.nome || '(sem nome)'}</span>
+                  <span className="text-xs text-muted-foreground truncate shrink-0">{d.motivo}</span>
+                </div>
+              ))}
+            {!(destinatarios?.sem_email_lista || []).length && (
+              <div className="px-3 py-4 text-sm text-muted-foreground text-center">
+                Nada a mostrar.
+              </div>
+            )}
           </div>
         </DialogContent>
       </Dialog>
