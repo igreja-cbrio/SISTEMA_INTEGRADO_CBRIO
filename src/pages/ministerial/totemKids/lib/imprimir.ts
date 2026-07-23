@@ -28,7 +28,7 @@ export interface DadosImpressao {
     observacoesMedicas?: string | null;
     alergia?: string | null;          // alergia em destaque (vermelho/preto)
     necessidade?: string | null;      // espectro/limitação/necessidade
-    fotoAutorizada?: boolean;         // AUTORIZAÇÃO DE USO DE IMAGEM (consent_marketing do cadastro) · câmera com X quando não autorizada
+    fotoAutorizada?: boolean;         // AUTORIZAÇÃO DE USO DE IMAGEM (consent_marketing) · autoriza = etiqueta limpa; NÃO autoriza = câmera cortada
     aniversarioSemana?: boolean;      // dispara a 4ª etiqueta de aniversário
   };
   responsavel: {
@@ -159,11 +159,15 @@ function cssEtiqueta(layout: EtiquetaLayout = LAYOUT_ETIQUETA_PADRAO): string {
   .recibo-dir .barcode-area svg { max-width: 34mm; height: 7mm; }
   .recibo-culto { font-size: ${pt(8)}; font-weight: 800; line-height: 1.1; }
   .info-sec { font-size: ${pt(7.5)}; color: #444; line-height: 1.2; margin-top: 0.5mm; }
+  /* Alerta de saúde (alergia/necessidade): PRETO NO BRANCO (a tarja preta saía
+     ilegível na térmica · Mari 2026-07-22), negrito, fonte maior (~9.5pt), uma
+     linha com símbolo de alerta + texto com ellipsis de segurança. */
   .alerta {
-    background: #000; color: #fff; padding: 0.7mm 1.5mm; margin-top: 1mm;
-    font-size: ${pt(7)}; font-weight: 700; line-height: 1.1; border-radius: 0.5mm;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: #000; font-weight: 800; font-size: ${pt(9.5)}; line-height: 1.1;
+    margin-top: 1mm; display: flex; align-items: center; gap: 1mm; overflow: hidden;
   }
+  .alerta svg { width: 3.6mm; height: 3.6mm; flex-shrink: 0; }
+  .alerta-txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* Faixa de ENSAIO (modo teste · culto de outro dia): a etiqueta física não
      pode ter cara de check-in real — ela sobrevive à tela. */
   .ensaio-strip {
@@ -254,10 +258,12 @@ function bandaCodigo(codigo: string, variante?: 'g' | 'cheia'): string {
   </div>`;
 }
 
-// Ícone SVG (não emoji — emoji sai quebrado na Brother). Câmera OK / câmera
-// cortada (proibido) pro voluntário saber quando NÃO há autorização de foto.
-const ICONE_CAMERA_OK = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>`;
+// Ícone SVG (não emoji — emoji sai quebrado na Brother). Só a câmera CORTADA:
+// aparece quando a criança NÃO tem autorização de imagem (quem autoriza fica com
+// a etiqueta limpa · inversão pedida por Marcos/Mari 2026-07-22).
 const ICONE_CAMERA_NAO = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/><line x1="2" y1="2" x2="22" y2="22" stroke-width="2.4"/></svg>`;
+// Triângulo de alerta (saúde) · SVG monocromático (emoji quebra na Brother).
+const ICONE_ALERTA = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#000" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><line x1="12" y1="9" x2="12" y2="13.5"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`;
 
 // Bolo (etiqueta de aniversário) · SVG monocromático (imprime na térmica)
 const ICONE_BOLO = `<svg viewBox="0 0 64 64" width="52" height="52" fill="none" stroke="#000" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M24 6c1.6 1 1.6 3.2 0 3.8-1.6-.6-1.6-2.8 0-3.8z" fill="#000" stroke="none"/><path d="M32 4c1.6 1 1.6 3.2 0 3.8-1.6-.6-1.6-2.8 0-3.8z" fill="#000" stroke="none"/><path d="M40 6c1.6 1 1.6 3.2 0 3.8-1.6-.6-1.6-2.8 0-3.8z" fill="#000" stroke="none"/><line x1="24" y1="11" x2="24" y2="20"/><line x1="32" y1="9" x2="32" y2="20"/><line x1="40" y1="11" x2="40" y2="20"/><rect x="19" y="20" width="26" height="9" rx="1.5"/><rect x="13" y="29" width="38" height="11" rx="1.5"/><path d="M8 40h48v10a2 2 0 0 1-2 2H10a2 2 0 0 1-2-2z"/><line x1="6" y1="52" x2="58" y2="52"/></svg>`;
@@ -269,16 +275,23 @@ const ICONE_BOLO = `<svg viewBox="0 0 64 64" width="52" height="52" fill="none" 
 function htmlEtiquetaCrianca(d: DadosImpressao): string {
   const layout = { ...LAYOUT_ETIQUETA_PADRAO, ...(d.layout || {}) };
 
-  // Saúde em destaque (barra preta): alergia + necessidade; senão, obs. médica.
+  // Saúde em destaque: alergia + necessidade; senão, obs. médica. Trunca em ~24
+  // chars (a string começa por ALERGIA → preserva o mais crítico); a tarja preta
+  // saiu (ilegível na térmica) e o símbolo de alerta marca a linha (Mari 2026-07-22).
   const saude = [
     d.crianca.alergia ? `ALERGIA: ${d.crianca.alergia}` : '',
     d.crianca.necessidade || '',
     !d.crianca.alergia && !d.crianca.necessidade ? (d.crianca.observacoesMedicas || '') : '',
   ].filter(Boolean).join(' · ');
-  const alerta = saude ? `<div class="alerta">! ${escapeHtml(saude)}</div>` : '';
+  const saudeCurta = saude.length > 24 ? saude.slice(0, 23).trimEnd() + '…' : saude;
+  const alerta = saude
+    ? `<div class="alerta">${ICONE_ALERTA}<span class="alerta-txt">${escapeHtml(saudeCurta)}</span></div>`
+    : '';
 
-  // Selo de foto: câmera OK / câmera cortada (sem autorização) — nunca texto/emoji.
-  const foto = `<span class="foto-badge">${d.crianca.fotoAutorizada ? ICONE_CAMERA_OK : ICONE_CAMERA_NAO}</span>`;
+  // Selo de foto INVERTIDO (Marcos/Mari 2026-07-22): quem AUTORIZA imagem fica com
+  // a etiqueta LIMPA (sem selo); quem NÃO autoriza recebe a câmera cortada, bem
+  // visível pro voluntário não fotografar. SVG monocromático — nunca texto/emoji.
+  const foto = d.crianca.fotoAutorizada ? '' : `<span class="foto-badge">${ICONE_CAMERA_NAO}</span>`;
 
   // Primeiro nome em destaque + resto menor (nome completo sempre sai).
   const { primeiro, resto } = partesNome(d.crianca.nome);
