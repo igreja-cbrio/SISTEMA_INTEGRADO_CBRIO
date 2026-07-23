@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { solicitacoes } from '../../api';
+import { solicitacoes, permissoes } from '../../api';
 import { Loader2, GitBranch, Info } from 'lucide-react';
 import { toast } from 'sonner';
+import { useAuth } from '../../contexts/AuthContext';
 import FluxoCanvas from '../../components/fluxo/FluxoCanvas';
 
 const C = {
@@ -17,9 +18,12 @@ const CAT_LABEL = {
 const label = (c) => CAT_LABEL[c] || c;
 
 export default function SolicitacoesFluxo() {
+  const { isAdmin } = useAuth();
   const [cats, setCats] = useState([]);
   const [sel, setSel] = useState(null);
   const [fluxo, setFluxo] = useState(null);
+  const [andamento, setAndamento] = useState({});
+  const [colaboradores, setColaboradores] = useState([]);
   const [loadingCats, setLoadingCats] = useState(true);
   const [loadingFluxo, setLoadingFluxo] = useState(false);
   const [erro, setErro] = useState(null);
@@ -33,17 +37,32 @@ export default function SolicitacoesFluxo() {
       })
       .catch(e => setErro(e.message))
       .finally(() => setLoadingCats(false));
-  }, []);
+    if (isAdmin) permissoes.colaboradores().then(d => setColaboradores(d || [])).catch(() => {});
+  }, [isAdmin]);
 
-  useEffect(() => {
-    if (!sel) return;
+  function carregarFluxo(categoria) {
     setLoadingFluxo(true);
     setErro(null);
-    solicitacoes.fluxos.get(sel)
-      .then(setFluxo)
+    Promise.all([
+      solicitacoes.fluxos.get(categoria),
+      solicitacoes.fluxos.andamento(categoria).catch(() => ({ porStatus: {} })),
+    ])
+      .then(([f, a]) => { setFluxo(f); setAndamento(a?.porStatus || {}); })
       .catch(e => { setErro(e.message); setFluxo(null); })
       .finally(() => setLoadingFluxo(false));
-  }, [sel]);
+  }
+
+  useEffect(() => { if (sel) carregarFluxo(sel); }, [sel]);
+
+  async function salvarResponsaveis(etapaId, profileIds) {
+    try {
+      await solicitacoes.fluxos.setEtapaResponsaveis(etapaId, profileIds);
+      toast.success('Responsáveis da etapa atualizados.');
+      carregarFluxo(sel);
+    } catch (e) {
+      toast.error(e.message || 'Não foi possível salvar os responsáveis.');
+    }
+  }
 
   return (
     <div style={{ padding: '24px clamp(16px, 4vw, 32px)', maxWidth: 1200, margin: '0 auto' }}>
@@ -60,8 +79,8 @@ export default function SolicitacoesFluxo() {
         background: 'var(--cbrio-bg)', border: `1px solid ${C.border}`, borderRadius: 999,
         padding: '4px 12px', marginBottom: 18,
       }}>
-        <Info size={13} /> Somente leitura por enquanto — a edição (arrastar para reordenar, criar etapas
-        e atribuir responsáveis) chega na próxima etapa.
+        <Info size={13} /> Clique numa etapa para atribuir responsáveis. Reordenar etapas e desenhar
+        transições chega numa próxima leva.
       </div>
 
       {loadingCats ? (
@@ -103,7 +122,13 @@ export default function SolicitacoesFluxo() {
                 <span> · versão {fluxo.versao} · {fluxo.etapas?.length || 0} etapas</span>
                 {fluxo.descricao && <div style={{ marginTop: 2 }}>{fluxo.descricao}</div>}
               </div>
-              <FluxoCanvas fluxo={fluxo} />
+              <FluxoCanvas
+                fluxo={fluxo}
+                andamento={andamento}
+                colaboradores={colaboradores}
+                editable={isAdmin}
+                onSaveResponsaveis={salvarResponsaveis}
+              />
             </>
           ) : !erro && (
             <div style={{ padding: 40, textAlign: 'center', color: C.text2 }}>Selecione uma categoria.</div>
