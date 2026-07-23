@@ -600,6 +600,29 @@ function authorizeModule(routeKey, nivelMinimo = 2) {
 }
 
 // ── Endpoint para o frontend buscar suas permissões ──
+// Super-admin ESTRITO (app_super_admins · não é role admin/diretor). Cache 5 min.
+const _superAdminCache = new Map(); // emailLower -> { at, val }
+async function isSuperAdminEmail(email) {
+  if (!email) return false;
+  const key = String(email).toLowerCase();
+  const hit = _superAdminCache.get(key);
+  if (hit && Date.now() - hit.at < 5 * 60 * 1000) return hit.val;
+  let val = false;
+  try {
+    const { data } = await supabase.from('app_super_admins')
+      .select('email').ilike('email', key).eq('ativo', true).maybeSingle();
+    val = !!data;
+  } catch { /* fail-closed */ }
+  _superAdminCache.set(key, { at: Date.now(), val });
+  return val;
+}
+
+// Middleware: só super-admin passa (ex.: Analytics do app · dado sensível).
+async function requireSuperAdmin(req, res, next) {
+  if (await isSuperAdminEmail(req.user?.email)) return next();
+  return res.status(403).json({ error: 'Acesso restrito aos administradores gerais.' });
+}
+
 // Exposto via GET /api/auth/my-permissions
 async function getMyPermissions(req, res) {
   if (!req.user) return res.status(401).json({ error: 'Não autenticado' });
@@ -620,6 +643,7 @@ async function getMyPermissions(req, res) {
     role: req.user.role,
     area: req.user.area,
     name: req.user.name,
+    isSuperAdmin: await isSuperAdminEmail(req.user.email),
     modulos: modulosMeta,
     granular: req.user.granular ? {
       cargoId: req.user.granular.cargoId,
@@ -717,4 +741,5 @@ function applyAccessFilter(query, req, routeKey, opts = {}) {
 module.exports = { authenticate, authorize, authorizeCycle, authorizeModule, authorizeKpiArea, getMyPermissions, getEffectiveLevel, getUserAreas, applyAccessFilter, bustPermissionCaches, ROLE_MAP, ROUTE_MODULE_MAP,
   // exports aditivos · reuso da resolução de permissão (ex.: cobertura de férias,
   // grade de acesso efetivo por módulo na tela de Permissões > Usuários)
-  resolveEffectivePerms, getCargoMatrix, getModulos, AREA_MODULO_BOOST, _normalizarArea };
+  resolveEffectivePerms, getCargoMatrix, getModulos, AREA_MODULO_BOOST, _normalizarArea,
+  isSuperAdminEmail, requireSuperAdmin };

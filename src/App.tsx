@@ -376,6 +376,15 @@ function MemberOnlyRedirect({ children }: { children: ReactNode }) {
  *   - moduleSlug: novo · checa modulePerms[slug].leitura >= nivelMinimo (default 1)
  *     Permite liberar acesso de visualizacao (nível 1) sem cair no fallback canX.
  */
+// Só super-admin ESTRITO (app_super_admins · NÃO tem bypass de admin/diretor).
+// Usado no Analytics do app (dado sensível · só gestão + Marcos Paulo).
+function SuperAdminGuard({ children }: { children: ReactNode }) {
+  const auth = useAuth() as Record<string, unknown>;
+  if (auth.loading) return <Loading />;
+  if (!auth.isSuperAdmin) return <Navigate to="/dashboard" replace />;
+  return <>{children}</>;
+}
+
 function ModuleGuard({ permKey, moduleSlug, anyOf, nivelMinimo = 1, children }: { permKey?: string; moduleSlug?: string; anyOf?: string[]; nivelMinimo?: number; children: ReactNode }) {
   const auth = useAuth();
   const a = auth as Record<string, unknown>;
@@ -701,7 +710,7 @@ function AppRoutes() {
         <Route path="/admin/solicitacoes-fluxo" element={<Suspense fallback={<Loading />}><SolicitacoesFluxo /></Suspense>} />
         <Route path="/admin/permissoes" element={<Suspense fallback={<Loading />}><PermissoesAdmin /></Suspense>} />
         <Route path="/admin/feedback" element={<Suspense fallback={<Loading />}><FeedbackAdmin /></Suspense>} />
-        <Route path="/admin/app-analytics" element={<ModuleGuard moduleSlug="dashboard" nivelMinimo={1}><Suspense fallback={<Loading />}><AppAnalytics /></Suspense></ModuleGuard>} />
+        <Route path="/admin/app-analytics" element={<SuperAdminGuard><Suspense fallback={<Loading />}><AppAnalytics /></Suspense></SuperAdminGuard>} />
         <Route path="/admin/whatsapp" element={<ModuleGuard moduleSlug="integracao" nivelMinimo={3}><Suspense fallback={<Loading />}><WhatsappAdmin /></Suspense></ModuleGuard>} />
         {/* Apresentações: módulo desativado (2026-07-06 · pedido do Matheus) — rota redireciona */}
         <Route path="/admin/apresentacoes" element={<Navigate to="/dashboard" replace />} />
