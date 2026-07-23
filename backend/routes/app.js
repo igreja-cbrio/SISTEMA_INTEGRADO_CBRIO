@@ -2476,4 +2476,104 @@ router.get('/grupos/:grupoId/membros', authApp, limiterNormal, async (req, res) 
   }
 });
 
+// ── Minhas tarefas (to-do pessoal · app) ────────────────────────────────────
+// Reusa a tabela `tarefas_pessoais` (mesma do /tarefas do ERP web): dono =
+// created_by = auth user id (o mesmo id que o app resolve no authApp). Assim o
+// colaborador vê as MESMAS tarefas no web e no app. Escopo garantido em código
+// (service role bypassa RLS) via .eq('created_by', req.user.id).
+const STATUS_TAREFA = ['a_fazer', 'fazendo', 'concluida'];
+const PRIOS_TAREFA = ['baixa', 'media', 'alta'];
+
+function limparTarefaApp(d = {}) {
+  const out = {};
+  if (d.titulo !== undefined) out.titulo = String(d.titulo || '').trim().slice(0, 200);
+  if (d.descricao !== undefined) out.descricao = d.descricao ? String(d.descricao).trim().slice(0, 2000) : null;
+  if (d.data !== undefined) out.data = d.data || null;
+  if (d.horario !== undefined) out.horario = d.horario || null;
+  if (d.prioridade !== undefined) out.prioridade = PRIOS_TAREFA.includes(d.prioridade) ? d.prioridade : 'media';
+  if (d.status !== undefined && STATUS_TAREFA.includes(d.status)) {
+    out.status = d.status;
+    out.done = d.status === 'concluida'; // espelho de compat com a agenda legada
+  }
+  return out;
+}
+
+// GET /api/app/tarefas — minhas tarefas (mais recentes/urgentes primeiro)
+router.get('/tarefas', authApp, limiterNormal, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('tarefas_pessoais')
+      .select('id, titulo, descricao, data, horario, prioridade, status, done, created_at, updated_at')
+      .eq('created_by', req.user.id)
+      .order('done', { ascending: true })
+      .order('data', { ascending: true, nullsFirst: false })
+      .order('created_at', { ascending: false })
+      .limit(1000);
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) {
+    console.error('[APP] tarefas list:', e.message);
+    res.status(500).json({ error: 'Erro ao listar as tarefas' });
+  }
+});
+
+// POST /api/app/tarefas — cria
+router.post('/tarefas', authApp, limiterNormal, async (req, res) => {
+  try {
+    const d = req.body || {};
+    if (!d.titulo || !String(d.titulo).trim()) return res.status(400).json({ error: 'Informe o título da tarefa' });
+    const { data, error } = await supabase.from('tarefas_pessoais').insert({
+      ...limparTarefaApp(d),
+      titulo: String(d.titulo).trim().slice(0, 200),
+      status: STATUS_TAREFA.includes(d.status) ? d.status : 'a_fazer',
+      done: d.status === 'concluida',
+      created_by: req.user.id,
+      responsavel_id: req.user.id,
+      tipo: 'pessoal',
+      recorrencia: 'unica',
+    }).select('id, titulo, descricao, data, horario, prioridade, status, done, created_at, updated_at').single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) {
+    console.error('[APP] tarefas create:', e.message);
+    res.status(500).json({ error: 'Erro ao criar a tarefa' });
+  }
+});
+
+// PUT /api/app/tarefas/:id — edita (só o dono)
+router.put('/tarefas/:id', authApp, limiterNormal, async (req, res) => {
+  try {
+    const patch = limparTarefaApp(req.body || {});
+    if (patch.titulo !== undefined && !patch.titulo) return res.status(400).json({ error: 'Informe o título da tarefa' });
+    if (!Object.keys(patch).length) return res.status(400).json({ error: 'Nada para atualizar' });
+    patch.updated_at = new Date().toISOString();
+    const { data, error } = await supabase.from('tarefas_pessoais')
+      .update(patch)
+      .eq('id', req.params.id).eq('created_by', req.user.id)
+      .select('id, titulo, descricao, data, horario, prioridade, status, done, created_at, updated_at')
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Tarefa não encontrada' });
+    res.json(data);
+  } catch (e) {
+    console.error('[APP] tarefas update:', e.message);
+    res.status(500).json({ error: 'Erro ao atualizar a tarefa' });
+  }
+});
+
+// DELETE /api/app/tarefas/:id — remove (só o dono · hard-delete, como o web)
+router.delete('/tarefas/:id', authApp, limiterNormal, async (req, res) => {
+  try {
+    const { error, count } = await supabase.from('tarefas_pessoais')
+      .delete({ count: 'exact' })
+      .eq('id', req.params.id).eq('created_by', req.user.id);
+    if (error) throw error;
+    if (!count) return res.status(404).json({ error: 'Tarefa não encontrada' });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[APP] tarefas delete:', e.message);
+    res.status(500).json({ error: 'Erro ao excluir a tarefa' });
+  }
+});
+
 module.exports = router;
