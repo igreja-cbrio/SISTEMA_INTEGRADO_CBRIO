@@ -1199,6 +1199,30 @@ override `WHATSAPP_TEMPLATE_GRUPOS_RENOVACAO`) via fila `whatsapp_envios`.
 A pessoa removida NÃO é notificada (decisão pastoral) — o caminho de volta é o
 broadcast de abertura das inscrições.
 
+## Grupos · contagens (vínculo × pessoa) + nova régua visitante/frequentador (2026-07-23)
+
+Auditoria (4 agentes) das divergências que o Marcos pegou entre as abas. **Régua de
+leitura (não regredir):** **Relatórios conta PARTICIPAÇÕES (vínculos · mem_grupo_membros ·
+uma pessoa em N grupos conta N×)** · **Pessoas conta PESSOAS DISTINTAS (membro_id único,
+papel de maior nível)**. Hoje 86 grupos ativos = 100% T2 → 999 participações = 749 pessoas
+distintas (162 em >1 grupo). Duplicatas: aba Pessoas mostra N **pessoas**, aba Duplicatas
+mostra M **pares** (N ≈ 2M). Nada disso era bug — só rótulo. Correções (PR
+`claude/grupos-contagem-frequentador`): (1) BUG do "1067" — o gráfico "Composição" somava
+Visitante/Frequentador (vínculos) + Líder=`num_lideres` (pessoas, nível grupo) → removida a
+barra Líder (líder vive na rosca de Liderança ao lado), gráfico virou "Participações por
+papel"; (2) rótulo "Membros"→"Participações" + nota explicando vínculo×pessoa; (3) aba
+Pessoas ganhou filtro `deleted_at` que faltava (inflava +1) + legenda de status; (4)
+duplicatas mostram pessoas E pares nas duas abas.
+
+**⚠️ NOVA RÉGUA visitante/frequentador (Marcos 2026-07-23 · migration
+`20260723210000`):** a régua antiga "3 presenças → frequentador" foi **abandonada** (com
+frequência MENSAL e sem histórico das temporadas antigas). Agora: (a) one-time — TODO
+visitante ativo virou **frequentador** (clima limpo); (b) novo entrante nasce **visitante**
+(default da coluna) e vira **frequentador na 1ª presença** (`fn_grupo_auto_membro` ·
+`presencas >= 1`, era `>3`). **Status de frequência** (aba Pessoas · `statusDe` no frontend,
+não no banco): 🟢 em dia (≤30d) · 🟡 atenção (31–90d) · 🔴 ausente (>90d) · ⚪ sem chamada
+ainda (nunca teve presença · NEUTRO — cobre o estado atual, já que a frequência nunca rodou).
+
 ## ⚠️ Grupos · Envios (barreiras anti-disparo-indevido) + console (2026-07-23)
 
 Susto do Marcos (envios proativos a líderes). Auditoria do código vivo + barreiras

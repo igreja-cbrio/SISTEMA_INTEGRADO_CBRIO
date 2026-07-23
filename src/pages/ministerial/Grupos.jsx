@@ -2735,7 +2735,7 @@ function RelatorioGrupos({ temporada }) {
             {[
               { icon: Users, label: 'Grupos', valor: (metricas ? metricas.num_grupos : data.total_grupos) ?? 0 },
               { icon: UserPlus, label: 'Inscrições', valor: metricas ? metricas.num_inscricoes : null },
-              { icon: Users, label: 'Membros', valor: metricas ? metricas.num_membros : null },
+              { icon: Users, label: 'Participações', valor: metricas ? metricas.num_membros : null },
               { icon: CalendarCheck, label: 'Encontros', valor: (metricas ? metricas.total_encontros : data.frequencia?.total_encontros) ?? 0 },
               { icon: Activity, label: 'Freq. média', valor: (metricas ? metricas.frequencia_media : data.frequencia?.media_por_encontro) ?? 0, dec: true },
               { icon: Star, label: 'NPS líderes', valor: nps ? Number(nps.valor) : null, dec: true },
@@ -2752,6 +2752,13 @@ function RelatorioGrupos({ temporada }) {
             ))}
           </div>
 
+          {/* Nota de leitura (Marcos 2026-07-23): deixa explícito que Relatórios
+              conta PARTICIPAÇÕES (vínculos), não pessoas — evita a confusão. */}
+          <div style={{ fontSize: 11.5, color: C.t3, display: 'flex', alignItems: 'flex-start', gap: 6, lineHeight: 1.5 }}>
+            <AlertTriangle size={12} style={{ color: cores.teal, flexShrink: 0, marginTop: 2 }} />
+            <span><strong>Participações</strong> = vínculos com grupos (uma pessoa em vários grupos conta em cada um). Para o número de <strong>pessoas distintas</strong>, veja a aba <strong>Pessoas</strong>.</span>
+          </div>
+
           {/* Dois gráficos de composição lado a lado: liderança (pizza) + papéis (barras) */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
             <LiderancaPizza
@@ -2761,7 +2768,6 @@ function RelatorioGrupos({ temporada }) {
             />
             <PapeisBarras
               funcoes={data.funcoes}
-              lideres={(metricas ? metricas.num_lideres : data.total_lideres) ?? 0}
               treino={(metricas ? metricas.num_lideres_treinamento : data.lideres_treinamento) ?? 0}
               cores={cores}
             />
@@ -2929,14 +2935,14 @@ function LiderancaPizza({ lideres, treino, cores }) {
   );
 }
 
-// Barras horizontais da composição do grupo (pessoas por papel). Série única →
-// hue único (teal); rótulo direto no fim de cada barra (dispensa eixo X).
-// ⚠️ Líder no CBRio = responsável do grupo (mem_grupos.lider_id), NÃO uma função
-// no roster (funcao='lider' é ~sempre 0). Por isso a barra "Líder" usa o
-// num_lideres (contagem real), não funcoes.lider — senão mostra 1 (Marcos · 18/07).
-function PapeisBarras({ funcoes, lideres = 0, treino = 0, cores }) {
+// Barras horizontais das PARTICIPAÇÕES por papel (vínculos do roster · uma
+// pessoa em N grupos conta N vezes). ⚠️ NÃO inclui "Líder": líder no CBRio é o
+// responsável do grupo (mem_grupos.lider_id), contado à parte na rosca de
+// Liderança ao lado — misturar com o roster gerava soma sem sentido (o "1067"
+// que o Marcos pegou · 2026-07-23). Aqui só entram os papéis que SÃO vínculo de
+// participação: frequentador, visitante, co-líder, em treino.
+function PapeisBarras({ funcoes, treino = 0, cores }) {
   const dados = [
-    { papel: 'Líder', valor: Number(lideres || 0) },
     { papel: 'Em treino', valor: Number(treino || funcoes?.lider_treinamento || 0) },
     { papel: 'Co-líder', valor: Number(funcoes?.co_lider || 0) },
     { papel: 'Frequentador', valor: Number(funcoes?.frequentador || 0) },
@@ -2948,7 +2954,7 @@ function PapeisBarras({ funcoes, lideres = 0, treino = 0, cores }) {
     <Card>
       <CardHeader className="pb-1">
         <CardTitle className="text-sm font-medium flex items-center gap-2">
-          <Users className="h-4 w-4" style={{ color: cores.teal }} /> Composição do grupo
+          <Users className="h-4 w-4" style={{ color: cores.teal }} /> Participações por papel
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -2964,9 +2970,9 @@ function PapeisBarras({ funcoes, lideres = 0, treino = 0, cores }) {
                 <Tooltip
                   cursor={{ fill: cores.teal + '14' }}
                   contentStyle={{ borderRadius: 8, fontSize: 12, border: `1px solid ${C.border}`, background: C.card, color: C.text }}
-                  formatter={(v) => [Number(v).toLocaleString('pt-BR'), 'Pessoas']}
+                  formatter={(v) => [Number(v).toLocaleString('pt-BR'), 'Participações']}
                 />
-                <Bar dataKey="valor" name="Pessoas" fill={cores.teal} radius={[0, 4, 4, 0]} maxBarSize={26} isAnimationActive={false}>
+                <Bar dataKey="valor" name="Participações" fill={cores.teal} radius={[0, 4, 4, 0]} maxBarSize={26} isAnimationActive={false}>
                   <LabelList dataKey="valor" position="right" style={{ fill: C.text, fontSize: 11.5, fontWeight: 700 }} formatter={(v) => Number(v).toLocaleString('pt-BR')} />
                 </Bar>
               </BarChart>

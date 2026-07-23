@@ -41,12 +41,16 @@ const PAPEIS = {
   visitante: { label: 'Visitante', plural: 'Visitantes', cor: '#94a3b8', Icon: Users },
 };
 
-// Status de frequência (derivado da última presença em grupo · bola colorida)
+// Status de frequência (derivado da última presença em grupo · bola colorida).
+// Régua alinhada à frequência MENSAL (Marcos 2026-07-23): 1 mês sem presença =
+// atenção, 3 meses = ausente. "Sem chamada ainda" é NEUTRO (nunca teve presença
+// lançada) — cobre quem acabou de entrar e o período em que a frequência ainda
+// não rodou; NÃO alarma.
 const STATUS = {
-  frequenta: { label: 'Frequenta', cor: '#10b981' },        // 🟢 ≤30d
-  atencao: { label: 'Atenção', cor: '#f59e0b' },            // 🟡 31-60d
-  ausente: { label: 'Ausente', cor: '#ef4444' },            // 🔴 >60d (já frequentou e sumiu)
-  sem_presenca: { label: 'Sem presença', cor: '#94a3b8' },  // ⚪ nunca teve presença lançada (neutro)
+  frequenta: { label: 'Em dia', cor: '#10b981' },              // 🟢 presença no último mês (≤30d)
+  atencao: { label: 'Atenção', cor: '#f59e0b' },               // 🟡 1-3 meses sem presença (31-90d)
+  ausente: { label: 'Ausente', cor: '#ef4444' },               // 🔴 3+ meses sem presença (>90d)
+  sem_presenca: { label: 'Sem chamada ainda', cor: '#94a3b8' },// ⚪ nunca teve presença lançada (neutro)
 };
 
 const fmtData = (d) => { if (!d) return null; try { return new Date(d + 'T12:00:00').toLocaleDateString('pt-BR'); } catch { return d; } };
@@ -56,9 +60,9 @@ function statusDe(p) {
   let dias;
   try { dias = Math.floor((Date.now() - new Date(p.ultima_frequencia + 'T12:00:00').getTime()) / 86400000); }
   catch { return 'sem_presenca'; }
-  if (dias <= 30) return 'frequenta';
-  if (dias <= 60) return 'atencao';
-  return 'ausente';
+  if (dias <= 30) return 'frequenta';   // presença no último mês
+  if (dias <= 90) return 'atencao';     // 1 a 3 meses sem presença
+  return 'ausente';                     // 3+ meses sem presença
 }
 
 // Item somente-leitura da ficha cadastral (modal da pessoa)
@@ -126,12 +130,14 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
   // Etiqueta "possível duplicata" (Marcos · 14/07): ids que caíram em algum
   // cluster da análise de duplicatas. Falha silenciosa (nível <3 recebe 403).
   const [dupIds, setDupIds] = useState(() => new Set());
+  const [dupPares, setDupPares] = useState(0); // nº de casos/pares (a aba Duplicatas mostra isso)
   useEffect(() => {
     api.duplicatas.list()
       .then(r => {
         const s = new Set();
         (r?.clusters || []).forEach(c => c.pessoas.forEach(p => s.add(p.id)));
         setDupIds(s);
+        setDupPares((r?.clusters || []).length);
       })
       .catch(() => {});
   }, []);
@@ -320,10 +326,25 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
       <div style={{ marginBottom: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
         <div>
           <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, margin: 0 }}>Pessoas dos grupos</h3>
-          <p style={{ fontSize: 12, color: C.t3, margin: '4px 0 0', maxWidth: 620 }}>
-            Censo de quem está nos grupos — função, status de frequência, última presença e grupo.
-            O status vem das chamadas registradas (quem ainda não tem presença lançada fica "Sem presença", em cinza).
+          <p style={{ fontSize: 12, color: C.t3, margin: '4px 0 0', maxWidth: 640, lineHeight: 1.5 }}>
+            Censo de <strong>pessoas distintas</strong> — cada uma aparece <strong>uma vez</strong>, no papel de maior nível,
+            mesmo que participe de vários grupos. (Na aba <strong>Relatórios</strong> os números são de participações/vínculos,
+            por isso ficam maiores.)
           </p>
+          {/* Legenda dos status de frequência (dots coloridos · sem emoji) */}
+          <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginTop: 8 }}>
+            {[
+              [STATUS.frequenta.cor, 'Em dia', 'presença no último mês'],
+              [STATUS.atencao.cor, 'Atenção', '1–3 meses sem presença'],
+              [STATUS.ausente.cor, 'Ausente', '3+ meses sem presença'],
+              [STATUS.sem_presenca.cor, 'Sem chamada ainda', 'nunca teve presença lançada'],
+            ].map(([cor, label, hint]) => (
+              <span key={label} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, color: C.t3 }} title={hint}>
+                <span style={{ width: 9, height: 9, borderRadius: '50%', background: cor, flexShrink: 0 }} />
+                {label}
+              </span>
+            ))}
+          </div>
         </div>
         <button onClick={() => { setImportOpen(true); setImportPreview(null); setImportResult(null); setImportFile(null); }}
           style={{ background: C.primary, color: '#fff', border: 'none', borderRadius: 10, padding: '8px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}>
@@ -395,8 +416,10 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
           background: `${C.amber}14`, border: `1px solid ${C.amber}55`, fontSize: 12.5, color: C.text,
         }}>
           <span>
-            <strong>{dupIds.size}</strong> pessoa{dupIds.size === 1 ? '' : 's'} com possível cadastro duplicado
-            — as linhas marcadas abaixo precisam de revisão.
+            <strong>{dupIds.size}</strong> pessoa{dupIds.size === 1 ? '' : 's'}
+            {dupPares > 0 && <> em <strong>{dupPares}</strong> possíve{dupPares === 1 ? 'l duplicata' : 'is duplicatas'}</>}
+            {' '}com cadastro duplicado — as linhas marcadas abaixo precisam de revisão.
+            {dupPares > 0 && <span style={{ color: C.t3 }}> (a aba Duplicatas mostra os {dupPares} casos; aqui contamos as {dupIds.size} pessoas envolvidas).</span>}
           </span>
           {onVerDuplicatas && (
             <button onClick={onVerDuplicatas} style={{ background: 'none', border: 'none', color: C.primary, cursor: 'pointer', fontSize: 12.5, fontWeight: 700, padding: 0 }}>
