@@ -11,7 +11,7 @@ import { Textarea } from '../../components/ui/textarea';
 import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog';
 import { toast } from 'sonner';
-import { Users, MapPin, Clock, Plus, Search, ChevronLeft, UserPlus, X, ArrowRightLeft, FileUp, Trash2, FileText, Image, File as FileIcon, Map as MapIcon, CalendarCheck, CalendarPlus, ClipboardCheck, Calendar, Activity, TrendingUp, TrendingDown, Minus, AlertTriangle, Inbox, QrCode, Compass, Copy, Check, Download, ExternalLink, Lock, BarChart3, GraduationCap, Star, UserCog, Eye, Settings, HeartHandshake, BookOpen } from 'lucide-react';
+import { Users, MapPin, Clock, Plus, Search, ChevronLeft, UserPlus, X, ArrowRightLeft, FileUp, Trash2, FileText, Image, File as FileIcon, Map as MapIcon, CalendarCheck, CalendarPlus, ClipboardCheck, Calendar, Activity, TrendingUp, TrendingDown, Minus, AlertTriangle, Inbox, QrCode, Send, Compass, Copy, Check, Download, ExternalLink, Lock, BarChart3, GraduationCap, Star, UserCog, Eye, Settings, HeartHandshake, BookOpen } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import GruposEntrada from './GruposEntrada';
 import InscricaoGruposQRCode from '../admin/InscricaoGruposQRCode';
@@ -19,6 +19,7 @@ import TemporadasGrupos from '../admin/TemporadasGrupos';
 import TemporadaInscricoesCard from './TemporadaInscricoesCard';
 import GruposVisitas, { AgendarVisitaModal } from './GruposVisitas';
 import GruposPessoas from './GruposPessoas';
+import GruposEnvios from './GruposEnvios';
 import GruposOrganograma from './GruposOrganograma';
 import GruposDuplicatas from './GruposDuplicatas';
 // Import ESTÁTICO de propósito (13/07): o chunk dinâmico do mapa quebrava em
@@ -74,7 +75,7 @@ const TIPOS_GRUPO = ['Conexao', 'Estudo', 'Jornada 180', 'Discipulado', 'Casais'
 // aba Pessoas (Marcos · 2026-07-13): menos abas, mesma informação.
 // A aba Configurações fundiu com a de QR (Marcos · 13/07): temporada, abrir/
 // fechar inscrições e QR codes são o mesmo assunto — viraram a aba "Inscrições".
-const PAGE_TABS = ['grupos', 'pessoas', 'relatorios', 'entrada', 'materiais', 'visitas', 'qrcode'];
+const PAGE_TABS = ['grupos', 'pessoas', 'relatorios', 'entrada', 'materiais', 'visitas', 'qrcode', 'envios'];
 
 // Tipo/papel do membro no grupo · vem da funcao (mem_grupo_membros). "Membro" é
 // o padrão (frequentador); "Visitante" só quem foi marcado como tal (regra:
@@ -1285,6 +1286,7 @@ export default function Grupos() {
           { key: 'materiais', label: 'Materiais', icon: FileText },
           { key: 'visitas', label: 'Visitas', icon: CalendarCheck },
           { key: 'qrcode', label: 'Inscrições', icon: QrCode },
+          { key: 'envios', label: 'Envios', icon: Send, soEditor: true },
         ].filter(tab => !tab.soEditor || podeEditarGrupos).map(tab => (
           <button key={tab.key} onClick={() => { setPageTab(tab.key); atualizarUrlView(tab.key, null); }} style={{
             // Com menos abas (13/07), cada uma respira mais — padding e fonte maiores.
@@ -1504,6 +1506,8 @@ export default function Grupos() {
 
       {/* ═══ TAB VISITAS ═══ */}
       {tabAtiva === 'visitas' && <GruposVisitas onOpenGrupo={openGrupoById} />}
+
+      {tabAtiva === 'envios' && <GruposEnvios podeEditar={podeEditarGrupos} />}
 
       {/* ═══ TAB INSCRIÇÕES · card da temporada no topo + botões QR codes | Temporadas ═══ */}
       {tabAtiva === 'qrcode' && (

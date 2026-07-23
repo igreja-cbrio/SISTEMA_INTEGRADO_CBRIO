@@ -1,13 +1,17 @@
-// Bot WhatsApp · Grupos de conexão — cron diário + admin do estudo da semana.
+// Bot WhatsApp · Grupos de conexão — cron diário (só sincroniza líderes).
 // Cron (Vercel · CRON_SECRET): GET /api/whatsapp-grupos/cron/diario
-//   - sincroniza líderes (auto-vínculos) e envia o estudo no dia configurado.
-// ⚠️ Decisão do Marcos (2026-07-20): NENHUMA mensagem automática de cobrança/
-// lembrete de relato pro líder — nem com temporada ativa. O pedido de chamada
-// é 1×/mês pelo cron frequencia-mensal (publicGrupos · gated por temporada em
-// curso) e lembrete avulso SÓ por disparo manual da coordenação.
+//   - sincroniza os auto-vínculos de líderes (whatsapp_lideres). SEM ENVIO.
+// ⚠️ NENHUMA mensagem automática pro líder por aqui:
+//   - Cobrança de relato: REMOVIDA em 2026-07-20 (decisão do Marcos).
+//   - Estudo da semana automático: REMOVIDO em 2026-07-23 (decisão do Marcos ·
+//     ideia descontinuada; estudo agora só é enviado manualmente pela aba de
+//     estudos, nunca por cron).
+// O único envio proativo automático que sobra é o cron mensal de frequência
+// (publicGrupos · gated por temporada em curso + kill-switch grupos_auto_envios).
+// Lembrete avulso e frequência avulsa: SÓ por disparo manual (aba Envios).
 // Admin (authenticate + módulo grupos):
-//   - PATCH /materiais/:docId/estudo-semana · marca o material da semana
-//   - POST  /enviar-estudo · disparo manual (teste)
+//   - PATCH /materiais/:docId/estudo-semana · marca o material da semana (a aba
+//     de estudos usa esse flag; NÃO dispara envio automático)
 //   - POST  /enviar-lembretes · disparo manual (coordenação)
 const router = require('express').Router();
 const { requireCron } = require('../utils/cronAuth');
@@ -15,23 +19,14 @@ const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const svc = require('../services/whatsappGrupos');
 
-// Dia do envio do estudo (0=Dom..6=Sáb) · default segunda
-const DIA_ESTUDO = Number(process.env.WHATSAPP_ESTUDO_DIA ?? 1);
-
 // ── Cron diário (sem login · CRON_SECRET) ───────────────────────────────────
-// Ordem: sincroniza líderes (auto-vínculos a partir de mem_grupos.lider_id) →
-// estudo da semana no dia configurado. Cobrança automática de relato foi
-// REMOVIDA em 2026-07-20 (decisão do Marcos: líder não recebe cobrança
-// automática nunca; ver cabeçalho do arquivo).
+// SÓ sincroniza os vínculos de líderes (a partir de mem_grupos.lider_id) — não
+// envia mensagem nenhuma. Estudo automático removido em 2026-07-23.
 router.get('/cron/diario', requireCron, async (req, res) => {
   try {
     const sync = await svc.sincronizarLideresGrupos();
-    let estudo = null;
-    if (new Date().getDay() === DIA_ESTUDO) {
-      estudo = await svc.enviarEstudoSemanal();
-    }
-    console.log('[whatsapp-grupos cron]', JSON.stringify({ sync, estudo }));
-    res.json({ ok: true, sync, estudo });
+    console.log('[whatsapp-grupos cron]', JSON.stringify({ sync }));
+    res.json({ ok: true, sync });
   } catch (e) {
     console.error('[whatsapp-grupos cron]', e.message);
     res.status(500).json({ error: e.message });
@@ -64,13 +59,9 @@ router.patch('/materiais/:docId/estudo-semana', podeGerir, async (req, res) => {
   }
 });
 
-// POST /api/whatsapp-grupos/enviar-estudo · disparo manual (teste do coordenador)
-router.post('/enviar-estudo', podeGerir, async (req, res) => {
-  try {
-    const r = await svc.enviarEstudoSemanal();
-    res.json({ ok: true, ...r });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
+// (Removido 2026-07-23) POST /enviar-estudo — envio de estudo pelo bot foi
+// descontinuado pelo Marcos. O estudo da semana agora vive só na aba de
+// estudos e, se for enviado, é manualmente por lá — não por este bot.
 
 // POST /api/whatsapp-grupos/enviar-lembretes · disparo manual (coordenação ·
 // única via de lembrete de relato — não há envio automático)

@@ -14,6 +14,7 @@ const { importarParticipantes } = require('../services/gruposImporter');
 const { notificarPessoaAprovada, notificarPessoaSugestao, montarEnvioRenovacao } = require('../services/gruposWhatsapp');
 const { enfileirarLote } = require('../services/whatsappFila');
 const { configurado: whatsappConfigurado } = require('../services/whatsappService');
+const gruposEnvios = require('../services/gruposEnvios');
 const { registrarEventoPedido } = require('../services/grupoPedidoEventos');
 
 // Auto-sync dos vínculos do bot WhatsApp (Marcos 2026-06-10): novo líder /
@@ -1672,6 +1673,80 @@ router.post('/renovacao/:renId/triar', authorizeModule('grupos', 3), async (req,
     console.error('[grupos renovacao triar]', e.message);
     res.status(500).json({ error: 'Erro ao registrar a triagem' });
   }
+});
+
+// ─────────────────────────────────────────────────────────────
+// CONSOLE DE ENVIOS (Marcos 2026-07-23) — "aba Envios" do /grupos.
+// Barreira central + disparo MANUAL da coordenação (frequência por líder/
+// bairro/rede/todos). Rotas de 2 segmentos — antes de /:id.
+//   - GET  /envios/config        · estado do kill-switch (nível 1)
+//   - PUT  /envios/config        · liga/desliga envios automáticos (nível 5)
+//   - GET  /envios/aux           · redes + bairros + grupos p/ os seletores
+//   - POST /envios/frequencia/preview · prévia (contagem/exemplo/exclusões)
+//   - POST /envios/frequencia    · dispara a chamada do mês (nível 5)
+//   - GET  /envios/historico     · últimos envios de grupos (visibilidade)
+// ─────────────────────────────────────────────────────────────
+
+router.get('/envios/config', authorizeModule('grupos', 1), async (req, res) => {
+  try { res.json(await gruposEnvios.getConfigEnvios()); }
+  catch (e) { console.error('[grupos envios config get]', e.message); res.status(500).json({ error: 'Erro ao ler config de envios' }); }
+});
+
+router.put('/envios/config', authorizeModule('grupos', 5), async (req, res) => {
+  try {
+    const ativo = req.body?.auto_envios === true;
+    const r = await gruposEnvios.setConfigEnvios(ativo, req.user?.userId || null);
+    res.json(r);
+  } catch (e) { console.error('[grupos envios config put]', e.message); res.status(500).json({ error: 'Erro ao salvar config de envios' }); }
+});
+
+router.get('/envios/aux', authorizeModule('grupos', 1), async (req, res) => {
+  try {
+    const { data: temp } = await supabase.from('mem_temporadas').select('id, label').eq('ativa', true).maybeSingle();
+    const { data: redes } = await supabase.from('mem_redes').select('id, nome').eq('ativa', true).order('nome');
+    let grupos = [];
+    if (temp) {
+      const { data: gs } = await supabase.from('mem_grupos')
+        .select('id, nome, bairro, rede_id, lider_id')
+        .eq('temporada', temp.id).eq('ativo', true).is('deleted_at', null).order('nome').limit(2000);
+      const liderIds = [...new Set((gs || []).map(g => g.lider_id).filter(Boolean))];
+      const nomes = {};
+      for (let i = 0; i < liderIds.length; i += 200) {
+        const { data: ms } = await supabase.from('mem_membros').select('id, nome').in('id', liderIds.slice(i, i + 200));
+        (ms || []).forEach(m => { nomes[m.id] = m.nome; });
+      }
+      grupos = (gs || []).map(g => ({ id: g.id, nome: g.nome, bairro: g.bairro || null, rede_id: g.rede_id || null, lider_nome: g.lider_id ? (nomes[g.lider_id] || null) : null }));
+    }
+    const bairros = [...new Set(grupos.map(g => g.bairro).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    res.json({ temporada: temp || null, redes: redes || [], bairros, grupos });
+  } catch (e) { console.error('[grupos envios aux]', e.message); res.status(500).json({ error: 'Erro ao carregar opções de envio' }); }
+});
+
+router.post('/envios/frequencia/preview', authorizeModule('grupos', 3), async (req, res) => {
+  try {
+    const r = await gruposEnvios.previewFrequencia(req.body?.audiencia || {});
+    if (r.erro) return res.status(400).json({ error: r.erro });
+    res.json(r);
+  } catch (e) { console.error('[grupos envios freq preview]', e.message); res.status(500).json({ error: 'Erro ao gerar prévia' }); }
+});
+
+router.post('/envios/frequencia', authorizeModule('grupos', 5), async (req, res) => {
+  try {
+    if (!whatsappConfigurado()) return res.status(409).json({ error: 'O envio de WhatsApp não está configurado no servidor.' });
+    const r = await gruposEnvios.dispararFrequencia(req.body?.audiencia || {});
+    if (r.erro) return res.status(400).json({ error: r.erro });
+    res.json({ ok: true, ...r });
+  } catch (e) { console.error('[grupos envios freq disparar]', e.message); res.status(500).json({ error: 'Erro ao disparar a frequência' }); }
+});
+
+router.get('/envios/historico', authorizeModule('grupos', 1), async (req, res) => {
+  try {
+    const { data } = await supabase.from('whatsapp_envios')
+      .select('id, telefone, template, contexto, status, criado_em, enviado_em, erro')
+      .like('contexto', 'grupos.%')
+      .order('criado_em', { ascending: false }).limit(80);
+    res.json({ items: data || [] });
+  } catch (e) { console.error('[grupos envios historico]', e.message); res.status(500).json({ error: 'Erro ao carregar o histórico de envios' }); }
 });
 
 // ─────────────────────────────────────────────────────────────
