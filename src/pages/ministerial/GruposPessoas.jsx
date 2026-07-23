@@ -283,10 +283,20 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
   const contagens = useMemo(() => {
     const c = {};
     Object.keys(PAPEIS).forEach(k => { c[k] = 0; });
-    for (const p of pessoas) c[p.papel] = (c[p.papel] || 0) + 1;
+    // Frequentador/Visitante = DERIVADOS da presença (Marcos 2026-07-23):
+    // foi a ≥1 encontro (tem última frequência) = frequentador; nunca foi = visitante.
+    let freq = 0, visit = 0;
+    for (const p of pessoas) {
+      c[p.papel] = (c[p.papel] || 0) + 1;
+      if (p.ultima_frequencia) freq++; else visit++;
+    }
     c.lideres_total = (c.lider || 0) + (c.co_lider || 0);
+    c.frequentadores = freq;
+    c.visitantes = visit;
+    c.com_presenca = freq > 0; // a frequência já começou a ser preenchida?
     return c;
   }, [pessoas]);
+  const inscritos = dados?.inscritos ?? null; // vínculos (participações)
 
   const filtradas = useMemo(() => {
     let lista = pessoas;
@@ -297,6 +307,8 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
         gruposDe(p).some(g => g.nome?.toLowerCase().includes(s)));
     }
     if (filtro === 'lideres') lista = lista.filter(p => p.papel === 'lider' || p.papel === 'co_lider');
+    else if (filtro === 'frequentadores') lista = lista.filter(p => !!p.ultima_frequencia);
+    else if (filtro === 'visitantes') lista = lista.filter(p => !p.ultima_frequencia);
     else if (filtro !== 'todos') lista = lista.filter(p => p.papel === filtro);
     if (filtroGrupo !== 'todos') lista = lista.filter(p => gruposDe(p).some(g => g.id === filtroGrupo));
     if (filtroStatus !== 'todos') lista = lista.filter(p => statusDe(p) === filtroStatus);
@@ -307,15 +319,19 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
 
   if (loading) return <div style={{ padding: 40, textAlign: 'center', color: C.t3 }}>Carregando pessoas...</div>;
 
-  // Cards-contador por função = também filtram
+  // Cards-contador (clicáveis = filtram). Pessoas = distintas; Frequentador/
+  // Visitante DERIVAM da presença e só aparecem quando a frequência já começou
+  // (Marcos 2026-07-23: até lá, todos são só "inscritos" aguardando a chamada).
   const CARDS = [
-    { key: 'todos', label: 'Todos', value: pessoas.length, cor: C.text },
-    { key: 'coordenador', label: 'Coordenadores', value: contagens.coordenador || 0, cor: PAPEIS.coordenador.cor },
-    { key: 'supervisor', label: 'Supervisores', value: contagens.supervisor || 0, cor: PAPEIS.supervisor.cor },
+    { key: 'todos', label: 'Pessoas', value: pessoas.length, cor: C.text },
+    ...(contagens.com_presenca ? [
+      { key: 'frequentadores', label: 'Frequentadores', value: contagens.frequentadores, cor: '#10b981' },
+      { key: 'visitantes', label: 'Visitantes', value: contagens.visitantes, cor: '#94a3b8' },
+    ] : []),
     { key: 'lideres', label: 'Líderes', value: contagens.lideres_total || 0, cor: PAPEIS.lider.cor },
-    { key: 'lider_treinamento', label: 'Líderes em treinamento', value: contagens.lider_treinamento || 0, cor: PAPEIS.lider_treinamento.cor },
-    { key: 'frequentador', label: 'Membros', value: contagens.frequentador || 0, cor: PAPEIS.frequentador.cor },
-    { key: 'visitante', label: 'Visitantes', value: contagens.visitante || 0, cor: PAPEIS.visitante.cor },
+    { key: 'supervisor', label: 'Supervisores', value: contagens.supervisor || 0, cor: PAPEIS.supervisor.cor },
+    ...(contagens.coordenador ? [{ key: 'coordenador', label: 'Coordenadores', value: contagens.coordenador, cor: PAPEIS.coordenador.cor }] : []),
+    ...(contagens.lider_treinamento ? [{ key: 'lider_treinamento', label: 'Líderes em treinamento', value: contagens.lider_treinamento, cor: PAPEIS.lider_treinamento.cor }] : []),
   ];
 
   const opcoesGrupo = [...gruposOptions].sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
@@ -326,10 +342,11 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
       <div style={{ marginBottom: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
         <div>
           <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, margin: 0 }}>Pessoas dos grupos</h3>
-          <p style={{ fontSize: 12, color: C.t3, margin: '4px 0 0', maxWidth: 640, lineHeight: 1.5 }}>
-            Censo de <strong>pessoas distintas</strong> — cada uma aparece <strong>uma vez</strong>, no papel de maior nível,
-            mesmo que participe de vários grupos. (Na aba <strong>Relatórios</strong> os números são de participações/vínculos,
-            por isso ficam maiores.)
+          <p style={{ fontSize: 12, color: C.t3, margin: '4px 0 0', maxWidth: 660, lineHeight: 1.5 }}>
+            <strong style={{ color: C.text }}>{pessoas.length} pessoas</strong>
+            {inscritos != null && <> · <strong style={{ color: C.text }}>{inscritos} inscrições</strong> (uma pessoa pode estar em vários grupos)</>}.
+            Cada pessoa aparece <strong>uma vez</strong>, no papel de maior nível.
+            {!contagens.com_presenca && <> <strong style={{ color: '#f59e0b' }}>Frequência ainda não registrada</strong> — todos são inscritos aguardando a 1ª chamada; quando a frequência entrar, aparecem os cards Frequentadores e Visitantes.</>}
           </p>
           {/* Legenda dos status de frequência (dots coloridos · sem emoji) */}
           <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginTop: 8 }}>
