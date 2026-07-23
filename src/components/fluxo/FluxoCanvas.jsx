@@ -22,6 +22,14 @@ const TIPO_LABEL = {
   inicio: 'Início', aprovacao: 'Aprovação', etapa: 'Etapa',
   execucao: 'Execução', entrega: 'Entrega', fim: 'Fim',
 };
+const TIPO_AJUDA = {
+  inicio: 'Onde o pedido começa.',
+  aprovacao: 'Alguém precisa aprovar antes do pedido seguir.',
+  etapa: 'Uma etapa do processo.',
+  execucao: 'Alguém executa a ação (comprar ou pagar).',
+  entrega: 'Aguardando o item chegar e ser recebido.',
+  fim: 'O pedido é encerrado.',
+};
 
 export default function FluxoCanvas({ fluxo, andamento = {}, colaboradores = [], editable = false, onSaveResponsaveis }) {
   const wrapRef = useRef(null);
@@ -30,6 +38,7 @@ export default function FluxoCanvas({ fluxo, andamento = {}, colaboradores = [],
   const [sel, setSel] = useState(null);
   const [savingResp, setSavingResp] = useState(false);
   const [addPick, setAddPick] = useState('');
+  const [info, setInfo] = useState(null); // { etapa, x, y }
   const drag = useRef(null);      // { id, startX, startY, ox, oy } | { pan, startX, startY, vx, vy }
   const reduce = useRef(false);
 
@@ -84,10 +93,17 @@ export default function FluxoCanvas({ fluxo, andamento = {}, colaboradores = [],
 
   // ── pointer: pan (fundo) / drag de nó ──
   function onPointerDownBg(e) {
+    if (e.target.closest('[data-info-pop]')) return;
+    setInfo(null);
     if (e.target.closest('[data-node]')) return;
     setSel(null);
     drag.current = { pan: true, startX: e.clientX, startY: e.clientY, vx: view.x, vy: view.y };
     e.currentTarget.setPointerCapture?.(e.pointerId);
+  }
+  function abrirInfo(etapa, ev) {
+    const rect = wrapRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setInfo({ etapa, x: ev.clientX - rect.left, y: ev.clientY - rect.top });
   }
   function onPointerDownNode(e, id) {
     e.stopPropagation();
@@ -199,7 +215,17 @@ export default function FluxoCanvas({ fluxo, andamento = {}, colaboradores = [],
                   boxShadow: on ? `0 0 0 3px ${cor}33, 0 8px 24px rgba(0,0,0,.12)` : '0 2px 10px rgba(0,0,0,.08)',
                   cursor: 'grab', userSelect: 'none',
                 }}>
-                <div style={{ fontSize: 10, letterSpacing: '.06em', textTransform: 'uppercase', fontWeight: 700, color: cor }}>
+                <button
+                  onPointerDown={ev => ev.stopPropagation()}
+                  onClick={ev => { ev.stopPropagation(); abrirInfo(e, ev); }}
+                  title="O que é esta etapa?"
+                  style={{
+                    position: 'absolute', top: 7, right: 8, width: 19, height: 19, borderRadius: '50%',
+                    border: `1.5px solid ${cor}`, background: 'var(--cbrio-card)', color: cor,
+                    fontSize: 11, fontWeight: 800, fontStyle: 'italic', lineHeight: 1, cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0,
+                  }}>i</button>
+                <div style={{ fontSize: 10, letterSpacing: '.06em', textTransform: 'uppercase', fontWeight: 700, color: cor, paddingRight: 22 }}>
                   {TIPO_LABEL[e.tipo] || e.tipo}
                 </div>
                 <div style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--cbrio-text)', marginTop: 2, lineHeight: 1.2 }}>
@@ -212,7 +238,7 @@ export default function FluxoCanvas({ fluxo, andamento = {}, colaboradores = [],
                 </div>
                 {(andamento[e.status_map] || 0) > 0 && (
                   <div title="Solicitações em andamento nesta etapa" style={{
-                    position: 'absolute', top: -9, right: -9, minWidth: 20, height: 20, padding: '0 6px',
+                    position: 'absolute', top: -9, left: -9, minWidth: 20, height: 20, padding: '0 6px',
                     borderRadius: 999, background: cor, color: '#fff', fontSize: 11, fontWeight: 700,
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                     boxShadow: '0 2px 6px rgba(0,0,0,.2)',
@@ -229,6 +255,30 @@ export default function FluxoCanvas({ fluxo, andamento = {}, colaboradores = [],
           <button onClick={() => setView(v => ({ ...v, scale: Math.min(1.6, v.scale * 1.15) }))} style={ctrlBtn}>+</button>
           <button onClick={() => setView(v => ({ ...v, scale: Math.max(0.4, v.scale * 0.87) }))} style={ctrlBtn}>−</button>
         </div>
+
+        {info && (
+          <div data-info-pop
+            onPointerDown={ev => ev.stopPropagation()}
+            style={{
+              position: 'absolute', zIndex: 6, width: 266,
+              left: Math.max(8, Math.min(info.x - 133, (wrapRef.current?.clientWidth || 900) - 278)),
+              top: Math.max(8, Math.min(info.y + 14, (wrapRef.current?.clientHeight || 500) - 160)),
+              background: 'var(--cbrio-card)', border: '1px solid var(--cbrio-border)',
+              borderRadius: 12, boxShadow: '0 12px 32px rgba(0,0,0,.24)', padding: '12px 14px',
+            }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+              <div style={{ fontWeight: 700, color: 'var(--cbrio-text)', fontSize: 14, lineHeight: 1.2 }}>{info.etapa.label}</div>
+              <button onClick={() => setInfo(null)} title="Fechar"
+                style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--cbrio-text3)', fontSize: 18, lineHeight: 1, padding: 0 }}>×</button>
+            </div>
+            <div style={{ fontSize: 10.5, textTransform: 'uppercase', letterSpacing: '.06em', fontWeight: 700, color: corEtapa(info.etapa), marginTop: 3 }}>
+              {TIPO_LABEL[info.etapa.tipo] || info.etapa.tipo}
+            </div>
+            <p style={{ margin: '8px 0 0', fontSize: 13, lineHeight: 1.55, color: 'var(--cbrio-text2)' }}>
+              {info.etapa.descricao || TIPO_AJUDA[info.etapa.tipo] || 'Sem explicação cadastrada para esta etapa.'}
+            </p>
+          </div>
+        )}
       </div>
 
       {selEtapa && (() => {
