@@ -18,6 +18,10 @@ const { configurado } = require('./whatsappService');
 // Fila com reenvio automático: enfileirar() grava e tenta na hora; se o envio
 // bater no teto diário da Meta (janela móvel de 24h), o cron reprocessa.
 const { enfileirar } = require('./whatsappFila');
+// Bloqueio geral (garantia 100% · Marcos 2026-07-23): quando ligado, NENHUM
+// envio de grupos sai — nem por evento, nem manual, nem automático. Módulo leaf
+// (sem require circular). Checado no topo de cada função de envio.
+const { bloqueioTotalAtivo } = require('./gruposEnviosConfig');
 
 // GRUPOS_TOKEN_SECRET (opcional) isola esta superfície dos demais usos do
 // CRON_SECRET (bearer de crons, clientState do Graph no Cérebro — que é
@@ -113,6 +117,7 @@ function formatarOnde(grupo) {
 // {{1}} líder · {{2}} grupo · {{3}} nome da pessoa · {{4}} contato · {{5}} link
 async function notificarLiderNovoPedido({ grupo, pedidoId, pessoa }) {
   try {
+    if (await bloqueioTotalAtivo()) return { sent: false, reason: 'bloqueio_total' };
     // Gate ANTES de assinar o token: com o envio desligado, o sendTemplate
     // cairia no DRY-RUN e logaria os params — incluindo o link-capability de
     // aprovar. Token não pode parar em log de produção.
@@ -161,6 +166,7 @@ async function notificarLiderNovoPedido({ grupo, pedidoId, pessoa }) {
 // {{1}} grupo · {{2}} dia/hora · {{3}} local · {{4}} líder · {{5}} tel do líder
 async function notificarPessoaAprovada({ telefone, grupo, liderNome, liderTelefone }) {
   try {
+    if (await bloqueioTotalAtivo()) return { sent: false, reason: 'bloqueio_total' };
     if (!telefone) return { sent: false, reason: 'pessoa_sem_telefone' };
     const r = await enfileirar({
       telefone,
@@ -203,6 +209,7 @@ function sanitizarMotivo(motivo) {
 
 async function notificarPessoaSugestao({ telefone, pessoaNome, grupoOriginalNome, grupoSugerido, pedidoId, motivo }) {
   try {
+    if (await bloqueioTotalAtivo()) return { sent: false, reason: 'bloqueio_total' };
     // Mesmo gate do template do líder: não assina token com o envio desligado
     // (o DRY-RUN logaria o link-capability).
     if (!WHATSAPP_LIGADO()) return { sent: false, reason: 'disabled' };
@@ -281,6 +288,7 @@ function montarEnvioFrequencia({ grupo, lider, mes }) {
 // Caminho individual (reenvio deliberado a um líder): envia na hora via fila.
 async function notificarLiderFrequencia({ grupo, lider, mes }) {
   try {
+    if (await bloqueioTotalAtivo()) return { sent: false, reason: 'bloqueio_total' };
     const m = montarEnvioFrequencia({ grupo, lider, mes });
     if (m.erro) return { sent: false, reason: m.erro };
     const r = await enfileirar(m.envio);
@@ -333,6 +341,7 @@ function montarEnvioRenovacao({ grupo, lider, temporada, renovacaoId, geracao })
 // grupos_pedido_aprovado, na aprovação). {{1}} primeiro nome · {{2}} grupo.
 async function enviarInscricaoConfirmada({ telefone, nome, grupoNome, pedidoId }) {
   try {
+    if (await bloqueioTotalAtivo()) return { sent: false, reason: 'bloqueio_total' };
     if (!telefone) return { sent: false, reason: 'pessoa_sem_telefone' };
     const r = await enfileirar({
       telefone,

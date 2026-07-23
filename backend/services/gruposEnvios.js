@@ -16,35 +16,11 @@
 const { supabase } = require('../utils/supabase');
 const { montarEnvioFrequencia, rotuloMes } = require('./gruposWhatsapp');
 const { enfileirarLote } = require('./whatsappFila');
+// Config dos interruptores vive no módulo leaf (sem require circular).
+const { bloqueioTotalAtivo } = require('./gruposEnviosConfig');
 
 const soDigitos = (t) => String(t || '').replace(/\D/g, '');
 const tel8 = (t) => soDigitos(t).slice(-8); // chave robusta a formatação/DDI/9
-
-// ── Kill-switch dos envios automáticos ──────────────────────────────────────
-async function enviosAutomaticosAtivos() {
-  try {
-    const { data } = await supabase.from('whatsapp_config')
-      .select('grupos_auto_envios').limit(1).maybeSingle();
-    return data?.grupos_auto_envios === true;
-  } catch { return false; } // coluna ausente / erro → estado seguro
-}
-
-async function getConfigEnvios() {
-  const { data } = await supabase.from('whatsapp_config')
-    .select('id, grupos_auto_envios, updated_at, updated_by').limit(1).maybeSingle();
-  return { auto_envios: data?.grupos_auto_envios === true, atualizado_em: data?.updated_at || null };
-}
-
-async function setConfigEnvios(ativo, userId) {
-  const { data: row } = await supabase.from('whatsapp_config').select('id').limit(1).maybeSingle();
-  const patch = { grupos_auto_envios: !!ativo, updated_by: userId || null, updated_at: new Date().toISOString() };
-  if (row?.id != null) {
-    await supabase.from('whatsapp_config').update(patch).eq('id', row.id);
-  } else {
-    await supabase.from('whatsapp_config').insert(patch);
-  }
-  return { auto_envios: !!ativo };
-}
 
 // ── Temporada ativa (base do universo de grupos) ────────────────────────────
 async function temporadaAtiva() {
@@ -140,6 +116,8 @@ async function previewFrequencia(audiencia) {
 
 // Disparo real (manual · via fila/template · respeita opt-out/roster).
 async function dispararFrequencia(audiencia) {
+  // Bloqueio geral vence até o manual (garantia 100% · Marcos 2026-07-23).
+  if (await bloqueioTotalAtivo()) return { erro: 'Envios de grupos estão BLOQUEADOS (bloqueio geral ligado). Desligue na aba Envios pra poder disparar.' };
   const r = await montarDestinatariosFrequencia(audiencia);
   if (r.erro) return r;
   const mes = new Date().toISOString().slice(0, 7);
@@ -155,9 +133,6 @@ async function dispararFrequencia(audiencia) {
 }
 
 module.exports = {
-  enviosAutomaticosAtivos,
-  getConfigEnvios,
-  setConfigEnvios,
   previewFrequencia,
   dispararFrequencia,
   montarDestinatariosFrequencia,

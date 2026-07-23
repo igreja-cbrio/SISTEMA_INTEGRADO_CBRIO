@@ -514,7 +514,7 @@ export const grupos = {
   },
   envios: {
     getConfig: () => get('/grupos/envios/config'),
-    setConfig: (auto_envios) => put('/grupos/envios/config', { auto_envios }),
+    setConfig: (patch) => put('/grupos/envios/config', patch),
     aux: () => get('/grupos/envios/aux'),
     previewFrequencia: (audiencia) => post('/grupos/envios/frequencia/preview', { audiencia }),
     dispararFrequencia: (audiencia) => post('/grupos/envios/frequencia', { audiencia }),

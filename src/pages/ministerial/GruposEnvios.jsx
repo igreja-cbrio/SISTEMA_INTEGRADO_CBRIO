@@ -50,7 +50,7 @@ export default function GruposEnvios({ podeEditar = false }) {
     setLoading(true);
     try {
       const [cfg, a, h, rp] = await Promise.all([
-        api.envios.getConfig().catch(() => ({ auto_envios: false })),
+        api.envios.getConfig().catch(() => ({ bloqueio_total: false, auto_frequencia: false })),
         api.envios.aux().catch(() => ({ redes: [], bairros: [], grupos: [], temporada: null })),
         api.envios.historico().then(r => r?.items || []).catch(() => []),
         api.renovacao.painel().catch(() => null),
@@ -61,15 +61,30 @@ export default function GruposEnvios({ podeEditar = false }) {
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  const toggleAuto = async () => {
+  // Bloqueio GERAL (garantia 100%): quando ligado, NADA de grupos sai.
+  const toggleBloqueio = async () => {
     if (!podeEditar) return;
-    const novo = !config?.auto_envios;
-    if (novo && !confirm('LIGAR os envios automáticos? A partir daí o sistema volta a disparar sozinho a chamada mensal de frequência pros líderes (respeitando temporada em curso e opt-out).')) return;
+    const novo = !config?.bloqueio_total;
+    if (novo && !confirm('BLOQUEAR todos os envios de grupos? Enquanto ligado, NADA sai — nem automático, nem por evento (confirmação de inscrição, aviso ao líder), nem manual. É o botão de pânico. Confirma?')) return;
     setSalvandoConfig(true);
     try {
-      const r = await api.envios.setConfig(novo);
+      const r = await api.envios.setConfig({ bloqueio_total: novo });
       setConfig(r);
-      toast.success(novo ? 'Envios automáticos LIGADOS' : 'Envios automáticos DESLIGADOS');
+      toast.success(novo ? 'TUDO bloqueado — nenhum envio de grupos vai sair' : 'Bloqueio geral desligado');
+    } catch (e) { toast.error(e.message || 'Erro ao salvar'); }
+    finally { setSalvandoConfig(false); }
+  };
+
+  // Automático por tipo (hoje só a frequência mensal é automática).
+  const toggleAutoFreq = async () => {
+    if (!podeEditar) return;
+    const novo = !config?.auto_frequencia;
+    if (novo && !confirm('LIGAR o envio AUTOMÁTICO da chamada mensal de frequência? O sistema passa a disparar sozinho 1×/mês (temporada em curso · respeitando opt-out).')) return;
+    setSalvandoConfig(true);
+    try {
+      const r = await api.envios.setConfig({ auto_frequencia: novo });
+      setConfig(r);
+      toast.success(novo ? 'Frequência mensal automática LIGADA' : 'Frequência mensal automática DESLIGADA');
     } catch (e) { toast.error(e.message || 'Erro ao salvar'); }
     finally { setSalvandoConfig(false); }
   };
@@ -115,32 +130,53 @@ export default function GruposEnvios({ podeEditar = false }) {
   };
 
   if (loading) return <div style={{ padding: 60, textAlign: 'center', color: C.t3 }}>Carregando...</div>;
-  const auto = config?.auto_envios === true;
+  const bloqueado = config?.bloqueio_total === true;
+  const autoFreq = config?.auto_frequencia === true;
 
   return (
     <div style={{ paddingTop: 14, display: 'flex', flexDirection: 'column', gap: 16 }}>
-      {/* 1) KILL-SWITCH */}
+      {/* 1) BLOQUEIO GERAL — garantia 100% (botão de pânico) */}
       <div style={{
-        background: C.card, borderRadius: 16, border: `1px solid ${auto ? C.amber : C.green}`,
-        borderLeft: `4px solid ${auto ? C.amber : C.green}`, padding: 18,
+        background: bloqueado ? `${C.red}10` : C.card, borderRadius: 16,
+        border: `1px solid ${bloqueado ? C.red : C.border}`,
+        borderLeft: `4px solid ${bloqueado ? C.red : C.green}`, padding: 18,
         display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap',
       }}>
-        <Power size={26} style={{ color: auto ? C.amber : C.green, flexShrink: 0 }} />
+        <Power size={26} style={{ color: bloqueado ? C.red : C.green, flexShrink: 0 }} />
         <div style={{ flex: 1, minWidth: 240 }}>
-          <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>
-            Envios automáticos: {auto ? 'LIGADOS' : 'DESLIGADOS'}
+          <div style={{ fontSize: 15, fontWeight: 700, color: bloqueado ? C.red : C.text }}>
+            {bloqueado ? 'TUDO BLOQUEADO — nenhum envio de grupos sai' : 'Envios de grupos: liberados'}
           </div>
           <div style={{ fontSize: 12.5, color: C.t3, marginTop: 3, lineHeight: 1.5 }}>
-            {auto
-              ? 'O sistema pode disparar sozinho a chamada mensal de frequência (na temporada em curso, respeitando quem pediu pra não receber).'
-              : 'Nenhum disparo automático sai. O envio manual abaixo continua funcionando normalmente.'}
+            {bloqueado
+              ? 'Garantia 100%: nada sai — nem automático, nem por evento (confirmação de inscrição, aviso ao líder), nem manual. Desligue pra voltar ao normal.'
+              : 'Botão de pânico: bloqueia de uma vez TODOS os envios de grupos (automático + evento + manual). Use se algo parecer errado.'}
           </div>
         </div>
         {podeEditar && (
-          <Button variant={auto ? 'outline' : 'default'} disabled={salvandoConfig} onClick={toggleAuto}>
-            {salvandoConfig ? 'Salvando...' : (auto ? 'Desligar' : 'Ligar')}
+          <Button variant={bloqueado ? 'default' : 'outline'} disabled={salvandoConfig} onClick={toggleBloqueio}>
+            {salvandoConfig ? 'Salvando...' : (bloqueado ? 'Desbloquear' : 'Bloquear tudo')}
           </Button>
         )}
+      </div>
+
+      {/* 1b) AUTOMÁTICOS POR TIPO — cada mensagem automática liga/desliga sozinha */}
+      <div style={{ background: C.card, borderRadius: 16, border: `1px solid ${C.border}`, padding: 18, opacity: bloqueado ? 0.6 : 1 }}>
+        <h2 style={{ fontSize: 15, fontWeight: 700, color: C.text, margin: '0 0 4px' }}>Envios automáticos (por mensagem)</h2>
+        <p style={{ fontSize: 12.5, color: C.t3, margin: '0 0 12px', lineHeight: 1.5 }}>
+          Ligue/desligue cada envio automático separadamente. {bloqueado && <strong style={{ color: C.red }}>O bloqueio geral está ligado — nada sai enquanto isso.</strong>}
+        </p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: 10, border: `1px solid ${C.border}`, flexWrap: 'wrap' }}>
+          <div style={{ flex: 1, minWidth: 220 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 600, color: C.text }}>Chamada mensal de frequência</div>
+            <div style={{ fontSize: 11.5, color: C.t3, marginTop: 2 }}>1×/mês, pros líderes da temporada em curso (respeita opt-out). {autoFreq ? 'LIGADA' : 'desligada'}.</div>
+          </div>
+          {podeEditar && (
+            <Button size="sm" variant={autoFreq ? 'outline' : 'default'} disabled={salvandoConfig || bloqueado} onClick={toggleAutoFreq}>
+              {autoFreq ? 'Desligar' : 'Ligar'}
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* 2) DISPARO MANUAL · FREQUÊNCIA */}
@@ -248,8 +284,10 @@ export default function GruposEnvios({ podeEditar = false }) {
           <h2 style={{ fontSize: 15, fontWeight: 700, color: C.text, margin: 0 }}>O que o sistema envia sozinho</h2>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
-          <Linha nome="Chamada mensal de frequência → líder" quando={auto ? 'automático · 1×/mês (temporada em curso)' : 'DESLIGADO agora'} cor={auto ? C.amber : C.t3} />
-          {AUTOMATICOS_EVENTO.map(([n, q]) => <Linha key={n} nome={n} quando={q} cor={C.t3} />)}
+          {bloqueado
+            ? <Linha nome="TODOS os envios de grupos" quando="BLOQUEADOS (bloqueio geral ligado)" cor={C.red} />
+            : <Linha nome="Chamada mensal de frequência → líder" quando={autoFreq ? 'automático · 1×/mês (temporada em curso)' : 'DESLIGADO agora'} cor={autoFreq ? C.amber : C.t3} />}
+          {!bloqueado && AUTOMATICOS_EVENTO.map(([n, q]) => <Linha key={n} nome={n} quando={q} cor={C.t3} />)}
           <div style={{ fontSize: 11.5, color: C.t3, marginTop: 4, lineHeight: 1.5, display: 'flex', gap: 6 }}>
             <Info size={13} style={{ flexShrink: 0, marginTop: 1 }} />
             Cobrança automática de relato e estudo automático foram <strong>removidos</strong>. Nada é enviado por texto livre — só templates aprovados pela Meta.
@@ -270,6 +308,7 @@ export default function GruposEnvios({ podeEditar = false }) {
                 <div key={h.id} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, padding: '6px 0', borderBottom: `1px solid ${C.border}` }}>
                   <span style={{ width: 8, height: 8, borderRadius: '50%', background: cor, flexShrink: 0 }} />
                   <span style={{ color: C.t2, minWidth: 128 }}>{fmtDT(h.criado_em)}</span>
+                  <span style={{ color: C.text, minWidth: 130, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.nome || h.telefone || '—'}</span>
                   <span style={{ color: C.t3, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.template} · {(h.contexto || '').replace('grupos.', '')}</span>
                   <span style={{ color: cor, fontWeight: 600 }}>{h.status}</span>
                 </div>

@@ -15,6 +15,7 @@ const { notificarPessoaAprovada, notificarPessoaSugestao, montarEnvioRenovacao }
 const { enfileirarLote } = require('../services/whatsappFila');
 const { configurado: whatsappConfigurado } = require('../services/whatsappService');
 const gruposEnvios = require('../services/gruposEnvios');
+const gruposEnviosConfig = require('../services/gruposEnviosConfig');
 const { registrarEventoPedido } = require('../services/grupoPedidoEventos');
 
 // Auto-sync dos vínculos do bot WhatsApp (Marcos 2026-06-10): novo líder /
@@ -1548,6 +1549,10 @@ router.get('/renovacao/painel', authorizeModule('grupos', 1), async (req, res) =
 // semestral em massa · boost de área dá 5 pra coordenação de Grupos).
 router.post('/renovacao/disparar', authorizeModule('grupos', 5), async (req, res) => {
   try {
+    // Bloqueio geral vence tudo (garantia 100% · Marcos 2026-07-23).
+    if (await gruposEnviosConfig.bloqueioTotalAtivo()) {
+      return res.status(409).json({ error: 'Envios de grupos estão BLOQUEADOS (bloqueio geral ligado na aba Envios). Desligue pra poder disparar.' });
+    }
     const temporadaId = req.body?.temporada_id;
     if (!temporadaId) return res.status(400).json({ error: 'Informe a temporada.' });
     const { data: temporada } = await supabase.from('mem_temporadas')
@@ -1688,14 +1693,19 @@ router.post('/renovacao/:renId/triar', authorizeModule('grupos', 3), async (req,
 // ─────────────────────────────────────────────────────────────
 
 router.get('/envios/config', authorizeModule('grupos', 1), async (req, res) => {
-  try { res.json(await gruposEnvios.getConfigEnvios()); }
+  try { res.json(await gruposEnviosConfig.getConfigEnvios()); }
   catch (e) { console.error('[grupos envios config get]', e.message); res.status(500).json({ error: 'Erro ao ler config de envios' }); }
 });
 
 router.put('/envios/config', authorizeModule('grupos', 5), async (req, res) => {
   try {
-    const ativo = req.body?.auto_envios === true;
-    const r = await gruposEnvios.setConfigEnvios(ativo, req.user?.userId || null);
+    // Grava só o que veio: bloqueio_total (garantia 100%) e/ou auto_frequencia.
+    const patch = {};
+    if ('bloqueio_total' in (req.body || {})) patch.bloqueio_total = req.body.bloqueio_total === true;
+    if ('auto_frequencia' in (req.body || {})) patch.auto_frequencia = req.body.auto_frequencia === true;
+    // compat: aceita o antigo { auto_envios } como auto_frequencia
+    if ('auto_envios' in (req.body || {}) && !('auto_frequencia' in patch)) patch.auto_frequencia = req.body.auto_envios === true;
+    const r = await gruposEnviosConfig.setConfigEnvios(patch, req.user?.userId || null);
     res.json(r);
   } catch (e) { console.error('[grupos envios config put]', e.message); res.status(500).json({ error: 'Erro ao salvar config de envios' }); }
 });
@@ -1745,7 +1755,29 @@ router.get('/envios/historico', authorizeModule('grupos', 1), async (req, res) =
       .select('id, telefone, template, contexto, status, criado_em, enviado_em, erro')
       .like('contexto', 'grupos.%')
       .order('criado_em', { ascending: false }).limit(80);
-    res.json({ items: data || [] });
+    const rows = data || [];
+
+    // "quem foram as pessoas" (Marcos 2026-07-23): resolve telefone → nome.
+    // 1º pelos líderes (whatsapp_lideres · a maioria dos envios), depois um
+    // fallback em mem_membros pros não-líderes. Chave = últimos 8 dígitos
+    // (robusto a formatação/DDI/9).
+    const last8 = (t) => String(t || '').replace(/\D/g, '').slice(-8);
+    const nomePorTel = {};
+    try {
+      const { data: lids } = await supabase.from('whatsapp_lideres')
+        .select('telefone, nome_exibicao').is('deleted_at', null);
+      (lids || []).forEach(l => { const k = last8(l.telefone); if (k && l.nome_exibicao && !nomePorTel[k]) nomePorTel[k] = l.nome_exibicao; });
+    } catch { /* segue sem os líderes */ }
+    // Fallback pros telefones ainda sem nome (limitado · view sob demanda)
+    const faltam = [...new Set(rows.map(r => last8(r.telefone)).filter(k => k && !nomePorTel[k]))].slice(0, 60);
+    for (const k of faltam) {
+      const { data: m } = await supabase.from('mem_membros')
+        .select('nome, telefone').ilike('telefone', `%${k}%`).is('deleted_at', null).limit(1);
+      if (m && m[0]?.nome) nomePorTel[k] = m[0].nome;
+    }
+
+    const items = rows.map(r => ({ ...r, nome: nomePorTel[last8(r.telefone)] || null }));
+    res.json({ items });
   } catch (e) { console.error('[grupos envios historico]', e.message); res.status(500).json({ error: 'Erro ao carregar o histórico de envios' }); }
 });
 
@@ -3600,10 +3632,10 @@ router.get('/pessoas/papeis', async (req, res) => {
         if (RANK.supervisor > pe.rank) { pe.rank = RANK.supervisor; pe.papel = 'supervisor'; }
       }
     }
-    // Confia na função real (o trigger fn_grupo_auto_membro mantém visitante →
-    // frequentador no 4º check-in). NÃO rebaixa por contagem de presenças: os
-    // membros atuais são Membro por decisão do Marcos; visitante é só pro novo
-    // entrante. Alinha com o Tipo do detalhe do grupo (#1200) e o default #1207.
+    // Confia na função real (o trigger fn_grupo_auto_membro promove visitante →
+    // frequentador na 1ª presença · Marcos 2026-07-23). NÃO rebaixa por
+    // contagem: os membros atuais são Membro por decisão do Marcos; visitante é
+    // só pro novo entrante (até a 1ª presença).
     Object.values(pessoas).forEach(pe => { if (!pe.papel) pe.papel = 'frequentador'; });
 
     // Data da última presença em grupo (status de frequência da aba Pessoas)
@@ -3615,6 +3647,26 @@ router.get('/pessoas/papeis', async (req, res) => {
       });
     } catch (eFreq) {
       console.error('[grupos] ultima_frequencia:', eFreq.message); // best-effort · não derruba a lista
+    }
+
+    // Último envio de WhatsApp que a pessoa recebeu (Marcos 2026-07-23: saber se
+    // estamos mandando demais/de menos pra alguém). Cruza por telefone (últimos
+    // 8 dígitos) com whatsapp_envios de contexto grupos.* — best-effort.
+    try {
+      const last8 = (t) => String(t || '').replace(/\D/g, '').slice(-8);
+      const { data: envs } = await supabase.from('whatsapp_envios')
+        .select('telefone, template, criado_em')
+        .like('contexto', 'grupos.%')
+        .order('criado_em', { ascending: false })
+        .limit(2000);
+      const ultimoPorTel = {};
+      (envs || []).forEach(e => { const k = last8(e.telefone); if (k && !ultimoPorTel[k]) ultimoPorTel[k] = { em: e.criado_em, template: e.template }; });
+      Object.values(pessoas).forEach(pe => {
+        const u = pe.telefone ? ultimoPorTel[last8(pe.telefone)] : null;
+        pe.ultimo_envio = u || null;
+      });
+    } catch (eEnv) {
+      console.error('[grupos] ultimo_envio:', eEnv.message); // best-effort
     }
 
     const lista = Object.values(pessoas)
