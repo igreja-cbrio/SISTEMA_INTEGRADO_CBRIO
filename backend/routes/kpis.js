@@ -906,6 +906,27 @@ router.post('/batismos', authorizeBatismo, async (req, res) => {
     // fail-open: segue sem vínculo (Entradas liga depois)
   }
 
+  // Dedup de INSCRIÇÃO no totem (self-service · mesma regra da porta pública):
+  // a mesma pessoa não abre 2 inscrições em aberto. Por membro OU CPF. O cadastro
+  // interno da equipe (origem 'manual') mantém liberdade de reinscrever.
+  if (origem === 'totem') {
+    const ors = [];
+    if (membro_id) ors.push(`membro_id.eq.${membro_id}`);
+    if (cpfClean) ors.push(`cpf.eq.${cpfClean}`);
+    if (ors.length) {
+      const { data: dups } = await supabase
+        .from('batismo_inscricoes')
+        .select('id, status')
+        .or(ors.join(','))
+        .in('status', ['pendente', 'confirmado'])
+        .is('deleted_at', null)
+        .limit(1);
+      if (dups && dups[0]) {
+        return res.json({ ok: true, duplicado: true, mensagem: `Você já tem uma inscrição de batismo em andamento (${dups[0].status}).` });
+      }
+    }
+  }
+
   const { data: inscricao, error } = await supabase
     .from('batismo_inscricoes')
     .insert({

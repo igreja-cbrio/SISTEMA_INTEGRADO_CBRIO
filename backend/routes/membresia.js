@@ -1341,7 +1341,65 @@ router.post('/totem/grupos/:id/entrar', async (req, res) => {
       return res.status(400).json({ error: 'membro_id ou cadastro_pendente_id obrigatório' });
     }
 
-    // Idempotente: pedido pendente do mesmo solicitante pro mesmo grupo não duplica.
+    // ── Gates de entrada · MESMAS regras da porta pública (publicGrupos.js) ──
+    // O totem não pode aceitar o que o formulário público barra: grupo por
+    // convite ('fechado'), inscrições fechadas, temporada fechada, gênero
+    // incompatível. Antes o totem pulava tudo isso.
+    const { data: grupo } = await supabase.from('mem_grupos')
+      .select('id, nome, ativo, aceitando_inscricoes, modo_inscricao, temporada, categoria, lider_id')
+      .eq('id', grupoId).is('deleted_at', null).maybeSingle();
+    if (!grupo || !grupo.ativo) {
+      return res.status(404).json({ error: 'Grupo não encontrado ou inativo.' });
+    }
+    if (grupo.modo_inscricao === 'fechado') {
+      return res.status(403).json({ error: 'Este grupo é por convite do líder — fale com ele para participar.', codigo: 'inscricoes_fechadas' });
+    }
+    if (grupo.aceitando_inscricoes === false) {
+      return res.status(403).json({ error: 'Este grupo não está recebendo novas inscrições no momento.', codigo: 'inscricoes_fechadas' });
+    }
+    if (grupo.temporada && grupo.modo_inscricao !== 'sempre_aberto') {
+      const { data: temporada } = await supabase.from('mem_temporadas')
+        .select('inscricoes_abertas').eq('id', grupo.temporada).maybeSingle();
+      if (!temporada?.inscricoes_abertas) {
+        return res.status(403).json({ error: 'As inscrições para esta temporada estão fechadas no momento.', codigo: 'inscricoes_fechadas' });
+      }
+    }
+
+    // Snapshot + identidade da pessoa (pro gate de gênero, dedup e rastro).
+    let pessoa = {
+      nome: nome ? String(nome).trim() : null,
+      telefone: telefone || null,
+      email: email ? String(email).trim().toLowerCase() : null,
+      cpf: null, data_nascimento: null, genero: null,
+    };
+    if (membro_id) {
+      const { data: m } = await supabase.from('mem_membros')
+        .select('nome, telefone, email, cpf, data_nascimento, genero').eq('id', membro_id).maybeSingle();
+      if (m) pessoa = { nome: pessoa.nome || m.nome, telefone: pessoa.telefone || m.telefone, email: pessoa.email || m.email, cpf: m.cpf, data_nascimento: m.data_nascimento, genero: m.genero };
+    } else if (cadastro_pendente_id) {
+      const { data: c } = await supabase.from('mem_cadastros_pendentes')
+        .select('nome, telefone, email, cpf, data_nascimento').eq('id', cadastro_pendente_id).maybeSingle();
+      if (c) pessoa = { ...pessoa, nome: pessoa.nome || c.nome, telefone: pessoa.telefone || c.telefone, email: pessoa.email || c.email, cpf: c.cpf, data_nascimento: c.data_nascimento };
+    }
+    if (!pessoa.nome) return res.status(400).json({ error: 'Não foi possível identificar o solicitante' });
+
+    // Gênero (única trava de compatibilidade · lei 2026-07-14) — só quando o
+    // gênero é conhecido; sem o dado, não trava (o líder decide na aprovação).
+    const cat = String(grupo.categoria || '').toLowerCase();
+    const gen = String(pessoa.genero || '').toLowerCase();
+    if ((cat === 'mulheres' && gen === 'masculino') || (cat === 'homens' && gen === 'feminino')) {
+      return res.status(422).json({
+        codigo: 'grupo_incompativel',
+        error: cat === 'mulheres' ? 'Este é um grupo só de mulheres.' : 'Este é um grupo só de homens.',
+      });
+    }
+
+    // Dedup: já é membro ativo (renovação · não abre pedido) OU já tem pedido pendente.
+    if (membro_id) {
+      const { data: ativo } = await supabase.from('mem_grupo_membros')
+        .select('id').eq('grupo_id', grupoId).eq('membro_id', membro_id).is('saiu_em', null).is('deleted_at', null).limit(1);
+      if (ativo && ativo.length) return res.json({ ok: true, ja_membro: true, grupo_nome: grupo.nome, mensagem: 'Você já participa deste grupo.' });
+    }
     let dedupQ = supabase.from('mem_grupo_pedidos')
       .select('id').eq('grupo_id', grupoId).eq('status', 'pendente').limit(1);
     dedupQ = membro_id
@@ -1350,23 +1408,15 @@ router.post('/totem/grupos/:id/entrar', async (req, res) => {
     const { data: existente } = await dedupQ.maybeSingle();
     if (existente) return res.json({ ok: true, pedido_id: existente.id, ja_existia: true });
 
-    // Snapshot de contato (nome é NOT NULL na tabela)
-    let pessoa = {
-      nome: nome ? String(nome).trim() : null,
-      telefone: telefone || null,
-      email: email ? String(email).trim().toLowerCase() : null,
-    };
-    if (membro_id && !pessoa.nome) {
-      const { data: m } = await supabase.from('mem_membros')
-        .select('nome, telefone, email').eq('id', membro_id).maybeSingle();
-      if (m) pessoa = { nome: m.nome, telefone: m.telefone, email: m.email };
-    }
-    if (!pessoa.nome && cadastro_pendente_id) {
-      const { data: c } = await supabase.from('mem_cadastros_pendentes')
-        .select('nome, telefone, email').eq('id', cadastro_pendente_id).maybeSingle();
-      if (c) pessoa = { nome: c.nome, telefone: c.telefone, email: c.email };
-    }
-    if (!pessoa.nome) return res.status(400).json({ error: 'Não foi possível identificar o solicitante' });
+    // Rastro de identidade (Contrato de porta · igual ao público · best-effort).
+    try {
+      const { registrarObservacaoSegura } = require('../services/identidadeProgressiva');
+      await registrarObservacaoSegura({
+        membroId: membro_id || null, origem: 'grupos_totem', origemId: cadastro_pendente_id || null,
+        nome: pessoa.nome, cpf: pessoa.cpf, email: pessoa.email,
+        telefone: pessoa.telefone, dataNascimento: pessoa.data_nascimento,
+      });
+    } catch (e) { console.error('[TOTEM] grupo registrarObservacao:', e.message); }
 
     const { data: pedido, error } = await supabase.from('mem_grupo_pedidos')
       .insert({
@@ -1383,21 +1433,34 @@ router.post('/totem/grupos/:id/entrar', async (req, res) => {
         status: 'pendente',
       })
       .select('id').single();
-    if (error) throw error;
+    if (error) {
+      if (error.code === '23505') return res.json({ ok: true, ja_existia: true });
+      throw error;
+    }
 
-    const { data: grupo } = await supabase.from('mem_grupos')
-      .select('nome').eq('id', grupoId).maybeSingle();
+    // Linha do tempo do pedido (histórico da caixa de entrada · igual ao público).
+    try {
+      require('../services/grupoPedidoEventos').registrarEventoPedido(pedido.id, 'criado', { grupo: grupo.nome, origem: 'totem' });
+    } catch { /* best-effort */ }
+
+    let liderAuthUserId = null;
+    if (grupo.lider_id) {
+      const { data: liderProf } = await supabase.from('vol_profiles')
+        .select('auth_user_id').eq('membresia_id', grupo.lider_id).maybeSingle();
+      liderAuthUserId = liderProf?.auth_user_id || null;
+    }
     notificar({
       modulo: 'grupos',
       tipo: 'pedido_grupo',
-      titulo: `Novo pedido para ${grupo?.nome || 'grupo'}`,
+      titulo: `Novo pedido para ${grupo.nome || 'grupo'}`,
       mensagem: `${pessoa.nome} pediu para entrar no grupo pelo totem.`,
       link: '/grupos?tab=entrada',
       severidade: 'aviso',
       chaveDedup: `pedido_grupo_${pedido.id}`,
+      extraTargetIds: liderAuthUserId ? [liderAuthUserId] : [],
     }).catch(() => {});
 
-    res.status(201).json({ ok: true, pedido_id: pedido.id, grupo_nome: grupo?.nome || null });
+    res.status(201).json({ ok: true, pedido_id: pedido.id, grupo_nome: grupo.nome || null });
   } catch (e) {
     console.error('[TOTEM] pedido grupo error:', e.message);
     res.status(500).json({ error: 'Erro ao registrar pedido' });
