@@ -11,7 +11,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { grupos as api } from '../../api';
 import { Button } from '../../components/ui/button';
 import { toast } from 'sonner';
-import { Send, Power, Users, CheckCircle2, AlertTriangle, RefreshCw, Zap, Info } from 'lucide-react';
+import { Send, Power, Users, CheckCircle2, AlertTriangle, RefreshCw, Zap, Info, Paperclip, FileText, X } from 'lucide-react';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
@@ -45,6 +45,14 @@ export default function GruposEnvios({ podeEditar = false }) {
   const [enviando, setEnviando] = useState(false);
   const [confirmando, setConfirmando] = useState(false);
   const [dispRenov, setDispRenov] = useState(false);
+
+  // Box "Materiais" — mesmo formato do de chamada, com anexo de arquivo.
+  const [tipoAudM, setTipoAudM] = useState('todos');
+  const [valorAudM, setValorAudM] = useState('');
+  const [arquivoM, setArquivoM] = useState(null);
+  const [previewM, setPreviewM] = useState(null);
+  const [carregandoPreviewM, setCarregandoPreviewM] = useState(false);
+  const [enviandoM, setEnviandoM] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -109,6 +117,36 @@ export default function GruposEnvios({ podeEditar = false }) {
       api.envios.historico().then(res => setHistorico(res?.items || [])).catch(() => {});
     } catch (e) { toast.error(e.message || 'Erro ao enviar'); }
     finally { setEnviando(false); }
+  };
+
+  // ── Material (anexo) ──
+  const audienciaM = () => ({ tipo: tipoAudM, valor: tipoAudM === 'todos' ? null : valorAudM });
+  const audienciaMValida = () => tipoAudM === 'todos' || !!valorAudM;
+
+  const gerarPreviewM = async () => {
+    if (!audienciaMValida()) { toast.error('Escolha o destino.'); return; }
+    setCarregandoPreviewM(true); setPreviewM(null);
+    try { setPreviewM(await api.envios.previewMaterial(audienciaM())); }
+    catch (e) { toast.error(e.message || 'Erro ao gerar prévia'); }
+    finally { setCarregandoPreviewM(false); }
+  };
+
+  const enviarMaterial = async () => {
+    if (!arquivoM) { toast.error('Anexe o arquivo do material.'); return; }
+    if (!(previewM?.total > 0)) { toast.error('Gere a prévia — ninguém pra enviar.'); return; }
+    if (!confirm(`Enviar o material "${arquivoM.name}" para ${previewM.total} líder(es)?`)) return;
+    setEnviandoM(true);
+    try {
+      const r = await api.envios.dispararMaterial(arquivoM, audienciaM(), arquivoM.name);
+      if (r?.motivo === 'template_material_nao_configurado') {
+        toast.warning('Material salvo, mas o envio por WhatsApp precisa do template aprovado na Meta (testamos na próxima temporada).');
+      } else {
+        toast.success(`${r?.enfileirados ?? 0} mensagem(ns) na fila de envio`);
+      }
+      setPreviewM(null); setArquivoM(null); setValorAudM('');
+      api.envios.historico().then(res => setHistorico(res?.items || [])).catch(() => {});
+    } catch (e) { toast.error(e.message || 'Erro ao enviar o material'); }
+    finally { setEnviandoM(false); }
   };
 
   const dispararRenovacao = async () => {
@@ -242,6 +280,86 @@ export default function GruposEnvios({ podeEditar = false }) {
             {preview.total > 0 ? (
               <Button disabled={enviando || !podeEditar} onClick={() => setConfirmando(true)}>
                 <Send size={14} style={{ marginRight: 6 }} /> Enviar para {preview.total} líder(es)
+              </Button>
+            ) : (
+              <div style={{ fontSize: 13, color: C.amber }}>Ninguém para enviar com esse destino.</div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* 2b) MATERIAIS (manual · igual ao de chamada, com anexo de arquivo) */}
+      <div style={{ background: C.card, borderRadius: 16, border: `1px solid ${C.border}`, padding: 18, opacity: bloqueado ? 0.6 : 1 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+          <FileText size={17} style={{ color: C.primary }} />
+          <h2 style={{ fontSize: 15, fontWeight: 700, color: C.text, margin: 0 }}>Enviar material (manual)</h2>
+        </div>
+        <p style={{ fontSize: 12.5, color: C.t3, margin: '0 0 12px', lineHeight: 1.5 }}>
+          Anexe o arquivo e escolha o destino — mesma lógica da chamada. {bloqueado && <strong style={{ color: C.red }}>Bloqueio geral ligado — nada sai. </strong>}
+          O envio por WhatsApp depende do template de material aprovado na Meta (testamos na próxima temporada).
+        </p>
+        {/* Anexo */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '8px 14px', borderRadius: 8, border: `1px dashed ${C.primary}`, color: C.primary, fontSize: 12.5, fontWeight: 600, cursor: 'pointer' }}>
+            <Paperclip size={14} /> {arquivoM ? 'Trocar arquivo' : 'Anexar arquivo'}
+            <input type="file" style={{ display: 'none' }} onChange={e => { setArquivoM(e.target.files?.[0] || null); setPreviewM(null); }} />
+          </label>
+          {arquivoM && (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: C.text }}>
+              <FileText size={13} style={{ color: C.t3 }} /> {arquivoM.name}
+              <button type="button" onClick={() => setArquivoM(null)} style={{ background: 'none', border: 'none', color: C.t3, cursor: 'pointer', display: 'flex' }}><X size={14} /></button>
+            </span>
+          )}
+        </div>
+        {/* Destino (igual ao box de chamada) */}
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12 }}>
+          <select value={tipoAudM} onChange={e => { setTipoAudM(e.target.value); setValorAudM(''); setPreviewM(null); }} style={selStyle}>
+            <option value="todos">Todos os líderes</option>
+            <option value="lider">Um líder específico</option>
+            <option value="bairro">Por bairro</option>
+            <option value="rede">Por rede</option>
+          </select>
+          {tipoAudM === 'lider' && (
+            <select value={valorAudM} onChange={e => { setValorAudM(e.target.value); setPreviewM(null); }} style={{ ...selStyle, minWidth: 260 }}>
+              <option value="">Escolha o grupo/líder...</option>
+              {(aux?.grupos || []).map(g => <option key={g.id} value={g.id}>{g.nome}{g.lider_nome ? ` — ${g.lider_nome}` : ''}</option>)}
+            </select>
+          )}
+          {tipoAudM === 'bairro' && (
+            <select value={valorAudM} onChange={e => { setValorAudM(e.target.value); setPreviewM(null); }} style={selStyle}>
+              <option value="">Escolha o bairro...</option>
+              {(aux?.bairros || []).map(b => <option key={b} value={b}>{b}</option>)}
+            </select>
+          )}
+          {tipoAudM === 'rede' && (
+            <select value={valorAudM} onChange={e => { setValorAudM(e.target.value); setPreviewM(null); }} style={selStyle}>
+              <option value="">Escolha a rede...</option>
+              {(aux?.redes || []).map(r => <option key={r.id} value={r.id}>{r.nome}</option>)}
+            </select>
+          )}
+          <Button variant="outline" disabled={carregandoPreviewM || !audienciaMValida()} onClick={gerarPreviewM}>
+            {carregandoPreviewM ? 'Calculando...' : 'Ver prévia'}
+          </Button>
+        </div>
+
+        {previewM && (
+          <div style={{ border: `1px solid ${C.border}`, borderRadius: 12, padding: 14, background: C.bg }}>
+            <div style={{ fontSize: 13.5, color: C.text, fontWeight: 600, marginBottom: 8 }}>
+              <Users size={14} style={{ display: 'inline', verticalAlign: -2, marginRight: 6, color: C.primary }} />
+              {previewM.total} líder(es) vão receber o material
+            </div>
+            {previewM.excluidos_total > 0 && (
+              <div style={{ fontSize: 12, color: C.t3, marginBottom: 10 }}>
+                🚫 {previewM.excluidos_total} não recebem:
+                {previewM.excluidos.sem_lider ? ` ${previewM.excluidos.sem_lider} sem líder ·` : ''}
+                {previewM.excluidos.sem_telefone ? ` ${previewM.excluidos.sem_telefone} sem WhatsApp ·` : ''}
+                {previewM.excluidos.opt_out ? ` ${previewM.excluidos.opt_out} pediram pra não receber ·` : ''}
+                {previewM.excluidos.sem_roster ? ` ${previewM.excluidos.sem_roster} sem participantes` : ''}
+              </div>
+            )}
+            {previewM.total > 0 ? (
+              <Button disabled={enviandoM || !podeEditar || !arquivoM} onClick={enviarMaterial}>
+                <Send size={14} style={{ marginRight: 6 }} /> {enviandoM ? 'Enviando...' : (arquivoM ? `Enviar material para ${previewM.total} líder(es)` : 'Anexe o arquivo primeiro')}
               </Button>
             ) : (
               <div style={{ fontSize: 13, color: C.amber }}>Ninguém para enviar com esse destino.</div>

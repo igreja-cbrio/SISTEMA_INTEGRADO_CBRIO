@@ -43,6 +43,10 @@ const TPL_FREQUENCIA_MES = process.env.WHATSAPP_TEMPLATE_GRUPOS_FREQUENCIA || 'g
 // body — lição do grupos_sugestao_grupo: 2º link/tom promocional reclassifica
 // como MARKETING). Renovação semestral: o líder diz se continua com o grupo.
 const TPL_RENOVACAO = process.env.WHATSAPP_TEMPLATE_GRUPOS_RENOVACAO || 'grupos_renovacao_temporada';
+// Material do grupo (envio manual · aba Envios). O template ainda NÃO existe na
+// Meta (Marcos: testar na próxima temporada) → sem a env, montarEnvioMaterial
+// devolve erro 'sem_template' e nada sai (nunca texto livre proativo).
+const TPL_MATERIAL = process.env.WHATSAPP_TEMPLATE_GRUPOS_MATERIAL || null;
 // «Olá {{1}}! Recebemos sua inscrição em {{2}}. 💙 Em breve te damos os
 // próximos passos.» — mensagem 1 da inscrição (a 2 é o grupos_pedido_aprovado).
 const TPL_INSCRICAO_CONFIRMADA = process.env.WHATSAPP_TEMPLATE_INSCRICAO_CONFIRMADA || 'cbrio_inscricao_confirmada';
@@ -336,6 +340,30 @@ function montarEnvioRenovacao({ grupo, lider, temporada, renovacaoId, geracao })
   };
 }
 
+// Template 6 · material do grupo (envio manual · aba Envios · Marcos 23/07).
+// {{1}} primeiro nome do líder · {{2}} título/material · {{3}} link do arquivo.
+// Monta SEM enviar (o disparo manual enfileira em lote). ⚠️ Sem o template
+// aprovado na Meta (env WHATSAPP_TEMPLATE_GRUPOS_MATERIAL), devolve 'sem_template'
+// e NADA sai — nunca texto livre (barreira). Testar na próxima temporada.
+function montarEnvioMaterial({ lider, link, titulo }) {
+  if (!WHATSAPP_LIGADO()) return { erro: 'disabled' };
+  if (!lider?.telefone) return { erro: 'lider_sem_telefone' };
+  if (!TPL_MATERIAL) return { erro: 'sem_template' };
+  return {
+    envio: {
+      telefone: lider.telefone,
+      template: TPL_MATERIAL,
+      params: [
+        (lider.nome || '').trim().split(/\s+/)[0] || 'Líder',
+        (titulo || 'Material do grupo').slice(0, 120),
+        link || '',
+      ],
+      contexto: 'grupos.material',
+      refId: null,
+    },
+  };
+}
+
 // Template 5 · cbrio_inscricao_confirmada — mensagem 1 pra PESSOA no momento
 // da inscrição («recebemos, em breve os próximos passos» · a mensagem 2 é o
 // grupos_pedido_aprovado, na aprovação). {{1}} primeiro nome · {{2}} grupo.
@@ -373,5 +401,6 @@ module.exports = {
   montarEnvioFrequencia,
   notificarLiderFrequencia,
   montarEnvioRenovacao,
+  montarEnvioMaterial,
   enviarInscricaoConfirmada,
 };

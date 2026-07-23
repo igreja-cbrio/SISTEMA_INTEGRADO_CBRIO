@@ -14,7 +14,7 @@
 //    proativo (o que a Meta bloqueava).
 // ============================================================================
 const { supabase } = require('../utils/supabase');
-const { montarEnvioFrequencia, rotuloMes } = require('./gruposWhatsapp');
+const { montarEnvioFrequencia, montarEnvioMaterial, rotuloMes } = require('./gruposWhatsapp');
 const { enfileirarLote } = require('./whatsappFila');
 // Config dos interruptores vive no módulo leaf (sem require circular).
 const { bloqueioTotalAtivo } = require('./gruposEnviosConfig');
@@ -132,8 +132,54 @@ async function dispararFrequencia(audiencia) {
   return { enfileirados: lote.queued, destinatarios: r.total, excluidos: r.excluidos, falhou_montar: semTemplate };
 }
 
+// ── MATERIAL (mesma audiência da frequência · anexo de arquivo) ─────────────
+// Prévia: quem receberia (idêntica à da frequência · mesmo público de líderes).
+async function previewMaterial(audiencia) {
+  const r = await montarDestinatariosFrequencia(audiencia);
+  if (r.erro) return r;
+  const primeiro = r.incluidos[0];
+  let exemplo = null;
+  if (primeiro) {
+    const nome = (primeiro.lider.nome || '').trim().split(/\s+/)[0] || 'líder';
+    exemplo = {
+      lider: primeiro.lider.nome,
+      grupo: primeiro.grupo.nome,
+      texto: `Oi, ${nome}! Segue o material do grupo ${primeiro.grupo.nome}: <link do arquivo>. `
+        + `(via template aprovado — precisa do template de material na Meta pra enviar de verdade)`,
+    };
+  }
+  return {
+    total: r.total,
+    exemplo,
+    excluidos: r.excluidos,
+    excluidos_total: Object.values(r.excluidos).reduce((a, b) => a + b, 0),
+  };
+}
+
+// Disparo do material (manual · via fila/template · respeita opt-out/roster/bloqueio).
+async function dispararMaterial(audiencia, { link, titulo }) {
+  if (await bloqueioTotalAtivo()) return { erro: 'Envios de grupos estão BLOQUEADOS (bloqueio geral ligado). Desligue na aba Envios pra poder enviar.' };
+  const r = await montarDestinatariosFrequencia(audiencia);
+  if (r.erro) return r;
+  const envios = [];
+  let semTemplate = 0;
+  for (const { lider } of r.incluidos) {
+    const m = montarEnvioMaterial({ lider, link, titulo });
+    if (m.erro) { if (m.erro === 'sem_template') semTemplate++; continue; }
+    envios.push(m.envio);
+  }
+  const lote = envios.length ? await enfileirarLote(envios) : { queued: 0 };
+  return {
+    enfileirados: lote.queued, destinatarios: r.total, excluidos: r.excluidos,
+    // Sem template aprovado na Meta, nada é enfileirado — sinaliza pro front.
+    motivo: (!envios.length && semTemplate) ? 'template_material_nao_configurado' : null,
+  };
+}
+
 module.exports = {
   previewFrequencia,
   dispararFrequencia,
+  previewMaterial,
+  dispararMaterial,
   montarDestinatariosFrequencia,
 };
