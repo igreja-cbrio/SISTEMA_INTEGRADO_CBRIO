@@ -413,7 +413,7 @@ export default function TotemMembro() {
           <Button
             onClick={(e) => { e.stopPropagation(); encerrarSessao(); }}
             variant="outline"
-            className="flex-1 border-white/20 text-white hover:bg-white/10 py-6 text-base rounded-2xl"
+            className="flex-1 !bg-white/10 border-white/20 text-white hover:!bg-white/20 py-6 text-base rounded-2xl"
           >
             Encerrar
           </Button>
@@ -524,7 +524,7 @@ export default function TotemMembro() {
         />
         {pinError && <p className="text-red-400 text-sm text-center">{pinError}</p>}
         <div className="flex gap-3">
-          <Button variant="outline" onClick={() => { setExitInput(''); setPinError(''); setState('idle'); setMember(null); }} className="flex-1 border-white/20 text-white">Cancelar</Button>
+          <Button variant="outline" onClick={() => { setExitInput(''); setPinError(''); setState('idle'); setMember(null); }} className="flex-1 !bg-white/10 border-white/20 text-white hover:!bg-white/20">Cancelar</Button>
           <Button onClick={handleExit} className="flex-1 bg-[#00B39D] hover:bg-[#00B39D]/90">Confirmar</Button>
         </div>
       </div>
@@ -1077,7 +1077,7 @@ function SuccessActions({ onDone, onEndSession, accent = '#00B39D' }: {
       <Button
         onClick={onEndSession}
         variant="outline"
-        className="w-full py-5 rounded-2xl border-white/20 text-white hover:bg-white/10"
+        className="w-full py-5 rounded-2xl !bg-white/10 border-white/20 text-white hover:!bg-white/20"
       >
         Encerrar sessão <span className="text-white/40 ml-1">({restante}s)</span>
       </Button>
@@ -1130,7 +1130,7 @@ function OptionFlow({ optionId, member, isDark, onBack, onDone, onEndSession, on
             <h3 className="text-2xl font-bold">{opt.label}</h3>
             <p className="text-white/40 mt-2">Em breve disponível neste totem.</p>
           </div>
-          <Button onClick={onBack} variant="outline" className="border-white/20 text-white hover:bg-white/10">
+          <Button onClick={onBack} variant="outline" className="!bg-white/10 border-white/20 text-white hover:!bg-white/20">
             Voltar ao menu
           </Button>
         </div>
@@ -1461,7 +1461,7 @@ function MeusDadosFlow({ opt, member, isDark, onBack, onDone, onActivity }: {
             <p className={`text-sm ${saveMsg.includes('Erro') ? 'text-red-400' : 'text-[#00B39D]'}`}>{saveMsg}</p>
           )}
           <div className="ml-auto flex gap-3">
-            <Button variant="outline" onClick={onBack} className={isDark ? 'border-white/20 text-white hover:bg-white/10' : ''}>
+            <Button variant="outline" onClick={onBack} className={isDark ? '!bg-white/10 border-white/20 text-white hover:!bg-white/20' : ''}>
               Cancelar
             </Button>
             <Button onClick={handleSave} disabled={saving} className="bg-[#00B39D] hover:bg-[#00B39D]/90 text-white gap-2 min-w-[140px]">
@@ -1515,7 +1515,6 @@ function GruposFlow({ opt, member, onBack, onDone, onEndSession, onNovoCadastro,
   const [fDia, setFDia] = useState<string>('');
   const [fRecorrencia, setFRecorrencia] = useState<string>('');
   const [fBairro, setFBairro] = useState<string>('');
-  const [showFiltros, setShowFiltros] = useState(false);
   const [showMap, setShowMap] = useState(false);
   const [selected, setSelected] = useState<any>(null);
   const [saving, setSaving] = useState(false);
@@ -1584,6 +1583,8 @@ function GruposFlow({ opt, member, onBack, onDone, onEndSession, onNovoCadastro,
   });
   const filtrosAtivos = [filterCat, fBairro, fDia !== '' ? fDia : '', fRecorrencia, buscaNorm].filter(Boolean).length;
   const limparFiltros = () => { setFilterCat(''); setFBairro(''); setFDia(''); setFRecorrencia(''); setBusca(''); };
+  // Dropdown escuro (color-scheme:dark deixa a lista aberta legível no totem).
+  const selCls = '!bg-white/10 border border-white/15 text-white text-sm rounded-lg px-3 py-2 outline-none focus:border-[#00B39D] [color-scheme:dark] cursor-pointer';
 
   const handleConfirm = async () => {
     if (!selected || !member.id) return;
@@ -1658,13 +1659,13 @@ function GruposFlow({ opt, member, onBack, onDone, onEndSession, onNovoCadastro,
                 <Button onClick={onNeedIdentify} className="w-full bg-[#00B39D] hover:bg-[#00B39D]/90 py-6 text-base rounded-2xl">
                   Continuar
                 </Button>
-                <Button variant="outline" onClick={() => { setSelected(null); setError(''); }} className="w-full border-white/20 text-white hover:bg-white/10 rounded-2xl">
+                <Button variant="outline" onClick={() => { setSelected(null); setError(''); }} className="w-full !bg-white/10 border-white/20 text-white hover:!bg-white/20 rounded-2xl">
                   Voltar aos grupos
                 </Button>
               </div>
             ) : (
               <div className="flex gap-3">
-                <Button variant="outline" onClick={() => { setSelected(null); setError(''); }} className="flex-1 border-white/20 text-white hover:bg-white/10" disabled={saving}>Cancelar</Button>
+                <Button variant="outline" onClick={() => { setSelected(null); setError(''); }} className="flex-1 !bg-white/10 border-white/20 text-white hover:!bg-white/20" disabled={saving}>Cancelar</Button>
                 <Button onClick={handleConfirm} disabled={saving} className="flex-1 bg-[#00B39D] hover:bg-[#00B39D]/90">
                   {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Enviar pedido'}
                 </Button>
@@ -1709,12 +1710,6 @@ function GruposFlow({ opt, member, onBack, onDone, onEndSession, onNovoCadastro,
             />
           </div>
           <button
-            onClick={() => setShowFiltros(v => !v)}
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-full text-sm transition-colors shrink-0 ${showFiltros || filtrosAtivos ? 'bg-[#00B39D] text-white' : 'bg-white/10 text-white/60 hover:bg-white/15'}`}
-          >
-            <List className="h-3.5 w-3.5" /> Filtros{filtrosAtivos ? ` (${filtrosAtivos})` : ''}
-          </button>
-          <button
             onClick={() => setShowMap(v => !v)}
             className={`flex items-center gap-1.5 px-3 py-2 rounded-full text-sm transition-colors shrink-0 ${showMap ? 'bg-[#00B39D] text-white' : 'bg-white/10 text-white/60 hover:bg-white/15'}`}
           >
@@ -1723,67 +1718,43 @@ function GruposFlow({ opt, member, onBack, onDone, onEndSession, onNovoCadastro,
           </button>
         </div>
 
-        {/* Painel de filtros (dia · frequência · bairro · categoria) */}
-        {showFiltros && (
-          <div className="flex flex-col gap-2.5 rounded-2xl bg-white/[0.03] border border-white/10 p-3">
-            {dias.length > 0 && (
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-xs text-white/40 w-20 shrink-0">Dia</span>
-                {dias.map((d) => (
-                  <button key={d} onClick={() => setFDia(String(d) === fDia ? '' : String(d))}
-                    className={`px-3 py-1 rounded-full text-xs transition-colors ${fDia === String(d) ? 'bg-[#00B39D] text-white' : 'bg-white/10 text-white/60 hover:bg-white/15'}`}>
-                    {DIAS_MAP[d]}
-                  </button>
-                ))}
-              </div>
-            )}
-            {recorrencias.length > 0 && (
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-xs text-white/40 w-20 shrink-0">Frequência</span>
-                {recorrencias.map((r) => (
-                  <button key={r} onClick={() => setFRecorrencia(r === fRecorrencia ? '' : r)}
-                    className={`px-3 py-1 rounded-full text-xs transition-colors ${fRecorrencia === r ? 'bg-[#00B39D] text-white' : 'bg-white/10 text-white/60 hover:bg-white/15'}`}>
-                    {RECORRENCIA_LABEL[r] || r}
-                  </button>
-                ))}
-              </div>
-            )}
-            {bairros.length > 0 && (
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-xs text-white/40 w-20 shrink-0">Bairro</span>
-                {bairros.map((b) => (
-                  <button key={b} onClick={() => setFBairro(b === fBairro ? '' : b)}
-                    className={`px-3 py-1 rounded-full text-xs transition-colors ${fBairro === b ? 'bg-[#00B39D] text-white' : 'bg-white/10 text-white/60 hover:bg-white/15'}`}>
-                    {b}
-                  </button>
-                ))}
-              </div>
-            )}
-            {categories.length > 0 && (
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-xs text-white/40 w-20 shrink-0">Categoria</span>
-                {categories.map((cat) => (
-                  <button key={cat} onClick={() => setFilterCat(cat === filterCat ? '' : cat)}
-                    className={`px-3 py-1 rounded-full text-xs transition-colors ${filterCat === cat ? 'bg-[#00B39D] text-white' : 'bg-white/10 text-white/60 hover:bg-white/15'}`}>
-                    {cat}
-                  </button>
-                ))}
-              </div>
-            )}
-            <div className="flex items-center justify-between pt-1">
-              {memberCoords ? (
-                <span className="text-xs text-white/30 flex items-center gap-1">
-                  <Navigation className="h-3 w-3 text-[#00B39D]" /> ordenado por distância
-                </span>
-              ) : <span />}
-              {filtrosAtivos > 0 && (
-                <button onClick={limparFiltros} className="text-xs text-white/50 hover:text-white/80 underline">
-                  Limpar filtros
-                </button>
-              )}
-            </div>
-          </div>
-        )}
+        {/* Dropdowns de filtro (sempre visíveis · igual à inscrição pública) */}
+        <div className="flex items-center gap-2 flex-wrap">
+          {dias.length > 0 && (
+            <select value={fDia} onChange={(e) => setFDia(e.target.value)} className={selCls} aria-label="Filtrar por dia">
+              <option value="">Dia: todos</option>
+              {dias.map((d) => <option key={d} value={String(d)}>{DIAS_MAP[d]}</option>)}
+            </select>
+          )}
+          {recorrencias.length > 0 && (
+            <select value={fRecorrencia} onChange={(e) => setFRecorrencia(e.target.value)} className={selCls} aria-label="Filtrar por frequência">
+              <option value="">Frequência: todas</option>
+              {recorrencias.map((r) => <option key={r} value={r}>{RECORRENCIA_LABEL[r] || r}</option>)}
+            </select>
+          )}
+          {bairros.length > 0 && (
+            <select value={fBairro} onChange={(e) => setFBairro(e.target.value)} className={selCls} aria-label="Filtrar por bairro">
+              <option value="">Bairro: todos</option>
+              {bairros.map((b) => <option key={b} value={b}>{b}</option>)}
+            </select>
+          )}
+          {categories.length > 0 && (
+            <select value={filterCat} onChange={(e) => setFilterCat(e.target.value)} className={selCls} aria-label="Filtrar por categoria">
+              <option value="">Categoria: todas</option>
+              {categories.map((cat) => <option key={cat} value={cat}>{cat}</option>)}
+            </select>
+          )}
+          {filtrosAtivos > 0 && (
+            <button onClick={limparFiltros} className="text-xs text-white/50 hover:text-white/80 underline px-1">
+              Limpar
+            </button>
+          )}
+          {memberCoords && (
+            <span className="text-xs text-white/30 flex items-center gap-1 ml-auto">
+              <Navigation className="h-3 w-3 text-[#00B39D]" /> por distância
+            </span>
+          )}
+        </div>
       </div>
 
       {loading ? (
@@ -2021,7 +1992,7 @@ function BatismoFlow({ opt, member, onBack, onDone, onEndSession, onActivity }: 
               <div className="text-center space-y-4 py-6">
                 <p className="text-white/60">As vagas deste batismo se esgotaram.</p>
                 <p className="text-white/40 text-sm">Procure nossa equipe no lounge para entrar na lista do próximo.</p>
-                <Button onClick={onBack} variant="outline" className="border-white/20 text-white hover:bg-white/10">
+                <Button onClick={onBack} variant="outline" className="!bg-white/10 border-white/20 text-white hover:!bg-white/20">
                   Voltar ao menu
                 </Button>
               </div>
@@ -2714,7 +2685,7 @@ function NextFlow({ opt, member, onBack, onDone, onEndSession, onActivity }: {
               )}
             </div>
             <p className="text-white/40 text-xs">Te esperamos lá!</p>
-            <Button onClick={onBack} variant="outline" className="border-white/20 text-white hover:bg-white/10">
+            <Button onClick={onBack} variant="outline" className="!bg-white/10 border-white/20 text-white hover:!bg-white/20">
               Voltar ao menu
             </Button>
           </div>
@@ -2739,7 +2710,7 @@ function NextFlow({ opt, member, onBack, onDone, onEndSession, onActivity }: {
                 Nenhum evento NEXT está agendado agora. Volte em breve!
               </p>
             </div>
-            <Button onClick={onBack} variant="outline" className="border-white/20 text-white hover:bg-white/10">
+            <Button onClick={onBack} variant="outline" className="!bg-white/10 border-white/20 text-white hover:!bg-white/20">
               Voltar ao menu
             </Button>
           </div>
@@ -3041,7 +3012,7 @@ function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onEndSession, onAct
               <p className="text-3xl font-bold text-[#EC4899]">{fmtDateBR(existente.data_apresentacao)}</p>
               <p className="text-white/60 text-xs mt-2">Domingo • CBRio Sede</p>
             </div>
-            <Button onClick={onBack} variant="outline" className="border-white/20 text-white hover:bg-white/10">
+            <Button onClick={onBack} variant="outline" className="!bg-white/10 border-white/20 text-white hover:!bg-white/20">
               Voltar ao menu
             </Button>
           </div>
