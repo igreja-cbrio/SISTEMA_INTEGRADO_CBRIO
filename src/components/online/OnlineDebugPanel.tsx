@@ -30,7 +30,7 @@ export function OnlineDebugPanel() {
           <h2 className="text-base font-bold leading-tight">Diagnóstico (admin)</h2>
         </div>
         <p className="text-xs text-muted-foreground">
-          Pra descobrir por que as metricas voltam zeradas. Roda os 2 testes e me passa o resultado.
+          Pra descobrir por que as métricas voltam zeradas. Roda os 2 testes e me passa o resultado.
         </p>
 
         {/* Teste 1 · canais autorizados */}
@@ -59,7 +59,7 @@ export function OnlineDebugPanel() {
                   <CheckCircle2 className="h-3.5 w-3.5 text-primary shrink-0" />
                   <div>
                     <div className="font-semibold">{c.title}</div>
-                    <div className="text-muted-foreground">{c.id} · {c.subscriber_count} inscritos · {c.video_count} videos</div>
+                    <div className="text-muted-foreground">{c.id} · {c.subscriber_count} inscritos · {c.video_count} vídeos</div>
                   </div>
                 </div>
               ))}
