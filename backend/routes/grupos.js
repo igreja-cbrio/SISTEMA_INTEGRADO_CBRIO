@@ -3520,6 +3520,7 @@ router.get('/pessoas/papeis', async (req, res) => {
           .from('mem_grupo_membros')
           .select('id, grupo_id, membro_id, funcao, presencas, entrou_em')
           .is('saiu_em', null)
+          .is('deleted_at', null) // alinha ao resto do módulo (Relatórios filtra) · evitava inflar +1 (23/07)
           .in('grupo_id', grupoIds)
           .range(offset, offset + pageSize - 1);
         if (eP) throw eP;

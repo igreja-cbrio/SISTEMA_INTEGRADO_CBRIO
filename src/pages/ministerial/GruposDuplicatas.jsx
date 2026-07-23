@@ -122,6 +122,7 @@ export default function GruposDuplicatas({ podeResolver = false }) {
         <div>
           <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, margin: 0 }}>
             Possíveis duplicatas · {clusters.length} caso{clusters.length === 1 ? '' : 's'}
+            {(() => { const n = clusters.reduce((a, c) => a + (c.pessoas?.length || 0), 0); return n ? ` · ${n} pessoas` : ''; })()}
           </h3>
           <p style={{ fontSize: 12, color: C.t3, margin: '4px 0 0', maxWidth: 680, lineHeight: 1.55 }}>
             Cadastros do universo de grupos que parecem ser a mesma pessoa (mesmo CPF, telefone, e-mail,
