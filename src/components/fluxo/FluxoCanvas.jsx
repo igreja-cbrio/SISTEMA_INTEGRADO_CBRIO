@@ -31,13 +31,14 @@ const TIPO_AJUDA = {
   fim: 'O pedido é encerrado.',
 };
 
-export default function FluxoCanvas({ fluxo, andamento = {}, colaboradores = [], editable = false, onSaveResponsaveis }) {
+export default function FluxoCanvas({
+  fluxo, andamento = {}, colaboradores = [], editable = false,
+  onSaveResponsaveis, onEditEtapa, onDeleteEtapa, onMoveEtapa, onCreateTransicao, onDeleteTransicao,
+}) {
   const wrapRef = useRef(null);
   const [view, setView] = useState({ x: 0, y: 0, scale: 1 });
   const [pos, setPos] = useState({});
   const [sel, setSel] = useState(null);
-  const [savingResp, setSavingResp] = useState(false);
-  const [addPick, setAddPick] = useState('');
   const [info, setInfo] = useState(null); // { etapa, x, y }
   const drag = useRef(null);      // { id, startX, startY, ox, oy } | { pan, startX, startY, vx, vy }
   const reduce = useRef(false);
@@ -123,7 +124,18 @@ export default function FluxoCanvas({ fluxo, andamento = {}, colaboradores = [],
       setPos(p => ({ ...p, [d.id]: { x: d.ox + dx, y: d.oy + dy } }));
     }
   }
-  function onPointerUp() { drag.current = null; }
+  function onPointerUp() {
+    const d = drag.current;
+    if (d?.id && onMoveEtapa) {
+      const p = pos[d.id];
+      if (p && (p.x !== d.ox || p.y !== d.oy)) {
+        const gx = (p.x - PAD) / COL;
+        const gy = (p.y - PAD) / ROW - 1;
+        onMoveEtapa(d.id, Number(gx.toFixed(3)), Number(gy.toFixed(3)));
+      }
+    }
+    drag.current = null;
+  }
 
   function onWheel(e) {
     e.preventDefault();
@@ -281,75 +293,21 @@ export default function FluxoCanvas({ fluxo, andamento = {}, colaboradores = [],
         )}
       </div>
 
-      {selEtapa && (() => {
-        const respIds = (selEtapa.responsaveis || []).map(r => r.profile_id);
-        const mudarResp = async (ids) => {
-          if (!onSaveResponsaveis) return;
-          setSavingResp(true);
-          try { await onSaveResponsaveis(selEtapa.id, ids); setAddPick(''); }
-          finally { setSavingResp(false); }
-        };
-        const disponiveis = (colaboradores || []).filter(c => !respIds.includes(c.id));
-        return (
-          <div style={{
-            marginTop: 12, padding: '12px 14px', background: 'var(--cbrio-card)',
-            border: '1px solid var(--cbrio-border)', borderRadius: 12, fontSize: 13,
-          }}>
-            <div style={{ fontWeight: 700, color: 'var(--cbrio-text)' }}>{selEtapa.label}
-              <span style={{ fontWeight: 500, color: 'var(--cbrio-text2)' }}> · {TIPO_LABEL[selEtapa.tipo] || selEtapa.tipo}</span>
-            </div>
-            <div style={{ color: 'var(--cbrio-text2)', marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: '2px 16px' }}>
-              {selEtapa.area && <span>Área: <b style={{ color: 'var(--cbrio-text)' }}>{selEtapa.area}</b></span>}
-              {selEtapa.status_map && <span>Status: <b style={{ color: 'var(--cbrio-text)' }}>{selEtapa.status_map}</b></span>}
-              {selEtapa.sla_horas != null && <span>SLA: <b style={{ color: 'var(--cbrio-text)' }}>{selEtapa.sla_horas}h</b></span>}
-            </div>
-
-            <div style={{ marginTop: 10, fontSize: 12, fontWeight: 650, color: 'var(--cbrio-text2)', textTransform: 'uppercase', letterSpacing: '.05em' }}>
-              Responsáveis desta etapa
-            </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
-              {selEtapa.responsaveis?.length ? selEtapa.responsaveis.map(r => (
-                <span key={r.profile_id} style={{
-                  display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12.5, fontWeight: 600,
-                  padding: '4px 8px 4px 10px', borderRadius: 999, background: 'var(--cbrio-bg)',
-                  border: '1px solid var(--cbrio-border)', color: 'var(--cbrio-text)',
-                }}>
-                  {r.nome || r.email}
-                  {editable && (
-                    <button title="Remover" disabled={savingResp}
-                      onClick={() => mudarResp(respIds.filter(id => id !== r.profile_id))}
-                      style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--cbrio-text3)', fontSize: 14, lineHeight: 1, padding: 0 }}>×</button>
-                  )}
-                </span>
-              )) : <i style={{ color: 'var(--cbrio-text2)' }}>nenhum atribuído nesta etapa</i>}
-            </div>
-
-            {editable && (
-              <div style={{ display: 'flex', gap: 8, marginTop: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-                <select value={addPick} onChange={e => setAddPick(e.target.value)} disabled={savingResp}
-                  style={{
-                    flex: '1 1 220px', minWidth: 180, padding: '7px 10px', fontSize: 13, borderRadius: 8,
-                    border: '1px solid var(--cbrio-border)', background: 'var(--cbrio-input-bg, var(--cbrio-bg))', color: 'var(--cbrio-text)',
-                  }}>
-                  <option value="">+ Adicionar responsável…</option>
-                  {disponiveis.map(c => <option key={c.id} value={c.id}>{c.name || c.email}</option>)}
-                </select>
-                <button disabled={!addPick || savingResp}
-                  onClick={() => addPick && mudarResp([...respIds, addPick])}
-                  style={{
-                    padding: '7px 14px', fontSize: 13, fontWeight: 650, borderRadius: 8, cursor: addPick ? 'pointer' : 'default',
-                    border: 'none', background: addPick ? '#00B39D' : 'var(--cbrio-border)', color: '#fff', opacity: savingResp ? 0.7 : 1,
-                  }}>{savingResp ? 'Salvando…' : 'Adicionar'}</button>
-              </div>
-            )}
-            {editable && selEtapa.area && (
-              <div style={{ fontSize: 11.5, color: 'var(--cbrio-text3)', marginTop: 8 }}>
-                Quem for adicionado aqui também passa a ver a fila da área <b>{selEtapa.area}</b> e recebe as notificações.
-              </div>
-            )}
-          </div>
-        );
-      })()}
+      {selEtapa && (
+        <EtapaPainel
+          key={selEtapa.id}
+          etapa={selEtapa}
+          etapas={etapas}
+          transicoes={transicoes}
+          editable={editable}
+          colaboradores={colaboradores}
+          onSaveResponsaveis={onSaveResponsaveis}
+          onEditEtapa={onEditEtapa}
+          onDeleteEtapa={(id) => { onDeleteEtapa?.(id); setSel(null); }}
+          onCreateTransicao={onCreateTransicao}
+          onDeleteTransicao={onDeleteTransicao}
+        />
+      )}
     </div>
   );
 }
@@ -359,3 +317,158 @@ const ctrlBtn = {
   background: 'var(--cbrio-card)', color: 'var(--cbrio-text)',
   border: '1px solid var(--cbrio-border)', borderRadius: 8, cursor: 'pointer',
 };
+
+const STATUS_OPCOES = [
+  'aguardando_aprovacao_origem', 'aguardando_merito', 'em_cotacao', 'aguardando_aprovacao_financeira',
+  'pendente', 'em_analise', 'aprovado', 'em_atendimento', 'aguardando_entrega', 'concluido',
+  'aguardando_ajuste', 'sobrestada', 'rejeitado', 'cancelado', 'avaliado',
+];
+
+// Painel da etapa selecionada · read-only ou editor completo (editable).
+function EtapaPainel({ etapa, etapas, transicoes, editable, colaboradores,
+  onSaveResponsaveis, onEditEtapa, onDeleteEtapa, onCreateTransicao, onDeleteTransicao }) {
+  const [form, setForm] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [savingResp, setSavingResp] = useState(false);
+  const [addPick, setAddPick] = useState('');
+  const [ligarA, setLigarA] = useState('');
+  const [ligarLabel, setLigarLabel] = useState('');
+
+  useEffect(() => {
+    setForm({
+      label: etapa.label || '', tipo: etapa.tipo || 'etapa', area: etapa.area || '',
+      status_map: etapa.status_map || '', sla_horas: etapa.sla_horas ?? '', descricao: etapa.descricao || '',
+    });
+    setAddPick(''); setLigarA(''); setLigarLabel('');
+  }, [etapa.id]);
+
+  const respIds = (etapa.responsaveis || []).map(r => r.profile_id);
+  const disponiveis = (colaboradores || []).filter(c => !respIds.includes(c.id));
+  const saidas = (transicoes || []).filter(t => t.de_etapa_id === etapa.id);
+  const etapaNome = (id) => (etapas || []).find(e => e.id === id)?.label || '—';
+  const outras = (etapas || []).filter(e => e.id !== etapa.id && !saidas.some(t => t.para_etapa_id === e.id));
+
+  const mudarResp = async (ids) => {
+    if (!onSaveResponsaveis) return;
+    setSavingResp(true);
+    try { await onSaveResponsaveis(etapa.id, ids); setAddPick(''); } finally { setSavingResp(false); }
+  };
+  const salvar = async () => {
+    if (!form.label?.trim()) return;
+    setSaving(true);
+    try {
+      await onEditEtapa?.(etapa.id, {
+        label: form.label.trim(), tipo: form.tipo, area: form.area || '',
+        status_map: form.status_map || '', sla_horas: form.sla_horas === '' ? null : Number(form.sla_horas),
+        descricao: form.descricao || '',
+      });
+    } finally { setSaving(false); }
+  };
+  const excluir = async () => {
+    if (!window.confirm(`Remover a etapa "${etapa.label}"? As transições ligadas a ela também saem.`)) return;
+    await onDeleteEtapa?.(etapa.id);
+  };
+  const ligar = async () => {
+    if (!ligarA) return;
+    await onCreateTransicao?.({ de_etapa_id: etapa.id, para_etapa_id: ligarA, label: ligarLabel.trim() || null });
+    setLigarA(''); setLigarLabel('');
+  };
+
+  const box = { marginTop: 12, padding: '14px 16px', background: 'var(--cbrio-card)', border: '1px solid var(--cbrio-border)', borderRadius: 12, fontSize: 13 };
+  const inp = { width: '100%', padding: '7px 10px', fontSize: 13, borderRadius: 8, border: '1px solid var(--cbrio-border)', background: 'var(--cbrio-input-bg, var(--cbrio-bg))', color: 'var(--cbrio-text)', boxSizing: 'border-box' };
+  const lbl = { fontSize: 11, fontWeight: 650, color: 'var(--cbrio-text2)', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 3, display: 'block' };
+  const sec = { marginTop: 14, fontSize: 12, fontWeight: 700, color: 'var(--cbrio-text2)', textTransform: 'uppercase', letterSpacing: '.05em' };
+
+  if (!editable) {
+    return (
+      <div style={box}>
+        <div style={{ fontWeight: 700, color: 'var(--cbrio-text)' }}>{etapa.label}
+          <span style={{ fontWeight: 500, color: 'var(--cbrio-text2)' }}> · {TIPO_LABEL[etapa.tipo] || etapa.tipo}</span></div>
+        <div style={{ color: 'var(--cbrio-text2)', marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: '2px 16px' }}>
+          {etapa.area && <span>Área: <b style={{ color: 'var(--cbrio-text)' }}>{etapa.area}</b></span>}
+          {etapa.status_map && <span>Status: <b style={{ color: 'var(--cbrio-text)' }}>{etapa.status_map}</b></span>}
+          {etapa.sla_horas != null && <span>SLA: <b style={{ color: 'var(--cbrio-text)' }}>{etapa.sla_horas}h</b></span>}
+        </div>
+        <div style={{ marginTop: 8, color: 'var(--cbrio-text2)' }}>
+          Responsáveis: {etapa.responsaveis?.length
+            ? <b style={{ color: 'var(--cbrio-text)' }}>{etapa.responsaveis.map(r => r.nome || r.email).join(', ')}</b>
+            : <i>nenhum</i>}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={box}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        <div style={{ gridColumn: '1 / -1' }}>
+          <label style={lbl}>Nome da etapa</label>
+          <input style={inp} value={form.label} onChange={e => setForm(f => ({ ...f, label: e.target.value }))} />
+        </div>
+        <div><label style={lbl}>Tipo</label>
+          <select style={inp} value={form.tipo} onChange={e => setForm(f => ({ ...f, tipo: e.target.value }))}>
+            {Object.entries(TIPO_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </select></div>
+        <div><label style={lbl}>Área (fila)</label>
+          <input style={inp} value={form.area} placeholder="ex.: financeiro" onChange={e => setForm(f => ({ ...f, area: e.target.value }))} /></div>
+        <div><label style={lbl}>Status do sistema</label>
+          <select style={inp} value={form.status_map} onChange={e => setForm(f => ({ ...f, status_map: e.target.value }))}>
+            <option value="">—</option>
+            {STATUS_OPCOES.map(s => <option key={s} value={s}>{s}</option>)}
+          </select></div>
+        <div><label style={lbl}>SLA (horas)</label>
+          <input style={inp} type="number" min="0" value={form.sla_horas} onChange={e => setForm(f => ({ ...f, sla_horas: e.target.value }))} /></div>
+        <div style={{ gridColumn: '1 / -1' }}>
+          <label style={lbl}>Explicação (o “i”)</label>
+          <textarea style={{ ...inp, resize: 'vertical' }} rows={2} value={form.descricao} onChange={e => setForm(f => ({ ...f, descricao: e.target.value }))} /></div>
+      </div>
+      <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+        <button onClick={salvar} disabled={saving || !form.label?.trim()}
+          style={{ padding: '7px 16px', fontSize: 13, fontWeight: 650, borderRadius: 8, border: 'none', background: '#00B39D', color: '#fff', cursor: 'pointer', opacity: saving ? 0.7 : 1 }}>
+          {saving ? 'Salvando…' : 'Salvar etapa'}</button>
+        <button onClick={excluir}
+          style={{ padding: '7px 14px', fontSize: 13, fontWeight: 600, borderRadius: 8, border: '1px solid #ef4444', background: 'transparent', color: '#ef4444', cursor: 'pointer' }}>Excluir</button>
+      </div>
+
+      <div style={sec}>Vai para</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6 }}>
+        {saidas.length ? saidas.map(t => (
+          <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'space-between', background: 'var(--cbrio-bg)', border: '1px solid var(--cbrio-border)', borderRadius: 8, padding: '5px 10px' }}>
+            <span style={{ color: 'var(--cbrio-text)' }}>→ <b>{etapaNome(t.para_etapa_id)}</b>{t.label ? <span style={{ color: 'var(--cbrio-text2)' }}> · {t.label}</span> : null}</span>
+            <button title="Remover ligação" onClick={() => onDeleteTransicao?.(t.id)}
+              style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--cbrio-text3)', fontSize: 15, lineHeight: 1, padding: 0 }}>×</button>
+          </div>
+        )) : <i style={{ color: 'var(--cbrio-text2)' }}>não liga a nenhuma etapa ainda</i>}
+      </div>
+      <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+        <select style={{ ...inp, flex: '1 1 160px' }} value={ligarA} onChange={e => setLigarA(e.target.value)}>
+          <option value="">Ligar a…</option>
+          {outras.map(e => <option key={e.id} value={e.id}>{e.label}</option>)}
+        </select>
+        <input style={{ ...inp, flex: '1 1 120px' }} placeholder="rótulo (opcional)" value={ligarLabel} onChange={e => setLigarLabel(e.target.value)} />
+        <button onClick={ligar} disabled={!ligarA}
+          style={{ padding: '7px 14px', fontSize: 13, fontWeight: 650, borderRadius: 8, border: 'none', background: ligarA ? '#00B39D' : 'var(--cbrio-border)', color: '#fff', cursor: ligarA ? 'pointer' : 'default' }}>Ligar</button>
+      </div>
+
+      <div style={sec}>Responsáveis desta etapa</div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+        {etapa.responsaveis?.length ? etapa.responsaveis.map(r => (
+          <span key={r.profile_id} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12.5, fontWeight: 600, padding: '4px 8px 4px 10px', borderRadius: 999, background: 'var(--cbrio-bg)', border: '1px solid var(--cbrio-border)', color: 'var(--cbrio-text)' }}>
+            {r.nome || r.email}
+            <button title="Remover" disabled={savingResp} onClick={() => mudarResp(respIds.filter(id => id !== r.profile_id))}
+              style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--cbrio-text3)', fontSize: 14, lineHeight: 1, padding: 0 }}>×</button>
+          </span>
+        )) : <i style={{ color: 'var(--cbrio-text2)' }}>nenhum atribuído</i>}
+      </div>
+      <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+        <select value={addPick} onChange={e => setAddPick(e.target.value)} disabled={savingResp} style={{ ...inp, flex: '1 1 200px' }}>
+          <option value="">+ Adicionar responsável…</option>
+          {disponiveis.map(c => <option key={c.id} value={c.id}>{c.name || c.email}</option>)}
+        </select>
+        <button disabled={!addPick || savingResp} onClick={() => addPick && mudarResp([...respIds, addPick])}
+          style={{ padding: '7px 14px', fontSize: 13, fontWeight: 650, borderRadius: 8, border: 'none', background: addPick ? '#00B39D' : 'var(--cbrio-border)', color: '#fff', cursor: addPick ? 'pointer' : 'default' }}>{savingResp ? 'Salvando…' : 'Adicionar'}</button>
+      </div>
+      {etapa.area && <div style={{ fontSize: 11.5, color: 'var(--cbrio-text3)', marginTop: 8 }}>Quem for adicionado aqui também passa a ver a fila da área <b>{etapa.area}</b> e recebe notificações.</div>}
+    </div>
+  );
+}

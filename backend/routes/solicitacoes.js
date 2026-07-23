@@ -167,6 +167,117 @@ router.put('/fluxos/etapas/:etapaId/responsaveis', async (req, res) => {
   }
 });
 
+// ── EDIÇÃO DE TOPOLOGIA DO FLUXO (Fase 2 · super-admin) ───────────────────────
+const FLUXO_TIPOS = ['inicio', 'etapa', 'aprovacao', 'execucao', 'entrega', 'fim'];
+const FLUXO_STATUS_VALIDOS = [
+  'aguardando_aprovacao_origem', 'em_cotacao', 'pendente', 'em_analise', 'aprovado',
+  'rejeitado', 'concluido', 'aguardando_aprovacao_financeira', 'em_atendimento',
+  'aguardando_entrega', 'avaliado', 'aguardando_ajuste', 'cancelado', 'aguardando_merito', 'sobrestada',
+];
+async function guardFluxoAdmin(req, res) {
+  if (!(await isAdminFallback(req))) { res.status(403).json({ error: 'Apenas administradores podem editar o fluxo.' }); return false; }
+  return true;
+}
+
+// Criar etapa no fluxo ATIVO da categoria
+router.post('/fluxos/:categoria/etapas', async (req, res) => {
+  try {
+    if (!(await guardFluxoAdmin(req, res))) return;
+    const b = req.body || {};
+    if (!b.label || !String(b.label).trim()) return res.status(400).json({ error: 'Informe o nome da etapa.' });
+    const tipo = FLUXO_TIPOS.includes(b.tipo) ? b.tipo : 'etapa';
+    if (b.status_map && !FLUXO_STATUS_VALIDOS.includes(b.status_map)) return res.status(400).json({ error: 'Status inválido.' });
+    const { data: fluxo } = await supabase.from('solic_fluxos')
+      .select('id').eq('categoria', req.params.categoria).eq('is_ativa', true).is('deleted_at', null).maybeSingle();
+    if (!fluxo) return res.status(404).json({ error: 'Sem fluxo ativo para esta categoria.' });
+    const chave = (String(b.chave || b.label).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+      .replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'etapa') + '_' + Date.now().toString(36).slice(-4);
+    const { data: maxOrdem } = await supabase.from('solic_fluxo_etapas')
+      .select('ordem').eq('fluxo_id', fluxo.id).is('deleted_at', null).order('ordem', { ascending: false }).limit(1).maybeSingle();
+    const { data, error } = await supabase.from('solic_fluxo_etapas').insert({
+      fluxo_id: fluxo.id, chave, label: String(b.label).trim(), tipo,
+      ordem: (maxOrdem?.ordem ?? -1) + 1,
+      area: b.area || null, modulo: b.modulo || null,
+      status_map: b.status_map || null, sla_horas: b.sla_horas ?? null,
+      descricao: b.descricao || null,
+      pos_x: b.pos_x ?? 0, pos_y: b.pos_y ?? 0,
+    }).select('*').single();
+    if (error) throw error;
+    solicFluxo.bustCache(req.params.categoria);
+    res.status(201).json(data);
+  } catch (e) { console.error('[SOLICITACOES] criar etapa:', e.message); res.status(500).json({ error: e.message }); }
+});
+
+// Editar etapa (campos + posição)
+router.patch('/fluxos/etapas/:id', async (req, res) => {
+  try {
+    if (!(await guardFluxoAdmin(req, res))) return;
+    const b = req.body || {};
+    if (b.tipo != null && !FLUXO_TIPOS.includes(b.tipo)) return res.status(400).json({ error: 'Tipo inválido.' });
+    if (b.status_map && !FLUXO_STATUS_VALIDOS.includes(b.status_map)) return res.status(400).json({ error: 'Status inválido.' });
+    const patch = { atualizado_em: new Date().toISOString() };
+    for (const k of ['label', 'tipo', 'area', 'modulo', 'status_map', 'sla_horas', 'descricao', 'pos_x', 'pos_y']) {
+      if (b[k] !== undefined) patch[k] = b[k] === '' ? null : b[k];
+    }
+    const { data, error } = await supabase.from('solic_fluxo_etapas')
+      .update(patch).eq('id', req.params.id).is('deleted_at', null)
+      .select('*, solic_fluxos(categoria)').single();
+    if (error) throw error;
+    solicFluxo.bustCache(data?.solic_fluxos?.categoria);
+    res.json(data);
+  } catch (e) { console.error('[SOLICITACOES] editar etapa:', e.message); res.status(500).json({ error: e.message }); }
+});
+
+// Remover etapa (soft) + suas transições
+router.delete('/fluxos/etapas/:id', async (req, res) => {
+  try {
+    if (!(await guardFluxoAdmin(req, res))) return;
+    const now = new Date().toISOString();
+    const { data: etapa } = await supabase.from('solic_fluxo_etapas')
+      .select('id, solic_fluxos(categoria)').eq('id', req.params.id).maybeSingle();
+    await supabase.from('solic_fluxo_etapas').update({ deleted_at: now }).eq('id', req.params.id);
+    await supabase.from('solic_fluxo_transicoes').update({ deleted_at: now })
+      .or(`de_etapa_id.eq.${req.params.id},para_etapa_id.eq.${req.params.id}`);
+    solicFluxo.bustCache(etapa?.solic_fluxos?.categoria);
+    res.json({ ok: true });
+  } catch (e) { console.error('[SOLICITACOES] remover etapa:', e.message); res.status(500).json({ error: e.message }); }
+});
+
+// Criar transição (arrastar-pra-conectar)
+router.post('/fluxos/transicoes', async (req, res) => {
+  try {
+    if (!(await guardFluxoAdmin(req, res))) return;
+    const { de_etapa_id, para_etapa_id, verbo, label, condicao_tipo, condicao_valor } = req.body || {};
+    if (!de_etapa_id || !para_etapa_id) return res.status(400).json({ error: 'Origem e destino são obrigatórios.' });
+    if (de_etapa_id === para_etapa_id) return res.status(400).json({ error: 'Uma etapa não liga nela mesma.' });
+    const { data: de } = await supabase.from('solic_fluxo_etapas')
+      .select('fluxo_id, solic_fluxos(categoria)').eq('id', de_etapa_id).is('deleted_at', null).maybeSingle();
+    const { data: para } = await supabase.from('solic_fluxo_etapas').select('fluxo_id').eq('id', para_etapa_id).is('deleted_at', null).maybeSingle();
+    if (!de || !para) return res.status(404).json({ error: 'Etapa não encontrada.' });
+    if (de.fluxo_id !== para.fluxo_id) return res.status(400).json({ error: 'As etapas são de fluxos diferentes.' });
+    const { data, error } = await supabase.from('solic_fluxo_transicoes').insert({
+      fluxo_id: de.fluxo_id, de_etapa_id, para_etapa_id,
+      verbo: verbo || null, label: label || null,
+      condicao_tipo: condicao_tipo || null, condicao_valor: condicao_valor || null,
+    }).select('*').single();
+    if (error) throw error;
+    solicFluxo.bustCache(de.solic_fluxos?.categoria);
+    res.status(201).json(data);
+  } catch (e) { console.error('[SOLICITACOES] criar transicao:', e.message); res.status(500).json({ error: e.message }); }
+});
+
+// Remover transição (soft)
+router.delete('/fluxos/transicoes/:id', async (req, res) => {
+  try {
+    if (!(await guardFluxoAdmin(req, res))) return;
+    const { data: t } = await supabase.from('solic_fluxo_transicoes')
+      .select('fluxo_id, solic_fluxos(categoria)').eq('id', req.params.id).maybeSingle();
+    await supabase.from('solic_fluxo_transicoes').update({ deleted_at: new Date().toISOString() }).eq('id', req.params.id);
+    solicFluxo.bustCache(t?.solic_fluxos?.categoria);
+    res.json({ ok: true });
+  } catch (e) { console.error('[SOLICITACOES] remover transicao:', e.message); res.status(500).json({ error: e.message }); }
+});
+
 // Bust do cache do painel após mutacao (afeta matriz adm/criativo)
 router.use((req, res, next) => {
   if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
