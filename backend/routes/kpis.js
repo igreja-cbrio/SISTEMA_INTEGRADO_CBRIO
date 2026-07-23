@@ -838,7 +838,7 @@ router.post('/batismos', authorizeBatismo, async (req, res) => {
     cpf, nome, sobrenome, data_nascimento, telefone, email,
     origem = 'manual', observacoes, area_kpi,
     tamanho_camisa, eh_crianca, possui_deficiencia, deficiencia_descricao, endereco,
-    horario_culto,
+    horario_culto, sexo,
   } = req.body;
   if (!nome || !sobrenome) return res.status(400).json({ error: 'nome e sobrenome são obrigatórios' });
   const AREAS_OK = ['kids', 'sede', 'bridge', 'ami', 'online'];
@@ -924,6 +924,7 @@ router.post('/batismos', authorizeBatismo, async (req, res) => {
       deficiencia_descricao: possui_deficiencia && deficiencia_descricao
         ? String(deficiencia_descricao).trim() : null,
       endereco: endereco ? String(endereco).trim() : null,
+      ...(sexo ? { sexo: String(sexo).trim().slice(0, 20) } : {}),
       ...(dataBatismo ? { data_batismo: dataBatismo, horario_culto: horarioCulto } : {}),
     })
     .select('*, membro:membro_id(id, nome, foto_url)')
