@@ -247,14 +247,48 @@ router.delete('/contas-pagar/:id', async (req, res) => {
 });
 
 // ── REEMBOLSOS ─────────────────────────────────────────────
+// Reembolsos = solicitações da categoria 'reembolso' (a fonte de verdade · a
+// tabela legada fin_reembolsos ficou vazia). Mapeia pro shape que a tela espera
+// (descricao/valor/data_despesa/status/observacoes) e traduz o status da
+// solicitação pro vocabulário de reembolso. A aprovação continua no módulo
+// /solicitacoes (aqui é visão).
+const REEMB_STATUS_MAP = {
+  aprovado: ['aprovado', 'aguardando_aprovacao_financeira', 'em_cotacao', 'aguardando_merito'],
+  rejeitado: ['rejeitado'],
+  pago: ['concluido', 'pago'],
+  pendente: ['aberto', 'pendente', 'aguardando_aprovacao_origem'],
+};
+function traduzStatusReembolso(s) {
+  if (s === 'rejeitado') return 'rejeitado';
+  if (s === 'concluido' || s === 'pago') return 'pago';
+  if (s === 'aprovado' || s === 'aguardando_aprovacao_financeira' || s === 'em_cotacao' || s === 'aguardando_merito') return 'aprovado';
+  return 'pendente';
+}
 router.get('/reembolsos', async (req, res) => {
   try {
     const { status } = req.query;
-    let query = supabase.from('fin_reembolsos').select('*, profiles!solicitante_id(name)').order('created_at', { ascending: false });
-    if (status) query = query.eq('status', status);
+    let query = supabase
+      .from('solicitacoes')
+      .select('id, titulo, descricao, justificativa, valor_estimado, status, created_at, data_necessaria, observacoes, solicitante_id, profiles!solicitante_id(name)')
+      .eq('categoria', 'reembolso')
+      .is('deleted_at', null)
+      .order('created_at', { ascending: false })
+      .limit(500);
+    if (status && REEMB_STATUS_MAP[status]) query = query.in('status', REEMB_STATUS_MAP[status]);
     const { data, error } = await query;
     if (error) return res.status(400).json({ error: error.message });
-    res.json(data);
+    const mapeado = (data || []).map((s) => ({
+      id: s.id,
+      descricao: s.descricao || s.titulo || 'Reembolso',
+      valor: s.valor_estimado,
+      data_despesa: s.data_necessaria || s.created_at,
+      status: traduzStatusReembolso(s.status),
+      status_original: s.status,
+      observacoes: s.justificativa || s.observacoes || null,
+      solicitante_nome: s.profiles?.name || null,
+      origem: 'solicitacao',
+    }));
+    res.json(mapeado);
   } catch (e) { res.status(500).json({ error: 'Erro ao listar reembolsos' }); }
 });
 

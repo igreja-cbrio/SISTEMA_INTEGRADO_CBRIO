@@ -841,9 +841,15 @@ function NotasFiscaisTab({ data, loading, onNew, onDelete, onReload, onScan, sca
           </td>
           <td style={styles.td}><Badge status={n.origem || 'manual'} map={NF_ORIGEM} /></td>
           <td style={styles.td}>
-            {n.storage_path ? <a href={n.storage_path} target="_blank" rel="noopener noreferrer" style={{ color: C.primary }}>📄 Ver</a>
-            : n.origem === 'mercadolivre' && n.ml_order_id ? <a href={`https://www.mercadolivre.com.br/purchases/${n.ml_order_id}`} target="_blank" rel="noopener noreferrer" style={{ color: C.primary, fontSize: 12 }}>🛒 Ver no ML</a>
-            : '—'}
+            {n.storage_path ? (
+              <span style={{ display: 'inline-flex', gap: 10, whiteSpace: 'nowrap' }}>
+                <a href={n.storage_path} target="_blank" rel="noopener noreferrer" style={{ color: C.primary }}>📄 Ver</a>
+                {/* ?download força o Content-Disposition attachment no Storage público do Supabase */}
+                <a href={`${n.storage_path}${n.storage_path.includes('?') ? '&' : '?'}download`} style={{ color: C.primary, fontSize: 12 }}>⬇ Baixar</a>
+              </span>
+            ) : n.origem === 'mercadolivre' && n.ml_order_id ? (
+              <a href={`https://www.mercadolivre.com.br/purchases/${n.ml_order_id}`} target="_blank" rel="noopener noreferrer" style={{ color: C.primary, fontSize: 12 }}>🛒 Ver no ML</a>
+            ) : '—'}
           </td>
           <td style={styles.td}>
             <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>

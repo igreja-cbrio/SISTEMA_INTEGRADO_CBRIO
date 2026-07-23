@@ -178,6 +178,20 @@ async function gerarForecast({ semanasAdiante = 4 } = {}) {
   const ultimas12 = ordenadas.length >= 12 ? ordenadas.slice(-12).map(s => Number(s.receita_total)) : [];
   const mediaAnual = ultimas12.length ? ultimas12.reduce((s, v) => s + v, 0) / ultimas12.length : null;
 
+  // Tendência semanal por regressão linear simples sobre o histórico (antes a
+  // estimativa era a média das 4 semanas REPETIDA em todas as semanas → o gráfico
+  // ficava achatado, igual pra 2/4/8/12 semanas). Agora cada semana projetada
+  // cresce/decresce compondo a taxa semanal `g` (limitada pra não explodir).
+  const serie = ordenadas.map(s => Number(s.receita_total));
+  const n = serie.length;
+  const xMedia = (n - 1) / 2;
+  const yMedia = serie.reduce((a, b) => a + b, 0) / n;
+  let num = 0, den = 0;
+  for (let k = 0; k < n; k++) { num += (k - xMedia) * (serie[k] - yMedia); den += (k - xMedia) ** 2; }
+  const slope = den ? num / den : 0; // variação absoluta por semana
+  let g = yMedia > 0 ? slope / yMedia : 0; // variação relativa por semana
+  g = Math.max(-0.15, Math.min(0.15, g)); // trava ±15%/semana (evita projeção absurda)
+
   const previsoes = [];
   const lastDate = new Date(ordenadas[ordenadas.length - 1].semana_fim);
 
@@ -187,14 +201,10 @@ async function gerarForecast({ semanasAdiante = 4 } = {}) {
     const fim = new Date(inicio);
     fim.setDate(fim.getDate() + 6);
 
-    // Estimativa base = media 4 semanas, ajustada por tendência anual se houver
-    let estimativa = media4;
-    if (mediaAnual && mediaAnual > 0) {
-      const tendencia = media4 / mediaAnual;
-      estimativa = mediaAnual * tendencia;
-    }
+    // Estimativa = base (média 4 semanas) compondo a tendência semanal · varia por semana
+    const estimativa = Math.max(0, media4 * Math.pow(1 + g, i));
 
-    // Intervalo de confiança · ±20% (heuristico)
+    // Intervalo de confiança · ±20% (heurístico)
     previsoes.push({
       semana_inicio: inicio.toISOString().slice(0, 10),
       semana_fim: fim.toISOString().slice(0, 10),
