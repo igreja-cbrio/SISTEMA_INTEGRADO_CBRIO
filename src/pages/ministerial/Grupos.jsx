@@ -49,7 +49,7 @@ const chartCores = (isDark) => ({
   eixo: 'var(--cbrio-text3)',
 });
 
-const DIAS = ['Domingo', 'Segunda', 'Terca', 'Quarta', 'Quinta', 'Sexta', 'Sabado'];
+const DIAS = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
 // Grupo diário acontece TODOS os dias (Marcos · 17/07): sem dia da semana fixo,
 // aparece em qualquer filtro de dia e mostra "Diário" no lugar do dia.
 const ehDiario = (g) => (g?.recorrencia || '').toLowerCase().trim() === 'diario';
@@ -600,7 +600,7 @@ export default function Grupos() {
       const fd = new FormData();
       fd.append('arquivo', file);
       fd.append('nome', file.name);
-      fd.append('comentario', uploadComment || `Upload por ${profile?.name || 'usuario'}`);
+      fd.append('comentario', uploadComment || `Upload por ${profile?.name || 'usuário'}`);
       fd.append('etiquetas', JSON.stringify(uploadEtiquetas.length > 0 ? uploadEtiquetas : ['Todos']));
       fd.append('grupo_ids', JSON.stringify(uploadGrupoIds));
       await api.uploadMaterial(fd);
@@ -865,7 +865,7 @@ export default function Grupos() {
         )}
         {!isOptimistic && metricas && metricas.total_encontros === 0 && (
           <div style={{ background: C.card, borderRadius: 16, padding: 16, border: '1px dashed var(--hairline)', boxShadow: 'var(--shadow)', marginBottom: 24, fontSize: 12, color: C.t3, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Activity size={14} /> Saude do grupo aparece aqui depois do primeiro encontro registrado.
+            <Activity size={14} /> Saúde do grupo aparece aqui depois do primeiro encontro registrado.
           </div>
         )}
 
@@ -1369,7 +1369,7 @@ export default function Grupos() {
               )}
             </div>
             <div style={{ marginBottom: 10 }}>
-              <Label style={{ fontSize: 11 }}>Grupos especificos (opcional)</Label>
+              <Label style={{ fontSize: 11 }}>Grupos específicos (opcional)</Label>
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
                 {gruposList.filter(g => g.ativo).map(g => {
                   const active = uploadGrupoIds.includes(g.id);
@@ -1771,7 +1771,7 @@ export default function Grupos() {
                       );
                     })()}
                   </div>
-                  {g.lider_nome && <div style={{ fontSize: 12, color: C.t2, marginBottom: 2 }}>Lider: {g.lider_nome}</div>}
+                  {g.lider_nome && <div style={{ fontSize: 12, color: C.t2, marginBottom: 2 }}>Líder: {g.lider_nome}</div>}
                   <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 4 }}>
                     {ehDiario(g) ? (
                       <span style={{ fontSize: 11, color: C.t3, display: 'flex', alignItems: 'center', gap: 3 }}>
@@ -2148,7 +2148,7 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
         <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto min-h-0" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div>
             <Label>Nome do grupo *</Label>
-            <Input value={form.nome || ''} onChange={e => set('nome', e.target.value)} placeholder="Ex: Conexao Barra" />
+            <Input value={form.nome || ''} onChange={e => set('nome', e.target.value)} placeholder="Ex: Conexão Barra" />
           </div>
 
           <div>
@@ -2175,7 +2175,7 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
               </ShadSelect>
             </div>
             <div>
-              <Label>Recorrencia</Label>
+              <Label>Recorrência</Label>
               <ShadSelect
                 value={form.recorrencia || 'semanal'}
                 onValueChange={v => setForm(f => ({
@@ -2275,7 +2275,7 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
               )}
             </div>
             <div>
-              <Label>Horario</Label>
+              <Label>Horário</Label>
               <Input type="time" value={form.horario || ''} onChange={e => set('horario', e.target.value)} />
             </div>
           </div>
@@ -2287,7 +2287,7 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
             </div>
             <div>
               <Label>Endereço</Label>
-              <Input value={form.endereco || ''} onChange={e => set('endereco', e.target.value)} placeholder="Rua, numero" />
+              <Input value={form.endereco || ''} onChange={e => set('endereco', e.target.value)} placeholder="Rua, número" />
             </div>
           </div>
 
@@ -2379,7 +2379,7 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
 
           <div>
             <Label>Tema atual</Label>
-            <Input value={form.tema || ''} onChange={e => set('tema', e.target.value)} placeholder="Ex: Serie Inabalavel" />
+            <Input value={form.tema || ''} onChange={e => set('tema', e.target.value)} placeholder="Ex: Série Inabalável" />
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
@@ -2423,7 +2423,7 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
           </div>
 
           <div>
-            <Label>Grupo de origem (multiplicacao)</Label>
+            <Label>Grupo de origem (multiplicação)</Label>
             <ShadSelect value={form.grupo_origem_id || '_none'} onValueChange={v => set('grupo_origem_id', v === '_none' ? '' : v)}>
               <SelectTrigger><SelectValue placeholder="Nenhum" /></SelectTrigger>
               <SelectContent>
@@ -2502,7 +2502,7 @@ function ChamadaModal({ open, onClose, membros, onSubmit, encontroEdit }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!data) { toast.error('Data obrigatoria'); return; }
+    if (!data) { toast.error('Data obrigatória'); return; }
     setSaving(true);
     await onSubmit({
       data,
@@ -2525,7 +2525,7 @@ function ChamadaModal({ open, onClose, membros, onSubmit, encontroEdit }) {
             </div>
             <div>
               <Label style={{ fontSize: 11 }}>Tema (opcional)</Label>
-              <Input value={tema} onChange={e => setTema(e.target.value)} placeholder="Ex: Mateus 5 - Bem-aventurancas" />
+              <Input value={tema} onChange={e => setTema(e.target.value)} placeholder="Ex: Mateus 5 - Bem-aventuranças" />
             </div>
           </div>
 
@@ -2583,7 +2583,7 @@ function SaudeDoGrupo({ metricas }) {
   const corScore = m.score_saude >= 70 ? C.green : m.score_saude >= 50 ? C.amber : C.red;
   const TendIcon = m.tendencia === 'subindo' ? TrendingUp : m.tendencia === 'caindo' ? TrendingDown : Minus;
   const corTend = m.tendencia === 'subindo' ? C.green : m.tendencia === 'caindo' ? C.red : C.t3;
-  const labelTend = m.tendencia === 'subindo' ? 'Subindo' : m.tendencia === 'caindo' ? 'Caindo' : 'Estavel';
+  const labelTend = m.tendencia === 'subindo' ? 'Subindo' : m.tendencia === 'caindo' ? 'Caindo' : 'Estável';
   const maxBar = Math.max(...(m.presencas_ultimos.length ? m.presencas_ultimos : [1]), 1);
 
   return (
@@ -2600,7 +2600,7 @@ function SaudeDoGrupo({ metricas }) {
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 14 }}>
         <MetricaCard label="Score" valor={m.score_saude} sufixo="/100" cor={corScore} />
-        <MetricaCard label="Frequencia media" valor={m.freq_media} sufixo=" pres." cor={C.primary} />
+        <MetricaCard label="Frequência média" valor={m.freq_media} sufixo=" pres." cor={C.primary} />
         <MetricaCard label="Taxa de presença" valor={m.taxa_presenca} sufixo="%" cor={C.primary} />
         <MetricaCard label="Regularidade" valor={m.regularidade} sufixo="%" cor={m.regularidade >= 70 ? C.green : m.regularidade >= 50 ? C.amber : C.red} />
       </div>
@@ -2611,7 +2611,7 @@ function SaudeDoGrupo({ metricas }) {
           <span style={{ fontSize: 12, color: corTend, fontWeight: 600 }}>{labelTend}</span>
         </div>
         <span style={{ fontSize: 11, color: C.t3 }}>
-          {m.realizados_90d}/{m.esperados_90d} encontros nos ultimos 90 dias
+          {m.realizados_90d}/{m.esperados_90d} encontros nos últimos 90 dias
         </span>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 3, alignItems: 'flex-end', height: 28 }}>
           {m.presencas_ultimos.map((p, i) => (

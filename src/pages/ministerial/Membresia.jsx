@@ -2729,7 +2729,7 @@ export default function Membresia() {
                                 || obs.toLowerCase().includes('planilha');
                               const isCulto = obs.toLowerCase().includes('culto');
                               const fonte = isImportado
-                                ? 'historico importado'
+                                ? 'histórico importado'
                                 : isCulto
                                   ? 'decisão em culto'
                                   : 'registrado';
@@ -2792,7 +2792,7 @@ export default function Membresia() {
                             if (m.ministerios_ativos?.length > 0) {
                               const nomes = m.ministerios_ativos.map(v => {
                                 const desde = fmt(v.desde);
-                                return `${v.ministerio?.nome || 'Ministerio'}${desde ? ` (desde ${desde})` : ''}`;
+                                return `${v.ministerio?.nome || 'Ministério'}${desde ? ` (desde ${desde})` : ''}`;
                               });
                               return { detected: true, detail: nomes.join(', ') };
                             }
@@ -2808,7 +2808,7 @@ export default function Membresia() {
                               const parts = [];
                               if (total > 0) parts.push(`R$ ${total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} no ano`);
                               if (ultima) parts.push(`última em ${ultima}`);
-                              return { detected: true, detail: parts.join(' · ') || 'Possui contribuicoes' };
+                              return { detected: true, detail: parts.join(' · ') || 'Possui contribuições' };
                             }
                             return null;
                           }
@@ -2892,7 +2892,7 @@ export default function Membresia() {
                   </div>
                   {isDiretor && (
                     <div style={{ fontSize: 11, color: C.text3, marginTop: 16, fontStyle: 'italic' }}>
-                      Clique em um circulo para marcar/desmarcar manualmente. Etapas com badge "AUTO" foram detectadas automaticamente.
+                      Clique em um círculo para marcar/desmarcar manualmente. Etapas com badge "AUTO" foram detectadas automaticamente.
                     </div>
                   )}
                 </TabsContent>
