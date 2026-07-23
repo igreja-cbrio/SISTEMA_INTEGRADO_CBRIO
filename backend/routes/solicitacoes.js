@@ -5,6 +5,7 @@ const { notificar, resolverDestinatarios } = require('../services/notificar');
 const { enviarEmail } = require('../services/email');
 const painelCache = require('../services/painelCache');
 const mlTracker = require('../services/solicitacoesMlTracker');
+const solicFluxo = require('../services/solicFluxo');
 
 const CRON_SECRET = process.env.CRON_SECRET;
 const { isAuthorizedCron } = require('../utils/cronAuth');
@@ -44,6 +45,35 @@ router.post('/cron/atualizar-ml', async (req, res) => {
 });
 
 router.use(authenticate);
+
+// ── MOTOR DE FLUXO · visualização read-only (Fase 1) ──────────────────────
+// Declarado ANTES de qualquer `/:id` pra não ser capturado pela rota genérica.
+// Guard: admin/super-admin (config do sistema · o editor Fase 2 será só super-admin).
+router.get('/fluxos', async (req, res) => {
+  try {
+    if (!(await isAdminFallback(req)) && !['admin', 'diretor'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Sem permissão para ver os fluxos.' });
+    }
+    res.json(await solicFluxo.listCategoriasComFluxo());
+  } catch (e) {
+    console.error('[SOLICITACOES] listar fluxos:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.get('/fluxos/:categoria', async (req, res) => {
+  try {
+    if (!(await isAdminFallback(req)) && !['admin', 'diretor'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Sem permissão para ver este fluxo.' });
+    }
+    const fluxo = await solicFluxo.getFluxoAtivo(req.params.categoria);
+    if (!fluxo) return res.status(404).json({ error: 'Nenhum fluxo configurado para esta categoria.' });
+    res.json(fluxo);
+  } catch (e) {
+    console.error('[SOLICITACOES] obter fluxo:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
 
 // Bust do cache do painel após mutacao (afeta matriz adm/criativo)
 router.use((req, res, next) => {
