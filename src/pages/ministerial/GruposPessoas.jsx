@@ -209,6 +209,24 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
     return () => { vivo = false; };
   }, [selected?.membro_id]);
 
+  // Frequência da pessoa POR grupo (Marcos 2026-07-23: "vai no A, não vai no B").
+  // Mapa grupo_id → { presencas, ultima, status, total_encontros }.
+  const [freqPessoa, setFreqPessoa] = useState(null); // { map, tem_encontro } | null
+  useEffect(() => {
+    setFreqPessoa(null);
+    if (!selected?.membro_id) return;
+    let vivo = true;
+    api.grupos.frequenciaPessoa(selected.membro_id)
+      .then(r => {
+        if (!vivo) return;
+        const map = {};
+        (r?.grupos || []).forEach(g => { map[g.grupo_id] = g; });
+        setFreqPessoa({ map, tem_encontro: !!r?.tem_encontro });
+      })
+      .catch(() => { if (vivo) setFreqPessoa({ map: {}, tem_encontro: false }); });
+    return () => { vivo = false; };
+  }, [selected?.membro_id]);
+
   const abrirEdicaoFicha = () => {
     setFichaForm({
       nome: ficha?.nome || '',
@@ -699,6 +717,9 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                     {gs.map(g => {
                       const fp = PAPEIS[g.funcao] || { label: g.funcao || 'Membro', cor: C.t2, Icon: Users };
+                      // Frequência DESTE grupo (Marcos 2026-07-23: vai no A, não no B)
+                      const fg = freqPessoa?.map?.[g.id];
+                      const stg = fg ? STATUS[fg.status] : null;
                       return (
                         <div key={g.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 10, border: `1px solid ${C.border}`, background: C.bg }}>
                           <div style={{ flex: 1, minWidth: 0 }}>
@@ -710,9 +731,19 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
                             </button>
                             <div style={{ fontSize: 11, color: C.t3, marginTop: 2 }}>
                               {g.entrou_em ? `desde ${fmtData(g.entrou_em)}` : 'participante'}
-                              {g.presencas ? ` · ${g.presencas} presença${g.presencas !== 1 ? 's' : ''}` : ''}
+                              {fg && fg.total_encontros > 0
+                                ? ` · ${fg.presencas}/${fg.total_encontros} encontro${fg.total_encontros !== 1 ? 's' : ''}`
+                                : (g.presencas ? ` · ${g.presencas} presença${g.presencas !== 1 ? 's' : ''}` : '')}
                               {g.supervisiona ? ' · supervisiona' : ''}
                             </div>
+                            {/* Status de frequência NESTE grupo · só quando já houve chamada */}
+                            {stg && fg.total_encontros > 0 && (
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, marginTop: 5, fontSize: 10, padding: '2px 8px', borderRadius: 99, background: `${stg.cor}18`, color: stg.cor, fontWeight: 700 }}>
+                                <span style={{ width: 6, height: 6, borderRadius: '50%', background: stg.cor }} />
+                                {fg.status === 'sem_presenca' ? 'não foi ainda' : stg.label}
+                                {fg.ultima ? ` · ${fmtData(fg.ultima)}` : ''}
+                              </span>
+                            )}
                           </div>
                           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10, padding: '2px 9px', borderRadius: 99, background: `${fp.cor}18`, color: fp.cor, fontWeight: 700, whiteSpace: 'nowrap' }}>
                             <fp.Icon size={10} /> {fp.label}
