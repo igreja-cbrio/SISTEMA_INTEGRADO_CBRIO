@@ -556,10 +556,18 @@ router.get('/', async (req, res) => {
         // "Minhas" = as que EU criei + as COMPARTILHADAS com a minha área
         // (compartilhar_area=true e area_cliente ∈ minhas áreas). area_cliente é
         // slug minúsculo; usuario_areas.nome vem em CAIXA → normaliza p/ minúsculo.
-        const areasView = [...new Set([
+        let areasView = [...new Set([
           ...((granular?.areas) || []).map(a => String(a).toLowerCase()),
           ...((req.user.kpi_areas) || []).map(a => String(a).toLowerCase()),
         ])].filter(a => /^[a-z0-9_]+$/.test(a));
+        // Quem tem escopo financeiro individual (ex.: aprovador de Compras) NÃO
+        // recebe as compartilhadas da área 'financeiro' aqui — elas viram ruído
+        // na aba "Minhas" (ele decide pela fila financeira). Espelha a régua da
+        // fila "Para Atender" logo abaixo.
+        const escopoFinanceiroMine = await obterCategoriasFinanceirasAutorizadas(userId);
+        if (escopoFinanceiroMine.disponivel && escopoFinanceiroMine.categorias.size > 0) {
+          areasView = areasView.filter(a => a !== 'financeiro');
+        }
         if (areasView.length) {
           q = q.or(`solicitante_id.eq.${userId},and(compartilhar_area.eq.true,area_cliente.in.(${areasView.join(',')}))`);
         } else {
@@ -2089,13 +2097,37 @@ router.post('/:id/enviar-cotacoes-financeiro', async (req, res) => {
       return res.status(400).json({ error: 'As cotações só podem ser enviadas antes da aprovação financeira.' });
     }
 
-    const { data: cotacoes, error: cotErr } = await supabase
+    let { data: cotacoes, error: cotErr } = await supabase
       .from('solicitacao_cotacoes').select('*')
       .eq('solicitacao_id', sol.id)
       .order('ordem', { ascending: true }).order('created_at', { ascending: true });
     if (cotErr) throw cotErr;
+
+    // Fluxo "um botão": o Amaury informa o valor no próprio envio e o sistema
+    // cria a cotação na hora (sem etapa separada de "Adicionar"). Fornecedor é
+    // opcional — a coluna é NOT NULL, então cai em 'Não informado'.
     if (!cotacoes || !cotacoes.length) {
-      return res.status(400).json({ error: 'Adicione ao menos uma cotação antes de enviar ao financeiro.' });
+      const vInline = Number(req.body?.valor);
+      if (req.body?.valor != null && req.body?.valor !== '' && Number.isFinite(vInline) && vInline >= 0) {
+        const { data: nova, error: novaErr } = await supabase
+          .from('solicitacao_cotacoes')
+          .insert({
+            solicitacao_id: sol.id,
+            fornecedor: (req.body.fornecedor || '').trim() || 'Não informado',
+            valor: vInline,
+            prazo: (req.body.prazo || '').trim() || null,
+            link: (req.body.link || '').trim() || null,
+            observacao: (req.body.observacao || '').trim() || null,
+            ordem: 0,
+            created_by: req.user.userId,
+          })
+          .select('*').single();
+        if (novaErr) throw novaErr;
+        cotacoes = [nova];
+      }
+    }
+    if (!cotacoes || !cotacoes.length) {
+      return res.status(400).json({ error: 'Informe o valor da cotação para enviar ao financeiro.' });
     }
 
     // Referência: a sugerida; se nenhuma, a de MENOR valor.

@@ -2362,14 +2362,29 @@ function CotacaoBlock({ item, canCotar, onChanged }) {
   }
 
   async function enviarFinanceiro() {
+    // Fluxo "um botão": sem cotação formal na lista, manda o valor digitado
+    // direto (o servidor cria a cotação na hora · fornecedor opcional).
+    let payload;
+    if (!cotacoes.length) {
+      const v = Number(form.valor);
+      if (form.valor === '' || Number.isNaN(v) || v < 0) { toast.error('Informe o valor pra enviar ao financeiro.'); return; }
+      payload = {
+        valor: v,
+        fornecedor: form.fornecedor.trim() || undefined,
+        observacao: form.observacao.trim() || undefined,
+        prazo: form.prazo.trim() || undefined,
+        link: form.link.trim() || undefined,
+      };
+    }
     setEnviando(true);
     try {
-      const r = await api.enviarCotacoesFinanceiro(item.id);
-      if (r?.email_ok) toast.success('Cotações enviadas ao financeiro por e-mail.');
+      const r = await api.enviarCotacoesFinanceiro(item.id, payload);
+      if (r?.email_ok) toast.success('Enviado ao financeiro (e-mail avisado).');
       else toast.warning(r?.motivo ? `Enviado ao financeiro no sistema, mas o e-mail não saiu — ${r.motivo}` : 'Enviado ao financeiro no sistema, mas o e-mail não saiu — verifique.');
+      if (payload) resetForm();
       onChanged?.();
       await recarregar();
-    } catch (e) { toast.error(e.message || 'Erro ao enviar cotações'); }
+    } catch (e) { toast.error(e.message || 'Erro ao enviar ao financeiro'); }
     finally { setEnviando(false); }
   }
 
@@ -2460,24 +2475,29 @@ function CotacaoBlock({ item, canCotar, onChanged }) {
         </div>
       )}
 
-      {podeEditar && (
-        <div className="space-y-1.5">
-          <Button
-            onClick={enviarFinanceiro}
-            disabled={enviando || !cotacoes.length}
-            className="w-full bg-teal-600 hover:bg-teal-700 text-white"
-          >
-            <Mail className="h-4 w-4 mr-2" />
-            {enviando ? 'Enviando...' : jaEnviado ? 'Reenviar cotações ao financeiro' : 'Enviar cotações por e-mail ao financeiro'}
-          </Button>
-          {jaEnviado && (
-            <p className="text-[11px] text-muted-foreground text-center">
-              Enviado em {new Date(item.cotacoes_email_em).toLocaleString('pt-BR')}
-            </p>
-          )}
-          {!cotacoes.length && <p className="text-[11px] text-muted-foreground text-center">Adicione ao menos uma cotação para habilitar o envio.</p>}
-        </div>
-      )}
+      {podeEditar && (() => {
+        const vNum = Number(form.valor);
+        const valorInlineValido = !cotacoes.length && form.valor !== '' && !Number.isNaN(vNum) && vNum >= 0;
+        const podeEnviar = cotacoes.length > 0 || valorInlineValido;
+        return (
+          <div className="space-y-1.5">
+            <Button
+              onClick={enviarFinanceiro}
+              disabled={enviando || !podeEnviar}
+              className="w-full bg-teal-600 hover:bg-teal-700 text-white"
+            >
+              <Mail className="h-4 w-4 mr-2" />
+              {enviando ? 'Enviando...' : jaEnviado ? 'Reenviar ao financeiro' : 'Enviar ao financeiro'}
+            </Button>
+            {jaEnviado && (
+              <p className="text-[11px] text-muted-foreground text-center">
+                Enviado em {new Date(item.cotacoes_email_em).toLocaleString('pt-BR')}
+              </p>
+            )}
+            {!podeEnviar && <p className="text-[11px] text-muted-foreground text-center">Informe o valor acima e clique em enviar ao financeiro.</p>}
+          </div>
+        );
+      })()}
     </div>
   );
 }
