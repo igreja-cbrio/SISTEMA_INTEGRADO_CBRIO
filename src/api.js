@@ -518,6 +518,8 @@ export const grupos = {
     aux: () => get('/grupos/envios/aux'),
     previewFrequencia: (audiencia) => post('/grupos/envios/frequencia/preview', { audiencia }),
     dispararFrequencia: (audiencia) => post('/grupos/envios/frequencia', { audiencia }),
+    previewMaterial: (audiencia) => post('/grupos/envios/material/preview', { audiencia }),
+    dispararMaterial: (file, audiencia, titulo) => { const fd = new FormData(); fd.append('arquivo', file); fd.append('audiencia', JSON.stringify(audiencia || {})); if (titulo) fd.append('titulo', titulo); return requestFile('/grupos/envios/material', fd, { timeoutMs: 120_000 }); },
     historico: () => get('/grupos/envios/historico'),
   },
   saudeAgregada: (params) => get('/grupos/saude/agregado' + (params ? '?' + new URLSearchParams(params) : '')),

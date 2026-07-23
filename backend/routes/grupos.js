@@ -1749,6 +1749,39 @@ router.post('/envios/frequencia', authorizeModule('grupos', 5), async (req, res)
   } catch (e) { console.error('[grupos envios freq disparar]', e.message); res.status(500).json({ error: 'Erro ao disparar a frequência' }); }
 });
 
+// MATERIAL — mesmo público da frequência, mas anexa um arquivo (Marcos 23/07).
+// Preview idêntico (quem recebe); o disparo sobe o arquivo e manda o link por
+// template. ⚠️ Sem template de material aprovado na Meta, nada sai (motivo
+// 'template_material_nao_configurado') — o arquivo fica salvo pra testar depois.
+router.post('/envios/material/preview', authorizeModule('grupos', 3), async (req, res) => {
+  try {
+    const r = await gruposEnvios.previewMaterial(req.body?.audiencia || {});
+    if (r.erro) return res.status(400).json({ error: r.erro });
+    res.json(r);
+  } catch (e) { console.error('[grupos envios material preview]', e.message); res.status(500).json({ error: 'Erro ao gerar prévia' }); }
+});
+
+router.post('/envios/material', authorizeModule('grupos', 5), uploadMw.single('arquivo'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Anexe o arquivo do material.' });
+    if (!whatsappConfigurado()) return res.status(409).json({ error: 'O envio de WhatsApp não está configurado no servidor.' });
+    let audiencia = {};
+    try { audiencia = JSON.parse(req.body?.audiencia || '{}'); } catch { /* audiência inválida → vazia */ }
+    const titulo = (req.body?.titulo || req.file.originalname || 'Material do grupo').slice(0, 120);
+    // Sobe o arquivo pro storage (mesmo bucket dos materiais) → link público.
+    const supaPath = `grupos/materiais/envios/${Date.now()}_${sanitizePath(req.file.originalname)}`;
+    const { error: upErr } = await supabase.storage
+      .from('eventos-anexos')
+      .upload(supaPath, req.file.buffer, { contentType: req.file.mimetype, upsert: true });
+    if (upErr) throw upErr;
+    const { data: urlData } = supabase.storage.from('eventos-anexos').getPublicUrl(supaPath);
+    const link = urlData?.publicUrl || null;
+    const r = await gruposEnvios.dispararMaterial(audiencia, { link, titulo });
+    if (r.erro) return res.status(400).json({ error: r.erro });
+    res.json({ ok: true, link, ...r });
+  } catch (e) { console.error('[grupos envios material disparar]', e.message); res.status(500).json({ error: 'Erro ao enviar o material' }); }
+});
+
 router.get('/envios/historico', authorizeModule('grupos', 1), async (req, res) => {
   try {
     const { data } = await supabase.from('whatsapp_envios')
