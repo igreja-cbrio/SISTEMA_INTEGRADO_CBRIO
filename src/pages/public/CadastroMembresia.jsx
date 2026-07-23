@@ -717,7 +717,7 @@ export default function CadastroMembresia() {
               fontSize: 22, marginBottom: 14,
             }}>&#x1F3E0;</div>
             <h2 style={{ fontSize: 17, fontWeight: 700, color: C.text, margin: '0 0 8px' }}>
-              Encontramos uma familia!
+              Encontramos uma família!
             </h2>
             <p style={{ fontSize: 13, color: C.text3, lineHeight: 1.5, marginBottom: 20 }}>
               {familiaOpcoes.length === 1
@@ -740,7 +740,7 @@ export default function CadastroMembresia() {
                     cursor: 'pointer', transition: 'all 0.2s',
                   }}
                 >
-                  Sim, sou da familia {fam.nome}
+                  Sim, sou da família {fam.nome}
                 </button>
               ))}
               <button
@@ -754,7 +754,7 @@ export default function CadastroMembresia() {
                   cursor: 'pointer', transition: 'all 0.2s',
                 }}
               >
-                {loading ? 'Enviando...' : 'Não, não faco parte de nenhuma dessas famílias'}
+                {loading ? 'Enviando...' : 'Não, não faço parte de nenhuma dessas famílias'}
               </button>
             </div>
           </div>
@@ -844,7 +844,7 @@ export default function CadastroMembresia() {
                   </Row>
                   {cpfChecando && (
                     <div style={{ marginTop: -10, marginBottom: 14, fontSize: 12, color: 'var(--cbrio-text3)' }}>
-                      Verificando se voce ja esta cadastrado...
+                      Verificando se você já está cadastrado...
                     </div>
                   )}
                   {!cpfChecando && cpfLookup?.found && (
@@ -862,15 +862,15 @@ export default function CadastroMembresia() {
                           <>
                             <strong>Bem-vindo(a) de volta, {cpfLookup.primeiroNome} {cpfLookup.iniciaisSobrenome}</strong>
                             <div style={{ color: 'var(--cbrio-text3)', marginTop: 2 }}>
-                              Encontramos seu cadastro. Continue preenchendo abaixo · seus dados serao atualizados ao enviar.
+                              Encontramos seu cadastro. Continue preenchendo abaixo · seus dados serão atualizados ao enviar.
                             </div>
                           </>
                         ) : (
                           <>
                             <strong>Já existe um cadastro com este CPF</strong>
                             <div style={{ color: 'var(--cbrio-text3)', marginTop: 2 }}>
-                              Em nome de {cpfLookup.primeiroNome} {cpfLookup.iniciaisSobrenome} (em analise).
-                              Se for voce, pode continuar — vamos atualizar.
+                              Em nome de {cpfLookup.primeiroNome} {cpfLookup.iniciaisSobrenome} (em análise).
+                              Se for você, pode continuar — vamos atualizar.
                             </div>
                           </>
                         )}
@@ -899,8 +899,8 @@ export default function CadastroMembresia() {
                         </div>
                         <div style={{ color: 'var(--cbrio-text3)', marginTop: 4, fontSize: 12 }}>
                           {nomeTelLookup.cadastroCompleto
-                            ? 'Esse cadastro já existe no sistema. E você mesmo?'
-                            : 'Provavelmente você e um novo convertido já registrado no nosso sistema. E você?'}
+                            ? 'Esse cadastro já existe no sistema. É você mesmo?'
+                            : 'Provavelmente você é um novo convertido já registrado no nosso sistema. É você?'}
                         </div>
                       </div>
                       <div style={{ display: 'flex', gap: 8 }}>
@@ -924,7 +924,7 @@ export default function CadastroMembresia() {
                             color: 'var(--cbrio-text)', fontWeight: 600, fontSize: 13, cursor: 'pointer',
                           }}
                         >
-                          Nao sou eu
+                          Não sou eu
                         </button>
                       </div>
                     </div>
@@ -1167,7 +1167,7 @@ export default function CadastroMembresia() {
                   padding: 4,
                 }}
               >
-                Ja fiz meu cadastro e quero meu QR de membro
+                Já fiz meu cadastro e quero meu QR de membro
               </button>
             </div>
           </>

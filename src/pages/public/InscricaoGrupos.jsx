@@ -26,7 +26,7 @@ import GrupoSelector from '../../components/grupos/GrupoSelector';
 import { BirthDatePicker } from '../../components/ui/birth-date-picker';
 import { CheckCircle2, ArrowLeft, Users, Camera, X, HelpCircle, User, CalendarClock } from 'lucide-react';
 
-const TEXTO_CONSENTIMENTO = `Ao enviar este formulário, você autoriza a CBRio a utilizar seus dados pessoais para fins de comunicacao com a igreja e participação em grupo de conexão, conforme a LGPD.`;
+const TEXTO_CONSENTIMENTO = `Ao enviar este formulário, você autoriza a CBRio a utilizar seus dados pessoais para fins de comunicação com a igreja e participação em grupo de conexão, conforme a LGPD.`;
 
 const IDLE_MS = 90_000; // totem: volta ao início após ~90s sem interação
 

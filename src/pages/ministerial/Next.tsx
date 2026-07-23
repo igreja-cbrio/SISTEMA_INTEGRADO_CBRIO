@@ -94,12 +94,12 @@ export default function Next() {
         <div>
           <h1 className="text-2xl font-bold text-foreground">NEXT</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Porta de entrada da CBRio — 3 primeiros domingos do mes
+            Porta de entrada da CBRio — 3 primeiros domingos do mês
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button onClick={() => setShareOpen(true)} className="gap-2 bg-[#00B39D] hover:bg-[#00B39D]/90 text-white">
-            <Share2 className="h-4 w-4" /> Compartilhar inscricao
+            <Share2 className="h-4 w-4" /> Compartilhar inscrição
           </Button>
           <Button variant="outline" onClick={handleRecalcular} disabled={recalcLoading} className="gap-2">
             {recalcLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
@@ -118,7 +118,7 @@ export default function Next() {
           iconColor={C.info}
         />
         <StatisticsCard
-          title="Inscricoes (mes)"
+          title="Inscrições (mês)"
           value={String(dashboard?.inscricoes_mes ?? 0)}
           icon={Users}
           iconColor={C.primary}
@@ -130,7 +130,7 @@ export default function Next() {
           iconColor={C.primary}
         />
         <StatisticsCard
-          title="Indicacoes pendentes"
+          title="Indicações pendentes"
           value={String(dashboard?.indicacoes_pendentes ?? 0)}
           icon={Clock}
           iconColor={C.warn}
@@ -141,7 +141,7 @@ export default function Next() {
         <TabsList>
           <TabsTrigger value="eventos">Eventos</TabsTrigger>
           <TabsTrigger value="inscritos">Inscritos</TabsTrigger>
-          <TabsTrigger value="indicacoes">Indicacoes</TabsTrigger>
+          <TabsTrigger value="indicacoes">Indicações</TabsTrigger>
           <TabsTrigger value="tarefas">Tarefas</TabsTrigger>
         </TabsList>
 
@@ -206,10 +206,10 @@ function TabEventos({ onChanged }: { onChanged: () => void }) {
       <div className="flex flex-wrap gap-2">
         <Button onClick={handleAutoCreate} disabled={autoCreating} className="gap-2">
           {autoCreating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Calendar className="h-4 w-4" />}
-          Gerar eventos do mes (3 domingos)
+          Gerar eventos do mês (3 domingos)
         </Button>
         <Button variant="outline" onClick={copyInviteLink} className="gap-2">
-          <Copy className="h-4 w-4" /> Copiar link de inscricao publica
+          <Copy className="h-4 w-4" /> Copiar link de inscrição pública
         </Button>
       </div>
 
@@ -571,7 +571,7 @@ function TabInscritos({ onChanged }: { onChanged: () => void }) {
           onClick={() => setNovaOpen(true)}
           className="gap-2 bg-[#00B39D] hover:bg-[#00B39D]/90 text-white ml-auto"
         >
-          <Plus className="h-4 w-4" /> Cadastrar inscricao
+          <Plus className="h-4 w-4" /> Cadastrar inscrição
         </Button>
       </div>
 
@@ -579,7 +579,7 @@ function TabInscritos({ onChanged }: { onChanged: () => void }) {
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground mx-auto my-12" />
       ) : list.length === 0 ? (
         <div className="rounded-xl border border-dashed border-border bg-muted/20 p-6 text-center text-sm text-muted-foreground">
-          Nenhuma inscricao encontrada.
+          Nenhuma inscrição encontrada.
         </div>
       ) : (
         <div className="rounded-2xl border border-border overflow-hidden">
@@ -590,7 +590,7 @@ function TabInscritos({ onChanged }: { onChanged: () => void }) {
                 <TableHead className="hidden md:table-cell">Contato</TableHead>
                 <TableHead className="hidden lg:table-cell">Evento</TableHead>
                 <TableHead className="text-center">Check-in</TableHead>
-                <TableHead className="text-center">Indicacoes</TableHead>
+                <TableHead className="text-center">Indicações</TableHead>
                 <TableHead className="text-right"></TableHead>
               </TableRow>
             </TableHeader>
@@ -746,9 +746,9 @@ function ModalNovaInscricao({
   const handleSubmit = async () => {
     if (!form.evento_id) return setErro('Selecione um evento');
     if (!form.nome.trim() || form.nome.trim().length < 2) return setErro('Informe o nome');
-    if (!form.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) return setErro('Email invalido');
-    if (!form.telefone || soDigitos(form.telefone).length < 10) return setErro('Telefone invalido');
-    if (form.cpf && !cpfValido(form.cpf)) return setErro('CPF invalido');
+    if (!form.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) return setErro('Email inválido');
+    if (!form.telefone || soDigitos(form.telefone).length < 10) return setErro('Telefone inválido');
+    if (form.cpf && !cpfValido(form.cpf)) return setErro('CPF inválido');
 
     setSaving(true);
     try {
@@ -779,7 +779,7 @@ function ModalNovaInscricao({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Plus className="h-5 w-5" style={{ color: C.primary }} />
-            Cadastrar inscricao no NEXT
+            Cadastrar inscrição no NEXT
           </DialogTitle>
         </DialogHeader>
 
@@ -902,7 +902,7 @@ function CardInscrito({ inscricao, onClose, onSaved }: {
     setSaving(true);
     try {
       await nextApi.inscricoes.indicacoes(inscricao.id, { tipos: Array.from(tipos), observacoes: obs });
-      toast.success('Indicacoes registradas! Áreas notificadas.');
+      toast.success('Indicações registradas! Áreas notificadas.');
       onSaved();
       onClose();
     } catch (e: any) {
@@ -912,10 +912,10 @@ function CardInscrito({ inscricao, onClose, onSaved }: {
   };
 
   const opcoes = [
-    { id: 'batismo', label: 'Quer se batizar', icon: Droplets, color: C.info, area: 'Integracao' },
+    { id: 'batismo', label: 'Quer se batizar', icon: Droplets, color: C.info, area: 'Integração' },
     { id: 'servir', label: 'Quer servir', icon: HandHeart, color: C.primary, area: 'Voluntariado' },
     { id: 'grupo', label: 'Quer entrar em grupo', icon: UsersRound, color: C.purple, area: 'Grupos' },
-    { id: 'dizimo', label: 'Quer comecar a dizimar/ofertar', icon: Wallet, color: C.warn, area: 'Generosidade' },
+    { id: 'dizimo', label: 'Quer começar a dizimar/ofertar', icon: Wallet, color: C.warn, area: 'Generosidade' },
   ];
 
   return (
@@ -940,7 +940,7 @@ function CardInscrito({ inscricao, onClose, onSaved }: {
           )}
 
           <div>
-            <Label className="mb-2 block">Indicacoes (marcar gera notificação para a área)</Label>
+            <Label className="mb-2 block">Indicações (marcar gera notificação para a área)</Label>
             <div className="grid grid-cols-1 gap-2">
               {opcoes.map(opt => {
                 const Icon = opt.icon;
@@ -968,7 +968,7 @@ function CardInscrito({ inscricao, onClose, onSaved }: {
           </div>
 
           <div>
-            <Label>Anotacoes (opcional)</Label>
+            <Label>Anotações (opcional)</Label>
             <Textarea value={obs} onChange={e => setObs(e.target.value)} rows={3} placeholder="Contexto, motivo, etc." />
           </div>
         </div>
@@ -1009,7 +1009,7 @@ function TabIndicacoes() {
     }
   };
 
-  const tipoLabel = (t: string) => ({ batismo: 'Batismo', servir: 'Servir', grupo: 'Grupos', dizimo: 'Dizimo' }[t] || t);
+  const tipoLabel = (t: string) => ({ batismo: 'Batismo', servir: 'Servir', grupo: 'Grupos', dizimo: 'Dízimo' }[t] || t);
   const tipoIcon = (t: string) => ({ batismo: Droplets, servir: HandHeart, grupo: UsersRound, dizimo: Wallet }[t] || AlertCircle);
 
   return (
@@ -1031,7 +1031,7 @@ function TabIndicacoes() {
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground mx-auto my-12" />
       ) : list.length === 0 ? (
         <div className="rounded-xl border border-dashed border-border bg-muted/20 p-6 text-center text-sm text-muted-foreground">
-          Nenhuma indicacao com status "{statusFilter}".
+          Nenhuma indicação com status "{statusFilter}".
         </div>
       ) : (
         <div className="rounded-2xl border border-border overflow-hidden">
@@ -1101,7 +1101,7 @@ function TabIndicacoes() {
 function ModalCompartilhar({ onClose }: { onClose: () => void }) {
   const url = `${window.location.origin}/next/inscrever`;
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
-  const mensagem = `Você esta convidado(a) para o NEXT da CBRio - a porta de entrada da igreja!\n\nInscreva-se: ${url}`;
+  const mensagem = `Você está convidado(a) para o NEXT da CBRio - a porta de entrada da igreja!\n\nInscreva-se: ${url}`;
 
   useEffect(() => {
     QRCode.toDataURL(url, { width: 320, margin: 2, color: { dark: '#000000', light: '#ffffff' } })
@@ -1121,7 +1121,7 @@ function ModalCompartilhar({ onClose }: { onClose: () => void }) {
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Share2 className="h-5 w-5" /> Compartilhar inscricao no NEXT
+            <Share2 className="h-5 w-5" /> Compartilhar inscrição no NEXT
           </DialogTitle>
         </DialogHeader>
 
@@ -1143,7 +1143,7 @@ function ModalCompartilhar({ onClose }: { onClose: () => void }) {
               <Label className="text-xs block mb-2">QR code</Label>
               <img src={qrDataUrl} alt="QR Code" className="mx-auto rounded-lg border border-border" style={{ width: 220, height: 220 }} />
               <p className="text-[10px] text-muted-foreground mt-2">
-                Escaneie com a camera do celular para abrir o formulario
+                Escaneie com a câmera do celular para abrir o formulário
               </p>
             </div>
           )}

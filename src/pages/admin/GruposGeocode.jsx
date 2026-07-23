@@ -83,7 +83,7 @@ export default function GruposGeocode() {
         ok: acumulado.ok, falhas: acumulado.falhas, skip: acumulado.skip,
         parcial: false,
       });
-      toast.success(`Concluido: ${acumulado.ok.length} validados, ${acumulado.falhas.length} falhas`);
+      toast.success(`Concluído: ${acumulado.ok.length} validados, ${acumulado.falhas.length} falhas`);
     } catch (e) {
       toast.error(e.message || 'Erro ao rodar geocode');
       console.error('[geocode batch]', e);

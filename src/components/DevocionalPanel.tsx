@@ -70,7 +70,7 @@ export default function DevocionalPanel() {
         setBibles(list);
         if (!bibleId && list.length) setBibleId(list[0].id);
       })
-      .catch((e: any) => setErrorBibles(e.message || 'Falha ao listar Biblias'))
+      .catch((e: any) => setErrorBibles(e.message || 'Falha ao listar Bíblias'))
       .finally(() => setLoadingBibles(false));
   }, []);
 
@@ -148,11 +148,11 @@ export default function DevocionalPanel() {
 
   async function salvar() {
     if (!membro?.id) {
-      toast.error('Você não esta vinculado a um membro. Avise a equipe para cadastrar seu email.');
+      toast.error('Você não está vinculado a um membro. Avise a equipe para cadastrar seu email.');
       return;
     }
     if (!observacoes.trim()) {
-      toast.error('Escreva sua reflexao antes de salvar.');
+      toast.error('Escreva sua reflexão antes de salvar.');
       return;
     }
     setSaving(true);
@@ -227,7 +227,7 @@ export default function DevocionalPanel() {
             </Button>
             <div className="font-semibold text-sm">{referencia || '—'}</div>
             <Button variant="ghost" size="sm" onClick={nextChapter} disabled={chapterIdx < 0 || chapterIdx >= chapters.length - 1}>
-              Proximo <ChevronRight className="h-4 w-4 ml-1" />
+              Próximo <ChevronRight className="h-4 w-4 ml-1" />
             </Button>
           </div>
 
@@ -246,7 +246,7 @@ export default function DevocionalPanel() {
                 {chapter.copyright && <p className="text-xs text-muted-foreground mt-6 not-prose">{chapter.copyright}</p>}
               </div>
             ) : (
-              <p className="text-muted-foreground text-sm">Selecione livro e capítulo para comecar.</p>
+              <p className="text-muted-foreground text-sm">Selecione livro e capítulo para começar.</p>
             )}
           </div>
         </Card>
@@ -287,7 +287,7 @@ export default function DevocionalPanel() {
           </div>
 
           <div>
-            <Label className="text-xs">Reflexao</Label>
+            <Label className="text-xs">Reflexão</Label>
             <Textarea rows={6} value={observacoes} onChange={e => setObservacoes(e.target.value)} placeholder="O que Deus te falou hoje?" />
           </div>
 
