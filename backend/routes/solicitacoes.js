@@ -1316,8 +1316,29 @@ router.get('/meu-papel', async (req, res) => {
       .eq('profile_id', userId);
     if (error) throw error;
     const areas = (data || []).map(r => r.area);
+
+    // Executor individual (ex.: Cristina · pagamentos não-cartão que a aprovação
+    // do financeiro roteia pra ela por responsavel_id) NÃO é responsável de área —
+    // senão veria a fila inteira do financeiro (em cotação etc.). Mas precisa da
+    // aba "Para Atender" pra receber o que é dela. Dois gatilhos:
+    // (1) É a executora financeira designada (mesma constante que a aprovação usa
+    //     pra rotear) → aba sempre visível, mesmo com a fila vazia (é o posto dela).
+    // (2) Regra genérica auto-mantida: tem QUALQUER item atribuído via
+    //     responsavel_id → atende=true (cobre outros executores individuais).
+    // A lista da view 'atender' já filtra por responsavel_id, então ela só vê os
+    // pagamentos que de fato passaram pela aprovação.
+    let temAtribuidas = EXECUTOR_FINANCEIRO_ID && userId === EXECUTOR_FINANCEIRO_ID;
+    if (!temAtribuidas && areas.length === 0) {
+      const { count: atribCount } = await supabase
+        .from('solicitacoes')
+        .select('id', { count: 'exact', head: true })
+        .eq('responsavel_id', userId)
+        .is('deleted_at', null);
+      temAtribuidas = (atribCount || 0) > 0;
+    }
+
     res.json({
-      atende: areas.length > 0,
+      atende: areas.length > 0 || temAtribuidas,
       admin: false,
       areas,
       eh_diretor_origem: ehAprovadorOrigem,
