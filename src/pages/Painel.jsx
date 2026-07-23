@@ -38,8 +38,8 @@ const C = {
 
 const STATUS_COLORS = {
   verde:    { cor: C.green, bg: C.greenBg, label: 'No alvo' },
-  amarelo:  { cor: C.amber, bg: C.amberBg, label: 'Atencao' },
-  vermelho: { cor: C.red,   bg: C.redBg,   label: 'Critico' },
+  amarelo:  { cor: C.amber, bg: C.amberBg, label: 'Atenção' },
+  vermelho: { cor: C.red,   bg: C.redBg,   label: 'Crítico' },
   sem_dado: { cor: C.gray,  bg: C.grayBg,  label: 'Sem dado' },
 };
 
@@ -59,9 +59,9 @@ function timeAgo(iso) {
   const d = new Date(iso);
   const diffMin = Math.floor((Date.now() - d.getTime()) / 60000);
   if (diffMin < 1) return 'agora';
-  if (diffMin < 60) return `ha ${diffMin}min`;
+  if (diffMin < 60) return `há ${diffMin}min`;
   const diffH = Math.floor(diffMin / 60);
-  if (diffH < 24) return `ha ${diffH}h`;
+  if (diffH < 24) return `há ${diffH}h`;
   return d.toLocaleDateString('pt-BR');
 }
 
@@ -273,13 +273,13 @@ function NsmCentralCard({ data, onAbrirPessoas }) {
             North Star Metric · {data.segmento_label}
           </div>
           <div style={{ fontSize: 14, color: C.t2, marginBottom: 12, lineHeight: 1.5, maxWidth: 600 }}>
-            Novos convertidos engajados em pelo menos um dos 5 valores em ate 60 dias da decisao
+            Novos convertidos engajados em pelo menos um dos 5 valores em até 60 dias da decisão
           </div>
           {semDado ? (
             <div style={{ marginTop: 16 }}>
               <div style={{ fontSize: 36, fontWeight: 700, color: C.gray, lineHeight: 1 }}>—</div>
               <div style={{ fontSize: 12, color: C.t3, marginTop: 6 }}>
-                Aguardando integracao das fontes de dados (triggers da Fase 1.5)
+                Aguardando integração das fontes de dados (triggers da Fase 1.5)
               </div>
             </div>
           ) : (
@@ -299,7 +299,7 @@ function NsmCentralCard({ data, onAbrirPessoas }) {
                     color: data.delta_vs_mes_anterior > 0 ? C.green : data.delta_vs_mes_anterior < 0 ? C.red : C.gray,
                     fontSize: 11, fontWeight: 700,
                   }}>
-                    <DeltaIcon size={12} /> {delta} vs periodo anterior
+                    <DeltaIcon size={12} /> {delta} vs período anterior
                   </span>
                 )}
               </div>

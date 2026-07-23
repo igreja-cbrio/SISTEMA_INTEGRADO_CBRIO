@@ -89,7 +89,7 @@ export default function MatrizValorArea() {
       <section style={cardStyle}>
         <header style={{ marginBottom: 14 }}>
           <h2 style={{ fontSize: 16, fontWeight: 700, color: C.text, margin: 0 }}>
-            Matriz Valor × Area
+            Matriz Valor × Área
           </h2>
           <p style={{ fontSize: 11, color: C.t3, marginTop: 4, margin: 0 }}>
             Clique numa célula para ver os KPIs daquela interseção. Cor = pior status entre os KPIs.
