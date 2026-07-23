@@ -601,7 +601,38 @@ router.get('/kpis/temporada-metricas', async (req, res) => {
     const { data, error } = await supabase.rpc('fn_temporada_metricas', { p_temporada: temporada });
     if (error) throw error;
     // fn_temporada_metricas RETURNS TABLE → array com 1 linha.
-    res.json((Array.isArray(data) ? data[0] : data) || {});
+    const met = (Array.isArray(data) ? data[0] : data) || {};
+
+    // Vocabulário canônico (Marcos 2026-07-23): num_membros da RPC = INSCRITOS
+    // (vínculos). Aqui somo PESSOAS distintas + Frequentadores (>=1 presença) e
+    // Visitantes (0 presença) DERIVADOS da presença (não mais do funcao).
+    try {
+      const { data: gs } = await supabase.from('mem_grupos')
+        .select('id').eq('temporada', temporada).eq('ativo', true).is('deleted_at', null).limit(2000);
+      const gids = (gs || []).map(g => g.id);
+      const pessoas = new Set();
+      if (gids.length) {
+        for (let off = 0; ; off += 1000) {
+          const { data: pg } = await supabase.from('mem_grupo_membros')
+            .select('membro_id').in('grupo_id', gids)
+            .is('saiu_em', null).is('deleted_at', null).order('id').range(off, off + 999);
+          (pg || []).forEach(v => v.membro_id && pessoas.add(v.membro_id));
+          if (!pg || pg.length < 1000) break;
+        }
+      }
+      // Quem tem >=1 presença (fn_grupos_ultima_frequencia = grupos ativos)
+      const comPresenca = new Set();
+      try {
+        const { data: fr } = await supabase.rpc('fn_grupos_ultima_frequencia');
+        (fr || []).forEach(f => { if (pessoas.has(f.membro_id)) comPresenca.add(f.membro_id); });
+      } catch { /* best-effort */ }
+      met.pessoas_distintas = pessoas.size;
+      met.frequentadores = comPresenca.size;           // pessoas com >=1 presença
+      met.visitantes = pessoas.size - comPresenca.size; // inscritos sem presença ainda
+      met.tem_presenca = comPresenca.size > 0;          // frequência já começou?
+    } catch (eCalc) { console.error('[temporada-metricas derivados]', eCalc.message); }
+
+    res.json(met);
   } catch (e) {
     console.error('[Grupos temporada-metricas]', e.message);
     res.status(500).json({ error: 'Erro ao buscar as métricas da temporada' });
@@ -3704,7 +3735,9 @@ router.get('/pessoas/papeis', async (req, res) => {
 
     const lista = Object.values(pessoas)
       .sort((a, b) => b.rank - a.rank || (a.nome || '').localeCompare(b.nome || ''));
-    res.json({ total: lista.length, pessoas: lista });
+    // total = PESSOAS distintas · inscritos = vínculos (participações · uma
+    // pessoa em N grupos conta N) — vocabulário canônico (Marcos 2026-07-23).
+    res.json({ total: lista.length, inscritos: participacoes.length, pessoas: lista });
   } catch (e) {
     console.error('[grupos] pessoas/papeis:', e.message);
     res.status(500).json({ error: 'Erro ao carregar pessoas' });

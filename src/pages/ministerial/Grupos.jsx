@@ -2734,8 +2734,9 @@ function RelatorioGrupos({ temporada }) {
           }}>
             {[
               { icon: Users, label: 'Grupos', valor: (metricas ? metricas.num_grupos : data.total_grupos) ?? 0 },
-              { icon: UserPlus, label: 'Inscrições', valor: metricas ? metricas.num_inscricoes : null },
-              { icon: Users, label: 'Participações', valor: metricas ? metricas.num_membros : null },
+              { icon: Users, label: 'Pessoas', valor: metricas ? metricas.pessoas_distintas : null },
+              { icon: UserPlus, label: 'Inscritos', valor: metricas ? metricas.num_membros : null },
+              { icon: UserPlus, label: 'Pedidos', valor: metricas ? metricas.num_inscricoes : null },
               { icon: CalendarCheck, label: 'Encontros', valor: (metricas ? metricas.total_encontros : data.frequencia?.total_encontros) ?? 0 },
               { icon: Activity, label: 'Freq. média', valor: (metricas ? metricas.frequencia_media : data.frequencia?.media_por_encontro) ?? 0, dec: true },
               { icon: Star, label: 'NPS líderes', valor: nps ? Number(nps.valor) : null, dec: true },
@@ -2752,25 +2753,20 @@ function RelatorioGrupos({ temporada }) {
             ))}
           </div>
 
-          {/* Nota de leitura (Marcos 2026-07-23): deixa explícito que Relatórios
-              conta PARTICIPAÇÕES (vínculos), não pessoas — evita a confusão. */}
+          {/* Nota de leitura (Marcos 2026-07-23): vocabulário canônico. */}
           <div style={{ fontSize: 11.5, color: C.t3, display: 'flex', alignItems: 'flex-start', gap: 6, lineHeight: 1.5 }}>
             <AlertTriangle size={12} style={{ color: cores.teal, flexShrink: 0, marginTop: 2 }} />
-            <span><strong>Participações</strong> = vínculos com grupos (uma pessoa em vários grupos conta em cada um). Para o número de <strong>pessoas distintas</strong>, veja a aba <strong>Pessoas</strong>.</span>
+            <span><strong>Pessoas</strong> = pessoas distintas · <strong>Inscritos</strong> = vínculos com grupos (uma pessoa em vários grupos conta em cada). <strong>Frequentador</strong> = já foi a ≥1 encontro · <strong>Visitante</strong> = ainda não foi (sai da presença).</span>
           </div>
 
-          {/* Dois gráficos de composição lado a lado: liderança (pizza) + papéis (barras) */}
+          {/* Liderança (pizza) + frequência (frequentador × visitante · derivada da presença) */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
             <LiderancaPizza
               lideres={(metricas ? metricas.num_lideres : data.total_lideres) ?? 0}
               treino={(metricas ? metricas.num_lideres_treinamento : data.lideres_treinamento) ?? 0}
               cores={cores}
             />
-            <PapeisBarras
-              funcoes={data.funcoes}
-              treino={(metricas ? metricas.num_lideres_treinamento : data.lideres_treinamento) ?? 0}
-              cores={cores}
-            />
+            <FrequenciaResumo metricas={metricas} cores={cores} />
           </div>
 
           {/* Série mensal: frequência / inscrições / membresia (com filtro) */}
@@ -2935,48 +2931,39 @@ function LiderancaPizza({ lideres, treino, cores }) {
   );
 }
 
-// Barras horizontais das PARTICIPAÇÕES por papel (vínculos do roster · uma
-// pessoa em N grupos conta N vezes). ⚠️ NÃO inclui "Líder": líder no CBRio é o
-// responsável do grupo (mem_grupos.lider_id), contado à parte na rosca de
-// Liderança ao lado — misturar com o roster gerava soma sem sentido (o "1067"
-// que o Marcos pegou · 2026-07-23). Aqui só entram os papéis que SÃO vínculo de
-// participação: frequentador, visitante, co-líder, em treino.
-function PapeisBarras({ funcoes, treino = 0, cores }) {
-  const dados = [
-    { papel: 'Em treino', valor: Number(treino || funcoes?.lider_treinamento || 0) },
-    { papel: 'Co-líder', valor: Number(funcoes?.co_lider || 0) },
-    { papel: 'Frequentador', valor: Number(funcoes?.frequentador || 0) },
-    { papel: 'Visitante', valor: Number(funcoes?.visitante || 0) },
-  ]
-    .filter(d => d.valor > 0)
-    .sort((a, b) => b.valor - a.valor);
+// Frequência: Frequentadores (foram a ≥1 encontro) × Visitantes (ainda não
+// foram) — DERIVADO da presença (Marcos 2026-07-23), não do funcao. Enquanto a
+// frequência não é registrada, mostra só "aguardando a 1ª chamada" (não force
+// o split · todos são inscritos até bater presença).
+function FrequenciaResumo({ metricas, cores }) {
+  const temPresenca = metricas?.tem_presenca === true;
+  const freq = Number(metricas?.frequentadores || 0);
+  const visit = Number(metricas?.visitantes || 0);
+  const pessoas = Number(metricas?.pessoas_distintas || 0);
   return (
     <Card>
       <CardHeader className="pb-1">
         <CardTitle className="text-sm font-medium flex items-center gap-2">
-          <Users className="h-4 w-4" style={{ color: cores.teal }} /> Participações por papel
+          <Activity className="h-4 w-4" style={{ color: cores.teal }} /> Frequência
         </CardTitle>
       </CardHeader>
       <CardContent>
-        {dados.length === 0 ? (
-          <div style={{ padding: 40, textAlign: 'center', color: C.t3, fontSize: 13 }}>Sem membros no roster desta temporada.</div>
+        {!temPresenca ? (
+          <div style={{ padding: '24px 12px', textAlign: 'center', color: C.t3, fontSize: 13, lineHeight: 1.6 }}>
+            <Clock size={22} style={{ margin: '0 auto 8px', display: 'block', opacity: 0.6 }} />
+            Frequência ainda não registrada.<br />
+            Os <strong style={{ color: C.text }}>{pessoas}</strong> inscritos aguardam a 1ª chamada — quando as presenças entrarem,
+            aparece aqui quantos são <strong>frequentadores</strong> (foram) × <strong>visitantes</strong> (ainda não).
+          </div>
         ) : (
-          <div style={{ height: Math.max(dados.length * 46, 120) }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={dados} layout="vertical" margin={{ top: 4, right: 40, left: 8, bottom: 4 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke={cores.grid} horizontal={false} />
-                <XAxis type="number" hide domain={[0, 'dataMax']} />
-                <YAxis type="category" dataKey="papel" width={92} tick={{ fontSize: 12, fill: cores.eixo }} axisLine={false} tickLine={false} />
-                <Tooltip
-                  cursor={{ fill: cores.teal + '14' }}
-                  contentStyle={{ borderRadius: 8, fontSize: 12, border: `1px solid ${C.border}`, background: C.card, color: C.text }}
-                  formatter={(v) => [Number(v).toLocaleString('pt-BR'), 'Participações']}
-                />
-                <Bar dataKey="valor" name="Participações" fill={cores.teal} radius={[0, 4, 4, 0]} maxBarSize={26} isAnimationActive={false}>
-                  <LabelList dataKey="valor" position="right" style={{ fill: C.text, fontSize: 11.5, fontWeight: 700 }} formatter={(v) => Number(v).toLocaleString('pt-BR')} />
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
+          <div style={{ display: 'flex', gap: 16, padding: '8px 0' }}>
+            {[['Frequentadores', freq, '#10b981', 'foram a ≥1 encontro'], ['Visitantes', visit, '#94a3b8', 'ainda não foram']].map(([lab, val, cor, hint]) => (
+              <div key={lab} style={{ flex: 1, textAlign: 'center' }}>
+                <div style={{ fontSize: 28, fontWeight: 800, color: cor, lineHeight: 1 }}>{val}</div>
+                <div style={{ fontSize: 12, color: C.text, fontWeight: 600, marginTop: 4 }}>{lab}</div>
+                <div style={{ fontSize: 10.5, color: C.t3, marginTop: 2 }}>{hint}</div>
+              </div>
+            ))}
           </div>
         )}
       </CardContent>
