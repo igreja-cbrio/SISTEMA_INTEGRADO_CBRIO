@@ -1850,6 +1850,7 @@ function BatismoFlow({ opt, member, onBack, onDone, onEndSession, onActivity }: 
     data_nascimento: memberSrc.data_nascimento || '',
     telefone: member.telefone || '',
     email: member.email || '',
+    sexo: memberSrc.sexo || '',
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -2079,14 +2080,24 @@ function BatismoFlow({ opt, member, onBack, onDone, onEndSession, onActivity }: 
               <input type="date" value={form.data_nascimento} onChange={setField('data_nascimento')} className={inputCls} />
             </div>
             <div>
-              <label className="block text-xs text-white/40 mb-1">Telefone *</label>
-              <input value={form.telefone} onChange={setField('telefone')} className={inputCls} placeholder="(21) 9..." inputMode="numeric" />
+              <label className="block text-xs text-white/40 mb-1">Sexo</label>
+              <select value={form.sexo} onChange={setField('sexo')} className={`${inputCls} [color-scheme:dark]`}>
+                <option value="">Selecionar</option>
+                <option value="M">Masculino</option>
+                <option value="F">Feminino</option>
+              </select>
             </div>
           </div>
 
-          <div>
-            <label className="block text-xs text-white/40 mb-1">E-mail</label>
-            <input type="email" value={form.email} onChange={setField('email')} className={inputCls} placeholder="email@exemplo.com" />
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-white/40 mb-1">Telefone *</label>
+              <input value={form.telefone} onChange={setField('telefone')} className={inputCls} placeholder="(21) 9..." inputMode="numeric" />
+            </div>
+            <div>
+              <label className="block text-xs text-white/40 mb-1">E-mail</label>
+              <input type="email" value={form.email} onChange={setField('email')} className={inputCls} placeholder="email@exemplo.com" />
+            </div>
           </div>
 
           {error && (
@@ -2541,6 +2552,7 @@ function NextFlow({ opt, member, onBack, onDone, onEndSession, onActivity }: {
     telefone: member.telefone ? maskPhoneInput(member.telefone) : '',
     email: member.email || '',
     data_nascimento: '',
+    sexo: '',
     observacoes: '',
   });
   const [saving, setSaving] = useState(false);
@@ -2605,6 +2617,7 @@ function NextFlow({ opt, member, onBack, onDone, onEndSession, onActivity }: {
         email: form.email.trim().toLowerCase(),
         cpf: form.cpf.replace(/\D/g, '') || null,
         data_nascimento: form.data_nascimento || null,
+        sexo: form.sexo || null,
         observacoes: form.observacoes || null,
         turma_id: turmaSel?.id || null,   // turma escolhida no calendário
       };
@@ -2852,9 +2865,19 @@ function NextFlow({ opt, member, onBack, onDone, onEndSession, onActivity }: {
             </div>
           </div>
 
-          <div>
-            <label className="block text-xs text-white/40 mb-1">Data de nascimento</label>
-            <input type="date" value={form.data_nascimento} onChange={setField('data_nascimento')} className={inputCls} />
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-white/40 mb-1">Data de nascimento</label>
+              <input type="date" value={form.data_nascimento} onChange={setField('data_nascimento')} className={inputCls} />
+            </div>
+            <div>
+              <label className="block text-xs text-white/40 mb-1">Sexo</label>
+              <select value={form.sexo} onChange={setField('sexo')} className={`${inputCls} [color-scheme:dark]`}>
+                <option value="">Selecionar</option>
+                <option value="M">Masculino</option>
+                <option value="F">Feminino</option>
+              </select>
+            </div>
           </div>
 
           {error && <p className="text-red-400 text-sm text-center">{error}</p>}
@@ -2886,8 +2909,6 @@ function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onEndSession, onAct
   const guest = !!member.guest;
   const [loading, setLoading] = useState(true);
   const [proximaData, setProximaData] = useState<string | null>(null);
-  const [cultosDia, setCultosDia] = useState<any[]>([]);
-  const [cultoSel, setCultoSel] = useState<any>(null);
   const [existente, setExistente] = useState<any>(null);
   const [step, setStep] = useState<'check' | 'form' | 'success'>('check');
   const [form, setForm] = useState({
@@ -2897,6 +2918,8 @@ function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onEndSession, onAct
     nome_pai: '',
     nome_mae: '',
     responsavel_nome: guest ? '' : member.nome || '',
+    responsavel_cpf: member.cpf ? maskCpfInput(member.cpf) : '',
+    responsavel_relacao: '',
     responsavel_telefone: member.telefone ? maskPhoneInput(member.telefone) : '',
     responsavel_email: member.email || '',
     observacoes: '',
@@ -2911,10 +2934,6 @@ function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onEndSession, onAct
       .then((r: any) => {
         setProximaData(r.proxima_data);
         setExistente(r.apresentacao_existente);
-        const ordenados = [...(r.cultos || [])].sort((a: any, b: any) =>
-          String(a.service_type?.recurrence_time || '99:99').localeCompare(String(b.service_type?.recurrence_time || '99:99')));
-        setCultosDia(ordenados);
-        if (ordenados.length === 1) setCultoSel(ordenados[0]);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -2923,6 +2942,7 @@ function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onEndSession, onAct
   const setField = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     let v = e.target.value;
     if (k === 'responsavel_telefone') v = maskPhoneInput(v);
+    if (k === 'responsavel_cpf') v = maskCpfInput(v);
     setForm(f => ({ ...f, [k]: v }));
     onActivity();
   };
@@ -2931,15 +2951,16 @@ function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onEndSession, onAct
     if (!form.bebe_nome.trim()) { setError('Nome do bebê obrigatório'); return; }
     if (!form.bebe_data_nascimento) { setError('Data de nascimento do bebê obrigatória'); return; }
     if (!form.responsavel_nome.trim()) { setError('Nome do responsável obrigatório'); return; }
+    if (!cpfDvOk(form.responsavel_cpf)) { setError('CPF do responsável é obrigatório e precisa ser válido'); return; }
     if (form.responsavel_telefone.replace(/\D/g, '').length < 10) { setError('Telefone inválido'); return; }
-    if (cultosDia.length > 0 && !cultoSel) { setError('Escolha o horário do culto da cerimônia'); return; }
     setSaving(true); setError('');
     onActivity();
     try {
       await membresia.totem.apresentacaoBebe.create({
         responsavel_membro_id: member.pending || member.guest ? null : member.id || null,
-        culto_id: cultoSel?.id || null,
         responsavel_nome: form.responsavel_nome.trim(),
+        responsavel_cpf: form.responsavel_cpf.replace(/\D/g, ''),
+        responsavel_relacao: form.responsavel_relacao || null,
         responsavel_telefone: form.responsavel_telefone.replace(/\D/g, ''),
         responsavel_email: form.responsavel_email.trim() || null,
         bebe_nome: form.bebe_nome.trim(),
@@ -2955,8 +2976,6 @@ function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onEndSession, onAct
     }
     setSaving(false);
   };
-
-  const horaCulto = (c: any) => String(c?.service_type?.recurrence_time || '').slice(0, 5);
 
   const inputCls = 'w-full px-4 py-3 rounded-2xl border border-gray-700 bg-gray-800 text-white placeholder:text-gray-500 text-sm outline-none focus:border-[#EC4899] focus:ring-1 focus:ring-[#EC4899]/30 transition-colors';
 
@@ -2980,9 +2999,7 @@ function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onEndSession, onAct
           {proximaData && (
             <p className="text-white/70 mt-3 text-lg">
               {fmtDateBR(proximaData).replace(/^(\w)/, c => c.toUpperCase())}
-              {cultoSel && horaCulto(cultoSel) ? (
-                <> · culto das <span className="text-[#EC4899] font-semibold">{horaCulto(cultoSel)}</span></>
-              ) : null}
+              {' · '}<span className="text-[#EC4899] font-semibold">às 10h</span>
             </p>
           )}
           <p className="text-white/50 mt-2 text-sm">
@@ -3040,6 +3057,7 @@ function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onEndSession, onAct
               <div className="rounded-2xl border border-[#EC4899]/30 bg-[#EC4899]/10 p-4">
                 <p className="text-white/60 text-xs uppercase tracking-wider">Próxima cerimônia</p>
                 <p className="text-xl font-bold text-[#EC4899] mt-1">{fmtDateBR(proximaData)}</p>
+                <p className="text-white/70 text-sm mt-1">no culto das 10h</p>
               </div>
             )}
             <Button
@@ -3069,30 +3087,6 @@ function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onEndSession, onAct
             )}
           </div>
 
-          {cultosDia.length > 0 && (
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-white/40 mb-2">
-                Horário do culto {cultosDia.length > 1 ? '*' : ''}
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {cultosDia.map((c: any) => {
-                  const sel = cultoSel?.id === c.id;
-                  return (
-                    <button
-                      key={c.id}
-                      type="button"
-                      onClick={() => setCultoSel(c)}
-                      className={`px-4 py-2.5 rounded-2xl border text-sm font-semibold transition-all ${
-                        sel ? 'border-[#EC4899] bg-[#EC4899]/15 text-[#EC4899]' : 'border-white/15 bg-white/5 text-white/70 hover:bg-white/10'
-                      }`}
-                    >
-                      {horaCulto(c) || c.service_type?.name || 'Culto'}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
 
           <p className="text-xs font-semibold uppercase tracking-wider text-white/40">Bebê</p>
 
@@ -3129,9 +3123,28 @@ function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onEndSession, onAct
           </div>
 
           <p className="text-xs font-semibold uppercase tracking-wider text-white/40 pt-2">Responsável (contato)</p>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-white/40 mb-1">Nome *</label>
+              <input value={form.responsavel_nome} onChange={setField('responsavel_nome')} className={inputCls} />
+            </div>
+            <div>
+              <label className="block text-xs text-white/40 mb-1">Parentesco com o bebê</label>
+              <select value={form.responsavel_relacao} onChange={setField('responsavel_relacao')} className={`${inputCls} [color-scheme:dark]`}>
+                <option value="">Selecionar</option>
+                <option value="mae">Mãe</option>
+                <option value="pai">Pai</option>
+                <option value="avo">Avó / Avô</option>
+                <option value="tio">Tio / Tia</option>
+                <option value="responsavel">Responsável</option>
+                <option value="outro">Outro</option>
+              </select>
+            </div>
+          </div>
           <div>
-            <label className="block text-xs text-white/40 mb-1">Nome *</label>
-            <input value={form.responsavel_nome} onChange={setField('responsavel_nome')} className={inputCls} />
+            <label className="block text-xs text-white/40 mb-1">CPF do responsável *</label>
+            <input value={form.responsavel_cpf} onChange={setField('responsavel_cpf')} className={inputCls} placeholder="000.000.000-00" inputMode="numeric" />
+            <p className="text-[11px] text-white/30 mt-1">Ajuda a já vincular sua família quando a criança for pro Kids.</p>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>

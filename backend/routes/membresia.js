@@ -1532,7 +1532,7 @@ router.post('/totem/next/inscrever', async (req, res) => {
   try {
     const {
       membro_id, nome, sobrenome, cpf, telefone, email,
-      data_nascimento, observacoes, turma_id,
+      data_nascimento, observacoes, turma_id, sexo,
     } = req.body || {};
 
     if (!nome || String(nome).trim().length < 2) {
@@ -1599,6 +1599,7 @@ router.post('/totem/next/inscrever', async (req, res) => {
         membro_id: membroId,
         ja_batizado: jaBatizado,
         ja_voluntario: jaVoluntario,
+        ...(sexo ? { sexo: String(sexo).trim().slice(0, 20) } : {}),
         origem: 'manual',
         registered_by: req.user?.id || null,
       })
@@ -1762,6 +1763,7 @@ router.post('/totem/apresentacao-bebe', async (req, res) => {
   try {
     const {
       responsavel_membro_id, responsavel_nome, responsavel_telefone, responsavel_email,
+      responsavel_cpf, responsavel_relacao,
       bebe_nome, bebe_data_nascimento, bebe_sexo, nome_pai, nome_mae, observacoes,
     } = req.body || {};
 
@@ -1771,6 +1773,12 @@ router.post('/totem/apresentacao-bebe', async (req, res) => {
     const cleanTel = String(responsavel_telefone || '').replace(/\D/g, '');
     if (cleanTel.length < 10) {
       return res.status(400).json({ error: 'Telefone do responsável invalido' });
+    }
+    // CPF do responsável obrigatório (identidade da família · base pro vínculo
+    // futuro com o Kids · lei do CPF como identidade global).
+    const cleanCpfResp = String(responsavel_cpf || '').replace(/\D/g, '');
+    if (!cpfValido(cleanCpfResp)) {
+      return res.status(400).json({ error: 'CPF do responsável é obrigatório e precisa ser válido.' });
     }
     if (!bebe_nome || String(bebe_nome).trim().length < 1) {
       return res.status(400).json({ error: 'Nome do bebe obrigatório' });
@@ -1782,28 +1790,44 @@ router.post('/totem/apresentacao-bebe', async (req, res) => {
     const proxima = _proximoSegundoDomingo();
     const proximaStr = _fmtDate(proxima);
 
-    // Culto da cerimônia: o totem manda o culto_id ESCOLHIDO pela família
-    // (validado contra os cultos do dia); sem escolha, cai no primeiro por
-    // horário (fallback legado).
+    // Culto da cerimônia: a apresentação é SEMPRE no culto das 10:00 (regra do
+    // Marcos 2026-07-23 · sem escolha). Vincula ao culto de 10:00 do 2º domingo;
+    // se não houver, cai no primeiro por horário (não trava o agendamento).
     let culto_id = null;
     const { data: cultosDia } = await supabase
       .from('cultos')
       .select('id, service_type:vol_service_types(recurrence_time)')
       .eq('data', proximaStr);
-    const idsDia = (cultosDia || []).map((c) => c.id);
-    const cultoEscolhido = req.body?.culto_id;
-    if (cultoEscolhido && idsDia.includes(cultoEscolhido)) {
-      culto_id = cultoEscolhido;
-    } else if (cultosDia && cultosDia.length) {
-      const ordenados = [...cultosDia].sort((a, b) =>
-        String(a.service_type?.recurrence_time || '99:99').localeCompare(String(b.service_type?.recurrence_time || '99:99')));
-      culto_id = ordenados[0].id;
+    if (cultosDia && cultosDia.length) {
+      const das10 = cultosDia.find((c) => String(c.service_type?.recurrence_time || '').startsWith('10:00'));
+      if (das10) {
+        culto_id = das10.id;
+      } else {
+        const ordenados = [...cultosDia].sort((a, b) =>
+          String(a.service_type?.recurrence_time || '99:99').localeCompare(String(b.service_type?.recurrence_time || '99:99')));
+        culto_id = ordenados[0].id;
+      }
+    }
+
+    // Identidade da família: resolve/cria o membro do responsável pelo CPF
+    // (matcher canônico) — sem isso a família não fica ligada pro Kids depois.
+    let respMembroId = responsavel_membro_id || null;
+    if (!respMembroId) {
+      try {
+        const r = await acharOuCriarGuardado({
+          cpf: cleanCpfResp, telefone: cleanTel,
+          email: responsavel_email ? String(responsavel_email).toLowerCase().trim() : null,
+          nome: String(responsavel_nome).trim(),
+          status: 'visitante', origem: 'apresentacao_bebe_totem',
+        });
+        respMembroId = r.membro_id;
+      } catch (e) { console.error('[TOTEM] bebe matcher responsável:', e.message); }
     }
 
     const { data, error } = await supabase
       .from('apresentacao_bebes')
       .insert({
-        responsavel_membro_id: responsavel_membro_id || null,
+        responsavel_membro_id: respMembroId,
         responsavel_nome: String(responsavel_nome).trim(),
         responsavel_telefone: cleanTel,
         responsavel_email: responsavel_email
@@ -1817,6 +1841,9 @@ router.post('/totem/apresentacao-bebe', async (req, res) => {
         data_apresentacao: proximaStr,
         culto_id,
         registrado_por: req.user?.id || null,
+        // Colunas novas (migration 20260723233000) · condicional tolera ausência.
+        ...(cleanCpfResp ? { responsavel_cpf: cleanCpfResp } : {}),
+        ...(responsavel_relacao ? { responsavel_relacao: String(responsavel_relacao).trim().slice(0, 40) } : {}),
       })
       .select()
       .single();
