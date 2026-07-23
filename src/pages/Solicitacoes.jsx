@@ -2299,6 +2299,73 @@ function MLTrackingBlock({ item, canEdit, onChanged }) {
   );
 }
 
+// Combobox com busca (plano de contas / centro de custo têm muitas opções · o
+// <select> nativo obriga rolar tudo). Filtra por código ou nome; mostra o
+// selecionado como "codigo · nome"; permite limpar. Cap de 200 com dica pra
+// digitar. Estilo shadcn/Tailwind pra casar com o resto da tela.
+function ComboboxContabil({ items, value, onChange, placeholder = 'Selecione…', emptyLabel = '— nenhum —', permiteVazio = true, invalido = false }) {
+  const [busca, setBusca] = useState('');
+  const [aberto, setAberto] = useState(false);
+  const sel = items.find(i => i.id === value);
+  const q = busca.trim().toLowerCase();
+  const filtrados = (q
+    ? items.filter(i => (i.codigo || '').toLowerCase().includes(q) || (i.nome || '').toLowerCase().includes(q))
+    : items).slice(0, 200);
+
+  const escolher = (id) => { onChange(id); setBusca(''); setAberto(false); };
+
+  return (
+    <div className="relative">
+      <div className="relative">
+        <input
+          type="text"
+          value={aberto ? busca : (sel ? `${sel.codigo} · ${sel.nome}` : '')}
+          onChange={e => { setBusca(e.target.value); setAberto(true); }}
+          onFocus={e => { setAberto(true); setBusca(''); e.target.select(); }}
+          onBlur={() => setTimeout(() => setAberto(false), 150)}
+          placeholder={placeholder}
+          className={`w-full pl-2 pr-14 py-2 text-sm rounded-md bg-background border ${invalido ? 'border-rose-400' : 'border-border'} outline-none focus:ring-1 focus:ring-primary`}
+        />
+        {value && permiteVazio && (
+          <button type="button" title="Limpar"
+            onMouseDown={e => { e.preventDefault(); escolher(''); }}
+            className="absolute right-7 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground p-0.5">
+            <X className="h-3.5 w-3.5" />
+          </button>
+        )}
+        <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+      </div>
+      {aberto && (
+        <div className="absolute top-full left-0 right-0 mt-1 z-[1200] rounded-md border border-border shadow-lg max-h-72 overflow-y-auto"
+          style={{ background: 'var(--cbrio-card)' }}>
+          {permiteVazio && (
+            <button type="button"
+              onMouseDown={e => { e.preventDefault(); escolher(''); }}
+              className={`block w-full text-left px-3 py-2 text-xs italic border-b border-border ${!value ? 'bg-primary/10' : 'hover:bg-muted/50'} text-muted-foreground`}>
+              {emptyLabel}
+            </button>
+          )}
+          {filtrados.length === 0 ? (
+            <div className="px-3 py-3 text-xs text-muted-foreground text-center">Nenhum resultado pra "{busca}"</div>
+          ) : filtrados.map(i => (
+            <button type="button" key={i.id}
+              onMouseDown={e => { e.preventDefault(); escolher(i.id); }}
+              className={`block w-full text-left px-3 py-2 text-sm ${i.id === value ? 'bg-primary/10' : 'hover:bg-muted/50'}`}>
+              <span className="font-mono text-xs text-muted-foreground mr-2">{i.codigo}</span>
+              <span className="text-foreground">{i.nome}</span>
+            </button>
+          ))}
+          {items.length > 200 && !q && (
+            <div className="px-3 py-2 text-[11px] italic text-muted-foreground text-center border-t border-border">
+              Mostrando 200 de {items.length} · digite pra buscar
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Cotação (compras/serviço) · o Amaury (logística) registra VÁRIAS cotações de
 // fornecedores e, com um botão dedicado reenviável, dispara um e-mail rico ao
 // financeiro (Yago) com todas as cotações + a sugerida + total, pra aprovar o
@@ -2531,19 +2598,11 @@ function CotacaoBlock({ item, canCotar, onChanged }) {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <div>
               <Label className="text-xs">Plano de contas</Label>
-              <select value={planoId} onChange={e => setPlanoId(e.target.value)}
-                className="w-full px-2 py-2 text-sm rounded-md border border-border bg-background">
-                <option value="">Selecione…</option>
-                {planos.map(p => <option key={p.id} value={p.id}>{p.codigo} · {p.nome}</option>)}
-              </select>
+              <ComboboxContabil items={planos} value={planoId} onChange={setPlanoId} placeholder="Buscar plano de contas…" emptyLabel="— sem plano de contas —" />
             </div>
             <div>
               <Label className="text-xs">Centro de custo</Label>
-              <select value={centroId} onChange={e => setCentroId(e.target.value)}
-                className="w-full px-2 py-2 text-sm rounded-md border border-border bg-background">
-                <option value="">Selecione…</option>
-                {centros.map(c => <option key={c.id} value={c.id}>{c.codigo} · {c.nome}</option>)}
-              </select>
+              <ComboboxContabil items={centros} value={centroId} onChange={setCentroId} placeholder="Buscar centro de custo…" emptyLabel="— sem centro de custo —" />
             </div>
           </div>
           <p className="text-[11px] text-muted-foreground">Anexe a nota e a IA sugere o plano de contas, o fornecedor e o valor pra você confirmar. Salvo ao enviar ao financeiro.</p>
@@ -3724,7 +3783,6 @@ function LancarFinanceiroModal({ solicitacao, onClose, onDone }) {
     } finally { setSaving(false); }
   }
 
-  const selCls = 'w-full px-2 py-2 text-sm rounded-md border border-border bg-background';
   return (
     <Dialog open onOpenChange={v => { if (!v) onClose(); }}>
       <DialogContent className="sm:max-w-md">
@@ -3732,15 +3790,11 @@ function LancarFinanceiroModal({ solicitacao, onClose, onDone }) {
         <div className="space-y-3">
           <p className="text-sm text-muted-foreground">Cria a despesa de <span className="font-medium">{solicitacao.titulo}</span> ({valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}) e concilia com o extrato automaticamente se o débito existir.</p>
           <div><Label className="text-xs">Plano de contas *</Label>
-            <select value={planoId} onChange={e => setPlanoId(e.target.value)} className={selCls}>
-              <option value="">Selecione…</option>
-              {planos.map(p => <option key={p.id} value={p.id}>{p.codigo} · {p.nome}</option>)}
-            </select></div>
+            <ComboboxContabil items={planos} value={planoId} onChange={setPlanoId} placeholder="Buscar plano de contas…" permiteVazio={false} invalido={!planoId} />
+          </div>
           <div><Label className="text-xs">Centro de custo</Label>
-            <select value={centroId} onChange={e => setCentroId(e.target.value)} className={selCls}>
-              <option value="">Selecione…</option>
-              {centros.map(c => <option key={c.id} value={c.id}>{c.codigo} · {c.nome}</option>)}
-            </select></div>
+            <ComboboxContabil items={centros} value={centroId} onChange={setCentroId} placeholder="Buscar centro de custo…" emptyLabel="— sem centro de custo —" />
+          </div>
           <div><Label className="text-xs">Conta bancária {precisaConta ? '(necessária · não achei no extrato)' : '(só se não houver débito no extrato)'}</Label>
             <select value={contaId} onChange={e => setContaId(e.target.value)} className={`w-full px-2 py-2 text-sm rounded-md bg-background border ${precisaConta && !contaId ? 'border-rose-400' : 'border-border'}`}>
               <option value="">— conciliar pelo extrato —</option>
