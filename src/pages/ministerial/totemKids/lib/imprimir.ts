@@ -177,10 +177,12 @@ function cssEtiqueta(layout: EtiquetaLayout = LAYOUT_ETIQUETA_PADRAO): string {
   }
   .info-sec { font-size: ${pt(7.5)}; color: #444; line-height: 1.2; margin-top: 0.5mm; }
   /* Alerta de saúde (alergia/necessidade): PRETO NO BRANCO (a tarja preta saía
-     ilegível na térmica · Mari 2026-07-22), negrito, fonte maior (~9.5pt), uma
-     linha com símbolo de alerta + texto com ellipsis de segurança. */
+     ilegível na térmica · Mari 2026-07-22), negrito, ~8pt — MENOR que antes pra
+     caber mais do conteúdo (Marcos 2026-07-23: a 9.5pt cortava o alérgeno cedo).
+     O símbolo ⚠ fica prominente ("atenção") e o texto ganha o espaço; corte por
+     LARGURA (ellipsis do .alerta-txt), não por nº fixo de chars. */
   .alerta {
-    color: #000; font-weight: 800; font-size: ${pt(9.5)}; line-height: 1.1;
+    color: #000; font-weight: 800; font-size: ${pt(8)}; line-height: 1.1;
     margin-top: 1mm; display: flex; align-items: center; gap: 1mm; overflow: hidden;
   }
   .alerta svg { width: 3.6mm; height: 3.6mm; flex-shrink: 0; }
@@ -292,17 +294,19 @@ const ICONE_BOLO = `<svg viewBox="0 0 64 64" width="52" height="52" fill="none" 
 function htmlEtiquetaCrianca(d: DadosImpressao): string {
   const layout = { ...LAYOUT_ETIQUETA_PADRAO, ...(d.layout || {}) };
 
-  // Saúde em destaque: alergia + necessidade; senão, obs. médica. Trunca em ~24
-  // chars (a string começa por ALERGIA → preserva o mais crítico); a tarja preta
-  // saiu (ilegível na térmica) e o símbolo de alerta marca a linha (Mari 2026-07-22).
+  // Saúde em destaque: alergia + necessidade; senão, obs. médica. O símbolo ⚠ já
+  // diz "atenção", então NÃO repetimos "ALERGIA:" na frente (roubava o espaço do
+  // alérgeno · Marcos 2026-07-23) — mostra o alérgeno direto. Autismo/limitação
+  // mantêm o rótulo próprio ("Espectro:"/"Limitação:"). Alergia vem primeiro (o
+  // mais crítico) e o corte é por LARGURA (ellipsis do .alerta-txt) → aparece o
+  // máximo que couber na fonte, sem cortar num nº fixo de chars.
   const saude = [
-    d.crianca.alergia ? `ALERGIA: ${d.crianca.alergia}` : '',
+    d.crianca.alergia || '',
     d.crianca.necessidade || '',
     !d.crianca.alergia && !d.crianca.necessidade ? (d.crianca.observacoesMedicas || '') : '',
   ].filter(Boolean).join(' · ');
-  const saudeCurta = saude.length > 24 ? saude.slice(0, 23).trimEnd() + '…' : saude;
   const alerta = saude
-    ? `<div class="alerta">${ICONE_ALERTA}<span class="alerta-txt">${escapeHtml(saudeCurta)}</span></div>`
+    ? `<div class="alerta">${ICONE_ALERTA}<span class="alerta-txt">${escapeHtml(saude)}</span></div>`
     : '';
 
   // Selo de foto INVERTIDO (Marcos/Mari 2026-07-22): quem AUTORIZA imagem fica com
