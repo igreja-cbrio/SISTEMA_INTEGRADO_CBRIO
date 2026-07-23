@@ -1815,6 +1815,11 @@ export const solicitacoes = {
     get:       (categoria) => get(`/solicitacoes/fluxos/${categoria}`),
     andamento: (categoria) => get(`/solicitacoes/fluxos/${categoria}/andamento`),
     setEtapaResponsaveis: (etapaId, profile_ids) => put(`/solicitacoes/fluxos/etapas/${etapaId}/responsaveis`, { profile_ids }),
+    criarEtapa:     (categoria, payload) => post(`/solicitacoes/fluxos/${categoria}/etapas`, payload),
+    editarEtapa:    (etapaId, body) => patch(`/solicitacoes/fluxos/etapas/${etapaId}`, body),
+    removerEtapa:   (etapaId) => del(`/solicitacoes/fluxos/etapas/${etapaId}`),
+    criarTransicao: (payload) => post('/solicitacoes/fluxos/transicoes', payload),
+    removerTransicao: (id) => del(`/solicitacoes/fluxos/transicoes/${id}`),
   },
   // Vinculo com pedido Mercado Livre (compras)
   vincularML:   (id, mlInput) => post(`/solicitacoes/${id}/vincular-ml`, { ml_input: mlInput }),

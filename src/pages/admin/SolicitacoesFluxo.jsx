@@ -64,6 +64,36 @@ export default function SolicitacoesFluxo() {
     }
   }
 
+  async function criarEtapa() {
+    const label = window.prompt('Nome da nova etapa:');
+    if (!label || !label.trim()) return;
+    try {
+      await solicitacoes.fluxos.criarEtapa(sel, { label: label.trim(), tipo: 'etapa', pos_x: 1, pos_y: 2 });
+      toast.success('Etapa criada — arraste e ajuste os detalhes.');
+      carregarFluxo(sel);
+    } catch (e) { toast.error(e.message || 'Não foi possível criar a etapa.'); }
+  }
+  async function editarEtapa(etapaId, patch) {
+    await solicitacoes.fluxos.editarEtapa(etapaId, patch);
+    carregarFluxo(sel);
+  }
+  async function removerEtapa(etapaId) {
+    await solicitacoes.fluxos.removerEtapa(etapaId);
+    toast.success('Etapa removida.');
+    carregarFluxo(sel);
+  }
+  async function moverEtapa(etapaId, pos_x, pos_y) {
+    try { await solicitacoes.fluxos.editarEtapa(etapaId, { pos_x, pos_y }); } catch { /* silencioso */ }
+  }
+  async function criarTransicao(payload) {
+    await solicitacoes.fluxos.criarTransicao(payload);
+    carregarFluxo(sel);
+  }
+  async function removerTransicao(id) {
+    await solicitacoes.fluxos.removerTransicao(id);
+    carregarFluxo(sel);
+  }
+
   return (
     <div style={{ padding: '24px clamp(16px, 4vw, 32px)', maxWidth: 1200, margin: '0 auto' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
@@ -117,10 +147,15 @@ export default function SolicitacoesFluxo() {
             <div style={{ padding: 60, textAlign: 'center' }}><Loader2 className="animate-spin" style={{ margin: '0 auto', color: C.text3 }} /></div>
           ) : fluxo ? (
             <>
-              <div style={{ fontSize: 13, color: C.text2, marginBottom: 10 }}>
-                <b style={{ color: C.text }}>{fluxo.nome || label(fluxo.categoria)}</b>
-                <span> · versão {fluxo.versao} · {fluxo.etapas?.length || 0} etapas</span>
-                {fluxo.descricao && <div style={{ marginTop: 2 }}>{fluxo.descricao}</div>}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: 12, marginBottom: 10, flexWrap: 'wrap' }}>
+                <div style={{ fontSize: 13, color: C.text2 }}>
+                  <b style={{ color: C.text }}>{fluxo.nome || label(fluxo.categoria)}</b>
+                  <span> · versão {fluxo.versao} · {fluxo.etapas?.length || 0} etapas</span>
+                  {fluxo.descricao && <div style={{ marginTop: 2 }}>{fluxo.descricao}</div>}
+                </div>
+                {isAdmin && (
+                  <button onClick={criarEtapa} style={{ padding: '8px 14px', fontSize: 13, fontWeight: 650, borderRadius: 8, border: `1px solid ${C.primary}`, background: C.primary, color: '#fff', cursor: 'pointer' }}>+ Adicionar etapa</button>
+                )}
               </div>
               <FluxoCanvas
                 fluxo={fluxo}
@@ -128,6 +163,11 @@ export default function SolicitacoesFluxo() {
                 colaboradores={colaboradores}
                 editable={isAdmin}
                 onSaveResponsaveis={salvarResponsaveis}
+                onEditEtapa={editarEtapa}
+                onDeleteEtapa={removerEtapa}
+                onMoveEtapa={moverEtapa}
+                onCreateTransicao={criarTransicao}
+                onDeleteTransicao={removerTransicao}
               />
             </>
           ) : !erro && (
