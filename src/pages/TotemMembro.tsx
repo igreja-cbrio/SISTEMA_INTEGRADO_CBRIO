@@ -1854,6 +1854,7 @@ function BatismoFlow({ opt, member, onBack, onDone, onEndSession, onActivity }: 
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [jaInscrito, setJaInscrito] = useState(false);
 
   useEffect(() => {
     membresia.totem.batismoHorarios()
@@ -1892,11 +1893,12 @@ function BatismoFlow({ opt, member, onBack, onDone, onEndSession, onActivity }: 
     setSaving(true); setError('');
     onActivity();
     try {
-      await kpisApi.batismos.create({
+      const r = await kpisApi.batismos.create({
         ...form,
         origem: 'totem',
         ...(horarioSel ? { horario_culto: horarioSel.horario } : {}),
       });
+      if (r?.duplicado) setJaInscrito(true);
       setStep('success');
     } catch (e: any) {
       setError(e.message || 'Não foi possível registrar. Tente novamente.');
@@ -1911,8 +1913,10 @@ function BatismoFlow({ opt, member, onBack, onDone, onEndSession, onActivity }: 
       <div className="min-h-screen bg-gray-950 text-white flex flex-col items-center justify-center gap-6 p-8" onClick={onActivity}>
         <CheckCircle2 className="h-20 w-20 text-[#00B39D]" />
         <div className="text-center max-w-md">
-          <h2 className="text-3xl font-bold">Inscrição confirmada!</h2>
-          {agenda.data_batismo ? (
+          <h2 className="text-3xl font-bold">{jaInscrito ? 'Você já está inscrito!' : 'Inscrição confirmada!'}</h2>
+          {jaInscrito ? (
+            <p className="text-white/70 mt-3 text-lg">Você já tem uma inscrição de batismo em andamento — está tudo certo, é só aguardar nossa equipe.</p>
+          ) : agenda.data_batismo ? (
             <p className="text-white/70 mt-3 text-lg">
               Seu batismo será em <span className="text-[#6366F1] font-semibold">{fmtDateBR(agenda.data_batismo)}</span>
               {horarioSel ? <> · culto das <span className="text-[#6366F1] font-semibold">{horarioSel.label || horarioSel.horario}</span></> : null}
