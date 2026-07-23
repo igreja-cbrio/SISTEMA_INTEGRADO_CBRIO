@@ -2675,6 +2675,7 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
   const [obsText, setObsText] = useState('');
   const [atenderEstoque, setAtenderEstoque] = useState(false); // ponte estoque (Fase 3a-2)
   const [converterCompra, setConverterCompra] = useState(false); // marketing → compra
+  const [lancarFin, setLancarFin] = useState(false); // loop financeiro · lançar despesa
 
   if (!item) return null;
   // Mesmo corpo, dois invólucros: Dialog (modal) ou Sheet (painel lateral direito).
@@ -3024,6 +3025,12 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
                   {['marketing', 'producao'].includes(item.categoria) && (
                     <Button size="sm" variant="outline" className="text-orange-600 border-orange-300 hover:bg-orange-50 dark:hover:bg-orange-950/30" onClick={() => setConverterCompra(true)}>Isto é uma compra</Button>
                   )}
+                  {['compras', 'servico'].includes(item.categoria) && item.aprovado_financeiro_em && !item.fin_transacao_id && (
+                    <Button size="sm" variant="outline" className="text-teal-700 border-teal-300 hover:bg-teal-50 dark:hover:bg-teal-950/30" onClick={() => setLancarFin(true)}>Lançar no financeiro</Button>
+                  )}
+                  {item.fin_transacao_id && (
+                    <span className="inline-flex items-center gap-1 text-xs text-emerald-600 self-center font-medium">✓ Lançado{item.fin_vinculo_status === 'conciliado' ? ' · conciliado' : ' · pendente'}</span>
+                  )}
                   {podeRejeitar && (
                     <Button size="sm" variant="destructive" onClick={() => setActionPending('rejeitado')}>Rejeitar</Button>
                   )}
@@ -3049,6 +3056,14 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
               solicitacao={item}
               onClose={() => setConverterCompra(false)}
               onDone={() => { setConverterCompra(false); onItemRefresh?.(); onClose(); }}
+            />
+          )}
+
+          {lancarFin && (
+            <LancarFinanceiroModal
+              solicitacao={item}
+              onClose={() => setLancarFin(false)}
+              onDone={() => { setLancarFin(false); onItemRefresh?.(); }}
             />
           )}
 
@@ -3674,6 +3689,67 @@ function ConverterEmCompraModal({ solicitacao, onClose, onDone }) {
         <div className="flex justify-end gap-2 pt-2 border-t border-border">
           <Button variant="outline" onClick={onClose} disabled={saving}>Cancelar</Button>
           <Button onClick={converter} disabled={saving} className="bg-orange-600 hover:bg-orange-700 text-white">{saving ? 'Convertendo…' : 'Virar compra'}</Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Loop financeiro Fase 2 · lança a despesa da compra e concilia com o extrato.
+function LancarFinanceiroModal({ solicitacao, onClose, onDone }) {
+  const [planos, setPlanos] = useState([]);
+  const [centros, setCentros] = useState([]);
+  const [contas, setContas] = useState([]);
+  const [planoId, setPlanoId] = useState(solicitacao.plano_contas_id || '');
+  const [centroId, setCentroId] = useState(solicitacao.centro_custo_id || '');
+  const [contaId, setContaId] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [precisaConta, setPrecisaConta] = useState(false);
+  const valor = Number(solicitacao.valor_cotado ?? solicitacao.valor_estimado) || 0;
+
+  useEffect(() => {
+    api.classificacaoAux().then(d => { setPlanos(d?.planos || []); setCentros(d?.centros || []); setContas(d?.contas || []); }).catch(() => {});
+  }, []);
+
+  async function lancar() {
+    if (!planoId) { toast.error('Escolha o plano de contas.'); return; }
+    setSaving(true);
+    try {
+      const r = await api.lancarFinanceiro(solicitacao.id, { plano_contas_id: planoId, centro_custo_id: centroId || undefined, conta_id: contaId || undefined });
+      toast.success(r?.conciliada ? 'Lançado e conciliado com o extrato.' : 'Lançado no financeiro (pendente de conciliação).');
+      onDone();
+    } catch (e) {
+      if (e?.precisaConta || /conta banc/i.test(e?.message || '')) { setPrecisaConta(true); toast.error('Não achei o débito no extrato — escolha a conta bancária e lance de novo.'); }
+      else toast.error(e.message || 'Erro ao lançar no financeiro');
+    } finally { setSaving(false); }
+  }
+
+  const selCls = 'w-full px-2 py-2 text-sm rounded-md border border-border bg-background';
+  return (
+    <Dialog open onOpenChange={v => { if (!v) onClose(); }}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader><DialogTitle>Lançar no financeiro</DialogTitle></DialogHeader>
+        <div className="space-y-3">
+          <p className="text-sm text-muted-foreground">Cria a despesa de <span className="font-medium">{solicitacao.titulo}</span> ({valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}) e concilia com o extrato automaticamente se o débito existir.</p>
+          <div><Label className="text-xs">Plano de contas *</Label>
+            <select value={planoId} onChange={e => setPlanoId(e.target.value)} className={selCls}>
+              <option value="">Selecione…</option>
+              {planos.map(p => <option key={p.id} value={p.id}>{p.codigo} · {p.nome}</option>)}
+            </select></div>
+          <div><Label className="text-xs">Centro de custo</Label>
+            <select value={centroId} onChange={e => setCentroId(e.target.value)} className={selCls}>
+              <option value="">Selecione…</option>
+              {centros.map(c => <option key={c.id} value={c.id}>{c.codigo} · {c.nome}</option>)}
+            </select></div>
+          <div><Label className="text-xs">Conta bancária {precisaConta ? '(necessária · não achei no extrato)' : '(só se não houver débito no extrato)'}</Label>
+            <select value={contaId} onChange={e => setContaId(e.target.value)} className={`w-full px-2 py-2 text-sm rounded-md bg-background border ${precisaConta && !contaId ? 'border-rose-400' : 'border-border'}`}>
+              <option value="">— conciliar pelo extrato —</option>
+              {contas.map(c => <option key={c.id} value={c.id}>{c.nome}{c.banco ? ` · ${c.banco}` : ''}</option>)}
+            </select></div>
+        </div>
+        <div className="flex justify-end gap-2 pt-3 border-t border-border mt-3">
+          <Button variant="outline" onClick={onClose} disabled={saving}>Cancelar</Button>
+          <Button onClick={lancar} disabled={saving || !planoId} className="bg-teal-600 hover:bg-teal-700 text-white">{saving ? 'Lançando…' : 'Lançar'}</Button>
         </div>
       </DialogContent>
     </Dialog>
