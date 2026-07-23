@@ -19,11 +19,13 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ── Segmento → destinatários ────────────────────────────────────────────────
-// Retorna { destinatarios: [{vol_profile_id, email, nome}], sem_email }.
+// Retorna { destinatarios: [{vol_profile_id, email, nome}], sem_email, sem_email_lista }.
 // Dedup por lower(email) · exclui perfis arquivados e e-mails inválidos.
+// `sem_email_lista` = quem ficou de fora (nome + motivo) pra exibir na UI.
 async function resolverSegmento(segmento = {}) {
   const tipo = segmento.tipo || 'todos';
   const brutos = [];
+  const semEmailLista = [];
   let semEmail = 0;
 
   if (tipo === 'todos') {
@@ -37,7 +39,7 @@ async function resolverSegmento(segmento = {}) {
       if (error) throw error;
       for (const p of data || []) {
         if (p.email) brutos.push({ vol_profile_id: p.id, email: p.email, nome: p.full_name });
-        else semEmail += 1;
+        else { semEmail += 1; semEmailLista.push({ nome: p.full_name || null, motivo: 'sem e-mail' }); }
       }
       if (!data || data.length < PAGE) break;
     }
@@ -58,6 +60,10 @@ async function resolverSegmento(segmento = {}) {
           brutos.push({ vol_profile_id: p.id, email: p.email, nome: p.full_name });
         } else {
           semEmail += 1; // membro só-PC (sem profile), arquivado ou sem e-mail
+          semEmailLista.push({
+            nome: p?.full_name || null,
+            motivo: !p ? 'sem perfil (só Planning Center)' : (p.arquivado ? 'perfil arquivado' : 'sem e-mail'),
+          });
         }
       }
       if (!data || data.length < PAGE) break;
@@ -73,7 +79,7 @@ async function resolverSegmento(segmento = {}) {
       if (error) throw error;
       for (const p of data || []) {
         if (p.email) brutos.push({ vol_profile_id: p.id, email: p.email, nome: p.full_name });
-        else semEmail += 1;
+        else { semEmail += 1; semEmailLista.push({ nome: p.full_name || null, motivo: 'sem e-mail' }); }
       }
     }
   } else if (tipo === 'escala') {
@@ -92,6 +98,10 @@ async function resolverSegmento(segmento = {}) {
           brutos.push({ vol_profile_id: p.id, email: p.email, nome: p.full_name || s.volunteer_name });
         } else {
           semEmail += 1; // escalado sem vínculo com vol_profiles ou sem e-mail
+          semEmailLista.push({
+            nome: p?.full_name || s.volunteer_name || null,
+            motivo: !p ? 'sem perfil (só Planning Center)' : (p.arquivado ? 'perfil arquivado' : 'sem e-mail'),
+          });
         }
       }
       if (!data || data.length < PAGE) break;
@@ -104,12 +114,17 @@ async function resolverSegmento(segmento = {}) {
   const destinatarios = [];
   for (const d of brutos) {
     const chave = String(d.email).trim().toLowerCase();
-    if (!EMAIL_RE.test(chave)) { semEmail += 1; continue; }
+    if (!EMAIL_RE.test(chave)) {
+      semEmail += 1;
+      semEmailLista.push({ nome: d.nome || null, motivo: `e-mail inválido: ${d.email}` });
+      continue;
+    }
     if (vistos.has(chave)) continue;
     vistos.add(chave);
     destinatarios.push({ ...d, email: chave });
   }
-  return { destinatarios, sem_email: semEmail };
+  semEmailLista.sort((a, b) => String(a.nome || '~').localeCompare(String(b.nome || '~'), 'pt-BR'));
+  return { destinatarios, sem_email: semEmail, sem_email_lista: semEmailLista };
 }
 
 // ── HTML ────────────────────────────────────────────────────────────────────

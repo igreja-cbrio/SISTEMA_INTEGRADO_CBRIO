@@ -277,10 +277,11 @@ router.delete('/:id', async (req, res) => {
 router.post('/resolver-destinatarios', async (req, res) => {
   try {
     const segmento = validarSegmento(req.body?.segmento);
-    const { destinatarios, sem_email } = await resolverSegmento(segmento);
+    const { destinatarios, sem_email, sem_email_lista } = await resolverSegmento(segmento);
     res.json({
       total: destinatarios.length,
       sem_email,
+      sem_email_lista: sem_email_lista || [],
       lista: destinatarios.map((d) => ({ nome: d.nome, email: d.email })),
     });
   } catch (e) {
