@@ -34,6 +34,7 @@ export interface NavGate {
   module?: string;
   moduleMin?: number;
   path?: string;
+  superAdminOnly?: boolean;
 }
 
 type AuthLike = Record<string, unknown>;
@@ -162,6 +163,9 @@ function perfilMenu(auth: AuthLike): Perfil {
 }
 
 export function navItemAllowed(item: NavGate, auth: AuthLike): boolean {
+  // Só super-admin ESTRITO (app_super_admins · sem bypass de admin/diretor).
+  // Ex.: Analytics do app. Estrito mesmo durante a carga (não pisca pra ninguém).
+  if (item.superAdminOnly && auth?.isSuperAdmin !== true) return false;
   const isAdmin = auth?.isAdmin === true;
   const modulePerms = auth?.modulePerms as Record<string, { leitura?: number }> | null | undefined;
   const modulosBloqueados = (auth?.modulosBloqueados as string[] | undefined) || [];

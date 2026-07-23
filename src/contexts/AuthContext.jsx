@@ -62,6 +62,7 @@ export function AuthProvider({ children }) {
   const [profile, setProfile] = useState(DEV_BYPASS_AUTH ? FAKE_PROFILE : null);
   const [modulePerms, setModulePerms] = useState(null);
   const [permData, setPermData] = useState(null);
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   const [loading, setLoading] = useState(DEV_BYPASS_AUTH ? false : true);
   // Já temos sessão ativa? Usado pra distinguir login REAL de re-emissão de
   // SIGNED_IN por foco de aba (Alt+Tab) — ver onAuthStateChange abaixo.
@@ -142,6 +143,7 @@ export function AuthProvider({ children }) {
         const data = await res.json();
         setModulePerms(data.granular?.modulePerms ?? null);
         setPermData(data.granular ?? null);
+        setIsSuperAdmin(!!data.isSuperAdmin);
         return { ok: true };
       }
       // Resposta não-ok (ex.: 401 com token renovando no resume) · tenta 1x.
@@ -243,6 +245,7 @@ export function AuthProvider({ children }) {
         setProfile(null);
         setModulePerms(null);
         setPermData(null);
+        setIsSuperAdmin(false);
       }
     });
 
@@ -455,6 +458,7 @@ export function AuthProvider({ children }) {
     cargoNome,
     cargoSlug,
     isDev,
+    isSuperAdmin,
     signInWithMicrosoft,
     signInWithGoogle,
     signInWithEmail,
@@ -485,7 +489,7 @@ export function useAuth() {
       canProcessos: false, canSolicitacoes: false, canNPS: false,
       canDadosBrutos: false, canPainel: false, canKPIs: false,
       userAreas: [], userSetores: [],
-      cargoNome: null, cargoSlug: null, isDev: false,
+      cargoNome: null, cargoSlug: null, isDev: false, isSuperAdmin: false,
       recarregarAuth: async () => {},
       refreshProfile: async () => {},
       signInWithMicrosoft: async () => ({}),
