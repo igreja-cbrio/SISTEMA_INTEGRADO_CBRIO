@@ -29,31 +29,6 @@ function mascaraTelefone(v) {
   return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
 }
 
-function mascaraCep(v) {
-  const d = soDigitos(v).slice(0, 8);
-  if (d.length <= 5) return d;
-  return `${d.slice(0, 5)}-${d.slice(5)}`;
-}
-
-async function buscarCep(cep) {
-  const d = soDigitos(cep);
-  if (d.length !== 8) return null;
-  try {
-    const res = await fetch(`https://viacep.com.br/ws/${d}/json/`);
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (data?.erro) return null;
-    return {
-      logradouro: data.logradouro || '',
-      bairro: data.bairro || '',
-      cidade: data.localidade || '',
-      uf: data.uf || '',
-    };
-  } catch {
-    return null;
-  }
-}
-
 function cpfValido(v) {
   const d = soDigitos(v);
   if (d.length !== 11) return false;
@@ -189,9 +164,18 @@ const ESTADO_CIVIL_OPTS = [
 const STEPS = [
   { id: 'pessoal', title: 'Dados Pessoais' },
   { id: 'info', title: 'Informações' },
-  { id: 'endereco', title: 'Endereço' },
   { id: 'termos', title: 'Termos' },
 ];
+
+// Bairros da região da igreja (Barra e adjacências): seleção rápida no totem em
+// vez de digitar endereço (2026-07-23). "Outro" abre campo livre — não trava
+// quem mora fora da região. Endereço completo saiu; o bairro basta pra
+// agrupar por região e a distância do mapa vem do GPS do aparelho.
+const BAIRROS = [
+  'Barra', 'Recreio', 'Freguesia', 'Anil', 'Pechincha', 'Taquara',
+  'Barra Olímpica', 'Curicica', 'Camorim', 'Vargem Grande', 'Vargem Pequena',
+];
+const BAIRRO_OUTRO = '__outro__';
 
 function Row({ children }) {
   return (
@@ -252,13 +236,16 @@ export default function CadastroMembresia() {
   const [form, setForm] = useState({
     nome: '', sobrenome: '', cpf: prefCpf ? mascaraCpf(prefCpf) : '', email: '', confirmar_email: '', telefone: '',
     senha: '', confirmar_senha: '',
-    data_nascimento: prefNasc || '', estado_civil: '', endereco: '', bairro: '',
-    cidade: '', cep: '', profissao: '', como_conheceu: '',
+    data_nascimento: prefNasc || '', estado_civil: '', bairro: '',
+    profissao: '', como_conheceu: '',
     website: '', // honeypot
   });
   const [aceitaTermos, setAceitaTermos] = useState(false);
   const [aceitaComunicacao, setAceitaComunicacao] = useState(false);
   const [converteuCbrio, setConverteuCbrio] = useState(false);
+  // Bairro: guarda a chave da seleção; se "Outro", o valor real vem de bairroOutro.
+  const [bairroSel, setBairroSel] = useState('');
+  const [bairroOutro, setBairroOutro] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [sent, setSent] = useState(false);
@@ -350,25 +337,6 @@ export default function CadastroMembresia() {
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const setMasked = (k, mask) => (e) => setForm((f) => ({ ...f, [k]: mask(e.target.value) }));
 
-  const [cepBuscando, setCepBuscando] = useState(false);
-  const handleCepChange = async (e) => {
-    const masked = mascaraCep(e.target.value);
-    setForm((f) => ({ ...f, cep: masked }));
-    if (soDigitos(masked).length === 8) {
-      setCepBuscando(true);
-      const result = await buscarCep(masked);
-      setCepBuscando(false);
-      if (result) {
-        setForm((f) => ({
-          ...f,
-          endereco: result.logradouro && !f.endereco ? result.logradouro : f.endereco,
-          bairro: result.bairro || f.bairro,
-          cidade: result.cidade || f.cidade,
-        }));
-      }
-    }
-  };
-
   // Debounce: 600ms após parar de digitar CPF, se CPF for valido, faz lookup
   useEffect(() => {
     const cpf = form.cpf;
@@ -450,18 +418,19 @@ export default function CadastroMembresia() {
       case 0:
         return form.nome.trim() !== '' && form.sobrenome.trim() !== '' && soDigitos(form.telefone).length >= 10 && cpfValido(form.cpf);
       case 1:
+        // Passo Informações (+ bairro). Obrigatórios: nascimento e e-mail
+        // (2026-07-23 · antes o e-mail só era exigido no devocional). Bairro,
+        // estado civil e profissão são opcionais.
         if (!form.data_nascimento) return false;
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) return false;
         if (fromDevocional) {
-          if (!form.email.trim()) return false;
           if (form.email.trim().toLowerCase() !== form.confirmar_email.trim().toLowerCase()) return false;
           if (!form.senha || form.senha.length < 6) return false;
           if (form.senha !== form.confirmar_senha) return false;
         }
         return true;
       case 2:
-        return true; // address is optional
-      case 3:
-        return aceitaTermos; // termos (o passo Grupo de Conexão saiu · 2026-07-23)
+        return aceitaTermos; // termos (o passo Endereço virou o seletor de bairro no passo Informações)
       default:
         return true;
     }
@@ -473,8 +442,8 @@ export default function CadastroMembresia() {
     if (soDigitos(form.telefone).length < 10) return 'Informe um celular válido com DDD.';
     if (!cpfValido(form.cpf)) return 'CPF inválido.';
     if (!form.data_nascimento) return 'Informe sua data de nascimento.';
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) return 'Informe um e-mail válido.';
     if (fromDevocional) {
-      if (!form.email.trim()) return 'Email obrigatório pra criar conta de acesso.';
       if (form.email.trim().toLowerCase() !== form.confirmar_email.trim().toLowerCase()) {
         return 'Os emails informados não conferem.';
       }
@@ -529,10 +498,12 @@ export default function CadastroMembresia() {
       }
 
       const { sobrenome, confirmar_email, confirmar_senha, ...rest } = form;
+      const bairroFinal = (bairroSel === BAIRRO_OUTRO ? bairroOutro.trim() : bairroSel) || null;
       const resp = await cadastroPublico.enviar({
         ...rest,
         nome: `${form.nome.trim()} ${sobrenome.trim()}`.trim(),
         cpf: soDigitos(form.cpf),
+        bairro: bairroFinal,
         origem,
         aceita_termos: aceitaTermos,
         aceita_contato: aceitaComunicacao,
@@ -966,12 +937,12 @@ export default function CadastroMembresia() {
                     <Field
                       id="email"
                       type="email"
-                      label={fromDevocional ? 'E-mail *' : 'E-mail'}
+                      label="E-mail *"
                       value={form.email}
                       onChange={set('email')}
                       autoComplete="email"
                       maxLength={200}
-                      required={fromDevocional}
+                      required
                     />
                   </Row>
 
@@ -1028,6 +999,16 @@ export default function CadastroMembresia() {
                     <SelectField id="estado_civil" label="Estado civil" value={form.estado_civil} onChange={set('estado_civil')} options={ESTADO_CIVIL_OPTS} />
                     <Field id="profissao" label="Profissão" value={form.profissao} onChange={set('profissao')} maxLength={120} />
                   </Row>
+                  <SelectField
+                    id="bairro"
+                    label="Bairro"
+                    value={bairroSel}
+                    onChange={(e) => setBairroSel(e.target.value)}
+                    options={[...BAIRROS.map((b) => ({ value: b, label: b })), { value: BAIRRO_OUTRO, label: 'Outro bairro' }]}
+                  />
+                  {bairroSel === BAIRRO_OUTRO && (
+                    <Field id="bairro_outro" label="Qual bairro?" value={bairroOutro} onChange={(e) => setBairroOutro(e.target.value)} maxLength={80} />
+                  )}
                   <Field
                     id="como_conheceu"
                     label="Como conheceu a CBRio? (opcional)"
@@ -1048,22 +1029,9 @@ export default function CadastroMembresia() {
                 </div>
               )}
 
-              {/* Step 3: Endereço */}
+              {/* Termos (o passo Endereço virou o seletor de bairro no passo
+                  Informações · 2026-07-23; o passo Grupo de Conexão saiu antes) */}
               {currentStep === 2 && (
-                <div>
-                  <SectionTitle>Endereço</SectionTitle>
-                  <Field id="cep" label={cepBuscando ? 'CEP (buscando...)' : 'CEP'} value={form.cep} onChange={handleCepChange} autoComplete="postal-code" inputMode="numeric" maxLength={9} />
-                  <Field id="endereco" label="Endereço (rua e número)" value={form.endereco} onChange={set('endereco')} autoComplete="street-address" maxLength={200} />
-                  <Row>
-                    <Field id="bairro" label="Bairro" value={form.bairro} onChange={set('bairro')} maxLength={80} />
-                    <Field id="cidade" label="Cidade" value={form.cidade} onChange={set('cidade')} maxLength={80} />
-                  </Row>
-                </div>
-              )}
-
-              {/* Step 4: Termos (o passo Grupo de Conexão foi removido em
-                  2026-07-23 · o vínculo de grupo se resolve pelo CPF/matcher) */}
-              {currentStep === 3 && (
                 <div>
                   <SectionTitle>Termos e consentimento</SectionTitle>
                   <div style={{
