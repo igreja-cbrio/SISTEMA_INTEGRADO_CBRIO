@@ -1633,7 +1633,7 @@ router.post('/totem/next/inscrever', async (req, res) => {
         const dataFmt = proxima.data ? String(proxima.data).split('-').reverse().join('/') : 'a confirmar';
         enfileirar({
           telefone: cleanTel,
-          template: process.env.WHATSAPP_TEMPLATE_NEXT_CONF || 'cbrio_next_confirmado',
+          template: process.env.WHATSAPP_TEMPLATE_NEXT_CONF || 'next_confirmacao',
           // {{1}} nome · {{2}} data · {{3}} horário
           params: [String(nome).split(' ')[0] || 'Olá', dataFmt, proxima.horario || 'a confirmar'],
           contexto: 'next_totem',
@@ -1843,7 +1843,7 @@ router.post('/totem/apresentacao-bebe', async (req, res) => {
         const horaCulto = String(cultoDoDia?.service_type?.recurrence_time || '').slice(0, 5);
         enfileirar({
           telefone: cleanTel,
-          template: process.env.WHATSAPP_TEMPLATE_BEBE_CONF || 'cbrio_apresentacao_bebe',
+          template: process.env.WHATSAPP_TEMPLATE_BEBE_CONF || 'apresentacao_bebes_confirmacao',
           // {{1}} responsável · {{2}} bebê · {{3}} data · {{4}} horário
           params: [
             String(responsavel_nome).split(' ')[0] || 'Olá',

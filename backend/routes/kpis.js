@@ -952,7 +952,7 @@ router.post('/batismos', authorizeBatismo, async (req, res) => {
         // Nome do template FIXO (padrão de grupos · gruposWhatsapp.js) · env só
         // override. A equipe cria o template na Meta com este nome e NÃO precisa
         // mexer no Vercel. Se ainda não existir na Meta, a fila registra o erro.
-        template: process.env.WHATSAPP_TEMPLATE_BATISMO_CONF || 'cbrio_batismo_confirmado',
+        template: process.env.WHATSAPP_TEMPLATE_BATISMO_CONF || 'batismo_confirmacao',
         params: [
           String(nome).split(' ')[0] || 'Olá',
           dataBatismo ? dataBatismo.split('-').reverse().join('/') : 'a confirmar',
