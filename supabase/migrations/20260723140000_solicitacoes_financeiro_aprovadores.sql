@@ -52,7 +52,7 @@ CREATE TRIGGER audit_solicitacoes_financeiro_aprovadores
   AFTER INSERT OR UPDATE OR DELETE ON public.solicitacoes_financeiro_aprovadores
   FOR EACH ROW EXECUTE FUNCTION public.audit_log_changes();
 
--- Alberto é o aprovador financeiro de Compras. A busca por e-mail evita fixar UUID.
+-- Alberto é o aprovador financeiro de Compras e Reembolso. Busca por e-mail evita fixar UUID.
 DO $$
 BEGIN
   IF (SELECT count(*) FROM public.profiles WHERE lower(email) = 'alberto.luiz@cbrio.com.br') <> 1 THEN
@@ -61,8 +61,9 @@ BEGIN
 END $$;
 
 INSERT INTO public.solicitacoes_financeiro_aprovadores (profile_id, categoria)
-SELECT p.id, 'compras'
+SELECT p.id, cat.categoria
 FROM public.profiles p
+CROSS JOIN (VALUES ('compras'), ('reembolso')) AS cat(categoria)
 WHERE lower(p.email) = 'alberto.luiz@cbrio.com.br'
 ON CONFLICT (profile_id, categoria) DO NOTHING;
 
