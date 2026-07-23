@@ -3377,27 +3377,41 @@ router.put('/area-responsaveis', async (req, res) => {
     if (!area) return res.status(400).json({ error: 'area obrigatoria' });
     if (!Array.isArray(profile_ids)) return res.status(400).json({ error: 'profile_ids deve ser array' });
 
-    // Apaga vinculos existentes da área
+    // VALIDA os profile_ids ANTES de apagar — id que não existe em `profiles`
+    // (ex.: colaborador de RH que ainda não fez o 1º login) viola a FK e, no
+    // fluxo antigo, o delete já tinha rodado → a área ficava SEM responsável.
+    // Agora: se algum id for inválido, aborta sem tocar nos vínculos atuais.
+    const idsUnicos = [...new Set((profile_ids || []).filter(Boolean))];
+    if (idsUnicos.length > 0) {
+      const { data: existentes, error: chkErr } = await supabase
+        .from('profiles').select('id').in('id', idsUnicos);
+      if (chkErr) throw chkErr;
+      const validos = new Set((existentes || []).map(p => p.id));
+      const invalidos = idsUnicos.filter(id => !validos.has(id));
+      if (invalidos.length) {
+        return res.status(400).json({
+          error: 'Uma das pessoas selecionadas ainda não tem conta no sistema (precisa fazer o primeiro login). Nenhuma alteração foi feita.',
+          invalidos,
+        });
+      }
+    }
+
+    // Só depois de validar: substitui os vínculos da área.
     const { error: delError } = await supabase
       .from('area_solicitacoes_responsaveis')
       .delete()
       .eq('area', area);
     if (delError) throw delError;
 
-    // Insere novos
-    if (profile_ids.length > 0) {
-      const rows = profile_ids.map(pid => ({
-        area,
-        profile_id: pid,
-        criado_por: req.user.userId,
-      }));
+    if (idsUnicos.length > 0) {
+      const rows = idsUnicos.map(pid => ({ area, profile_id: pid, criado_por: req.user.userId }));
       const { error: insError } = await supabase
         .from('area_solicitacoes_responsaveis')
         .insert(rows);
       if (insError) throw insError;
     }
 
-    res.json({ ok: true, area, count: profile_ids.length });
+    res.json({ ok: true, area, count: idsUnicos.length });
   } catch (e) {
     console.error('[SOLICITACOES] area-responsaveis PUT:', e.message);
     res.status(500).json({ error: e.message });
