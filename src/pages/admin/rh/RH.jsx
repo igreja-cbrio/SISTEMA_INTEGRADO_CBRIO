@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { Users, Pencil, Trash2, Palmtree, X, Save, AlertTriangle, Download, UserPlus, Briefcase, Calendar, Search, Filter, Eye, Edit, MoreVertical, LayoutDashboard, Network, Receipt, Star, Clock, CalendarDays, Scale, Camera, UserMinus, RotateCcw, Sparkles, ShieldCheck, FileText, GraduationCap, StickyNote, Wallet, Mail, Phone } from 'lucide-react';
+import { Users, Pencil, Trash2, Palmtree, X, Save, Check, AlertTriangle, Download, UserPlus, Briefcase, Calendar, Search, Filter, Eye, Edit, MoreVertical, LayoutDashboard, Network, Receipt, Star, Clock, CalendarDays, Scale, Camera, UserMinus, RotateCcw, Sparkles, ShieldCheck, FileText, GraduationCap, StickyNote, Wallet, Mail, Phone } from 'lucide-react';
 import { toast as sonnerToast } from 'sonner';
 import { Button } from '../../../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../../components/ui/card';
@@ -2689,6 +2689,7 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = t
   const [permData, setPermData] = useState(null);
   const [estrutura, setEstrutura] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [salvo, setSalvo] = useState(false); // confirmação visual transitória no botão
   const [permError, setPermError] = useState('');
   const [permSuccess, setPermSuccess] = useState('');
   const [editMode, setEditMode] = useState(false);
@@ -2805,28 +2806,41 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = t
       if (currentAreaIds !== newAreaIds) {
         await permissoes.setAreas(permData.usuario.id, localAreas);
       }
-      // 3. Salvar overrides de módulos
-      for (const [modId, levels] of Object.entries(localModulos)) {
+      // 3. Overrides de módulos — só os que MUDARAM, e em PARALELO (antes era
+      // sequencial · com vários módulos alterados o botão travava um bom tempo).
+      const cargoDefault = permData.usuario.cargos || {};
+      const mudancas = Object.entries(localModulos).filter(([modId, levels]) => {
         const existing = (permData.overrides || []).find(o => o.modulo_id === parseInt(modId));
-        const cargoDefault = permData.usuario.cargos || {};
         const prevLeitura = existing?.nivel_leitura ?? cargoDefault.nivel_padrao_leitura ?? 1;
         const prevEscrita = existing?.nivel_escrita ?? cargoDefault.nivel_padrao_escrita ?? 1;
-        if (levels.leitura !== prevLeitura || levels.escrita !== prevEscrita) {
-          await permissoes.setModulo(permData.usuario.id, {
-            modulo_id: parseInt(modId),
-            nivel_leitura: levels.leitura,
-            nivel_escrita: levels.escrita,
-          });
-        }
-      }
-      // Recarregar dados
-      const perms = await permissoes.usuario(permData.usuario.id);
-      setPermData(perms);
-      initLocalPerms(perms, estrutura);
+        return levels.leitura !== prevLeitura || levels.escrita !== prevEscrita;
+      });
+      await Promise.all(mudancas.map(([modId, levels]) => permissoes.setModulo(permData.usuario.id, {
+        modulo_id: parseInt(modId),
+        nivel_leitura: levels.leitura,
+        nivel_escrita: levels.escrita,
+      })));
+
+      // Sucesso IMEDIATO — libera o botão e confirma visualmente sem esperar o
+      // reload pesado da matriz (era o que dava a sensação de "travado").
+      setSaving(false);
+      setSalvo(true);
+      setTimeout(() => setSalvo(false), 2500);
       setPermSuccess('Permissões salvas com sucesso!');
       setTimeout(() => setPermSuccess(''), 3000);
-    } catch (e) { setPermError(e.message); }
-    finally { setSaving(false); }
+      sonnerToast.success('Permissões salvas ✓');
+
+      // Reload em BACKGROUND: reconcilia a ficha (limpa os "alterado") e atualiza
+      // o DIRETÓRIO (a coluna Acesso reflete o novo tipo de acesso).
+      permissoes.usuario(permData.usuario.id)
+        .then((perms) => { setPermData(perms); initLocalPerms(perms, estrutura); })
+        .catch(() => { /* não crítico · o toast já confirmou o salvamento */ });
+      onChanged?.();
+    } catch (e) {
+      setPermError(e.message || 'Não foi possível salvar as permissões.');
+      sonnerToast.error('Não foi possível salvar as permissões.');
+      setSaving(false);
+    }
   }
 
   if (!data || !open) return null;
@@ -3183,8 +3197,10 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = t
             {/* Botão Salvar Permissões */}
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16, paddingTop: 12, borderTop: `1px solid ${C.border}` }}>
               <Button variant="ghost" size="sm" onClick={() => { initLocalPerms(permData, estrutura); setPermError(''); }}>Desfazer</Button>
-              <Button size="sm" className="gap-1.5" disabled={saving || !permDirty} onClick={savePermissions}>
-                <Save className="h-3.5 w-3.5" />{saving ? 'Salvando...' : 'Salvar Permissões'}
+              <Button size="sm" className="gap-1.5" disabled={saving || (!permDirty && !salvo)} onClick={savePermissions}
+                style={salvo ? { background: '#10b981', borderColor: '#10b981', color: '#fff' } : undefined}>
+                {salvo ? <Check className="h-3.5 w-3.5" /> : <Save className="h-3.5 w-3.5" />}
+                {saving ? 'Salvando...' : salvo ? 'Salvo ✓' : 'Salvar Permissões'}
               </Button>
             </div>
           </div>
