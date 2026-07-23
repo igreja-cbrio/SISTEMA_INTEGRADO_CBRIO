@@ -2427,11 +2427,24 @@ function ancestraisDe(id, funcs) {
 function HierarquiaSection({ data, funcs = [], onChanged }) {
   const [saving, setSaving] = useState(false);
   const [addSel, setAddSel] = useState('');
-  const ativos = funcs.filter(f => f.status === 'ativo');
-  const gestor = data.gestor_id ? funcs.find(f => f.id === data.gestor_id) : null;
+  // A hierarquia precisa do ROSTER COMPLETO — não da lista filtrada pela busca do
+  // diretório. Sem isso, ao procurar alguém (ex.: "cristina") o dropdown de gestor
+  // só listava quem casava com a busca. Carrega todos ao abrir a ficha; fallback =
+  // os funcs recebidos.
+  const [roster, setRoster] = useState(funcs);
+  useEffect(() => {
+    let vivo = true;
+    rh.funcionarios.list({}).then((all) => { if (vivo && Array.isArray(all) && all.length) setRoster(all); }).catch(() => {});
+    return () => { vivo = false; };
+  }, [data.id]);
+  const base = roster.length >= funcs.length ? roster : funcs;
+  // Elegíveis pra hierarquia = quem NÃO está desligado (inclui em_admissão, férias
+  // e licença — ex.: um coordenador em admissão ainda pode ser gestor de alguém).
+  const ativos = base.filter(f => f.status !== 'inativo');
+  const gestor = data.gestor_id ? base.find(f => f.id === data.gestor_id) : null;
   const subordinados = ativos.filter(f => f.gestor_id === data.id).sort((a, b) => a.nome.localeCompare(b.nome));
-  const desc = descendentesDe(data.id, funcs);
-  const anc = ancestraisDe(data.id, funcs);
+  const desc = descendentesDe(data.id, base);
+  const anc = ancestraisDe(data.id, base);
   const opcoesGestor = ativos.filter(f => f.id !== data.id && !desc.has(f.id)).sort((a, b) => a.nome.localeCompare(b.nome));
   const opcoesAdd = ativos.filter(f => f.id !== data.id && f.gestor_id !== data.id && !anc.has(f.id)).sort((a, b) => a.nome.localeCompare(b.nome));
 
