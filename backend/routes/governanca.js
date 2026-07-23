@@ -10,6 +10,7 @@ const multer = require('multer');
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { isAuthorizedCron } = require('../utils/cronAuth');
 const { supabase } = require('../utils/supabase');
+const { fetchAllRows } = require('../utils/pagination');
 const govDocs = require('../services/sharepointGovernanca');
 const govIA = require('../services/governancaIA');
 
@@ -69,14 +70,14 @@ async function buildOKR() {
   const h = hoje();
   const [projRes, tasksRes, risksRes, kpisRes, marcosRes] = await Promise.all([
     supabase.from('projects').select('id, name, status, date_end, responsible, area, budget_planned, budget_spent, priority, description, ourico_passa, gera_unidade, colabora_expansao, macro_eixo, publico_alvo, complexidade, impacto').neq('status', 'concluido').neq('status', 'cancelado').order('name'),
-    supabase.from('project_tasks').select('id, project_id, status'),
+    fetchAllRows(() => supabase.from('project_tasks').select('id, project_id, status')),  // 2.7k linhas → paginado
     supabase.from('project_risks').select('id, project_id, title, probability, impact, score, owner_name, status, mitigation').neq('status', 'mitigado').order('score', { ascending: false }),
     supabase.from('project_kpis').select('id, project_id, name, target_value, current_value, unit'),
     supabase.from('expansion_milestones').select('id, name, status, date_end, responsible, area, phase, budget_planned').neq('status', 'concluido').neq('status', 'cancelado').order('sort_order'),
   ]);
 
   const proj = projRes.data || [];
-  const tasks = tasksRes.data || [];
+  const tasks = tasksRes || [];  // fetchAllRows → array direto
   const risks = risksRes.data || [];
   const allKpis = kpisRes.data || [];
   const marcos = marcosRes.data || [];
@@ -176,15 +177,16 @@ async function buildDRE(mes) {
 
   const [contasRes, transAtualRes, transAntRes, pagarRes, reembRes] = await Promise.all([
     supabase.from('fin_contas').select('id, nome, tipo, saldo, ativa').eq('ativa', true).order('nome'),
-    supabase.from('fin_transacoes').select('id, tipo, valor, data_competencia, descricao, fin_categorias(nome, tipo)').gte('data_competencia', inicioStr).lte('data_competencia', fimStr).neq('status', 'cancelado').order('data_competencia', { ascending: false }),
-    supabase.from('fin_transacoes').select('tipo, valor, fin_categorias(nome, tipo)').gte('data_competencia', mesAnteriorInicio).lte('data_competencia', mesAnteriorFim).neq('status', 'cancelado'),
+    // fin_transacoes do mês passa de 1000 (junho ~4k) — paginado nos 2 (mês e mês anterior)
+    fetchAllRows(() => supabase.from('fin_transacoes').select('id, tipo, valor, data_competencia, descricao, fin_categorias(nome, tipo)').gte('data_competencia', inicioStr).lte('data_competencia', fimStr).neq('status', 'cancelado').order('data_competencia', { ascending: false })),
+    fetchAllRows(() => supabase.from('fin_transacoes').select('tipo, valor, fin_categorias(nome, tipo)').gte('data_competencia', mesAnteriorInicio).lte('data_competencia', mesAnteriorFim).neq('status', 'cancelado')),
     supabase.from('fin_contas_pagar').select('id, descricao, fornecedor, valor, data_vencimento, status').eq('status', 'pendente').order('data_vencimento'),
     supabase.from('fin_reembolsos').select('id, descricao, valor, status').eq('status', 'pendente'),
   ]);
 
   const contas = contasRes.data || [];
-  const transAtual = transAtualRes.data || [];
-  const transAnt = transAntRes.data || [];
+  const transAtual = transAtualRes || [];  // fetchAllRows → array direto
+  const transAnt = transAntRes || [];
   const pagar = pagarRes.data || [];
   const reemb = reembRes.data || [];
 
@@ -342,11 +344,11 @@ async function buildDE() {
   const [funcRes, bensRes, transRes] = await Promise.all([
     supabase.from('rh_funcionarios').select('id, nome, status, cargo, area').eq('status', 'ativo'),
     supabase.from('patrimonio_bens').select('id, nome, status, categoria_id'),
-    supabase.from('fin_transacoes').select('tipo, valor').gte('data_competencia', `${ano}-01-01`).neq('status', 'cancelado'),
+    fetchAllRows(() => supabase.from('fin_transacoes').select('tipo, valor').gte('data_competencia', `${ano}-01-01`).neq('status', 'cancelado')),  // ano ~21k → paginado
   ]);
   const funcs = funcRes.data || [];
   const bens = bensRes.data || [];
-  const trans = transRes.data || [];
+  const trans = transRes || [];  // fetchAllRows → array direto
   const recAno = trans.filter(t => t.tipo === 'receita').reduce((s, t) => s + Number(t.valor), 0);
   const despAno = trans.filter(t => t.tipo === 'despesa').reduce((s, t) => s + Number(t.valor), 0);
   return {
@@ -364,12 +366,12 @@ async function buildAG() {
   const ano = new Date().getFullYear();
   const [projRes, transRes, membrosRes, cultosRes] = await Promise.all([
     supabase.from('projects').select('id, name, status'),
-    supabase.from('fin_transacoes').select('tipo, valor').gte('data_competencia', `${ano}-01-01`).neq('status', 'cancelado'),
+    fetchAllRows(() => supabase.from('fin_transacoes').select('tipo, valor').gte('data_competencia', `${ano}-01-01`).neq('status', 'cancelado')),  // ano ~21k → paginado
     supabase.from('mem_membros').select('id', { count: 'exact', head: true }).eq('status', 'membro_ativo').is('deleted_at', null),
     supabase.from('cultos').select('id', { count: 'exact', head: true }).gte('data', `${ano}-01-01`),
   ]);
   const proj = projRes.data || [];
-  const trans = transRes.data || [];
+  const trans = transRes || [];  // fetchAllRows → array direto
   const concluidos = proj.filter(p => p.status === 'concluido').length;
   const recAno = trans.filter(t => t.tipo === 'receita').reduce((s, t) => s + Number(t.valor), 0);
   const despAno = trans.filter(t => t.tipo === 'despesa').reduce((s, t) => s + Number(t.valor), 0);
