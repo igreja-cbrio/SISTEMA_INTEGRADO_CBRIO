@@ -24,7 +24,7 @@ import AnimatedBackground from './AnimatedBackground';
 import { usePublicTheme, PublicThemeToggle, PublicPaletteCtx, usePublicPalette } from './publicTheme';
 import GrupoSelector from '../../components/grupos/GrupoSelector';
 import { BirthDatePicker } from '../../components/ui/birth-date-picker';
-import { CheckCircle2, ArrowLeft, Users, Camera, X, HelpCircle } from 'lucide-react';
+import { CheckCircle2, ArrowLeft, Users, Camera, X, HelpCircle, User, CalendarClock } from 'lucide-react';
 
 const TEXTO_CONSENTIMENTO = `Ao enviar este formulário, você autoriza a CBRio a utilizar seus dados pessoais para fins de comunicacao com a igreja e participação em grupo de conexão, conforme a LGPD.`;
 
@@ -36,6 +36,20 @@ const FORM_VAZIO = {
 };
 
 function soDigitos(v) { return (v || '').toString().replace(/\D+/g, ''); }
+
+// Dia + horário do grupo pra confirmação no formulário (pedido da Nana · 23/07:
+// mostrar líder/dia/horário abaixo do nome pra ter certeza do grupo certo).
+const DIAS_SEMANA = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+function formatarQuando(g) {
+  if (!g) return '';
+  const hora = g.horario ? String(g.horario).slice(0, 5) : '';
+  const recor = ['quinzenal', 'mensal'].includes((g.recorrencia || '').toLowerCase()) ? ` · ${g.recorrencia}` : '';
+  let dia = '';
+  if ((g.recorrencia || '').toLowerCase() === 'diario') dia = 'Todos os dias';
+  else if (g.dia_semana != null && g.dia_semana >= 0 && g.dia_semana <= 6) dia = DIAS_SEMANA[g.dia_semana];
+  if (!dia && !hora) return recor ? recor.replace(' · ', '') : '';
+  return `${dia}${dia && hora ? ', ' : ''}${hora}${recor}`;
+}
 
 // Data de nascimento plausível (obrigatória desde 2026-07-10): formato ok,
 // não-futura e ano >= 1900. Devolve a idade em anos, ou null se inválida.
@@ -476,9 +490,31 @@ export default function InscricaoGrupos() {
                 <ArrowLeft size={16} /> Voltar à escolha do grupo
               </button>
               <h2 style={{ color: C.text, fontSize: 16, fontWeight: 700, marginBottom: 4 }}>2. Seus dados</h2>
-              <p style={{ color: C.text3, fontSize: 12, marginBottom: preenchidoViaLink ? 8 : 16 }}>
+              <p style={{ color: C.text3, fontSize: 12, marginBottom: 8 }}>
                 Para o grupo <strong style={{ color: C.text }}>{grupoEscolhido?.nome}</strong>
               </p>
+              {/* Confirma o grupo certo: líder + dia/horário logo abaixo do nome (Nana · 23/07) */}
+              {grupoEscolhido && (grupoEscolhido.lider_nome || formatarQuando(grupoEscolhido)) && (
+                <div style={{
+                  display: 'flex', flexDirection: 'column', gap: 5,
+                  padding: '10px 12px', marginBottom: 16, borderRadius: 10,
+                  background: C.isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
+                  border: `1px solid ${C.isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)'}`,
+                }}>
+                  {grupoEscolhido.lider_nome && (
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12.5, color: C.text3 }}>
+                      <User size={14} style={{ color: '#00B39D', flexShrink: 0 }} />
+                      Líder: <strong style={{ color: C.text, fontWeight: 600 }}>{grupoEscolhido.lider_nome}</strong>
+                    </span>
+                  )}
+                  {formatarQuando(grupoEscolhido) && (
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12.5, color: C.text3 }}>
+                      <CalendarClock size={14} style={{ color: '#00B39D', flexShrink: 0 }} />
+                      <strong style={{ color: C.text, fontWeight: 600 }}>{formatarQuando(grupoEscolhido)}</strong>
+                    </span>
+                  )}
+                </div>
+              )}
               {preenchidoViaLink && (
                 <div style={{
                   padding: '8px 12px', marginBottom: 14, borderRadius: 10,
