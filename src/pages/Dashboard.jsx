@@ -31,8 +31,21 @@ const MODULES = [
 ];
 
 const SEV_COLORS = { urgente: '#ef4444', aviso: '#f59e0b', info: '#00B39D' };
-const MOD_COLORS = { rh: '#8b5cf6', financeiro: '#10b981', logistica: '#ef4444', patrimonio: '#6366f1', eventos: '#3b82f6', projetos: '#f59e0b', sistema: '#6b7280' };
-const MOD_LABELS = { rh: 'RH', financeiro: 'Financeiro', logistica: 'Logística', patrimonio: 'Patrimônio', eventos: 'Eventos', projetos: 'Projetos', sistema: 'Sistema' };
+const MOD_COLORS = { rh: '#8b5cf6', financeiro: '#10b981', logistica: '#ef4444', patrimonio: '#6366f1', membresia: '#00B39D', eventos: '#3b82f6', projetos: '#ec4899', kpis: '#f97316', cuidados: '#ef476f', processos: '#00B39D', nps: '#06b6d4', sistema: '#6b7280' };
+// Rótulo de exibição por módulo — cobre todo valor de `notificacoes.modulo` gravado
+// pelo backend (mesmo mapa do AppShell.jsx). Sem entrada aqui, o filtro cai no
+// fallback do slug cru (minúsculo, sem acento).
+const MOD_LABELS = {
+  rh: 'RH', financeiro: 'Financeiro', logistica: 'Logística', patrimonio: 'Patrimônio',
+  membresia: 'Membresia', eventos: 'Eventos', 'eventos-externos': 'Eventos Externos',
+  projetos: 'Projetos', kpis: 'KPIs', cuidados: 'Cuidados', processos: 'Processos',
+  nps: 'NPS', sistema: 'Sistema', integracao: 'Integração', next: 'NEXT',
+  voluntariado: 'Voluntariado', grupos: 'Grupos', kids: 'Kids', batismos: 'Batismos',
+  marketing: 'Marketing', producao: 'Produção', governanca: 'Governança', wifi: 'WiFi',
+  administrativo: 'Administrativo', ti: 'TI', cerebro: 'Cérebro',
+  apresentacoes: 'Apresentações', online: 'Online', conversas: 'Conversas',
+  desconhecido: 'Desconhecido', tarefas: 'Tarefas', dashboard: 'Dashboard',
+};
 
 function NotifItem({ n, onClick }) {
   const sevColor = SEV_COLORS[n.severidade] || '#00B39D';
