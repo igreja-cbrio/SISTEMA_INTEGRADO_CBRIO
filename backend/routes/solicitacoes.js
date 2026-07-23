@@ -75,6 +75,98 @@ router.get('/fluxos/:categoria', async (req, res) => {
   }
 });
 
+// Contagem de solicitações EM ANDAMENTO por status (pra "encaixar" no fluxo · a UI
+// casa cada status com a etapa via status_map). Não cacheado (muda com o uso).
+router.get('/fluxos/:categoria/andamento', async (req, res) => {
+  try {
+    if (!(await isAdminFallback(req)) && !['admin', 'diretor'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Sem permissão.' });
+    }
+    const fluxo = await solicFluxo.getFluxoAtivo(req.params.categoria);
+    if (!fluxo) return res.json({ porStatus: {} });
+    const statuses = [...new Set((fluxo.etapas || []).map(e => e.status_map).filter(Boolean))];
+    const porStatus = {};
+    await Promise.all(statuses.map(async st => {
+      const { count } = await supabase
+        .from('solicitacoes')
+        .select('id', { count: 'exact', head: true })
+        .eq('categoria', req.params.categoria).eq('status', st).is('deleted_at', null);
+      porStatus[st] = count || 0;
+    }));
+    res.json({ porStatus });
+  } catch (e) {
+    console.error('[SOLICITACOES] andamento fluxo:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Atribuir/remover RESPONSÁVEIS de uma etapa (Fase 2 · super-admin). Grava na
+// tabela que os guards leem e ESPELHA (aditivo) na área pra manter fila/notificação.
+router.put('/fluxos/etapas/:etapaId/responsaveis', async (req, res) => {
+  try {
+    if (!(await isAdminFallback(req))) {
+      return res.status(403).json({ error: 'Apenas administradores podem editar o fluxo.' });
+    }
+    const { profile_ids } = req.body || {};
+    if (!Array.isArray(profile_ids)) return res.status(400).json({ error: 'profile_ids deve ser array' });
+
+    const { data: etapa, error: eErr } = await supabase
+      .from('solic_fluxo_etapas')
+      .select('id, area, solic_fluxos(categoria)')
+      .eq('id', req.params.etapaId).is('deleted_at', null).maybeSingle();
+    if (eErr) throw eErr;
+    if (!etapa) return res.status(404).json({ error: 'Etapa não encontrada.' });
+
+    const ids = [...new Set(profile_ids.filter(Boolean))];
+    // Valida contra profiles (mesma lição do FK · não deixa quebrar por quem não logou).
+    if (ids.length) {
+      const { data: ex } = await supabase.from('profiles').select('id').in('id', ids);
+      const validos = new Set((ex || []).map(p => p.id));
+      const inval = ids.filter(i => !validos.has(i));
+      if (inval.length) {
+        return res.status(400).json({
+          error: 'Uma das pessoas ainda não tem conta no sistema (precisa fazer o primeiro login). Nada foi alterado.',
+          invalidos: inval,
+        });
+      }
+    }
+
+    // Substitui os responsáveis DA ETAPA.
+    const { error: delErr } = await supabase
+      .from('solic_fluxo_etapa_responsaveis').delete().eq('etapa_id', etapa.id);
+    if (delErr) throw delErr;
+    if (ids.length) {
+      const { error: insErr } = await supabase.from('solic_fluxo_etapa_responsaveis')
+        .insert(ids.map(pid => ({ etapa_id: etapa.id, profile_id: pid, criado_por: req.user.userId })));
+      if (insErr) throw insErr;
+    }
+
+    // Espelha na área (ADITIVO · só adiciona quem falta · nunca remove) pra o
+    // responsável já ver a fila e receber notificação. Best-effort (área pode não
+    // ser um valor válido do enum area_adm_resp).
+    if (etapa.area && ids.length) {
+      try {
+        const { data: jaResp } = await supabase
+          .from('area_solicitacoes_responsaveis').select('profile_id').eq('area', etapa.area);
+        const existentes = new Set((jaResp || []).map(r => r.profile_id));
+        const novos = ids.filter(i => !existentes.has(i));
+        if (novos.length) {
+          await supabase.from('area_solicitacoes_responsaveis')
+            .insert(novos.map(pid => ({ area: etapa.area, profile_id: pid, criado_por: req.user.userId })));
+        }
+      } catch (mirrErr) {
+        console.warn('[SOLICITACOES] espelho área falhou (best-effort):', mirrErr.message);
+      }
+    }
+
+    solicFluxo.bustCache(etapa.solic_fluxos?.categoria);
+    res.json({ ok: true, etapa_id: etapa.id, count: ids.length });
+  } catch (e) {
+    console.error('[SOLICITACOES] etapa responsaveis PUT:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Bust do cache do painel após mutacao (afeta matriz adm/criativo)
 router.use((req, res, next) => {
   if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
