@@ -489,6 +489,88 @@ router.get('/:id/metricas', async (req, res) => {
   } catch (e) { console.error('[Grupos metricas]', e.message); res.status(500).json({ error: 'Erro ao calcular metricas' }); }
 });
 
+// Status de frequência POR pessoa a partir da data da última presença (mesma
+// régua da aba Pessoas · Marcos 2026-07-23): em dia ≤30d · atenção 31-90d ·
+// ausente >90d · sem_presenca = nunca teve presença (neutro).
+function statusFrequenciaPorData(ultimaData) {
+  if (!ultimaData) return 'sem_presenca';
+  const dias = Math.floor((Date.now() - new Date(ultimaData + 'T12:00:00').getTime()) / 86400000);
+  if (dias <= 30) return 'em_dia';
+  if (dias <= 90) return 'atencao';
+  return 'ausente';
+}
+
+// GET /api/grupos/:id/frequencia — frequência DAQUELE grupo (Marcos 2026-07-23:
+// "quem não está indo naquele grupo" + % de frequência). % = presenças ÷
+// (encontros × inscritos). Inscritos do grupo = roster ativo ∪ líder ∪
+// supervisor (todos deviam comparecer). Nasce vazio até a 1ª chamada.
+router.get('/:id/frequencia', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { data: grupo, error: eG } = await supabase.from('mem_grupos')
+      .select('id, nome, lider_id, supervisor_id').eq('id', id).is('deleted_at', null).single();
+    if (eG || !grupo) return res.status(404).json({ error: 'Grupo não encontrado' });
+
+    const { data: encontros } = await supabase.from('mem_grupo_encontros')
+      .select('id, data').eq('grupo_id', id).is('deleted_at', null).order('data', { ascending: true });
+    const encData = {}; (encontros || []).forEach(e => { encData[e.id] = e.data; });
+    const encIds = Object.keys(encData);
+
+    // Inscritos do grupo (papel por pessoa · líder/supervisor entram)
+    const { data: roster } = await supabase.from('mem_grupo_membros')
+      .select('membro_id, funcao').eq('grupo_id', id).is('saiu_em', null).is('deleted_at', null);
+    const papelDe = new Map();
+    (roster || []).forEach(r => { if (r.membro_id) papelDe.set(r.membro_id, r.funcao || 'membro'); });
+    if (grupo.lider_id) papelDe.set(grupo.lider_id, 'lider');
+    if (grupo.supervisor_id && !papelDe.has(grupo.supervisor_id)) papelDe.set(grupo.supervisor_id, 'supervisor');
+    const inscritoIds = [...papelDe.keys()];
+
+    // Presenças da pessoa NESTE grupo (contagem + última data)
+    const presDe = {}; // membro_id -> { count, ultima }
+    for (let i = 0; i < encIds.length; i += 200) {
+      const { data: pres } = await supabase.from('mem_grupo_encontro_presencas')
+        .select('encontro_id, membro_id').eq('presente', true).in('encontro_id', encIds.slice(i, i + 200));
+      (pres || []).forEach(p => {
+        const d = encData[p.encontro_id];
+        const cur = presDe[p.membro_id] || { count: 0, ultima: null };
+        cur.count += 1;
+        if (d && (!cur.ultima || d > cur.ultima)) cur.ultima = d;
+        presDe[p.membro_id] = cur;
+      });
+    }
+
+    // Nomes
+    const nomes = {};
+    for (let i = 0; i < inscritoIds.length; i += 400) {
+      const { data: ms } = await supabase.from('mem_membros')
+        .select('id, nome, telefone').in('id', inscritoIds.slice(i, i + 400)).is('deleted_at', null);
+      (ms || []).forEach(m => { nomes[m.id] = m; });
+    }
+
+    const nEnc = encIds.length;
+    const nInsc = inscritoIds.length;
+    let totalPres = 0;
+    const membros = inscritoIds.map(mid => {
+      const pm = presDe[mid] || { count: 0, ultima: null };
+      totalPres += pm.count;
+      return {
+        membro_id: mid, nome: nomes[mid]?.nome || '—', telefone: nomes[mid]?.telefone || null,
+        papel: papelDe.get(mid), presencas: pm.count, ultima: pm.ultima,
+        status: statusFrequenciaPorData(pm.ultima),
+      };
+    }).sort((a, b) => a.presencas - b.presencas || (a.nome || '').localeCompare(b.nome || ''));
+
+    res.json({
+      grupo_id: id, nome: grupo.nome,
+      total_encontros: nEnc, total_inscritos: nInsc,
+      presenca_media: nEnc > 0 ? Math.round((totalPres / nEnc) * 10) / 10 : 0,
+      pct_frequencia: (nEnc > 0 && nInsc > 0) ? Math.round((totalPres / (nEnc * nInsc)) * 100) : 0,
+      tem_encontro: nEnc > 0,
+      membros,
+    });
+  } catch (e) { console.error('[Grupos frequencia grupo]', e.message); res.status(500).json({ error: 'Erro ao calcular a frequência do grupo' }); }
+});
+
 // GET /api/grupos/saude — agregado: total ativos, em risco, ranking
 router.get('/saude/agregado', async (req, res) => {
   try {
@@ -589,6 +671,65 @@ router.get('/kpis/relatorio', async (req, res) => {
   }
 });
 
+// GET /api/grupos/kpis/frequencia-grupos?temporada=X — ranking de % de frequência
+// POR grupo (Marcos 2026-07-23: indicador por grupo pra achar quem está caindo).
+// Mesma definição do /:id/frequencia (% = presenças ÷ (encontros × inscritos),
+// inscritos = roster ∪ líder ∪ supervisor). Pior primeiro. Vazio até a 1ª chamada.
+router.get('/kpis/frequencia-grupos', async (req, res) => {
+  try {
+    const { temporada } = req.query;
+    let q = supabase.from('mem_grupos')
+      .select('id, nome, lider_id, supervisor_id').eq('ativo', true).is('deleted_at', null);
+    if (temporada) q = q.eq('temporada', temporada);
+    const { data: grupos } = await q;
+    if (!grupos?.length) return res.json({ tem_encontro: false, grupos: [] });
+    const grupoIds = grupos.map(g => g.id);
+
+    // Encontros de todos os grupos (data por encontro + grupo do encontro)
+    const encGrupo = {}; const encData = {}; const encDoGrupo = {};
+    for (let i = 0; i < grupoIds.length; i += 200) {
+      const { data: enc } = await supabase.from('mem_grupo_encontros')
+        .select('id, grupo_id, data').is('deleted_at', null).in('grupo_id', grupoIds.slice(i, i + 200));
+      (enc || []).forEach(e => { encGrupo[e.id] = e.grupo_id; encData[e.id] = e.data; (encDoGrupo[e.grupo_id] = encDoGrupo[e.grupo_id] || []).push(e.id); });
+    }
+    const allEncIds = Object.keys(encGrupo);
+
+    // Inscritos por grupo (roster ∪ líder ∪ supervisor · distinct)
+    const inscDoGrupo = {}; // grupo_id -> Set(membro_id)
+    grupos.forEach(g => { inscDoGrupo[g.id] = new Set(); if (g.lider_id) inscDoGrupo[g.id].add(g.lider_id); if (g.supervisor_id) inscDoGrupo[g.id].add(g.supervisor_id); });
+    for (let off = 0; ; off += 1000) {
+      const { data: pg } = await supabase.from('mem_grupo_membros')
+        .select('membro_id, grupo_id').in('grupo_id', grupoIds)
+        .is('saiu_em', null).is('deleted_at', null).order('id').range(off, off + 999);
+      (pg || []).forEach(v => { if (v.membro_id && inscDoGrupo[v.grupo_id]) inscDoGrupo[v.grupo_id].add(v.membro_id); });
+      if (!pg || pg.length < 1000) break;
+    }
+
+    // Total de presenças por grupo
+    const presGrupo = {}; // grupo_id -> total presenças
+    for (let i = 0; i < allEncIds.length; i += 200) {
+      const { data: pres } = await supabase.from('mem_grupo_encontro_presencas')
+        .select('encontro_id').eq('presente', true).in('encontro_id', allEncIds.slice(i, i + 200));
+      (pres || []).forEach(p => { const gid = encGrupo[p.encontro_id]; if (gid) presGrupo[gid] = (presGrupo[gid] || 0) + 1; });
+    }
+
+    const ranking = grupos.map(g => {
+      const nEnc = (encDoGrupo[g.id] || []).length;
+      const nInsc = inscDoGrupo[g.id].size;
+      const totalPres = presGrupo[g.id] || 0;
+      return {
+        grupo_id: g.id, nome: g.nome,
+        total_encontros: nEnc, total_inscritos: nInsc,
+        presenca_media: nEnc > 0 ? Math.round((totalPres / nEnc) * 10) / 10 : 0,
+        pct_frequencia: (nEnc > 0 && nInsc > 0) ? Math.round((totalPres / (nEnc * nInsc)) * 100) : 0,
+        tem_encontro: nEnc > 0,
+      };
+    }).sort((a, b) => (b.tem_encontro - a.tem_encontro) || (a.pct_frequencia - b.pct_frequencia) || (a.nome || '').localeCompare(b.nome || ''));
+
+    res.json({ tem_encontro: allEncIds.length > 0, grupos: ranking });
+  } catch (e) { console.error('[Grupos frequencia-grupos]', e.message); res.status(500).json({ error: 'Erro ao gerar o ranking de frequência' }); }
+});
+
 // GET /api/grupos/kpis/temporada-metricas?temporada=X — conjunto COMPLETO de
 // indicadores de UMA temporada, AO VIVO, pela MESMA função que a consolidação
 // congela (fn_temporada_metricas). Garante que o relatório filtrado por
@@ -603,23 +744,33 @@ router.get('/kpis/temporada-metricas', async (req, res) => {
     // fn_temporada_metricas RETURNS TABLE → array com 1 linha.
     const met = (Array.isArray(data) ? data[0] : data) || {};
 
-    // Vocabulário canônico (Marcos 2026-07-23): num_membros da RPC = INSCRITOS
-    // (vínculos). Aqui somo PESSOAS distintas + Frequentadores (>=1 presença) e
-    // Visitantes (0 presença) DERIVADOS da presença (não mais do funcao).
+    // Vocabulário canônico (Marcos 2026-07-23):
+    // - Pessoas = pessoas distintas (roster ∪ líder ∪ supervisor).
+    // - Inscritos = TODA conexão pessoa×grupo (roster + liderar + supervisionar) ·
+    //   o líder/supervisor também "se inscreveu naquele grupo" (Marcos 23/07) —
+    //   por isso NÃO usamos num_membros da RPC (que conta só o roster).
+    // - Frequentadores (>=1 presença) / Visitantes (0 presença) DERIVADOS da presença.
     try {
       const { data: gs } = await supabase.from('mem_grupos')
-        .select('id').eq('temporada', temporada).eq('ativo', true).is('deleted_at', null).limit(2000);
+        .select('id, lider_id, supervisor_id').eq('temporada', temporada)
+        .eq('ativo', true).is('deleted_at', null).limit(2000);
       const gids = (gs || []).map(g => g.id);
-      const pessoas = new Set();
+      const pessoas = new Set();            // membro_id distintos
+      const conex = new Set();              // 'membro_id|grupo_id' distintos = Inscritos
       if (gids.length) {
         for (let off = 0; ; off += 1000) {
           const { data: pg } = await supabase.from('mem_grupo_membros')
-            .select('membro_id').in('grupo_id', gids)
+            .select('membro_id, grupo_id').in('grupo_id', gids)
             .is('saiu_em', null).is('deleted_at', null).order('id').range(off, off + 999);
-          (pg || []).forEach(v => v.membro_id && pessoas.add(v.membro_id));
+          (pg || []).forEach(v => { if (v.membro_id) { pessoas.add(v.membro_id); conex.add(v.membro_id + '|' + v.grupo_id); } });
           if (!pg || pg.length < 1000) break;
         }
       }
+      // Líder e supervisor de cada grupo também contam (pessoa + inscrição)
+      (gs || []).forEach(g => {
+        if (g.lider_id) { pessoas.add(g.lider_id); conex.add(g.lider_id + '|' + g.id); }
+        if (g.supervisor_id) { pessoas.add(g.supervisor_id); conex.add(g.supervisor_id + '|' + g.id); }
+      });
       // Quem tem >=1 presença (fn_grupos_ultima_frequencia = grupos ativos)
       const comPresenca = new Set();
       try {
@@ -627,7 +778,8 @@ router.get('/kpis/temporada-metricas', async (req, res) => {
         (fr || []).forEach(f => { if (pessoas.has(f.membro_id)) comPresenca.add(f.membro_id); });
       } catch { /* best-effort */ }
       met.pessoas_distintas = pessoas.size;
-      met.frequentadores = comPresenca.size;           // pessoas com >=1 presença
+      met.inscritos = conex.size;                       // conexões pessoa×grupo (todos os papéis)
+      met.frequentadores = comPresenca.size;            // pessoas com >=1 presença
       met.visitantes = pessoas.size - comPresenca.size; // inscritos sem presença ainda
       met.tem_presenca = comPresenca.size > 0;          // frequência já começou?
     } catch (eCalc) { console.error('[temporada-metricas derivados]', eCalc.message); }
@@ -3735,13 +3887,90 @@ router.get('/pessoas/papeis', async (req, res) => {
 
     const lista = Object.values(pessoas)
       .sort((a, b) => b.rank - a.rank || (a.nome || '').localeCompare(b.nome || ''));
-    // total = PESSOAS distintas · inscritos = vínculos (participações · uma
-    // pessoa em N grupos conta N) — vocabulário canônico (Marcos 2026-07-23).
-    res.json({ total: lista.length, inscritos: participacoes.length, pessoas: lista });
+    // total = PESSOAS distintas · inscritos = TODA conexão pessoa×grupo (roster +
+    // liderar + supervisionar · líder/supervisor também é inscrição naquele grupo,
+    // Marcos 2026-07-23). Distinct (membro|grupo) pra não duplicar quem lidera e é
+    // roster do mesmo grupo.
+    const conex = new Set();
+    participacoes.forEach(p => { if (p.membro_id && p.grupo_id) conex.add(p.membro_id + '|' + p.grupo_id); });
+    (grupos || []).forEach(g => {
+      if (g.lider_id) conex.add(g.lider_id + '|' + g.id);
+      if (g.supervisor_id) conex.add(g.supervisor_id + '|' + g.id);
+    });
+    res.json({ total: lista.length, inscritos: conex.size, pessoas: lista });
   } catch (e) {
     console.error('[grupos] pessoas/papeis:', e.message);
     res.status(500).json({ error: 'Erro ao carregar pessoas' });
   }
+});
+
+// GET /api/grupos/pessoas/:membroId/frequencia — grade de frequência da pessoa
+// EM CADA grupo que ela é inscrita (Marcos 2026-07-23: "clica na pessoa e vê se
+// ela está frequentando TODOS os grupos" · vai no A, não vai no B). Roster ∪
+// liderar ∪ supervisionar. Nasce vazio até a 1ª chamada.
+router.get('/pessoas/:membroId/frequencia', async (req, res) => {
+  try {
+    const mid = req.params.membroId;
+    // Guard UUID (o .or() abaixo interpola o valor · evita injeção PostgREST)
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(mid)) {
+      return res.status(400).json({ error: 'membro inválido' });
+    }
+    const { data: rosterRows } = await supabase.from('mem_grupo_membros')
+      .select('grupo_id, funcao').eq('membro_id', mid).is('saiu_em', null).is('deleted_at', null);
+    const { data: papeisGrupo } = await supabase.from('mem_grupos')
+      .select('id, nome, lider_id, supervisor_id')
+      .or(`lider_id.eq.${mid},supervisor_id.eq.${mid}`).eq('ativo', true).is('deleted_at', null);
+    const papelDe = new Map();
+    (rosterRows || []).forEach(r => { if (r.grupo_id) papelDe.set(r.grupo_id, r.funcao || 'membro'); });
+    (papeisGrupo || []).forEach(g => {
+      if (g.lider_id === mid) papelDe.set(g.id, 'lider');
+      else if (g.supervisor_id === mid && !papelDe.has(g.id)) papelDe.set(g.id, 'supervisor');
+    });
+    const grupoIds = [...papelDe.keys()];
+    if (!grupoIds.length) return res.json({ membro_id: mid, grupos: [] });
+
+    // Nomes dos grupos
+    const gnome = {};
+    for (let i = 0; i < grupoIds.length; i += 200) {
+      const { data: gs } = await supabase.from('mem_grupos').select('id, nome').in('id', grupoIds.slice(i, i + 200));
+      (gs || []).forEach(g => { gnome[g.id] = g.nome; });
+    }
+
+    // Encontros dos grupos (mapa encontro→grupo + total por grupo)
+    const encGrupo = {}; const encData = {}; const encPorGrupo = {};
+    for (let i = 0; i < grupoIds.length; i += 200) {
+      const { data: enc } = await supabase.from('mem_grupo_encontros')
+        .select('id, grupo_id, data').is('deleted_at', null).in('grupo_id', grupoIds.slice(i, i + 200));
+      (enc || []).forEach(e => { encGrupo[e.id] = e.grupo_id; encData[e.id] = e.data; encPorGrupo[e.grupo_id] = (encPorGrupo[e.grupo_id] || 0) + 1; });
+    }
+    const allEncIds = Object.keys(encGrupo);
+
+    // Presenças da pessoa (por grupo: contagem + última data)
+    const presDe = {}; // grupo_id -> { count, ultima }
+    for (let i = 0; i < allEncIds.length; i += 200) {
+      const { data: pres } = await supabase.from('mem_grupo_encontro_presencas')
+        .select('encontro_id').eq('membro_id', mid).eq('presente', true).in('encontro_id', allEncIds.slice(i, i + 200));
+      (pres || []).forEach(p => {
+        const gid = encGrupo[p.encontro_id]; const d = encData[p.encontro_id];
+        if (!gid) return;
+        const cur = presDe[gid] || { count: 0, ultima: null };
+        cur.count += 1;
+        if (d && (!cur.ultima || d > cur.ultima)) cur.ultima = d;
+        presDe[gid] = cur;
+      });
+    }
+
+    const grupos = grupoIds.map(gid => {
+      const pm = presDe[gid] || { count: 0, ultima: null };
+      return {
+        grupo_id: gid, nome: gnome[gid] || '—', papel: papelDe.get(gid),
+        total_encontros: encPorGrupo[gid] || 0, presencas: pm.count, ultima: pm.ultima,
+        status: statusFrequenciaPorData(pm.ultima),
+      };
+    }).sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
+
+    res.json({ membro_id: mid, tem_encontro: allEncIds.length > 0, grupos });
+  } catch (e) { console.error('[Grupos frequencia pessoa]', e.message); res.status(500).json({ error: 'Erro ao calcular a frequência da pessoa' }); }
 });
 
 // ============================================================================

@@ -1153,6 +1153,9 @@ export default function Grupos() {
           </div>
         )}
 
+        {/* Frequência DESTE grupo · % + quem não está indo (Marcos 2026-07-23) */}
+        {!isOptimistic && <FrequenciaGrupoCard grupoId={g.id} />}
+
         {/* Log de alterações (app_audit_log · carrega sob demanda) */}
         {!isOptimistic && <LogAlteracoesCard grupoId={g.id} />}
 
@@ -2735,7 +2738,7 @@ function RelatorioGrupos({ temporada }) {
             {[
               { icon: Users, label: 'Grupos', valor: (metricas ? metricas.num_grupos : data.total_grupos) ?? 0 },
               { icon: Users, label: 'Pessoas', valor: metricas ? metricas.pessoas_distintas : null },
-              { icon: UserPlus, label: 'Inscritos', valor: metricas ? metricas.num_membros : null },
+              { icon: UserPlus, label: 'Inscritos', valor: metricas ? (metricas.inscritos ?? metricas.num_membros) : null },
               { icon: UserPlus, label: 'Pedidos', valor: metricas ? metricas.num_inscricoes : null },
               { icon: CalendarCheck, label: 'Encontros', valor: (metricas ? metricas.total_encontros : data.frequencia?.total_encontros) ?? 0 },
               { icon: Activity, label: 'Freq. média', valor: (metricas ? metricas.frequencia_media : data.frequencia?.media_por_encontro) ?? 0, dec: true },
@@ -2756,7 +2759,7 @@ function RelatorioGrupos({ temporada }) {
           {/* Nota de leitura (Marcos 2026-07-23): vocabulário canônico. */}
           <div style={{ fontSize: 11.5, color: C.t3, display: 'flex', alignItems: 'flex-start', gap: 6, lineHeight: 1.5 }}>
             <AlertTriangle size={12} style={{ color: cores.teal, flexShrink: 0, marginTop: 2 }} />
-            <span><strong>Pessoas</strong> = pessoas distintas · <strong>Inscritos</strong> = vínculos com grupos (uma pessoa em vários grupos conta em cada). <strong>Frequentador</strong> = já foi a ≥1 encontro · <strong>Visitante</strong> = ainda não foi (sai da presença).</span>
+            <span><strong>Pessoas</strong> = pessoas distintas · <strong>Inscritos</strong> = conexões com grupos (uma pessoa em vários grupos conta em cada; líder e supervisor também contam, cada um no seu grupo). <strong>Frequentador</strong> = já foi a ≥1 encontro · <strong>Visitante</strong> = ainda não foi (sai da presença).</span>
           </div>
 
           {/* Liderança (pizza) + frequência (frequentador × visitante · derivada da presença) */}
@@ -2768,6 +2771,9 @@ function RelatorioGrupos({ temporada }) {
             />
             <FrequenciaResumo metricas={metricas} cores={cores} />
           </div>
+
+          {/* Ranking de % de frequência POR grupo (Marcos 2026-07-23) */}
+          <RankingFrequenciaGrupos temporada={temporada} cores={cores} />
 
           {/* Série mensal: frequência / inscrições / membresia (com filtro) */}
           <SerieTempo serie={series?.serie} cores={cores} />
@@ -2964,6 +2970,62 @@ function FrequenciaResumo({ metricas, cores }) {
                 <div style={{ fontSize: 10.5, color: C.t3, marginTop: 2 }}>{hint}</div>
               </div>
             ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// Ranking de % de frequência POR grupo (Marcos 2026-07-23: achar quem está
+// caindo). Pior primeiro. Nasce vazio até a 1ª chamada de algum grupo.
+function RankingFrequenciaGrupos({ temporada, cores }) {
+  const [loading, setLoading] = useState(true);
+  const [grupos, setGrupos] = useState([]);
+  const [temEncontro, setTemEncontro] = useState(false);
+  useEffect(() => {
+    let vivo = true;
+    setLoading(true);
+    api.grupos.frequenciaRanking(temporada)
+      .then(r => { if (vivo) { setGrupos(r?.grupos || []); setTemEncontro(!!r?.tem_encontro); } })
+      .catch(() => { if (vivo) { setGrupos([]); setTemEncontro(false); } })
+      .finally(() => { if (vivo) setLoading(false); });
+    return () => { vivo = false; };
+  }, [temporada]);
+
+  const corPct = (p) => (p >= 70 ? '#10b981' : p >= 40 ? '#f59e0b' : '#ef4444');
+  const comEnc = grupos.filter(g => g.tem_encontro);
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-medium flex items-center gap-2">
+          <Activity className="h-4 w-4" style={{ color: cores.teal }} /> Frequência por grupo
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {loading ? (
+          <div style={{ fontSize: 13, color: C.t3, textAlign: 'center', padding: 12 }}>Carregando…</div>
+        ) : !temEncontro ? (
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 13, color: C.t3, lineHeight: 1.6, padding: '4px 0' }}>
+            <Clock size={16} style={{ color: C.t3, flexShrink: 0, marginTop: 2 }} />
+            <span>Nenhum grupo lançou chamada ainda. Quando as presenças entrarem, cada grupo aparece aqui com sua <strong style={{ color: C.text }}>% de frequência</strong> (das presenças possíveis) — os mais baixos primeiro, pra saber onde agir.</span>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 7, maxHeight: 320, overflowY: 'auto' }}>
+            {comEnc.map(g => (
+              <div key={g.grupo_id} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.nome}</span>
+                <div style={{ flex: '0 0 120px', height: 8, borderRadius: 99, background: C.border, overflow: 'hidden' }}>
+                  <div style={{ width: `${Math.min(100, g.pct_frequencia)}%`, height: '100%', background: corPct(g.pct_frequencia) }} />
+                </div>
+                <span style={{ flex: '0 0 42px', textAlign: 'right', fontSize: 13, fontWeight: 700, color: corPct(g.pct_frequencia) }}>{g.pct_frequencia}%</span>
+                <span style={{ flex: '0 0 96px', textAlign: 'right', fontSize: 10.5, color: C.t3, whiteSpace: 'nowrap' }}>{g.presenca_media}/enc · {g.total_inscritos} insc</span>
+              </div>
+            ))}
+            {grupos.length > comEnc.length && (
+              <div style={{ fontSize: 11, color: C.t3, marginTop: 4 }}>+{grupos.length - comEnc.length} grupo(s) ainda sem chamada.</div>
+            )}
           </div>
         )}
       </CardContent>
@@ -3310,6 +3372,97 @@ function ComparativoTemporadas() {
 // Log de alterações do grupo (lê o app_audit_log via backend · triggers da
 // migration 20260720230000). Carrega sob demanda pra não pesar a abertura da
 // ficha; quem não tem grupos>=3 recebe erro do guard e o card mostra o aviso.
+// Frequência DESTE grupo (Marcos 2026-07-23): % de frequência (presenças ÷
+// (encontros × inscritos)) + presença média + a lista de "quem não está indo"
+// (semáforo por-grupo). Nasce vazio até a 1ª chamada do grupo. Carrega no mount.
+const SF_STATUS = {
+  em_dia: { label: 'Em dia', cor: '#10b981' },
+  atencao: { label: 'Atenção', cor: '#f59e0b' },
+  ausente: { label: 'Ausente', cor: '#ef4444' },
+  sem_presenca: { label: 'Não foi ainda', cor: '#94a3b8' },
+};
+function FrequenciaGrupoCard({ grupoId }) {
+  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState(null);
+  const [erro, setErro] = useState(null);
+
+  useEffect(() => {
+    let vivo = true;
+    setLoading(true); setErro(null);
+    api.grupos.frequenciaGrupo(grupoId)
+      .then(r => { if (vivo) setData(r); })
+      .catch(() => { if (vivo) setErro('Não foi possível carregar a frequência.'); })
+      .finally(() => { if (vivo) setLoading(false); });
+    return () => { vivo = false; };
+  }, [grupoId]);
+
+  const naoVao = (data?.membros || []).filter(m => m.status === 'ausente' || m.status === 'sem_presenca');
+
+  return (
+    <div style={{ background: C.card, borderRadius: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', marginTop: 16, overflow: 'hidden' }}>
+      <div style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 8, borderBottom: `1px solid ${C.border}` }}>
+        <Activity size={14} style={{ color: C.primary }} />
+        <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Frequência do grupo</span>
+      </div>
+      <div style={{ padding: 16 }}>
+        {loading ? (
+          <div style={{ fontSize: 13, color: C.t3, textAlign: 'center', padding: 12 }}>Carregando…</div>
+        ) : erro ? (
+          <div style={{ fontSize: 13, color: C.red }}>{erro}</div>
+        ) : !data?.tem_encontro ? (
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 13, color: C.t3, lineHeight: 1.6 }}>
+            <Clock size={16} style={{ color: C.t3, flexShrink: 0, marginTop: 2 }} />
+            <span>Nenhuma chamada registrada ainda. Os <strong style={{ color: C.text }}>{data?.total_inscritos ?? 0}</strong> inscritos deste grupo aparecem aqui com o status de frequência assim que a 1ª chamada for lançada.</span>
+          </div>
+        ) : (
+          <>
+            {/* Indicadores */}
+            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 14 }}>
+              {[
+                ['% de frequência', `${data.pct_frequencia}%`, C.primary, 'das presenças possíveis'],
+                ['Presença média', String(data.presenca_media), C.text, 'por encontro'],
+                ['Encontros', String(data.total_encontros), C.text, 'registrados'],
+                ['Inscritos', String(data.total_inscritos), C.text, 'no grupo'],
+              ].map(([lab, val, cor, hint]) => (
+                <div key={lab} style={{ flex: '1 1 100px', minWidth: 90 }}>
+                  <div style={{ fontSize: 24, fontWeight: 800, color: cor, lineHeight: 1 }}>{val}</div>
+                  <div style={{ fontSize: 11.5, color: C.text, fontWeight: 600, marginTop: 4 }}>{lab}</div>
+                  <div style={{ fontSize: 10, color: C.t3 }}>{hint}</div>
+                </div>
+              ))}
+            </div>
+            {/* Quem não está indo */}
+            <div style={{ fontSize: 11, color: C.t3, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 8 }}>
+              Quem não está indo ({naoVao.length})
+            </div>
+            {naoVao.length === 0 ? (
+              <div style={{ fontSize: 12.5, color: '#10b981' }}>Todos os inscritos vieram a pelo menos um encontro recente.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 240, overflowY: 'auto' }}>
+                {naoVao.map(m => {
+                  const st = SF_STATUS[m.status];
+                  return (
+                    <div key={m.membro_id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 8, border: `1px solid ${C.border}`, background: C.bg }}>
+                      <span style={{ flex: 1, minWidth: 0, fontSize: 13, color: C.text, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.nome}</span>
+                      <span style={{ fontSize: 11, color: C.t3, whiteSpace: 'nowrap' }}>
+                        {m.presencas > 0 ? `${m.presencas}/${data.total_encontros}` : 'nunca veio'}
+                        {m.ultima ? ` · ${fmtDate(m.ultima)}` : ''}
+                      </span>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10, padding: '2px 8px', borderRadius: 99, background: `${st.cor}18`, color: st.cor, fontWeight: 700, whiteSpace: 'nowrap' }}>
+                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: st.cor }} /> {st.label}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function LogAlteracoesCard({ grupoId }) {
   const [aberto, setAberto] = useState(false);
   const [loading, setLoading] = useState(false);

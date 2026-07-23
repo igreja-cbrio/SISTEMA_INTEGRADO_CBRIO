@@ -532,6 +532,12 @@ export const grupos = {
   consolidarTemporada: (id, forcar = false) => post(`/grupos/temporadas/${id}/consolidar${forcar ? '?forcar=1' : ''}`, {}),
   // Métricas COMPLETAS de uma temporada ao vivo (mesma fonte da consolidação)
   temporadaMetricas: (temporada) => get('/grupos/kpis/temporada-metricas?temporada=' + encodeURIComponent(temporada)),
+  // Frequência POR grupo (Marcos 2026-07-23): % de frequência + quem não vai
+  frequenciaGrupo: (grupoId) => get(`/grupos/${grupoId}/frequencia`),
+  // Grade de frequência de UMA pessoa em cada grupo que ela é inscrita
+  frequenciaPessoa: (membroId) => get(`/grupos/pessoas/${membroId}/frequencia`),
+  // Ranking de % de frequência por grupo (pior primeiro) · aba Relatórios
+  frequenciaRanking: (temporada) => get('/grupos/kpis/frequencia-grupos' + (temporada ? '?temporada=' + encodeURIComponent(temporada) : '')),
   // Séries mensais (frequência/inscrições/membresia) + tamanho dos grupos
   temporadaSeries: (temporada) => get('/grupos/kpis/temporada-series?temporada=' + encodeURIComponent(temporada)),
   // Revisão de fim de temporada: membros sem presença (por grupo)
