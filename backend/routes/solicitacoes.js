@@ -899,6 +899,23 @@ router.get('/', async (req, res) => {
         if (responsavelAreas.size > 0) {
           orParts.push(`area_responsavel.in.(${[...responsavelAreas].join(',')})`);
         }
+
+        // Líder de área (diretor / boost ≥4) enxerga TODAS as demandas da área
+        // dele por area_cliente (quem PEDIU), não só o que ele atende. Ex.: Pedro
+        // Paulo (diretor do Criativo · boost marketing) vê tudo de
+        // area_cliente=marketing — inclusive o que virou compra (area_cliente
+        // segue marketing). Escopado: colaborador comum da área NÃO ganha isso.
+        const perms = granular?.modulePerms || {};
+        const ehDiretorCargo = /^diretor/.test(String(granular?.cargoSlug || ''));
+        const minhasAreas = [...new Set([
+          ...((granular?.areas) || []).map(a => String(a).toLowerCase()),
+          ...((req.user.kpi_areas) || []).map(a => String(a).toLowerCase()),
+        ])].filter(a => /^[a-z0-9_]+$/.test(a));
+        const areasLideradas = minhasAreas.filter(a =>
+          ehDiretorCargo || (perms[a] && (perms[a].leitura >= 4 || perms[a].escrita >= 4)));
+        if (areasLideradas.length) {
+          orParts.push(`area_cliente.in.(${areasLideradas.join(',')})`);
+        }
         q = q.or(orParts.join(','));
       }
 
@@ -2655,6 +2672,122 @@ async function rejeitarOrigemHandler(req, res) {
   }
 }
 router.patch('/:id/rejeitar-origem', rejeitarOrigemHandler);
+
+// Normaliza itens de compra (mesma semântica do POST create · valor_tipo →
+// TOTAL DA LINHA) → { itensNorm, itensTexto, valorTotal }. Reuso no converter.
+function normalizarItensCompra(itens_lista) {
+  const itensNorm = (Array.isArray(itens_lista) ? itens_lista : [])
+    .filter(it => it && String(it.descricao || '').trim())
+    .map((it, i) => {
+      const qNum = Number(it.quantidade);
+      const quantidade = isFinite(qNum) && qNum > 0 ? qNum : 1;
+      const vNum = Number(it.valor_estimado);
+      const temValor = it.valor_estimado != null && it.valor_estimado !== '' && isFinite(vNum);
+      const valorLinha = temValor ? (it.valor_tipo === 'unitario' ? vNum * quantidade : vNum) : null;
+      return {
+        descricao: String(it.descricao).trim().slice(0, 500),
+        quantidade,
+        unidade: it.unidade ? String(it.unidade).trim().slice(0, 20) : 'un',
+        link_referencia: it.link_referencia ? String(it.link_referencia).trim().slice(0, 1000) : null,
+        valor_estimado: valorLinha,
+        imagem_url: it.imagem_url ? String(it.imagem_url).slice(0, 2000) : null,
+        ordem: i,
+      };
+    });
+  const itensTexto = itensNorm.map(it => `${it.quantidade}x ${it.descricao}`).join('\n');
+  const valorTotal = itensNorm.reduce((acc, it) => acc + (it.valor_estimado != null ? it.valor_estimado : 0), 0);
+  return { itensNorm, itensTexto, valorTotal };
+}
+
+// Converter um pedido de MARKETING (criativo) em COMPRA — sem criar outra
+// solicitação. A origem já foi aprovada no fluxo de marketing (diretor do
+// Criativo), então só entra o portão de MÉRITO (Pastor Presidente) por valor.
+// Fecha a campanha do marketing como concluída (o criativo terminou).
+router.post('/:id/converter-em-compra', async (req, res) => {
+  try {
+    const { data: sol } = await supabase.from('solicitacoes')
+      .select('*').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!sol) return res.status(404).json({ error: 'Solicitação não encontrada.' });
+    if (!(await podeGerirSolicitacao(req, sol))) {
+      return res.status(403).json({ error: 'Você não pode converter esta solicitação.' });
+    }
+    if (!CRIATIVO_CATEGORIAS.includes(sol.categoria)) {
+      return res.status(400).json({ error: 'Só um pedido de marketing/produção pode virar compra.' });
+    }
+    if (['concluido', 'cancelado', 'rejeitado', 'avaliado'].includes(sol.status)) {
+      return res.status(400).json({ error: 'Este pedido já está encerrado.' });
+    }
+
+    const { itens_lista, favorecido_nome, eh_planejado, data_necessaria, justificativa } = req.body || {};
+    const { itensNorm, itensTexto, valorTotal } = normalizarItensCompra(itens_lista);
+    if (!itensNorm.length) return res.status(400).json({ error: 'Adicione ao menos um item da compra.' });
+
+    const planejado = eh_planejado === true || eh_planejado === 'true';
+    // Régua de valor (mérito · Pastor Presidente): planejado > 5k · não-planejado > 1k.
+    const precisaMeritoConv = planejado ? valorTotal > 5000 : valorTotal > 1000;
+    const now = new Date().toISOString();
+
+    const updates = {
+      categoria: 'compras',
+      area_responsavel: 'logistica_compras',
+      subcategoria: 'default',
+      eh_planejado: planejado,
+      ...(planejado ? { planejado_por: req.user.userId } : {}),
+      itens: itensTexto,
+      valor_estimado: valorTotal,
+      // O trigger de SLA que liga isto é só no INSERT — aqui setamos explícito.
+      precisa_aprovacao_financeira: true,
+      aprovacao_gestao_status: 'dispensada',
+      aprovacao_gestao_em: now,
+      aprovacao_gestao_motivo: 'Compra convertida de um pedido de marketing (origem já aprovada no Criativo).',
+      status: precisaMeritoConv ? 'aguardando_merito' : 'em_cotacao',
+      ...(precisaMeritoConv ? { merito_status: 'pendente', merito_em: now } : {}),
+    };
+    if (favorecido_nome) updates.favorecido_nome = String(favorecido_nome).trim().slice(0, 200);
+    if (data_necessaria) updates.data_necessaria = data_necessaria;
+    if (justificativa) {
+      updates.justificativa = sol.justificativa
+        ? `${sol.justificativa}\n[Virou compra] ${justificativa}`
+        : String(justificativa).slice(0, 2000);
+    }
+
+    const { data, error } = await supabase.from('solicitacoes')
+      .update(updates).eq('id', sol.id).is('deleted_at', null).select('*').maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(409).json({ error: 'Solicitação alterada por outra pessoa. Recarregue.' });
+
+    // Itens estruturados (best-effort · o write primário já decidiu o sucesso).
+    try {
+      await supabase.from('solicitacao_itens')
+        .insert(itensNorm.map(it => ({ ...it, solicitacao_id: sol.id })));
+    } catch (e) { console.error('[SOLICITACOES] converter itens:', e.message); }
+
+    // Fecha a campanha do marketing como concluída (o criativo terminou). NÃO usa
+    // o caminho de conclusão de card (que marcaria o próprio pedido como concluído).
+    try {
+      await supabase.from('marketing_campanhas')
+        .update({ status: 'concluida' })
+        .eq('solicitacao_id', sol.id).neq('status', 'concluida');
+    } catch (e) { console.error('[SOLICITACOES] fechar campanha:', e.message); }
+
+    // Notifica a logística (Amaury) + o solicitante.
+    notificar({
+      modulo: 'logistica',
+      tipo: 'solicitacao_status',
+      titulo: `Compra vinda do marketing: ${sol.titulo}`,
+      mensagem: `Um pedido de marketing virou compra${precisaMeritoConv ? ' (aguardando o Pastor Presidente)' : ' e já está pronto pra cotação'}.`,
+      link: '/solicitacoes',
+      severidade: 'info',
+      chaveDedup: `solicitacao_virou_compra_${sol.id}`,
+      extraTargetIds: [sol.solicitante_id].filter(Boolean),
+    }).catch(err => console.error('[SOLICITACOES] notify converter:', err.message));
+
+    res.json(data);
+  } catch (e) {
+    console.error('[SOLICITACOES] converter-em-compra:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao converter em compra' });
+  }
+});
 
 // ── Chamada interna (fake req/res) · reusa 100% da lógica dos handlers acima
 // pra o webhook do WhatsApp aplicar a decisão do Arthur (1=aprovar, 2=rejeitar).

@@ -2674,6 +2674,7 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
   const [actionPending, setActionPending] = useState(null); // e.g. 'aprovado', 'rejeitado', 'concluído', 'em_analise'
   const [obsText, setObsText] = useState('');
   const [atenderEstoque, setAtenderEstoque] = useState(false); // ponte estoque (Fase 3a-2)
+  const [converterCompra, setConverterCompra] = useState(false); // marketing → compra
 
   if (!item) return null;
   // Mesmo corpo, dois invólucros: Dialog (modal) ou Sheet (painel lateral direito).
@@ -3020,6 +3021,9 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
                   {!fluxoCompra && item.status === 'aprovado' && <Button size="sm" className="bg-green-600 hover:bg-green-700" onClick={() => setActionPending('concluido')}>Concluir</Button>}
                   {!fluxoCompra && item.status === 'pendente' && <Button size="sm" variant="outline" onClick={() => setActionPending('em_analise')}>Analisar</Button>}
                   {!fluxoCompra && podeEstoque && <Button size="sm" variant="outline" onClick={() => setAtenderEstoque(true)}>Atender pelo estoque</Button>}
+                  {['marketing', 'producao'].includes(item.categoria) && (
+                    <Button size="sm" variant="outline" className="text-orange-600 border-orange-300 hover:bg-orange-50 dark:hover:bg-orange-950/30" onClick={() => setConverterCompra(true)}>Isto é uma compra</Button>
+                  )}
                   {podeRejeitar && (
                     <Button size="sm" variant="destructive" onClick={() => setActionPending('rejeitado')}>Rejeitar</Button>
                   )}
@@ -3037,6 +3041,14 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
               solicitacao={item}
               onClose={() => setAtenderEstoque(false)}
               onDone={() => { setAtenderEstoque(false); onItemRefresh?.(); onClose(); }}
+            />
+          )}
+
+          {converterCompra && (
+            <ConverterEmCompraModal
+              solicitacao={item}
+              onClose={() => setConverterCompra(false)}
+              onDone={() => { setConverterCompra(false); onItemRefresh?.(); onClose(); }}
             />
           )}
 
@@ -3562,6 +3574,106 @@ function AtenderEstoqueModal({ solicitacao, onClose, onDone }) {
             <Button variant="outline" size="sm" onClick={onClose}>Cancelar</Button>
             <Button size="sm" onClick={confirmar} disabled={saving || !fila.length}>{saving ? 'Baixando...' : 'Dar baixa e concluir'}</Button>
           </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Marketing → "Isto é uma compra": preenche os itens/valor/planejado e o MESMO
+// pedido vira uma compra que segue pro Amaury (régua de planejado/valor aplicada
+// no servidor). Não cria outra solicitação.
+function ConverterEmCompraModal({ solicitacao, onClose, onDone }) {
+  const [itens, setItens] = useState([{ descricao: '', quantidade: '1', valor_estimado: '', valor_tipo: 'total', link_referencia: '' }]);
+  const [favorecido, setFavorecido] = useState('');
+  const [planejado, setPlanejado] = useState(false);
+  const [dataNec, setDataNec] = useState('');
+  const [justificativa, setJustificativa] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const total = itens.reduce((acc, it) => {
+    const v = parseFloat(it.valor_estimado); const q = parseFloat(it.quantidade) > 0 ? parseFloat(it.quantidade) : 1;
+    if (!isFinite(v)) return acc;
+    return acc + (it.valor_tipo === 'unitario' ? v * q : v);
+  }, 0);
+  const setItem = (i, patch) => setItens(arr => arr.map((it, idx) => idx === i ? { ...it, ...patch } : it));
+  const addItem = () => setItens(arr => [...arr, { descricao: '', quantidade: '1', valor_estimado: '', valor_tipo: 'total', link_referencia: '' }]);
+  const rmItem = (i) => setItens(arr => arr.length > 1 ? arr.filter((_, idx) => idx !== i) : arr);
+
+  async function converter() {
+    const validos = itens.filter(it => it.descricao.trim());
+    if (!validos.length) { toast.error('Descreva ao menos um item da compra.'); return; }
+    setSaving(true);
+    try {
+      await api.converterEmCompra(solicitacao.id, {
+        itens_lista: validos.map(it => ({
+          descricao: it.descricao.trim(),
+          quantidade: it.quantidade,
+          valor_estimado: it.valor_estimado === '' ? null : it.valor_estimado,
+          valor_tipo: it.valor_tipo,
+          link_referencia: it.link_referencia.trim() || undefined,
+        })),
+        favorecido_nome: favorecido.trim() || undefined,
+        eh_planejado: planejado,
+        data_necessaria: dataNec || undefined,
+        justificativa: justificativa.trim() || undefined,
+      });
+      toast.success('Virou compra — seguiu pro Amaury.');
+      onDone();
+    } catch (e) { toast.error(e.message || 'Erro ao converter em compra'); }
+    finally { setSaving(false); }
+  }
+
+  return (
+    <Dialog open onOpenChange={v => { if (!v) onClose(); }}>
+      <DialogContent className="sm:max-w-lg max-h-[90vh] flex flex-col">
+        <DialogHeader><DialogTitle>Isto é uma compra</DialogTitle></DialogHeader>
+        <div className="space-y-3 overflow-y-auto min-h-0 flex-1">
+          <p className="text-sm text-muted-foreground">Especifique o que precisa ser comprado. O pedido <span className="font-medium">{solicitacao.titulo}</span> vira uma compra e segue pro Amaury (cotação → financeiro), sem abrir outra solicitação.</p>
+
+          <div className="space-y-2">
+            {itens.map((it, i) => (
+              <div key={i} className="rounded-md border border-border p-2.5 space-y-2">
+                <div className="flex gap-2">
+                  <Input className="flex-1" placeholder="O que comprar" value={it.descricao} onChange={e => setItem(i, { descricao: e.target.value })} />
+                  {itens.length > 1 && <Button size="icon" variant="ghost" className="h-9 w-9 text-destructive" onClick={() => rmItem(i)}><Trash2 className="h-4 w-4" /></Button>}
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <div><Label className="text-xs">Qtd</Label><Input type="number" min="1" value={it.quantidade} onChange={e => setItem(i, { quantidade: e.target.value })} /></div>
+                  <div><Label className="text-xs">Valor (R$)</Label><Input type="number" step="0.01" min="0" value={it.valor_estimado} onChange={e => setItem(i, { valor_estimado: e.target.value })} placeholder="0,00" /></div>
+                  <div>
+                    <Label className="text-xs">Tipo</Label>
+                    <select value={it.valor_tipo} onChange={e => setItem(i, { valor_tipo: e.target.value })}
+                      className="w-full h-9 px-2 text-sm rounded-md border border-border bg-background">
+                      <option value="total">R$ total</option>
+                      <option value="unitario">R$ por unid.</option>
+                    </select>
+                  </div>
+                </div>
+                <Input placeholder="Link (opcional)" value={it.link_referencia} onChange={e => setItem(i, { link_referencia: e.target.value })} />
+              </div>
+            ))}
+            <Button size="sm" variant="outline" onClick={addItem} className="w-full">+ Adicionar item</Button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div><Label className="text-xs">Fornecedor sugerido</Label><Input value={favorecido} onChange={e => setFavorecido(e.target.value)} placeholder="opcional" /></div>
+            <div><Label className="text-xs">Data necessária</Label><Input type="date" value={dataNec} onChange={e => setDataNec(e.target.value)} /></div>
+          </div>
+
+          <label className="flex items-start gap-2 text-sm cursor-pointer">
+            <input type="checkbox" checked={planejado} onChange={e => setPlanejado(e.target.checked)} className="mt-1" />
+            <span>Compra <b>planejada</b> (já prevista no orçamento da área). <span className="text-muted-foreground">Muda a régua de aprovação por valor.</span></span>
+          </label>
+
+          <div><Label className="text-xs">Observação (opcional)</Label>
+            <Textarea rows={2} value={justificativa} onChange={e => setJustificativa(e.target.value)} placeholder="Detalhes da compra..." /></div>
+
+          <div className="text-sm text-right text-muted-foreground">Total estimado: <b className="text-foreground">R$ {total.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b></div>
+        </div>
+        <div className="flex justify-end gap-2 pt-2 border-t border-border">
+          <Button variant="outline" onClick={onClose} disabled={saving}>Cancelar</Button>
+          <Button onClick={converter} disabled={saving} className="bg-orange-600 hover:bg-orange-700 text-white">{saving ? 'Convertendo…' : 'Virar compra'}</Button>
         </div>
       </DialogContent>
     </Dialog>
