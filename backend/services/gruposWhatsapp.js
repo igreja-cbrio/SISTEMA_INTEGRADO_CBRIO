@@ -47,6 +47,11 @@ const TPL_RENOVACAO = process.env.WHATSAPP_TEMPLATE_GRUPOS_RENOVACAO || 'grupos_
 // Meta (Marcos: testar na próxima temporada) → sem a env, montarEnvioMaterial
 // devolve erro 'sem_template' e nada sai (nunca texto livre proativo).
 const TPL_MATERIAL = process.env.WHATSAPP_TEMPLATE_GRUPOS_MATERIAL || null;
+// Abertura de inscrições (Utility · Marcos 2026-07-24): avisa o LÍDER que a
+// temporada abriu + bloco pra ele encaminhar no grupo (o link vive FIXO no
+// corpo do template · a Cloud API não posta em grupo). Nome fixo no código; env
+// só pra override. Só sai de fato depois de aprovar o template na Meta.
+const TPL_ABERTURA = process.env.WHATSAPP_TEMPLATE_GRUPOS_ABERTURA || 'abertura_grupos_convite_lider';
 // «Olá {{1}}! Recebemos sua inscrição em {{2}}. 💙 Em breve te damos os
 // próximos passos.» — mensagem 1 da inscrição (a 2 é o grupos_pedido_aprovado).
 const TPL_INSCRICAO_CONFIRMADA = process.env.WHATSAPP_TEMPLATE_INSCRICAO_CONFIRMADA || 'cbrio_inscricao_confirmada';
@@ -364,6 +369,25 @@ function montarEnvioMaterial({ lider, link, titulo }) {
   };
 }
 
+// Template 7 · abertura_grupos_convite_lider (Utility) — avisa o LÍDER que as
+// inscrições da temporada abriram + bloco pra ele encaminhar no grupo. O link
+// (cbrio.org/inscricao-grupos) é FIXO no corpo do template na Meta → aqui só
+// vai {{1}} = primeiro nome. Monta SEM enviar (o disparo manual enfileira em
+// lote). Sem o template aprovado, a fila falha por-mensagem (não é texto livre).
+function montarEnvioAbertura({ lider }) {
+  if (!WHATSAPP_LIGADO()) return { erro: 'disabled' };
+  if (!lider?.telefone) return { erro: 'lider_sem_telefone' };
+  return {
+    envio: {
+      telefone: lider.telefone,
+      template: TPL_ABERTURA,
+      params: [ (lider.nome || '').trim().split(/\s+/)[0] || 'Líder' ],
+      contexto: 'grupos.abertura_convite',
+      refId: null,
+    },
+  };
+}
+
 // Template 5 · cbrio_inscricao_confirmada — mensagem 1 pra PESSOA no momento
 // da inscrição («recebemos, em breve os próximos passos» · a mensagem 2 é o
 // grupos_pedido_aprovado, na aprovação). {{1}} primeiro nome · {{2}} grupo.
@@ -402,5 +426,6 @@ module.exports = {
   notificarLiderFrequencia,
   montarEnvioRenovacao,
   montarEnvioMaterial,
+  montarEnvioAbertura,
   enviarInscricaoConfirmada,
 };
