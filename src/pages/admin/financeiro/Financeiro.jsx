@@ -8,6 +8,7 @@ import SantanderTab from './SantanderTab';
 import EstruturaFiscal from './EstruturaFiscal';
 import ImportarExtratos from './ImportarExtratos';
 import FilaClassificacao from './FilaClassificacao';
+import Conciliacao from './Conciliacao';
 import NotasCompras from './NotasCompras';
 import DashboardOverview from './DashboardOverview';
 import DreAuto from './DreAuto';
@@ -347,7 +348,7 @@ const TABS = [
   'Análises', 'DRE', 'Generosidade', 'Banco',
   'Operacional', 'Gestão', 'Configuração',
 ];
-const SUBS_OPERACIONAL = ['Contas', 'Recorrentes', 'Reembolsos', 'Importar extratos', 'Fila de classificação', 'Calendário', 'Notas de compras'];
+const SUBS_OPERACIONAL = ['Contas', 'Recorrentes', 'Reembolsos', 'Importar extratos', 'Fila de classificação', 'Conciliação', 'Calendário', 'Notas de compras'];
 const SUBS_GESTAO = ['Solicitações', 'Alertas', 'Fechamento', 'Auditoria'];
 const SUBS_DRE = ['DRE Auto', 'Por Centro de Custo', 'Comparativo Temporal'];
 
@@ -456,8 +457,9 @@ export default function Financeiro() {
       case 'reembolsos':       setTab(8); setSubOp(2); break;
       case 'importar':         setTab(8); setSubOp(3); break;
       case 'fila':             setTab(8); setSubOp(4); break;
-      case 'calendario':       setTab(8); setSubOp(5); break;
-      case 'notas_compras':    setTab(8); setSubOp(6); break;
+      case 'conciliacao':      setTab(8); setSubOp(5); break;
+      case 'calendario':       setTab(8); setSubOp(6); break;
+      case 'notas_compras':    setTab(8); setSubOp(7); break;
       case 'solicitacoes_fin': setTab(9); setSubGestao(0); break;
       case 'alertas':          setTab(9); setSubGestao(1); break;
       case 'closing':          setTab(9); setSubGestao(2); break;
@@ -1546,8 +1548,9 @@ export default function Financeiro() {
           {subOp === 2 && renderReembolsos()}
           {subOp === 3 && <ImportarExtratos />}
           {subOp === 4 && <FilaClassificacao />}
-          {subOp === 5 && <CalendarioFinanceiro />}
-          {subOp === 6 && <NotasCompras />}
+          {subOp === 5 && <Conciliacao />}
+          {subOp === 6 && <CalendarioFinanceiro />}
+          {subOp === 7 && <NotasCompras />}
         </div>
       )}
 

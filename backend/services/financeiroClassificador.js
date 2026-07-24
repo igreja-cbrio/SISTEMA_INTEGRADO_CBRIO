@@ -372,11 +372,100 @@ async function classificarBatch({ uploadId } = {}) {
   return { processados: lancamentos.length, sugeridos };
 }
 
+// ── 4. IA em lote (Fase 3 · o "futuro" do item 4 do cabeçalho chegou) ────────
+// Pros itens da fila SEM sugestão (centavo/memória/regra não cobriram), pede ao
+// Claude Haiku a classificação em LOTES (1 chamada pra ~20 lançamentos · barato).
+// Grava a sugestão na fila com origem 'ia' — segue review-before-apply.
+async function sugerirLoteIA({ maxItens = 40 } = {}) {
+  const Anthropic = require('@anthropic-ai/sdk');
+  const client = new Anthropic();
+  const MODEL = 'claude-haiku-4-5-20251001';
+
+  // Itens pendentes sem sugestão de plano (o que a fila mostra como "sem sugestão")
+  const { data: fila } = await supabase
+    .from('fin_fila_classificacao')
+    .select('id, lancamento_bruto_id, lancamento:lancamento_bruto_id(id, valor, tipo_trn, memo, nome_contraparte, documento_contraparte, data_lancamento)')
+    .eq('status', 'pendente')
+    .is('sugestao_plano_contas_id', null)
+    .limit(maxItens);
+  if (!fila || !fila.length) return { processados: 0, com_sugestao: 0, restantes: 0 };
+
+  // Catálogo (folhas que aceitam lançamento) — vai no prompt uma vez
+  const { data: planos } = await supabase.from('fin_plano_contas')
+    .select('id, codigo, nome, tipo').eq('aceita_lancamento', true).eq('ativo', true).order('codigo');
+  const { data: centros } = await supabase.from('fin_centros_custo')
+    .select('id, codigo, nome').eq('aceita_lancamento', true).eq('ativo', true).order('codigo');
+
+  const catalogoPlanos = (planos || []).map((p) => `${p.id} | ${p.codigo} ${p.nome} (${p.tipo})`).join('\n');
+  const catalogoCentros = (centros || []).map((c) => `${c.id} | ${c.codigo} ${c.nome}`).join('\n');
+
+  let comSugestao = 0;
+  const LOTE = 20;
+  for (let i = 0; i < fila.length; i += LOTE) {
+    const chunk = fila.slice(i, i + LOTE).filter((f) => f.lancamento);
+    if (!chunk.length) continue;
+    const linhas = chunk.map((f) => {
+      const l = f.lancamento;
+      const sinal = (l.tipo_trn === 'CREDIT' || Number(l.valor) > 0) ? 'ENTRADA' : 'SAÍDA';
+      return `${f.id} | ${sinal} | R$ ${Math.abs(Number(l.valor)).toFixed(2)} | ${l.data_lancamento} | ${l.memo || ''} | ${l.nome_contraparte || ''}`;
+    }).join('\n');
+
+    try {
+      const resp = await client.messages.create({
+        model: MODEL,
+        max_tokens: 2000,
+        messages: [{
+          role: 'user',
+          content: `Você classifica lançamentos bancários de uma igreja (CBRio) no plano de contas.
+
+PLANO DE CONTAS (id | código nome (tipo)):
+${catalogoPlanos}
+
+CENTROS DE CUSTO (id | código nome):
+${catalogoCentros}
+
+LANÇAMENTOS (fila_id | sentido | valor | data | memo | contraparte):
+${linhas}
+
+Pra cada lançamento escolha o plano de contas mais provável (ENTRADA→tipo receita, SAÍDA→tipo despesa) e, se evidente, o centro de custo. Se não der pra inferir com razoável confiança, omita o item.
+Responda SÓ um JSON array: [{"fila_id":"...","plano_contas_id":"...","centro_custo_id":"..."|null,"confianca":0.0-1.0,"motivo":"curto"}]`,
+        }],
+      });
+      const texto = resp.content?.[0]?.text || '[]';
+      const json = JSON.parse(texto.slice(texto.indexOf('['), texto.lastIndexOf(']') + 1));
+      const validPlano = new Set((planos || []).map((p) => p.id));
+      const validCentro = new Set((centros || []).map((c) => c.id));
+      for (const s of json) {
+        if (!s?.fila_id || !validPlano.has(s.plano_contas_id)) continue; // não confia cego no modelo
+        const { error } = await supabase.from('fin_fila_classificacao')
+          .update({
+            sugestao_plano_contas_id: s.plano_contas_id,
+            sugestao_centro_custo_id: validCentro.has(s.centro_custo_id) ? s.centro_custo_id : null,
+            sugestao_origem: 'ia',
+            sugestao_confianca: Math.max(0, Math.min(1, Number(s.confianca) || 0.6)),
+            sugestao_explicacao: `IA: ${String(s.motivo || 'classificação por contexto').slice(0, 160)}`,
+          })
+          .eq('id', s.fila_id).eq('status', 'pendente');
+        if (!error) comSugestao++;
+      }
+    } catch (e) {
+      console.error('[FIN-CLASS] IA lote:', e.message);
+    }
+  }
+
+  const { count } = await supabase.from('fin_fila_classificacao')
+    .select('id', { count: 'exact', head: true })
+    .eq('status', 'pendente').is('sugestao_plano_contas_id', null);
+
+  return { processados: fila.length, com_sugestao: comSugestao, restantes: count || 0 };
+}
+
 module.exports = {
   classificarLancamento,
   aprenderClassificacao,
   resolverMembroPorDocumento,
   matchOfxPix,
   classificarBatch,
+  sugerirLoteIA,
   extractCentavo,
 };

@@ -1037,6 +1037,14 @@ export const financeiroV2 = {
     list: (params) => get('/financeiro-v2/fila-classificacao' + (params ? '?' + new URLSearchParams(params) : '')),
     aprovar: (filaId, data) => post(`/financeiro-v2/classificar/${filaId}/aprovar`, data),
     ignorar: (filaId) => post(`/financeiro-v2/classificar/${filaId}/ignorar`, {}),
+    // IA em lote pros itens sem sugestão (repetir até restantes=0)
+    sugerirLote: () => post('/financeiro-v2/fila-classificacao/sugerir-lote', {}),
+  },
+  // Conciliação em lote · extrato × contas a pagar (Fase 3)
+  conciliacao: {
+    sugestoes: () => get('/financeiro-v2/conciliacao/sugestoes'),
+    aplicar: (pares) => post('/financeiro-v2/conciliacao/aplicar', { pares }),
+    aplicarSeguros: () => post('/financeiro-v2/conciliacao/aplicar-seguros', {}),
   },
   notasCompras: {
     list: (params) => get('/financeiro-v2/notas-compras' + (params ? '?' + new URLSearchParams(params) : '')),
