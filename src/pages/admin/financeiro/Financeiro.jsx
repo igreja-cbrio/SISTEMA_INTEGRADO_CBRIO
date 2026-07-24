@@ -32,8 +32,8 @@ const C = {
   blue: '#3b82f6', blueBg: '#3b82f618',
 };
 
-const TIPO_CONTA = { corrente: 'Corrente', poupanca: 'Poupanca', caixa: 'Caixa', investimento: 'Investimento' };
-const TIPO_TRANSACAO = { receita: 'Receita', despesa: 'Despesa', transferencia: 'Transferencia' };
+const TIPO_CONTA = { corrente: 'Corrente', poupanca: 'Poupança', caixa: 'Caixa', investimento: 'Investimento' };
+const TIPO_TRANSACAO = { receita: 'Receita', despesa: 'Despesa', transferencia: 'Transferência' };
 
 const STATUS_TRANSACAO = {
   pendente: { c: C.amber, bg: C.amberBg, label: 'Pendente' },
@@ -674,7 +674,7 @@ export default function Financeiro() {
   };
 
   const deleteTransacao = async (id) => {
-    if (!window.confirm('Deseja excluir esta transacao?')) return;
+    if (!window.confirm('Deseja excluir esta transação?')) return;
     try { await financeiro.transacoes.remove(id); loadTransacoes(); loadDash(); } catch (e) { handleError(e); }
   };
 
@@ -772,7 +772,7 @@ export default function Financeiro() {
   const renderContas = () => (
     <div style={styles.card}>
       <div style={styles.cardHeader}>
-        <div style={styles.cardTitle}>Contas Bancarias</div>
+        <div style={styles.cardTitle}>Contas Bancárias</div>
         {isDiretor && (
           <Button onClick={() => setModalConta({ nome: '', banco: '', agencia: '', conta: '', tipo: 'corrente', saldo: 0, ativa: true })}>
             + Nova Conta
@@ -1289,7 +1289,7 @@ export default function Financeiro() {
         <Input label="Nome" value={form.nome || ''} onChange={e => upd('nome', e.target.value)} />
         <div style={styles.formRow}>
           <Input label="Banco" value={form.banco || ''} onChange={e => upd('banco', e.target.value)} />
-          <Input label="Agencia" value={form.agencia || ''} onChange={e => upd('agencia', e.target.value)} />
+          <Input label="Agência" value={form.agencia || ''} onChange={e => upd('agencia', e.target.value)} />
         </div>
         <div style={styles.formRow}>
           <Input label="Conta" value={form.conta || ''} onChange={e => upd('conta', e.target.value)} />

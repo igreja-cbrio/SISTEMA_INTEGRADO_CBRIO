@@ -760,7 +760,7 @@ export default function Eventos() {
   function renderKPIs() {
     const d = kpiData;
     const CAT_COLORS = { marketing: '#00B39D', producao: '#6366f1', compras: '#3b82f6', financeiro: '#10b981', manutencao: '#f59e0b', limpeza: '#8b5cf6', cozinha: '#ec4899', adm: '#0ea5e9' };
-    const CAT_LABELS = { marketing: 'Marketing', producao: 'Producao', compras: 'Compras', financeiro: 'Financeiro', manutencao: 'Manutencao', limpeza: 'Limpeza', cozinha: 'Cozinha', adm: 'Administrativo' };
+    const CAT_LABELS = { marketing: 'Marketing', producao: 'Produção', compras: 'Compras', financeiro: 'Financeiro', manutencao: 'Manutenção', limpeza: 'Limpeza', cozinha: 'Cozinha', adm: 'Administrativo' };
     // scoreColor movido para nível do componente
 
     const ScoreLegend = () => (
@@ -768,7 +768,7 @@ export default function Eventos() {
         <span style={{ fontSize: 11, fontWeight: 600, color: C.t2 }}>Score =</span>
         {[
           { label: 'Prazo', pts: 40, color: '#3b82f6', icon: '\u23f0' },
-          { label: 'Aprovacao', pts: 30, color: '#10b981', icon: '\u2705' },
+          { label: 'Aprova\u00e7\u00e3o', pts: 30, color: '#10b981', icon: '\u2705' },
           { label: 'Qualidade', pts: 20, color: '#f59e0b', icon: '\u2b50' },
           { label: 'Arquivo', pts: 10, color: '#8b5cf6', icon: '\ud83d\udcce' },
         ].map((s, i) => (
@@ -805,7 +805,7 @@ export default function Eventos() {
             </div>
             <div>
               <div style={{ fontSize: 18, fontWeight: 700, color: C.text }}>{kpiEventName || 'Evento'}</div>
-              <div style={{ fontSize: 12, color: C.t3 }}>{kpiVal}% score | {ev.kpi_evento?.total_docs || 0} documentos | {ev.kpi_evento?.total_areas || 0} areas</div>
+              <div style={{ fontSize: 12, color: C.t3 }}>{kpiVal}% score | {ev.kpi_evento?.total_docs || 0} documentos | {ev.kpi_evento?.total_areas || 0} áreas</div>
             </div>
           </div>
 
@@ -826,7 +826,7 @@ export default function Eventos() {
                     <span style={{ fontSize: 20, fontWeight: 800, color: scoreColor(a.kpi_area) }}>{a.kpi_area || 0}%</span>
                   </div>
                   <BreakdownBar label="Prazo" icon={'\u23f0'} value={b.score_prazo || 0} max={b.total * 40} count={b.no_prazo || 0} total={b.total || 0} />
-                  <BreakdownBar label="Aprovacao" icon={'\u2705'} value={b.score_aprovacao || 0} max={b.total * 30} count={b.aprovados || 0} total={b.total || 0} />
+                  <BreakdownBar label="Aprova\u00e7\u00e3o" icon={'\u2705'} value={b.score_aprovacao || 0} max={b.total * 30} count={b.aprovados || 0} total={b.total || 0} />
                   <BreakdownBar label="Qualidade" icon={'\u2b50'} value={b.score_qualidade || 0} max={b.total * 20} count={b.qualidade_ok || 0} total={b.total || 0} />
                   <BreakdownBar label="Arquivo" icon={'\ud83d\udcce'} value={b.score_arquivo || 0} max={b.total * 10} count={b.com_arquivo || 0} total={b.total || 0} />
                   <div style={{ fontSize: 10, color: C.t3, marginTop: 6, paddingTop: 6, borderTop: `1px solid ${C.border}` }}>{a.docs_ok}/{a.total_docs} entregues | {a.docs_atrasados} atrasados | {a.docs_pendentes} pendentes</div>
@@ -861,7 +861,7 @@ export default function Eventos() {
                     return (
                       <tr key={doc.id} onClick={async () => { setKpiDocModal({ doc, resumo: null, loading: true }); try { const r = await cyclesApi.docResumo(doc.id); setKpiDocModal({ doc, ...r, loading: false }); } catch { setKpiDocModal(m => ({ ...m, loading: false })); } }} style={{ borderBottom: `1px solid ${C.border}`, cursor: 'pointer' }}
                         onMouseEnter={e => e.currentTarget.style.background = C.bg} onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-                        <td style={{ padding: '10px 12px', fontSize: 13, fontWeight: 600, color: C.text }}>{doc.card_titulo}{doc.is_critical && <span style={{ fontSize: 9, marginLeft: 6, padding: '1px 5px', borderRadius: 99, background: '#ef444420', color: '#ef4444' }}>critico</span>}</td>
+                        <td style={{ padding: '10px 12px', fontSize: 13, fontWeight: 600, color: C.text }}>{doc.card_titulo}{doc.is_critical && <span style={{ fontSize: 9, marginLeft: 6, padding: '1px 5px', borderRadius: 99, background: '#ef444420', color: '#ef4444' }}>crítico</span>}</td>
                         <td style={{ padding: '10px 12px' }}><span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 99, background: (CAT_COLORS[doc.area] || '#9ca3af') + '20', color: CAT_COLORS[doc.area] || '#9ca3af', fontWeight: 500 }}>{CAT_LABELS[doc.area] || doc.area}</span></td>
                         <td style={{ padding: '10px 12px', textAlign: 'center' }}>
                           {entregue ? (
@@ -943,14 +943,14 @@ export default function Eventos() {
             <div style={{ display: 'flex', gap: 16, marginBottom: 24, flexWrap: 'wrap' }}>
               <div style={{ background: 'var(--panel)', WebkitBackdropFilter: 'blur(14px) saturate(140%)', backdropFilter: 'blur(14px) saturate(140%)', borderRadius: 16, padding: 20, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow), var(--hi)', flex: '1 1 200px', textAlign: 'center' }}>
                 <div style={{ fontSize: 40, fontWeight: 800, color: scoreColor(d.kpi_medio) }}>{d.kpi_medio}</div>
-                <div style={{ fontSize: 13, color: C.t3 }}>KPI Medio Institucional</div>
+                <div style={{ fontSize: 13, color: C.t3 }}>KPI Médio Institucional</div>
                 <div style={{ fontSize: 11, color: C.t3, marginTop: 4 }}>{d.eventos?.length || 0} eventos com ciclo criativo</div>
               </div>
 
               {/* Top 3 áreas */}
               {(d.ranking_areas || []).slice(0, 3).map((a, i) => (
                 <div key={a.area} style={{ background: 'var(--panel)', WebkitBackdropFilter: 'blur(14px) saturate(140%)', backdropFilter: 'blur(14px) saturate(140%)', borderRadius: 16, padding: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow), var(--hi)', flex: '1 1 150px' }}>
-                  <div style={{ fontSize: 10, color: C.t3, textTransform: 'uppercase', fontWeight: 600, marginBottom: 4 }}>{i === 0 ? 'Melhor area' : `#${i + 1}`}</div>
+                  <div style={{ fontSize: 10, color: C.t3, textTransform: 'uppercase', fontWeight: 600, marginBottom: 4 }}>{i === 0 ? 'Melhor área' : `#${i + 1}`}</div>
                   <div style={{ fontSize: 13, fontWeight: 700, color: CAT_COLORS[a.area] || C.text }}>{CAT_LABELS[a.area] || a.area}</div>
                   <div style={{ fontSize: 24, fontWeight: 800, color: scoreColor(a.kpi) }}>{a.kpi}</div>
                   <div style={{ fontSize: 10, color: C.t3 }}>{a.docs_ok}/{a.total_docs} docs OK</div>
@@ -1006,7 +1006,7 @@ export default function Eventos() {
 
   function renderKpiConfig() {
     if (!kpiConfigOpen) return null;
-    const CAT_LABELS = { marketing: 'Marketing', producao: 'Producao', compras: 'Compras', financeiro: 'Financeiro', manutencao: 'Manutencao', limpeza: 'Limpeza', cozinha: 'Cozinha', adm: 'Administrativo' };
+    const CAT_LABELS = { marketing: 'Marketing', producao: 'Produção', compras: 'Compras', financeiro: 'Financeiro', manutencao: 'Manutenção', limpeza: 'Limpeza', cozinha: 'Cozinha', adm: 'Administrativo' };
     return (
       <div style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)' }}>
         <div style={{ background: 'var(--panel)', WebkitBackdropFilter: 'blur(18px) saturate(140%)', backdropFilter: 'blur(18px) saturate(140%)', border: '1px solid var(--hairline)', borderRadius: 16, padding: 24, maxWidth: 500, width: '90%', maxHeight: '85vh', overflowY: 'auto', boxShadow: 'var(--shadow-hover), var(--hi)' }}>
@@ -1015,7 +1015,7 @@ export default function Eventos() {
             <button onClick={() => setKpiConfigOpen(false)} style={{ background: 'none', border: 'none', fontSize: 18, color: C.t3, cursor: 'pointer' }}>{'\u2715'}</button>
           </div>
           <div style={{ fontSize: 12, color: C.t3, marginBottom: 12 }}>
-            Defina a importancia de cada area no calculo do KPI. Producao com peso 3 vale 3x mais que uma area com peso 1.
+            Defina a importância de cada área no cálculo do KPI. Produção com peso 3 vale 3x mais que uma área com peso 1.
           </div>
           <div style={{ maxHeight: 400, overflowY: 'auto' }}>
             {(kpiWeights || []).map(w => (
@@ -1038,7 +1038,7 @@ export default function Eventos() {
 
   function renderTemplates() {
     const AREAS = ['marketing', 'producao', 'compras', 'financeiro', 'manutencao', 'limpeza', 'cozinha', 'adm'];
-    const CAT_LABELS = { marketing: 'Marketing', producao: 'Producao', compras: 'Compras', financeiro: 'Financeiro', manutencao: 'Manutencao', limpeza: 'Limpeza', cozinha: 'Cozinha', adm: 'Administrativo' };
+    const CAT_LABELS = { marketing: 'Marketing', producao: 'Produção', compras: 'Compras', financeiro: 'Financeiro', manutencao: 'Manutenção', limpeza: 'Limpeza', cozinha: 'Cozinha', adm: 'Administrativo' };
     const CAT_COLORS = { marketing: '#00B39D', producao: '#6366f1', compras: '#3b82f6', financeiro: '#10b981', manutencao: '#f59e0b', limpeza: '#8b5cf6', cozinha: '#ec4899', adm: '#0ea5e9' };
     const cardStyle = { background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, overflow: 'hidden' };
 
@@ -1089,7 +1089,7 @@ export default function Eventos() {
           ))}
         </div>
         <div style={{ fontSize: 12, color: C.t3, marginBottom: 16 }}>
-          Tarefas criadas automaticamente ao ativar o ciclo criativo. O prazo e vinculado a fase (dias antes do Dia D).
+          Tarefas criadas automaticamente ao ativar o ciclo criativo. O prazo é vinculado à fase (dias antes do Dia D).
         </div>
 
         {/* Novo template */}
@@ -1174,10 +1174,10 @@ export default function Eventos() {
         {tpls.length > 0 && (
           <div style={{ ...cardStyle, padding: 14, marginTop: 8 }}>
             <div style={{ fontSize: 12, color: C.t2, display: 'flex', gap: 16 }}>
-              <span><strong>{tpls.length}</strong> tarefas padrao</span>
+              <span><strong>{tpls.length}</strong> tarefas padrão</span>
               <span><strong>{tpls.filter(t => t.ativo).length}</strong> ativas</span>
               <span><strong>{tpls.reduce((a, t) => a + (t.adm_task_template_subtasks?.length || 0), 0)}</strong> subtarefas</span>
-              <span style={{ color: C.t3, fontSize: 11 }}>Ao adicionar/excluir, as alteracoes são aplicadas em todos os eventos ativos</span>
+              <span style={{ color: C.t3, fontSize: 11 }}>Ao adicionar/excluir, as alterações são aplicadas em todos os eventos ativos</span>
             </div>
           </div>
         )}
@@ -1206,7 +1206,7 @@ export default function Eventos() {
         </div>
 
         <div style={{ fontSize: 12, color: C.t3, marginBottom: 16 }}>
-          Tarefas recorrentes para eventos sem ciclo criativo. Ao adicionar, a tarefa e criada automaticamente no evento e aparece na aba Tarefas toda vez.
+          Tarefas recorrentes para eventos sem ciclo criativo. Ao adicionar, a tarefa é criada automaticamente no evento e aparece na aba Tarefas toda vez.
         </div>
 
         {/* Lista de eventos simples com suas tarefas */}
@@ -1268,7 +1268,7 @@ export default function Eventos() {
     return (
       <div style={{ background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, overflow: 'hidden' }}>
         <div style={{ padding: '10px 16px', borderBottom: `1px solid ${C.border}`, background: 'var(--cbrio-table-header)', display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: 13, fontWeight: 600, color: C.text, flex: 1 }}>Tarefas padrao ({stpls.length})</span>
+          <span style={{ fontSize: 13, fontWeight: 600, color: C.text, flex: 1 }}>Tarefas padrão ({stpls.length})</span>
           <input placeholder="Nova tarefa..." value={newName} onChange={e => setNewName(e.target.value)} style={{ padding: '4px 10px', borderRadius: 6, border: `1px solid ${C.border}`, background: C.bg, color: C.text, fontSize: 12, width: 250 }} onKeyDown={async e => {
             if (e.key === 'Enter' && newName.trim()) { await events.createSimpleTemplate({ titulo: newName.trim() }); setNewName(''); await reload(); }
           }} />
@@ -3524,7 +3524,7 @@ export default function Eventos() {
 
             {/* Score breakdown do doc */}
             <div style={{ background: C.bg, borderRadius: 10, padding: 12, marginBottom: 16, border: `1px solid ${C.border}` }}>
-              <div style={{ fontSize: 11, fontWeight: 600, color: C.t2, marginBottom: 8 }}>Composicao do Score</div>
+              <div style={{ fontSize: 11, fontWeight: 600, color: C.t2, marginBottom: 8 }}>Composição do Score</div>
               {[
                 { label: 'Entrega no prazo', pts: 40, ok: kpiDocModal.doc?.on_time !== false && kpiDocModal.doc?.status === 'concluida', icon: '\u23f0' },
                 { label: 'Aprovado', pts: 30, ok: !!kpiDocModal.doc?.approved_by, icon: '\u2705' },
@@ -3540,7 +3540,7 @@ export default function Eventos() {
             </div>
 
             {/* Resumo do Cerebro */}
-            <div style={{ fontSize: 12, fontWeight: 600, color: C.t2, marginBottom: 8 }}>Resumo do Documento (Cerebro)</div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: C.t2, marginBottom: 8 }}>Resumo do Documento (Cérebro)</div>
             {kpiDocModal.loading ? (
               <div style={{ padding: 16, textAlign: 'center', color: C.t3, fontSize: 12 }}>Carregando resumo...</div>
             ) : kpiDocModal.resumo ? (
@@ -3556,7 +3556,7 @@ export default function Eventos() {
               </div>
             ) : (
               <div style={{ padding: 16, textAlign: 'center', color: C.t3, fontSize: 12, background: C.bg, borderRadius: 10, border: `1px solid ${C.border}` }}>
-                {kpiDocModal.file_name ? 'Documento ainda não processado pelo Cerebro. O resumo aparece após o próximo ciclo do agente.' : 'Nenhum arquivo anexado a este card.'}
+                {kpiDocModal.file_name ? 'Documento ainda não processado pelo Cérebro. O resumo aparece após o próximo ciclo do agente.' : 'Nenhum arquivo anexado a este card.'}
               </div>
             )}
 

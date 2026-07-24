@@ -20,7 +20,7 @@ const STATUS_MAP = {
   'em_andamento': { c: C.blue, bg: C.blueBg, label: 'Em Andamento' },
   'em-risco': { c: C.amber, bg: C.amberBg, label: 'Em Risco' },
   'atrasado': { c: C.red, bg: C.redBg, label: 'Atrasado' },
-  'concluido': { c: '#06b6d4', bg: '#06b6d420', label: 'Concluido' },
+  'concluido': { c: '#06b6d4', bg: '#06b6d420', label: 'Concluído' },
   'cancelado': { c: '#6b7280', bg: '#6b728020', label: 'Cancelado' },
   'pausado': { c: '#d946ef', bg: '#d946ef20', label: 'Pausado' },
 };
@@ -28,28 +28,28 @@ const STATUS_MAP = {
 const TASK_STATUS_MAP = {
   'pendente': { c: C.t3, bg: 'var(--cbrio-bg)', label: 'Pendente' },
   'em-andamento': { c: C.blue, bg: C.blueBg, label: 'Em Andamento' },
-  'concluida': { c: C.green, bg: C.greenBg, label: 'Concluida' },
+  'concluida': { c: C.green, bg: C.greenBg, label: 'Concluída' },
   'bloqueada': { c: C.red, bg: C.redBg, label: 'Bloqueada' },
 };
 
 const PHASE_STATUS_MAP = {
   'pendente': { c: C.t3, bg: 'var(--cbrio-bg)', label: 'Pendente' },
   'em-andamento': { c: C.blue, bg: C.blueBg, label: 'Em Andamento' },
-  'concluida': { c: C.green, bg: C.greenBg, label: 'Concluida' },
+  'concluida': { c: C.green, bg: C.greenBg, label: 'Concluída' },
   'bloqueada': { c: C.red, bg: C.redBg, label: 'Bloqueada' },
 };
 
 const PRIORITY_MAP = {
   'alta': { c: C.red, bg: C.redBg, label: 'Alta' },
-  'media': { c: C.amber, bg: C.amberBg, label: 'Media' },
+  'media': { c: C.amber, bg: C.amberBg, label: 'Média' },
   'baixa': { c: C.green, bg: C.greenBg, label: 'Baixa' },
 };
 
 const COMPLEXITY_MAP = {
-  'baixa': 'Baixa', 'media': 'Media', 'alta': 'Alta',
+  'baixa': 'Baixa', 'media': 'Média', 'alta': 'Alta',
 };
 const IMPACT_MAP = {
-  'baixo': 'Baixo', 'medio': 'Medio', 'alto': 'Alto',
+  'baixo': 'Baixo', 'medio': 'Médio', 'alto': 'Alto',
 };
 
 const BUDGET_CATEGORIES = [
@@ -135,7 +135,7 @@ function DaysCounter({ date, status }) {
   if (!s || status === 'concluido' || status === 'concluida') return null;
   const diff = Math.ceil((new Date(s + 'T12:00:00') - new Date()) / 86400000);
   const color = diff < 0 ? C.red : diff <= 7 ? C.amber : C.green;
-  const text = diff < 0 ? `${Math.abs(diff)}d atras` : diff === 0 ? 'Hoje' : `${diff}d`;
+  const text = diff < 0 ? `${Math.abs(diff)}d atrás` : diff === 0 ? 'Hoje' : `${diff}d`;
   return <span style={{ fontSize: 11, fontWeight: 700, color, marginLeft: 6 }}>{text}</span>;
 }
 
@@ -431,7 +431,7 @@ export default function Projetos() {
     { label: 'No Prazo', value: d.by_status?.['no-prazo'] ?? counts['no-prazo'], color: C.green, action: () => kpiDrillDown('no-prazo') },
     { label: 'Em Risco', value: d.by_status?.['em-risco'] ?? counts['em-risco'], color: C.amber, action: () => kpiDrillDown('em-risco') },
     { label: 'Atrasados', value: d.by_status?.['atrasado'] ?? counts['atrasado'], color: C.red, action: () => kpiDrillDown('atrasado') },
-    { label: 'Concluidos', value: d.by_status?.['concluido'] ?? counts['concluido'], color: C.blue, action: () => kpiDrillDown('concluido') },
+    { label: 'Concluídos', value: d.by_status?.['concluido'] ?? counts['concluido'], color: C.blue, action: () => kpiDrillDown('concluido') },
     null,
     { label: 'Tarefas abertas', value: d.tasks_open || 0, color: C.t2, action: () => { setTab(2); } },
     { label: 'Tarefas atrasadas', value: d.tasks_overdue || 0, color: C.red, action: () => { setTab(2); } },
@@ -684,7 +684,7 @@ export default function Projetos() {
           {/* Budget card */}
           <div style={{ ...styles.card, flex: '1 1 320px', minWidth: 280 }}>
             <div style={{ padding: '20px 24px' }}>
-              <div style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 12 }}>Orcamento Global</div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 12 }}>Orçamento Global</div>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: C.t2, marginBottom: 6 }}>
                 <span>Gasto: {fmtMoney(budgetSpent)}</span>
                 <span>Planejado: {fmtMoney(budgetPlanned)}</span>
@@ -754,7 +754,7 @@ export default function Projetos() {
                   const dl = normDate(t.deadline);
                   const diff = dl ? Math.ceil((new Date(dl + 'T12:00:00') - new Date()) / 86400000) : null;
                   const dc = diff === null ? null : diff < 0 ? C.red : diff <= 3 ? C.amber : C.green;
-                  const dt = diff === null ? '' : diff < 0 ? `${Math.abs(diff)}d atras` : diff === 0 ? 'Hoje' : `${diff}d`;
+                  const dt = diff === null ? '' : diff < 0 ? `${Math.abs(diff)}d atrás` : diff === 0 ? 'Hoje' : `${diff}d`;
                   return (
                     <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0', borderBottom: `1px solid ${C.border}` }}>
                       <div style={{ width: 8, height: 8, borderRadius: '50%', background: (TASK_STATUS_MAP[t.status] || {}).c || C.t3, flexShrink: 0 }} />
@@ -840,7 +840,7 @@ export default function Projetos() {
           <input style={{ ...styles.input, width: 200 }} placeholder="Buscar..." value={fSearch} onChange={e => setFSearch(e.target.value)} />
           <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: C.t2, cursor: 'pointer' }}>
             <input type="checkbox" checked={hideDone} onChange={e => setHideDone(e.target.checked)} />
-            Esconder concluidos
+            Esconder concluídos
           </label>
         </div>
 
@@ -849,7 +849,7 @@ export default function Projetos() {
           <table style={styles.table}>
             <thead style={{ position: 'sticky', top: 0, zIndex: 10 }}>
               <tr>
-                {[{ key: 'name', label: 'Nome' }, { key: 'category', label: 'Categoria' }, { key: 'leader', label: 'Lider' }, { key: 'status', label: 'Status' }, { key: 'priority', label: 'Prioridade' }, { key: 'progress', label: 'Progresso' }, { key: 'deadline', label: 'Prazo' }, ...(isDiretor ? [{ key: '_actions', label: 'Acoes' }] : [])].map(col => (
+                {[{ key: 'name', label: 'Nome' }, { key: 'category', label: 'Categoria' }, { key: 'leader', label: 'Líder' }, { key: 'status', label: 'Status' }, { key: 'priority', label: 'Prioridade' }, { key: 'progress', label: 'Progresso' }, { key: 'deadline', label: 'Prazo' }, ...(isDiretor ? [{ key: '_actions', label: 'Ações' }] : [])].map(col => (
                   <th key={col.key} style={{ ...styles.th, cursor: 'pointer', userSelect: 'none' }} onClick={() => thClick(col.key)}>
                     {col.label} {sortCol === col.key ? (sortAsc ? '\u25B2' : '\u25BC') : ''}
                   </th>
@@ -1394,7 +1394,7 @@ export default function Projetos() {
     const budgetItems = p.budget_items || [];
     const retro = p.retrospective || retroData;
 
-    const DETAIL_TABS = ['Info', 'Fases', 'Tarefas', 'Riscos', 'Orcamento', 'Retrospectiva'];
+    const DETAIL_TABS = ['Info', 'Fases', 'Tarefas', 'Riscos', 'Orçamento', 'Retrospectiva'];
 
     return (
       <>
@@ -1442,7 +1442,7 @@ export default function Projetos() {
                 <div><div style={styles.infoLabel}>Área</div><div style={styles.infoValue}>{p.area || '\u2014'}</div></div>
                 <div><div style={styles.infoLabel}>Período</div><div style={styles.infoValue}>{fmtDate(p.date_start)} - {fmtDate(p.date_end)}</div></div>
                 <div><div style={styles.infoLabel}>Frequência</div><div style={styles.infoValue}>{p.frequency || '\u2014'}</div></div>
-                <div><div style={styles.infoLabel}>Publico-alvo</div><div style={styles.infoValue}>{p.public_target || '\u2014'}</div></div>
+                <div><div style={styles.infoLabel}>P\u00fablico-alvo</div><div style={styles.infoValue}>{p.public_target || '\u2014'}</div></div>
                 <div><div style={styles.infoLabel}>Complexidade</div><div style={styles.infoValue}>{COMPLEXITY_MAP[p.complexity] || p.complexity || '\u2014'}</div></div>
                 <div><div style={styles.infoLabel}>Impacto</div><div style={styles.infoValue}>{IMPACT_MAP[p.impact] || p.impact || '\u2014'}</div></div>
                 <div><div style={styles.infoLabel}>Ano</div><div style={styles.infoValue}>{p.year || '\u2014'}</div></div>
@@ -1451,16 +1451,16 @@ export default function Projetos() {
 
             {/* Ourico card */}
             <div style={{ ...styles.card, padding: 20, marginBottom: 20 }}>
-              <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 12 }}>Teste do Ourico</div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 12 }}>Teste do Ouriço</div>
               <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
                 {[
-                  { label: 'Passa no Ourico?', value: p.ourico_test },
+                  { label: 'Passa no Ouriço?', value: p.ourico_test },
                   { label: 'Gera Unidade?', value: p.generates_unity },
                   { label: 'Colabora com Expansão?', value: p.collaborates_expansion },
                 ].map(item => {
-                  const val = item.value === true || item.value === 'sim' ? 'Sim' : item.value === false || item.value === 'nao' ? 'Nao' : 'N/A';
-                  const color = val === 'Sim' ? C.green : val === 'Nao' ? C.red : C.t3;
-                  const bg = val === 'Sim' ? C.greenBg : val === 'Nao' ? C.redBg : 'var(--cbrio-bg)';
+                  const val = item.value === true || item.value === 'sim' ? 'Sim' : item.value === false || item.value === 'nao' ? 'Não' : 'N/A';
+                  const color = val === 'Sim' ? C.green : val === 'Não' ? C.red : C.t3;
+                  const bg = val === 'Sim' ? C.greenBg : val === 'Não' ? C.redBg : 'var(--cbrio-bg)';
                   return (
                     <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <span style={{ fontSize: 12, color: C.t2 }}>{item.label}</span>
@@ -1474,13 +1474,13 @@ export default function Projetos() {
             {/* SWOT card */}
             {(p.swot_strengths || p.swot_weaknesses || p.swot_opportunities || p.swot_threats) && (
               <div style={{ ...styles.card, padding: 20, marginBottom: 20 }}>
-                <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 12 }}>Analise SWOT</div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 12 }}>Análise SWOT</div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                   {[
-                    { label: 'Forcas', value: p.swot_strengths, color: C.green },
+                    { label: 'Forças', value: p.swot_strengths, color: C.green },
                     { label: 'Fraquezas', value: p.swot_weaknesses, color: C.red },
                     { label: 'Oportunidades', value: p.swot_opportunities, color: C.blue },
-                    { label: 'Ameacas', value: p.swot_threats, color: C.amber },
+                    { label: 'Ameaças', value: p.swot_threats, color: C.amber },
                   ].map(q => (
                     <div key={q.label} style={{ borderLeft: `4px solid ${q.color}`, padding: '12px 16px', background: C.bg, borderRadius: 8 }}>
                       <div style={{ fontSize: 12, fontWeight: 700, color: q.color, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>{q.label}</div>
@@ -1776,7 +1776,7 @@ export default function Projetos() {
 
             {taskView === 'lista' ? (
               /* Task list view */
-              tasks.length === 0 ? <div style={styles.empty}>Nenhuma tarefa nesta fase. Use o botao + Tarefa para adicionar.</div> : (
+              tasks.length === 0 ? <div style={styles.empty}>Nenhuma tarefa nesta fase. Use o botão + Tarefa para adicionar.</div> : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   {sortByUrgency(tasks).map(t => {
                     const subs = t.subtasks || [];
@@ -1835,7 +1835,7 @@ export default function Projetos() {
                           <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${C.border}` }}>
                             {comments.map((c, ci) => (
                               <div key={ci} style={{ background: C.bg, borderRadius: 8, padding: '6px 10px', marginBottom: 4, fontSize: 12, color: C.t2 }}>
-                                <span style={{ fontWeight: 600 }}>{c.author_name || 'Anonimo'}</span>: {c.text}
+                                <span style={{ fontWeight: 600 }}>{c.author_name || 'Anônimo'}</span>: {c.text}
                                 <span style={{ fontSize: 10, color: C.t3, marginLeft: 8 }}>{fmtDate(c.created_at)}</span>
                               </div>
                             ))}
@@ -1949,7 +1949,7 @@ export default function Projetos() {
                 </div>
               </div>
             )}
-            {risks.length === 0 ? <div style={styles.empty}>Nenhum risco cadastrado. Adicione riscos para monitorar ameacas ao projeto.</div> : (
+            {risks.length === 0 ? <div style={styles.empty}>Nenhum risco cadastrado. Adicione riscos para monitorar ameaças ao projeto.</div> : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {risks.map(r => {
                   const score = (Number(r.probability) || 1) * (Number(r.impact) || 1);
@@ -1973,11 +1973,11 @@ export default function Projetos() {
                       {r.description && <div style={{ fontSize: 12, color: C.t2, marginBottom: 6 }}>{r.description}</div>}
                       {r.mitigation && (
                         <div style={{ fontSize: 12, color: C.t2, background: C.bg, padding: '8px 12px', borderRadius: 6, marginBottom: 6 }}>
-                          <span style={{ fontWeight: 600 }}>Mitigacao:</span> {r.mitigation}
+                          <span style={{ fontWeight: 600 }}>Mitigação:</span> {r.mitigation}
                         </div>
                       )}
                       <div style={{ display: 'flex', gap: 12, alignItems: 'center', fontSize: 12, color: C.t3 }}>
-                        {r.owner_name && <span>Responsavel: {r.owner_name}</span>}
+                        {r.owner_name && <span>Responsável: {r.owner_name}</span>}
                         {r.status && isDiretor && (
                           <select style={{ ...styles.select, fontSize: 11, padding: '2px 6px' }} value={r.status}
                             onChange={e => saveRisk({ ...r, status: e.target.value })}>
@@ -2002,7 +2002,7 @@ export default function Projetos() {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 20 }}>
               {[
                 { label: 'Investimento', value: fmtMoney(p.budget_planned), color: C.blue },
-                { label: 'Arrecadacao', value: fmtMoney(p.budget_revenue), color: C.green },
+                { label: 'Arrecadação', value: fmtMoney(p.budget_revenue), color: C.green },
                 { label: 'Custo para Igreja', value: fmtMoney(p.budget_church_cost), color: C.amber },
               ].map(item => (
                 <div key={item.label} style={{ ...styles.card, padding: 20, textAlign: 'center' }}>
@@ -2033,7 +2033,7 @@ export default function Projetos() {
               <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Itens ({budgetItems.length})</div>
               {canEdit && <button style={{ ...styles.btn('primary'), ...styles.btnSm }} onClick={() => setModalBudget({})}>+ Item</button>}
             </div>
-            {budgetItems.length === 0 ? <div style={styles.empty}>Nenhum item de orcamento. Adicione itens para acompanhar gastos.</div> : (
+            {budgetItems.length === 0 ? <div style={styles.empty}>Nenhum item de orçamento. Adicione itens para acompanhar gastos.</div> : (
               <div style={styles.card}>
                 <table style={styles.table}>
                   <thead>
@@ -2132,7 +2132,7 @@ export default function Projetos() {
       <div style={styles.header}>
         <div>
           <div style={styles.title}>Projetos</div>
-          <div style={styles.subtitle}>Planejamento e acompanhamento de 67 projetos estrategicos</div>
+          <div style={styles.subtitle}>Planejamento e acompanhamento de 67 projetos estratégicos</div>
         </div>
         {canEdit && tab !== 4 && !apenasListaProjetos && (
           <button style={styles.btn('primary')} onClick={() => setModalProject({})}>+ Novo Projeto</button>
@@ -2196,7 +2196,7 @@ function ProjectFormModal({ open, data, categories, onClose, onSave, isDiretor, 
   if (!open || !isDiretor) return null;
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const handleSave = () => {
-    if (!form.name) { alert('Nome e obrigatório'); return; }
+    if (!form.name) { alert('Nome é obrigatório'); return; }
     onSave(form);
   };
   return (
@@ -2208,26 +2208,26 @@ function ProjectFormModal({ open, data, categories, onClose, onSave, isDiretor, 
           <option value="">Selecione</option>
           {(categories || []).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
         </Select>
-        <Input label="Lider" value={form.leader || ''} onChange={e => set('leader', e.target.value)} />
+        <Input label="Líder" value={form.leader || ''} onChange={e => set('leader', e.target.value)} />
       </div>
       <div style={styles.formRow}>
-        <Input label="Responsavel" value={form.responsible || ''} onChange={e => set('responsible', e.target.value)} />
-        <Input label="Area" value={form.area || ''} onChange={e => set('area', e.target.value)} />
+        <Input label="Responsável" value={form.responsible || ''} onChange={e => set('responsible', e.target.value)} />
+        <Input label="Área" value={form.area || ''} onChange={e => set('area', e.target.value)} />
       </div>
       <div style={styles.formRow}>
         <Input label="Ano" type="number" value={form.year || ''} onChange={e => set('year', e.target.value)} />
-        <Input label="Frequencia" value={form.frequency || ''} onChange={e => set('frequency', e.target.value)} />
+        <Input label="Frequência" value={form.frequency || ''} onChange={e => set('frequency', e.target.value)} />
       </div>
       <div style={styles.formRow}>
-        <Input label="Data Inicio" type="date" value={normDate(form.date_start) || ''} onChange={e => set('date_start', e.target.value)} />
+        <Input label="Data Início" type="date" value={normDate(form.date_start) || ''} onChange={e => set('date_start', e.target.value)} />
         <Input label="Data Fim" type="date" value={normDate(form.date_end) || ''} onChange={e => set('date_end', e.target.value)} />
       </div>
       <div style={styles.formRow}>
-        <Input label="Publico-alvo" value={form.public_target || ''} onChange={e => set('public_target', e.target.value)} />
+        <Input label="Público-alvo" value={form.public_target || ''} onChange={e => set('public_target', e.target.value)} />
         <Select label="Complexidade" value={form.complexity || ''} onChange={e => set('complexity', e.target.value)}>
           <option value="">Selecione</option>
           <option value="baixa">Baixa</option>
-          <option value="media">Media</option>
+          <option value="media">Média</option>
           <option value="alta">Alta</option>
         </Select>
       </div>
@@ -2235,7 +2235,7 @@ function ProjectFormModal({ open, data, categories, onClose, onSave, isDiretor, 
         <Select label="Impacto" value={form.impact || ''} onChange={e => set('impact', e.target.value)}>
           <option value="">Selecione</option>
           <option value="baixo">Baixo</option>
-          <option value="medio">Medio</option>
+          <option value="medio">Médio</option>
           <option value="alto">Alto</option>
         </Select>
         <Select label="Prioridade" value={form.priority || ''} onChange={e => set('priority', e.target.value)}>
@@ -2246,7 +2246,7 @@ function ProjectFormModal({ open, data, categories, onClose, onSave, isDiretor, 
         <Select label="Status" value={form.status || ''} onChange={e => set('status', e.target.value)}>
           {Object.entries(STATUS_MAP).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
         </Select>
-        <Select label="Ourico" value={form.ourico_test || ''} onChange={e => set('ourico_test', e.target.value)}>
+        <Select label="Ouriço" value={form.ourico_test || ''} onChange={e => set('ourico_test', e.target.value)}>
           <option value="">Selecione</option>
           <option value="sim">Sim</option>
           <option value="nao">Não</option>
@@ -2262,27 +2262,27 @@ function ProjectFormModal({ open, data, categories, onClose, onSave, isDiretor, 
         <div style={styles.formGroup}>
           <label style={{ ...styles.label, display: 'flex', alignItems: 'center', gap: 8 }}>
             <input type="checkbox" checked={!!form.collaborates_expansion} onChange={e => set('collaborates_expansion', e.target.checked)} style={{ accentColor: C.primary }} />
-            Colabora com Expansao?
+            Colabora com Expansão?
           </label>
         </div>
       </div>
       <div style={styles.formRow}>
-        <Input label="Orcamento Planejado" type="number" step="0.01" value={form.budget_planned || ''} onChange={e => set('budget_planned', e.target.value)} />
+        <Input label="Orçamento Planejado" type="number" step="0.01" value={form.budget_planned || ''} onChange={e => set('budget_planned', e.target.value)} />
         <Input label="Receita Prevista" type="number" step="0.01" value={form.budget_revenue || ''} onChange={e => set('budget_revenue', e.target.value)} />
       </div>
       <Input label="Custo para Igreja" type="number" step="0.01" value={form.budget_church_cost || ''} onChange={e => set('budget_church_cost', e.target.value)} />
-      <Textarea label="Descricao" value={form.description || ''} onChange={e => set('description', e.target.value)} />
+      <Textarea label="Descrição" value={form.description || ''} onChange={e => set('description', e.target.value)} />
       <Textarea label="Notas" value={form.notes || ''} onChange={e => set('notes', e.target.value)} />
 
       {/* SWOT */}
-      <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginTop: 12, marginBottom: 8 }}>Analise SWOT</div>
+      <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginTop: 12, marginBottom: 8 }}>Análise SWOT</div>
       <div style={styles.formRow}>
-        <Textarea label="Forcas" value={form.swot_strengths || ''} onChange={e => set('swot_strengths', e.target.value)} />
+        <Textarea label="Forças" value={form.swot_strengths || ''} onChange={e => set('swot_strengths', e.target.value)} />
         <Textarea label="Fraquezas" value={form.swot_weaknesses || ''} onChange={e => set('swot_weaknesses', e.target.value)} />
       </div>
       <div style={styles.formRow}>
         <Textarea label="Oportunidades" value={form.swot_opportunities || ''} onChange={e => set('swot_opportunities', e.target.value)} />
-        <Textarea label="Ameacas" value={form.swot_threats || ''} onChange={e => set('swot_threats', e.target.value)} />
+        <Textarea label="Ameaças" value={form.swot_threats || ''} onChange={e => set('swot_threats', e.target.value)} />
       </div>
     </Modal>
   );
@@ -2294,7 +2294,7 @@ function TaskFormModal({ open, data, milestones, usersList, onClose, onSave, mod
   if (!open) return null;
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const handleSave = () => {
-    if (!form.name) { alert('Nome e obrigatório'); return; }
+    if (!form.name) { alert('Nome é obrigatório'); return; }
     onSave(form);
   };
   return (
@@ -2315,7 +2315,7 @@ function TaskFormModal({ open, data, milestones, usersList, onClose, onSave, mod
         </Select>
       )}
       <div style={styles.formRow}>
-        <Input label="Data Inicio" type="date" value={normDate(form.start_date) || ''} onChange={e => set('start_date', e.target.value)} />
+        <Input label="Data Início" type="date" value={normDate(form.start_date) || ''} onChange={e => set('start_date', e.target.value)} />
         <Input label="Prazo" type="date" value={normDate(form.deadline) || ''} onChange={e => set('deadline', e.target.value)} />
       </div>
       <div style={styles.formRow}>
@@ -2326,7 +2326,7 @@ function TaskFormModal({ open, data, milestones, usersList, onClose, onSave, mod
           {Object.entries(PRIORITY_MAP).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
         </Select>
       </div>
-      <Textarea label="Descricao" value={form.description || ''} onChange={e => set('description', e.target.value)} />
+      <Textarea label="Descrição" value={form.description || ''} onChange={e => set('description', e.target.value)} />
     </Modal>
   );
 }
@@ -2337,14 +2337,14 @@ function RiskFormModal({ open, data, onClose, onSave, modalSaving }) {
   if (!open) return null;
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const handleSave = () => {
-    if (!form.title) { alert('Título e obrigatório'); return; }
+    if (!form.title) { alert('Título é obrigatório'); return; }
     onSave(form);
   };
   return (
     <Modal open title={form.id ? 'Editar Risco' : 'Novo Risco'} onClose={onClose}
       footer={<><button style={styles.btn('ghost')} onClick={onClose}>Cancelar</button><button disabled={modalSaving} style={{ ...styles.btn('primary'), opacity: modalSaving ? 0.5 : 1 }} onClick={handleSave}>{modalSaving ? 'Salvando...' : 'Salvar'}</button></>}>
       <Input label="Titulo *" value={form.title || ''} onChange={e => set('title', e.target.value)} />
-      <Textarea label="Descricao" value={form.description || ''} onChange={e => set('description', e.target.value)} />
+      <Textarea label="Descrição" value={form.description || ''} onChange={e => set('description', e.target.value)} />
       <div style={styles.formRow}>
         <Select label="Probabilidade (1-5)" value={form.probability || 1} onChange={e => set('probability', Number(e.target.value))}>
           {[1, 2, 3, 4, 5].map(n => <option key={n} value={n}>{n}</option>)}
@@ -2353,7 +2353,7 @@ function RiskFormModal({ open, data, onClose, onSave, modalSaving }) {
           {[1, 2, 3, 4, 5].map(n => <option key={n} value={n}>{n}</option>)}
         </Select>
       </div>
-      <Textarea label="Mitigacao" value={form.mitigation || ''} onChange={e => set('mitigation', e.target.value)} />
+      <Textarea label="Mitigação" value={form.mitigation || ''} onChange={e => set('mitigation', e.target.value)} />
       <Input label="Responsável do Risco" value={form.owner_name || ''} onChange={e => set('owner_name', e.target.value)} />
     </Modal>
   );
@@ -2365,7 +2365,7 @@ function KpiFormModal({ open, data, onClose, onSave, modalSaving }) {
   if (!open) return null;
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const handleSave = () => {
-    if (!form.name) { alert('Nome e obrigatório'); return; }
+    if (!form.name) { alert('Nome é obrigatório'); return; }
     onSave(form);
   };
   return (
@@ -2379,7 +2379,7 @@ function KpiFormModal({ open, data, onClose, onSave, modalSaving }) {
       {form.id && (
         <Input label="Valor Atual" type="number" value={form.current_value || ''} onChange={e => set('current_value', e.target.value)} />
       )}
-      <Input label="Instrumento de Medicao" value={form.instrument || ''} onChange={e => set('instrument', e.target.value)} />
+      <Input label="Instrumento de Medição" value={form.instrument || ''} onChange={e => set('instrument', e.target.value)} />
     </Modal>
   );
 }
@@ -2390,13 +2390,13 @@ function BudgetItemFormModal({ open, data, onClose, onSave, modalSaving }) {
   if (!open) return null;
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const handleSave = () => {
-    if (!form.description) { alert('Descrição e obrigatória'); return; }
+    if (!form.description) { alert('Descrição é obrigatória'); return; }
     onSave(form);
   };
   return (
-    <Modal open title={form.id ? 'Editar Item' : 'Novo Item de Orcamento'} onClose={onClose}
+    <Modal open title={form.id ? 'Editar Item' : 'Novo Item de Orçamento'} onClose={onClose}
       footer={<><button style={styles.btn('ghost')} onClick={onClose}>Cancelar</button><button disabled={modalSaving} style={{ ...styles.btn('primary'), opacity: modalSaving ? 0.5 : 1 }} onClick={handleSave}>{modalSaving ? 'Salvando...' : 'Salvar'}</button></>}>
-      <Input label="Descricao *" value={form.description || ''} onChange={e => set('description', e.target.value)} />
+      <Input label="Descrição *" value={form.description || ''} onChange={e => set('description', e.target.value)} />
       <Select label="Categoria" value={form.category || ''} onChange={e => set('category', e.target.value)}>
         <option value="">Selecione</option>
         {BUDGET_CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
@@ -2416,7 +2416,7 @@ function MilestoneFormModal({ open, data, onClose, onSave, modalSaving }) {
   if (!open) return null;
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const handleSave = () => {
-    if (!form.name) { alert('Nome e obrigatório'); return; }
+    if (!form.name) { alert('Nome é obrigatório'); return; }
     onSave(form);
   };
   return (
@@ -2424,10 +2424,10 @@ function MilestoneFormModal({ open, data, onClose, onSave, modalSaving }) {
       footer={<><button style={styles.btn('ghost')} onClick={onClose}>Cancelar</button><button disabled={modalSaving} style={{ ...styles.btn('primary'), opacity: modalSaving ? 0.5 : 1 }} onClick={handleSave}>{modalSaving ? 'Salvando...' : 'Salvar'}</button></>}>
       <Input label="Nome *" value={form.name || ''} onChange={e => set('name', e.target.value)} />
       <div style={styles.formRow}>
-        <Input label="Data Inicio" type="date" value={normDate(form.date_start) || ''} onChange={e => set('date_start', e.target.value)} />
+        <Input label="Data Início" type="date" value={normDate(form.date_start) || ''} onChange={e => set('date_start', e.target.value)} />
         <Input label="Data Fim" type="date" value={normDate(form.date_end) || ''} onChange={e => set('date_end', e.target.value)} />
       </div>
-      <Textarea label="Descricao" value={form.description || ''} onChange={e => set('description', e.target.value)} />
+      <Textarea label="Descrição" value={form.description || ''} onChange={e => set('description', e.target.value)} />
     </Modal>
   );
 }

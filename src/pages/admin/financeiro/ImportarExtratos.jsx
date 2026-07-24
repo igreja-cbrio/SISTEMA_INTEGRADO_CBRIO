@@ -127,7 +127,7 @@ export default function ImportarExtratos() {
         {/* OFX */}
         <UploadCard
           title="Extrato bancário (OFX)"
-          subtitle="Importa todas as transacoes do Santander (PIX, TED, boletos, cartao, tarifas...). Sem hora · matching com PIX-Excel preenche hora real."
+          subtitle="Importa todas as transações do Santander (PIX, TED, boletos, cartão, tarifas...). Sem hora · matching com PIX-Excel preenche hora real."
           accept=".ofx,.OFX"
           icon="📑"
           color={C.blue}
@@ -141,7 +141,7 @@ export default function ImportarExtratos() {
               </label>
               <select value={contaOFX} onChange={e => setContaOFX(e.target.value)}
                 style={selectSt}>
-                <option value="">Selecione a conta bancaria...</option>
+                <option value="">Selecione a conta bancária...</option>
                 {contas.map(c => (
                   <option key={c.id} value={c.id}>{c.nome}{c.banco ? ` · ${c.banco}` : ''}</option>
                 ))}
@@ -153,7 +153,7 @@ export default function ImportarExtratos() {
         {/* PIX */}
         <UploadCard
           title="Extrato PIX (Excel/CSV)"
-          subtitle="Importa o relatório detalhado de PIX recebidos com horario exato (extraido do End-to-End ID). Cruzamento automático com lancamentos OFX."
+          subtitle="Importa o relatório detalhado de PIX recebidos com horário exato (extraído do End-to-End ID). Cruzamento automático com lançamentos OFX."
           accept=".xlsx,.xls,.csv"
           icon="🔄"
           color={C.primary}
@@ -166,7 +166,7 @@ export default function ImportarExtratos() {
                 Conta (opcional)
               </label>
               <select value={contaPIX} onChange={e => setContaPIX(e.target.value)} style={selectSt}>
-                <option value="">Auto · sem vinculo direto</option>
+                <option value="">Auto · sem vínculo direto</option>
                 {contas.map(c => (
                   <option key={c.id} value={c.id}>{c.nome}{c.banco ? ` · ${c.banco}` : ''}</option>
                 ))}
@@ -217,7 +217,7 @@ export default function ImportarExtratos() {
 
       {/* Histórico de uploads */}
       <div style={{ marginTop: 24 }}>
-        <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 12, color: C.text }}>Histórico de importacoes</h3>
+        <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 12, color: C.text }}>Histórico de importações</h3>
         <div style={{ background: C.card, border: '1px solid var(--hairline)', borderRadius: 16, boxShadow: 'var(--shadow)', overflow: 'hidden' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead style={{ background: 'var(--cbrio-table-header)' }}>
@@ -520,7 +520,7 @@ function TipoBadgeUpload({ tipo }) {
     ofx:      { c: C.blue, bg: C.blueBg, label: 'OFX' },
     pix_xlsx: { c: C.primary, bg: C.primaryBg, label: 'PIX (Excel)' },
     pix_csv:  { c: C.primary, bg: C.primaryBg, label: 'PIX (CSV)' },
-    cartao_csv: { c: C.amber, bg: C.amberBg, label: 'Cartao' },
+    cartao_csv: { c: C.amber, bg: C.amberBg, label: 'Cartão' },
     balanco:  { c: C.amber, bg: C.amberBg, label: 'Balanço' },
     contribuicoes: { c: C.primary, bg: C.primaryBg, label: 'Contribuições' },
   };
@@ -535,7 +535,7 @@ function TipoBadgeUpload({ tipo }) {
 function StatusBadge({ status }) {
   const map = {
     processando: { c: C.amber, bg: C.amberBg, label: 'Processando' },
-    concluido:   { c: C.green, bg: C.greenBg, label: 'Concluido' },
+    concluido:   { c: C.green, bg: C.greenBg, label: 'Concluído' },
     erro:        { c: C.red, bg: C.redBg, label: 'Erro' },
   };
   const s = map[status] || { c: C.text3, bg: '#73737318', label: status };
