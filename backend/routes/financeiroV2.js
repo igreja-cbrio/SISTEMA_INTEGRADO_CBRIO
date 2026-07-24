@@ -412,6 +412,22 @@ router.post('/importar/ofx', upload.single('arquivo'), async (req, res) => {
       }
     } catch (e) { console.error('[FIN-V2] conciliação pós-OFX:', e.message); }
 
+    // Identifica doadores automaticamente: casa cada doação do balanço
+    // (nome+valor+data, sem CPF) com o PIX do OFX (CPF) e vincula ao membro na
+    // LINHA DO BALANÇO (não cria transação → não duplica). Só o inequívoco é
+    // vinculado; ambíguo fica sem atribuição (a fila de revisão é opcional).
+    // Best-effort — não derruba o import.
+    let doadoresIdentificados = null;
+    try {
+      if (parsed.header.dtStart && parsed.header.dtEnd) {
+        const r = await conciliacaoOfx.conciliar({
+          inicio: parsed.header.dtStart, fim: parsed.header.dtEnd,
+          dryRun: false, userId: req.user.userId,
+        });
+        doadoresIdentificados = { vinculados: r.stats.vinculados || 0, avulsos: r.stats.avulsos_criados || 0, pendentes: r.stats.revisao || 0 };
+      }
+    } catch (e) { console.error('[FIN-V2] identificação de doadores pós-OFX:', e.message); }
+
     res.json({
       upload_id: uploadRow.id,
       total, inseridos, duplicados,
@@ -419,6 +435,7 @@ router.post('/importar/ofx', upload.single('arquivo'), async (req, res) => {
       classificacao: classifResult,
       conciliadas_auto: conciliadasAuto,
       identidade: identidadeStats,
+      doadores_identificados: doadoresIdentificados,
       periodo: { inicio: parsed.header.dtStart, fim: parsed.header.dtEnd },
     });
   } catch (e) {
@@ -550,7 +567,20 @@ router.post('/importar/balanco', authorizeModule('financeiro', 4), upload.single
       } catch (_) { /* notificação não é crítica */ }
     }
 
-    res.json({ upload_id: uploadRow?.id, ...r });
+    // Identifica doadores automaticamente pro período do balanço recém-importado
+    // (casa com o OFX já existente por CPF · vincula só o inequívoco · best-effort).
+    let doadoresIdentificados = null;
+    if (r.inseridas > 0 && r.periodo?.inicio && r.periodo?.fim) {
+      try {
+        const c = await conciliacaoOfx.conciliar({
+          inicio: r.periodo.inicio, fim: r.periodo.fim,
+          dryRun: false, userId: req.user.userId,
+        });
+        doadoresIdentificados = { vinculados: c.stats.vinculados || 0, avulsos: c.stats.avulsos_criados || 0, pendentes: c.stats.revisao || 0 };
+      } catch (e) { console.error('[FIN-V2] identificação de doadores pós-balanço:', e.message); }
+    }
+
+    res.json({ upload_id: uploadRow?.id, ...r, doadores_identificados: doadoresIdentificados });
   } catch (e) {
     console.error('[FIN-V2] Balanço:', e);
     if (uploadRow) {
