@@ -3,6 +3,8 @@ import { useAuth } from '../../../contexts/AuthContext';
 import { logistica, ml, arquivei } from '../../../api';
 import { supabase } from '../../../supabaseClient';
 import { Button } from '../../../components/ui/button';
+import { Copy } from 'lucide-react';
+import { toast } from 'sonner';
 import LogisticaEstoque from './LogisticaEstoque';
 import LogisticaCompras from './LogisticaCompras';
 
@@ -1193,6 +1195,15 @@ const ML_SHIP_STATUS = {
 // ═══════════════════════════════════════════════════════════
 // TAB: Compras Mercado Livre
 // ═══════════════════════════════════════════════════════════
+async function copiarRastreio(codigo) {
+  try {
+    await navigator.clipboard.writeText(codigo);
+    toast.success('Código de rastreio copiado');
+  } catch {
+    toast.error('Não foi possível copiar o código');
+  }
+}
+
 function ComprasMLTab() {
   const [mlStatus, setMlStatus] = useState(null);
   const [orders, setOrders] = useState([]);
@@ -1424,9 +1435,24 @@ function ComprasMLTab() {
                         <Badge status={shipDetail.status} map={ML_SHIP_STATUS} />
                         {shipDetail.substatus && <div style={{ fontSize: 11, color: C.text2, marginTop: 2 }}>{shipDetail.substatus}</div>}
                       </div>
-                      {shipDetail.tracking_number && <div>
+                      {shipDetail.tracking_number && <div style={{ minWidth: 0 }}>
                         <div style={{ fontSize: 11, color: C.text3, fontWeight: 600 }}>RASTREIO</div>
-                        <div style={{ fontSize: 14, fontFamily: 'monospace', fontWeight: 600, color: C.text }}>{shipDetail.tracking_number}</div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                          <div
+                            title={shipDetail.tracking_number}
+                            style={{ fontSize: 14, fontFamily: 'monospace', fontWeight: 600, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}
+                          >
+                            {shipDetail.tracking_number}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => copiarRastreio(shipDetail.tracking_number)}
+                            title="Copiar código de rastreio"
+                            style={{ flexShrink: 0, padding: 3, background: 'none', border: 'none', cursor: 'pointer', color: C.text3, display: 'flex', alignItems: 'center' }}
+                          >
+                            <Copy size={14} />
+                          </button>
+                        </div>
                       </div>}
                       {shipDetail.tracking_method && <div>
                         <div style={{ fontSize: 11, color: C.text3, fontWeight: 600 }}>TRANSPORTADORA</div>
@@ -1688,8 +1714,25 @@ function ShipmentCard({ ship, expanded, detail, onToggle }) {
             <div style={{ padding: '0 18px 16px' }}>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '8px 16px', padding: '12px 14px', background: 'var(--cbrio-input-bg)', borderRadius: 10 }}>
                 {detail.tracking_number && (
-                  <div><div style={{ fontSize: 10, color: C.text3, textTransform: 'uppercase', fontWeight: 600 }}>Rastreio</div>
-                    <div style={{ fontSize: 12, fontWeight: 600, fontFamily: 'monospace', color: C.text }}>{detail.tracking_number}</div></div>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 10, color: C.text3, textTransform: 'uppercase', fontWeight: 600 }}>Rastreio</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                      <div
+                        title={detail.tracking_number}
+                        style={{ fontSize: 12, fontWeight: 600, fontFamily: 'monospace', color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}
+                      >
+                        {detail.tracking_number}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => copiarRastreio(detail.tracking_number)}
+                        title="Copiar código de rastreio"
+                        style={{ flexShrink: 0, padding: 2, background: 'none', border: 'none', cursor: 'pointer', color: C.text3, display: 'flex', alignItems: 'center' }}
+                      >
+                        <Copy size={12} />
+                      </button>
+                    </div>
+                  </div>
                 )}
                 {detail.tracking_method && (
                   <div><div style={{ fontSize: 10, color: C.text3, textTransform: 'uppercase', fontWeight: 600 }}>Transportadora</div>
