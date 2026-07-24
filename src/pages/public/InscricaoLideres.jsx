@@ -155,6 +155,9 @@ export default function InscricaoLideres() {
         endereco: form.endereco.trim() || null,
         foto_url: form.foto_url || null,
         aceita_termos: aceitaTermos,
+        // Líder consente com WhatsApp por padrão (obrigatório do papel · o aviso
+        // no formulário explica; enviar aqui = ação afirmativa ao concluir).
+        whatsapp_optin: true,
         consentimento_texto: TEXTO_CONSENTIMENTO,
         website: form.website,
       });
@@ -355,6 +358,15 @@ export default function InscricaoLideres() {
 
               {/* honeypot */}
               <input type="text" value={form.website} onChange={set('website')} style={{ position: 'absolute', left: -9999, opacity: 0 }} tabIndex={-1} autoComplete="off" />
+
+              {/* Aviso de WhatsApp · virar líder implica receber as mensagens
+                  operacionais (Marcos 2026-07-24). Concluir a inscrição É o
+                  consentimento — por isso não tem checkbox separado aqui. */}
+              <div style={{ background: 'rgba(0,179,157,0.10)', border: '1px solid rgba(0,179,157,0.45)', borderRadius: 10, padding: 12, marginBottom: 12 }}>
+                <p style={{ fontSize: 12, color: C.text, lineHeight: 1.5, margin: 0 }}>
+                  📲 Como líder, você vai <strong>receber mensagens da CBRio no WhatsApp</strong> (chamada do mês, materiais e avisos dos grupos). Ao concluir a inscrição você concorda em recebê-las — dá pra cancelar quando quiser, respondendo <strong>SAIR</strong>.
+                </p>
+              </div>
 
               <div data-campo="aceita_termos" style={{ background: C.isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)', border: `1px solid ${errosCampos.aceita_termos ? '#ef4444' : C.cardBorder}`, borderRadius: 10, padding: 12, marginBottom: 12 }}>
                 <p style={{ fontSize: 11, color: C.text3, lineHeight: 1.5, margin: 0, marginBottom: 8 }}>{TEXTO_CONSENTIMENTO}</p>
