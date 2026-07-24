@@ -9,6 +9,7 @@ import EstruturaFiscal from './EstruturaFiscal';
 import ImportarExtratos from './ImportarExtratos';
 import FilaClassificacao from './FilaClassificacao';
 import Conciliacao from './Conciliacao';
+import { CartoesConfig, FaturaModal } from './CartoesFaturas';
 import NotasCompras from './NotasCompras';
 import DashboardOverview from './DashboardOverview';
 import DreAuto from './DreAuto';
@@ -508,6 +509,7 @@ export default function Financeiro() {
   const [modalConta, setModalConta] = useState(null);
   const [modalTransacao, setModalTransacao] = useState(null);
   const [modalPagar, setModalPagar] = useState(null);
+  const [faturaModal, setFaturaModal] = useState(null); // fatura_id aberto no detalhe
   // Form do modal de Conta a Pagar · estado NO TOPO (antes ficava num useState
   // dentro de renderModalPagar(), que é chamado condicionalmente → violava a
   // regra dos hooks e quebrava com "Rendered more hooks" (React #310) ao editar).
@@ -523,6 +525,7 @@ export default function Financeiro() {
   const [detalheTransacaoId, setDetalheTransacaoId] = useState(null);
   // Plano de contas (folhas) e centros de custo pro modal novo (v2)
   const [planosContas, setPlanosContas] = useState([]);
+  const [cartoesCred, setCartoesCred] = useState([]); // cartões ativos (fatura · Fase 4)
   const [centrosCusto, setCentrosCusto] = useState([]);
   // F2 · colaboradores do RH pro toggle "É salário" do modal de Conta a Pagar.
   // null = ainda não tentou carregar · [] = carregou vazio ou sem permissão
@@ -616,6 +619,8 @@ export default function Financeiro() {
       .then(p => setPlanosContas(p || [])).catch(() => {});
     financeiroV2.centrosCusto.list({ aceita_lancamento: 'true', ativo: 'true' })
       .then(c => setCentrosCusto(c || [])).catch(() => {});
+    financeiroV2.cartoes.list()
+      .then(cs => setCartoesCred((cs || []).filter(k => k.ativo))).catch(() => {});
   }, [tab, planosContas.length]);
   useEffect(() => { if (tab === 3) loadContasPagar(); }, [tab, loadContasPagar]);
   // F2 · colaboradores do RH pro select de salário — tenta UMA vez, quando o
@@ -664,6 +669,7 @@ export default function Financeiro() {
         forma_pagamento: form.forma_pagamento || null,
         parcelas_total: cartao && form.parcelas_total ? Number(form.parcelas_total) : null,
         parcela_num: cartao && form.parcela_num ? Number(form.parcela_num) : null,
+        cartao_id: cartao && form.cartao_id ? form.cartao_id : null,
         observacoes: form.observacoes || null,
       };
       if (form.id) await financeiroV2.transacoes.atualizar(form.id, payload);
@@ -1153,6 +1159,14 @@ export default function Financeiro() {
                 <tr key={cp.id} style={vencido ? { background: C.redBg } : {}}>
                   <td style={{ ...styles.td, fontWeight: 600 }}>
                     {cp.descricao}
+                    {cp.fatura_id && (
+                      <div style={{ marginTop: 3 }}>
+                        <button onClick={() => setFaturaModal(cp.fatura_id)}
+                          style={{ fontSize: 11, fontWeight: 700, color: '#8b5cf6', background: '#8b5cf618', border: 'none', borderRadius: 6, padding: '2px 8px', cursor: 'pointer' }}>
+                          💳 Fatura · ver rubricas
+                        </button>
+                      </div>
+                    )}
                     {(cp.recorrente_id || cp.eh_salario) && (
                       <div style={{ display: 'flex', gap: 6, marginTop: 3, flexWrap: 'wrap' }}>
                         {cp.recorrente_id && (
@@ -1364,10 +1378,16 @@ export default function Financeiro() {
             ))}
           </Select>
           {noCartao && (
-            <Select label="Parcelas" value={form.parcelas_total || ''} onChange={e => upd('parcelas_total', e.target.value)}>
-              <option value="">À vista</option>
-              {Array.from({ length: 11 }, (_, i) => i + 2).map(n => <option key={n} value={n}>{n}x</option>)}
-            </Select>
+            <>
+              <Select label="Parcelas" value={form.parcelas_total || ''} onChange={e => upd('parcelas_total', e.target.value)}>
+                <option value="">À vista</option>
+                {Array.from({ length: 11 }, (_, i) => i + 2).map(n => <option key={n} value={n}>{n}x</option>)}
+              </Select>
+              <Select label="Cartão (fatura)" value={form.cartao_id || ''} onChange={e => upd('cartao_id', e.target.value)}>
+                <option value="">Sem fatura</option>
+                {cartoesCred.map(k => <option key={k.id} value={k.id}>{k.nome}{k.final ? ` · ${k.final}` : ''}</option>)}
+              </Select>
+            </>
           )}
         </div>
         <Input label="Observações" value={form.observacoes || ''} onChange={e => upd('observacoes', e.target.value)} />
@@ -1566,11 +1586,12 @@ export default function Financeiro() {
       )}
 
       {/* 10 · Configuração */}
-      {tab === 10 && <EstruturaFiscal />}
+      {tab === 10 && (<div><EstruturaFiscal /><CartoesConfig /></div>)}
 
       {modalConta && renderModalConta()}
       {modalTransacao && renderModalTransacao()}
       {modalPagar && renderModalPagar()}
+      {faturaModal && <FaturaModal faturaId={faturaModal} onClose={() => { setFaturaModal(null); loadContasPagar?.(); }} />}
       {detalheTransacaoId && (
         <DetalheTransacao
           id={detalheTransacaoId}
