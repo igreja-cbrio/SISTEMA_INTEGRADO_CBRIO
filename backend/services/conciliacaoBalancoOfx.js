@@ -41,6 +41,40 @@ async function fetchAll(table, cols, applyFilter) {
 
 const chaveVD = (valor, data) => `${Number(valor).toFixed(2)}|${String(data).slice(0, 10)}`;
 
+// Resolve CPF/CNPJ → membro na nossa base (nome real). Essencial p/ o OFX do
+// Santander, que traz só o CPF (sem nome). Placeholder de avulso
+// ("Contribuinte 0141...") NÃO conta como nome real. Lote de 150 p/ cap da URL.
+async function resolverNomesPorDoc(docs) {
+  const map = new Map();
+  const unicos = [...new Set(docs.filter((d) => d && (d.length === 11 || d.length === 14)))];
+  for (let i = 0; i < unicos.length; i += 150) {
+    const lote = unicos.slice(i, i + 150);
+    const { data, error } = await supabase.from('mem_membros')
+      .select('id, nome, cpf, cnpj')
+      .or(`cpf.in.(${lote.join(',')}),cnpj.in.(${lote.join(',')})`)
+      .is('deleted_at', null);
+    if (error) { console.warn('[conciliacaoOfx] resolverNomes · %s', error.message); continue; }
+    for (const m of (data || [])) {
+      const doc = String(m.cpf || m.cnpj || '');
+      if (!doc) continue;
+      const placeholder = /^contribuinte\s/i.test(m.nome || '');
+      map.set(doc, { membro_id: m.id, nome: m.nome, placeholder });
+    }
+  }
+  return map;
+}
+
+// Colapsa créditos OFX idênticos (mesmo CPF+valor+data) — reimport do mesmo
+// extrato gera a linha 2× (uma com hora, outra sem). Mantém a com hora.
+function dedupCandidatos(cands) {
+  const porDoc = new Map();
+  for (const c of cands) {
+    const ex = porDoc.get(c.documento);
+    if (!ex || (!ex.hora && c.hora)) porDoc.set(c.documento, c);
+  }
+  return [...porDoc.values()];
+}
+
 // Carrega os créditos OFX do período, com NOME LIMPO re-extraído do memo (os
 // brutos antigos têm nome_contraparte sujo · o parser novo só vale p/ imports
 // futuros, então relemos aqui). Indexa por valor|data.
@@ -70,12 +104,18 @@ async function indexarOfx(inicio, fim) {
   return porVD;
 }
 
-// Escolhe o candidato OFX pra uma linha do balanço. Retorna { cand, via } ou null.
-function escolherCandidato(balNomeNorm, candidatos) {
-  if (!candidatos || !candidatos.length) return null;
-  if (candidatos.length === 1) return { cand: candidatos[0], via: 'valor_data' };
+// Escolhe o candidato OFX pra uma linha do balanço (recebe candidatos JÁ
+// deduplicados). Retorna { cand, via } ou null.
+function escolherCandidato(balNomeNorm, cands) {
+  if (!cands || !cands.length) return null;
+  if (cands.length === 1) return { cand: cands[0], via: 'valor_data' };
   if (balNomeNorm) {
-    const porNome = candidatos.filter((c) => c.nome_norm && c.nome_norm === balNomeNorm);
+    // 1) o CPF do candidato é um membro cujo nome bate com o do balanço (alta
+    //    confiança · funciona no Santander, que não tem nome no OFX).
+    const porMembro = cands.filter((c) => c.membro_nome_norm && c.membro_nome_norm === balNomeNorm);
+    if (porMembro.length === 1) return { cand: porMembro[0], via: 'valor_data_membro' };
+    // 2) nome limpo extraído do próprio OFX bate (Itaú traz nome no memo).
+    const porNome = cands.filter((c) => c.nome_norm && c.nome_norm === balNomeNorm);
     if (porNome.length === 1) return { cand: porNome[0], via: 'valor_data_nome' };
   }
   return null; // ambíguo → revisão
@@ -89,6 +129,19 @@ async function conciliar({ inicio, fim, dryRun = false, userId = null } = {}) {
   if (!inicio || !fim) throw new Error('inicio e fim são obrigatórios');
 
   const porVD = await indexarOfx(inicio, fim);
+
+  // Enriquece cada crédito OFX com o NOME do membro dono do CPF (o Santander
+  // não traz nome no memo → é a única forma de identificar e desempatar).
+  const todosDocs = [];
+  for (const arr of porVD.values()) for (const it of arr) todosDocs.push(it.documento);
+  const nomesPorDoc = await resolverNomesPorDoc(todosDocs);
+  for (const arr of porVD.values()) for (const it of arr) {
+    const m = nomesPorDoc.get(it.documento);
+    if (m && !m.placeholder) {
+      it.membro_nome = m.nome;
+      it.membro_nome_norm = nomeNormalizado(m.nome);
+    }
+  }
 
   // Balanço receita Pix ainda sem membro e sem decisão de conciliação.
   const balanco = await fetchAll(
@@ -106,7 +159,7 @@ async function conciliar({ inicio, fim, dryRun = false, userId = null } = {}) {
 
   for (const b of balanco) {
     const nomeNorm = nomeNormalizado(b.descricao || b.referencia || '');
-    const cands = porVD.get(chaveVD(b.valor, b.data_competencia)) || [];
+    const cands = dedupCandidatos(porVD.get(chaveVD(b.valor, b.data_competencia)) || []);
     const escolha = escolherCandidato(nomeNorm, cands);
     if (escolha) {
       paraVincular.push({ transacao_id: b.id, cand: escolha.cand, via: escolha.via });
@@ -114,7 +167,11 @@ async function conciliar({ inicio, fim, dryRun = false, userId = null } = {}) {
       stats.revisao++;
       if (revisao.length < 500) revisao.push({
         transacao_id: b.id, nome: b.descricao || b.referencia, valor: Number(b.valor), data: String(b.data_competencia).slice(0, 10),
-        candidatos: cands.map((c) => ({ bruto_id: c.bruto_id, cpf: c.cpf, nome: c.nome_limpo, hora: c.hora })),
+        candidatos: cands.map((c) => ({
+          bruto_id: c.bruto_id, cpf: c.cpf,
+          nome: c.membro_nome || c.nome_limpo || null, // nome do membro (base) > nome do OFX
+          ja_membro: !!c.membro_nome, hora: c.hora,
+        })),
       });
     } else {
       stats.sem_match++;
