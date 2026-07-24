@@ -2060,6 +2060,24 @@ router.get('/batismos', authorizeModule('kids', 1), async (req, res) => {
   }
 });
 
+// GET /batismos/todos · TODAS as inscrições de batismo (adultos + crianças),
+// pra equipe Kids ver as turmas completas pelo app. Select ENXUTO de propósito:
+// sem telefone/e-mail de adulto (contato de adulto é papel da Integração —
+// aqui é visão da turma). Crianças seguem com gestão própria no GET /batismos.
+router.get('/batismos/todos', authorizeModule('kids', 1), async (_req, res) => {
+  try {
+    const { data } = await supabase.from('batismo_inscricoes')
+      .select('id, nome, sobrenome, status, data_batismo, horario_culto, data_nascimento, eh_crianca, created_at')
+      .is('deleted_at', null)
+      .order('data_batismo', { ascending: false, nullsFirst: false })
+      .limit(1000);
+    res.json(data || []);
+  } catch (e) {
+    console.error('[totemKids] batismos todos:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar as turmas de batismo' });
+  }
+});
+
 // PATCH /batismos/:id · a equipe Kids GERENCIA a inscrição de batismo de
 // CRIANÇA (status/data/observações) sem depender do módulo Integração — o
 // guard restringe às inscrições infantis (eh_crianca ou <13 anos); inscrição
