@@ -17,6 +17,7 @@
 //   /dashboard/culto       · receita por culto na semana
 
 const router = require('express').Router();
+const crypto = require('crypto');
 const multer = require('multer');
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
@@ -1101,6 +1102,241 @@ router.get('/transacoes', async (req, res) => {
     if (error) return res.status(400).json({ error: error.message });
     res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro ao listar transacoes' }); }
+});
+
+// ====================================================================
+// TRANSAÇÕES · Fase 1 da reforma (lançamento manual moderno, detalhe,
+// anexos de comprovante). O DELETE fica FORA desta fase de propósito:
+// fin_transacoes não tem soft-delete (sem deleted_at).
+// ====================================================================
+
+// Match com o extrato — mesma lógica de services/finLancamento.js
+// (lancarDespesaConciliando): exatamente 1 débito OFX NÃO classificado, mesmo
+// valor, janela [dataBase, +15d]. Replicado aqui (em vez de chamar o service)
+// porque a assinatura de lá exige plano_contas_id e força data_pagamento mesmo
+// sem match — no lançamento manual o plano é opcional e sem pagamento a
+// transação deve nascer 'pendente' com data_pagamento nula.
+async function matchDebitoExtrato(valor, dataBase) {
+  try {
+    const fimJanela = new Date(new Date(`${dataBase}T12:00:00`).getTime() + 15 * 86400000).toISOString().slice(0, 10);
+    const { data: candidatos } = await supabase.from('fin_lancamentos_brutos')
+      .select('id, conta_id, valor, tipo_trn, data_lancamento, memo')
+      .eq('ja_classificado', false)
+      .in('valor', [-valor, valor])
+      .gte('data_lancamento', dataBase)
+      .lte('data_lancamento', fimJanela);
+    const debitos = (candidatos || []).filter(c => c.tipo_trn === 'DEBIT' || Number(c.valor) < 0);
+    if (debitos.length === 1) return debitos[0]; // >1 → não escolhe sozinho (fica pendente · match manual)
+  } catch (e) { console.error('[FIN-V2] match extrato manual:', e.message); }
+  return null;
+}
+
+// Lançamento manual moderno (substitui o create da v1 no modal novo)
+router.post('/transacoes', async (req, res) => {
+  try {
+    const {
+      tipo, descricao, valor, data_competencia, data_pagamento, conta_id,
+      plano_contas_id, centro_custo_id, forma_pagamento,
+      parcelas_total, parcela_num, observacoes, tentar_conciliar,
+    } = req.body;
+
+    if (!['receita', 'despesa'].includes(tipo)) {
+      return res.status(400).json({ error: "tipo deve ser 'receita' ou 'despesa'" });
+    }
+    if (!descricao || !String(descricao).trim()) return res.status(400).json({ error: 'descrição obrigatória' });
+    const v = Math.abs(Number(valor) || 0);
+    if (!v) return res.status(400).json({ error: 'valor obrigatório (maior que zero)' });
+    if (!data_competencia) return res.status(400).json({ error: 'data_competencia obrigatória' });
+    if (!conta_id) return res.status(400).json({ error: 'conta_id obrigatório' });
+
+    // Conciliação opcional (só despesa): mesma lógica do finLancamento
+    let bruto = null;
+    if (tentar_conciliar && tipo === 'despesa') {
+      bruto = await matchDebitoExtrato(v, data_competencia);
+    }
+
+    const { data: transacao, error } = await supabase.from('fin_transacoes')
+      .insert({
+        conta_id: bruto?.conta_id || conta_id,
+        tipo,
+        descricao: String(descricao).trim(),
+        valor: v,
+        data_competencia,
+        data_pagamento: bruto?.data_lancamento || data_pagamento || null,
+        // Conciliado se casou com o extrato; senão, pago (data_pagamento) =
+        // conciliado, sem pagamento = pendente.
+        status: bruto ? 'conciliado' : (data_pagamento ? 'conciliado' : 'pendente'),
+        plano_contas_id: plano_contas_id || null,
+        centro_custo_id: centro_custo_id || null,
+        forma_pagamento: forma_pagamento || null,
+        parcelas_total: parcelas_total ? Number(parcelas_total) : null,
+        parcela_num: parcela_num ? Number(parcela_num) : null,
+        observacoes: observacoes || null,
+        lancamento_bruto_id: bruto?.id || null,
+        classificacao_origem: 'manual',
+        classificacao_confianca: 1.0,
+        created_by: req.user.userId,
+      })
+      .select().single();
+    if (error) return res.status(400).json({ error: error.message });
+
+    // Secundárias best-effort (mesmo pós-match do finLancamento): marca o bruto
+    // como classificado e tira da fila de classificação.
+    if (bruto) {
+      try {
+        await supabase.from('fin_lancamentos_brutos').update({ ja_classificado: true }).eq('id', bruto.id);
+        await supabase.from('fin_fila_classificacao')
+          .update({ status: 'ignorado', decidido_em: new Date().toISOString(), decidido_por: req.user.userId })
+          .eq('lancamento_bruto_id', bruto.id).eq('status', 'pendente');
+      } catch (e) { console.error('[FIN-V2] marcar bruto (transação manual):', e.message); }
+    }
+
+    res.json({ ...transacao, conciliada: !!bruto });
+  } catch (e) {
+    console.error('[FIN-V2] criar transação:', e);
+    res.status(500).json({ error: 'Erro ao criar transação' });
+  }
+});
+
+// Edita os campos do lançamento (NÃO mexe em status/lancamento_bruto_id —
+// conciliação não se desfaz por edição)
+router.put('/transacoes/:id', async (req, res) => {
+  try {
+    const {
+      tipo, descricao, valor, data_competencia, data_pagamento, conta_id,
+      plano_contas_id, centro_custo_id, forma_pagamento,
+      parcelas_total, parcela_num, observacoes,
+    } = req.body;
+
+    const upd = {};
+    if (tipo !== undefined) {
+      if (!['receita', 'despesa'].includes(tipo)) return res.status(400).json({ error: "tipo deve ser 'receita' ou 'despesa'" });
+      upd.tipo = tipo;
+    }
+    if (descricao !== undefined) {
+      if (!String(descricao).trim()) return res.status(400).json({ error: 'descrição não pode ficar vazia' });
+      upd.descricao = String(descricao).trim();
+    }
+    if (valor !== undefined) {
+      const v = Math.abs(Number(valor) || 0);
+      if (!v) return res.status(400).json({ error: 'valor deve ser maior que zero' });
+      upd.valor = v;
+    }
+    if (data_competencia !== undefined) {
+      if (!data_competencia) return res.status(400).json({ error: 'data_competencia não pode ficar vazia' });
+      upd.data_competencia = data_competencia;
+    }
+    if (data_pagamento !== undefined) upd.data_pagamento = data_pagamento || null;
+    if (conta_id !== undefined) {
+      if (!conta_id) return res.status(400).json({ error: 'conta_id não pode ficar vazio' });
+      upd.conta_id = conta_id;
+    }
+    if (plano_contas_id !== undefined) upd.plano_contas_id = plano_contas_id || null;
+    if (centro_custo_id !== undefined) upd.centro_custo_id = centro_custo_id || null;
+    if (forma_pagamento !== undefined) upd.forma_pagamento = forma_pagamento || null;
+    if (parcelas_total !== undefined) upd.parcelas_total = parcelas_total ? Number(parcelas_total) : null;
+    if (parcela_num !== undefined) upd.parcela_num = parcela_num ? Number(parcela_num) : null;
+    if (observacoes !== undefined) upd.observacoes = observacoes || null;
+    if (!Object.keys(upd).length) return res.status(400).json({ error: 'Nada pra atualizar' });
+
+    const { data, error } = await supabase.from('fin_transacoes')
+      .update(upd).eq('id', req.params.id).select().single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) {
+    console.error('[FIN-V2] atualizar transação:', e);
+    res.status(500).json({ error: 'Erro ao atualizar transação' });
+  }
+});
+
+// Detalhe completo: transação + nomes (conta/plano/centro) + NF vinculada +
+// conta a pagar vinculada + anexos
+router.get('/transacoes/:id/detalhe', async (req, res) => {
+  try {
+    const { data: t, error } = await supabase.from('fin_transacoes')
+      .select('*, conta:fin_contas(id, nome, banco), plano:fin_plano_contas(id, codigo, nome, tipo), centro:fin_centros_custo(id, codigo, nome)')
+      .eq('id', req.params.id).single();
+    if (error || !t) return res.status(404).json({ error: 'Transação não encontrada' });
+
+    const [nf, cp] = await Promise.all([
+      supabase.from('log_notas_fiscais')
+        .select('id, numero, emitente_nome, emitente_cnpj, valor, storage_path')
+        .eq('transacao_id', t.id).limit(1),
+      supabase.from('fin_contas_pagar')
+        .select('id, descricao, fornecedor, valor, data_vencimento, status')
+        .eq('fin_transacao_id', t.id).is('deleted_at', null).limit(1),
+    ]);
+
+    res.json({
+      ...t,
+      anexos_url: Array.isArray(t.anexos_url) ? t.anexos_url : [],
+      nota_fiscal: nf.data?.[0] || null,
+      conta_pagar: cp.data?.[0] || null,
+    });
+  } catch (e) {
+    console.error('[FIN-V2] detalhe transação:', e);
+    res.status(500).json({ error: 'Erro ao carregar o detalhe da transação' });
+  }
+});
+
+// Anexos (comprovantes/notas) · bucket público log-arquivos, mesmo padrão do
+// upload de /logistica/compras/escanear
+const uploadAnexo = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 15 * 1024 * 1024, files: 1 },
+});
+
+router.post('/transacoes/:id/anexos', uploadAnexo.single('arquivo'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Nenhum arquivo enviado' });
+    const ext = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/pdf': 'pdf' }[req.file.mimetype];
+    if (!ext) return res.status(400).json({ error: 'Formato não suportado — envie JPG, PNG, WEBP ou PDF' });
+
+    const { data: t, error: errT } = await supabase.from('fin_transacoes')
+      .select('id, anexos_url').eq('id', req.params.id).single();
+    if (errT || !t) return res.status(404).json({ error: 'Transação não encontrada' });
+
+    const path = `fin-comprovantes/${Date.now()}-${crypto.randomBytes(4).toString('hex')}.${ext}`;
+    const { error: upErr } = await supabase.storage.from('log-arquivos')
+      .upload(path, req.file.buffer, { contentType: req.file.mimetype, upsert: false });
+    if (upErr) return res.status(500).json({ error: `Erro ao salvar arquivo: ${upErr.message}` });
+    const url = supabase.storage.from('log-arquivos').getPublicUrl(path).data.publicUrl;
+
+    const anexos = [
+      ...(Array.isArray(t.anexos_url) ? t.anexos_url : []),
+      { url, nome: req.file.originalname || `comprovante.${ext}`, tipo: req.file.mimetype, em: new Date().toISOString() },
+    ];
+    const { error: errUpd } = await supabase.from('fin_transacoes')
+      .update({ anexos_url: anexos }).eq('id', t.id);
+    if (errUpd) return res.status(400).json({ error: errUpd.message });
+
+    res.json(anexos);
+  } catch (e) {
+    console.error('[FIN-V2] anexar comprovante:', e);
+    res.status(500).json({ error: 'Erro ao anexar comprovante' });
+  }
+});
+
+// Remove um anexo do array (o arquivo permanece no storage — histórico barato)
+router.delete('/transacoes/:id/anexos', async (req, res) => {
+  try {
+    const { url } = req.body || {};
+    if (!url) return res.status(400).json({ error: 'url obrigatória' });
+
+    const { data: t, error: errT } = await supabase.from('fin_transacoes')
+      .select('id, anexos_url').eq('id', req.params.id).single();
+    if (errT || !t) return res.status(404).json({ error: 'Transação não encontrada' });
+
+    const anexos = (Array.isArray(t.anexos_url) ? t.anexos_url : []).filter(a => a?.url !== url);
+    const { error: errUpd } = await supabase.from('fin_transacoes')
+      .update({ anexos_url: anexos }).eq('id', t.id);
+    if (errUpd) return res.status(400).json({ error: errUpd.message });
+
+    res.json(anexos);
+  } catch (e) {
+    console.error('[FIN-V2] remover anexo:', e);
+    res.status(500).json({ error: 'Erro ao remover anexo' });
+  }
 });
 
 // Lista arrecadacoes (plano 3.01.*) via RPC · contorna db-max-rows do PostgREST
