@@ -159,7 +159,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
           {isChunkError ? (
             <>
               <p style={{ color: '#888', maxWidth: 480 }}>
-                Houve uma atualizacao do sistema. Vamos limpar o cache e recarregar.
+                Houve uma atualização do sistema. Vamos limpar o cache e recarregar.
               </p>
               <button
                 onClick={async () => {
@@ -185,7 +185,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
                 Limpar cache e recarregar
               </button>
               <p style={{ color: '#aaa', fontSize: 12, marginTop: 8 }}>
-                Se o problema persistir: feche o navegador e abra de novo, ou use uma aba anonima.
+                Se o problema persistir: feche o navegador e abra de novo, ou use uma aba anônima.
               </p>
             </>
           ) : (
