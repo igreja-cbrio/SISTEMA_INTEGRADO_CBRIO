@@ -216,7 +216,7 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
     setFreqPessoa(null);
     if (!selected?.membro_id) return;
     let vivo = true;
-    api.grupos.frequenciaPessoa(selected.membro_id)
+    api.frequenciaPessoa(selected.membro_id)
       .then(r => {
         if (!vivo) return;
         const map = {};

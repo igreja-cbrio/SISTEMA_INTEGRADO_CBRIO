@@ -2986,7 +2986,7 @@ function RankingFrequenciaGrupos({ temporada, cores }) {
   useEffect(() => {
     let vivo = true;
     setLoading(true);
-    api.grupos.frequenciaRanking(temporada)
+    api.frequenciaRanking(temporada)
       .then(r => { if (vivo) { setGrupos(r?.grupos || []); setTemEncontro(!!r?.tem_encontro); } })
       .catch(() => { if (vivo) { setGrupos([]); setTemEncontro(false); } })
       .finally(() => { if (vivo) setLoading(false); });
@@ -3389,7 +3389,7 @@ function FrequenciaGrupoCard({ grupoId }) {
   useEffect(() => {
     let vivo = true;
     setLoading(true); setErro(null);
-    api.grupos.frequenciaGrupo(grupoId)
+    api.frequenciaGrupo(grupoId)
       .then(r => { if (vivo) setData(r); })
       .catch(() => { if (vivo) setErro('Não foi possível carregar a frequência.'); })
       .finally(() => { if (vivo) setLoading(false); });
