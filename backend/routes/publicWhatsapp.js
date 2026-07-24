@@ -139,6 +139,31 @@ async function processarMensagem(m, cfg) {
     .from('whatsapp_coletas').select('id').eq('whatsapp_message_id', messageId).maybeSingle();
   if (jaVisto) return;
 
+  // ── OPT-OUT / OPT-IN · PRIORIDADE MÁXIMA (Marcos 2026-07-24). Quem pede pra
+  // parar é desligado NA HORA (membro + líder), antes de qualquer fluxo —
+  // respeitar isso protege o número (opt-out é melhor que bloqueio). Pega o
+  // texto digitado OU o payload do botão "Não quero mais receber" dos templates.
+  {
+    const optSvc = require('../services/whatsappOptout');
+    let bruto = texto, deBotao = false;
+    if (m.type === 'button') { bruto = m.button?.text || m.button?.payload || ''; deBotao = true; }
+    else if (m.type === 'interactive') { bruto = m.interactive?.button_reply?.title || m.interactive?.list_reply?.title || m.interactive?.button_reply?.id || ''; deBotao = true; }
+    const intencao = optSvc.intencaoOptOut(bruto, { deBotao });
+    if (intencao) {
+      const ligar = intencao === 'in';
+      const r = await optSvc.aplicarOptOut({ telefone, ligar }).catch(err => { console.error('[whatsapp webhook] optout:', err.message); return null; });
+      await supabase.from('whatsapp_coletas').insert({
+        whatsapp_message_id: messageId, telefone, raw_text: (bruto || texto || '').slice(0, 2000),
+        status: 'ignorado', parsed: { fonte: ligar ? 'opt_in' : 'opt_out', afetados: r?.afetados ?? 0 },
+      }).catch(() => {});
+      await enviarTexto(telefone, ligar
+        ? 'Pronto! Você voltou a receber as mensagens da CBRio. 🙏'
+        : 'Pronto, você não vai mais receber mensagens da CBRio por aqui. Se mudar de ideia, responda VOLTAR.'
+      ).catch(() => {});
+      return;
+    }
+  }
+
   // ── APROVAÇÃO DE SOLICITAÇÃO · se o número tem solicitação aguardando (ex.:
   // Arthur), interpreta 1=aprovar / 2=rejeitar e aplica. Intercepta cedo (só
   // assume se houver pendência pra este número); senão segue o fluxo normal.

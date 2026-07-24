@@ -636,10 +636,13 @@ export default function InscricaoGrupos() {
                 {errosCampos.aceita_termos && <p style={{ fontSize: 11.5, color: '#ef4444', margin: '6px 0 0' }}>{errosCampos.aceita_termos}</p>}
               </div>
 
-              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer', background: C.isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)', border: `1px solid ${C.cardBorder}`, borderRadius: 10, padding: 12, marginBottom: 12 }}>
-                <input type="checkbox" checked={optinWhats} onChange={e => setOptinWhats(e.target.checked)} style={{ marginTop: 2, accentColor: '#00B39D', flexShrink: 0 }} />
-                <span style={{ fontSize: 11.5, color: C.text3, lineHeight: 1.5 }}>
-                  Aceito receber mensagens da CBRio no <strong>WhatsApp</strong> (avisos do grupo, lembretes e felicitações). Posso cancelar quando quiser.
+              {/* Opt-in destacado (Marcos 2026-07-24): fica DESMARCADO por padrão
+                  (consentimento válido pela LGPD = ação afirmativa), mas com
+                  destaque visual pra aumentar a adesão. */}
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer', background: 'rgba(0,179,157,0.10)', border: '1.5px solid rgba(0,179,157,0.55)', borderRadius: 10, padding: 14, marginBottom: 12 }}>
+                <input type="checkbox" checked={optinWhats} onChange={e => setOptinWhats(e.target.checked)} style={{ marginTop: 2, width: 18, height: 18, accentColor: '#00B39D', flexShrink: 0 }} />
+                <span style={{ fontSize: 12.5, color: C.text, lineHeight: 1.5 }}>
+                  📲 <strong>Quero receber avisos do meu grupo no WhatsApp</strong> — lembretes de encontro, materiais e recados da CBRio. Posso cancelar quando quiser.
                 </span>
               </label>
 
