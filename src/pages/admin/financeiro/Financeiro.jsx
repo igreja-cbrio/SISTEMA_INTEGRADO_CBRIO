@@ -522,6 +522,10 @@ export default function Financeiro() {
   // Plano de contas (folhas) e centros de custo pro modal novo (v2)
   const [planosContas, setPlanosContas] = useState([]);
   const [centrosCusto, setCentrosCusto] = useState([]);
+  // F2 · colaboradores do RH pro toggle "É salário" do modal de Conta a Pagar.
+  // null = ainda não tentou carregar · [] = carregou vazio ou sem permissão
+  // (o aux exige nível 4 do financeiro — salário é dado sensível).
+  const [funcionariosRh, setFuncionariosRh] = useState(null);
 
   // ── Loaders ──
   const loadDash = useCallback(async () => {
@@ -601,16 +605,25 @@ export default function Financeiro() {
   // Nova estrutura · tab 1 = Transações, tab 3 = Contas a Pagar,
   // tab 8 + subOp 2 = Reembolsos, tab 8 + subOp 0 = Contas
   useEffect(() => { if (tab === 1) loadTransacoes(); }, [tab, loadTransacoes]);
-  // Plano de contas (folhas que aceitam lançamento) + centros de custo pro
-  // modal de transação (v2) · carrega uma vez ao entrar na aba
+  // Plano de contas (folhas que aceitam lançamento) + centros de custo pros
+  // modais de transação (v2) e de conta a pagar (F2) · carrega uma vez ao
+  // entrar na aba
   useEffect(() => {
-    if (tab !== 1 || planosContas.length) return;
+    if ((tab !== 1 && tab !== 3) || planosContas.length) return;
     financeiroV2.planoContas.list({ aceita_lancamento: 'true', ativo: 'true' })
       .then(p => setPlanosContas(p || [])).catch(() => {});
     financeiroV2.centrosCusto.list({ aceita_lancamento: 'true', ativo: 'true' })
       .then(c => setCentrosCusto(c || [])).catch(() => {});
   }, [tab, planosContas.length]);
   useEffect(() => { if (tab === 3) loadContasPagar(); }, [tab, loadContasPagar]);
+  // F2 · colaboradores do RH pro select de salário — tenta UMA vez, quando o
+  // modal de conta a pagar abre (sem permissão → lista vazia, sem erro na tela)
+  useEffect(() => {
+    if (!modalPagar || funcionariosRh !== null) return;
+    financeiroV2.auxFuncionarios()
+      .then(f => setFuncionariosRh(f || []))
+      .catch(() => setFuncionariosRh([]));
+  }, [modalPagar, funcionariosRh]);
   useEffect(() => { if (tab === 8 && subOp === 2) loadReembolsos(); }, [tab, subOp, loadReembolsos]);
 
   // ── Ações ──
@@ -665,10 +678,31 @@ export default function Financeiro() {
     try { await financeiro.transacoes.remove(id); loadTransacoes(); loadDash(); } catch (e) { handleError(e); }
   };
 
+  // F2 · salvar via financeiro-v2 (plano de contas, salário do RH, recorrência).
+  // Quando é salário, o backend IGNORA o valor e puxa rh_funcionarios.salario.
   const savePagar = async (form) => {
     try {
-      if (form.id) await financeiro.contasPagar.update(form.id, form);
-      else await financeiro.contasPagar.create(form);
+      if (form.eh_salario && !form.funcionario_id) {
+        handleError(new Error('Selecione o colaborador do salário'));
+        return;
+      }
+      const payload = {
+        descricao: form.descricao,
+        fornecedor: form.fornecedor || null,
+        valor: form.valor,
+        data_vencimento: form.data_vencimento,
+        data_pagamento: form.data_pagamento || null,
+        status: form.status || 'pendente',
+        conta_id: form.conta_id || null,
+        plano_contas_id: form.plano_contas_id || null,
+        centro_custo_id: form.centro_custo_id || null,
+        forma_pagamento: form.forma_pagamento || null,
+        eh_salario: !!form.eh_salario,
+        funcionario_id: form.eh_salario ? form.funcionario_id : null,
+        observacao: form.historico || null,
+      };
+      if (form.id) await financeiroV2.contasPagar.atualizar(form.id, payload);
+      else await financeiroV2.contasPagar.criar(payload);
       setModalPagar(null);
       loadContasPagar();
       loadDash();
@@ -677,14 +711,32 @@ export default function Financeiro() {
 
   const deletePagar = async (id) => {
     if (!window.confirm('Deseja excluir esta conta a pagar?')) return;
-    try { await financeiro.contasPagar.remove(id); loadContasPagar(); loadDash(); } catch (e) { handleError(e); }
+    try { await financeiroV2.contasPagar.remover(id); loadContasPagar(); loadDash(); } catch (e) { handleError(e); }
   };
 
   const pagarConta = async (item) => {
     try {
-      await financeiro.contasPagar.update(item.id, { ...item, status: 'pago', data_pagamento: new Date().toISOString().slice(0, 10) });
+      await financeiroV2.contasPagar.atualizar(item.id, { status: 'pago', data_pagamento: new Date().toISOString().slice(0, 10) });
       loadContasPagar();
       loadDash();
+    } catch (e) { handleError(e); }
+  };
+
+  // F2 · recorrência a partir da conta (idempotente no backend)
+  const tornarRecorrente = async () => {
+    try {
+      const r = await financeiroV2.contasPagar.tornarRecorrente(formPagar.id);
+      setFormPagar(f => ({ ...f, recorrente_id: r?.recorrencia?.id || f.recorrente_id }));
+      loadContasPagar();
+    } catch (e) { handleError(e); }
+  };
+
+  const desfazerRecorrente = async () => {
+    if (!window.confirm('Desfazer a recorrência desta conta? A recorrência será desativada.')) return;
+    try {
+      await financeiroV2.contasPagar.desfazerRecorrente(formPagar.id);
+      setFormPagar(f => ({ ...f, recorrente_id: null }));
+      loadContasPagar();
     } catch (e) { handleError(e); }
   };
 
@@ -1057,7 +1109,9 @@ export default function Financeiro() {
         )}
         {podeEditarFin && (
           <Button onClick={() => setModalPagar({
-            descricao: '', fornecedor: '', categoria_id: '', valor: '', data_vencimento: '', data_pagamento: '', conta_id: '', status: 'pendente',
+            descricao: '', fornecedor: '', valor: '', data_vencimento: '', data_pagamento: '', conta_id: '',
+            plano_contas_id: '', centro_custo_id: '', forma_pagamento: '', status: 'pendente',
+            eh_salario: false, funcionario_id: '', historico: '',
           })}>
             + Nova Conta a Pagar
           </Button>
@@ -1095,7 +1149,23 @@ export default function Financeiro() {
                 const stExib = vencido ? 'vencido' : cp.status;
                 return (
                 <tr key={cp.id} style={vencido ? { background: C.redBg } : {}}>
-                  <td style={{ ...styles.td, fontWeight: 600 }}>{cp.descricao}</td>
+                  <td style={{ ...styles.td, fontWeight: 600 }}>
+                    {cp.descricao}
+                    {(cp.recorrente_id || cp.eh_salario) && (
+                      <div style={{ display: 'flex', gap: 6, marginTop: 3, flexWrap: 'wrap' }}>
+                        {cp.recorrente_id && (
+                          <span style={{ fontSize: 11, fontWeight: 600, color: C.blue, background: C.blueBg, borderRadius: 6, padding: '1px 6px' }}>
+                            🔁 Recorrente
+                          </span>
+                        )}
+                        {cp.eh_salario && (
+                          <span style={{ fontSize: 11, fontWeight: 600, color: C.primary, background: C.primaryBg, borderRadius: 6, padding: '1px 6px' }}>
+                            💼 Salário{cp.funcionario_nome ? ` · ${cp.funcionario_nome}` : ''}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </td>
                   <td style={styles.td}>{cp.fornecedor || '—'}</td>
                   <td style={styles.td}>{cp.plano?.nome || cp.plano_contas_nome || '—'}</td>
                   <td style={styles.td}>{cp.centro?.nome || cp.centro_custo_nome || '—'}</td>
@@ -1309,9 +1379,24 @@ export default function Financeiro() {
     );
   };
 
+  // F2 · modal moderno: plano de contas (folhas despesa) + centro de custo +
+  // forma de pagamento no lugar da categoria legada; toggle "É salário" trava
+  // o valor no salário do RH; recorrência liga/desliga direto daqui.
   const renderModalPagar = () => {
     const form = formPagar;
     const upd = (k, v) => setFormPagar(f => ({ ...f, [k]: v }));
+    const planosDespesa = planosContas.filter(p => p.tipo === 'despesa');
+    const funcs = funcionariosRh || [];
+    const setFuncionario = (id) => {
+      const f = funcs.find(x => x.id === id);
+      setFormPagar(prev => ({ ...prev, funcionario_id: id, valor: f?.salario ?? prev.valor }));
+    };
+    const toggleSalario = (on) => {
+      setFormPagar(prev => {
+        const f = on ? funcs.find(x => x.id === prev.funcionario_id) : null;
+        return { ...prev, eh_salario: on, valor: on && f?.salario != null ? f.salario : prev.valor };
+      });
+    };
     return (
       <Modal
         open={!!modalPagar}
@@ -1319,20 +1404,62 @@ export default function Financeiro() {
         title={form.id ? 'Editar Conta a Pagar' : 'Nova Conta a Pagar'}
         footer={
           <>
+            {form.id && (form.recorrente_id ? (
+              <Button variant="outline" onClick={desfazerRecorrente}>Recorrente ✓ · desfazer</Button>
+            ) : (
+              <Button variant="outline" onClick={tornarRecorrente}>🔁 Tornar recorrente</Button>
+            ))}
             <Button variant="outline" onClick={() => setModalPagar(null)}>Cancelar</Button>
             <Button onClick={() => savePagar(form)}>Salvar</Button>
           </>
         }
       >
         <Input label="Descrição" value={form.descricao || ''} onChange={e => upd('descricao', e.target.value)} />
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: C.text2, cursor: 'pointer', margin: '4px 0 8px' }}>
+          <input type="checkbox" checked={!!form.eh_salario} onChange={e => toggleSalario(e.target.checked)} />
+          💼 É salário (valor puxado do RH)
+        </label>
+        {form.eh_salario && (
+          funcs.length ? (
+            <Select label="Colaborador" value={form.funcionario_id || ''} onChange={e => setFuncionario(e.target.value)}>
+              <option value="">Selecione...</option>
+              {funcs.map(f => (
+                <option key={f.id} value={f.id}>{f.nome}{f.cargo ? ` · ${f.cargo}` : ''}</option>
+              ))}
+            </Select>
+          ) : (
+            <div style={{ fontSize: 12, color: C.amber, marginBottom: 8 }}>
+              {funcionariosRh === null
+                ? 'Carregando colaboradores do RH...'
+                : 'Sem acesso à lista de colaboradores do RH (exige nível 4 do financeiro).'}
+            </div>
+          )
+        )}
         <div style={styles.formRow}>
           <Input label="Fornecedor" value={form.fornecedor || ''} onChange={e => upd('fornecedor', e.target.value)} />
-          <Input label="Valor (R$)" type="number" step="0.01" value={form.valor ?? ''} onChange={e => upd('valor', e.target.value)} />
+          <div>
+            <Input label="Valor (R$)" type="number" step="0.01" value={form.valor ?? ''} readOnly={!!form.eh_salario} onChange={e => upd('valor', e.target.value)} />
+            {form.eh_salario && (
+              <div style={{ fontSize: 11, color: C.text3, marginTop: 2 }}>Puxado do RH (salário do colaborador)</div>
+            )}
+          </div>
         </div>
         <div style={styles.formRow}>
-          <Select label="Categoria" value={form.categoria_id || ''} onChange={e => upd('categoria_id', e.target.value)}>
+          <Select label="Plano de contas" value={form.plano_contas_id || ''} onChange={e => upd('plano_contas_id', e.target.value)}>
             <option value="">Selecione...</option>
-            {categorias.filter(c => c.tipo === 'despesa').map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
+            {planosDespesa.map(p => <option key={p.id} value={p.id}>{p.codigo} · {p.nome}</option>)}
+          </Select>
+          <Select label="Centro de custo" value={form.centro_custo_id || ''} onChange={e => upd('centro_custo_id', e.target.value)}>
+            <option value="">Selecione...</option>
+            {centrosCusto.map(c => <option key={c.id} value={c.id}>{c.codigo ? `${c.codigo} · ` : ''}{c.nome}</option>)}
+          </Select>
+        </div>
+        <div style={styles.formRow}>
+          <Select label="Forma de pagamento" value={form.forma_pagamento || ''} onChange={e => upd('forma_pagamento', e.target.value)}>
+            <option value="">Selecione...</option>
+            {['Pix', 'Dinheiro', 'Cartão de Crédito', 'Cartão de Débito', 'Transferência', 'Boleto', 'Outro'].map(f => (
+              <option key={f} value={f}>{f}</option>
+            ))}
           </Select>
           <Select label="Conta Pagamento" value={form.conta_id || ''} onChange={e => upd('conta_id', e.target.value)}>
             <option value="">Selecione...</option>
@@ -1349,6 +1476,7 @@ export default function Financeiro() {
           <option value="cancelado">Cancelado</option>
           <option value="vencido">Vencido</option>
         </Select>
+        <Input label="Observações" value={form.historico || ''} onChange={e => upd('historico', e.target.value)} />
       </Modal>
     );
   };
