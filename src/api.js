@@ -1009,13 +1009,15 @@ export const financeiroV2 = {
       const fd = new FormData();
       fd.append('arquivo', file);
       fd.append('conta_id', conta_id);
-      return requestFile('/financeiro-v2/importar/ofx', fd);
+      // 300s (não o default 60s): um OFX de mês inteiro insere centenas de
+      // transações + matching PIX + conciliação — alinha com o maxDuration do Vercel.
+      return requestFile('/financeiro-v2/importar/ofx', fd, { timeoutMs: 300_000 });
     },
     pixExtrato: (file, conta_id) => {
       const fd = new FormData();
       fd.append('arquivo', file);
       if (conta_id) fd.append('conta_id', conta_id);
-      return requestFile('/financeiro-v2/importar/pix-extrato', fd);
+      return requestFile('/financeiro-v2/importar/pix-extrato', fd, { timeoutMs: 300_000 });
     },
     balanco: (file) => {
       const fd = new FormData();
