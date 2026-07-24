@@ -4,9 +4,10 @@
 // nominais. Os KPIs de Generosidade que contam DOADORES/recorrência precisam
 // do dado por membro (não só o total do balanço). Este serviço parseia a
 // planilha (auto-detecção de colunas, tolerante a variações PT), casa cada
-// linha a um membro EXISTENTE via membroMatch.acharMembroGuardado (NUNCA cria
-// membro novo — a planilha de doação não pode poluir a Membresia) e grava de
-// forma IDEMPOTENTE.
+// pessoa a um membro EXISTENTE por CPF ou NOME (índice em memória · o relatório
+// da CBRio não tem CPF, então conta por nome por ora · nome ambíguo não é
+// chutado · NUNCA cria membro — a planilha de doação não pode poluir a
+// Membresia) e grava de forma IDEMPOTENTE.
 //
 // Idempotência: referencia_externa = sha256(membro_id|dataISO|valorCentavos|tipo).
 // Reimportar o MESMO arquivo = 0 novos (a linha já existe com essa referência).
@@ -20,7 +21,6 @@
 const XLSX = require('xlsx');
 const crypto = require('crypto');
 const { supabase } = require('../utils/supabase');
-const { acharMembroGuardado } = require('./membroMatch');
 
 const BATCH_SIZE = 500;
 
@@ -203,17 +203,48 @@ async function refsJaGravadas(refs) {
   return existentes;
 }
 
-// Executa `fn` sobre `items` com concorrência limitada (não sequencial, não
-// tudo de uma vez). Preserva a ordem NÃO importa — quem chama grava no Map.
-async function mapLimit(items, limit, fn) {
-  let i = 0;
-  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (i < items.length) {
-      const idx = i++;
-      await fn(items[idx]);
+// Índice de membros em memória (1 leitura paginada de mem_membros vivos).
+// porCpf: cpf(dígitos) -> membro_id · porNome: nomeNorm -> [membro_id...]
+// Casa contra TODA a base (não só membro_ativo): quem doa pode não ter status
+// ativo. NUNCA cria membro.
+async function carregarIndiceMembros() {
+  const porCpf = new Map();
+  const porNome = new Map();
+  let offset = 0;
+  const page = 1000;
+  for (;;) {
+    const { data, error } = await supabase
+      .from('mem_membros')
+      .select('id, nome, cpf')
+      .is('deleted_at', null)
+      .range(offset, offset + page - 1);
+    if (error) throw new Error('Erro carregando membros: ' + error.message);
+    if (!data || !data.length) break;
+    for (const m of data) {
+      const nn = norm(m.nome);
+      if (nn) { if (!porNome.has(nn)) porNome.set(nn, []); porNome.get(nn).push(m.id); }
+      if (m.cpf) porCpf.set(String(m.cpf).replace(/\D/g, ''), m.id);
     }
-  });
-  await Promise.all(workers);
+    if (data.length < page) break;
+    offset += page;
+  }
+  return { porCpf, porNome };
+}
+
+// Casa uma linha ao membro pelo índice: CPF exato primeiro; senão NOME
+// normalizado EXATO. Nome que aponta pra 2+ membros é AMBÍGUO → não chuta
+// (decisão do Matheus: contar por nome por ora; CPF vai refinando com o tempo).
+// Retorna { membro_id } | { _ambiguo:true } | null.
+function casarPorIndice(idx, r) {
+  const cpf = r.cpf ? String(r.cpf).replace(/\D/g, '') : null;
+  if (cpf && idx.porCpf.has(cpf)) return { membro_id: idx.porCpf.get(cpf) };
+  const nn = norm(r.nome);
+  if (nn && idx.porNome.has(nn)) {
+    const ids = idx.porNome.get(nn);
+    if (ids.length === 1) return { membro_id: ids[0] };
+    return { _ambiguo: true };
+  }
+  return null;
 }
 
 // ── processar · o coração ────────────────────────────────────────────────────
@@ -225,18 +256,19 @@ async function processar(rows, { userId = null, commit = false } = {}) {
     inseridos: 0,
     duplicados: 0,
     sem_vinculo: 0,
+    ambiguos: 0, // nome que casa com 2+ membros (não atribuído · vira sem_vinculo)
     erros: [],
     colunas_detectadas: null, // preenchido pela rota (vem do parse)
     amostra_sem_vinculo: [],
   };
 
-  // Pré-computa o match POR PESSOA ÚNICA, em paralelo (concorrência limitada).
-  // O gargalo era casar SEQUENCIALMENTE linha a linha — num arquivo grande
-  // (ex.: 18k contribuições do ano) isso passava do tempo do servidor
-  // (→ "Failed to fetch"). Como a mesma pessoa doa várias vezes, casamos cada
-  // chave (CPF ou nome) UMA vez e reusamos em todas as linhas dela. Mesma
-  // lógica de match (só-leitura, nunca cria membro); o loop abaixo segue igual
-  // (ordem/dedup/erros preservados), lendo do Map por chave de pessoa.
+  // Casa POR PESSOA ÚNICA usando um índice de membros em MEMÓRIA (1 leitura,
+  // sem consulta por pessoa). O relatório de contribuições da CBRio não tem CPF,
+  // então casa por NOME (decisão do Matheus 2026-07-24): conta por nome por ora,
+  // e conforme os cadastros ganham CPF o cruzamento melhora. Nome ambíguo (2+
+  // membros com o mesmo nome) NÃO é chutado. Isto atribui a contribuição ao
+  // membro só pra KPI de doadores — não mexe no matcher canônico de identidade
+  // (que, de propósito, nunca liga por nome sozinho) nem cria membro.
   const chavePessoa = (r) =>
     r.cpf ? 'cpf:' + String(r.cpf).replace(/\D/g, '')
       : (r.nome ? 'nome:' + norm(r.nome) : null);
@@ -245,15 +277,11 @@ async function processar(rows, { userId = null, commit = false } = {}) {
     const k = chavePessoa(r);
     if (k && !linhaPorChave.has(k)) linhaPorChave.set(k, r);
   }
-  const matchByChave = new Map(); // chave -> { membro_id... } | { _erro } | null
-  await mapLimit([...linhaPorChave.keys()], 12, async (k) => {
-    const r = linhaPorChave.get(k);
-    try {
-      matchByChave.set(k, await acharMembroGuardado({ cpf: r.cpf, nome: r.nome }));
-    } catch (e) {
-      matchByChave.set(k, { _erro: e.message });
-    }
-  });
+  const indiceMembros = await carregarIndiceMembros();
+  const matchByChave = new Map(); // chave -> { membro_id } | { _ambiguo } | null
+  for (const [k, r] of linhaPorChave) {
+    matchByChave.set(k, casarPorIndice(indiceMembros, r));
+  }
 
   // 1ª passada: valida + casa pessoa + monta payloads candidatos (com ref).
   const candidatos = []; // { ref, payload }
@@ -277,15 +305,11 @@ async function processar(rows, { userId = null, commit = false } = {}) {
     }
 
     // casa a pessoa (SÓ-LEITURA · nunca cria membro) — resultado pré-computado
-    // por pessoa única, em paralelo acima.
-    const pre = matchByChave.get(chavePessoa(row));
-    if (pre && pre._erro) {
-      resumo.erros.push({ linha: row.linha, motivo: 'erro ao casar pessoa: ' + pre._erro });
-      continue;
-    }
-    const match = pre || null;
+    // por pessoa única (índice em memória) acima.
+    const match = matchByChave.get(chavePessoa(row)) || null;
     if (!match?.membro_id) {
       resumo.sem_vinculo++;
+      if (match?._ambiguo) resumo.ambiguos++;
       if (semVinculoNomes.length < 20) semVinculoNomes.push(row.nome || row.cpf || `linha ${row.linha}`);
       continue;
     }
