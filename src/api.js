@@ -1050,6 +1050,13 @@ export const financeiroV2 = {
     aplicar: (pares) => post('/financeiro-v2/conciliacao/aplicar', { pares }),
     aplicarSeguros: () => post('/financeiro-v2/conciliacao/aplicar-seguros', {}),
   },
+  // Conciliação balanço × OFX · identificar o doador por CPF (Fase 3)
+  conciliacaoOfx: {
+    rodar: (inicio, fim, dryRun) => post('/financeiro-v2/conciliar-balanco-ofx', { inicio, fim, dry_run: dryRun }),
+    revisao: (inicio, fim) => get(`/financeiro-v2/conciliar-balanco-ofx/revisao?inicio=${inicio}&fim=${fim}`),
+    confirmar: (transacao_id, bruto_id) => post('/financeiro-v2/conciliar-balanco-ofx/confirmar', { transacao_id, bruto_id }),
+    ignorar: (transacao_id) => post('/financeiro-v2/conciliar-balanco-ofx/ignorar', { transacao_id }),
+  },
   // Cartões de crédito + faturas (Fase 4)
   cartoes: {
     list: () => get('/financeiro-v2/cartoes'),

@@ -9,6 +9,7 @@ import EstruturaFiscal from './EstruturaFiscal';
 import ImportarExtratos from './ImportarExtratos';
 import FilaClassificacao from './FilaClassificacao';
 import Conciliacao from './Conciliacao';
+import IdentificarDoadores from './IdentificarDoadores';
 import { CartoesConfig, FaturaModal } from './CartoesFaturas';
 import NotasCompras from './NotasCompras';
 import DashboardOverview from './DashboardOverview';
@@ -349,7 +350,7 @@ const TABS = [
   'Análises', 'DRE', 'Generosidade', 'Banco',
   'Operacional', 'Gestão', 'Configuração',
 ];
-const SUBS_OPERACIONAL = ['Contas', 'Recorrentes', 'Reembolsos', 'Importar extratos', 'Fila de classificação', 'Conciliação', 'Calendário', 'Notas de compras'];
+const SUBS_OPERACIONAL = ['Contas', 'Recorrentes', 'Reembolsos', 'Importar extratos', 'Fila de classificação', 'Conciliação', 'Calendário', 'Notas de compras', 'Identificar doadores'];
 const SUBS_GESTAO = ['Solicitações', 'Alertas', 'Fechamento', 'Auditoria'];
 const SUBS_DRE = ['DRE Auto', 'Por Centro de Custo', 'Comparativo Temporal'];
 
@@ -1571,6 +1572,7 @@ export default function Financeiro() {
           {subOp === 5 && <Conciliacao />}
           {subOp === 6 && <CalendarioFinanceiro />}
           {subOp === 7 && <NotasCompras />}
+          {subOp === 8 && <IdentificarDoadores />}
         </div>
       )}
 
