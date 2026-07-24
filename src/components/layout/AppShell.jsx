@@ -718,7 +718,10 @@ export default function AppShell() {
       </header>
 
       {/* Main content */}
-      <main className="max-w-[1800px] mx-auto">
+      {/* pb-24: respiro no rodapé pra o conteúdo rolar ACIMA dos botões
+          flutuantes (Reportar/IA), que são position:fixed e cobriam a última
+          linha de tabelas/listas. */}
+      <main className="max-w-[1800px] mx-auto pb-24">
         <Outlet />
       </main>
 
