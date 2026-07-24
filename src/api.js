@@ -1053,7 +1053,20 @@ export const financeiroV2 = {
       return requestFile('/financeiro-v2/contas-pagar/importar', fd, { timeoutMs: 300_000 });
     },
   },
-  transacoes: (params) => get('/financeiro-v2/transacoes' + (params ? '?' + new URLSearchParams(params) : '')),
+  // Fase 1 da reforma: era função direta (só listar) → virou namespace com
+  // criar/atualizar/detalhe/anexos. A criação nova usa a v2 (a v1 segue intacta).
+  transacoes: {
+    list: (params) => get('/financeiro-v2/transacoes' + (params ? '?' + new URLSearchParams(params) : '')),
+    criar: (data) => post('/financeiro-v2/transacoes', data),
+    atualizar: (id, data) => put(`/financeiro-v2/transacoes/${id}`, data),
+    detalhe: (id) => get(`/financeiro-v2/transacoes/${id}/detalhe`),
+    anexar: (id, file) => {
+      const fd = new FormData();
+      fd.append('arquivo', file);
+      return requestFile(`/financeiro-v2/transacoes/${id}/anexos`, fd, { timeoutMs: 120_000 });
+    },
+    removerAnexo: (id, url) => request(`/financeiro-v2/transacoes/${id}/anexos`, { method: 'DELETE', body: JSON.stringify({ url }) }),
+  },
   arrecadacoes: (params) => get('/financeiro-v2/arrecadacoes' + (params ? '?' + new URLSearchParams(params) : '')),
   despesasDetalhe: (params) => get('/financeiro-v2/despesas/detalhe' + (params ? '?' + new URLSearchParams(params) : '')),
   sugerirPlanoHorario: (params) => get('/financeiro-v2/sugerir-plano-horario' + (params ? '?' + new URLSearchParams(params) : '')),

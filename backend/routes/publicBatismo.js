@@ -136,7 +136,7 @@ router.get('/horarios', async (_req, res) => {
 router.post('/', limiter, async (req, res) => {
   try {
     const {
-      nome, sobrenome, email, telefone, cpf, data_nascimento,
+      nome, sobrenome, email, telefone, cpf, data_nascimento, sexo,
       endereco, cep, tamanho_camisa, limitacao_mobilidade, motivo,
       observacoes, horario_culto, area_kpi, fez_next,
       // Novos · LGPD/integracao
@@ -256,6 +256,13 @@ router.post('/', limiter, async (req, res) => {
     if (motivo) obsParts.push(`Motivo: ${String(motivo).trim().slice(0, 500)}`);
     if (observacoes) obsParts.push(`Comentario: ${String(observacoes).trim().slice(0, 1000)}`);
     const cepNorm = cep ? String(cep).trim().slice(0, 20) : null;
+    // Sexo · paridade com o totem (armazenado como 'M'/'F' · opcional).
+    const sexoNorm = (() => {
+      const s = sexo ? String(sexo).trim().toUpperCase() : '';
+      if (s === 'M' || s === 'MASCULINO') return 'M';
+      if (s === 'F' || s === 'FEMININO') return 'F';
+      return null;
+    })();
 
     const AREAS_OK = ['kids', 'sede', 'bridge', 'ami', 'online'];
     const areaKpiValida = AREAS_OK.includes(area_kpi) ? area_kpi : 'sede';
@@ -298,6 +305,7 @@ router.post('/', limiter, async (req, res) => {
       // "Você já fez o NEXT?" · boolean | null (não informado)
       fez_next: typeof fez_next === 'boolean' ? fez_next : null,
       cep: cepNorm,
+      sexo: sexoNorm,
     };
 
     const { data, error } = await supabase
