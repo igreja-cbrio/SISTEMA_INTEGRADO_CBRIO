@@ -826,7 +826,7 @@ export default function Eventos() {
                     <span style={{ fontSize: 20, fontWeight: 800, color: scoreColor(a.kpi_area) }}>{a.kpi_area || 0}%</span>
                   </div>
                   <BreakdownBar label="Prazo" icon={'\u23f0'} value={b.score_prazo || 0} max={b.total * 40} count={b.no_prazo || 0} total={b.total || 0} />
-                  <BreakdownBar label="Aprova\u00e7\u00e3o" icon={'\u2705'} value={b.score_aprovacao || 0} max={b.total * 30} count={b.aprovados || 0} total={b.total || 0} />
+                  <BreakdownBar label="Aprovação" icon={'\u2705'} value={b.score_aprovacao || 0} max={b.total * 30} count={b.aprovados || 0} total={b.total || 0} />
                   <BreakdownBar label="Qualidade" icon={'\u2b50'} value={b.score_qualidade || 0} max={b.total * 20} count={b.qualidade_ok || 0} total={b.total || 0} />
                   <BreakdownBar label="Arquivo" icon={'\ud83d\udcce'} value={b.score_arquivo || 0} max={b.total * 10} count={b.com_arquivo || 0} total={b.total || 0} />
                   <div style={{ fontSize: 10, color: C.t3, marginTop: 6, paddingTop: 6, borderTop: `1px solid ${C.border}` }}>{a.docs_ok}/{a.total_docs} entregues | {a.docs_atrasados} atrasados | {a.docs_pendentes} pendentes</div>
