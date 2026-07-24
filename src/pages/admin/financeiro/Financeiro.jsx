@@ -1598,7 +1598,7 @@ export default function Financeiro() {
         <DetalheTransacao
           id={detalheTransacaoId}
           onClose={() => setDetalheTransacaoId(null)}
-          podeEditar={isDiretor}
+          podeEditar={podeEditarFin}
           onChanged={loadTransacoes}
           onEditar={(det) => { setDetalheTransacaoId(null); setModalTransacao(det); }}
         />
