@@ -21,7 +21,7 @@ import { usePublicTheme, PublicThemeToggle, PublicPaletteCtx, usePublicPalette }
 import { BirthDatePicker } from '../../components/ui/birth-date-picker';
 import { CheckCircle2, Camera, X, Users, Home } from 'lucide-react';
 
-const TEXTO_CONSENTIMENTO = `Ao enviar este formulário, você autoriza a CBRio a utilizar seus dados pessoais para fins de comunicacao com a igreja e participação na equipe de grupos de conexão, conforme a LGPD.`;
+const TEXTO_CONSENTIMENTO = `Ao enviar este formulário, você autoriza a CBRio a utilizar seus dados pessoais para fins de comunicação com a igreja e participação na equipe de grupos de conexão, conforme a LGPD.`;
 
 const FORM_VAZIO = {
   nome: '', cpf: '', email: '', telefone: '', data_nascimento: '', genero: '',
