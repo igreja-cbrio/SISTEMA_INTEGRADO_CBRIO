@@ -160,6 +160,14 @@ router.post('/', limiter, async (req, res) => {
     if (!cpf || !cpfValido(cpf)) {
       return res.status(400).json({ error: 'CPF é obrigatório e precisa ser válido.' });
     }
+    // Obrigatórios do form de batismo (pedido da gestão · 2026-07-24)
+    if (!data_nascimento) {
+      return res.status(400).json({ error: 'Informe a data de nascimento.' });
+    }
+    const camisaNorm = tamanho_camisa ? String(tamanho_camisa).trim().toUpperCase() : null;
+    if (!camisaNorm || !['PP', 'P', 'M', 'G', 'GG', 'XG', 'XGG'].includes(camisaNorm)) {
+      return res.status(400).json({ error: 'Escolha o tamanho da camisa.' });
+    }
 
     const cpfNorm = cpf ? soDigitos(cpf) : null;
     const telNorm = soDigitos(telefone);
