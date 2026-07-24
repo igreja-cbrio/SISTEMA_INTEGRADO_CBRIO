@@ -1563,7 +1563,7 @@ export default function Expansao() {
       <div style={styles.header}>
         <div>
           <div style={styles.title}>Planejamento Estratégico</div>
-          <div style={styles.subtitle}>Plano vigente: Expans\u00e3o {'\u00b7'} Quadri\u00eanio 2026{'\u2013'}2029 {'\u00b7'} Pr. Pedr\u00e3o</div>
+          <div style={styles.subtitle}>Plano vigente: Expansão {'·'} Quadriênio 2026{'–'}2029 {'·'} Pr. Pedrão</div>
         </div>
         {canEdit && (
           <button style={styles.btn('primary')} onClick={() => setModalMilestone({})}>

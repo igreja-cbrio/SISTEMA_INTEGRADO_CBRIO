@@ -1442,7 +1442,7 @@ export default function Projetos() {
                 <div><div style={styles.infoLabel}>Área</div><div style={styles.infoValue}>{p.area || '\u2014'}</div></div>
                 <div><div style={styles.infoLabel}>Período</div><div style={styles.infoValue}>{fmtDate(p.date_start)} - {fmtDate(p.date_end)}</div></div>
                 <div><div style={styles.infoLabel}>Frequência</div><div style={styles.infoValue}>{p.frequency || '\u2014'}</div></div>
-                <div><div style={styles.infoLabel}>P\u00fablico-alvo</div><div style={styles.infoValue}>{p.public_target || '\u2014'}</div></div>
+                <div><div style={styles.infoLabel}>Público-alvo</div><div style={styles.infoValue}>{p.public_target || '\u2014'}</div></div>
                 <div><div style={styles.infoLabel}>Complexidade</div><div style={styles.infoValue}>{COMPLEXITY_MAP[p.complexity] || p.complexity || '\u2014'}</div></div>
                 <div><div style={styles.infoLabel}>Impacto</div><div style={styles.infoValue}>{IMPACT_MAP[p.impact] || p.impact || '\u2014'}</div></div>
                 <div><div style={styles.infoLabel}>Ano</div><div style={styles.infoValue}>{p.year || '\u2014'}</div></div>
