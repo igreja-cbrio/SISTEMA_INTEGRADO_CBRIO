@@ -372,6 +372,12 @@ function ResultadoCard({ r }) {
             {r.identidade.avulsos_criados > 0 && <> · <strong style={{ color: C.blue }}>{r.identidade.avulsos_criados}</strong> novos contribuintes</>}
           </div>
         )}
+        {r.doadores_identificados && (r.doadores_identificados.vinculados > 0 || r.doadores_identificados.pendentes > 0) && (
+          <div>
+            <strong style={{ color: C.green }}>{r.doadores_identificados.vinculados}</strong> doador(es) do balanço identificado(s) automaticamente
+            {r.doadores_identificados.pendentes > 0 && <> · <strong style={{ color: C.amber }}>{r.doadores_identificados.pendentes}</strong> ambíguo(s) (opcional revisar em Identificar doadores)</>}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -514,6 +520,9 @@ function ResultadoBalancoCard({ r }) {
         <div><strong style={{ color: C.green }}>{r.inseridas}</strong> novos lançamentos</div>
         <div><strong style={{ color: C.text3 }}>{r.ja_existentes}</strong> já existentes</div>
         {r.invalidas > 0 && <div><strong style={{ color: C.amber }}>{r.invalidas}</strong> ignoradas (sem data/valor)</div>}
+        {r.doadores_identificados && r.doadores_identificados.vinculados > 0 && (
+          <div><strong style={{ color: C.green }}>{r.doadores_identificados.vinculados}</strong> doador(es) identificado(s) automaticamente pelo OFX</div>
+        )}
       </div>
       {temErro && (
         <div style={{ marginTop: 8, fontSize: 11, color: C.red }}>
