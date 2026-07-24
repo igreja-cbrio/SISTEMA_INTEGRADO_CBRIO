@@ -1052,7 +1052,15 @@ export const financeiroV2 = {
       if (origem) fd.append('origem', origem);
       return requestFile('/financeiro-v2/contas-pagar/importar', fd, { timeoutMs: 300_000 });
     },
+    // F2 · CRUD moderno (plano de contas, salário do RH, recorrência)
+    criar: (data) => post('/financeiro-v2/contas-pagar', data),
+    atualizar: (id, data) => put(`/financeiro-v2/contas-pagar/${id}`, data),
+    remover: (id) => del(`/financeiro-v2/contas-pagar/${id}`),
+    tornarRecorrente: (id) => post(`/financeiro-v2/contas-pagar/${id}/tornar-recorrente`, {}),
+    desfazerRecorrente: (id) => del(`/financeiro-v2/contas-pagar/${id}/tornar-recorrente`),
   },
+  // Colaboradores do RH pro toggle "É salário" (o financeiro pode não ter o módulo RH)
+  auxFuncionarios: () => get('/financeiro-v2/aux/funcionarios'),
   // Fase 1 da reforma: era função direta (só listar) → virou namespace com
   // criar/atualizar/detalhe/anexos. A criação nova usa a v2 (a v1 segue intacta).
   transacoes: {
