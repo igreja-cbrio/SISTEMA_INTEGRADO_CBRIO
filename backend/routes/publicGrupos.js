@@ -800,6 +800,17 @@ router.post('/inscrever-lider', async (req, res) => {
       }
     }
 
+    // Opt-in de WhatsApp OBRIGATÓRIO pro líder (Marcos 2026-07-24): virar líder
+    // implica receber as mensagens operacionais (chamada, renovação, materiais).
+    // Clicar em "virar líder" após o aviso É a ação afirmativa de consentimento.
+    if (membroId) {
+      try {
+        await supabase.from('mem_membros')
+          .update({ whatsapp_optin: true, whatsapp_optin_em: new Date().toISOString() })
+          .eq('id', membroId).is('deleted_at', null);
+      } catch (e) { console.warn('[public grupos inscrever-lider] optin membro:', e.message); }
+    }
+
     let cadastroPendenteId = null;
     if (!membroId) {
       const ip = (req.headers['x-forwarded-for'] || '').toString().split(',')[0].trim() || req.ip || null;
@@ -821,6 +832,10 @@ router.post('/inscrever-lider', async (req, res) => {
         origem: 'qr_code',
         aceita_termos: !!aceita_termos,
         aceita_contato: true,
+        // Líder consente com WhatsApp por padrão (obrigatório do papel · propaga
+        // pro membro na aprovação do cadastro pendente).
+        whatsapp_optin: true,
+        whatsapp_optin_em: new Date().toISOString(),
         consentimento_texto: consentimento_texto ? String(consentimento_texto).slice(0, 2000) : null,
         status: 'pendente',
         ip_origem: ip,
