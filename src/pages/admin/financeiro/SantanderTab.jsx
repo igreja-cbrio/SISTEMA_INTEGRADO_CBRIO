@@ -11,7 +11,7 @@ const C = {
 };
 
 const STATUS_LOCAL = {
-  pendente: { c: C.text3, bg: '#73737318', label: 'Disponivel' },
+  pendente: { c: C.text3, bg: '#73737318', label: 'Disponível' },
   requested: { c: C.amber, bg: C.amberBg, label: 'Processando' },
   baixado: { c: C.green, bg: C.greenBg, label: 'Baixado' },
   erro: { c: C.red, bg: C.redBg, label: 'Erro' },
@@ -184,8 +184,8 @@ export default function SantanderTab() {
       <div style={styles.section}>
         <div style={styles.sectionTitle}>Integração Santander</div>
         <div style={styles.alertBox(C.amberBg, C.amber)}>
-          <strong>Configuração pendente.</strong> Para usar essa integracao,
-          configure no Vercel as variaveis de ambiente:
+          <strong>Configuração pendente.</strong> Para usar essa integração,
+          configure no Vercel as variáveis de ambiente:
           <ul style={{ margin: '8px 0 0 18px' }}>
             {(health?.missing_env || []).map((v) => (
               <li key={v} style={{ fontFamily: 'monospace', fontSize: 12 }}>{v}</li>
@@ -234,7 +234,7 @@ export default function SantanderTab() {
                 </div>
                 <div style={styles.kpiSub}>Saldo livre pra usar</div>
               </div>
-              <div style={styles.kpi} title="Valores retidos temporariamente (PIX agendado, debito autorizado, garantias)">
+              <div style={styles.kpi} title="Valores retidos temporariamente (PIX agendado, débito autorizado, garantias)">
                 <div style={styles.kpiLabel}>Bloqueado</div>
                 <div style={styles.kpiValue}>{brl(saldo.blocked)}</div>
                 <div style={styles.kpiSub}>Retido temporariamente</div>
@@ -252,7 +252,7 @@ export default function SantanderTab() {
                   <div style={{ ...styles.kpiValue, color: C.blue }}>{brl(saldo.overdraftLimit)}</div>
                   <div style={styles.kpiSub}>Cheque especial</div>
                 </div>
-                <div style={styles.kpi} title="Quanto do limite esta sendo usado agora">
+                <div style={styles.kpi} title="Quanto do limite está sendo usado agora">
                   <div style={styles.kpiLabel}>Limite usado</div>
                   <div style={{ ...styles.kpiValue, color: saldo.overdraftUsed > 0 ? C.amber : C.text }}>
                     {brl(saldo.overdraftUsed)}
@@ -287,7 +287,7 @@ export default function SantanderTab() {
           </Button>
           {extrato && (
             <Button variant="outline" onClick={() => loadExtrato(true)} disabled={loadingExtrato}>
-              Forcar refresh
+              Forçar refresh
             </Button>
           )}
         </div>
@@ -326,7 +326,7 @@ export default function SantanderTab() {
 }
 
 function ExtratoTabela({ conteudo }) {
-  if (!conteudo.length) return <div style={{ color: C.text3, padding: 12 }}>Sem movimentacoes no período</div>;
+  if (!conteudo.length) return <div style={{ color: C.text3, padding: 12 }}>Sem movimentações no período</div>;
   return (
     <div style={{ overflowX: 'auto' }}>
       <table style={styles.table}>
@@ -375,7 +375,7 @@ function ComprovantesTabela({ data, baixandoId, onBaixar, onAbrirPdf }) {
           <tr>
             <th style={styles.th}>Data</th>
             <th style={styles.th}>Categoria</th>
-            <th style={styles.th}>Beneficiario</th>
+            <th style={styles.th}>Beneficiário</th>
             <th style={{ ...styles.th, textAlign: 'right' }}>Valor</th>
             <th style={styles.th}>Status</th>
             <th style={{ ...styles.th, textAlign: 'right' }}>Ações</th>

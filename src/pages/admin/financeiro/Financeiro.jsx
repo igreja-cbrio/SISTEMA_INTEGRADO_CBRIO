@@ -32,8 +32,8 @@ const C = {
   blue: '#3b82f6', blueBg: '#3b82f618',
 };
 
-const TIPO_CONTA = { corrente: 'Corrente', poupanca: 'Poupanca', caixa: 'Caixa', investimento: 'Investimento' };
-const TIPO_TRANSACAO = { receita: 'Receita', despesa: 'Despesa', transferencia: 'Transferencia' };
+const TIPO_CONTA = { corrente: 'Corrente', poupanca: 'Poupança', caixa: 'Caixa', investimento: 'Investimento' };
+const TIPO_TRANSACAO = { receita: 'Receita', despesa: 'Despesa', transferencia: 'Transferência' };
 
 const STATUS_TRANSACAO = {
   pendente: { c: C.amber, bg: C.amberBg, label: 'Pendente' },
@@ -440,7 +440,7 @@ export default function Financeiro() {
   };
 
   const deleteTransacao = async (id) => {
-    if (!window.confirm('Deseja excluir esta transacao?')) return;
+    if (!window.confirm('Deseja excluir esta transação?')) return;
     try { await financeiro.transacoes.remove(id); loadTransacoes(); loadDash(); } catch (e) { handleError(e); }
   };
 
@@ -499,7 +499,7 @@ export default function Financeiro() {
   const renderContas = () => (
     <div style={styles.card}>
       <div style={styles.cardHeader}>
-        <div style={styles.cardTitle}>Contas Bancarias</div>
+        <div style={styles.cardTitle}>Contas Bancárias</div>
         {isDiretor && (
           <Button onClick={() => setModalConta({ nome: '', banco: '', agencia: '', conta: '', tipo: 'corrente', saldo: 0, ativa: true })}>
             + Nova Conta
@@ -983,7 +983,7 @@ export default function Financeiro() {
         <Input label="Nome" value={form.nome || ''} onChange={e => upd('nome', e.target.value)} />
         <div style={styles.formRow}>
           <Input label="Banco" value={form.banco || ''} onChange={e => upd('banco', e.target.value)} />
-          <Input label="Agencia" value={form.agencia || ''} onChange={e => upd('agencia', e.target.value)} />
+          <Input label="Agência" value={form.agencia || ''} onChange={e => upd('agencia', e.target.value)} />
         </div>
         <div style={styles.formRow}>
           <Input label="Conta" value={form.conta || ''} onChange={e => upd('conta', e.target.value)} />
@@ -1008,7 +1008,7 @@ export default function Financeiro() {
       <Modal
         open={!!modalTransacao}
         onClose={() => setModalTransacao(null)}
-        title={form.id ? 'Editar Transacao' : 'Nova Transacao'}
+        title={form.id ? 'Editar Transação' : 'Nova Transação'}
         footer={
           <>
             <Button variant="outline" onClick={() => setModalTransacao(null)}>Cancelar</Button>
@@ -1016,7 +1016,7 @@ export default function Financeiro() {
           </>
         }
       >
-        <Input label="Descricao" value={form.descricao || ''} onChange={e => upd('descricao', e.target.value)} />
+        <Input label="Descrição" value={form.descricao || ''} onChange={e => upd('descricao', e.target.value)} />
         <div style={styles.formRow}>
           <Select label="Conta" value={form.conta_id || ''} onChange={e => upd('conta_id', e.target.value)}>
             <option value="">Selecione...</option>
@@ -1034,7 +1034,7 @@ export default function Financeiro() {
           <Input label="Valor (R$)" type="number" step="0.01" value={form.valor ?? ''} onChange={e => upd('valor', e.target.value)} />
         </div>
         <div style={styles.formRow}>
-          <Input label="Data Competencia" type="date" value={form.data_competencia || ''} onChange={e => upd('data_competencia', e.target.value)} />
+          <Input label="Data Competência" type="date" value={form.data_competencia || ''} onChange={e => upd('data_competencia', e.target.value)} />
           <Input label="Data Pagamento" type="date" value={form.data_pagamento || ''} onChange={e => upd('data_pagamento', e.target.value)} />
         </div>
         <div style={styles.formRow}>
@@ -1043,9 +1043,9 @@ export default function Financeiro() {
             <option value="conciliado">Conciliado</option>
             <option value="cancelado">Cancelado</option>
           </Select>
-          <Input label="Referencia" value={form.referencia || ''} onChange={e => upd('referencia', e.target.value)} />
+          <Input label="Referência" value={form.referencia || ''} onChange={e => upd('referencia', e.target.value)} />
         </div>
-        <Input label="Observacoes" value={form.observacoes || ''} onChange={e => upd('observacoes', e.target.value)} />
+        <Input label="Observações" value={form.observacoes || ''} onChange={e => upd('observacoes', e.target.value)} />
       </Modal>
     );
   };
@@ -1065,7 +1065,7 @@ export default function Financeiro() {
           </>
         }
       >
-        <Input label="Descricao" value={form.descricao || ''} onChange={e => upd('descricao', e.target.value)} />
+        <Input label="Descrição" value={form.descricao || ''} onChange={e => upd('descricao', e.target.value)} />
         <div style={styles.formRow}>
           <Input label="Fornecedor" value={form.fornecedor || ''} onChange={e => upd('fornecedor', e.target.value)} />
           <Input label="Valor (R$)" type="number" step="0.01" value={form.valor ?? ''} onChange={e => upd('valor', e.target.value)} />

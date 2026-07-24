@@ -285,8 +285,8 @@ function IdentificadoresPanel() {
     <div>
       <div style={{ marginBottom: 16, padding: 12, background: 'var(--cbrio-bg)', borderRadius: 6, fontSize: 12, color: C.text2, border: `1px solid ${C.border}` }}>
         <strong style={{ color: C.text }}>Como funciona:</strong> doadores adicionam os centavos finais ao valor pra identificar o destino.
-        Ex: <code>R$ 100,17</code> = Templo · <code>R$ 50,22</code> = Bazar/Missoes · <code>R$ 30,31</code> = Acao Social.
-        Use apenas pra destinos especificos · culto eh classificado pela faixa horaria (slots de culto).
+        Ex: <code>R$ 100,17</code> = Templo · <code>R$ 50,22</code> = Bazar/Missões · <code>R$ 30,31</code> = Ação Social.
+        Use apenas pra destinos específicos · culto é classificado pela faixa horária (slots de culto).
       </div>
 
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
@@ -353,14 +353,14 @@ function IdentificadorModal({ modal, setModal, salvar, centros }) {
           {form.id ? 'Editar' : 'Novo'} identificador de centavo
         </h3>
         <p style={{ fontSize: 12, color: C.text3, marginBottom: 16, lineHeight: 1.4 }}>
-          O centavo marca a campanha/destino especial. A conta do plano de contas eh escolhida na hora da classificacao de cada lancamento.
+          O centavo marca a campanha/destino especial. A conta do plano de contas é escolhida na hora da classificação de cada lançamento.
         </p>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 20 }}>
           <Field label="Centavo">
             <input value={form.centavo || ''} onChange={e => setForm({ ...form, centavo: e.target.value.replace(/\D/g, '').slice(0, 2) })}
               placeholder="25" maxLength={2} disabled={!!form.id} style={inputSt} />
           </Field>
-          <Field label="Descricao">
+          <Field label="Descrição">
             <input value={form.descricao || ''} onChange={e => setForm({ ...form, descricao: e.target.value })}
               placeholder="Templo · campanha do templo central" style={inputSt} />
           </Field>
@@ -375,7 +375,7 @@ function IdentificadorModal({ modal, setModal, salvar, centros }) {
               ))}
             </select>
           </Field>
-          <Field label="Observacao (opcional)">
+          <Field label="Observação (opcional)">
             <input value={form.observacao || ''} onChange={e => setForm({ ...form, observacao: e.target.value })} style={inputSt} />
           </Field>
         </div>
@@ -405,7 +405,7 @@ function truncate(s, n) {
 // ============================================================
 // CULTO SLOTS
 // ============================================================
-const DIAS_SEMANA = ['Domingo', 'Segunda', 'Terca', 'Quarta', 'Quinta', 'Sexta', 'Sabado'];
+const DIAS_SEMANA = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
 
 function CultoSlotsPanel() {
   const [data, setData] = useState([]);
@@ -417,7 +417,7 @@ function CultoSlotsPanel() {
   return (
     <div>
       <div style={{ marginBottom: 16, padding: 12, background: 'var(--cbrio-bg)', borderRadius: 6, fontSize: 12, color: C.text2, border: `1px solid ${C.border}` }}>
-        Slots definem as faixas horarias usadas pra classificar receitas por culto.
+        Slots definem as faixas horárias usadas pra classificar receitas por culto.
         A engine pega a hora do PIX (do End-to-End ID) e identifica em qual janela cai.
       </div>
 
@@ -429,7 +429,7 @@ function CultoSlotsPanel() {
               <th style={th}>Dia</th>
               <th style={th}>Início</th>
               <th style={th}>Fim</th>
-              <th style={th}>Conta dizimo</th>
+              <th style={th}>Conta dízimo</th>
               <th style={th}>Conta oferta</th>
               <th style={th}>Ativo</th>
             </tr>
@@ -469,7 +469,7 @@ function RegrasPanel() {
   return (
     <div>
       <div style={{ marginBottom: 16, padding: 12, background: 'var(--cbrio-bg)', borderRadius: 6, fontSize: 12, color: C.text2, border: `1px solid ${C.border}` }}>
-        Regras explicitas pra classificacao automatica. Ex: <code>RENDIMENTO LIQUIDO DE CONTAMAX</code> sempre vai pra "Rendimentos Aplicacoes Financeiras".
+        Regras explícitas pra classificação automática. Ex: <code>RENDIMENTO LIQUIDO DE CONTAMAX</code> sempre vai pra "Rendimentos Aplicações Financeiras".
       </div>
       <div style={{ background: C.card, border: '1px solid var(--hairline)', borderRadius: 16, boxShadow: 'var(--shadow)', overflow: 'hidden' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
