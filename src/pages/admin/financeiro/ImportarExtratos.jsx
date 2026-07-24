@@ -363,6 +363,9 @@ function ResultadoCard({ r }) {
         {r.classificacao && (
           <div><strong style={{ color: C.blue }}>{r.classificacao.sugeridos}</strong> classificados automaticamente</div>
         )}
+        {r.conciliadas_auto > 0 && (
+          <div><strong style={{ color: C.green }}>{r.conciliadas_auto}</strong> conta(s) a pagar baixada(s) automaticamente</div>
+        )}
       </div>
     </div>
   );

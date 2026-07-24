@@ -24,8 +24,9 @@ const { supabase } = require('../utils/supabase');
 const { parseOfx } = require('../services/ofxParser');
 const { parsePixExtrato } = require('../services/pixExtratoParser');
 const {
-  matchOfxPix, classificarBatch, aprenderClassificacao, resolverMembroPorDocumento,
+  matchOfxPix, classificarBatch, aprenderClassificacao, resolverMembroPorDocumento, sugerirLoteIA,
 } = require('../services/financeiroClassificador');
+const { sugerirMatches, aplicarMatch, baixaAutomaticaPorTransacao } = require('../services/finConciliador');
 const { notificar } = require('../services/notificar');
 
 router.use(authenticate, authorizeModule('financeiro'));
@@ -379,11 +380,24 @@ router.post('/importar/ofx', upload.single('arquivo'), async (req, res) => {
       })
       .eq('id', uploadRow.id);
 
+    // Baixa automática pós-import: pares PERFEITOS extrato × contas a pagar
+    // (score 100 = valor exato + débito único + contraparte casa) são aplicados
+    // sozinhos — conta baixada + transação conciliada. Best-effort.
+    let conciliadasAuto = 0;
+    try {
+      const { pares } = await sugerirMatches();
+      for (const p of pares.filter((x) => x.score === 100)) {
+        const r = await aplicarMatch({ contaId: p.conta.id, brutoId: p.bruto.id, userId: req.user.userId, score: 100, origem: 'conciliacao_auto' });
+        if (!r.erro) conciliadasAuto++;
+      }
+    } catch (e) { console.error('[FIN-V2] conciliação pós-OFX:', e.message); }
+
     res.json({
       upload_id: uploadRow.id,
       total, inseridos, duplicados,
       match_pix: matchResult,
       classificacao: classifResult,
+      conciliadas_auto: conciliadasAuto,
       periodo: { inicio: parsed.header.dtStart, fim: parsed.header.dtEnd },
     });
   } catch (e) {
@@ -830,7 +844,14 @@ router.post('/classificar/:filaId/aprovar', async (req, res) => {
       centro_custo_id: finalCentroCusto,
     });
 
-    res.json({ transacao });
+    // Baixa automática no Contas a Pagar: se esta despesa bate com exatamente
+    // UMA conta pendente (mesmo valor, vencimento ±10d), dá baixa sozinho.
+    let contaBaixada = null;
+    if (transacao?.tipo === 'despesa') {
+      contaBaixada = await baixaAutomaticaPorTransacao(transacao, req.user.userId);
+    }
+
+    res.json({ transacao, conta_pagar_baixada: contaBaixada });
   } catch (e) {
     console.error('[FIN-V2] aprovar:', e);
     res.status(500).json({ error: e.message || 'Erro ao aprovar' });
@@ -1191,7 +1212,13 @@ router.post('/transacoes', async (req, res) => {
       } catch (e) { console.error('[FIN-V2] marcar bruto (transação manual):', e.message); }
     }
 
-    res.json({ ...transacao, conciliada: !!bruto });
+    // Baixa automática no Contas a Pagar (candidato único · best-effort)
+    let contaBaixada = null;
+    if (transacao?.tipo === 'despesa') {
+      contaBaixada = await baixaAutomaticaPorTransacao(transacao, req.user.userId);
+    }
+
+    res.json({ ...transacao, conciliada: !!bruto, conta_pagar_baixada: contaBaixada });
   } catch (e) {
     console.error('[FIN-V2] criar transação:', e);
     res.status(500).json({ error: 'Erro ao criar transação' });
@@ -1336,6 +1363,70 @@ router.delete('/transacoes/:id/anexos', async (req, res) => {
   } catch (e) {
     console.error('[FIN-V2] remover anexo:', e);
     res.status(500).json({ error: 'Erro ao remover anexo' });
+  }
+});
+
+// ====================================================================
+// CONCILIAÇÃO EM LOTE · extrato × contas a pagar (Fase 3)
+// ====================================================================
+
+// Sugestões de match (score 100/85 = seguras · 60 = manual)
+router.get('/conciliacao/sugestoes', async (_req, res) => {
+  try {
+    const r = await sugerirMatches();
+    res.json(r);
+  } catch (e) {
+    console.error('[FIN-V2] conciliação sugestões:', e);
+    res.status(500).json({ error: 'Erro ao montar as sugestões de conciliação' });
+  }
+});
+
+// Aplica pares escolhidos { pares: [{conta_id, bruto_id}] } · coleta erros por par
+router.post('/conciliacao/aplicar', async (req, res) => {
+  try {
+    const pares = Array.isArray(req.body?.pares) ? req.body.pares : [];
+    if (!pares.length) return res.status(400).json({ error: 'Nenhum par selecionado' });
+    const resultados = [];
+    for (const p of pares) {
+      const r = await aplicarMatch({ contaId: p.conta_id, brutoId: p.bruto_id, userId: req.user.userId });
+      resultados.push({ conta_id: p.conta_id, bruto_id: p.bruto_id, ok: !r.erro, erro: r.erro || null });
+    }
+    res.json({ aplicados: resultados.filter(r => r.ok).length, erros: resultados.filter(r => !r.ok), resultados });
+  } catch (e) {
+    console.error('[FIN-V2] conciliação aplicar:', e);
+    res.status(500).json({ error: 'Erro ao aplicar a conciliação' });
+  }
+});
+
+// Aplica TODAS as seguras (score >= 85) · recalcula na hora (nada de par stale)
+router.post('/conciliacao/aplicar-seguros', async (req, res) => {
+  try {
+    const { pares } = await sugerirMatches();
+    const seguras = pares.filter((p) => p.score >= 85);
+    let aplicados = 0;
+    const erros = [];
+    for (const p of seguras) {
+      const r = await aplicarMatch({ contaId: p.conta.id, brutoId: p.bruto.id, userId: req.user.userId, score: p.score });
+      if (r.erro) erros.push({ conta_id: p.conta.id, erro: r.erro });
+      else aplicados++;
+    }
+    res.json({ aplicados, erros });
+  } catch (e) {
+    console.error('[FIN-V2] conciliação seguras:', e);
+    res.status(500).json({ error: 'Erro ao aplicar as conciliações seguras' });
+  }
+});
+
+// Fila de classificação · sugestão por IA em lote pros itens SEM sugestão
+// (máx ~40 por chamada pra caber no timeout serverless · o front repete até
+// restantes=0)
+router.post('/fila-classificacao/sugerir-lote', async (_req, res) => {
+  try {
+    const r = await sugerirLoteIA({ maxItens: 40 });
+    res.json(r);
+  } catch (e) {
+    console.error('[FIN-V2] sugerir lote IA:', e);
+    res.status(500).json({ error: 'Erro ao sugerir com IA' });
   }
 });
 

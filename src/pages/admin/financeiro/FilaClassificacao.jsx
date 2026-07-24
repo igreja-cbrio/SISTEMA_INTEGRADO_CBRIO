@@ -146,6 +146,27 @@ export default function FilaClassificacao() {
     finally { setBulkProcessing(false); }
   };
 
+  // IA em lote pros itens SEM sugestão · repete a chamada até restantes=0
+  // (o servidor processa ~40 por vez pra caber no timeout serverless)
+  const [iaProgresso, setIaProgresso] = useState(null); // texto de progresso
+  const sugerirComIA = async () => {
+    setBulkProcessing(true);
+    setIaProgresso('Analisando…');
+    try {
+      let total = 0, rodadas = 0;
+      while (rodadas < 20) { // trava de segurança
+        const r = await financeiroV2.fila.sugerirLote();
+        total += r.com_sugestao || 0;
+        rodadas += 1;
+        if (!r.restantes || r.processados === 0) break;
+        setIaProgresso(`${total} sugeridos · ${r.restantes} restantes…`);
+      }
+      toast.success(`IA sugeriu classificação pra ${total} lançamento(s)`);
+      load();
+    } catch (e) { toast.error('Erro na sugestão por IA: ' + e.message); }
+    finally { setBulkProcessing(false); setIaProgresso(null); }
+  };
+
   useEffect(() => { load(); }, [load]);
 
   const aprovar = async (item, override = {}) => {
@@ -304,6 +325,10 @@ export default function FilaClassificacao() {
           </Button>
           <Button variant="outline" size="sm" onClick={reclassificar} disabled={bulkProcessing}>
             🔄 Re-classificar pendentes
+          </Button>
+          <Button variant="outline" size="sm" onClick={sugerirComIA} disabled={bulkProcessing}
+            style={{ borderColor: '#8b5cf6', color: '#8b5cf6' }}>
+            {iaProgresso ? `✨ ${iaProgresso}` : '✨ Sugerir com IA (sem sugestão)'}
           </Button>
         </div>
       )}
