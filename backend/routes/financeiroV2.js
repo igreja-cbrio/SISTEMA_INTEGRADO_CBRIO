@@ -24,6 +24,7 @@ const { supabase } = require('../utils/supabase');
 const { parseOfx } = require('../services/ofxParser');
 const { parsePixExtrato } = require('../services/pixExtratoParser');
 const { vincularIdentidadeOfx } = require('../services/ofxIdentidade');
+const conciliacaoOfx = require('../services/conciliacaoBalancoOfx');
 const {
   matchOfxPix, classificarBatch, aprenderClassificacao, resolverMembroPorDocumento, sugerirLoteIA,
 } = require('../services/financeiroClassificador');
@@ -3889,6 +3890,57 @@ router.delete('/contas-pagar/:id/tornar-recorrente', async (req, res) => {
   } catch (e) {
     console.error('[FIN-V2] desfazer recorrente:', e);
     res.status(500).json({ error: 'Erro ao desfazer a recorrência' });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════
+// Conciliação balanço × OFX · identificar o doador por CPF (Fase 3)
+// ════════════════════════════════════════════════════════════════════
+router.post('/conciliar-balanco-ofx', authorizeModule('financeiro', 4), async (req, res) => {
+  try {
+    const { inicio, fim, dry_run } = req.body || {};
+    if (!inicio || !fim) return res.status(400).json({ error: 'inicio e fim são obrigatórios (YYYY-MM-DD)' });
+    const r = await conciliacaoOfx.conciliar({ inicio, fim, dryRun: !!dry_run, userId: req.user.userId });
+    res.json(r);
+  } catch (e) {
+    console.error('[FIN-V2] conciliar balanco×ofx:', e.message);
+    res.status(500).json({ error: e.message || 'Erro na conciliação' });
+  }
+});
+
+router.get('/conciliar-balanco-ofx/revisao', authorizeModule('financeiro', 4), async (req, res) => {
+  try {
+    const { inicio, fim } = req.query;
+    if (!inicio || !fim) return res.status(400).json({ error: 'inicio e fim são obrigatórios' });
+    const revisao = await conciliacaoOfx.listarRevisao({ inicio, fim });
+    res.json({ revisao });
+  } catch (e) {
+    console.error('[FIN-V2] revisao conciliacao:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao listar revisão' });
+  }
+});
+
+router.post('/conciliar-balanco-ofx/confirmar', authorizeModule('financeiro', 4), async (req, res) => {
+  try {
+    const { transacao_id, bruto_id } = req.body || {};
+    if (!transacao_id || !bruto_id) return res.status(400).json({ error: 'transacao_id e bruto_id são obrigatórios' });
+    const r = await conciliacaoOfx.confirmarVinculo({ transacaoId: transacao_id, brutoId: bruto_id, userId: req.user.userId });
+    res.json(r);
+  } catch (e) {
+    console.error('[FIN-V2] confirmar vinculo:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao confirmar' });
+  }
+});
+
+router.post('/conciliar-balanco-ofx/ignorar', authorizeModule('financeiro', 4), async (req, res) => {
+  try {
+    const { transacao_id } = req.body || {};
+    if (!transacao_id) return res.status(400).json({ error: 'transacao_id é obrigatório' });
+    const r = await conciliacaoOfx.ignorarVinculo({ transacaoId: transacao_id, userId: req.user.userId });
+    res.json(r);
+  } catch (e) {
+    console.error('[FIN-V2] ignorar vinculo:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao ignorar' });
   }
 });
 
