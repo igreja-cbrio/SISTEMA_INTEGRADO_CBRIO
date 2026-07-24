@@ -14,7 +14,7 @@
 //    proativo (o que a Meta bloqueava).
 // ============================================================================
 const { supabase } = require('../utils/supabase');
-const { montarEnvioFrequencia, montarEnvioMaterial, rotuloMes } = require('./gruposWhatsapp');
+const { montarEnvioFrequencia, montarEnvioMaterial, montarEnvioAbertura, rotuloMes } = require('./gruposWhatsapp');
 const { enfileirarLote } = require('./whatsappFila');
 // Config dos interruptores vive no módulo leaf (sem require circular).
 const { bloqueioTotalAtivo } = require('./gruposEnviosConfig');
@@ -49,7 +49,10 @@ async function resolverGruposAudiencia(audiencia) {
 }
 
 // Constrói a lista de destinatários + exclusões (respeitando opt-out e roster).
-async function montarDestinatariosFrequencia(audiencia) {
+// exigirRoster: a chamada de frequência só faz sentido em grupo COM roster; o
+// convite de abertura vai pra TODO líder (inclusive de grupo ainda vazio, pra
+// as pessoas se inscreverem) → chama com { exigirRoster: false }.
+async function montarDestinatariosFrequencia(audiencia, { exigirRoster = true } = {}) {
   const r = await resolverGruposAudiencia(audiencia);
   if (r.erro) return r;
   const { temporada, grupos } = r;
@@ -67,13 +70,15 @@ async function montarDestinatariosFrequencia(audiencia) {
   const { data: optouts } = await supabase.from('whatsapp_lideres')
     .select('telefone, recebe_lembretes').is('deleted_at', null).eq('recebe_lembretes', false);
   const optOutSet = new Set((optouts || []).map(o => tel8(o.telefone)).filter(Boolean));
-  // Roster ativo por grupo (paginado)
+  // Roster ativo por grupo (paginado) · só quando a audiência exige roster
   const comRoster = new Set();
-  for (let off = 0; ; off += 1000) {
-    const { data: pag } = await supabase.from('mem_grupo_membros')
-      .select('grupo_id').is('saiu_em', null).is('deleted_at', null).order('id').range(off, off + 999);
-    (pag || []).forEach(v => comRoster.add(v.grupo_id));
-    if (!pag || pag.length < 1000) break;
+  if (exigirRoster) {
+    for (let off = 0; ; off += 1000) {
+      const { data: pag } = await supabase.from('mem_grupo_membros')
+        .select('grupo_id').is('saiu_em', null).is('deleted_at', null).order('id').range(off, off + 999);
+      (pag || []).forEach(v => comRoster.add(v.grupo_id));
+      if (!pag || pag.length < 1000) break;
+    }
   }
 
   const incluidos = [];
@@ -83,7 +88,7 @@ async function montarDestinatariosFrequencia(audiencia) {
     const lider = lideres.get(g.lider_id);
     if (!lider || soDigitos(lider.telefone).length < 10) { excluidos.sem_telefone++; continue; }
     if (optOutSet.has(tel8(lider.telefone))) { excluidos.opt_out++; continue; }
-    if (!comRoster.has(g.id)) { excluidos.sem_roster++; continue; }
+    if (exigirRoster && !comRoster.has(g.id)) { excluidos.sem_roster++; continue; }
     incluidos.push({ grupo: g, lider });
   }
   return { temporada, incluidos, excluidos, total: incluidos.length };
@@ -176,10 +181,53 @@ async function dispararMaterial(audiencia, { link, titulo }) {
   };
 }
 
+// ── ABERTURA DE INSCRIÇÕES (convite pros líderes · Marcos 2026-07-24) ────────
+// Vai pra TODO líder de grupo ativo (não exige roster — grupo vazio também quer
+// gente). O líder encaminha o link no WhatsApp do próprio grupo.
+async function previewAbertura(audiencia) {
+  const r = await montarDestinatariosFrequencia(audiencia, { exigirRoster: false });
+  if (r.erro) return r;
+  const primeiro = r.incluidos[0];
+  let exemplo = null;
+  if (primeiro) {
+    const nome = (primeiro.lider.nome || '').trim().split(/\s+/)[0] || 'líder';
+    exemplo = {
+      lider: primeiro.lider.nome,
+      grupo: primeiro.grupo.nome,
+      texto: `Oi, ${nome}! As inscrições da nova temporada dos grupos de conexão já estão abertas. `
+        + `É só encaminhar no WhatsApp do seu grupo o convite com o link cbrio.org/inscricao-grupos. `
+        + `(via template abertura_grupos_convite_lider)`,
+    };
+  }
+  return {
+    total: r.total,
+    exemplo,
+    excluidos: r.excluidos,
+    excluidos_total: Object.values(r.excluidos).reduce((a, b) => a + b, 0),
+  };
+}
+
+async function dispararAbertura(audiencia) {
+  if (await bloqueioTotalAtivo()) return { erro: 'Envios de grupos estão BLOQUEADOS (bloqueio geral ligado). Desligue na aba Envios pra poder enviar.' };
+  const r = await montarDestinatariosFrequencia(audiencia, { exigirRoster: false });
+  if (r.erro) return r;
+  const envios = [];
+  let semTemplate = 0;
+  for (const { lider } of r.incluidos) {
+    const m = montarEnvioAbertura({ lider });
+    if (m.erro) { semTemplate++; continue; }
+    envios.push(m.envio);
+  }
+  const lote = envios.length ? await enfileirarLote(envios) : { queued: 0 };
+  return { enfileirados: lote.queued, destinatarios: r.total, excluidos: r.excluidos, falhou_montar: semTemplate };
+}
+
 module.exports = {
   previewFrequencia,
   dispararFrequencia,
   previewMaterial,
   dispararMaterial,
+  previewAbertura,
+  dispararAbertura,
   montarDestinatariosFrequencia,
 };

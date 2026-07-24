@@ -1932,6 +1932,27 @@ router.post('/envios/frequencia', authorizeModule('grupos', 5), async (req, res)
   } catch (e) { console.error('[grupos envios freq disparar]', e.message); res.status(500).json({ error: 'Erro ao disparar a frequência' }); }
 });
 
+// ABERTURA — convite pros LÍDERES (Utility · template abertura_grupos_convite_lider)
+// avisando que as inscrições abriram, pra eles encaminharem o link no grupo.
+// Todo líder de grupo ativo (não exige roster). Só sai de fato após o template
+// ser aprovado na Meta (a fila falha por-mensagem enquanto não estiver).
+router.post('/envios/abertura/preview', authorizeModule('grupos', 3), async (req, res) => {
+  try {
+    const r = await gruposEnvios.previewAbertura(req.body?.audiencia || {});
+    if (r.erro) return res.status(400).json({ error: r.erro });
+    res.json(r);
+  } catch (e) { console.error('[grupos envios abertura preview]', e.message); res.status(500).json({ error: 'Erro ao gerar prévia' }); }
+});
+
+router.post('/envios/abertura', authorizeModule('grupos', 5), async (req, res) => {
+  try {
+    if (!whatsappConfigurado()) return res.status(409).json({ error: 'O envio de WhatsApp não está configurado no servidor.' });
+    const r = await gruposEnvios.dispararAbertura(req.body?.audiencia || {});
+    if (r.erro) return res.status(400).json({ error: r.erro });
+    res.json({ ok: true, ...r });
+  } catch (e) { console.error('[grupos envios abertura disparar]', e.message); res.status(500).json({ error: 'Erro ao disparar o convite de abertura' }); }
+});
+
 // MATERIAL — mesmo público da frequência, mas anexa um arquivo (Marcos 23/07).
 // Preview idêntico (quem recebe); o disparo sobe o arquivo e manda o link por
 // template. ⚠️ Sem template de material aprovado na Meta, nada sai (motivo

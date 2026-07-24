@@ -54,6 +54,14 @@ export default function GruposEnvios({ podeEditar = false }) {
   const [carregandoPreviewM, setCarregandoPreviewM] = useState(false);
   const [enviandoM, setEnviandoM] = useState(false);
 
+  // Box "Convite de abertura" — avisa o líder que as inscrições abriram (Utility).
+  const [tipoAudA, setTipoAudA] = useState('todos');
+  const [valorAudA, setValorAudA] = useState('');
+  const [previewA, setPreviewA] = useState(null);
+  const [carregandoPreviewA, setCarregandoPreviewA] = useState(false);
+  const [enviandoA, setEnviandoA] = useState(false);
+  const [confirmandoA, setConfirmandoA] = useState(false);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -147,6 +155,29 @@ export default function GruposEnvios({ podeEditar = false }) {
       api.envios.historico().then(res => setHistorico(res?.items || [])).catch(() => {});
     } catch (e) { toast.error(e.message || 'Erro ao enviar o material'); }
     finally { setEnviandoM(false); }
+  };
+
+  // ── Convite de abertura (líderes encaminham no grupo) ──
+  const audienciaA = () => ({ tipo: tipoAudA, valor: tipoAudA === 'todos' ? null : valorAudA });
+  const audienciaAValida = () => tipoAudA === 'todos' || !!valorAudA;
+
+  const gerarPreviewA = async () => {
+    if (!audienciaAValida()) { toast.error('Escolha o destino.'); return; }
+    setCarregandoPreviewA(true); setPreviewA(null);
+    try { setPreviewA(await api.envios.previewAbertura(audienciaA())); }
+    catch (e) { toast.error(e.message || 'Erro ao gerar prévia'); }
+    finally { setCarregandoPreviewA(false); }
+  };
+
+  const enviarAbertura = async () => {
+    setEnviandoA(true); setConfirmandoA(false);
+    try {
+      const r = await api.envios.dispararAbertura(audienciaA());
+      toast.success(`${r.enfileirados} mensagem(ns) na fila de envio`);
+      setPreviewA(null); setValorAudA('');
+      api.envios.historico().then(res => setHistorico(res?.items || [])).catch(() => {});
+    } catch (e) { toast.error(e.message || 'Erro ao enviar'); }
+    finally { setEnviandoA(false); }
   };
 
   const dispararRenovacao = async () => {
@@ -280,6 +311,77 @@ export default function GruposEnvios({ podeEditar = false }) {
             {preview.total > 0 ? (
               <Button disabled={enviando || !podeEditar} onClick={() => setConfirmando(true)}>
                 <Send size={14} style={{ marginRight: 6 }} /> Enviar para {preview.total} líder(es)
+              </Button>
+            ) : (
+              <div style={{ fontSize: 13, color: C.amber }}>Ninguém para enviar com esse destino.</div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* 2a) CONVITE DE ABERTURA — avisa o líder que as inscrições abriram, pra
+           ele encaminhar o link no grupo (Utility · o link vive no template) */}
+      <div style={{ background: C.card, borderRadius: 16, border: `1px solid ${C.border}`, padding: 18, opacity: bloqueado ? 0.6 : 1 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+          <Send size={17} style={{ color: C.primary }} />
+          <h2 style={{ fontSize: 15, fontWeight: 700, color: C.text, margin: 0 }}>Convite de abertura pros líderes (manual)</h2>
+        </div>
+        <p style={{ fontSize: 12.5, color: C.t3, margin: '0 0 12px', lineHeight: 1.5 }}>
+          Avisa cada líder que as inscrições da temporada abriram e manda o texto pra ele <strong>encaminhar no WhatsApp do próprio grupo</strong> (o link vai no template). {bloqueado && <strong style={{ color: C.red }}>Bloqueio geral ligado — nada sai. </strong>}
+          Só sai depois do template <code>abertura_grupos_convite_lider</code> ser aprovado na Meta.
+        </p>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12 }}>
+          <select value={tipoAudA} onChange={e => { setTipoAudA(e.target.value); setValorAudA(''); setPreviewA(null); }} style={selStyle}>
+            <option value="todos">Todos os líderes</option>
+            <option value="lider">Um líder específico</option>
+            <option value="bairro">Por bairro</option>
+            <option value="rede">Por rede</option>
+          </select>
+          {tipoAudA === 'lider' && (
+            <select value={valorAudA} onChange={e => { setValorAudA(e.target.value); setPreviewA(null); }} style={{ ...selStyle, minWidth: 260 }}>
+              <option value="">Escolha o grupo/líder...</option>
+              {(aux?.grupos || []).map(g => <option key={g.id} value={g.id}>{g.nome}{g.lider_nome ? ` — ${g.lider_nome}` : ''}</option>)}
+            </select>
+          )}
+          {tipoAudA === 'bairro' && (
+            <select value={valorAudA} onChange={e => { setValorAudA(e.target.value); setPreviewA(null); }} style={selStyle}>
+              <option value="">Escolha o bairro...</option>
+              {(aux?.bairros || []).map(b => <option key={b} value={b}>{b}</option>)}
+            </select>
+          )}
+          {tipoAudA === 'rede' && (
+            <select value={valorAudA} onChange={e => { setValorAudA(e.target.value); setPreviewA(null); }} style={selStyle}>
+              <option value="">Escolha a rede...</option>
+              {(aux?.redes || []).map(r => <option key={r.id} value={r.id}>{r.nome}</option>)}
+            </select>
+          )}
+          <Button variant="outline" disabled={carregandoPreviewA || !audienciaAValida()} onClick={gerarPreviewA}>
+            {carregandoPreviewA ? 'Calculando...' : 'Ver prévia'}
+          </Button>
+        </div>
+
+        {previewA && (
+          <div style={{ border: `1px solid ${C.border}`, borderRadius: 12, padding: 14, background: C.bg }}>
+            <div style={{ fontSize: 13.5, color: C.text, fontWeight: 600, marginBottom: 8 }}>
+              <Users size={14} style={{ display: 'inline', verticalAlign: -2, marginRight: 6, color: C.primary }} />
+              {previewA.total} líder(es) vão receber o convite de abertura
+            </div>
+            {previewA.exemplo && (
+              <div style={{ fontSize: 12.5, color: C.t2, fontStyle: 'italic', borderLeft: `3px solid ${C.primary}`, paddingLeft: 10, marginBottom: 10, lineHeight: 1.5 }}>
+                Ex. ({previewA.exemplo.lider}): "{previewA.exemplo.texto}"
+              </div>
+            )}
+            {previewA.excluidos_total > 0 && (
+              <div style={{ fontSize: 12, color: C.t3, marginBottom: 10 }}>
+                🚫 {previewA.excluidos_total} não recebem:
+                {previewA.excluidos.sem_lider ? ` ${previewA.excluidos.sem_lider} sem líder ·` : ''}
+                {previewA.excluidos.sem_telefone ? ` ${previewA.excluidos.sem_telefone} sem WhatsApp ·` : ''}
+                {previewA.excluidos.opt_out ? ` ${previewA.excluidos.opt_out} pediram pra não receber` : ''}
+              </div>
+            )}
+            {previewA.total > 0 ? (
+              <Button disabled={enviandoA || !podeEditar} onClick={() => setConfirmandoA(true)}>
+                <Send size={14} style={{ marginRight: 6 }} /> Enviar para {previewA.total} líder(es)
               </Button>
             ) : (
               <div style={{ fontSize: 13, color: C.amber }}>Ninguém para enviar com esse destino.</div>
@@ -449,6 +551,25 @@ export default function GruposEnvios({ podeEditar = false }) {
               <Button variant="outline" style={{ flex: 1 }} onClick={() => setConfirmando(false)}>Cancelar</Button>
               <Button style={{ flex: 1 }} disabled={enviando} onClick={enviarFrequencia}>
                 {enviando ? 'Enviando...' : `Enviar para ${preview.total}`}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmação do convite de abertura (número = o freio) */}
+      {confirmandoA && previewA && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 1100, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.55)', padding: 16 }}>
+          <div style={{ width: '100%', maxWidth: 420, background: C.card, borderRadius: 16, border: `1px solid ${C.border}`, padding: 20 }}>
+            <h3 style={{ fontSize: 16, fontWeight: 800, color: C.text, margin: '0 0 10px' }}>Confirmar envio</h3>
+            <p style={{ fontSize: 13.5, color: C.t2, margin: '0 0 16px', lineHeight: 1.6 }}>
+              Vou mandar o convite de abertura para <strong style={{ color: C.primary }}>{previewA.total} líder(es)</strong> agora — eles encaminham o link no grupo.
+              {previewA.total >= 20 && <> É um disparo grande — confirme que é isso.</>}
+            </p>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <Button variant="outline" style={{ flex: 1 }} onClick={() => setConfirmandoA(false)}>Cancelar</Button>
+              <Button style={{ flex: 1 }} disabled={enviandoA} onClick={enviarAbertura}>
+                {enviandoA ? 'Enviando...' : `Enviar para ${previewA.total}`}
               </Button>
             </div>
           </div>
