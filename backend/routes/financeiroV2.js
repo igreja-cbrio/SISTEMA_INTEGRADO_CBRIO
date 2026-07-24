@@ -1090,7 +1090,9 @@ router.get('/dashboard/semana', async (req, res) => {
       .from('vw_fin_transacoes_completa')
       .select('valor, tipo, plano_contas_codigo, plano_contas_natureza, centro_custo_codigo, culto_nome, culto_service_type_slug')
       .gte('data_competencia', inicio).lte('data_competencia', fim)
-      .neq('status', 'cancelado');
+      .neq('status', 'cancelado')
+      // Guardrail dupla contagem: balanço = verdade; ignora linhas do OFX aprovado.
+      .is('lancamento_bruto_id', null);
 
     const receitas = (trans || []).filter(t => t.tipo === 'receita').reduce((s, t) => s + Number(t.valor), 0);
     const despesas = (trans || []).filter(t => t.tipo === 'despesa').reduce((s, t) => s + Number(t.valor), 0);
@@ -2294,7 +2296,11 @@ router.get('/dashboard/semana-completa', async (req, res) => {
         .select(cols)
         .gte('data_competencia', ini).lte('data_competencia', fim)
         .eq('tipo', 'receita').neq('status', 'cancelado')
-        .in('classe_movimento', ['ordinaria', 'extraordinaria']);
+        .in('classe_movimento', ['ordinaria', 'extraordinaria'])
+        // Guardrail dupla contagem: balanço é a fonte de verdade; ignora receita
+        // vinda do OFX aprovado (que teria lancamento_bruto_id). O balanço nunca
+        // tem lancamento_bruto_id, então isso mantém balanço+manual e exclui OFX.
+        .is('lancamento_bruto_id', null);
       if (centroCodigo) q = q.like('centro_custo_codigo', `${centroCodigo}%`);
       if (planoCodigo) q = q.like('plano_contas_codigo', `${planoCodigo}%`);
       return (await q.limit(50000)).data || [];
@@ -2337,7 +2343,9 @@ router.get('/dashboard/semana-completa', async (req, res) => {
       supabase.from('vw_fin_transacoes_completa')
         .select('plano_contas_codigo, plano_contas_nome, plano_contas_natureza, valor, culto_nome, culto_service_type_slug, data_competencia, classe_movimento')
         .gte('data_competencia', range.inicio).lte('data_competencia', range.fim)
-        .eq('tipo', 'receita').neq('status', 'cancelado'),
+        .eq('tipo', 'receita').neq('status', 'cancelado')
+        // Guardrail dupla contagem: ignora receita do OFX aprovado (balanço = verdade).
+        .is('lancamento_bruto_id', null),
     ]);
 
     // Quando há filtro, recomputa receita/buckets/cultos/top/histórico das transações
