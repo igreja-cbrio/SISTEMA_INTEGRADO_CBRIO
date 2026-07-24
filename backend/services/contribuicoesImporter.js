@@ -198,6 +198,19 @@ async function refsJaGravadas(refs) {
   return existentes;
 }
 
+// Executa `fn` sobre `items` com concorrência limitada (não sequencial, não
+// tudo de uma vez). Preserva a ordem NÃO importa — quem chama grava no Map.
+async function mapLimit(items, limit, fn) {
+  let i = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (i < items.length) {
+      const idx = i++;
+      await fn(items[idx]);
+    }
+  });
+  await Promise.all(workers);
+}
+
 // ── processar · o coração ────────────────────────────────────────────────────
 // Pra cada linha: valida → casa pessoa → calcula ref → checa duplicidade →
 // (se commit) insere em lote. Modo prévia (commit=false) faz tudo menos gravar.
@@ -211,6 +224,21 @@ async function processar(rows, { userId = null, commit = false } = {}) {
     colunas_detectadas: null, // preenchido pela rota (vem do parse)
     amostra_sem_vinculo: [],
   };
+
+  // Pré-computa o match de cada linha EM PARALELO (concorrência limitada). O
+  // gargalo era chamar o matcher SEQUENCIALMENTE linha a linha — num arquivo
+  // grande de contribuições nominais isso passava do tempo do servidor
+  // (→ "Failed to fetch"). Mesma lógica de match (só-leitura, nunca cria
+  // membro); só paraleliza as consultas (REST, fora do pool pg max:1). O loop
+  // abaixo segue igual (ordem/dedup/erros preservados), lendo do Map.
+  const matchByRow = new Map(); // row -> { membro_id... } | { _erro } | null
+  await mapLimit(rows.filter((r) => r.nome || r.cpf), 12, async (row) => {
+    try {
+      matchByRow.set(row, await acharMembroGuardado({ cpf: row.cpf, nome: row.nome }));
+    } catch (e) {
+      matchByRow.set(row, { _erro: e.message });
+    }
+  });
 
   // 1ª passada: valida + casa pessoa + monta payloads candidatos (com ref).
   const candidatos = []; // { ref, payload }
@@ -233,14 +261,14 @@ async function processar(rows, { userId = null, commit = false } = {}) {
       continue;
     }
 
-    // casa a pessoa (SÓ-LEITURA · nunca cria membro)
-    let match = null;
-    try {
-      match = await acharMembroGuardado({ cpf: row.cpf, nome: row.nome });
-    } catch (e) {
-      resumo.erros.push({ linha: row.linha, motivo: 'erro ao casar pessoa: ' + e.message });
+    // casa a pessoa (SÓ-LEITURA · nunca cria membro) — resultado pré-computado
+    // em paralelo acima.
+    const pre = matchByRow.get(row);
+    if (pre && pre._erro) {
+      resumo.erros.push({ linha: row.linha, motivo: 'erro ao casar pessoa: ' + pre._erro });
       continue;
     }
+    const match = pre || null;
     if (!match?.membro_id) {
       resumo.sem_vinculo++;
       if (semVinculoNomes.length < 20) semVinculoNomes.push(row.nome || row.cpf || `linha ${row.linha}`);
