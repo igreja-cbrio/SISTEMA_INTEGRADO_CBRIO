@@ -14,7 +14,7 @@ import { Label } from '../components/ui/label';
 import { Textarea } from '../components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { ScrollArea } from '../components/ui/scroll-area';
-import { Plus, ClipboardList, Clock, CheckCircle2, XCircle, Search as SearchIcon, ArrowRight, List, Upload, FileText, X, Users, Star, Trash2, Image as ImageIcon, Check, ChevronDown, Mail, Pencil, Lock } from 'lucide-react';
+import { Plus, ClipboardList, Clock, CheckCircle2, XCircle, Search as SearchIcon, ArrowRight, List, Upload, FileText, X, Users, Star, Trash2, Image as ImageIcon, Check, ChevronDown, Mail, Pencil, Lock, Info } from 'lucide-react';
 import { supabase } from '../supabaseClient';
 import { toast } from 'sonner';
 
@@ -58,16 +58,20 @@ const KANBAN_COLUMNS = [
 const KANBAN_MACRO = [
   { key: 'aprovacao', label: 'Aprovação', accent: '#00B39D',
     match: ['aguardando_aprovacao_origem', 'aguardando_merito', 'pendente', 'em_analise', 'aguardando_ajuste'],
-    sub: 'precisa de decisão' },
+    sub: 'precisa de decisão',
+    desc: 'Solicitações esperando uma decisão: aprovação do diretor de origem, julgamento de mérito do Pastor Presidente, ou análise/aprovação da área que atende. É aqui que alguém precisa dizer "pode seguir".' },
   { key: 'cotacao_fin', label: 'Cotação & Financeiro', accent: '#0ea5e9',
     match: ['em_cotacao', 'aguardando_aprovacao_financeira'],
-    sub: 'cotação e pagamento' },
+    sub: 'cotação e pagamento',
+    desc: 'Compras aprovadas na origem: o Amaury faz a cotação com os fornecedores e envia ao financeiro; o Alberto aprova o pagamento. A decisão de cada portão é feita nos blocos próprios do card (Cotação) e na tela do Financeiro.' },
   { key: 'andamento', label: 'Em andamento', accent: '#22c55e',
     match: ['aprovado', 'em_atendimento', 'aguardando_entrega', 'sobrestada'],
-    sub: 'aprovadas & em atendimento' },
+    sub: 'aprovadas & em atendimento',
+    desc: 'Já foi aprovado e está sendo executado: comprando, pagando, a caminho da entrega, ou em atendimento pela área. "Em espera" (sobrestada) também fica aqui até ser retomada.' },
   { key: 'concluido', label: 'Concluído', accent: '#8a938f',
     match: ['concluido', 'avaliado'],
-    sub: 'últimos 90 dias' },
+    sub: 'últimos 90 dias',
+    desc: 'Solicitações entregues/finalizadas nos últimos 90 dias. As rejeitadas e canceladas ficam no bloco "Não aprovadas", separado, no rodapé.' },
 ];
 const MACRO_REJEITADO_MATCH = ['rejeitado', 'cancelado'];
 
@@ -451,6 +455,7 @@ export default function Solicitacoes() {
     () => filtered.filter(i => MACRO_REJEITADO_MATCH.includes(i.status)),
     [filtered]);
   const [showRejeitados, setShowRejeitados] = useState(false);
+  const [infoCol, setInfoCol] = useState(null); // qual etapa está com o "izinho" aberto
 
   // Kanban do solicitante (aba Minhas) · colunas macro read-only.
   const colunasSolicitante = useMemo(() => {
@@ -791,16 +796,36 @@ export default function Solicitacoes() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             {columnsMacro.map(col => (
               <div key={col.key} className="flex flex-col">
-                <div className="flex items-center gap-2.5 px-3 py-2 mb-3 rounded-xl border border-border/60"
-                  style={{ background: 'var(--panel)' }}>
-                  <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ background: col.accent }} />
-                  <div className="min-w-0 leading-tight">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-[15px] font-semibold text-foreground">{col.label}</span>
-                      <span className="text-xs font-semibold text-muted-foreground">{col.items.length}</span>
+                <div className="relative mb-3">
+                  <div className="flex items-center gap-2.5 px-3 py-2 rounded-xl border border-border/60"
+                    style={{ background: 'var(--panel)' }}>
+                    <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ background: col.accent }} />
+                    <div className="min-w-0 leading-tight flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[15px] font-semibold text-foreground">{col.label}</span>
+                        <span className="text-xs font-semibold text-muted-foreground">{col.items.length}</span>
+                      </div>
+                      <span className="text-[11px] text-muted-foreground">{col.sub}</span>
                     </div>
-                    <span className="text-[11px] text-muted-foreground">{col.sub}</span>
+                    <button type="button" title="O que é esta etapa?"
+                      onClick={() => setInfoCol(infoCol === col.key ? null : col.key)}
+                      className="shrink-0 text-muted-foreground/70 hover:text-foreground transition-colors">
+                      <Info className="h-4 w-4" />
+                    </button>
                   </div>
+                  {infoCol === col.key && (
+                    <>
+                      <div className="fixed inset-0 z-[1190]" onClick={() => setInfoCol(null)} />
+                      <div className="absolute right-0 top-full mt-1 z-[1200] w-72 rounded-xl border border-border shadow-lg p-3"
+                        style={{ background: 'var(--cbrio-card)' }}>
+                        <div className="flex items-center gap-2 mb-1.5">
+                          <span className="h-2 w-2 rounded-full" style={{ background: col.accent }} />
+                          <span className="text-sm font-semibold text-foreground">{col.label}</span>
+                        </div>
+                        <p className="text-xs text-muted-foreground leading-relaxed">{col.desc}</p>
+                      </div>
+                    </>
+                  )}
                 </div>
                 <ScrollArea className="flex-1 max-h-[calc(100vh-260px)]">
                   <div className="space-y-2.5 pr-1 min-h-[60px]">
@@ -1927,10 +1952,20 @@ function SolicitanteCard({ grupo, maxCarga, onOpen }) {
   );
 }
 
+// Pendente (visão por solicitante) = aguardando decisão OU ação de alguém. NÃO
+// inclui as que já foram aprovadas e estão em execução/entrega (aprovado,
+// em_atendimento, aguardando_entrega) nem as encerradas — essas não "pendem"
+// mais de ninguém (pedido do Matheus 2026-07-24).
+const STATUS_PENDENTE_SOLICITANTE = new Set([
+  'aguardando_aprovacao_origem', 'aguardando_merito', 'pendente', 'em_analise',
+  'aguardando_ajuste', 'em_cotacao', 'aguardando_aprovacao_financeira', 'sobrestada',
+]);
 function PainelPorSolicitante({ items, onOpen }) {
-  // Só solicitações ABERTAS (não encerradas) · com o tempo o histórico acumula
-  // e polui a visão por solicitante (pedido do Matheus 2026-07-22).
-  const ativos = useMemo(() => (items || []).filter(i => !ehEncerrada(i)), [items]);
+  // Só as PENDENTES (aguardando decisão/ação) · o histórico e o que já está em
+  // execução poluíam a visão por solicitante (pedido do Matheus 2026-07-24).
+  const ativos = useMemo(
+    () => (items || []).filter(i => STATUS_PENDENTE_SOLICITANTE.has(i.status)),
+    [items]);
   const grupos = useMemo(() => {
     const map = new Map();
     for (const it of ativos) {
@@ -1959,13 +1994,13 @@ function PainelPorSolicitante({ items, onOpen }) {
   const totalSla = ativos.filter(i => { const s = getSlaBadge(i); return !!s && s.color.includes('rose'); }).length;
 
   if (ativos.length === 0) {
-    return <Card className="p-8 text-center text-muted-foreground">Nenhuma solicitação aberta para os filtros atuais. 🎉</Card>;
+    return <Card className="p-8 text-center text-muted-foreground">Nenhuma solicitação pendente para os filtros atuais. 🎉</Card>;
   }
 
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <StatMini label="Solicitações ativas" valor={ativos.length} />
+        <StatMini label="Solicitações pendentes" valor={ativos.length} />
         <StatMini label="Solicitantes" valor={grupos.length} />
         <StatMini label="Urgentes" valor={urgentesGlobais.length} tom="rose" />
         <StatMini label="SLA atrasado" valor={totalSla} tom="amber" />
@@ -2020,9 +2055,19 @@ function CardMacro({ item, canAgir, concluido = false, rejeitado = false, onStat
   const sla = getSlaBadge(item);
   const st = getStatusMeta(item.status);
   const solic = item.solicitante?.name || 'Desconhecido';
-  // Ação primária do board macro (mesma régua do SolicitacaoCard · origem/mérito/
-  // financeiro se decidem nas abas próprias, então aqui só as do fluxo de atendimento).
+  const valor = Number(item.valor_estimado);
+  const money = valor > 0 ? valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : null;
+  // Ação primária do card · MESMA régua do DetailDialog (não pode oferecer um
+  // status que caia num portão do fluxo · o backend recusa em_cotacao/financeiro/
+  // origem/mérito/sobrestada). Compra pós-aprovação-financeira: cartão → o Amaury
+  // marca "comprado"; demais → o financeiro marca "pago"; depois confirma entrega.
+  const posAprov = ['compras', 'servico'].includes(item.categoria) && !!item.aprovado_financeiro_em;
+  const ehAguardandoCompra = posAprov && item.status === 'pendente' && item.area_responsavel === 'logistica_compras';
+  const ehAguardandoPagamento = posAprov && item.status === 'em_atendimento' && item.area_responsavel === 'financeiro';
   const acao = !canAgir ? null
+    : ehAguardandoCompra ? { label: 'Marcar como comprado', to: 'aguardando_entrega' }
+    : ehAguardandoPagamento ? { label: 'Marcar como pago', to: 'aguardando_entrega' }
+    : item.status === 'aguardando_entrega' ? { label: 'Confirmar entrega', to: 'concluido', icon: CheckCircle2 }
     : item.status === 'pendente' ? { label: 'Analisar', to: 'em_analise', icon: ArrowRight }
     : item.status === 'em_analise' ? { label: 'Aprovar', to: 'aprovado' }
     : item.status === 'aprovado' ? { label: 'Concluir', to: 'concluido', icon: CheckCircle2 }
@@ -2053,13 +2098,16 @@ function CardMacro({ item, canAgir, concluido = false, rejeitado = false, onStat
             <span className="text-[11px] text-muted-foreground truncate max-w-[120px]">{solic}</span>
             {item.compartilhar_area === false && <Lock className="h-2.5 w-2.5 text-muted-foreground shrink-0" title="Privada" />}
           </span>
-          {rejeitado ? (
-            <XCircle className="h-3.5 w-3.5 text-rose-500 shrink-0" />
-          ) : concluido ? (
-            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
-          ) : st ? (
-            <span className={`text-[10px] px-1.5 py-0.5 rounded shrink-0 ${st.color}`}>{st.label}</span>
-          ) : null}
+          <div className="flex items-center gap-1.5 shrink-0">
+            {money && <span className={`text-[11px] font-semibold tabular-nums ${concluido ? 'text-muted-foreground' : 'text-foreground'}`}>{money}</span>}
+            {rejeitado ? (
+              <XCircle className="h-3.5 w-3.5 text-rose-500 shrink-0" />
+            ) : concluido ? (
+              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+            ) : st ? (
+              <span className={`text-[10px] px-1.5 py-0.5 rounded shrink-0 ${st.color}`}>{st.label}</span>
+            ) : null}
+          </div>
         </div>
         {acao && (
           <div className="mt-2.5 flex gap-1.5">
@@ -3168,11 +3216,18 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
             // ajuste, nem antes dos portões de aprovação/mérito, nem sobrestada —
             // em espera precisa retomar antes). Aprovar mantém o passo seguinte de
             // Concluir; Rejeitar é terminal (sem Concluir).
-            const podeAprovar = !['concluido', 'cancelado', 'rejeitado', 'avaliado', 'aprovado', 'aguardando_ajuste', 'aguardando_aprovacao_origem', 'aguardando_merito', 'sobrestada'].includes(item.status);
-            const podeRejeitar = !['concluido', 'cancelado', 'rejeitado', 'avaliado', 'aguardando_ajuste', 'aguardando_aprovacao_origem', 'aguardando_merito', 'sobrestada'].includes(item.status);
+            // Portões do fluxo (o backend recusa mudar status por PATCH nesses):
+            // origem, mérito, sobrestada, EM COTAÇÃO e AGUARDANDO APROVAÇÃO FINANCEIRA.
+            // Antes, em_cotacao/aguardando_aprovacao_financeira NÃO estavam aqui → o
+            // botão "Aprovar" aparecia numa compra em cotação e o clique batia no
+            // guard ("está num portão do fluxo"). A cotação se resolve no bloco de
+            // Cotação; a aprovação financeira, na tela do Financeiro.
+            const PORTOES_FLUXO = ['aguardando_aprovacao_origem', 'aguardando_merito', 'sobrestada', 'em_cotacao', 'aguardando_aprovacao_financeira'];
+            const podeAprovar = !['concluido', 'cancelado', 'rejeitado', 'avaliado', 'aprovado', 'aguardando_ajuste', ...PORTOES_FLUXO].includes(item.status);
+            const podeRejeitar = !['concluido', 'cancelado', 'rejeitado', 'avaliado', 'aguardando_ajuste', ...PORTOES_FLUXO].includes(item.status);
             // Ponte estoque · só faz sentido em pedidos de material (logística) ativos
             const podeEstoque = ['compras', 'servico', 'infraestrutura', 'outro'].includes(item.categoria)
-              && !['concluido', 'cancelado', 'rejeitado', 'avaliado', 'aguardando_aprovacao_origem', 'aguardando_merito', 'sobrestada'].includes(item.status);
+              && !['concluido', 'cancelado', 'rejeitado', 'avaliado', ...PORTOES_FLUXO].includes(item.status);
             // Fluxo de compra EXPLÍCITO pós-aprovação financeira: cartão → Amaury
             // COMPRA; demais → financeiro (Cristina) PAGA; depois confirma entrega.
             // Comprado e pago caem no MESMO marco (aguardando_entrega).
