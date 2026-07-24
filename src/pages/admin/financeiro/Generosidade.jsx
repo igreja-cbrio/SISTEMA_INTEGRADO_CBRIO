@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { hrefConversa } from '@/lib/conversas';
 import {
   Loader2, RefreshCw, TrendingUp, TrendingDown, Users, Heart, Wallet,
-  UserCheck, UserX, AlertTriangle, Phone, Mail, ExternalLink,
+  UserCheck, UserX, AlertTriangle, Phone, Mail, ExternalLink, ArrowUp, ArrowDown,
 } from 'lucide-react';
 import { Card, CardContent } from '../../../components/ui/card';
 import { Button } from '../../../components/ui/button';
@@ -296,6 +296,10 @@ function AbaAnonimos() {
 function AbaPararam() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
+  // Ordenação: por valor total ou nº de doações. Default = maior valor primeiro
+  // (quem mais doava e parou · prioridade pastoral). Clicar inverte a direção.
+  const [sortKey, setSortKey] = useState('valor_total'); // 'valor_total' | 'doacoes_total'
+  const [sortDir, setSortDir] = useState('desc');         // 'desc' | 'asc'
 
   useEffect(() => {
     setLoading(true);
@@ -303,6 +307,24 @@ function AbaPararam() {
       .then(r => setItems(Array.isArray(r) ? r : []))
       .finally(() => setLoading(false));
   }, []);
+
+  function ordenarPor(k) {
+    if (sortKey === k) setSortDir(d => (d === 'desc' ? 'asc' : 'desc'));
+    else { setSortKey(k); setSortDir('desc'); }
+  }
+
+  const sorted = useMemo(() => {
+    const arr = [...items];
+    arr.sort((a, b) => {
+      const va = Number(a[sortKey] || 0);
+      const vb = Number(b[sortKey] || 0);
+      return sortDir === 'desc' ? vb - va : va - vb;
+    });
+    return arr;
+  }, [items, sortKey, sortDir]);
+
+  const SetaSort = ({ col }) => sortKey !== col ? null
+    : (sortDir === 'desc' ? <ArrowDown className="h-3 w-3 inline ml-1" /> : <ArrowUp className="h-3 w-3 inline ml-1" />);
 
   return (
     <Card>
@@ -330,14 +352,26 @@ function AbaPararam() {
                 <tr className="border-b border-border text-xs uppercase text-muted-foreground">
                   <th className="text-left py-2 px-2 font-medium">Membro</th>
                   <th className="text-left py-2 px-2 font-medium">Contato</th>
-                  <th className="text-right py-2 px-2 font-medium">Doações</th>
-                  <th className="text-right py-2 px-2 font-medium">Total histórico</th>
+                  <th className="text-right py-2 px-2 font-medium">
+                    <button onClick={() => ordenarPor('doacoes_total')}
+                      className={`inline-flex items-center hover:text-foreground uppercase ${sortKey === 'doacoes_total' ? 'text-foreground' : ''}`}
+                      title="Ordenar por nº de doações">
+                      Doações<SetaSort col="doacoes_total" />
+                    </button>
+                  </th>
+                  <th className="text-right py-2 px-2 font-medium">
+                    <button onClick={() => ordenarPor('valor_total')}
+                      className={`inline-flex items-center hover:text-foreground uppercase ${sortKey === 'valor_total' ? 'text-foreground' : ''}`}
+                      title="Ordenar por valor total">
+                      Total histórico<SetaSort col="valor_total" />
+                    </button>
+                  </th>
                   <th className="text-left py-2 px-2 font-medium">Última</th>
                   <th className="text-right py-2 px-2 font-medium">Inativo há</th>
                 </tr>
               </thead>
               <tbody>
-                {items.map((d) => {
+                {sorted.map((d) => {
                   const dias = Number(d.dias_inativo || 0);
                   const cor = dias > 180 ? 'text-rose-600' : dias > 120 ? 'text-amber-600' : 'text-muted-foreground';
                   return (
