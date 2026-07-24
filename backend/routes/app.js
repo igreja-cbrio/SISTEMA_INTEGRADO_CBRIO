@@ -348,7 +348,9 @@ router.post('/inscricoes', limiterStrict, tryAuth, async (req, res) => {
     // ficha + snapshot de nome/telefone. Pro batismo/next isso melhora a taxa
     // de vínculo do fan-out (trigger fn_app_inscricoes_fanout) — o JWT já
     // identifica a pessoa, não dá pra depender só do que o form mandou.
-    if (ehCuidados || tipo === 'batismo' || tipo === 'next') {
+    // Resolve o membro logado pra TODO tipo (backfill de nome/telefone/CPF —
+    // o CPF virou obrigatório nas inscrições · 2026-07-24)
+    if (true) {
       const membro = await resolveMembroApp(req).catch(() => null);
       if (membro) {
         membroId = membro.id;
@@ -362,6 +364,17 @@ router.post('/inscricoes', limiterStrict, tryAuth, async (req, res) => {
       if (!membroId && typeof extras.membro_id === 'string' && UUID_RE.test(extras.membro_id)) {
         membroId = extras.membro_id;
       }
+    }
+
+    // CPF obrigatório nas INSCRIÇÕES (grupos/batismo/next/voluntariado/retiro/
+    // cursos/eventos). Pedidos pastorais (oração/sos/aconselhamento) e contato
+    // ficam FORA — urgência pastoral não pode travar em documento.
+    if (!ehCuidados && tipo !== 'contato') {
+      const cpfDig = String(dados.cpf || '').replace(/\D+/g, '');
+      if (cpfDig.length !== 11) {
+        return res.status(400).json({ error: 'CPF é obrigatório pra se inscrever — complete seu CPF no perfil do app.' });
+      }
+      dados.cpf = cpfDig;
     }
 
     // Pedido de oração: a IA classifica o tema (pra insights) já no insert.

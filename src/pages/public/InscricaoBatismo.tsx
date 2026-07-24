@@ -221,6 +221,8 @@ export default function InscricaoBatismo() {
     if (!form.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) return setError('E-mail inválido.');
     if (!form.telefone || soDigitos(form.telefone).length < 10) return setError('Telefone inválido.');
     if (!form.cpf || !cpfValido(form.cpf)) return setError('Informe um CPF válido.');
+    if (!form.data_nascimento) return setError('Informe sua data de nascimento.');
+    if (!form.tamanho_camisa) return setError('Escolha o tamanho da camisa.');
 
     setLoading(true);
     try {
@@ -376,7 +378,7 @@ export default function InscricaoBatismo() {
               <SectionTitle>Sobre o batismo</SectionTitle>
               <Row>
                 <SelectField
-                  id="tamanho_camisa" label="Tamanho da camisa"
+                  id="tamanho_camisa" label="Tamanho da camisa" required
                   value={form.tamanho_camisa}
                   onChange={set('tamanho_camisa') as any}
                   options={[

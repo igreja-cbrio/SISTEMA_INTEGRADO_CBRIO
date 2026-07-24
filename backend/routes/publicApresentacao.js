@@ -48,7 +48,7 @@ router.get('/proxima-data', (_req, res) => {
 router.post('/', limiter, async (req, res) => {
   try {
     const {
-      nome_pai, nome_mae, criancas, crianca_nome, crianca_idade, telefone,
+      nome_pai, nome_mae, criancas, crianca_nome, crianca_idade, telefone, cpf_responsavel,
       observacoes, website, // website = honeypot
     } = req.body || {};
 
@@ -67,6 +67,19 @@ router.post('/', limiter, async (req, res) => {
 
     const tel = String(telefone || '').replace(/\D+/g, '');
     if (!lista.length) return res.status(400).json({ error: 'Informe o nome de ao menos uma criança.' });
+    // CPF do responsável obrigatório (pedido da gestão · 2026-07-24 · toda
+    // inscrição do sistema pede CPF — chave da identidade global)
+    const cpfDig = String(cpf_responsavel || '').replace(/\D+/g, '');
+    const cpfOk = (() => {
+      if (cpfDig.length !== 11 || /^(\d)\1+$/.test(cpfDig)) return false;
+      let s1 = 0; for (let i = 0; i < 9; i++) s1 += parseInt(cpfDig[i]) * (10 - i);
+      let d1 = (s1 * 10) % 11; if (d1 === 10) d1 = 0;
+      if (d1 !== parseInt(cpfDig[9])) return false;
+      let s2 = 0; for (let i = 0; i < 10; i++) s2 += parseInt(cpfDig[i]) * (11 - i);
+      let d2 = (s2 * 10) % 11; if (d2 === 10) d2 = 0;
+      return d2 === parseInt(cpfDig[10]);
+    })();
+    if (!cpfOk) return res.status(400).json({ error: 'Informe um CPF válido do responsável.' });
     if (tel.length < 10) return res.status(400).json({ error: 'Telefone inválido.' });
 
     const dataApresentacao = proximoSegundoDomingoISO();
@@ -99,6 +112,7 @@ router.post('/', limiter, async (req, res) => {
           crianca_nome: c.nome,
           crianca_idade: c.idade,
           telefone: tel,
+          cpf_responsavel: cpfDig,
           data_apresentacao: dataApresentacao,
           status: 'pendente',
           origem: 'publico',

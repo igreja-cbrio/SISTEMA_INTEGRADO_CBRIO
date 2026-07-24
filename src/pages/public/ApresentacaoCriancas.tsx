@@ -5,6 +5,20 @@ import { usePublicTheme, PublicThemeToggle } from './publicTheme';
 
 function soDigitos(v: string) { return (v || '').toString().replace(/\D+/g, ''); }
 
+function mascaraCpf(v: string) {
+  const d = v.replace(/\D/g, '').slice(0, 11);
+  return d.replace(/(\d{3})(\d)/, '$1.$2').replace(/(\d{3})\.(\d{3})(\d)/, '$1.$2.$3').replace(/\.(\d{3})(\d)/, '.$1-$2');
+}
+function cpfValido(cpf: string) {
+  const c = cpf.replace(/\D/g, '');
+  if (c.length !== 11 || /^(\d)\1+$/.test(c)) return false;
+  let s1 = 0; for (let i = 0; i < 9; i++) s1 += parseInt(c[i]) * (10 - i);
+  let d1 = (s1 * 10) % 11; if (d1 === 10) d1 = 0;
+  if (d1 !== parseInt(c[9])) return false;
+  let s2 = 0; for (let i = 0; i < 10; i++) s2 += parseInt(c[i]) * (11 - i);
+  let d2 = (s2 * 10) % 11; if (d2 === 10) d2 = 0;
+  return d2 === parseInt(c[10]);
+}
 function mascaraTelefone(v: string) {
   const d = soDigitos(v).slice(0, 11);
   if (d.length <= 2) return d.length ? `(${d}` : '';
@@ -81,7 +95,7 @@ export default function ApresentacaoCriancas() {
   const { C } = usePublicTheme();
   const [proximaData, setProximaData] = useState('');
   const [form, setForm] = useState({
-    nome_pai: '', nome_mae: '', telefone: '',
+    nome_pai: '', nome_mae: '', telefone: '', cpf_responsavel: '',
     website: '', // honeypot
   });
   const [criancas, setCriancas] = useState<{ nome: string; idadeNum: string; idadeUnidade: string }[]>([{ nome: '', idadeNum: '', idadeUnidade: 'meses' }]);
@@ -104,6 +118,7 @@ export default function ApresentacaoCriancas() {
   const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     let v = e.target.value;
     if (k === 'telefone') v = mascaraTelefone(v);
+    if (k === 'cpf_responsavel') v = mascaraCpf(v);
     setForm(f => ({ ...f, [k]: v }));
   };
 
@@ -117,6 +132,7 @@ export default function ApresentacaoCriancas() {
       .filter(c => c.nome.length >= 2);
     if (!criancasValidas.length) return setError('Informe o nome completo de ao menos uma criança.');
     if (soDigitos(form.telefone).length < 10) return setError('Telefone inválido.');
+    if (!cpfValido(form.cpf_responsavel)) return setError('Informe um CPF válido do responsável.');
 
     setLoading(true);
     try {
@@ -125,6 +141,7 @@ export default function ApresentacaoCriancas() {
         nome_mae: form.nome_mae.trim() || null,
         criancas: criancasValidas,
         telefone: form.telefone,
+        cpf_responsavel: form.cpf_responsavel,
       });
       setSent(true);
     } catch (err: any) {
@@ -244,6 +261,7 @@ export default function ApresentacaoCriancas() {
               </button>
 
               <Field id="telefone" label="Telefone para contato" value={form.telefone} onChange={set('telefone')} required placeholder="(00) 00000-0000" inputMode="tel" autoComplete="tel" />
+              <Field id="cpf_responsavel" label="CPF do responsável" value={form.cpf_responsavel} onChange={set('cpf_responsavel')} required placeholder="000.000.000-00" inputMode="numeric" />
 
               <button type="submit" disabled={loading} style={{
                 width: '100%', marginTop: 8, padding: '13px', borderRadius: 12,
