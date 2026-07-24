@@ -106,27 +106,42 @@ function extractDocumento(memo) {
 }
 
 /**
- * Extrai nome de contraparte do MEMO removendo palavras-chave
+ * Extrai o NOME LIMPO da contraparte do MEMO.
+ * Padrão do memo (Itaú): "PIX RECEBIDO <NOME+DD/MM> <NOME COMPLETO> <CPF/CNPJ>"
+ *   ex.: "PIX RECEBIDO TATIANE24/05 TATIANE PEREIRA 091.314.057-03" → "TATIANE PEREIRA"
+ * Santander traz só o CPF (sem nome) → retorna null.
+ * A versão antiga falhava porque o CPF vem FORMATADO (091.314.057-03), e
+ * `\d{8,}` não removia (runs de 3 díg entre pontos), sobrando o lixo + CPF.
  */
 function extractNomeContraparte(memo) {
   if (!memo) return null;
   const prefixos = [
-    'PIX ENVIADO', 'PIX RECEBIDO', 'TED RECEBIDA', 'TED ENVIADA',
-    'PAGAMENTO A FORNECEDORES', 'PAGAMENTO DE BOLETO',
-    'PAGAMENTO CARTAO DE DEBITO',
+    'PIX QR CODE RECEBIDO', 'PIX QR CODE ENVIADO', 'PIX ENVIADO', 'PIX RECEBIDO',
+    'TED RECEBIDA', 'TED ENVIADA', 'DOC RECEBIDO', 'DOC ENVIADO',
+    'TRANSFERENCIA RECEBIDA', 'TRANSFERENCIA ENVIADA',
+    'PAGAMENTO A FORNECEDORES', 'PAGAMENTO DE BOLETO', 'PAGAMENTO CARTAO DE DEBITO',
   ];
-  let s = memo;
+  let s = String(memo);
+  const up = s.toUpperCase();
   for (const p of prefixos) {
-    if (s.toUpperCase().startsWith(p)) {
-      s = s.substring(p.length).trim();
-      break;
-    }
+    if (up.startsWith(p)) { s = s.substring(p.length); break; }
   }
-  // Remove digitos longos (CPF/CNPJ/IDs)
-  s = s.replace(/\d{8,}/g, '').replace(/\s+/g, ' ').trim();
-  // Se sobrou so código (ex: "3957.4900010396-D-000008"), retorna null
-  if (!s || /^[\d.\-/]+$/.test(s)) return null;
-  return s || null;
+  // Remove CPF/CNPJ (formatado ou cru) e ids longos crus.
+  s = s
+    .replace(/\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}/g, ' ') // CNPJ
+    .replace(/\d{3}\.?\d{3}\.?\d{3}-?\d{2}/g, ' ')          // CPF
+    .replace(/\d{6,}/g, ' ');                                // ids crus
+  // Remove o token colado NOME+DD/MM do começo (ex.: "TATIANE24/05 ", "WAGNER 03/05 ").
+  s = s.replace(/^.*?\d{1,2}\/\d{1,2}\s+/, '');
+  // Limpa resíduos de data/hora/códigos e normaliza espaços.
+  s = s
+    .replace(/\b\d{1,2}\/\d{1,2}(\/\d{2,4})?\b/g, ' ')
+    .replace(/[.\-/]{2,}/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  // Precisa sobrar algo que pareça nome (tem letra e ≥3 chars).
+  if (!s || s.length < 3 || !/[A-Za-zÀ-ÿ]/.test(s)) return null;
+  return s;
 }
 
 /**
