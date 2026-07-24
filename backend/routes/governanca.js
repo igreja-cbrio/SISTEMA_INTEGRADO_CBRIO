@@ -52,12 +52,12 @@ function addDays(dateStr, days) {
 }
 
 const TIPOS = [
-  { sigla: 'OKR', nome: 'OKR', cor: '#3b82f6', recorrencia: 'Mensal — 1a quarta', descricao: 'Revisar objetivos estrategicos, KRs em risco, desvios e causas' },
-  { sigla: 'DRE', nome: 'DRE', cor: '#10b981', recorrencia: 'Mensal — 2a quarta', descricao: 'Saude economica: receita, custos, despesas, planejado x realizado' },
-  { sigla: 'KPI', nome: 'KPI', cor: '#f59e0b', recorrencia: 'Mensal — 3a quarta', descricao: 'Performance operacional: 5 pilares, meta x realizado, tendencia' },
-  { sigla: 'CC',  nome: 'Conselho Consultivo', cor: '#8b5cf6', recorrencia: 'Mensal — 4a quarta', descricao: 'Sintese OKR+DRE+KPI, riscos, decisoes estruturais' },
-  { sigla: 'DE',  nome: 'Diretoria Estatutaria', cor: '#ef4444', recorrencia: 'Quadrimestral', descricao: 'Relatório de diretoria: RH, patrimônio, financeiro acumulado' },
-  { sigla: 'AG',  nome: 'Assembleia Geral', cor: '#06b6d4', recorrencia: 'Semestral', descricao: 'Prestacao de contas completa a igreja' },
+  { sigla: 'OKR', nome: 'OKR', cor: '#3b82f6', recorrencia: 'Mensal — 1ª quarta', descricao: 'Revisar objetivos estratégicos, KRs em risco, desvios e causas' },
+  { sigla: 'DRE', nome: 'DRE', cor: '#10b981', recorrencia: 'Mensal — 2ª quarta', descricao: 'Saúde econômica: receita, custos, despesas, planejado x realizado' },
+  { sigla: 'KPI', nome: 'KPI', cor: '#f59e0b', recorrencia: 'Mensal — 3ª quarta', descricao: 'Performance operacional: 5 pilares, meta x realizado, tendência' },
+  { sigla: 'CC',  nome: 'Conselho Consultivo', cor: '#8b5cf6', recorrencia: 'Mensal — 4ª quarta', descricao: 'Síntese OKR+DRE+KPI, riscos, decisões estruturais' },
+  { sigla: 'DE',  nome: 'Diretoria Estatutária', cor: '#ef4444', recorrencia: 'Quadrimestral', descricao: 'Relatório de diretoria: RH, patrimônio, financeiro acumulado' },
+  { sigla: 'AG',  nome: 'Assembleia Geral', cor: '#06b6d4', recorrencia: 'Semestral', descricao: 'Prestação de contas completa à igreja' },
 ];
 
 router.get('/tipos', (req, res) => res.json(TIPOS));
@@ -152,7 +152,7 @@ async function buildOKR() {
       { item: 'Projetos no prazo', ok: atrasados.length === 0, valor: `${proj.length - atrasados.length}/${proj.length}` },
       { item: 'Todos com responsável', ok: projEnriched.every(p => p.responsible), valor: projEnriched.filter(p => !p.responsible).length === 0 ? 'OK' : `${projEnriched.filter(p => !p.responsible).length} sem resp.` },
       { item: 'Marcos de expansão atualizados', ok: marcosAtrasados.length === 0, valor: `${marcos.length - marcosAtrasados.length}/${marcos.length} no prazo` },
-      { item: 'Sem KRs criticos', ok: krsOffTrack === 0, valor: krsOffTrack === 0 ? 'OK' : `${krsOffTrack} KRs abaixo de 50%` },
+      { item: 'Sem KRs críticos', ok: krsOffTrack === 0, valor: krsOffTrack === 0 ? 'OK' : `${krsOffTrack} KRs abaixo de 50%` },
     ],
     resumo: {
       total_objetivos: proj.length, no_prazo: proj.length - atrasados.length - emRisco.length,
@@ -214,7 +214,7 @@ async function buildDRE(mes) {
 
   return {
     checklist: [
-      { item: 'Transacoes do mês lancadas', ok: transAtual.length > 0, valor: `${transAtual.length} transacoes` },
+      { item: 'Transações do mês lançadas', ok: transAtual.length > 0, valor: `${transAtual.length} transações` },
       { item: 'Contas com saldo atualizado', ok: contas.length > 0, valor: `${contas.length} contas ativas` },
       { item: 'Sem contas a pagar vencidas', ok: pagarVencidas.length === 0, valor: pagarVencidas.length === 0 ? 'OK' : `${pagarVencidas.length} vencidas` },
       { item: 'Reembolsos processados', ok: reemb.length === 0, valor: reemb.length === 0 ? 'OK' : `${reemb.length} pendentes` },
@@ -294,7 +294,7 @@ async function buildKPI(mes) {
   return {
     checklist: [
       { item: 'Cultos do mês registrados', ok: cultosAtual.length > 0, valor: `${cultosAtual.length} cultos` },
-      { item: 'Presenca registrada', ok: presMedia > 0, valor: presMedia > 0 ? `Media: ${presMedia}` : 'Sem registros' },
+      { item: 'Presença registrada', ok: presMedia > 0, valor: presMedia > 0 ? `Média: ${presMedia}` : 'Sem registros' },
       { item: 'Dados de generosidade', ok: genPreenchido, valor: genPreenchido ? `${brl(genTotal)} · ${genDoacoes} doações` : 'Não preenchido' },
       { item: 'Membresia atualizada', ok: membrosAtivos > 0, valor: `${membrosAtivos} membros ativos` },
     ],
@@ -354,7 +354,7 @@ async function buildDE() {
   return {
     checklist: [
       { item: 'Quadro de funcionários atualizado', ok: funcs.length > 0, valor: `${funcs.length} ativos` },
-      { item: 'Patrimonio inventariado', ok: bens.length > 0, valor: `${bens.length} bens` },
+      { item: 'Patrimônio inventariado', ok: bens.length > 0, valor: `${bens.length} bens` },
       { item: 'Financeiro acumulado do ano', ok: trans.length > 0, valor: `Resultado: R$ ${(recAno - despAno).toLocaleString('pt-BR')}` },
     ],
     resumo: { funcionarios: funcs.length, bens: bens.length, receita_ano: recAno, despesa_ano: despAno, resultado_ano: recAno - despAno },
@@ -377,7 +377,7 @@ async function buildAG() {
   const despAno = trans.filter(t => t.tipo === 'despesa').reduce((s, t) => s + Number(t.valor), 0);
   return {
     checklist: [
-      { item: 'Projetos com status final', ok: true, valor: `${concluidos}/${proj.length} concluidos` },
+      { item: 'Projetos com status final', ok: true, valor: `${concluidos}/${proj.length} concluídos` },
       { item: 'Financeiro anual fechado', ok: trans.length > 0, valor: `R$ ${recAno.toLocaleString('pt-BR')} rec | R$ ${despAno.toLocaleString('pt-BR')} desp` },
       { item: 'Membresia atualizada', ok: (membrosRes.count || 0) > 0, valor: `${membrosRes.count || 0} membros ativos` },
     ],
@@ -473,17 +473,17 @@ router.get('/cron/lembrete', async (req, res) => {
     const dayOfWeek = new Date().getDay(); // 0=dom, 1=seg
 
     // Só roda na segunda-feira
-    if (dayOfWeek !== 1) return res.json({ skipped: true, reason: 'Não e segunda-feira' });
+    if (dayOfWeek !== 1) return res.json({ skipped: true, reason: 'Não é segunda-feira' });
 
     // Verificar se a próxima quarta é a 1a quarta do mês
     const nextWed = new Date();
     nextWed.setDate(nextWed.getDate() + 2); // segunda + 2 = quarta
-    if (nextWed.getDate() > 7) return res.json({ skipped: true, reason: 'Não e a 1a quarta do mês' });
+    if (nextWed.getDate() > 7) return res.json({ skipped: true, reason: 'Não é a 1ª quarta do mês' });
 
     // Gerar checklist
     const okr = await buildOKR();
     const krsNaoPreenchidos = (okr.checklist.find(c => c.item.includes('valor atual')) || {});
-    const projSemResp = (okr.checklist.find(c => c.item.includes('responsavel')) || {});
+    const projSemResp = (okr.checklist.find(c => c.item.includes('responsável')) || {});
 
     const mensagem = [
       `Reunião OKR em 2 dias (${nextWed.toLocaleDateString('pt-BR')}).`,
