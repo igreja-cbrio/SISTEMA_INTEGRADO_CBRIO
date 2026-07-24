@@ -720,6 +720,80 @@ router.get('/membros/:id', authorizeModule('membros', 1), async (req, res) => {
 });
 
 // ────────────────────────────────────────────────────────────────────────
+// GET /api/membresia/membros/:id/timeline · "log do membro" — linha do tempo
+// agregando as atividades da pessoa em vários módulos, em ordem cronológica.
+// Read-only. Uma query .eq por fonte (poucas linhas por membro · seguro).
+// Fontes espelham o export LGPD; NÃO inclui Kids (dado de menor) nem telemetria.
+// ────────────────────────────────────────────────────────────────────────
+router.get('/membros/:id/timeline', authorizeModule('membros', 1), async (req, res) => {
+  try {
+    const id = req.params.id;
+    const eventos = [];
+    const add = (tipo, data, titulo, detalhe, link) => {
+      if (!data) return;
+      const iso = new Date(data);
+      if (isNaN(iso.getTime())) return;
+      eventos.push({ tipo, data: iso.toISOString(), titulo, detalhe: detalhe || null, link: link || null });
+    };
+    const brl = (v) => 'R$ ' + Math.round(Number(v) || 0).toLocaleString('pt-BR');
+
+    // Resolve o vol_profile (voluntariado liga por vol_profiles.membresia_id).
+    const { data: volProfile } = await supabase.from('vol_profiles')
+      .select('id').eq('membresia_id', id).maybeSingle();
+
+    const [
+      trilha, grupos, contribs, devos, next, batismos, jornada,
+      convertidos, acompanh, encaminh, decisoes, historico, checkins,
+    ] = await Promise.all([
+      supabase.from('mem_trilha_valores').select('etapa, concluida, data_conclusao, created_at').eq('membro_id', id),
+      supabase.from('mem_grupo_membros').select('entrou_em, saiu_em, motivo_saida, grupo:mem_grupos(nome)').eq('membro_id', id),
+      supabase.from('mem_contribuicoes').select('tipo, valor, data, campanha').eq('membro_id', id).is('deleted_at', null).order('data', { ascending: false }).limit(200),
+      supabase.from('mem_devocionais').select('tipo, data_devocional, topico').eq('membro_id', id).order('data_devocional', { ascending: false }).limit(200),
+      supabase.from('next_inscricoes').select('created_at, check_in_at, evento:next_eventos(titulo)').eq('membro_id', id).limit(50),
+      supabase.from('batismo_inscricoes').select('created_at, data_batismo, status').eq('membro_id', id).limit(20),
+      supabase.from('cui_jornada180').select('data_encontro, etapa, presente').eq('membro_id', id).limit(50),
+      supabase.from('cui_convertidos').select('data_culto, observacoes').eq('membro_id', id).limit(20),
+      supabase.from('cui_acompanhamentos').select('data_inicio, data_encerramento, motivo, status').eq('membro_id', id).limit(50),
+      supabase.from('jornada_encaminhamentos').select('encaminhado_em, destino, status').eq('membro_id', id).is('deleted_at', null).limit(50),
+      supabase.from('cultos_decisoes_pessoas').select('registrado_em, tipo_decisao, culto:cultos(data)').eq('membro_id', id).limit(20),
+      supabase.from('mem_historico').select('descricao, data').eq('membro_id', id).order('data', { ascending: false }).limit(50),
+      volProfile?.id
+        ? supabase.from('vol_check_ins').select('checked_in_at, method, service:vol_services(name, scheduled_at)').eq('volunteer_id', volProfile.id).order('checked_in_at', { ascending: false }).limit(100)
+        : Promise.resolve({ data: [] }),
+    ]);
+
+    (trilha.data || []).forEach((t) => t.concluida && add('trilha', t.data_conclusao || t.created_at, `Trilha: ${t.etapa}`, 'Etapa concluída', '/ministerial/membresia'));
+    (grupos.data || []).forEach((g) => {
+      add('grupo', g.entrou_em, `Entrou no grupo${g.grupo?.nome ? ` ${g.grupo.nome}` : ''}`, null, '/grupos');
+      add('grupo_saida', g.saiu_em, `Saiu do grupo${g.grupo?.nome ? ` ${g.grupo.nome}` : ''}`, g.motivo_saida, '/grupos');
+    });
+    (contribs.data || []).forEach((c) => add('contribuicao', c.data, `Doação · ${c.tipo}`, `${brl(c.valor)}${c.campanha ? ` · ${c.campanha}` : ''}`, '/admin/financeiro'));
+    (devos.data || []).forEach((d) => add('devocional', d.data_devocional, 'Devocional', [d.tipo, d.topico].filter(Boolean).join(' · ') || null, '/ministerial/membresia'));
+    (next.data || []).forEach((n) => {
+      add('next', n.created_at, `Inscrição no NEXT${n.evento?.titulo ? ` · ${n.evento.titulo}` : ''}`, null, '/next');
+      add('next_checkin', n.check_in_at, `Check-in no NEXT${n.evento?.titulo ? ` · ${n.evento.titulo}` : ''}`, null, '/next');
+    });
+    (batismos.data || []).forEach((b) => {
+      add('batismo', b.created_at, 'Inscrição no batismo', b.status, '/batismo');
+      if (b.status === 'realizado' || b.status === 'confirmado') add('batismo_realizado', b.data_batismo, 'Batizado', null, '/batismo');
+    });
+    (jornada.data || []).forEach((j) => add('jornada', j.data_encontro, `Encontro pastoral (jornada 180)`, j.etapa ? `Etapa ${j.etapa}` : null, '/ministerial/cuidados'));
+    (convertidos.data || []).forEach((c) => add('conversao', c.data_culto, 'Decisão / conversão', c.observacoes, '/ministerial/cuidados'));
+    (acompanh.data || []).forEach((a) => add('aconselhamento', a.data_inicio, 'Aconselhamento', [a.motivo, a.status].filter(Boolean).join(' · ') || null, '/ministerial/cuidados'));
+    (encaminh.data || []).forEach((e) => add('encaminhamento', e.encaminhado_em, `Encaminhado · ${e.destino}`, e.status, '/ministerial/cuidados'));
+    (decisoes.data || []).forEach((d) => add('decisao', d.registrado_em || d.culto?.data, `Decisão no culto`, d.tipo_decisao, '/integracao'));
+    (historico.data || []).forEach((h) => add('nota', h.data, h.descricao, 'Registro manual', '/ministerial/membresia'));
+    (checkins.data || []).forEach((ci) => add('voluntariado', ci.checked_in_at, 'Check-in de voluntariado', ci.service?.name || null, '/voluntariado'));
+
+    eventos.sort((a, b) => (a.data < b.data ? 1 : -1));
+    res.json({ eventos, total: eventos.length });
+  } catch (e) {
+    console.error('[membresia] timeline:', e.message);
+    res.status(500).json({ error: 'Erro ao montar linha do tempo' });
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────────
 // GET /api/membresia/orfaos-stats · conta voluntários e batismos sem
 // link com mem_membros. Ideal = 0 após a migration 20260515500000.
 // ────────────────────────────────────────────────────────────────────────
