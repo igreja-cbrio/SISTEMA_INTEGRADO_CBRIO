@@ -50,6 +50,38 @@ const KANBAN_COLUMNS = [
   { key: 'rejeitado',      label: 'Rejeitado',    icon: XCircle,      color: 'border-b-red-500',     match: ['rejeitado', 'cancelado'] },
 ];
 
+// Board macro (redesign 2026-07-24 · pedido do Matheus · referência "Board de
+// Solicitações") · as 8 colunas viraram 4 etapas macro pra tirar a rolagem
+// lateral e as colunas vazias. Rejeitadas/canceladas ficam num bloco DISCRETO
+// recolhível embaixo (não é coluna). O status detalhado vira uma pílula discreta
+// no card; a coluna Aprovação ganha o destaque teal (é onde precisa de você).
+const KANBAN_MACRO = [
+  { key: 'aprovacao', label: 'Aprovação', accent: '#00B39D',
+    match: ['aguardando_aprovacao_origem', 'aguardando_merito', 'pendente', 'em_analise', 'aguardando_ajuste'],
+    sub: 'precisa de decisão' },
+  { key: 'cotacao_fin', label: 'Cotação & Financeiro', accent: '#0ea5e9',
+    match: ['em_cotacao', 'aguardando_aprovacao_financeira'],
+    sub: 'cotação e pagamento' },
+  { key: 'andamento', label: 'Em andamento', accent: '#22c55e',
+    match: ['aprovado', 'em_atendimento', 'aguardando_entrega', 'sobrestada'],
+    sub: 'aprovadas & em atendimento' },
+  { key: 'concluido', label: 'Concluído', accent: '#8a938f',
+    match: ['concluido', 'avaliado'],
+    sub: 'últimos 90 dias' },
+];
+const MACRO_REJEITADO_MATCH = ['rejeitado', 'cancelado'];
+
+// Cor de acento por categoria (borda-esquerda + pontinho do card macro). Poucas
+// cores, semânticas (a paleta que o Matheus curtiu na referência): a categoria é
+// o único código de cor "arbitrário"; verde=ação, vermelho=atraso, âmbar=SLA.
+const CAT_ACCENT = {
+  compras: '#f59e0b', infraestrutura: '#6366f1', servico: '#0ea5e9',
+  pagamento: '#10b981', reembolso: '#22c55e', reserva_espaco: '#a855f7',
+  hospitalidade: '#f43f5e', ti: '#3b82f6', marketing: '#ec4899',
+  producao: '#8b5cf6', ferias: '#06b6d4', licenca: '#14b8a6',
+};
+function catAccent(cat) { return CAT_ACCENT[cat] || '#8a938f'; }
+
 // Kanban do SOLICITANTE (aba Minhas · 2026-07-02) · colunas MACRO próprias, TODAS
 // read-only: o solicitante acompanha o pedido, não move (quem move é a área na aba
 // Atender). Não confundir com KANBAN_COLUMNS (board operacional da aba Atender).
@@ -116,7 +148,6 @@ export default function Solicitacoes() {
   const [filterCat, setFilterCat] = useState('todas');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [detailItem, setDetailItem] = useState(null);
-  const [dragOverCol, setDragOverCol] = useState(null);
   // Fase 2 · filtros de escala + período + layout da fila
   const [filterArea, setFilterArea] = useState('todas');
   const [filterStatus, setFilterStatus] = useState('todos');
@@ -410,12 +441,16 @@ export default function Solicitacoes() {
     return r;
   }, [items, filterCat, filterArea, filterStatus, slaOnly, busca]);
 
-  const columns = useMemo(() => {
-    return KANBAN_COLUMNS.map(col => ({
-      ...col,
-      items: filtered.filter(i => (col.match || [col.key]).includes(i.status)),
-    }));
-  }, [filtered]);
+  // Board macro (4 etapas) · redesign 2026-07-24. Rejeitadas ficam separadas
+  // (bloco discreto), fora das 4 colunas.
+  const columnsMacro = useMemo(() => KANBAN_MACRO.map(col => ({
+    ...col,
+    items: filtered.filter(i => col.match.includes(i.status)),
+  })), [filtered]);
+  const rejeitadosMacro = useMemo(
+    () => filtered.filter(i => MACRO_REJEITADO_MATCH.includes(i.status)),
+    [filtered]);
+  const [showRejeitados, setShowRejeitados] = useState(false);
 
   // Kanban do solicitante (aba Minhas) · colunas macro read-only.
   const colunasSolicitante = useMemo(() => {
@@ -751,51 +786,61 @@ export default function Solicitacoes() {
         ) : atenderLayout === 'solicitante' ? (
           <PainelPorSolicitante items={filtered} onOpen={setDetailItem} />
         ) : (
-        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-8 gap-4">
-          {columns.map(col => (
-            <div
-              key={col.key}
-              className={`flex flex-col rounded-lg transition-colors ${dragOverCol === col.key ? 'bg-accent/50 ring-2 ring-primary/30' : ''}`}
-              onDragOver={e => { if (!isResponsavel || col.readOnly) return; e.preventDefault(); setDragOverCol(col.key); }}
-              onDragLeave={() => setDragOverCol(null)}
-              onDrop={e => {
-                e.preventDefault();
-                setDragOverCol(null);
-                if (!isResponsavel || col.readOnly) return;
-                const itemId = e.dataTransfer.getData('text/plain');
-                if (!itemId) return;
-                // Ignora drop na MESMA coluna · não dispara update nem toast
-                // (evita lançamento redundante que mexeria em SLA/indicadores).
-                const item = items.find(i => i.id === itemId);
-                const colAtual = KANBAN_COLUMNS.find(c => (c.match || [c.key]).includes(item?.status))?.key;
-                if (!item || colAtual === col.key) return;
-                handleStatusChange(itemId, col.key);
-              }}
-            >
-              <div className={`flex items-center gap-2 pb-3 mb-3 border-b-2 ${col.color}`} title={col.hint}>
-                <col.icon className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm font-semibold text-foreground">{col.label}</span>
-                <Badge variant="secondary" className="ml-auto text-xs">{col.items.length}</Badge>
+        /* ── Board macro · 4 etapas (redesign 2026-07-24) ── */
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            {columnsMacro.map(col => (
+              <div key={col.key} className="flex flex-col">
+                <div className="flex items-center gap-2.5 px-3 py-2 mb-3 rounded-xl border border-border/60"
+                  style={{ background: 'var(--panel)' }}>
+                  <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ background: col.accent }} />
+                  <div className="min-w-0 leading-tight">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[15px] font-semibold text-foreground">{col.label}</span>
+                      <span className="text-xs font-semibold text-muted-foreground">{col.items.length}</span>
+                    </div>
+                    <span className="text-[11px] text-muted-foreground">{col.sub}</span>
+                  </div>
+                </div>
+                <ScrollArea className="flex-1 max-h-[calc(100vh-260px)]">
+                  <div className="space-y-2.5 pr-1 min-h-[60px]">
+                    {col.items.length === 0 && (
+                      <p className="text-xs text-muted-foreground/50 italic text-center py-10">Nada por aqui</p>
+                    )}
+                    {col.items.map(item => (
+                      <CardMacro
+                        key={item.id}
+                        item={item}
+                        canAgir={isResponsavel}
+                        concluido={col.key === 'concluido'}
+                        onStatusChange={handleStatusChange}
+                        onClick={() => setDetailItem(item)}
+                      />
+                    ))}
+                  </div>
+                </ScrollArea>
               </div>
-              <ScrollArea className="flex-1 max-h-[calc(100vh-280px)]">
-                <div className="space-y-3 pr-1 min-h-[60px]">
-                  {col.items.length === 0 && (
-                    <p className="text-xs text-muted-foreground/60 italic text-center py-8">Nada por aqui</p>
-                  )}
-                  {col.items.map(item => (
-                    <SolicitacaoCard
-                      key={item.id}
-                      item={item}
-                      isAdmin={isResponsavel}
-                      onStatusChange={handleStatusChange}
-                      onClick={() => setDetailItem(item)}
-                      draggable={isResponsavel && !col.readOnly}
-                    />
+            ))}
+          </div>
+          {/* Não aprovadas · bloco discreto recolhível (pedido do Matheus) */}
+          {rejeitadosMacro.length > 0 && (
+            <div className="pt-1 border-t border-border/40">
+              <button type="button" onClick={() => setShowRejeitados(v => !v)}
+                className="inline-flex items-center gap-1.5 mt-3 text-xs text-muted-foreground hover:text-foreground transition-colors">
+                <XCircle className="h-3.5 w-3.5" />
+                Não aprovadas <span className="font-semibold">{rejeitadosMacro.length}</span>
+                <ChevronDown className={`h-3.5 w-3.5 transition-transform ${showRejeitados ? 'rotate-180' : ''}`} />
+              </button>
+              {showRejeitados && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 mt-3">
+                  {rejeitadosMacro.map(item => (
+                    <CardMacro key={item.id} item={item} canAgir={false} concluido rejeitado
+                      onStatusChange={handleStatusChange} onClick={() => setDetailItem(item)} />
                   ))}
                 </div>
-              </ScrollArea>
+              )}
             </div>
-          ))}
+          )}
         </div>
         )}
         </>
@@ -1959,6 +2004,77 @@ function PainelPorSolicitante({ items, onOpen }) {
             )}
           </Card>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// Card do board macro (redesign 2026-07-24 · referência do Matheus). Borda-esquerda
+// colorida por categoria + rótulo/pontinho, data e SLA no topo, título forte, avatar
+// + solicitante + status discreto embaixo, e um botão de ação teal quando o
+// responsável pode agir. Concluídas/rejeitadas ficam apagadas e sem botão.
+function CardMacro({ item, canAgir, concluido = false, rejeitado = false, onStatusChange, onClick }) {
+  const cat = getCatMeta(item.categoria);
+  const accent = catAccent(item.categoria);
+  const date = new Date(item.created_at).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
+  const sla = getSlaBadge(item);
+  const st = getStatusMeta(item.status);
+  const solic = item.solicitante?.name || 'Desconhecido';
+  // Ação primária do board macro (mesma régua do SolicitacaoCard · origem/mérito/
+  // financeiro se decidem nas abas próprias, então aqui só as do fluxo de atendimento).
+  const acao = !canAgir ? null
+    : item.status === 'pendente' ? { label: 'Analisar', to: 'em_analise', icon: ArrowRight }
+    : item.status === 'em_analise' ? { label: 'Aprovar', to: 'aprovado' }
+    : item.status === 'aprovado' ? { label: 'Concluir', to: 'concluido', icon: CheckCircle2 }
+    : null;
+  const podeRejeitar = canAgir && item.status === 'em_analise';
+
+  return (
+    <div
+      onClick={onClick}
+      className="rounded-xl border border-border/60 cursor-pointer transition-all hover:shadow-md hover:border-border"
+      style={{ background: 'var(--cbrio-card)', borderLeft: `3px solid ${accent}` }}
+    >
+      <div className="p-3">
+        <div className="flex items-center justify-between gap-2">
+          <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground truncate">
+            <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ background: accent }} />
+            {cat.label}
+          </span>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <span className="text-[10px] text-muted-foreground tabular-nums">{date}</span>
+            {sla && <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${sla.color}`}>{sla.label}</span>}
+          </div>
+        </div>
+        <p className={`text-sm font-semibold leading-snug mt-1.5 mb-2 line-clamp-2 ${concluido ? 'text-muted-foreground' : 'text-foreground'}`}>{item.titulo}</p>
+        <div className="flex items-center justify-between gap-2">
+          <span className="inline-flex items-center gap-1.5 min-w-0">
+            <span className="h-5 w-5 rounded-full bg-muted text-[9px] font-semibold text-muted-foreground inline-flex items-center justify-center shrink-0">{iniciais(solic)}</span>
+            <span className="text-[11px] text-muted-foreground truncate max-w-[120px]">{solic}</span>
+            {item.compartilhar_area === false && <Lock className="h-2.5 w-2.5 text-muted-foreground shrink-0" title="Privada" />}
+          </span>
+          {rejeitado ? (
+            <XCircle className="h-3.5 w-3.5 text-rose-500 shrink-0" />
+          ) : concluido ? (
+            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+          ) : st ? (
+            <span className={`text-[10px] px-1.5 py-0.5 rounded shrink-0 ${st.color}`}>{st.label}</span>
+          ) : null}
+        </div>
+        {acao && (
+          <div className="mt-2.5 flex gap-1.5">
+            <Button size="sm" className="h-7 text-xs flex-1 bg-primary hover:bg-primary/90 text-primary-foreground"
+              onClick={e => { e.stopPropagation(); onStatusChange(item.id, acao.to); }}>
+              {acao.label}{acao.icon && <acao.icon className="h-3 w-3 ml-1" />}
+            </Button>
+            {podeRejeitar && (
+              <Button size="sm" variant="outline" className="h-7 text-xs px-2 text-rose-600 border-rose-300 dark:border-rose-500/40"
+                onClick={e => { e.stopPropagation(); onStatusChange(item.id, 'rejeitado'); }}>
+                Rejeitar
+              </Button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -3559,21 +3675,17 @@ function TermometroRefeitas() {
   }, []);
   if (!d || !d.total_periodo) return null;
   const pct = d.pct_refeitas;
-  const cor = pct >= 25 ? 'text-red-600 dark:text-red-400'
-    : pct >= 12 ? 'text-amber-600 dark:text-amber-400'
-    : 'text-emerald-600 dark:text-emerald-400';
+  const cor = pct >= 25 ? '#f43f5e' : pct >= 12 ? '#f59e0b' : '#00B39D';
   return (
-    <Card className="p-3 mb-4 flex flex-wrap items-center gap-x-6 gap-y-1">
-      <span className="text-xs font-medium text-muted-foreground">Pedimos bem? · últimos 90 dias</span>
-      <span className="flex items-baseline gap-1.5">
-        <span className={`text-lg font-bold ${cor}`}>{pct}%</span>
-        <span className="text-xs text-muted-foreground">precisaram de ajuste ({d.refeitas} de {d.total_periodo})</span>
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mb-4 text-xs text-muted-foreground">
+      <span className="inline-flex items-center gap-1.5">
+        <span className="h-2 w-2 rounded-full" style={{ background: cor }} />
+        Termômetro · 90 dias · não punitivo
       </span>
-      {d.devolucoes > 0 && (
-        <span className="text-xs text-muted-foreground">{d.devolucoes} devolvida(s) pela área</span>
-      )}
-      <span className="text-[10px] text-muted-foreground/70 ml-auto">termômetro · não punitivo</span>
-    </Card>
+      <span className="text-muted-foreground/40">—</span>
+      <span><span className="font-bold" style={{ color: cor }}>{pct}%</span> precisaram de ajuste ({d.refeitas} de {d.total_periodo})</span>
+      {d.devolucoes > 0 && <span>· {d.devolucoes} devolvida(s) pela área</span>}
+    </div>
   );
 }
 
