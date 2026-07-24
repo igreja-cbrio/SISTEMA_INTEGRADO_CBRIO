@@ -83,6 +83,13 @@ export default function IdentificarDoadores() {
           Casa cada doação do balanço (nome+valor+data) com o PIX do OFX (CPF) e vincula ao membro.
           Conservador: auto-vincula só o inequívoco; o resto vem pra revisão. Não duplica no dashboard.
         </div>
+        <div style={{ fontSize: 12, color: C.text2, marginTop: 8, padding: '8px 10px', borderRadius: 8, background: C.blueBg, lineHeight: 1.5 }}>
+          <b>Como usar:</b> escolha o período → <b>Prévia</b> (não grava) pra ver quantos casam →
+          <b> Conciliar período</b> pra vincular os inequívocos. Sobra a <b>fila de revisão</b>: quando
+          uma doação do balanço bate em valor+data com <b>mais de um</b> PIX, você escolhe qual CPF é o
+          doador e confirma. Cada CPF mostra o nome de quem é na base (o extrato do Santander vem só com
+          o CPF); <i>CPF não cadastrado</i> = ninguém no sistema tem esse CPF ainda.
+        </div>
       </div>
 
       <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap', margin: '14px 0' }}>
@@ -118,7 +125,10 @@ export default function IdentificarDoadores() {
                   {r.candidatos.map(c => (
                     <label key={c.bruto_id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: C.text, cursor: 'pointer', padding: '6px 8px', borderRadius: 8, background: escolha[r.transacao_id] === c.bruto_id ? C.primaryBg : 'transparent' }}>
                       <input type="radio" name={`r${r.transacao_id}`} checked={escolha[r.transacao_id] === c.bruto_id} onChange={() => setEscolha(s => ({ ...s, [r.transacao_id]: c.bruto_id }))} style={{ accentColor: C.primary }} />
-                      <span style={{ fontWeight: 600 }}>{c.nome || '(sem nome no OFX)'}</span>
+                      <span style={{ fontWeight: 600, color: c.nome ? C.text : C.text3, fontStyle: c.nome ? 'normal' : 'italic' }}>
+                        {c.nome || 'CPF não cadastrado'}
+                      </span>
+                      {c.ja_membro && <span style={{ fontSize: 10, fontWeight: 700, color: C.green, background: C.greenBg, padding: '1px 6px', borderRadius: 6 }}>membro</span>}
                       <span style={{ color: C.text3 }}>CPF {fmtCpf(c.cpf)}{c.hora ? ` · ${String(c.hora).slice(0, 5)}` : ''}</span>
                     </label>
                   ))}
