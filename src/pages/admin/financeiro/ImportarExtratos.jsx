@@ -366,6 +366,12 @@ function ResultadoCard({ r }) {
         {r.conciliadas_auto > 0 && (
           <div><strong style={{ color: C.green }}>{r.conciliadas_auto}</strong> conta(s) a pagar baixada(s) automaticamente</div>
         )}
+        {r.identidade && (
+          <div>
+            <strong style={{ color: C.primary }}>{r.identidade.vinculados_existente}</strong> vinculados a membros por CPF
+            {r.identidade.avulsos_criados > 0 && <> · <strong style={{ color: C.blue }}>{r.identidade.avulsos_criados}</strong> novos contribuintes</>}
+          </div>
+        )}
       </div>
     </div>
   );

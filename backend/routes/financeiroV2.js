@@ -23,6 +23,7 @@ const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { parseOfx } = require('../services/ofxParser');
 const { parsePixExtrato } = require('../services/pixExtratoParser');
+const { vincularIdentidadeOfx } = require('../services/ofxIdentidade');
 const {
   matchOfxPix, classificarBatch, aprenderClassificacao, resolverMembroPorDocumento, sugerirLoteIA,
 } = require('../services/financeiroClassificador');
@@ -337,11 +338,25 @@ router.post('/importar/ofx', upload.single('arquivo'), async (req, res) => {
       .select().single();
     if (upErr) return res.status(500).json({ error: upErr.message });
 
+    // Fase 1 · OFX alimenta identidade por CPF: resolve UM membro por CPF/CNPJ
+    // único (observação de identidade + vínculo por CPF exato + cria avulso só
+    // em PIX de crédito). Best-effort — se falhar, o import segue sem membro_id.
+    let identidadeStats = null;
+    let mapaDoc = new Map();
+    try {
+      const r = await vincularIdentidadeOfx(parsed.transactions, { criarAvulso: true });
+      mapaDoc = r.mapaDoc;
+      identidadeStats = r.stats;
+    } catch (e) {
+      console.error('[FIN-V2] identidade OFX:', e.message);
+    }
+
     // Insere lancamentos brutos (ignora duplicados via UNIQUE)
     let inseridos = 0;
     let duplicados = 0;
 
     for (const t of parsed.transactions) {
+      const docLimpo = t.documento_contraparte ? String(t.documento_contraparte).replace(/\D/g, '') : null;
       const payload = {
         fonte: 'ofx',
         conta_id,
@@ -354,6 +369,7 @@ router.post('/importar/ofx', upload.single('arquivo'), async (req, res) => {
         fitid: t.fitid,
         documento_contraparte: t.documento_contraparte,
         nome_contraparte: t.nome_contraparte,
+        membro_id: (docLimpo && mapaDoc.get(docLimpo)) || null,
         raw_data: t.raw_data,
         upload_id: uploadRow.id,
         created_by: req.user.userId,
@@ -401,6 +417,7 @@ router.post('/importar/ofx', upload.single('arquivo'), async (req, res) => {
       match_pix: matchResult,
       classificacao: classifResult,
       conciliadas_auto: conciliadasAuto,
+      identidade: identidadeStats,
       periodo: { inicio: parsed.header.dtStart, fim: parsed.header.dtEnd },
     });
   } catch (e) {
