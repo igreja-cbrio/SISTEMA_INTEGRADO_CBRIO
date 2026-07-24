@@ -700,6 +700,8 @@ router.post('/compras/escanear', uploadNf.single('arquivo'), async (req, res) =>
       });
     } catch (e) { console.error('[LOG] notificar compra:', e.message); }
 
+    // Compra escaneada no cartão → fatura aberta (best-effort)
+    try { await require('../services/finFaturas').vincularCompraNaFatura(compra); } catch (e2) { console.error('[LOG] fatura scan:', e2.message); }
     res.json({ compra, extracao_ok: !!extraido });
   } catch (e) { console.error('[LOG] escanear compra:', e); res.status(500).json({ error: 'Erro ao escanear a nota da compra' }); }
 });
@@ -796,6 +798,8 @@ router.post('/compras', async (req, res) => {
     const { data, error } = await supabase.from('log_compras')
       .insert(payload).select(COMPRA_SELECT).single();
     if (error) return res.status(400).json({ error: error.message });
+    // Compra no cartão → entra na fatura aberta do ciclo (Fase 4 · best-effort)
+    try { await require('../services/finFaturas').vincularCompraNaFatura(data); } catch (e2) { console.error('[LOG] fatura:', e2.message); }
     res.json(data);
   } catch (e) { console.error('[LOG] criar compra:', e); res.status(500).json({ error: 'Erro ao criar compra' }); }
 });

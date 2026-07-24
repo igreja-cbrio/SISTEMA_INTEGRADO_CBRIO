@@ -88,8 +88,10 @@ async function criarCompraPendenteDeNota({ extraido, storagePath, telefone, orig
       extracao_confianca: extraido?.confianca ?? null,
       status_aprovacao: 'pendente',
     })
-    .select('id, fornecedor, valor').single();
+    .select('id, fornecedor, valor, forma_pgto, data_compra').single();
   if (error) { console.error('[COMPRAS] criarCompraPendenteDeNota:', error.message); return null; }
+  // Compra no cartão (WhatsApp/app) → fatura aberta do ciclo (Fase 4 · best-effort)
+  try { await require('./finFaturas').vincularCompraNaFatura(data); } catch (e2) { console.error('[COMPRAS] fatura:', e2.message); }
   return data;
 }
 

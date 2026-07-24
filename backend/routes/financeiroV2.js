@@ -27,6 +27,9 @@ const {
   matchOfxPix, classificarBatch, aprenderClassificacao, resolverMembroPorDocumento, sugerirLoteIA,
 } = require('../services/financeiroClassificador');
 const { sugerirMatches, aplicarMatch, baixaAutomaticaPorTransacao } = require('../services/finConciliador');
+const {
+  vincularTransacaoNaFatura, fecharFaturasVencidas, itensDaFatura, sincronizarFatura,
+} = require('../services/finFaturas');
 const { notificar } = require('../services/notificar');
 
 router.use(authenticate, authorizeModule('financeiro'));
@@ -1158,7 +1161,7 @@ router.post('/transacoes', async (req, res) => {
     const {
       tipo, descricao, valor, data_competencia, data_pagamento, conta_id,
       plano_contas_id, centro_custo_id, forma_pagamento,
-      parcelas_total, parcela_num, observacoes, tentar_conciliar,
+      parcelas_total, parcela_num, observacoes, tentar_conciliar, cartao_id,
     } = req.body;
 
     if (!['receita', 'despesa'].includes(tipo)) {
@@ -1212,13 +1215,20 @@ router.post('/transacoes', async (req, res) => {
       } catch (e) { console.error('[FIN-V2] marcar bruto (transação manual):', e.message); }
     }
 
-    // Baixa automática no Contas a Pagar (candidato único · best-effort)
+    // Despesa no CARTÃO → entra na fatura aberta do ciclo (Fase 4)
+    let faturaId = null;
+    if (transacao?.tipo === 'despesa' && cartao_id) {
+      faturaId = await vincularTransacaoNaFatura(transacao, cartao_id);
+    }
+
+    // Baixa automática no Contas a Pagar (candidato único · best-effort).
+    // Compra de cartão NÃO baixa conta avulsa (ela compõe a fatura).
     let contaBaixada = null;
-    if (transacao?.tipo === 'despesa') {
+    if (transacao?.tipo === 'despesa' && !faturaId) {
       contaBaixada = await baixaAutomaticaPorTransacao(transacao, req.user.userId);
     }
 
-    res.json({ ...transacao, conciliada: !!bruto, conta_pagar_baixada: contaBaixada });
+    res.json({ ...transacao, conciliada: !!bruto, conta_pagar_baixada: contaBaixada, fatura_id: faturaId });
   } catch (e) {
     console.error('[FIN-V2] criar transação:', e);
     res.status(500).json({ error: 'Erro ao criar transação' });
@@ -1427,6 +1437,119 @@ router.post('/fila-classificacao/sugerir-lote', async (_req, res) => {
   } catch (e) {
     console.error('[FIN-V2] sugerir lote IA:', e);
     res.status(500).json({ error: 'Erro ao sugerir com IA' });
+  }
+});
+
+// ====================================================================
+// CARTÕES DE CRÉDITO + FATURAS (Fase 4)
+// ====================================================================
+
+// CRUD de cartões (Configuração)
+router.get('/cartoes', async (_req, res) => {
+  try {
+    const { data, error } = await supabase.from('fin_cartoes')
+      .select('*, conta:conta_id(nome)').order('nome');
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: 'Erro ao listar cartões' }); }
+});
+
+router.post('/cartoes', authorizeModule('financeiro', 4), async (req, res) => {
+  try {
+    const { nome, bandeira, final, dia_fechamento, dia_vencimento, conta_id } = req.body || {};
+    if (!nome || !String(nome).trim()) return res.status(400).json({ error: 'Nome do cartão obrigatório' });
+    const df = parseInt(dia_fechamento, 10), dv = parseInt(dia_vencimento, 10);
+    if (!(df >= 1 && df <= 31)) return res.status(400).json({ error: 'Dia de fechamento inválido (1-31)' });
+    if (!(dv >= 1 && dv <= 31)) return res.status(400).json({ error: 'Dia de vencimento inválido (1-31)' });
+    const { data, error } = await supabase.from('fin_cartoes')
+      .insert({
+        nome: String(nome).trim(), bandeira: bandeira || null,
+        final: final ? String(final).replace(/\D/g, '').slice(-4) : null,
+        dia_fechamento: df, dia_vencimento: dv, conta_id: conta_id || null,
+      }).select().single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.status(201).json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao criar cartão' }); }
+});
+
+router.put('/cartoes/:id', authorizeModule('financeiro', 4), async (req, res) => {
+  try {
+    const b = req.body || {};
+    const patch = { updated_at: new Date().toISOString() };
+    if (b.nome !== undefined) patch.nome = String(b.nome).trim();
+    if (b.bandeira !== undefined) patch.bandeira = b.bandeira || null;
+    if (b.final !== undefined) patch.final = b.final ? String(b.final).replace(/\D/g, '').slice(-4) : null;
+    if (b.dia_fechamento !== undefined) {
+      const df = parseInt(b.dia_fechamento, 10);
+      if (!(df >= 1 && df <= 31)) return res.status(400).json({ error: 'Dia de fechamento inválido (1-31)' });
+      patch.dia_fechamento = df;
+    }
+    if (b.dia_vencimento !== undefined) {
+      const dv = parseInt(b.dia_vencimento, 10);
+      if (!(dv >= 1 && dv <= 31)) return res.status(400).json({ error: 'Dia de vencimento inválido (1-31)' });
+      patch.dia_vencimento = dv;
+    }
+    if (b.conta_id !== undefined) patch.conta_id = b.conta_id || null;
+    if (b.ativo !== undefined) patch.ativo = !!b.ativo;
+    const { data, error } = await supabase.from('fin_cartoes')
+      .update(patch).eq('id', req.params.id).select().maybeSingle();
+    if (error) return res.status(400).json({ error: error.message });
+    if (!data) return res.status(404).json({ error: 'Cartão não encontrado' });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao atualizar cartão' }); }
+});
+
+// Faturas (lista · por cartão opcional)
+router.get('/faturas', async (req, res) => {
+  try {
+    await fecharFaturasVencidas(); // best-effort: fecha ciclos passados
+    let q = supabase.from('fin_faturas')
+      .select('*, cartao:cartao_id(nome, final, bandeira)')
+      .order('vencimento', { ascending: false }).limit(60);
+    if (req.query.cartao_id) q = q.eq('cartao_id', req.query.cartao_id);
+    const { data, error } = await q;
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: 'Erro ao listar faturas' }); }
+});
+
+// Detalhe da fatura: rubricas (por plano de contas) + cada compra
+router.get('/faturas/:id', async (req, res) => {
+  try {
+    const { data: fatura, error } = await supabase.from('fin_faturas')
+      .select('*, cartao:cartao_id(nome, final, bandeira, dia_fechamento, dia_vencimento)')
+      .eq('id', req.params.id).maybeSingle();
+    if (error || !fatura) return res.status(404).json({ error: 'Fatura não encontrada' });
+    const { itens, rubricas } = await itensDaFatura(fatura.id);
+    res.json({ ...fatura, itens, rubricas });
+  } catch (e) { res.status(500).json({ error: 'Erro ao carregar a fatura' }); }
+});
+
+// Recalcula o total (se algum item entrou por fora)
+router.post('/faturas/:id/sincronizar', async (req, res) => {
+  try {
+    const total = await sincronizarFatura(req.params.id);
+    if (total === null) return res.status(404).json({ error: 'Fatura não encontrada' });
+    res.json({ ok: true, total });
+  } catch (e) { res.status(500).json({ error: 'Erro ao sincronizar a fatura' }); }
+});
+
+// IA compara o PDF da fatura com o que está lançado (aceita PDF com senha)
+const uploadFatura = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
+router.post('/faturas/:id/comparar', uploadFatura.single('arquivo'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Envie o PDF da fatura' });
+    if (!/pdf/i.test(req.file.mimetype || '')) return res.status(400).json({ error: 'O arquivo precisa ser um PDF' });
+    const { compararFatura } = require('../services/finFaturaComparador');
+    const r = await compararFatura({
+      faturaId: req.params.id,
+      buffer: req.file.buffer,
+      senha: req.body?.senha || null,
+    });
+    res.json(r);
+  } catch (e) {
+    console.error('[FIN-V2] comparar fatura:', e.message);
+    res.status(e.status || 500).json({ error: e.message || 'Erro ao comparar a fatura' });
   }
 });
 

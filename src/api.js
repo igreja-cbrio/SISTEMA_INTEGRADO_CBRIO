@@ -1046,6 +1046,24 @@ export const financeiroV2 = {
     aplicar: (pares) => post('/financeiro-v2/conciliacao/aplicar', { pares }),
     aplicarSeguros: () => post('/financeiro-v2/conciliacao/aplicar-seguros', {}),
   },
+  // Cartões de crédito + faturas (Fase 4)
+  cartoes: {
+    list: () => get('/financeiro-v2/cartoes'),
+    criar: (data) => post('/financeiro-v2/cartoes', data),
+    atualizar: (id, data) => put(`/financeiro-v2/cartoes/${id}`, data),
+  },
+  faturas: {
+    list: (cartaoId) => get('/financeiro-v2/faturas' + (cartaoId ? `?cartao_id=${cartaoId}` : '')),
+    get: (id) => get(`/financeiro-v2/faturas/${id}`),
+    sincronizar: (id) => post(`/financeiro-v2/faturas/${id}/sincronizar`, {}),
+    // Compara o PDF da fatura (com senha opcional) com o que está lançado
+    comparar: (id, file, senha) => {
+      const fd = new FormData();
+      fd.append('arquivo', file);
+      if (senha) fd.append('senha', senha);
+      return requestFile(`/financeiro-v2/faturas/${id}/comparar`, fd, { timeoutMs: 300_000 });
+    },
+  },
   notasCompras: {
     list: (params) => get('/financeiro-v2/notas-compras' + (params ? '?' + new URLSearchParams(params) : '')),
     lancar: (id, data) => post(`/financeiro-v2/notas-compras/${id}/lancar`, data),
