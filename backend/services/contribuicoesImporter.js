@@ -29,13 +29,18 @@ const norm = (s) => String(s ?? '').toLowerCase().normalize('NFD').replace(/[̀-
 
 // ── Sinônimos de cabeçalho (todos normalizados na comparação) ────────────────
 const SINONIMOS = {
-  nome: ['nome', 'nome completo', 'contribuinte', 'membro', 'doador'],
+  // 'origem' e 'nome do contribuinte' cobrem o export do sistema contábil da
+  // CBRio (Itaú/igreja), onde o nome do doador vem na coluna "Origem".
+  nome: ['nome', 'nome completo', 'contribuinte', 'nome do contribuinte', 'membro', 'doador', 'origem'],
   cpf: ['cpf', 'documento', 'cpf/cnpj', 'cpf cnpj'],
   valor: ['valor', 'valor(r$)', 'valor (r$)', 'valor r$', 'valor da contribuicao'],
   data: ['data', 'data contribuicao', 'data da contribuicao', 'competencia', 'data do lancamento', 'data lancamento'],
-  tipo: ['tipo', 'especie'],
+  // 'tipo de contribuicao' PRIMEIRO: no export da CBRio existe também a coluna
+  // "Tipo" (E/S = entrada/saída) que NÃO é dízimo/oferta. A classificação real
+  // (Dízimos, Ofertas, Campanha...) vem em "Tipo de Contribuição".
+  tipo: ['tipo de contribuicao', 'tipo contribuicao', 'tipo', 'especie'],
   forma_pagamento: ['forma', 'forma de pagamento', 'forma pagamento', 'forma pagto'],
-  area: ['area', 'ministerio', 'campus'],
+  area: ['area', 'ministerio', 'campus', 'centro de custo'],
   campanha: ['campanha'],
 };
 
@@ -225,18 +230,28 @@ async function processar(rows, { userId = null, commit = false } = {}) {
     amostra_sem_vinculo: [],
   };
 
-  // Pré-computa o match de cada linha EM PARALELO (concorrência limitada). O
-  // gargalo era chamar o matcher SEQUENCIALMENTE linha a linha — num arquivo
-  // grande de contribuições nominais isso passava do tempo do servidor
-  // (→ "Failed to fetch"). Mesma lógica de match (só-leitura, nunca cria
-  // membro); só paraleliza as consultas (REST, fora do pool pg max:1). O loop
-  // abaixo segue igual (ordem/dedup/erros preservados), lendo do Map.
-  const matchByRow = new Map(); // row -> { membro_id... } | { _erro } | null
-  await mapLimit(rows.filter((r) => r.nome || r.cpf), 12, async (row) => {
+  // Pré-computa o match POR PESSOA ÚNICA, em paralelo (concorrência limitada).
+  // O gargalo era casar SEQUENCIALMENTE linha a linha — num arquivo grande
+  // (ex.: 18k contribuições do ano) isso passava do tempo do servidor
+  // (→ "Failed to fetch"). Como a mesma pessoa doa várias vezes, casamos cada
+  // chave (CPF ou nome) UMA vez e reusamos em todas as linhas dela. Mesma
+  // lógica de match (só-leitura, nunca cria membro); o loop abaixo segue igual
+  // (ordem/dedup/erros preservados), lendo do Map por chave de pessoa.
+  const chavePessoa = (r) =>
+    r.cpf ? 'cpf:' + String(r.cpf).replace(/\D/g, '')
+      : (r.nome ? 'nome:' + norm(r.nome) : null);
+  const linhaPorChave = new Map();
+  for (const r of rows) {
+    const k = chavePessoa(r);
+    if (k && !linhaPorChave.has(k)) linhaPorChave.set(k, r);
+  }
+  const matchByChave = new Map(); // chave -> { membro_id... } | { _erro } | null
+  await mapLimit([...linhaPorChave.keys()], 12, async (k) => {
+    const r = linhaPorChave.get(k);
     try {
-      matchByRow.set(row, await acharMembroGuardado({ cpf: row.cpf, nome: row.nome }));
+      matchByChave.set(k, await acharMembroGuardado({ cpf: r.cpf, nome: r.nome }));
     } catch (e) {
-      matchByRow.set(row, { _erro: e.message });
+      matchByChave.set(k, { _erro: e.message });
     }
   });
 
@@ -262,8 +277,8 @@ async function processar(rows, { userId = null, commit = false } = {}) {
     }
 
     // casa a pessoa (SÓ-LEITURA · nunca cria membro) — resultado pré-computado
-    // em paralelo acima.
-    const pre = matchByRow.get(row);
+    // por pessoa única, em paralelo acima.
+    const pre = matchByChave.get(chavePessoa(row));
     if (pre && pre._erro) {
       resumo.erros.push({ linha: row.linha, motivo: 'erro ao casar pessoa: ' + pre._erro });
       continue;
