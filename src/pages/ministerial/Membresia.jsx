@@ -43,6 +43,17 @@ const C = {
   blue: '#3b82f6', blueBg: '#3b82f618',
 };
 
+// Cores da linha do tempo (log do membro) por tipo de evento.
+const TIMELINE_COR = {
+  trilha: '#8b5cf6', grupo: '#3b82f6', grupo_saida: '#94a3b8',
+  contribuicao: '#ec4899', devocional: '#10b981',
+  next: '#f59e0b', next_checkin: '#f59e0b',
+  batismo: '#06b6d4', batismo_realizado: '#06b6d4',
+  jornada: '#00B39D', conversao: '#8b5cf6', aconselhamento: '#00B39D',
+  encaminhamento: '#00B39D', decisao: '#8b5cf6',
+  voluntariado: '#f59e0b', nota: '#94a3b8',
+};
+
 const STATUS_MAP = {
   visitante: { c: C.text3, bg: '#52525218', label: 'Visitante' },
   frequentador: { c: C.blue, bg: C.blueBg, label: 'Frequentador' },
@@ -860,6 +871,8 @@ export default function Membresia() {
   const [loadingWifi, setLoadingWifi] = useState(false);
   const [faceHist, setFaceHist] = useState(null); // { total, ultima, itens: [] }
   const [loadingFace, setLoadingFace] = useState(false);
+  const [timeline, setTimeline] = useState(null); // { eventos: [], total }
+  const [loadingTimeline, setLoadingTimeline] = useState(false);
   const [possiveisDup, setPossiveisDup] = useState([]);
   const [fundindo, setFundindo] = useState(false);
 
@@ -921,6 +934,18 @@ export default function Membresia() {
       .then(r => { if (!cancelado) setFaceHist(r); })
       .catch(() => { if (!cancelado) setFaceHist({ total: 0, itens: [] }); })
       .finally(() => { if (!cancelado) setLoadingFace(false); });
+    return () => { cancelado = true; };
+  }, [selectedMembro?.id, activeTab]);
+
+  // Linha do tempo (log do membro) · carrega ao abrir a aba
+  useEffect(() => {
+    if (!selectedMembro?.id || activeTab !== 'timeline') return;
+    let cancelado = false;
+    setLoadingTimeline(true);
+    membresia.membros.timeline(selectedMembro.id)
+      .then(r => { if (!cancelado) setTimeline(r); })
+      .catch(() => { if (!cancelado) setTimeline({ eventos: [], total: 0 }); })
+      .finally(() => { if (!cancelado) setLoadingTimeline(false); });
     return () => { cancelado = true; };
   }, [selectedMembro?.id, activeTab]);
 
@@ -1088,6 +1113,7 @@ export default function Membresia() {
     setVolStatus(null);
     setDevocionalHist(null);
     setWifiHist(null);
+    setTimeline(null);
     setFaceHist(null);
 
     if (typeof mOrId === 'object' && mOrId) {
@@ -1681,6 +1707,7 @@ export default function Membresia() {
                 <TabsList className="flex h-auto w-full flex-wrap justify-start bg-transparent p-0 gap-1 border-b border-border rounded-none mb-4">
                   {[
                     { key: 'info', label: 'Informações', icon: Users },
+                    { key: 'timeline', label: 'Linha do tempo', icon: Clock },
                     { key: 'familia', label: 'Família', icon: Home },
                     { key: 'grupo', label: 'Grupo', icon: Users },
                     { key: 'generosidade', label: 'Generosidade', icon: HandCoins },
@@ -2931,6 +2958,40 @@ export default function Membresia() {
                   ) : (
                     <div style={{ padding: '24px 0', textAlign: 'center', color: C.text3, fontSize: 13 }}>
                       Nenhum registro no histórico
+                    </div>
+                  )}
+                </TabsContent>
+
+                <TabsContent value="timeline" className="mt-4">
+                  {loadingTimeline ? (
+                    <div style={{ padding: '24px 0', textAlign: 'center', color: C.text3, fontSize: 13 }}>Carregando…</div>
+                  ) : timeline?.eventos?.length > 0 ? (
+                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                      {timeline.eventos.map((ev, i) => {
+                        const cor = TIMELINE_COR[ev.tipo] || C.text3;
+                        return (
+                          <div key={i} style={{ display: 'flex', gap: 12, alignItems: 'stretch' }}>
+                            {/* trilho + bolinha */}
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: 14 }}>
+                              <div style={{ width: 10, height: 10, borderRadius: 5, background: cor, marginTop: 5, flexShrink: 0 }} />
+                              {i < timeline.eventos.length - 1 && <div style={{ width: 2, flex: 1, background: 'var(--cbrio-border)', marginTop: 2 }} />}
+                            </div>
+                            <div style={{ flex: 1, minWidth: 0, paddingBottom: 14 }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                                <div style={{ fontSize: 13, fontWeight: 600, color: C.text, wordBreak: 'break-word' }}>{ev.titulo}</div>
+                                <div style={{ fontSize: 11, color: C.text3, flexShrink: 0, whiteSpace: 'nowrap' }}>
+                                  {new Date(ev.data).toLocaleDateString('pt-BR')}
+                                </div>
+                              </div>
+                              {ev.detalhe && <div style={{ fontSize: 12, color: C.text3, marginTop: 2, wordBreak: 'break-word' }}>{ev.detalhe}</div>}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div style={{ padding: '24px 0', textAlign: 'center', color: C.text3, fontSize: 13 }}>
+                      Nenhuma atividade registrada para esta pessoa ainda.
                     </div>
                   )}
                 </TabsContent>
