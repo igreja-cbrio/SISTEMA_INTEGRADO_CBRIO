@@ -3332,7 +3332,22 @@ router.get('/contas-pagar', async (req, res) => {
     query = query.range(from, from + pageSize - 1);
     const { data, error, count } = await query;
     if (error) return res.status(400).json({ error: error.message });
-    res.json({ items: data || [], total: count || 0, page, pageSize });
+
+    // F2 · enriquece com o nome do colaborador quando a conta é salário.
+    // Feito em JS (e não via embed no select) pra não quebrar a lista caso a
+    // migration das colunas eh_salario/funcionario_id ainda não tenha rodado.
+    const items = data || [];
+    const funcIds = [...new Set(items.map(i => i.funcionario_id).filter(Boolean))];
+    if (funcIds.length) {
+      const { data: funcs } = await supabase
+        .from('rh_funcionarios').select('id, nome').in('id', funcIds);
+      const nomePorId = new Map((funcs || []).map(f => [f.id, f.nome]));
+      for (const i of items) {
+        if (i.funcionario_id) i.funcionario_nome = nomePorId.get(i.funcionario_id) || null;
+      }
+    }
+
+    res.json({ items, total: count || 0, page, pageSize });
   } catch (e) {
     console.error('[FIN-V2] contas-pagar list:', e);
     res.status(500).json({ error: 'Erro ao listar contas a pagar' });
@@ -3383,6 +3398,258 @@ router.post('/contas-pagar/importar', authorizeModule('financeiro', 4), upload.s
   } catch (e) {
     console.error('[FIN-V2] contas-pagar importar:', e);
     res.status(500).json({ error: e.message || 'Erro ao importar contas a pagar' });
+  }
+});
+
+// ====================================================================
+// CONTAS A PAGAR · F2 da reforma (CRUD moderno + salário do RH + recorrência)
+//
+// Pedidos da gestão: ao clicar numa conta, poder marcar que é RECORRENTE e/ou
+// que é SALÁRIO de um colaborador — nesse caso o valor NÃO é digitado: vem de
+// rh_funcionarios.salario (fonte de verdade é o RH).
+// ====================================================================
+
+// Salário atual do colaborador no RH (fonte de verdade quando eh_salario).
+// Retorna { salario } ou { erro } pronto pro 400.
+async function salarioDoRh(funcionarioId) {
+  const { data: func, error } = await supabase
+    .from('rh_funcionarios')
+    .select('id, nome, salario')
+    .eq('id', funcionarioId)
+    .is('deleted_at', null)
+    .single();
+  if (error || !func) return { erro: 'Colaborador não encontrado no RH' };
+  const salario = Number(func.salario) || 0;
+  if (!salario) return { erro: 'Colaborador sem salário cadastrado no RH' };
+  return { salario, nome: func.nome };
+}
+
+// Lista auxiliar de colaboradores pro select "É salário" do modal.
+// O usuário do financeiro pode NÃO ter o módulo RH — por isso o aux vive aqui.
+// Salário é dado sensível → mesmo nível 4 dos endpoints sensíveis do arquivo
+// (quem paga a folha tem nível 4 no financeiro).
+router.get('/aux/funcionarios', authorizeModule('financeiro', 4), async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('rh_funcionarios')
+      .select('id, nome, cargo, salario')
+      .eq('status', 'ativo')
+      .is('deleted_at', null)
+      .order('nome');
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || []);
+  } catch (e) {
+    console.error('[FIN-V2] aux/funcionarios:', e);
+    res.status(500).json({ error: 'Erro ao listar colaboradores' });
+  }
+});
+
+// Criar conta a pagar (v2 · substitui o POST v1 no modal do frontend)
+router.post('/contas-pagar', async (req, res) => {
+  try {
+    const {
+      descricao, fornecedor, valor, data_vencimento, data_pagamento, status,
+      conta_id, plano_contas_id, centro_custo_id, forma_pagamento, pago_cartao,
+      eh_salario, funcionario_id, observacao,
+    } = req.body;
+
+    if (!descricao || !String(descricao).trim()) return res.status(400).json({ error: 'Descrição obrigatória' });
+    if (!data_vencimento) return res.status(400).json({ error: 'Data de vencimento obrigatória' });
+
+    // Regra do salário: valor do body é IGNORADO — vale o salário do RH.
+    let v = Math.abs(Number(valor) || 0);
+    const salario = !!eh_salario && !!funcionario_id;
+    if (salario) {
+      const r = await salarioDoRh(funcionario_id);
+      if (r.erro) return res.status(400).json({ error: r.erro });
+      v = r.salario;
+    }
+    if (!v) return res.status(400).json({ error: 'Valor obrigatório (maior que zero)' });
+
+    const { data, error } = await supabase.from('fin_contas_pagar')
+      .insert({
+        descricao: String(descricao).trim(),
+        fornecedor: fornecedor || null,
+        valor: v,
+        data_vencimento,
+        data_pagamento: data_pagamento || null,
+        status: status || 'pendente',
+        conta_id: conta_id || null,
+        plano_contas_id: plano_contas_id || null,
+        centro_custo_id: centro_custo_id || null,
+        forma_pagamento: forma_pagamento || null,
+        pago_cartao: pago_cartao === undefined ? null : !!pago_cartao,
+        eh_salario: salario,
+        funcionario_id: salario ? funcionario_id : null,
+        historico: observacao || null,       // campo livre da tabela é `historico`
+        origem: 'manual',
+        created_by: req.user.userId,
+      })
+      .select().single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) {
+    console.error('[FIN-V2] criar conta a pagar:', e);
+    res.status(500).json({ error: 'Erro ao criar conta a pagar' });
+  }
+});
+
+// Atualizar conta a pagar (parcial · só campos presentes no body)
+router.put('/contas-pagar/:id', async (req, res) => {
+  try {
+    const {
+      descricao, fornecedor, valor, data_vencimento, data_pagamento, status,
+      conta_id, plano_contas_id, centro_custo_id, forma_pagamento, pago_cartao,
+      eh_salario, funcionario_id, observacao,
+    } = req.body;
+
+    const upd = {};
+    if (descricao !== undefined) {
+      if (!String(descricao).trim()) return res.status(400).json({ error: 'Descrição não pode ficar vazia' });
+      upd.descricao = String(descricao).trim();
+    }
+    if (fornecedor !== undefined) upd.fornecedor = fornecedor || null;
+    if (data_vencimento !== undefined) {
+      if (!data_vencimento) return res.status(400).json({ error: 'Data de vencimento não pode ficar vazia' });
+      upd.data_vencimento = data_vencimento;
+    }
+    if (data_pagamento !== undefined) upd.data_pagamento = data_pagamento || null;
+    if (status !== undefined) upd.status = status;
+    if (conta_id !== undefined) upd.conta_id = conta_id || null;
+    if (plano_contas_id !== undefined) upd.plano_contas_id = plano_contas_id || null;
+    if (centro_custo_id !== undefined) upd.centro_custo_id = centro_custo_id || null;
+    if (forma_pagamento !== undefined) upd.forma_pagamento = forma_pagamento || null;
+    if (pago_cartao !== undefined) upd.pago_cartao = !!pago_cartao;
+    if (observacao !== undefined) upd.historico = observacao || null;
+
+    // Regra do salário: com eh_salario + funcionario_id, RE-PUXA o salário do
+    // RH e ignora o valor do body. Desligando o toggle, limpa o vínculo.
+    if (eh_salario !== undefined) {
+      if (eh_salario && funcionario_id) {
+        const r = await salarioDoRh(funcionario_id);
+        if (r.erro) return res.status(400).json({ error: r.erro });
+        upd.eh_salario = true;
+        upd.funcionario_id = funcionario_id;
+        upd.valor = r.salario;
+      } else {
+        upd.eh_salario = false;
+        upd.funcionario_id = null;
+      }
+    } else if (funcionario_id !== undefined) {
+      upd.funcionario_id = funcionario_id || null;
+    }
+    if (upd.valor === undefined && valor !== undefined) {
+      const v = Math.abs(Number(valor) || 0);
+      if (!v) return res.status(400).json({ error: 'Valor deve ser maior que zero' });
+      upd.valor = v;
+    }
+    if (!Object.keys(upd).length) return res.status(400).json({ error: 'Nada pra atualizar' });
+
+    const { data, error } = await supabase.from('fin_contas_pagar')
+      .update(upd).eq('id', req.params.id).is('deleted_at', null)
+      .select().single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) {
+    console.error('[FIN-V2] atualizar conta a pagar:', e);
+    res.status(500).json({ error: 'Erro ao atualizar conta a pagar' });
+  }
+});
+
+// Excluir conta a pagar · SOFT-delete (padrão de segurança da casa)
+router.delete('/contas-pagar/:id', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('fin_contas_pagar')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('id', req.params.id).is('deleted_at', null)
+      .select('id').single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ success: true, id: data.id });
+  } catch (e) {
+    console.error('[FIN-V2] excluir conta a pagar:', e);
+    res.status(500).json({ error: 'Erro ao excluir conta a pagar' });
+  }
+});
+
+// Tornar a conta recorrente: cria fin_despesas_recorrentes a partir dela e
+// grava recorrente_id na conta. Idempotente — se já tem, devolve a existente.
+router.post('/contas-pagar/:id/tornar-recorrente', async (req, res) => {
+  try {
+    const { data: conta, error: errConta } = await supabase
+      .from('fin_contas_pagar').select('*')
+      .eq('id', req.params.id).is('deleted_at', null).single();
+    if (errConta || !conta) return res.status(404).json({ error: 'Conta a pagar não encontrada' });
+
+    if (conta.recorrente_id) {
+      const { data: existente } = await supabase
+        .from('fin_despesas_recorrentes').select('*')
+        .eq('id', conta.recorrente_id).single();
+      if (existente) return res.json({ ja_existia: true, recorrencia: existente });
+      // recorrente_id órfão (recorrência sumiu) → segue e recria
+    }
+
+    const valor = Number(conta.valor) || 0;
+    const diaVenc = conta.data_vencimento
+      ? Number(String(conta.data_vencimento).slice(8, 10))
+      : null;
+
+    // Mesmo preenchimento do POST /financeiro/recorrentes (criação manual)
+    const { data: recorrencia, error } = await supabase
+      .from('fin_despesas_recorrentes')
+      .insert({
+        descricao: conta.descricao,
+        fornecedor: conta.fornecedor || null,
+        chave_match: (conta.fornecedor || conta.descricao).toLowerCase().trim(),
+        tipo_chave: 'manual',
+        valor_medio: valor,
+        valor_minimo: valor,
+        valor_maximo: valor,
+        cadencia_dias: 30,
+        dia_vencimento: diaVenc,
+        plano_contas_id: conta.plano_contas_id || null,
+        centro_custo_id: conta.centro_custo_id || null,
+        conta_id: conta.conta_id || null,
+        classe: 'fixa',
+        gera_n_dias_antes: 7,
+        eh_salario: !!conta.eh_salario,
+        funcionario_id: conta.funcionario_id || null,
+        ativa: true, confirmada: true, confianca: 1.0,
+        observacao: 'Criada a partir de uma conta a pagar (F2)',
+      })
+      .select().single();
+    if (error) return res.status(400).json({ error: error.message });
+
+    const { error: errUpd } = await supabase.from('fin_contas_pagar')
+      .update({ recorrente_id: recorrencia.id }).eq('id', conta.id);
+    if (errUpd) return res.status(400).json({ error: errUpd.message });
+
+    res.json({ ja_existia: false, recorrencia });
+  } catch (e) {
+    console.error('[FIN-V2] tornar recorrente:', e);
+    res.status(500).json({ error: 'Erro ao tornar a conta recorrente' });
+  }
+});
+
+// Desfazer a recorrência: desativa a recorrência e desamarra a conta
+router.delete('/contas-pagar/:id/tornar-recorrente', async (req, res) => {
+  try {
+    const { data: conta, error: errConta } = await supabase
+      .from('fin_contas_pagar').select('id, recorrente_id')
+      .eq('id', req.params.id).is('deleted_at', null).single();
+    if (errConta || !conta) return res.status(404).json({ error: 'Conta a pagar não encontrada' });
+    if (!conta.recorrente_id) return res.json({ success: true, ja_desfeita: true });
+
+    await supabase.from('fin_despesas_recorrentes')
+      .update({ ativa: false, updated_at: new Date().toISOString() })
+      .eq('id', conta.recorrente_id);
+    const { error } = await supabase.from('fin_contas_pagar')
+      .update({ recorrente_id: null }).eq('id', conta.id);
+    if (error) return res.status(400).json({ error: error.message });
+
+    res.json({ success: true });
+  } catch (e) {
+    console.error('[FIN-V2] desfazer recorrente:', e);
+    res.status(500).json({ error: 'Erro ao desfazer a recorrência' });
   }
 });
 
