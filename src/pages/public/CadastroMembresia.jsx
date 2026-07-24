@@ -29,6 +29,27 @@ function mascaraTelefone(v) {
   return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
 }
 
+function mascaraCep(v) {
+  const d = soDigitos(v).slice(0, 8);
+  if (d.length <= 5) return d;
+  return `${d.slice(0, 5)}-${d.slice(5)}`;
+}
+
+// ViaCEP · usado só pra sugerir o bairro a partir do CEP (fail-open · nunca bloqueia).
+async function buscarCep(cep) {
+  const d = soDigitos(cep);
+  if (d.length !== 8) return null;
+  try {
+    const res = await fetch(`https://viacep.com.br/ws/${d}/json/`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data?.erro) return null;
+    return { bairro: data.bairro || '', cidade: data.localidade || '', uf: data.uf || '' };
+  } catch {
+    return null;
+  }
+}
+
 function cpfValido(v) {
   const d = soDigitos(v);
   if (d.length !== 11) return false;
@@ -176,6 +197,8 @@ const BAIRROS = [
   'Barra Olímpica', 'Curicica', 'Camorim', 'Vargem Grande', 'Vargem Pequena',
 ];
 const BAIRRO_OUTRO = '__outro__';
+// Normaliza p/ casar o bairro devolvido pelo ViaCEP com a lista fixa (sem acento/caixa).
+const normBairro = (s) => (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
 
 function Row({ children }) {
   return (
@@ -237,7 +260,7 @@ export default function CadastroMembresia() {
     nome: '', sobrenome: '', cpf: prefCpf ? mascaraCpf(prefCpf) : '', email: '', confirmar_email: '', telefone: '',
     senha: '', confirmar_senha: '',
     data_nascimento: prefNasc || '', estado_civil: '', bairro: '',
-    profissao: '', como_conheceu: '',
+    cep: '', profissao: '', como_conheceu: '',
     website: '', // honeypot
   });
   const [aceitaTermos, setAceitaTermos] = useState(false);
@@ -246,6 +269,7 @@ export default function CadastroMembresia() {
   // Bairro: guarda a chave da seleção; se "Outro", o valor real vem de bairroOutro.
   const [bairroSel, setBairroSel] = useState('');
   const [bairroOutro, setBairroOutro] = useState('');
+  const [cepBuscando, setCepBuscando] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [sent, setSent] = useState(false);
@@ -336,6 +360,22 @@ export default function CadastroMembresia() {
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const setMasked = (k, mask) => (e) => setForm((f) => ({ ...f, [k]: mask(e.target.value) }));
+
+  // CEP: máscara + ViaCEP sugere o bairro (casa com a lista fixa ou cai em "Outro").
+  const handleCepChange = async (e) => {
+    const masked = mascaraCep(e.target.value);
+    setForm((f) => ({ ...f, cep: masked }));
+    if (soDigitos(masked).length === 8) {
+      setCepBuscando(true);
+      const result = await buscarCep(masked);
+      setCepBuscando(false);
+      if (result?.bairro) {
+        const match = BAIRROS.find((b) => normBairro(b) === normBairro(result.bairro));
+        if (match) { setBairroSel(match); setBairroOutro(''); }
+        else { setBairroSel(BAIRRO_OUTRO); setBairroOutro(result.bairro); }
+      }
+    }
+  };
 
   // Debounce: 600ms após parar de digitar CPF, se CPF for valido, faz lookup
   useEffect(() => {
@@ -999,6 +1039,15 @@ export default function CadastroMembresia() {
                     <SelectField id="estado_civil" label="Estado civil" value={form.estado_civil} onChange={set('estado_civil')} options={ESTADO_CIVIL_OPTS} />
                     <Field id="profissao" label="Profissão" value={form.profissao} onChange={set('profissao')} maxLength={120} />
                   </Row>
+                  <Field
+                    id="cep"
+                    label={cepBuscando ? 'CEP (buscando bairro...)' : 'CEP (opcional)'}
+                    value={form.cep}
+                    onChange={handleCepChange}
+                    inputMode="numeric"
+                    autoComplete="postal-code"
+                    maxLength={9}
+                  />
                   <SelectField
                     id="bairro"
                     label="Bairro"

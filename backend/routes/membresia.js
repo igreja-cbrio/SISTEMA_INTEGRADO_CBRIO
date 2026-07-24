@@ -1601,7 +1601,10 @@ router.post('/totem/next/inscrever', async (req, res) => {
     if (!nome || String(nome).trim().length < 2) {
       return res.status(400).json({ error: 'Nome obrigatorio' });
     }
-    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email))) {
+    // E-mail é OPCIONAL no Next do totem (só valida se veio) — muitos membros
+    // não têm e-mail no cadastro e a inscrição do membro identificado é só uma
+    // confirmação. O matcher liga a pessoa por membro_id/telefone.
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email))) {
       return res.status(400).json({ error: 'Email invalido' });
     }
     const cleanTel = String(telefone || '').replace(/\D/g, '');
@@ -1609,7 +1612,7 @@ router.post('/totem/next/inscrever', async (req, res) => {
       return res.status(400).json({ error: 'Telefone invalido' });
     }
     const cleanCpf = cpf ? String(cpf).replace(/\D/g, '') : null;
-    const cleanEmail = String(email).toLowerCase().trim();
+    const cleanEmail = email ? String(email).toLowerCase().trim() : null;
 
     // Turma: a escolhida no calendário (validada contra as abertas) ou a mais próxima.
     const turmas = await _turmasAbertasTotem();
@@ -1681,7 +1684,7 @@ router.post('/totem/next/inscrever', async (req, res) => {
       await notificar({
         modulo: 'next',
         titulo: 'Nova inscrição no NEXT (via totem)',
-        mensagem: `${nome} ${sobrenome || ''} (${cleanEmail}) se inscreveu pelo totem.`,
+        mensagem: `${nome} ${sobrenome || ''} (${cleanEmail || 'sem e-mail'}) se inscreveu pelo totem.`,
         link: '/ministerial/next',
       });
     } catch (e) {

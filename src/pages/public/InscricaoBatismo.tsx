@@ -171,7 +171,7 @@ export default function InscricaoBatismo() {
   const [form, setForm] = useState({
     nome: '', sobrenome: '',
     cpf: '', telefone: '', email: '',
-    data_nascimento: '',
+    data_nascimento: '', sexo: '',
     endereco: '', cep: '',
     tamanho_camisa: '',
     fez_next: '', // '' não informado | 'sim' | 'nao'
@@ -231,6 +231,7 @@ export default function InscricaoBatismo() {
         telefone: form.telefone,
         email: form.email,
         data_nascimento: form.data_nascimento || null,
+        sexo: form.sexo || null,
         endereco: form.endereco || null,
         cep: form.cep || null,
         tamanho_camisa: form.tamanho_camisa || null,
@@ -354,6 +355,17 @@ export default function InscricaoBatismo() {
                 <label style={{ display: 'block', fontSize: 11, color: 'var(--cbrio-text3)', marginBottom: 6 }}>Data de nascimento (opcional)</label>
                 <BirthDatePicker value={form.data_nascimento} onChange={(v) => setForm(f => ({ ...f, data_nascimento: v }))} />
               </div>
+              <Row>
+                <SelectField
+                  id="sexo" label="Sexo"
+                  value={form.sexo}
+                  onChange={set('sexo') as any}
+                  options={[
+                    { value: 'F', label: 'Feminino' },
+                    { value: 'M', label: 'Masculino' },
+                  ]}
+                />
+              </Row>
 
               <SectionTitle>Endereço</SectionTitle>
               <Row>

@@ -2604,9 +2604,18 @@ function NextFlow({ opt, member, onBack, onDone, onEndSession, onActivity }: {
     onActivity();
   };
 
+  // Dados completos = membro identificado que já tem nome/sobrenome/telefone no
+  // cadastro → a inscrição vira confirmação de um toque (nada para digitar).
+  // E-mail e CPF NÃO entram aqui: o Next não os exige (o matcher liga pelo
+  // membro_id/telefone) e muitos membros não têm e-mail cadastrado.
+  const dadosCompletos = !guest
+    && !!form.nome.trim()
+    && !!form.sobrenome.trim()
+    && form.telefone.replace(/\D/g, '').length >= 10;
+
   const handleSubmit = async () => {
     if (!form.nome || form.nome.trim().length < 2) { setError('Nome obrigatório'); return; }
-    if (!form.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) { setError('E-mail inválido'); return; }
+    if (form.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) { setError('E-mail inválido'); return; }
     if (form.telefone.replace(/\D/g, '').length < 10) { setError('Telefone inválido'); return; }
     setSaving(true); setError('');
     onActivity();
@@ -2786,12 +2795,27 @@ function NextFlow({ opt, member, onBack, onDone, onEndSession, onActivity }: {
               </div>
             ) : null}
 
-            <Button
-              onClick={() => setStep('form')}
-              className="w-full bg-[#10B981] hover:bg-[#10B981]/90 text-white py-3 text-base rounded-2xl gap-2"
-            >
-              Quero me inscrever <ChevronRight className="h-5 w-5" />
-            </Button>
+            {error && <p className="text-sm text-red-400">{error}</p>}
+
+            {dadosCompletos ? (
+              <div className="space-y-2">
+                <Button
+                  onClick={handleSubmit}
+                  disabled={saving}
+                  className="w-full bg-[#10B981] hover:bg-[#10B981]/90 text-white py-3 text-base rounded-2xl gap-2"
+                >
+                  {saving ? <Loader2 className="h-5 w-5 animate-spin" /> : <>Confirmar inscrição <ChevronRight className="h-5 w-5" /></>}
+                </Button>
+                <p className="text-white/40 text-xs">Vamos usar os dados do seu cadastro, {form.nome} — nada para digitar.</p>
+              </div>
+            ) : (
+              <Button
+                onClick={() => setStep('form')}
+                className="w-full bg-[#10B981] hover:bg-[#10B981]/90 text-white py-3 text-base rounded-2xl gap-2"
+              >
+                Quero me inscrever <ChevronRight className="h-5 w-5" />
+              </Button>
+            )}
 
             {/* Receber material do NEXT no WhatsApp — só aparece quando o
                 material (PDF) está ligado (opt-in do Marcos · validar c/ líderes) */}
@@ -2854,7 +2878,7 @@ function NextFlow({ opt, member, onBack, onDone, onEndSession, onActivity }: {
           </div>
 
           <div>
-            <label className="block text-xs text-white/40 mb-1">E-mail *</label>
+            <label className="block text-xs text-white/40 mb-1">E-mail</label>
             <input type="email" value={form.email} onChange={setField('email')} className={inputCls} placeholder="email@exemplo.com" />
           </div>
 
