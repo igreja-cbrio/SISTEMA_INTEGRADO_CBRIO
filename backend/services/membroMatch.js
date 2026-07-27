@@ -183,6 +183,15 @@ function nomesMesmaPessoa(a, b) {
   return _dice(x, y) >= 0.90;
 }
 
+// Nome-placeholder do import financeiro ("Contribuinte 059412...") — o extrato
+// chega com o nome mascarado e a fin_resolver_ou_criar_contribuinte cria o
+// membro assim. NÃO é um nome de pessoa: nenhum fluxo de pessoas deve exibi-lo
+// nem preferi-lo a um cadastro com nome real (incidente Kids 2026-07-26: 6
+// check-ins imprimiram "Contribuinte NNN" como mãe na etiqueta).
+function ehNomePlaceholder(nome) {
+  return /^contribuinte\b/i.test(String(nome || '').trim());
+}
+
 // _consolidarCpfNoMatch · quando a pessoa entrou COM CPF mas ligou por sinal
 // fraco (e-mail/telefone+nome/nascimento+nome), consolida o CPF no membro
 // ligado — é o "CPF tardio" (pessoa converteu antes sem CPF, voltou com CPF).
@@ -230,9 +239,18 @@ async function acharOuCriarGuardado({ cpf, email, telefone, nome, dataNascimento
     && (!cpf11 || (!!nasc && !!c.data_nascimento && nasc === c.data_nascimento));
 
   if (cpf11) {
-    const { data } = await supabase.from('mem_membros').select('id')
+    const { data } = await supabase.from('mem_membros').select('id, nome')
       .eq('cpf', cpf11).is('deleted_at', null).maybeSingle();
     if (data?.id) {
+      // Match por CPF num registro com nome-placeholder do financeiro
+      // ("Contribuinte NNN...") e a porta trouxe o nome REAL: adota o registro
+      // (CPF = mesma pessoa) e corrige o nome — o fantasma vira o cadastro
+      // real, em vez de propagar "Contribuinte" pra etiquetas/telas.
+      if (ehNomePlaceholder(data.nome) && nome && String(nome).trim().length >= 3 && !ehNomePlaceholder(nome)) {
+        const { error: eNome } = await supabase.from('mem_membros')
+          .update({ nome: String(nome).trim() }).eq('id', data.id);
+        if (!eNome) console.log(`[membroMatch] placeholder renomeado via ${origem}: ${data.nome} -> ${String(nome).trim()} (${data.id})`);
+      }
       _registrarContatoNoMatch(data.id, { telefone: tel, email: emailLc }, 'porta');
       await _observar(data.id, entrada, 'cpf', false);
       return { membro_id: data.id, created: false, matched_by: 'cpf' };
@@ -358,6 +376,7 @@ module.exports = {
   normalizarEmail,
   normalizarNome,
   nomesMesmaPessoa,
+  ehNomePlaceholder,
   buscarCandidatos,
   acharOuCriar,
   acharOuCriarGuardado,

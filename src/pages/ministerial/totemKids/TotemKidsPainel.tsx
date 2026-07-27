@@ -108,10 +108,16 @@ export default function TotemKidsPainel() {
   const [dataDia, setDataDia] = useState<string>('');
   const [unicas, setUnicas] = useState<{ presentes: number; total: number } | null>(null);
   // Pagers em uso + pendentes (Mari 2026-07-22) — recarrega junto do painel (15s).
-  const [pagers, setPagers] = useState<{
-    em_uso: { pager_numero: string; crianca_nome: string; sala_nome: string | null; responsavel_nome: string | null }[];
-    pendentes: { crianca_nome: string; sala_nome: string | null; responsavel_nome: string | null }[];
-  }>({ em_uso: [], pendentes: [] });
+  type PagerItem = {
+    pager_numero?: string;
+    checkin_id: string;
+    crianca_id: string | null;
+    checkin_at: string | null;
+    crianca_nome: string;
+    sala_nome: string | null;
+    responsavel_nome: string | null;
+  };
+  const [pagers, setPagers] = useState<{ em_uso: PagerItem[]; pendentes: PagerItem[] }>({ em_uso: [], pendentes: [] });
   const [cultoSel, setCultoSel] = useState<CultoDia | null>(null);
   const cultoSelRef = useRef<string | null>(null);
   const [dados, setDados] = useState<PainelSala[]>([]);
@@ -246,6 +252,25 @@ export default function TotemKidsPainel() {
     } finally {
       setCarregandoSala(false);
     }
+  }
+
+  // Ficha direto do card de pagers (Marcos 2026-07-27): clicar na criança abre
+  // o MESMO modal de ficha das salas (com check-out ali), sem passar pela sala.
+  function abrirFichaPager(p: { checkin_id: string; crianca_id: string | null; checkin_at: string | null; crianca_nome: string; responsavel_nome: string | null }) {
+    if (!p.crianca_id) { toast.error('Check-in sem criança vinculada'); return; }
+    setCriancaSelCheckin({
+      id: p.checkin_id,
+      crianca_id: p.crianca_id,
+      checkin_at: p.checkin_at || '',
+      checkout_at: null,
+      codigo_seguranca: '',
+      responsavel_checkin_nome: p.responsavel_nome || '',
+      fez_decisao_jesus: false,
+      observacoes_no_dia: null,
+      total_decisoes_historico: 0,
+      crianca: { id: p.crianca_id, nome: p.crianca_nome, data_nascimento: null, foto_url: null, observacoes_medicas: null, idade_label: '' },
+    });
+    abrirCrianca(p.crianca_id);
   }
 
   async function abrirCrianca(criancaId: string) {
@@ -472,12 +497,18 @@ export default function TotemKidsPainel() {
           {pagers.em_uso.length > 0 ? (
             <div className="flex flex-col gap-1.5">
               {pagers.em_uso.map((p, i) => (
-                <div key={i} className="flex items-center gap-2 text-sm">
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => abrirFichaPager(p)}
+                  className="flex items-center gap-2 text-sm w-full text-left rounded-md px-1 py-0.5 -mx-1 hover:bg-accent transition-colors"
+                  title="Abrir a ficha da criança (com check-out)"
+                >
                   <span className="shrink-0 inline-flex items-center justify-center min-w-[2.2rem] h-7 px-2 rounded-md bg-amber-600 text-white font-mono font-bold">{p.pager_numero}</span>
                   <span className="font-medium truncate">{p.crianca_nome}</span>
                   {p.sala_nome && <span className="text-muted-foreground truncate">· {p.sala_nome}</span>}
                   {p.responsavel_nome && <span className="text-muted-foreground truncate ml-auto text-right">{p.responsavel_nome}</span>}
-                </div>
+                </button>
               ))}
             </div>
           ) : (
@@ -489,11 +520,17 @@ export default function TotemKidsPainel() {
                 <AlertTriangle className="h-3.5 w-3.5" /> Precisam de pager e estão sem número
               </div>
               {pagers.pendentes.map((p, i) => (
-                <div key={i} className="text-sm flex items-center gap-2">
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => abrirFichaPager(p)}
+                  className="text-sm flex items-center gap-2 w-full text-left rounded-md px-1 py-0.5 -mx-1 hover:bg-red-100/60 dark:hover:bg-red-900/30 transition-colors"
+                  title="Abrir a ficha da criança (com check-out)"
+                >
                   <span className="font-medium truncate">{p.crianca_nome}</span>
                   {p.sala_nome && <span className="text-muted-foreground truncate">· {p.sala_nome}</span>}
                   {p.responsavel_nome && <span className="text-muted-foreground truncate ml-auto">{p.responsavel_nome}</span>}
-                </div>
+                </button>
               ))}
             </div>
           )}
@@ -574,7 +611,8 @@ export default function TotemKidsPainel() {
       </div>
 
       {/* Modal · sala → lista de crianças ↔ ficha da criança (drilldown mobile) */}
-      <Dialog open={!!salaDetalhe} onOpenChange={(o) => { if (!o) { setSalaDetalhe(null); setCriancaSelId(null); setCriancaDet(null); setCriancaSelCheckin(null); setSelCheckout(new Set()); } }}>
+      {/* Abre pela sala OU direto pela criança (card de pagers · standalone) */}
+      <Dialog open={!!salaDetalhe || !!criancaSelId} onOpenChange={(o) => { if (!o) { setSalaDetalhe(null); setCriancaSelId(null); setCriancaDet(null); setCriancaSelCheckin(null); setSelCheckout(new Set()); } }}>
         <DialogContent className="max-w-lg max-h-[90vh] flex flex-col p-0 gap-0">
           {/* ── Ficha da criança ── */}
           {criancaSelId ? (

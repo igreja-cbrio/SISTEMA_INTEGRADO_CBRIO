@@ -44,6 +44,13 @@ export default function TotemKidsCheckout({ embutido = false }: { embutido?: boo
   const navigate = useNavigate();
   const { profile, isAdmin } = useAuth();
   const [codigoInput, setCodigoInput] = useState('');
+  // 3 jeitos de achar a criança (Marcos 2026-07-27): código da etiqueta
+  // (padrão), NOME da criança e número do PAGER — pra quando a etiqueta some.
+  const [modoBusca, setModoBusca] = useState<'codigo' | 'nome' | 'pager'>('codigo');
+  const [buscaAberta, setBuscaAberta] = useState('');
+  const [resultadosAbertos, setResultadosAbertos] = useState<any[]>([]);
+  const [buscandoAbertos, setBuscandoAbertos] = useState(false);
+  const [buscouAbertos, setBuscouAbertos] = useState(false);
   const [carregando, setCarregando] = useState(false);
   const [checkin, setCheckin] = useState<CheckinData | null>(null);
   const [responsavelPickup, setResponsavelPickup] = useState<string>('');
@@ -82,6 +89,42 @@ export default function TotemKidsCheckout({ embutido = false }: { embutido?: boo
     setCheckin(null);
     setCodigoInput('');
     setResponsavelPickup('');
+    setBuscaAberta('');
+    setResultadosAbertos([]);
+    setBuscouAbertos(false);
+  }
+
+  // Busca check-ins ABERTOS por nome da criança ou nº do pager (debounce) —
+  // o clique num resultado entra no MESMO fluxo do código (porCodigo).
+  useEffect(() => {
+    if (modoBusca === 'codigo') return;
+    const q = buscaAberta.trim();
+    const pager = q.replace(/\D/g, '');
+    if (modoBusca === 'pager' ? !pager : q.length < 2) {
+      setResultadosAbertos([]);
+      setBuscouAbertos(false);
+      return;
+    }
+    setBuscandoAbertos(true);
+    const t = setTimeout(() => {
+      totemKids.checkin.abertosBuscar(modoBusca === 'pager' ? { pager } : { nome: q })
+        .then((data: any[]) => { setResultadosAbertos(Array.isArray(data) ? data : []); setBuscouAbertos(true); })
+        .catch(() => toast.error('Erro ao buscar check-ins abertos'))
+        .finally(() => setBuscandoAbertos(false));
+    }, 300);
+    return () => clearTimeout(t);
+  }, [buscaAberta, modoBusca]);
+
+  async function abrirCheckinAberto(codigo: string) {
+    setCarregando(true);
+    try {
+      const data = await totemKids.checkin.porCodigo(codigo);
+      setCheckin(data);
+    } catch (e: unknown) {
+      toast.error((e as { message?: string })?.message || 'Erro ao abrir o check-in');
+    } finally {
+      setCarregando(false);
+    }
   }
 
   async function confirmarCheckout(
@@ -172,33 +215,125 @@ export default function TotemKidsCheckout({ embutido = false }: { embutido?: boo
           <div className="text-center">
             <h1 className="text-3xl sm:text-4xl font-black tracking-tight">Hora do check-out! 🎒</h1>
             <p className="text-slate-500 mt-2 text-sm sm:text-base">
-              Digite o código de segurança da etiqueta do responsável.
+              {modoBusca === 'codigo' && 'Digite o código de segurança da etiqueta do responsável.'}
+              {modoBusca === 'nome' && 'Perdeu a etiqueta? Busque pelo nome da criança.'}
+              {modoBusca === 'pager' && 'Digite o número do pager que a família está segurando.'}
             </p>
           </div>
-          <div className="max-w-xl mx-auto rounded-2xl border-2 border-slate-100 bg-slate-50/70 p-6 space-y-4">
-            <div className="flex items-center gap-2">
-              <span className="w-8 h-8 rounded-lg bg-cyan-100 text-cyan-600 flex items-center justify-center text-base">🔑</span>
-              <h2 className="font-bold text-slate-700 text-sm sm:text-base">Código de segurança</h2>
+
+          {/* Como buscar? Código (padrão) · Nome · Pager */}
+          <div className="max-w-xl mx-auto grid grid-cols-3 gap-2">
+            {([
+              { key: 'codigo', rotulo: '🔑 Código', dica: 'da etiqueta' },
+              { key: 'nome', rotulo: '🧒 Nome', dica: 'da criança' },
+              { key: 'pager', rotulo: '📟 Pager', dica: 'da família' },
+            ] as const).map(m => (
+              <button
+                key={m.key}
+                type="button"
+                onClick={() => { setModoBusca(m.key); setBuscaAberta(''); setResultadosAbertos([]); setBuscouAbertos(false); }}
+                className={`rounded-xl border-2 px-3 py-2.5 text-center transition ${
+                  modoBusca === m.key
+                    ? 'border-cyan-400 bg-cyan-50 dark:bg-cyan-950/30 font-bold text-cyan-800 dark:text-cyan-200'
+                    : 'border-slate-200 bg-white/60 text-slate-500 hover:border-cyan-200'
+                }`}
+              >
+                <div className="text-sm sm:text-base">{m.rotulo}</div>
+                <div className="text-[10px] text-slate-400">{m.dica}</div>
+              </button>
+            ))}
+          </div>
+
+          {modoBusca === 'codigo' ? (
+            <div className="max-w-xl mx-auto rounded-2xl border-2 border-slate-100 bg-slate-50/70 p-6 space-y-4">
+              <div className="flex items-center gap-2">
+                <span className="w-8 h-8 rounded-lg bg-cyan-100 text-cyan-600 flex items-center justify-center text-base">🔑</span>
+                <h2 className="font-bold text-slate-700 text-sm sm:text-base">Código de segurança</h2>
+              </div>
+              <div className="flex gap-2">
+                <Input
+                  ref={inputRef}
+                  placeholder="ABC1"
+                  value={codigoInput}
+                  onChange={e => setCodigoInput(e.target.value.toUpperCase().slice(0, 4))}
+                  onKeyDown={e => { if (e.key === 'Enter') buscarCodigo(); }}
+                  className="h-16 text-3xl font-black font-mono tracking-[0.4em] text-center rounded-xl border-2 border-slate-200 bg-white text-slate-700"
+                  maxLength={4}
+                  autoFocus
+                />
+                <Button onClick={buscarCodigo} disabled={carregando || codigoInput.length !== 4} size="lg" className="h-16 rounded-xl bg-gradient-to-r from-cyan-400 to-blue-500 hover:opacity-90 text-white font-bold">
+                  {carregando ? <Loader2 className="h-5 w-5 animate-spin" /> : <><Search className="h-5 w-5 mr-1" /> Buscar</>}
+                </Button>
+              </div>
+              <p className="text-xs text-slate-400 text-center">
+                Pode escanear o código de barras com leitor USB (vai aparecer no campo acima)
+              </p>
             </div>
-            <div className="flex gap-2">
+          ) : (
+            <div className="max-w-xl mx-auto rounded-2xl border-2 border-slate-100 bg-slate-50/70 p-6 space-y-4">
+              <div className="flex items-center gap-2">
+                <span className="w-8 h-8 rounded-lg bg-cyan-100 text-cyan-600 flex items-center justify-center text-base">
+                  {modoBusca === 'nome' ? '🧒' : '📟'}
+                </span>
+                <h2 className="font-bold text-slate-700 text-sm sm:text-base">
+                  {modoBusca === 'nome' ? 'Nome da criança' : 'Número do pager'}
+                </h2>
+              </div>
               <Input
-                ref={inputRef}
-                placeholder="ABC1"
-                value={codigoInput}
-                onChange={e => setCodigoInput(e.target.value.toUpperCase().slice(0, 4))}
-                onKeyDown={e => { if (e.key === 'Enter') buscarCodigo(); }}
-                className="h-16 text-3xl font-black font-mono tracking-[0.4em] text-center rounded-xl border-2 border-slate-200 bg-white text-slate-700"
-                maxLength={4}
                 autoFocus
+                inputMode={modoBusca === 'pager' ? 'numeric' : 'text'}
+                placeholder={modoBusca === 'nome' ? 'ex.: Maitê' : 'ex.: 12'}
+                value={buscaAberta}
+                onChange={e => setBuscaAberta(modoBusca === 'pager' ? e.target.value.replace(/\D/g, '').slice(0, 4) : e.target.value)}
+                className={`h-14 rounded-xl border-2 border-slate-200 bg-white text-slate-700 ${modoBusca === 'pager' ? 'text-2xl text-center font-bold tracking-widest' : 'text-lg'}`}
               />
-              <Button onClick={buscarCodigo} disabled={carregando || codigoInput.length !== 4} size="lg" className="h-16 rounded-xl bg-gradient-to-r from-cyan-400 to-blue-500 hover:opacity-90 text-white font-bold">
-                {carregando ? <Loader2 className="h-5 w-5 animate-spin" /> : <><Search className="h-5 w-5 mr-1" /> Buscar</>}
-              </Button>
+              {buscandoAbertos && (
+                <div className="flex items-center justify-center gap-2 text-sm text-slate-400 py-2">
+                  <Loader2 className="h-4 w-4 animate-spin" /> Buscando…
+                </div>
+              )}
+              {!buscandoAbertos && buscouAbertos && resultadosAbertos.length === 0 && (
+                <p className="text-sm text-slate-400 text-center py-2">
+                  Nenhuma criança com check-in aberto encontrada.
+                </p>
+              )}
+              <div className="space-y-2 max-h-[340px] overflow-y-auto">
+                {resultadosAbertos.map((r: any) => (
+                  <button
+                    key={r.id}
+                    onClick={() => abrirCheckinAberto(r.codigo_seguranca)}
+                    disabled={carregando}
+                    className="w-full text-left flex items-center gap-3 p-3 rounded-xl border-2 border-slate-200 bg-white hover:border-cyan-300 hover:bg-cyan-50/50 transition"
+                  >
+                    {r.crianca?.foto_url ? (
+                      <img src={r.crianca.foto_url} alt="" className="h-11 w-11 rounded-full object-cover" />
+                    ) : (
+                      <div className="h-11 w-11 rounded-full bg-pink-100 dark:bg-pink-900/40 flex items-center justify-center">
+                        <Baby className="h-5 w-5 text-pink-500" />
+                      </div>
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <div className="font-semibold truncate">{r.crianca?.nome}</div>
+                      <div className="text-xs text-slate-400 truncate">
+                        Entrou às {format(new Date(r.checkin_at), 'HH:mm')}
+                        {r.responsavel_checkin_nome ? ` · com ${r.responsavel_checkin_nome}` : ''}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {r.pager_numero && (
+                        <span className="inline-flex items-center justify-center min-w-[2rem] h-6 px-1.5 rounded-md bg-amber-500 text-white text-xs font-mono font-bold">
+                          {r.pager_numero}
+                        </span>
+                      )}
+                      {r.sala?.nome && (
+                        <Badge style={{ background: r.sala.cor || '#EC4899' }} className="text-white">{r.sala.nome}</Badge>
+                      )}
+                    </div>
+                  </button>
+                ))}
+              </div>
             </div>
-            <p className="text-xs text-slate-400 text-center">
-              Pode escanear o código de barras com leitor USB (vai aparecer no campo acima)
-            </p>
-          </div>
+          )}
         </div>
       ) : (
         <Card>
