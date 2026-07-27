@@ -12,14 +12,28 @@ import { Sparkles, X, Plus, Volume2, VolumeX, Send, Loader2, History, Square, Tr
 import { agents } from '../../api';
 import { SiriWave } from '../ui/siri-wave';
 import { pedrinhoFalar, pedrinhoParar } from '../../lib/pedrinhoVoz';
+import { useOverlayAberto } from '../../hooks/useOverlayAberto';
 
 const PRIMARY = '#00B39D';
 const VOZ_KEY = 'cbrio-pedrinho-voz';
+const TEMPO_DESARME_MS = 4000;
 
 type Msg = { role: 'user' | 'assistant' | 'error' | 'system'; text: string };
 
 export default function ChatIAFloating() {
   const [open, setOpen] = useState(false);
+  // Botão fecha o próprio painel (canto direito) — o drawer de navegação
+  // (lateral esquerda) nunca o cobre, então só minimiza pros demais overlays
+  // (dialogs/modais no meio da tela que podem invadir o canto inferior direito).
+  const { aberto: overlayAberto, drawerEsquerdo } = useOverlayAberto();
+  const [armado, setArmado] = useState(false);
+  const minimizado = !open && overlayAberto && !drawerEsquerdo && !armado;
+  useEffect(() => {
+    if (!overlayAberto) { setArmado(false); return; }
+    if (!armado) return;
+    const t = setTimeout(() => setArmado(false), TEMPO_DESARME_MS);
+    return () => clearTimeout(t);
+  }, [armado, overlayAberto]);
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState('');
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -156,16 +170,17 @@ export default function ChatIAFloating() {
   if (!open) {
     return (
       <button
-        onClick={() => setOpen(true)}
+        onClick={() => { if (minimizado) { setArmado(true); return; } setOpen(true); }}
         aria-label="Abrir o Pedrinho"
-        title="Pedrinho · assistente IA da CBRio"
-        className="floating-action-btn fixed right-6 z-50 h-14 w-14 rounded-full shadow-lg flex items-center justify-center text-white hover:scale-110 active:scale-95 transition-all duration-150 ring-2 ring-white/20 hover:ring-white/40"
+        title={minimizado ? 'Toque de novo pra abrir o Pedrinho' : 'Pedrinho · assistente IA da CBRio'}
+        className="floating-action-btn fixed right-6 z-50 rounded-full shadow-lg flex items-center justify-center text-white hover:scale-110 active:scale-95 transition-all duration-150 ring-2 ring-white/20 hover:ring-white/40"
         style={{
           bottom: 'calc(1.5rem + env(safe-area-inset-bottom, 0px))',
+          height: minimizado ? 36 : 56, width: minimizado ? 36 : 56,
           background: `linear-gradient(135deg, ${PRIMARY} 0%, #008e7d 100%)`, boxShadow: `0 8px 24px ${PRIMARY}55, 0 2px 8px rgba(0,0,0,0.12)`,
         }}
       >
-        <Sparkles className="h-6 w-6" strokeWidth={2.2} />
+        <Sparkles className={minimizado ? 'h-4 w-4' : 'h-6 w-6'} strokeWidth={2.2} />
       </button>
     );
   }
