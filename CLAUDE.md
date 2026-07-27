@@ -1251,6 +1251,32 @@ Susto do Marcos (envios proativos a líderes). Auditoria do código vivo + barre
 - ⚠️ Aplicar `20260723180000` antes do merge (aditiva/idempotente · código tolera
   ausência tratando como false).
 
+## Fila WhatsApp · política de reenvio + falha avisa gente (2026-07-27)
+
+O teste de lançamento de grupos (26/07 · 34 inscrições ao vivo) expôs: erro
+PERMANENTE (telefone corrompido de 21 dígitos de uma líder → `invalid_phone`)
+era re-tentado 5× em silêncio e ninguém soube que ela ficou sem os links de
+aprovação. Decisão do Marcos (27/07): "enviado 1 vez; reenvia só se deu
+problema no envio — e problema definitivo avisa gente". Em
+`services/whatsappFila.js` (sem migration):
+- **`falhaPermanente()`**: `invalid_phone` (normalização local do
+  whatsappService) e códigos Meta permanentes (100, 131026, 131030, 132000,
+  132001, 132005, 132007, 132012) marcam `status='erro'` na PRIMEIRA falha,
+  sem retry. Falha passageira (teto diário TIER_250, timeout, exception)
+  mantém o retry com backoff — é o motivo de a fila existir. Envio com
+  sucesso nunca foi re-enviado (`enviado` é terminal · sem mudança).
+- **Falha TERMINAL (permanente ou esgotou) dispara `notificar()`** pro módulo
+  do prefixo do `contexto` (`grupos.pedido_novo_lider` → grupos · sem regra
+  configurada cai no fallback admin/diretor) com dedup
+  `wpp_envio_falha_<id>` e link `/grupos` quando for de grupos.
+- **Validação de telefone na porta** (`routes/membresia.js` ·
+  `normalizarTelefonePayload`, espelho do `normalizarCpfPayload`): POST/PUT
+  de membros e o PUT do totem normalizam pra digits-only e exigem 10-11
+  dígitos (DDD+número · 55 na frente é removido), com grandfathering do
+  legado (valor idêntico ao armazenado passa — senão telefone antigo inválido
+  travaria qualquer edição). Contrato de porta aplicado ao canal que deixou o
+  número corrompido entrar.
+
 ## Grupos × Bot WhatsApp · estudo semanal + relato do encontro (2026-06-10)
 
 Marcos: o bot manda o ESTUDO DA SEMANA pros líderes de grupos e, no dia
