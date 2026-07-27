@@ -1332,6 +1332,104 @@ router.put('/profiles/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar perfil' }); }
 });
 
+// Editar o CADASTRO do voluntário (nome/e-mail/telefone/CPF) refletindo na
+// MEMBRESIA — voluntário é membro, então a fonte única é mem_membros. Vale
+// também pros perfis vindos do Planning Center: marca protegido_sync=true pra
+// o sync horário não reverter o nome/e-mail editado. Guard voluntariado>=3
+// (Ariel entra por boost de área). Backend usa service_role → escreve em
+// mem_membros mesmo sem a pessoa ser admin/diretor.
+router.put('/profiles/:id/cadastro', authorizeModule('voluntariado', 3), async (req, res) => {
+  try {
+    const { full_name, email, phone, cpf } = req.body || {};
+    if (!full_name || !String(full_name).trim()) {
+      return res.status(400).json({ error: 'Nome obrigatório' });
+    }
+    const nome = String(full_name).trim();
+
+    const { data: perfil, error: pErr } = await supabase.from('vol_profiles')
+      .select('id, full_name, email, phone, cpf, membresia_id, planning_center_id')
+      .eq('id', req.params.id).maybeSingle();
+    if (pErr) throw pErr;
+    if (!perfil) return res.status(404).json({ error: 'Voluntário não encontrado' });
+
+    // Normalização (mesmo espírito da Membresia): CPF com DV (grandfathering do
+    // valor atual), telefone digits-only 10-11, e-mail básico.
+    let cleanCpf = perfil.cpf || null;
+    if (cpf !== undefined) {
+      const dig = String(cpf || '').replace(/\D/g, '');
+      if (!dig) cleanCpf = null;
+      else if (dig === String(perfil.cpf || '')) cleanCpf = dig; // idêntico ao atual passa
+      else if (dig.length !== 11 || !cpfValido(dig)) return res.status(400).json({ error: 'CPF inválido — confira os dígitos' });
+      else cleanCpf = dig;
+    }
+    let cleanPhone = perfil.phone || null;
+    if (phone !== undefined) {
+      let d = String(phone || '').replace(/\D/g, '');
+      if (!d) cleanPhone = null;
+      else {
+        if (d.startsWith('55') && d.length > 11) d = d.slice(2);
+        if (d.length < 10 || d.length > 11) return res.status(400).json({ error: 'Telefone inválido — DDD + número (10 ou 11 dígitos)' });
+        cleanPhone = d;
+      }
+    }
+    let cleanEmail = perfil.email || null;
+    if (email !== undefined) {
+      const e = String(email || '').trim().toLowerCase();
+      if (!e) cleanEmail = null;
+      else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) return res.status(400).json({ error: 'E-mail inválido' });
+      else cleanEmail = e;
+    }
+
+    // 1) Resolve/garante o vínculo com a membresia (fonte única). Se já tem, usa;
+    //    senão, matcher canônico (CPF→e-mail+nome→telefone+nome→nasc+nome).
+    let membresiaId = perfil.membresia_id || null;
+    if (!membresiaId) {
+      try {
+        const r = await acharOuCriarGuardado({
+          cpf: cleanCpf, email: cleanEmail, telefone: cleanPhone, nome,
+          status: 'visitante', origem: 'voluntariado_edicao',
+        });
+        membresiaId = r?.membro_id || null;
+      } catch (e) {
+        console.error('[vol] cadastro matcher:', e.message);
+      }
+    }
+
+    // 2) Propaga o cadastro pra mem_membros (fonte única que o sync do PC não toca).
+    if (membresiaId) {
+      const patchMembro = { nome };
+      if (cleanEmail !== null) patchMembro.email = cleanEmail;
+      if (cleanPhone !== null) patchMembro.telefone = cleanPhone;
+      if (cleanCpf !== null) patchMembro.cpf = cleanCpf;
+      const { error: mErr } = await supabase.from('mem_membros')
+        .update(patchMembro).eq('id', membresiaId);
+      if (mErr) {
+        // colisão de CPF/e-mail único no cadastro de membro → mensagem clara
+        const dup = /duplicate|unique|23505/i.test(mErr.message || '');
+        return res.status(dup ? 409 : 400).json({
+          error: dup ? 'CPF ou e-mail já pertence a outra pessoa na membresia.' : mErr.message,
+        });
+      }
+      enqueueSync('membro', membresiaId, 'upsert').catch(() => {});
+    }
+
+    // 3) Atualiza o vol_profile + protege do sync do PC (nome/e-mail não voltam).
+    const { data, error } = await supabase.from('vol_profiles')
+      .update({
+        full_name: nome, email: cleanEmail, phone: cleanPhone, cpf: cleanCpf,
+        membresia_id: membresiaId, protegido_sync: true, profile_complete: true,
+      })
+      .eq('id', req.params.id).select().single();
+    if (error) return res.status(400).json({ error: error.message });
+    enqueueSync('voluntario', req.params.id, 'upsert').catch(() => {});
+
+    res.json({ ...data, membresia_vinculada: !!membresiaId });
+  } catch (e) {
+    console.error('[vol] editar cadastro:', e.message);
+    res.status(500).json({ error: 'Erro ao salvar o cadastro do voluntário' });
+  }
+});
+
 // ══════════════════════════════════════════════════════════════
 // OPÇÕES DO FORMULÁRIO PÚBLICO ("Onde você quer servir")
 // Editaveis pela equipe de voluntariado · alimentam /inscricao-voluntariado

@@ -1,11 +1,15 @@
-import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { Loader2, Mail, Phone, CalendarCheck, ScanLine, ListChecks, Activity, MessageCircle } from 'lucide-react';
+import { Loader2, Mail, Phone, CalendarCheck, ScanLine, ListChecks, Activity, MessageCircle, Pencil } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { toast } from 'sonner';
 import { voluntariado } from '@/api';
 import { hrefConversa } from '@/lib/conversas';
 
@@ -35,6 +39,7 @@ const STATUS: Record<string, { label: string; cls: string }> = {
 };
 
 export default function VolDetalheDialog({ id, onClose }: { id: string | null; onClose: () => void }) {
+  const [editar, setEditar] = useState(false);
   const { data, isLoading } = useQuery({
     queryKey: ['vol', 'detalhe', id],
     queryFn: () => voluntariado.profiles.detalhe(id as string),
@@ -59,6 +64,14 @@ export default function VolDetalheDialog({ id, onClose }: { id: string | null; o
                 {p.phone && <span className="flex items-center gap-1"><Phone className="w-3 h-3" />{p.phone}</span>}
               </div>
             </div>
+            <Button
+              size="sm" variant="outline"
+              className="ml-auto mr-6 h-8 gap-1.5 shrink-0"
+              onClick={() => setEditar(true)}
+              disabled={isLoading || !p.id}
+            >
+              <Pencil className="w-3.5 h-3.5" /> Editar cadastro
+            </Button>
           </DialogTitle>
         </DialogHeader>
 
@@ -171,6 +184,71 @@ export default function VolDetalheDialog({ id, onClose }: { id: string | null; o
             </>
           )}
         </div>
+      </DialogContent>
+      {editar && p.id && (
+        <EditarCadastroDialog perfil={p} volId={id as string} onClose={() => setEditar(false)} />
+      )}
+    </Dialog>
+  );
+}
+
+// Editar nome/e-mail/telefone/CPF do voluntário — reflete na Membresia (o
+// backend propaga pra mem_membros e protege o perfil do sync do Planning Center).
+function EditarCadastroDialog({ perfil, volId, onClose }: { perfil: any; volId: string; onClose: () => void }) {
+  const qc = useQueryClient();
+  const [nome, setNome] = useState(perfil.full_name || '');
+  const [email, setEmail] = useState(perfil.email || '');
+  const [telefone, setTelefone] = useState(perfil.phone || '');
+  const [cpf, setCpf] = useState(perfil.cpf || '');
+
+  const salvar = useMutation({
+    mutationFn: () => voluntariado.profiles.editarCadastro(volId, {
+      full_name: nome, email, phone: telefone, cpf,
+    }),
+    onSuccess: (r: { membresia_vinculada?: boolean }) => {
+      toast.success(r?.membresia_vinculada
+        ? 'Cadastro salvo e refletido na Membresia.'
+        : 'Cadastro salvo.');
+      qc.invalidateQueries({ queryKey: ['vol'] });
+      onClose();
+    },
+    onError: (e: Error) => toast.error(e.message || 'Erro ao salvar'),
+  });
+
+  return (
+    <Dialog open onOpenChange={(v) => { if (!v) onClose(); }}>
+      <DialogContent className="max-w-md z-[1100]">
+        <DialogHeader>
+          <DialogTitle>Editar cadastro do voluntário</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div>
+            <Label>Nome completo</Label>
+            <Input className="mt-1" value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Nome completo" />
+          </div>
+          <div>
+            <Label>E-mail</Label>
+            <Input className="mt-1" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email@exemplo.com" />
+          </div>
+          <div>
+            <Label>Telefone</Label>
+            <Input className="mt-1" value={telefone} onChange={(e) => setTelefone(e.target.value)} placeholder="DDD + número" />
+          </div>
+          <div>
+            <Label>CPF</Label>
+            <Input className="mt-1" value={cpf} onChange={(e) => setCpf(e.target.value)} placeholder="Só números" />
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            Voluntário é membro — o que você editar aqui atualiza também o cadastro na Membresia.
+            Perfis vindos do Planning Center não voltam ao valor antigo depois de editados.
+          </p>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose} disabled={salvar.isPending}>Cancelar</Button>
+          <Button onClick={() => salvar.mutate()} disabled={salvar.isPending || !nome.trim()}>
+            {salvar.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Salvar'}
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

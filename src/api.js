@@ -2702,6 +2702,8 @@ export const voluntariado = {
     detalhe: (id) => get(`/voluntariado/profiles/${id}/detalhe`),
     create: (data) => post('/voluntariado/profiles', data),
     update: (id, data) => put(`/voluntariado/profiles/${id}`, data),
+    // Edita o cadastro (nome/e-mail/telefone/CPF) refletindo na Membresia
+    editarCadastro: (id, data) => put(`/voluntariado/profiles/${id}/cadastro`, data),
   },
   // Roles
   roles: {
