@@ -82,6 +82,28 @@ async function resolverSegmento(segmento = {}) {
         else { semEmail += 1; semEmailLista.push({ nome: p.full_name || null, motivo: 'sem e-mail' }); }
       }
     }
+  } else if (tipo === 'inscritos') {
+    // Inscrições do funil (form público · vol_inscricoes tem e-mail/nome próprios).
+    // Filtra por status (default 'inscrito') e, opcionalmente, por área.
+    const status = segmento.status || 'inscrito';
+    const area = segmento.area ? String(segmento.area).toLowerCase() : null;
+    for (let from = 0; ; from += PAGE) {
+      let q = supabase
+        .from('vol_inscricoes')
+        .select('id, nome_completo, nome, email, membro_id, status, area')
+        .eq('status', status)
+        .order('id')
+        .range(from, from + PAGE - 1);
+      if (area) q = q.eq('area', area);
+      const { data, error } = await q;
+      if (error) throw error;
+      for (const i of data || []) {
+        const nome = i.nome_completo || i.nome || null;
+        if (i.email) brutos.push({ vol_profile_id: null, email: i.email, nome });
+        else { semEmail += 1; semEmailLista.push({ nome, motivo: 'sem e-mail' }); }
+      }
+      if (!data || data.length < PAGE) break;
+    }
   } else if (tipo === 'escala') {
     if (!segmento.service_id) throw new Error('service_id obrigatório no segmento de escala');
     for (let from = 0; ; from += PAGE) {

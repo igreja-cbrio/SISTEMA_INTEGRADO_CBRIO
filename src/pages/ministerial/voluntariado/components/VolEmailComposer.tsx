@@ -50,9 +50,10 @@ export type VolEmailDisparo = {
   assunto: string;
   corpo_html: string;
   segmento: {
-    tipo: 'todos' | 'equipe' | 'escala' | 'manual';
+    tipo: 'todos' | 'equipe' | 'escala' | 'manual' | 'inscritos';
     team_id?: string | null;
     service_id?: string | null;
+    status?: string | null;
     vol_profile_ids?: string[];
   };
   incluir_assinatura?: boolean;
@@ -67,7 +68,15 @@ export type VolEmailDisparo = {
 };
 
 type Props = { disparo: VolEmailDisparo | null; onVoltar: () => void };
-type SegTipo = 'todos' | 'equipe' | 'escala' | 'manual';
+type SegTipo = 'todos' | 'equipe' | 'escala' | 'manual' | 'inscritos';
+
+// Status do funil de inscrição (vol_inscricoes.status) que fazem sentido pra e-mail.
+const INSCRICAO_STATUS: { value: string; label: string }[] = [
+  { value: 'inscrito', label: 'Inscritos (aguardando alocação)' },
+  { value: 'enviado_ministerio', label: 'Enviados ao ministério' },
+  { value: 'nao_responde', label: 'Não responderam' },
+  { value: 'integrado', label: 'Integrados' },
+];
 type TeamOpt = { id: string; name: string };
 type ServiceOpt = { id: string; name: string; scheduled_at: string };
 type ResolucaoDest = { total: number; sem_email: number; lista: { nome: string | null; email: string }[]; sem_email_lista?: { nome: string | null; motivo: string }[] };
@@ -98,6 +107,7 @@ export default function VolEmailComposer({ disparo, onVoltar }: Props) {
   const [segTeamId, setSegTeamId] = useState<string>(disparo?.segmento?.team_id || '');
   const [segServiceId, setSegServiceId] = useState<string>(disparo?.segmento?.service_id || '');
   const [segIds, setSegIds] = useState<string[]>(disparo?.segmento?.vol_profile_ids || []);
+  const [segStatus, setSegStatus] = useState<string>(disparo?.segmento?.status || 'inscrito');
   const [incluirAssinatura, setIncluirAssinatura] = useState(disparo?.incluir_assinatura !== false);
   const [verListaOpen, setVerListaOpen] = useState(false);
   const [buscaLista, setBuscaLista] = useState('');
@@ -135,13 +145,15 @@ export default function VolEmailComposer({ disparo, onVoltar }: Props) {
     ...(segTipo === 'equipe' ? { team_id: segTeamId || null } : {}),
     ...(segTipo === 'escala' ? { service_id: segServiceId || null } : {}),
     ...(segTipo === 'manual' ? { vol_profile_ids: segIds } : {}),
+    ...(segTipo === 'inscritos' ? { status: segStatus } : {}),
   });
 
   const segmentoValido =
     segTipo === 'todos' ||
     (segTipo === 'equipe' && segTeamId) ||
     (segTipo === 'escala' && segServiceId) ||
-    (segTipo === 'manual' && segIds.length > 0);
+    (segTipo === 'manual' && segIds.length > 0) ||
+    (segTipo === 'inscritos' && !!segStatus);
 
   // Equipes (com id) e cultos futuros pro seletor de segmento
   const { data: teams = [] } = useQuery<TeamOpt[]>({
@@ -502,10 +514,25 @@ export default function VolEmailComposer({ disparo, onVoltar }: Props) {
                     <SelectItem value="todos">Todos os voluntários</SelectItem>
                     <SelectItem value="equipe">Uma equipe</SelectItem>
                     <SelectItem value="escala">Escalados de um culto</SelectItem>
+                    <SelectItem value="inscritos">Inscritos (por status do funil)</SelectItem>
                     <SelectItem value="manual">Escolher voluntários</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
+
+              {segTipo === 'inscritos' && (
+                <div>
+                  <Label>Status da inscrição</Label>
+                  <Select value={segStatus} onValueChange={setSegStatus}>
+                    <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {INSCRICAO_STATUS.map((s) => (
+                        <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
 
               {segTipo === 'manual' && (
                 <Button variant="outline" className="w-full" onClick={() => setSelecionarOpen(true)}>

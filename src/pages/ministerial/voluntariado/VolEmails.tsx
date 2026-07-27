@@ -36,6 +36,13 @@ function segmentoLabel(seg: VolEmailDisparo['segmento'] | null | undefined): str
   if (seg?.tipo === 'equipe') return 'Equipe';
   if (seg?.tipo === 'escala') return 'Escala (culto)';
   if (seg?.tipo === 'manual') return `Seleção manual (${seg.vol_profile_ids?.length || 0})`;
+  if (seg?.tipo === 'inscritos') {
+    const STATUS_LABEL: Record<string, string> = {
+      inscrito: 'Inscritos (aguardando)', enviado_ministerio: 'Enviados ao ministério',
+      nao_responde: 'Não responderam', integrado: 'Integrados',
+    };
+    return STATUS_LABEL[seg.status || 'inscrito'] || `Inscrições (${seg.status})`;
+  }
   return 'Todos os voluntários';
 }
 
