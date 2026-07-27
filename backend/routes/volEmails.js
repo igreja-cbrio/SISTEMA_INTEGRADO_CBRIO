@@ -26,10 +26,15 @@ const EDITAVEIS = ['rascunho', 'agendado'];
 
 function validarSegmento(seg) {
   if (!seg || typeof seg !== 'object') return { tipo: 'todos' };
-  const tipo = ['todos', 'equipe', 'escala', 'manual'].includes(seg.tipo) ? seg.tipo : 'todos';
+  const tipo = ['todos', 'equipe', 'escala', 'manual', 'inscritos'].includes(seg.tipo) ? seg.tipo : 'todos';
   const limpo = { tipo };
   if (tipo === 'equipe') limpo.team_id = seg.team_id || null;
   if (tipo === 'escala') limpo.service_id = seg.service_id || null;
+  if (tipo === 'inscritos') {
+    const STATUS_OK = ['inscrito', 'enviado_ministerio', 'nao_responde', 'integrado'];
+    limpo.status = STATUS_OK.includes(seg.status) ? seg.status : 'inscrito';
+    if (seg.area) limpo.area = String(seg.area).toLowerCase();
+  }
   if (tipo === 'manual') {
     limpo.vol_profile_ids = (Array.isArray(seg.vol_profile_ids) ? seg.vol_profile_ids : [])
       .filter(id => typeof id === 'string' && id)
