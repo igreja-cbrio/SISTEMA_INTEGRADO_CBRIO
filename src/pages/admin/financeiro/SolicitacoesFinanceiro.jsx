@@ -218,6 +218,7 @@ function DetalheDialog({ solicitacao: s, onClose, onAction }) {
   const [erro, setErro] = useState(null);
   const [cotacoes, setCotacoes] = useState([]);
   const [cotacoesLoading, setCotacoesLoading] = useState(false);
+  const [cotacoesErro, setCotacoesErro] = useState(false);
   // Compra/serviço exige a forma de pagamento na aprovação: define quem executa
   // (cartão → Amaury compra; demais → Cristina paga).
   const ehCompraServico = ['compras', 'servico'].includes(s.categoria);
@@ -227,13 +228,15 @@ function DetalheDialog({ solicitacao: s, onClose, onAction }) {
     if (!['compras', 'servico'].includes(s.categoria) || !s.cotacao_em) {
       setCotacoes([]);
       setCotacoesLoading(false);
+      setCotacoesErro(false);
       return () => { ativo = false; };
     }
 
     setCotacoesLoading(true);
+    setCotacoesErro(false);
     solicitacoes.listarCotacoes(s.id)
       .then(resultado => { if (ativo) setCotacoes(Array.isArray(resultado) ? resultado : []); })
-      .catch(() => { if (ativo) setCotacoes([]); })
+      .catch(() => { if (ativo) { setCotacoes([]); setCotacoesErro(true); } })
       .finally(() => { if (ativo) setCotacoesLoading(false); });
     return () => { ativo = false; };
   }, [s.id, s.categoria, s.cotacao_em]);
@@ -340,6 +343,11 @@ function DetalheDialog({ solicitacao: s, onClose, onAction }) {
             <div className="mb-2 text-[10px] font-semibold uppercase text-primary">Cotações enviadas pela logística</div>
             {cotacoesLoading ? (
               <div className="text-xs text-muted-foreground">Carregando cotações...</div>
+            ) : cotacoesErro ? (
+              <div style={{ padding: 12, background: '#FCEBEB', border: '1px dashed #F09595', borderRadius: 6, textAlign: 'center' }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: '#501313', marginBottom: 4 }}>Não foi possível carregar as cotações</div>
+                <div style={{ fontSize: 11, color: '#791F1F' }}>Verifique com a logística se as cotações foram registradas antes de aprovar.</div>
+              </div>
             ) : cotacoes.length ? (
               <div className="space-y-2">
                 {cotacoes.map(cotacao => (

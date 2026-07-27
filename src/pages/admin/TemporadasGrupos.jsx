@@ -503,15 +503,17 @@ function RevisaoFimTemporada({ temporadas }) {
   const [temporada, setTemporada] = useState(() => (temporadas.find(t => t.ativa)?.id || temporadas[0]?.id || ''));
   const [grupos, setGrupos] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [erroLoad, setErroLoad] = useState(false);
   const [removendo, setRemovendo] = useState({});
 
   async function load(temp) {
     if (!temp) return;
     setLoading(true);
+    setErroLoad(false);
     try {
       const data = await api.semPresenca(temp);
       setGrupos(Array.isArray(data) ? data : []);
-    } catch (e) { toast.error(e.message || 'Erro ao carregar a revisão'); setGrupos([]); }
+    } catch (e) { toast.error(e.message || 'Erro ao carregar a revisão'); setGrupos([]); setErroLoad(true); }
     finally { setLoading(false); }
   }
   useEffect(() => { load(temporada); /* eslint-disable-next-line */ }, [temporada]);
@@ -554,6 +556,12 @@ function RevisaoFimTemporada({ temporadas }) {
       <div style={{ padding: 16 }}>
         {loading ? (
           <div style={{ padding: 24, textAlign: 'center', color: C.t3, fontSize: 13 }}>Carregando...</div>
+        ) : erroLoad ? (
+          <div style={{ padding: 24, background: '#FCEBEB', border: '1px dashed #F09595', borderRadius: 8, textAlign: 'center' }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: '#501313', marginBottom: 4 }}>Não foi possível carregar a revisão</div>
+            <div style={{ fontSize: 12, color: '#791F1F', marginBottom: 12 }}>Pode haver pessoas a revisar — a lista falhou ao carregar. NÃO trate como "está tudo em dia".</div>
+            <button onClick={() => load(temporada)} style={{ background: '#E24B4A', color: '#fff', border: 'none', borderRadius: 6, padding: '8px 16px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Tentar de novo</button>
+          </div>
         ) : !grupos || grupos.length === 0 ? (
           <div style={{ padding: 24, textAlign: 'center', color: C.t3, fontSize: 13, lineHeight: 1.6 }}>
             <CheckCircle2 size={26} style={{ margin: '0 auto 8px', display: 'block', color: C.green, opacity: 0.7 }} />

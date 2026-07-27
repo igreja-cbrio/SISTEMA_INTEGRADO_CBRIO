@@ -12,12 +12,14 @@ import { toast } from 'sonner';
 
 export default function ConversasSetores() {
   const [setores, setSetores] = useState(null);
+  const [erroSetores, setErroSetores] = useState(false);
   const [areas, setAreas] = useState([]);
   const [novo, setNovo] = useState({ rotulo: '', area: '', ordem: '' });
   const [salvando, setSalvando] = useState(false);
 
   const carregar = useCallback(() => {
-    waInbox.setores().then((r) => setSetores(r?.setores || [])).catch(() => setSetores([]));
+    setErroSetores(false);
+    waInbox.setores().then((r) => setSetores(r?.setores || [])).catch(() => { setSetores([]); setErroSetores(true); });
   }, []);
   useEffect(() => {
     carregar();
@@ -60,6 +62,12 @@ export default function ConversasSetores() {
       <Card className="p-4">
         {setores === null ? (
           <div className="flex justify-center py-8"><Loader2 className="h-5 w-5 animate-spin text-primary" /></div>
+        ) : erroSetores ? (
+          <div style={{ padding: 16, background: '#FCEBEB', border: '1px dashed #F09595', borderRadius: 8, textAlign: 'center' }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: '#501313', marginBottom: 4 }}>Não foi possível carregar os setores</div>
+            <div style={{ fontSize: 11, color: '#791F1F', marginBottom: 10 }}>Setores existentes podem estar configurados — não recrie sem confirmar.</div>
+            <button onClick={carregar} style={{ background: '#E24B4A', color: '#fff', border: 'none', borderRadius: 6, padding: '6px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Tentar de novo</button>
+          </div>
         ) : (
           <div className="space-y-2">
             <div className="grid grid-cols-[40px_1fr_1fr_70px_44px] gap-2 px-1 text-[11px] uppercase tracking-wide text-muted-foreground">
