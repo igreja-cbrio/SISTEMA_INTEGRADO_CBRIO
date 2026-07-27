@@ -2,7 +2,11 @@
 <html lang="pt-BR">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- maximum-scale=1/user-scalable=no: pinch-zoom deixava os botões
+         flutuantes (Reportar/IA) e outros elementos position:fixed instáveis
+         no mobile — em alguns navegadores eles "somem" do canto quando a
+         página é zoomada (achado do usuário 2026-07-27, Financeiro/Patrimônio). -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>CBRio · Comunidade Batista do Rio de Janeiro</title>
     <meta name="description" content="A CBRio é uma igreja pra você chamar de casa. Conheça nossa missão, participe de um grupo, seja voluntário e cresça na sua jornada com Jesus." />
     <!-- Verificação de propriedade do domínio no Google Search Console (Play Console org) -->
