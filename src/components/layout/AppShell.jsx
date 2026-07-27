@@ -791,7 +791,20 @@ function MobileNavSheet({ items }) {
           <MenuIcon className="h-5 w-5" />
         </button>
       </SheetTrigger>
-      <SheetContent side="left" className="w-80 max-w-[85vw] overflow-y-auto p-0">
+      <SheetContent
+        side="left"
+        className="w-80 max-w-[85vw] overflow-y-auto p-0"
+        // Reportar/IA ficam realocados na faixa livre à direita enquanto o
+        // drawer está aberto (ver useOverlayAberto.js) — sem isso, o Radix
+        // trata o toque neles como "clique fora" e fecha o drawer ANTES do
+        // onClick do botão rodar (o botão "pula" de posição no meio do toque
+        // e o relatório nunca abre — achado do usuário 2026-07-27).
+        onPointerDownOutside={(e) => {
+          if (e.target instanceof Element && e.target.closest('.floating-action-btn')) {
+            e.preventDefault();
+          }
+        }}
+      >
         <div className="px-4 py-4 border-b border-border">
           <img src="/logo-cbrio-text.png" alt="CBRio" className="h-7 object-contain" />
         </div>
