@@ -564,6 +564,84 @@ export async function imprimirEtiquetas(d: DadosImpressao, preview = false, incl
   }
 }
 
+// Impressão da FAMÍLIA em UM job (Marcos 2026-07-27): irmãos disparavam uma
+// requisição de impressão (iframe+print) e 2-3 POSTs de log POR CRIANÇA —
+// medo real de gargalo na fila do domingo. Aqui o conjunto inteiro (2 etiquetas
+// por criança + recibo 1× + aniversários elegíveis) vira UM documento → UM
+// print → UM POST de log (lote). A Brother corta entre as páginas.
+export async function imprimirEtiquetasLote(
+  itens: { d: DadosImpressao; incluirRecibo: boolean }[],
+  preview = false,
+): Promise<void> {
+  if (!itens.length) return;
+  if (itens.length === 1) {
+    // 1 criança = comportamento individual intacto (mesmo job/log de sempre)
+    return imprimirEtiquetas(itens[0].d, preview, itens[0].incluirRecibo);
+  }
+
+  const primeiro = itens[0].d;
+  // Barcode só aparece no recibo · gera 1× por item com recibo (normalmente 1)
+  const barcodes = new Map<string, string>();
+  await Promise.all([
+    ...itens.filter((it) => it.incluirRecibo).map(async (it) => {
+      barcodes.set(it.d.codigoBarras, await gerarBarcodeSvg(it.d.codigoBarras));
+    }),
+    preloadImg(primeiro.logoAniversarioUrl),
+  ]);
+
+  // Limite de 2 etiquetas de aniversário/semana · checa por criança (paralelo)
+  const podeAniversario = await Promise.all(itens.map(async (it) => {
+    if (!it.d.crianca.aniversarioSemana) return false;
+    if (!it.d.criancaId) return true;
+    try {
+      const r = await totemKids.criancas.aniversarioImpressoes(it.d.criancaId);
+      return r?.imprimir !== false;
+    } catch { return true; /* fail-open · não perde o aniversário */ }
+  }));
+
+  const fragmentos: string[] = [];
+  for (let i = 0; i < itens.length; i++) {
+    const { d, incluirRecibo } = itens[i];
+    const fragCrianca = htmlEtiquetaCrianca(d);
+    fragmentos.push(fragCrianca, fragCrianca);
+    if (incluirRecibo) fragmentos.push(htmlEtiquetaResponsavel(d, barcodes.get(d.codigoBarras) || ''));
+    if (podeAniversario[i]) fragmentos.push(htmlEtiquetaAniversario(d));
+  }
+
+  const resultado = await imprimirHtml(documento(fragmentos, primeiro.layout), preview);
+  if (preview) return;
+
+  const eventos: Record<string, unknown>[] = [];
+  itens.forEach(({ d, incluirRecibo }, i) => {
+    eventos.push({
+      checkin_id: d.checkinId,
+      estacao_id: d.estacaoId,
+      tipo: 'crianca',
+      conteudo: {
+        nome: d.crianca.nome,
+        sala: d.crianca.salaNome,
+        idade: d.crianca.idadeLabel,
+        codigo: d.codigoSeguranca,
+        observacoes_medicas: d.crianca.observacoesMedicas,
+        copias: 2,
+        aniversario: podeAniversario[i],
+        lote_familia: itens.length,
+      },
+      status: resultado.status,
+    });
+    if (incluirRecibo) {
+      eventos.push({
+        checkin_id: d.checkinId,
+        estacao_id: d.estacaoId,
+        tipo: 'responsavel',
+        conteudo: { crianca: d.crianca.nome, sala: d.crianca.salaNome, codigo: d.codigoSeguranca, lote_familia: itens.length },
+        status: resultado.status,
+      });
+    }
+  });
+  totemKids.etiquetas.logLote(eventos).catch(() => {});
+}
+
 // Reimpressao (etiqueta rasgou ou impressora falhou) — 1 etiqueta, 1 job.
 export async function reimprimirEtiqueta(d: DadosImpressao, tipo: 'crianca' | 'responsavel', motivo: string): Promise<void> {
   const [barcodeSvg] = await Promise.all([

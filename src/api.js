@@ -1648,6 +1648,8 @@ export const totemKids = {
     // Check-in aberto da criança na sessão (pra reimprimir etiqueta perdida)
     aberto: (sessaoId, criancaId) => get(`/totem-kids/checkin/aberto?sessao_id=${encodeURIComponent(sessaoId)}&crianca_id=${encodeURIComponent(criancaId)}`),
     porCodigo: (codigo) => get(`/totem-kids/checkin/codigo/${encodeURIComponent(codigo)}`),
+    // Check-out sem etiqueta: acha check-ins ABERTOS pelo nome da criança ou nº do pager
+    abertosBuscar: ({ nome, pager } = {}) => get(`/totem-kids/checkins-abertos/buscar?${pager ? `pager=${encodeURIComponent(pager)}` : `nome=${encodeURIComponent(nome || '')}`}`),
     atualizar: (id, data) => patch(`/totem-kids/checkin/${id}`, data),
     // Número do pager entregue (rastreio · propaga por família). Vazio limpa.
     // Conflito de número → { ok:false, conflito:true, em_uso:[...] } (não bloqueia o check-in).
@@ -1710,6 +1712,8 @@ export const totemKids = {
   },
   etiquetas: {
     log: (data) => post('/totem-kids/etiquetas-log', data),
+    // Impressão em lote (família) → 1 requisição com N eventos de log
+    logLote: (eventos) => post('/totem-kids/etiquetas-log', { eventos }),
   },
   auditoria: {
     overrides: () => get('/totem-kids/auditoria/overrides'),

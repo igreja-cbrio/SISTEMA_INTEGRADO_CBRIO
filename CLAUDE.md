@@ -2713,6 +2713,40 @@ via `window.print` na Brother QL-820NWB default do Windows).
   resolvem foto via `anexarFotosEmLote` (`totemKids.js` · `createSignedUrls` =
   1 chamada pra N fotos + cache em memória ~25 min; falha degrada pra sem
   foto). O detalhe individual segue com `fotoVisivelCrianca`.
+- **Ajustes pós-culto 26/07 (2026-07-27 · sem migration)**: (1) o diálogo do
+  pager não perde mais o foco — o effect que devolve o foco à busca ao limpar a
+  seleção agora PULA enquanto `pagerFluxo` está aberto (era ele que roubava o
+  teclado 50ms depois do check-in da família; o número ia parar na busca).
+  (2) **Check-out com 3 buscas**: código (padrão) + NOME da criança + nº do
+  PAGER — `GET /totem-kids/checkins-abertos/buscar?nome=|pager=` acha check-ins
+  ABERTOS e o clique entra no MESMO fluxo do código (`porCodigo`). (3) **Card
+  de pagers do painel é clicável**: abre a MESMA ficha das salas (com
+  check-out) — `pagers-em-uso` devolve `checkin_id`/`crianca_id`/`checkin_at`
+  e o Dialog da ficha abre standalone (`!!salaDetalhe || !!criancaSelId`).
+  (4) **Família imprime em 1 job + 1 log**: `imprimirEtiquetasLote` (imprimir.ts)
+  junta 2 etiquetas por criança + recibo 1× + aniversários num documento só e o
+  `POST /etiquetas-log` aceita `{eventos:[...]}` (lote) — irmãos não disparam
+  mais 1 impressão + 2-3 POSTs por criança. (5) **Seleção da busca refaz
+  `GET /criancas/:id`** (`selecionarCrianca`): edição de cadastro (mãe/data de
+  nascimento) reflete na hora — antes a etiqueta saía com o retrato velho da
+  busca (casos Alice Lopes/idade em 26/07).
+- **⚠️ Incidente "Contribuinte NNN" como responsável (26/07 · corrigido
+  2026-07-27)**: o import financeiro de 24/07 criou ~95 `mem_membros` com CPF
+  REAL e nome mascarado do extrato ("Contribuinte 059412..." · via
+  `fin_resolver_ou_criar_contribuinte`). O dedup por CPF do check-in ("CPF já é
+  de outra pessoa → usa a existente") trocava o responsável selecionado pelo
+  fantasma → 6 etiquetas de 4 famílias saíram com "Contribuinte" como mãe.
+  Guardas permanentes: `ehNomePlaceholder` (membroMatch · exportado) — match
+  por CPF em registro-placeholder com nome real na porta **renomeia o registro**
+  (fantasma vira o cadastro real); nos 2 check-ins (`/checkin` e `/checkin/lote`),
+  dono do CPF sendo placeholder **não rouba a identidade** —
+  `transferirCpfDePlaceholder` migra o CPF pro cadastro selecionado (real) e o
+  telefone do fantasma vira contato secundário (`fn_registrar_contato`).
+  Dados reparados via script guardado (CPF Mariane Malafaia/Suellen Santana
+  transferidos; vínculos mae→fantasma de Fiorella/Noah removidos — recriam no
+  próximo check-in manual, já com a guarda). ⚠️ Os fantasmas restantes seguem
+  no banco (lastro financeiro): nenhum fluxo de PESSOAS deve exibi-los nem
+  preferi-los — usar `ehNomePlaceholder` em busca/vínculo novos.
 - **Pendências operacionais**: aplicar migration
   `20260522300000_totem_kids_chamadas_display.sql`; Brother no Windows do totem
   (docs/totem-kids-setup-brother.md); comprar/parear 6 Fire TV Sticks;

@@ -21,7 +21,7 @@ import TotemKidsCheckout from './TotemKidsCheckout';
 import EditarEtiquetaModal from './EditarEtiquetaModal';
 import QrScanner from '@/pages/ministerial/voluntariado/components/checkin/QrScanner';
 import { calcIdadeMeses, formatIdade, formatIdadeShort } from './lib/idade';
-import { imprimirEtiquetas, reimprimirEtiqueta, reimprimirEtiquetasCompletas } from './lib/imprimir';
+import { imprimirEtiquetas, imprimirEtiquetasLote, reimprimirEtiqueta, reimprimirEtiquetasCompletas } from './lib/imprimir';
 import DataNascimentoPicker from './DataNascimentoPicker';
 import useConfirmarSaida from '@/hooks/useConfirmarSaida';
 import confetti from 'canvas-confetti';
@@ -394,8 +394,10 @@ export default function TotemKidsCheckin() {
   const [pagerConflito, setPagerConflito] = useState<{ numero: string; emUso: string[] } | null>(null);
 
   // Imprime o conjunto (criança(s) + recibo 1×), carimbando "Pager X" só nas
-  // obrigadas quando há número. Com pager, imprime a obrigada primeiro pra o
-  // recibo (genérico da família) também sair com o número.
+  // obrigadas quando há número. Com pager, a obrigada vai primeiro pra o
+  // recibo (genérico da família) também sair com o número. Desde 2026-07-27 a
+  // família inteira sai em UM job de impressão + UM log (imprimirEtiquetasLote)
+  // — irmãos não disparam mais uma requisição por criança.
   async function imprimirEtiquetasComPager(
     etiquetas: { dados: Parameters<typeof imprimirEtiquetas>[0]; precisa: boolean }[],
     pagerNumero?: string,
@@ -403,14 +405,13 @@ export default function TotemKidsCheckin() {
     const ordenadas = pagerNumero
       ? [...etiquetas].sort((a, b) => Number(b.precisa) - Number(a.precisa))
       : etiquetas;
-    let reciboFeito = false;
-    for (const e of ordenadas) {
-      const dados = pagerNumero && e.precisa ? { ...e.dados, pagerNumero } : e.dados;
-      try {
-        await imprimirEtiquetas(dados, false, !reciboFeito);
-        reciboFeito = true;
-      } catch { /* impressão falhou · não derruba o resto */ }
-    }
+    const itens = ordenadas.map((e, i) => ({
+      d: pagerNumero && e.precisa ? { ...e.dados, pagerNumero } : e.dados,
+      incluirRecibo: i === 0,
+    }));
+    try {
+      await imprimirEtiquetasLote(itens);
+    } catch { /* impressão falhou · check-in já está salvo (reimprimir resolve) */ }
   }
 
   function fecharPagerFluxo() {
@@ -998,12 +999,17 @@ export default function TotemKidsCheckin() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Foco no input após limpar seleção
+  // Foco no input após limpar seleção. ⚠️ NÃO roubar o foco enquanto o diálogo
+  // do pager está aberto (Marcos 2026-07-27): o check-in da família limpa a
+  // seleção (crianca=null) no MESMO instante em que o pagerFluxo abre — este
+  // setTimeout então puxava o foco do input do pager pra busca, e o número
+  // digitado ia parar na busca de criança. Quando o diálogo fecha
+  // (pagerFluxo=null), o effect roda de novo e devolve o foco à busca.
   useEffect(() => {
-    if (!crianca) {
+    if (!crianca && !pagerFluxo) {
       setTimeout(() => buscaRef.current?.focus(), 50);
     }
-  }, [crianca]);
+  }, [crianca, pagerFluxo]);
 
   // Busca debounced
   useEffect(() => {
@@ -1112,6 +1118,21 @@ export default function TotemKidsCheckin() {
     } catch {
       toast.error('Erro ao carregar a criança do pré-check-in');
     }
+  }
+
+  // Seleção da busca com dados FRESCOS (Marcos 2026-07-27): o objeto da lista
+  // é um retrato do momento da busca — edição de cadastro feita depois (mãe
+  // corrigida, data de nascimento incluída) não aparecia e a etiqueta saía com
+  // dado velho (casos Alice Lopes/idade em 26-07). Mostra o retrato na hora
+  // (tela responsiva) e busca o registro atual por id; se ainda for a mesma
+  // criança na tela, substitui — idade/sala sugerida/responsáveis atualizam.
+  function selecionarCrianca(c: Crianca) {
+    setCrianca(c);
+    totemKids.criancas.get(c.id)
+      .then((fresh: Crianca) => {
+        setCrianca((atual) => (atual && atual.id === c.id ? { ...atual, ...fresh } : atual));
+      })
+      .catch(() => { /* rede falhou · segue com o retrato da busca */ });
   }
 
   // Encerra o modo pré-check-in (concluído ou cancelado) e limpa o estado.
@@ -1564,7 +1585,7 @@ export default function TotemKidsCheckin() {
               {resultados.map(c => (
                 <button
                   key={c.id}
-                  onClick={() => setCrianca(c)}
+                  onClick={() => selecionarCrianca(c)}
                   className="w-full text-left flex items-center gap-3 p-3 rounded-lg border bg-card hover:bg-pink-50 dark:hover:bg-pink-950/30 transition"
                 >
                   {c.foto_url ? (

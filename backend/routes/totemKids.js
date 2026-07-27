@@ -25,7 +25,7 @@ const { notificar } = require('../services/notificar');
 const wpp = require('../services/whatsappService');
 const { traduzErroUmPaiUmaMae } = require('../utils/kidsResponsavel');
 const { enviarTexto: enviarTextoWpp, enviarTemplate: enviarTemplateWpp } = require('../services/whatsappSend');
-const { acharOuCriarGuardado } = require('../services/membroMatch');
+const { acharOuCriarGuardado, ehNomePlaceholder } = require('../services/membroMatch');
 // O Planning Center Check-Ins saiu do código (Marcos 2026-07-20): a frequência
 // do Kids é 100% do nosso totem (kids_checkins). Sobrou só a coluna legada
 // kids_criancas.planning_center_id e a tabela kids_pco_presencas (histórico
@@ -2684,6 +2684,36 @@ function canonicalPager(v) {
   return d === '' ? null : d;
 }
 
+// O CPF digitado no check-in pertence a um registro-FANTASMA do import
+// financeiro ("Contribuinte NNN..." · nome mascarado do extrato)? Então o
+// responsável SELECIONADO (nome real, já vinculado à criança) é a mesma pessoa:
+// em vez de trocar a identidade pro fantasma (incidente 2026-07-26 · 6
+// etiquetas saíram com "Contribuinte" como mãe), TRANSFERE o CPF pro cadastro
+// real. O fantasma fica inerte pros fluxos de pessoa (sem CPF) e o financeiro
+// passa a resolver contribuições futuras direto no cadastro real.
+async function transferirCpfDePlaceholder(selecionadoId, ghost, cpfInformado) {
+  const { error: e1 } = await supabase.from('mem_membros')
+    .update({ cpf: null }).eq('id', ghost.id).eq('cpf', cpfInformado);
+  if (e1) { console.error('[totemKids] transferir cpf (limpar fantasma):', e1.message); return false; }
+  const { error: e2 } = await supabase.from('mem_membros')
+    .update({ cpf: cpfInformado }).eq('id', selecionadoId);
+  if (e2) {
+    console.error('[totemKids] transferir cpf (gravar no real):', e2.message);
+    await supabase.from('mem_membros').update({ cpf: cpfInformado }).eq('id', ghost.id)
+      .then(() => {}, () => {});
+    return false;
+  }
+  // Telefone/e-mail que só o fantasma tinha viram contato secundário do real
+  // (nunca sobrescrevem o principal · fn_registrar_contato acumula).
+  if (ghost.telefone) {
+    supabase.rpc('fn_registrar_contato', {
+      p_membro_id: selecionadoId, p_telefone: ghost.telefone, p_email: null, p_fonte: 'kids_cpf_placeholder',
+    }).then(({ error }) => { if (error) console.warn('[totemKids] contato do fantasma não registrado:', error.message); });
+  }
+  console.log(`[totemKids] CPF ${cpfInformado} transferido do placeholder ${ghost.id} ("${ghost.nome}") pro cadastro real ${selecionadoId}`);
+  return true;
+}
+
 // Espelha o precisaPager do front: < 4 anos (48 meses) OU espectro/limitação
 // física. Campos estruturados na criança (sem julgamento do voluntário).
 function precisaPagerServer(c) {
@@ -2715,7 +2745,7 @@ async function fetchCheckinsAbertosPager() {
   const pageSize = 1000;
   for (let offset = 0; ; offset += pageSize) {
     const { data, error } = await supabase.from('kids_checkins')
-      .select('pager_numero, responsavel_checkin_nome, crianca:kids_criancas(nome, data_nascimento, tem_espectro, tem_limitacao_fisica), sala:kids_salas(nome)')
+      .select('id, crianca_id, checkin_at, pager_numero, responsavel_checkin_nome, crianca:kids_criancas(nome, data_nascimento, tem_espectro, tem_limitacao_fisica), sala:kids_salas(nome)')
       .is('checkout_at', null).is('deleted_at', null)
       .range(offset, offset + pageSize - 1);
     if (error) throw error;
@@ -2783,6 +2813,9 @@ router.get('/pagers-em-uso', authorizeModule('kids', 1), async (req, res) => {
     const pendentes = [];
     for (const c of abertos) {
       const base = {
+        checkin_id: c.id,
+        crianca_id: c.crianca_id || null,
+        checkin_at: c.checkin_at || null,
         crianca_nome: (c.crianca && c.crianca.nome) || '—',
         sala_nome: (c.sala && c.sala.nome) || null,
         responsavel_nome: c.responsavel_checkin_nome || null,
@@ -2795,6 +2828,42 @@ router.get('/pagers-em-uso', authorizeModule('kids', 1), async (req, res) => {
   } catch (e) {
     console.error('[totemKids] pagers em uso:', e.message);
     res.status(500).json({ error: 'Erro ao carregar os pagers' });
+  }
+});
+
+// GET /api/totem-kids/checkins-abertos/buscar?nome=&pager= · busca check-ins
+// ABERTOS pro check-out sem etiqueta (Marcos 2026-07-27): a família perdeu o
+// código → acha pelo NOME da criança ou pelo NÚMERO do pager. Devolve lista
+// enxuta; o front conclui pelo fluxo do código (GET /checkin/codigo/:codigo).
+router.get('/checkins-abertos/buscar', authorizeModule('kids', 2), async (req, res) => {
+  try {
+    const nome = String(req.query.nome || '').trim();
+    const pager = canonicalPager(req.query.pager);
+    if (!pager && nome.length < 2) return res.json([]);
+
+    let q = supabase.from('kids_checkins')
+      .select(`
+        id, codigo_seguranca, checkin_at, responsavel_checkin_nome, pager_numero,
+        crianca:kids_criancas!inner(id, nome, foto_url),
+        sala:kids_salas(nome, cor),
+        sessao:kids_sessoes(culto:cultos(nome, data))
+      `)
+      .is('checkout_at', null).is('deleted_at', null);
+    if (pager) {
+      q = q.eq('pager_numero', pager);
+    } else {
+      // Mesma normalização da busca de crianças (nome_norm · sem acento, AND
+      // por palavra) — "maite corr" acha "Maitê Correa".
+      const qNorm = nome.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+      const termos = qNorm.split(/\s+/).filter(t => t.length >= 1).slice(0, 6);
+      for (const t of termos) q = q.ilike('crianca.nome_norm', `%${t}%`);
+    }
+    const { data, error } = await q.order('checkin_at', { ascending: false }).limit(15);
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) {
+    console.error('[totemKids/checkins-abertos/buscar]', e.message);
+    res.status(500).json({ error: 'Erro ao buscar check-ins abertos' });
   }
 });
 
@@ -2887,11 +2956,16 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
       if (!jaTemCpf) {
         if (cpfInformado) {
           // CPF já é de OUTRA pessoa? → é duplicata: usa a pessoa existente (dedup).
+          // EXCETO se a "outra pessoa" é um placeholder do financeiro
+          // ("Contribuinte NNN...") — aí quem vale é o selecionado (nome real)
+          // e o CPF é transferido pra ele (incidente 2026-07-26).
           const { data: outro } = await supabase.from('mem_membros')
             .select('id, nome, telefone').eq('cpf', cpfInformado).neq('id', m.id).maybeSingle();
-          if (outro) {
+          if (outro && !ehNomePlaceholder(outro.nome)) {
             respId = outro.id; respNome = outro.nome; respTel = outro.telefone || respTel;
             await ligarResponsavel(outro.id, responsavel_parentesco);
+          } else if (outro) {
+            await transferirCpfDePlaceholder(m.id, outro, cpfInformado);
           } else {
             await supabase.from('mem_membros').update({ cpf: cpfInformado }).eq('id', m.id);
           }
@@ -3153,8 +3227,11 @@ router.post('/checkin/lote', authorizeModule('kids', 2), async (req, res) => {
       const jaTemCpf = m.cpf && String(m.cpf).replace(/\D/g, '').length === 11;
       if (!jaTemCpf) {
         if (cpfInformado) {
+          // Dono do CPF sendo placeholder do financeiro ("Contribuinte NNN...")
+          // NÃO rouba a identidade — o CPF migra pro selecionado (nome real).
           const { data: outro } = await supabase.from('mem_membros').select('id, nome, telefone').eq('cpf', cpfInformado).neq('id', m.id).maybeSingle();
-          if (outro) { respId = outro.id; respNome = outro.nome; respTel = outro.telefone || respTel; }
+          if (outro && !ehNomePlaceholder(outro.nome)) { respId = outro.id; respNome = outro.nome; respTel = outro.telefone || respTel; }
+          else if (outro) { await transferirCpfDePlaceholder(m.id, outro, cpfInformado); }
           else { await supabase.from('mem_membros').update({ cpf: cpfInformado }).eq('id', m.id); }
         } else if (!permitir_sem_cpf) {
           return res.status(422).json({ error: 'Precisamos do CPF do responsável.', precisa_cpf: true, responsavel_nome: m.nome });
@@ -4023,6 +4100,45 @@ router.post('/etiqueta-config/logo/remover', authorizeModule('kids', 3), async (
 
 router.post('/etiquetas-log', authorizeModule('kids', 2), async (req, res) => {
   try {
+    // LOTE (Marcos 2026-07-27): a impressão da família sai num job só e o log
+    // acompanha — 1 requisição com N eventos em vez de N requisições.
+    if (Array.isArray(req.body?.eventos)) {
+      const eventos = req.body.eventos.filter((e) => e && e.checkin_id && e.tipo).slice(0, 30);
+      if (!eventos.length) return res.status(400).json({ error: 'eventos vazio (checkin_id e tipo obrigatórios)' });
+      const rows = eventos.map((e) => ({
+        checkin_id: e.checkin_id,
+        estacao_id: e.estacao_id || null,
+        tipo: e.tipo,
+        conteudo_json: e.conteudo || {},
+        reimpressao: !!e.reimpressao,
+        motivo_reimpressao: e.motivo_reimpressao || null,
+        impressa_por: req.user.userId,
+        status: e.status || 'enviada',
+        erro: e.erro || null,
+      }));
+      let { error } = await supabase.from('kids_etiquetas_log').insert(rows);
+      if (error && error.code === '23503' && String(error.message || '').includes('estacao')) {
+        ({ error } = await supabase.from('kids_etiquetas_log')
+          .insert(rows.map((r) => ({ ...r, estacao_id: null }))));
+      }
+      if (error && error.code === '23514') {
+        return res.status(400).json({ error: 'tipo ou status inválido', detalhe: error.message });
+      }
+      if (error) throw error;
+      // Contador por check-in (best effort · agrupa antes de atualizar)
+      const porCheckin = {};
+      for (const r of rows) porCheckin[r.checkin_id] = (porCheckin[r.checkin_id] || 0) + 1;
+      for (const [cid, n] of Object.entries(porCheckin)) {
+        const { data: cur } = await supabase
+          .from('kids_checkins').select('labels_impressas').eq('id', cid).maybeSingle();
+        if (cur) {
+          await supabase.from('kids_checkins')
+            .update({ labels_impressas: (cur.labels_impressas || 0) + n }).eq('id', cid);
+        }
+      }
+      return res.status(201).json({ ok: true, inseridos: rows.length });
+    }
+
     const { checkin_id, estacao_id, tipo, conteudo, reimpressao, motivo_reimpressao, status, erro } = req.body;
     if (!checkin_id || !tipo) return res.status(400).json({ error: 'checkin_id e tipo obrigatórios' });
 
