@@ -2193,19 +2193,37 @@ router.post('/telemetria', tryAuth, async (req, res) => {
 // Resolve o papel do usuário do app no domínio de grupos:
 //  - membro (mem_membros do logado, pra checar liderança e montar o nome)
 //  - grupos_liderados: grupos onde ele é lider_id
+//  - grupos_supervisionados: grupos onde ele é supervisor_id
+//  - grupos_geridos: união (dedup por id) de liderados + supervisionados — é o
+//    ESCOPO DE GESTÃO (líder OU supervisor pode gerenciar esses grupos)
 //  - admin_grupos: role admin/diretor OU área "grupos" (boost) OU nível do
 //    módulo grupos >= 3 (via permissões granulares resolvidas por e-mail).
 async function gruposPapelApp(req) {
   const membro = await resolveMembroApp(req).catch(() => null);
 
-  // Grupos liderados pelo membro (só se resolvemos o membro).
+  // Grupos liderados/supervisionados pelo membro (só se resolvemos o membro).
   let gruposLiderados = [];
+  let gruposSupervisionados = [];
   if (membro?.id) {
-    const { data: gl } = await supabase.from('mem_grupos')
-      .select('id, nome').eq('lider_id', membro.id).is('deleted_at', null)
-      .order('nome', { ascending: true });
-    gruposLiderados = gl || [];
+    const [glRes, gsRes] = await Promise.all([
+      supabase.from('mem_grupos')
+        .select('id, nome').eq('lider_id', membro.id).is('deleted_at', null)
+        .order('nome', { ascending: true }),
+      supabase.from('mem_grupos')
+        .select('id, nome').eq('supervisor_id', membro.id).is('deleted_at', null)
+        .order('nome', { ascending: true }),
+    ]);
+    gruposLiderados = glRes.data || [];
+    gruposSupervisionados = gsRes.data || [];
   }
+
+  // Escopo de gestão = líder OU supervisor (dedup por id).
+  const geridosMap = new Map();
+  for (const g of [...gruposLiderados, ...gruposSupervisionados]) {
+    if (!geridosMap.has(g.id)) geridosMap.set(g.id, g);
+  }
+  const gruposGeridos = [...geridosMap.values()]
+    .sort((a, b) => String(a.nome).localeCompare(String(b.nome)));
 
   // Admin de grupos · (a) role legado admin/diretor no profiles do auth user.
   let adminGrupos = false;
@@ -2247,17 +2265,19 @@ async function gruposPapelApp(req) {
     }
   }
 
-  return { membro, adminGrupos, gruposLiderados };
+  return { membro, adminGrupos, gruposLiderados, gruposSupervisionados, gruposGeridos };
 }
 
 // GET /api/app/grupos/papel — o app decide se mostra a funcionalidade.
 router.get('/grupos/papel', authApp, limiterNormal, async (req, res) => {
   try {
-    const { adminGrupos, gruposLiderados } = await gruposPapelApp(req);
+    const { adminGrupos, gruposLiderados, gruposSupervisionados } = await gruposPapelApp(req);
     res.json({
       lider: gruposLiderados.length > 0,
+      supervisor: gruposSupervisionados.length > 0,
       admin_grupos: adminGrupos,
       grupos_liderados: gruposLiderados,
+      grupos_supervisionados: gruposSupervisionados,
     });
   } catch (e) {
     console.error('[APP] grupos/papel:', e.message);
@@ -2267,13 +2287,13 @@ router.get('/grupos/papel', authApp, limiterNormal, async (req, res) => {
 
 // Monta a query de pedidos pendentes conforme o escopo do usuário. Retorna
 // null quando o usuário não é nem líder nem admin (o chamador responde vazio).
-function pedidosPendentesQuery({ adminGrupos, gruposLiderados }) {
-  if (!adminGrupos && !gruposLiderados.length) return null;
+function pedidosPendentesQuery({ adminGrupos, gruposGeridos }) {
+  if (!adminGrupos && !gruposGeridos.length) return null;
   let q = supabase.from('mem_grupo_pedidos')
     .select('id, grupo_id, nome, telefone, email, origem, created_at, mem_grupos(nome)')
     .eq('status', 'pendente');
   if (!adminGrupos) {
-    q = q.in('grupo_id', gruposLiderados.map(g => g.id));
+    q = q.in('grupo_id', gruposGeridos.map(g => g.id));
   }
   return q;
 }
@@ -2281,8 +2301,8 @@ function pedidosPendentesQuery({ adminGrupos, gruposLiderados }) {
 // GET /api/app/grupos/pedidos — pendentes no escopo do usuário (mais antigos 1º).
 router.get('/grupos/pedidos', authApp, limiterNormal, async (req, res) => {
   try {
-    const { adminGrupos, gruposLiderados } = await gruposPapelApp(req);
-    const q = pedidosPendentesQuery({ adminGrupos, gruposLiderados });
+    const { adminGrupos, gruposGeridos } = await gruposPapelApp(req);
+    const q = pedidosPendentesQuery({ adminGrupos, gruposGeridos });
     if (!q) return res.json({ admin: false, pedidos: [] });
     const { data, error } = await q.order('created_at', { ascending: true });
     if (error) throw error;
@@ -2306,11 +2326,11 @@ router.get('/grupos/pedidos', authApp, limiterNormal, async (req, res) => {
 // GET /api/app/grupos/pedidos/count — badge (mesmo escopo).
 router.get('/grupos/pedidos/count', authApp, limiterNormal, async (req, res) => {
   try {
-    const { adminGrupos, gruposLiderados } = await gruposPapelApp(req);
-    if (!adminGrupos && !gruposLiderados.length) return res.json({ count: 0 });
+    const { adminGrupos, gruposGeridos } = await gruposPapelApp(req);
+    if (!adminGrupos && !gruposGeridos.length) return res.json({ count: 0 });
     let q = supabase.from('mem_grupo_pedidos')
       .select('id', { count: 'exact', head: true }).eq('status', 'pendente');
-    if (!adminGrupos) q = q.in('grupo_id', gruposLiderados.map(g => g.id));
+    if (!adminGrupos) q = q.in('grupo_id', gruposGeridos.map(g => g.id));
     const { count, error } = await q;
     if (error) throw error;
     res.json({ count: count || 0 });
@@ -2320,15 +2340,16 @@ router.get('/grupos/pedidos/count', authApp, limiterNormal, async (req, res) => 
   }
 });
 
-// Autoriza a decisão sobre um pedido: precisa ser líder do grupo do pedido OU
-// admin de grupos. Devolve { pedido, membro } ou responde o erro e retorna null.
+// Autoriza a decisão sobre um pedido: precisa gerir o grupo do pedido (líder OU
+// supervisor) OU ser admin de grupos. Devolve { pedido, membro } ou responde o
+// erro e retorna null.
 async function autorizarDecisaoPedido(req, res) {
-  const { membro, adminGrupos, gruposLiderados } = await gruposPapelApp(req);
+  const { membro, adminGrupos, gruposGeridos } = await gruposPapelApp(req);
   const { data: pedido } = await supabase.from('mem_grupo_pedidos')
     .select('id, grupo_id, status').eq('id', req.params.id).maybeSingle();
   if (!pedido) { res.status(404).json({ error: 'Pedido não encontrado' }); return null; }
-  const ehLider = gruposLiderados.some(g => g.id === pedido.grupo_id);
-  if (!adminGrupos && !ehLider) {
+  const ehGerido = gruposGeridos.some(g => g.id === pedido.grupo_id);
+  if (!adminGrupos && !ehGerido) {
     res.status(403).json({ error: 'Você não tem permissão para decidir este pedido' });
     return null;
   }
@@ -2409,13 +2430,14 @@ router.post('/grupos/pedidos/:id/rejeitar', authApp, limiterNormal, async (req, 
   }
 });
 
-// GET /api/app/grupos/meus — os grupos que o usuário LIDERA, com contagens
-// (membros ativos + inscrições pendentes) e info básica. É o que faz o app
-// "ver o meu grupo" mesmo quando não há nenhuma inscrição pendente.
+// GET /api/app/grupos/meus — os grupos que o usuário GERE (lidera OU
+// supervisiona), com contagens (membros ativos + inscrições pendentes) e info
+// básica. É o que faz o app "ver os grupos que gerencio" mesmo quando não há
+// nenhuma inscrição pendente.
 router.get('/grupos/meus', authApp, limiterNormal, async (req, res) => {
   try {
-    const { adminGrupos, gruposLiderados } = await gruposPapelApp(req);
-    const ids = gruposLiderados.map(g => g.id);
+    const { adminGrupos, gruposGeridos } = await gruposPapelApp(req);
+    const ids = gruposGeridos.map(g => g.id);
     if (!ids.length) return res.json({ admin: adminGrupos, grupos: [] });
 
     const [infoRes, membrosRes, pendRes] = await Promise.all([
@@ -2447,13 +2469,14 @@ router.get('/grupos/meus', authApp, limiterNormal, async (req, res) => {
 });
 
 // GET /api/app/grupos/:grupoId/membros — detalhe do grupo + roster ativo +
-// inscrições pendentes daquele grupo. Gate: líder do grupo OU admin de grupos.
+// inscrições pendentes daquele grupo. Gate: gere o grupo (líder OU supervisor)
+// OU admin de grupos.
 router.get('/grupos/:grupoId/membros', authApp, limiterNormal, async (req, res) => {
   try {
-    const { adminGrupos, gruposLiderados } = await gruposPapelApp(req);
+    const { adminGrupos, gruposGeridos } = await gruposPapelApp(req);
     const gid = req.params.grupoId;
-    const ehLider = gruposLiderados.some(g => g.id === gid);
-    if (!adminGrupos && !ehLider) {
+    const ehGerido = gruposGeridos.some(g => g.id === gid);
+    if (!adminGrupos && !ehGerido) {
       return res.status(403).json({ error: 'Você não gerencia este grupo' });
     }
     const { data: grupo } = await supabase.from('mem_grupos')
