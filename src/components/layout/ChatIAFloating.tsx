@@ -22,11 +22,13 @@ type Msg = { role: 'user' | 'assistant' | 'error' | 'system'; text: string };
 
 export default function ChatIAFloating() {
   const [open, setOpen] = useState(false);
-  // Botão fecha o próprio painel (canto direito) — o drawer de navegação
-  // (lateral esquerda) nunca o cobre, então só minimiza pros demais overlays
-  // (dialogs/modais no meio da tela que podem invadir o canto inferior direito).
+  // Com o drawer de navegação aberto, só o Reportar fica disponível na faixa
+  // livre à direita (pedido do usuário — evita 2 botões competindo no mesmo
+  // espaço apertado) — o Pedrinho some de vez, não só minimiza. Nos demais
+  // overlays (dialogs/modais no meio da tela) ele só minimiza, como antes.
   const { aberto: overlayAberto, drawerEsquerdo } = useOverlayAberto();
   const [armado, setArmado] = useState(false);
+  const escondidoNoDrawer = !open && drawerEsquerdo;
   const minimizado = !open && overlayAberto && !drawerEsquerdo && !armado;
   useEffect(() => {
     if (!overlayAberto) { setArmado(false); return; }
@@ -167,6 +169,7 @@ export default function ChatIAFloating() {
   }
 
   // ── Botão flutuante ──────────────────────────────────────────────────
+  if (escondidoNoDrawer) return null;
   if (!open) {
     return (
       <button
