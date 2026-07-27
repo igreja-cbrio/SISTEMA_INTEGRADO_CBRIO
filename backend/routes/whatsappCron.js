@@ -55,15 +55,18 @@ router.get('/aniversarios', requireCron, async (_req, res) => {
 });
 
 // GET /api/whatsapp-cron/batismos-lembrete — lembra quem se batiza AMANHÃ.
-// {{1}} data · {{2}} hora (não há horário no banco → env WHATSAPP_BATISMO_HORA).
+// {{1}} data · {{2}} hora = horario_culto DA INSCRIÇÃO (cada um se batiza no
+// culto que escolheu · 08:30/10:00/...). Bug corrigido 2026-07-27: a hora era
+// FIXA (env/'19h') e o lembrete de 25/07 saiu errado pra turma inteira — duas
+// pessoas responderam corrigindo. Fallback: env WHATSAPP_BATISMO_HORA → 'a confirmar'.
 router.get('/batismos-lembrete', requireCron, async (_req, res) => {
   try {
     const base = new Date(Date.now() - 3 * 3600 * 1000); // BRT
     base.setDate(base.getDate() + 1);
     const amanhaISO = base.toISOString().slice(0, 10);
-    const hora = process.env.WHATSAPP_BATISMO_HORA || '19h';
+    const horaFallback = process.env.WHATSAPP_BATISMO_HORA || 'a confirmar';
     const { data, error } = await supabase.from('batismo_inscricoes')
-      .select('id, membro_id, data_batismo, status')
+      .select('id, membro_id, data_batismo, horario_culto, status')
       .is('deleted_at', null).eq('data_batismo', amanhaISO)
       .not('membro_id', 'is', null)
       .neq('status', 'realizado').neq('status', 'cancelado');
@@ -71,6 +74,7 @@ router.get('/batismos-lembrete', requireCron, async (_req, res) => {
     let enviados = 0;
     for (const b of data || []) {
       const dataFmt = new Date(b.data_batismo + 'T12:00:00').toLocaleDateString('pt-BR');
+      const hora = (b.horario_culto && String(b.horario_culto).trim()) || horaFallback;
       const r = await wpp.notificarMembro(b.membro_id, 'batismo_lembrete', [dataFmt, hora]);
       if (r?.sent) enviados++;
     }
