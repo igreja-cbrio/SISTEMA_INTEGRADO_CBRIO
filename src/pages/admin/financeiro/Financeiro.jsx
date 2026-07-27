@@ -64,10 +64,10 @@ const styles = {
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, flexWrap: 'wrap', gap: 12 },
   title: { fontSize: 20, fontWeight: 700, color: C.text, letterSpacing: -0.5, lineHeight: 1.25 },
   subtitle: { fontSize: 14, color: C.text2, marginTop: 2, lineHeight: 1.5 },
-  tabs: { display: 'flex', gap: 0, borderBottom: `2px solid ${C.border}`, marginBottom: 24 },
+  tabs: { display: 'flex', gap: 0, borderBottom: `2px solid ${C.border}`, marginBottom: 24, overflowX: 'auto', WebkitOverflowScrolling: 'touch' },
   tab: (active) => ({
     padding: '12px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer', border: 'none', background: 'none',
-    color: active ? C.primary : C.text2,
+    color: active ? C.primary : C.text2, whiteSpace: 'nowrap', flexShrink: 0,
     borderBottom: active ? `2px solid ${C.primary}` : '2px solid transparent',
     marginBottom: -2, transition: 'all 0.15s',
   }),
