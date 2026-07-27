@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import {
   Loader2, Plus, Users, GraduationCap, CalendarDays, Search,
   CheckCircle2, AlertTriangle, X, UserPlus, UserCheck, Sparkles, RotateCcw,
-  Share2, Copy, MessageCircle, Monitor,
+  Share2, Copy, MessageCircle, Monitor, ArrowRightLeft,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import QRCode from 'qrcode';
@@ -299,6 +299,7 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
   const [loading, setLoading] = useState(true);
   const [addOpen, setAddOpen] = useState(false);
   const [qrSatisfacaoOpen, setQrSatisfacaoOpen] = useState(false);
+  const [transferir, setTransferir] = useState<Matricula | null>(null);
   const [ordem, setOrdem] = useState<'nome' | 'recentes'>('nome');
   const load = useCallback(async () => {
     setLoading(true);
@@ -413,11 +414,12 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
                     ))}
                     <th className="text-center p-2 font-medium">Status</th>
                     <th className="text-center p-2 font-medium whitespace-nowrap">Contato</th>
+                    <th className="text-center p-2 font-medium"></th>
                   </tr>
                 </thead>
                 <tbody>
                   {matriculasOrdenadas.length === 0 ? (
-                    <tr><td colSpan={3 + totalEnc} className="p-4 text-center text-muted-foreground text-xs">Ninguém matriculado ainda.</td></tr>
+                    <tr><td colSpan={4 + totalEnc} className="p-4 text-center text-muted-foreground text-xs">Ninguém matriculado ainda.</td></tr>
                   ) : matriculasOrdenadas.map(m => {
                     const n = presCount(m.id);
                     const incompletoFim = totalEnc > 0 && n < totalEnc && det.status === 'encerrada';
@@ -457,6 +459,12 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
                             {m.contato_em && <span className="text-[9px] text-emerald-600 leading-none">feito</span>}
                           </label>
                         </td>
+                        <td className="text-center p-2">
+                          <button onClick={() => setTransferir(m)} title="Transferir pra outra turma"
+                            className="inline-flex items-center justify-center h-7 w-7 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
+                            <ArrowRightLeft className="h-3.5 w-3.5" />
+                          </button>
+                        </td>
                       </tr>
                     );
                   })}
@@ -482,8 +490,100 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
             </DialogFooter>
             {addOpen && <AddMatriculaModal turmaId={turmaId} onClose={() => setAddOpen(false)} onAdded={() => { setAddOpen(false); load(); onChanged(); }} />}
             {qrSatisfacaoOpen && <QrSatisfacaoModal turmaId={turmaId} turmaNome={det.nome} onClose={() => setQrSatisfacaoOpen(false)} />}
+            {transferir && (
+              <TransferirTurmaModal
+                matricula={transferir}
+                turmaAtualId={turmaId}
+                onClose={() => setTransferir(null)}
+                onDone={() => { setTransferir(null); load(); onChanged(); }}
+              />
+            )}
           </>
         )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Transferir a pessoa pra outra turma. Lista as turmas disponíveis (exceto a
+// atual · abertas primeiro) e chama o endpoint dedicado (limpa presenças da
+// turma antiga e recomeça na destino).
+function TransferirTurmaModal({ matricula, turmaAtualId, onClose, onDone }: {
+  matricula: Matricula; turmaAtualId: string; onClose: () => void; onDone: () => void;
+}) {
+  const [turmas, setTurmas] = useState<Turma[]>([]);
+  const [carregando, setCarregando] = useState(true);
+  const [destino, setDestino] = useState<string>('');
+  const [salvando, setSalvando] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const lista: Turma[] = await nextApi.turmas.list();
+        // exclui a turma atual e as apagadas; abertas no topo, depois por nome
+        const opcoes = (lista || [])
+          .filter(t => t.id !== turmaAtualId)
+          .sort((a, b) => {
+            if ((a.status === 'aberta') !== (b.status === 'aberta')) return a.status === 'aberta' ? -1 : 1;
+            return (a.nome || '').localeCompare(b.nome || '', 'pt-BR');
+          });
+        setTurmas(opcoes);
+      } catch (e: any) { toast.error(e?.message || 'Erro ao carregar turmas'); }
+      setCarregando(false);
+    })();
+  }, [turmaAtualId]);
+
+  const confirmar = async () => {
+    if (!destino) return;
+    setSalvando(true);
+    try {
+      const r = await nextApi.matriculas.transferir(matricula.id, destino);
+      toast.success(`${matricula.nome} transferido(a) para ${r?.turma_destino_nome || 'a turma'}`);
+      onDone();
+    } catch (e: any) { toast.error(e?.message || 'Erro ao transferir'); }
+    setSalvando(false);
+  };
+
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <ArrowRightLeft className="h-4 w-4" style={{ color: C.primary }} /> Transferir de turma
+          </DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            Mover <span className="font-medium text-foreground">{matricula.nome} {matricula.sobrenome || ''}</span> para outra turma.
+            As presenças na turma atual são removidas (a pessoa recomeça na turma escolhida).
+          </p>
+          {carregando ? (
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground mx-auto my-4" />
+          ) : turmas.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Não há outra turma para transferir. Crie a turma de destino primeiro.</p>
+          ) : (
+            <div className="space-y-1.5">
+              <Label>Turma de destino</Label>
+              <Select value={destino} onValueChange={setDestino}>
+                <SelectTrigger><SelectValue placeholder="Selecione a turma" /></SelectTrigger>
+                <SelectContent className="z-[1200]">
+                  {turmas.map(t => (
+                    <SelectItem key={t.id} value={t.id}>
+                      {t.nome}{t.status !== 'aberta' ? ` (${t.status})` : ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancelar</Button>
+          <Button onClick={confirmar} disabled={!destino || salvando} className="gap-2">
+            {salvando ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRightLeft className="h-4 w-4" />}
+            Transferir
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
