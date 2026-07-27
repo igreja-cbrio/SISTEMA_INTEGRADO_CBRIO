@@ -932,6 +932,51 @@ router.patch('/matriculas/:id', async (req, res) => {
   res.json(data);
 });
 
+// POST /matriculas/:id/transferir — move a pessoa pra OUTRA turma. body { turma_id }.
+// Diferente do PATCH turma_id cru: LIMPA as presenças da turma antiga (elas eram dos
+// encontros de lá · não seguem a pessoa), zera check-in e status (recomeça na turma
+// destino) e RECALCULA as DUAS turmas. Caso de uso: inscreveu na turma errada (ex.:
+// não tinha turma de agosto → entrou na 2ª de julho) e precisa ir pra turma certa.
+router.post('/matriculas/:id/transferir', async (req, res) => {
+  const destinoId = req.body?.turma_id;
+  if (!destinoId) return res.status(400).json({ error: 'turma_id de destino obrigatório' });
+
+  // Matrícula + turma de origem
+  const { data: mat } = await supabase.from('next_matriculas')
+    .select('id, turma_id, nome').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+  if (!mat) return res.status(404).json({ error: 'Matrícula não encontrada' });
+  if (mat.turma_id === destinoId) return res.status(400).json({ error: 'A pessoa já está nessa turma' });
+
+  // Turma destino existe e não está apagada
+  const { data: destino } = await supabase.from('next_turmas')
+    .select('id, nome, status').eq('id', destinoId).is('deleted_at', null).maybeSingle();
+  if (!destino) return res.status(404).json({ error: 'Turma de destino não encontrada' });
+
+  const origemId = mat.turma_id;
+
+  // Limpa as presenças da pessoa nos encontros da turma ANTIGA (presença é por encontro,
+  // e encontro pertence à turma · sem isso ficam penduradas / contam na turma errada).
+  if (origemId) {
+    const { data: encsOrigem } = await supabase.from('next_encontros').select('id').eq('turma_id', origemId);
+    const encIds = (encsOrigem || []).map(e => e.id);
+    if (encIds.length) {
+      await supabase.from('next_presencas').delete().eq('matricula_id', mat.id).in('encontro_id', encIds);
+    }
+  }
+
+  // Move + recomeça na turma destino (check-in e status zerados)
+  const { data: atualizada, error } = await supabase.from('next_matriculas')
+    .update({ turma_id: destinoId, status: 'matriculado', check_in_at: null, updated_at: new Date().toISOString() })
+    .eq('id', mat.id).is('deleted_at', null).select().maybeSingle();
+  if (error) return res.status(500).json({ error: error.message });
+
+  // Recalcula o status das DUAS turmas (origem perdeu alguém, destino ganhou)
+  if (origemId) await recomputarStatusTurma(origemId);
+  await recomputarStatusTurma(destinoId);
+  recalcularKpisNext();
+  res.json({ ...atualizada, turma_destino_nome: destino.nome });
+});
+
 // PATCH /matriculas/:id/contato — marca/desmarca "contato feito" com a pessoa.
 // body { feito: boolean } (default true). Carimba quem/quando pra ficar rastreável.
 router.patch('/matriculas/:id/contato', async (req, res) => {

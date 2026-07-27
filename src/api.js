@@ -399,6 +399,8 @@ export const next = {
     list: (params) => get('/next/matriculas' + (params ? '?' + new URLSearchParams(params) : '')),
     create: (data) => post('/next/matriculas', data),
     update: (id, data) => patch(`/next/matriculas/${id}`, data),
+    // Transfere a pessoa pra outra turma (limpa presenças da antiga · recomeça na destino).
+    transferir: (id, turma_id) => post(`/next/matriculas/${id}/transferir`, { turma_id }),
     remove: (id) => del(`/next/matriculas/${id}`),
     // Marca/desmarca "contato feito" com a pessoa (feito=false desmarca).
     setContato: (id, feito) => patch(`/next/matriculas/${id}/contato`, { feito }),
