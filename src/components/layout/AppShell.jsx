@@ -781,7 +781,13 @@ function MobileNavSheet({ items }) {
   }
 
   return (
-    <Sheet open={open} onOpenChange={setOpen}>
+    // modal={false}: por padrão o Radix BLOQUEIA toda interação fora do Sheet
+    // enquanto aberto (é assim que ele impede clique "vazar" pro fundo) — isso
+    // fazia o toque no Reportar/IA realocados (que ficam FORA do Sheet de
+    // propósito) ser descartado mesmo com onPointerDownOutside prevenindo o
+    // fechamento (prevenia o dismiss, mas não devolvia a interatividade).
+    // Sem o modal, a faixa livre à direita fica genuinamente clicável.
+    <Sheet open={open} onOpenChange={setOpen} modal={false}>
       <SheetTrigger asChild>
         <button
           data-tour="megamenu"
