@@ -1416,6 +1416,134 @@ router.post('/next/encontros/:eventoId/checkin', authApp, limiterNormal, async (
   }
 });
 
+// ── Next · RESPONSÁVEL de turma (gestão pelo app do membro) ────────────────
+// Espelha o que o líder de grupo faz em grupos, mas para a turma do Next.
+// O papel vem do membro logado: turmas onde next_turmas.responsavel_id = membro.id.
+// SEMPRE gated por responsavel_id (nunca expõe turma de outro responsável).
+
+// Recompute MÍNIMO do status das matrículas de uma turma a partir das presenças.
+// Réplica enxuta de recomputarStatusTurma() de routes/next.js (não dá para importar
+// entre arquivos sem refatorar; a semântica é idêntica): "formado" = presente em
+// TODOS os encontros; não mexe em 'desistiu'/'incompleto'. Chamado best-effort após
+// marcar presença, para o status refletir na hora no app (igual à web). O cron/web
+// continua sendo a fonte canônica de KPIs — aqui só ajustamos o status da matrícula.
+async function recomputarStatusTurmaApp(turmaId) {
+  if (!turmaId) return;
+  const { data: encontros } = await supabase.from('next_encontros').select('id').eq('turma_id', turmaId);
+  const encIds = (encontros || []).map((e) => e.id);
+  const totalEnc = encIds.length;
+  const { data: mats } = await supabase
+    .from('next_matriculas').select('id, status').eq('turma_id', turmaId).is('deleted_at', null);
+  if (!mats || !mats.length) return;
+  const presByMat = {};
+  if (encIds.length) {
+    const { data: pres } = await supabase.from('next_presencas').select('matricula_id, presente').in('encontro_id', encIds);
+    (pres || []).forEach((p) => { if (p.presente) presByMat[p.matricula_id] = (presByMat[p.matricula_id] || 0) + 1; });
+  }
+  for (const m of mats) {
+    if (m.status === 'desistiu' || m.status === 'incompleto') continue;
+    const n = presByMat[m.id] || 0;
+    const novo = (totalEnc > 0 && n >= totalEnc) ? 'formado' : 'matriculado';
+    if (novo !== m.status) {
+      await supabase.from('next_matriculas')
+        .update({ status: novo, updated_at: new Date().toISOString() }).eq('id', m.id);
+    }
+  }
+}
+
+// GET /api/app/next/papel — o membro logado é responsável de alguma turma?
+// { responsavel: boolean, turmas: [...] } (turmas onde responsavel_id = membro.id)
+router.get('/next/papel', authApp, limiterNormal, async (req, res) => {
+  try {
+    const membro = await resolveMembroApp(req);
+    if (!membro) return res.json({ responsavel: false, turmas: [] });
+    const { data: turmas, error } = await supabase.from('next_turmas')
+      .select('id, nome, status, observacoes, origem_mes, created_at')
+      .eq('responsavel_id', membro.id).is('deleted_at', null)
+      .order('created_at', { ascending: false }).limit(200);
+    if (error) throw error;
+    res.json({ responsavel: (turmas || []).length > 0, turmas: turmas || [] });
+  } catch (e) {
+    console.error('[APP next/papel]', e.message);
+    res.status(500).json({ error: 'Erro ao carregar suas turmas do NEXT' });
+  }
+});
+
+// GET /api/app/next/turmas/:turmaId — detalhe da turma (mesmo shape do web
+// GET /next/turmas/:id). Gate: só se o membro é responsavel_id da turma.
+router.get('/next/turmas/:turmaId', authApp, limiterNormal, async (req, res) => {
+  try {
+    const membro = await resolveMembroApp(req);
+    if (!membro) return res.status(404).json({ error: 'Cadastro de membro não encontrado' });
+    const { turmaId } = req.params;
+    const { data: turma } = await supabase.from('next_turmas')
+      .select('*').eq('id', turmaId).is('deleted_at', null).maybeSingle();
+    if (!turma) return res.status(404).json({ error: 'Turma não encontrada' });
+    if (turma.responsavel_id !== membro.id) {
+      return res.status(403).json({ error: 'Você não é o responsável por esta turma.' });
+    }
+    const { data: encontros } = await supabase.from('next_encontros')
+      .select('*').eq('turma_id', turmaId).order('numero');
+    const { data: matriculas } = await supabase.from('next_matriculas')
+      .select('id, nome, sobrenome, telefone, status, check_in_at')
+      .eq('turma_id', turmaId).is('deleted_at', null).order('nome');
+    const encIds = (encontros || []).map((e) => e.id);
+    let presencas = [];
+    if (encIds.length) {
+      const { data: pres } = await supabase.from('next_presencas')
+        .select('encontro_id, matricula_id, presente').in('encontro_id', encIds);
+      presencas = pres || [];
+    }
+    res.json({ turma, encontros: encontros || [], matriculas: matriculas || [], presencas });
+  } catch (e) {
+    console.error('[APP next/turmas/:id]', e.message);
+    res.status(500).json({ error: 'Erro ao carregar a turma' });
+  }
+});
+
+// POST /api/app/next/encontros/:encontroId/presenca — marca/desmarca UMA pessoa.
+// body { matricula_id, presente }. Espelha o POST web /next/encontros/:id/presenca:
+// remove o par e reinsere só quando presente + carimba next_matriculas.check_in_at.
+// Gate: o encontro pertence a uma turma cujo responsavel_id = membro.id.
+router.post('/next/encontros/:encontroId/presenca', authApp, limiterNormal, async (req, res) => {
+  try {
+    const membro = await resolveMembroApp(req);
+    if (!membro) return res.status(404).json({ error: 'Cadastro de membro não encontrado' });
+    const { encontroId } = req.params;
+    const matriculaId = req.body?.matricula_id;
+    const presente = req.body?.presente !== false; // default true
+    if (!matriculaId) return res.status(400).json({ error: 'matricula_id obrigatório' });
+
+    const { data: enc } = await supabase.from('next_encontros')
+      .select('id, turma_id').eq('id', encontroId).maybeSingle();
+    if (!enc) return res.status(404).json({ error: 'Encontro não encontrado' });
+    const { data: turma } = await supabase.from('next_turmas')
+      .select('id, responsavel_id').eq('id', enc.turma_id).is('deleted_at', null).maybeSingle();
+    if (!turma) return res.status(404).json({ error: 'Turma não encontrada' });
+    if (turma.responsavel_id !== membro.id) {
+      return res.status(403).json({ error: 'Você não é o responsável por esta turma.' });
+    }
+
+    // idempotente: remove o par e reinsere só quando presente (mesma lógica do web)
+    await supabase.from('next_presencas').delete().eq('encontro_id', encontroId).eq('matricula_id', matriculaId);
+    if (presente) {
+      const { error: insErr } = await supabase.from('next_presencas')
+        .insert({ encontro_id: encontroId, matricula_id: matriculaId, presente: true });
+      if (insErr) throw insErr;
+    }
+    await supabase.from('next_matriculas')
+      .update({ check_in_at: presente ? new Date().toISOString() : null, updated_at: new Date().toISOString() })
+      .eq('id', matriculaId);
+    // best-effort: recalcula o status da turma (não bloqueia a resposta se falhar).
+    // KPIs continuam a cargo do fluxo web/cron (recalcularKpisNext vive em next.js).
+    await recomputarStatusTurmaApp(enc.turma_id).catch((e) => console.warn('[APP next presenca] recompute:', e.message));
+    res.json({ ok: true, presente });
+  } catch (e) {
+    console.error('[APP next/encontros/:id/presenca]', e.message);
+    res.status(500).json({ error: 'Erro ao marcar presença' });
+  }
+});
+
 // ── Kids · pré-check-in pelo app ───────────────────────────────────────────
 // O responsável prepara o check-in (escolhe os filhos), gera um código/QR,
 // e no totem o voluntário aplica. NÃO faz a entrada/retirada — só adianta.
