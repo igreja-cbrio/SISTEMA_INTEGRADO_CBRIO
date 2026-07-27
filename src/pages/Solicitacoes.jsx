@@ -828,7 +828,10 @@ export default function Solicitacoes() {
                   )}
                 </div>
                 <ScrollArea className="flex-1 max-h-[calc(100vh-260px)]">
-                  <div className="space-y-2.5 pr-1 min-h-[60px]">
+                  {/* pb extra em mobile: os últimos cards da coluna não ficam
+                      escondidos atrás do "Reportar"/FAB IA (position:fixed) —
+                      achado na revisão de responsividade 2026-07-27. */}
+                  <div className="space-y-2.5 pr-1 min-h-[60px] pb-24 md:pb-0">
                     {col.items.length === 0 && (
                       <p className="text-xs text-muted-foreground/50 italic text-center py-10">Nada por aqui</p>
                     )}
@@ -880,7 +883,7 @@ export default function Solicitacoes() {
                 <Badge variant="secondary" className="ml-auto text-xs">{col.items.length}</Badge>
               </div>
               <ScrollArea className="flex-1 max-h-[calc(100vh-280px)]">
-                <div className="space-y-3 pr-1 min-h-[60px]">
+                <div className="space-y-3 pr-1 min-h-[60px] pb-24 md:pb-0">
                   {col.items.length === 0 && (
                     <p className="text-xs text-muted-foreground/60 italic text-center py-8">Nada por aqui</p>
                   )}

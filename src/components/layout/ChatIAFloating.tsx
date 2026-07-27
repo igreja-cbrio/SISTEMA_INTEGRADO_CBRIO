@@ -159,8 +159,11 @@ export default function ChatIAFloating() {
         onClick={() => setOpen(true)}
         aria-label="Abrir o Pedrinho"
         title="Pedrinho · assistente IA da CBRio"
-        className="fixed bottom-6 right-6 z-50 h-14 w-14 rounded-full shadow-lg flex items-center justify-center text-white hover:scale-110 active:scale-95 transition-all duration-150 ring-2 ring-white/20 hover:ring-white/40"
-        style={{ background: `linear-gradient(135deg, ${PRIMARY} 0%, #008e7d 100%)`, boxShadow: `0 8px 24px ${PRIMARY}55, 0 2px 8px rgba(0,0,0,0.12)` }}
+        className="floating-action-btn fixed right-6 z-50 h-14 w-14 rounded-full shadow-lg flex items-center justify-center text-white hover:scale-110 active:scale-95 transition-all duration-150 ring-2 ring-white/20 hover:ring-white/40"
+        style={{
+          bottom: 'calc(1.5rem + env(safe-area-inset-bottom, 0px))',
+          background: `linear-gradient(135deg, ${PRIMARY} 0%, #008e7d 100%)`, boxShadow: `0 8px 24px ${PRIMARY}55, 0 2px 8px rgba(0,0,0,0.12)`,
+        }}
       >
         <Sparkles className="h-6 w-6" strokeWidth={2.2} />
       </button>
