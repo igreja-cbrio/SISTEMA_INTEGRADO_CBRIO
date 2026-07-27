@@ -6,11 +6,14 @@
 // testa. Captura a rota atual + contexto e manda pro /api/feedback. Estilo
 // inline com as CSS vars --cbrio-* (igual ao resto do painel) · sem dep nova.
 // ============================================================================
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { MessageSquareWarning, X, Bug, HelpCircle, Lightbulb, Send } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { feedback as feedbackApi } from '../api';
 import { toast } from 'sonner';
+import { useOverlayAberto } from '../hooks/useOverlayAberto';
+
+const TEMPO_DESARME_MS = 4000; // some voltando a minimizado se não confirmar
 
 const TIPOS = [
   { id: 'bug', label: 'Algo quebrou', icon: Bug },
@@ -24,8 +27,31 @@ export default function FeedbackButton() {
   const [tipo, setTipo] = useState('bug');
   const [msg, setMsg] = useState('');
   const [enviando, setEnviando] = useState(false);
+  const { aberto: overlayAberto, drawerEsquerdo } = useOverlayAberto();
+  const [armado, setArmado] = useState(false);
+  const desarmeTimer = useRef(null);
+
+  // Desarma sozinho (volta a minimizado) se a pessoa não confirmar o toque,
+  // e sempre que o overlay que motivou a minimização fechar.
+  useEffect(() => {
+    if (!overlayAberto) { setArmado(false); return; }
+    if (!armado) return;
+    desarmeTimer.current = setTimeout(() => setArmado(false), TEMPO_DESARME_MS);
+    return () => clearTimeout(desarmeTimer.current);
+  }, [armado, overlayAberto]);
 
   if (!profile) return null; // só pra quem está logado
+
+  // Drawer lateral: o botão só se REALOCA (fica cheio, 1 toque já funciona —
+  // não sobrepõe nada ali). Nos demais overlays (modais/dialogs no meio da
+  // tela) ele MINIMIZA e exige confirmar com um 2º toque, pra evitar que a
+  // pessoa acerte sem querer algo que apareceu no lugar dele.
+  const minimizado = overlayAberto && !drawerEsquerdo && !armado;
+
+  function aoClicarBotao() {
+    if (minimizado) { setArmado(true); return; } // 1º toque: só reexpande
+    setOpen(true); // realocado, já expandido, ou sem overlay: abre de vez
+  }
 
   async function enviar() {
     if (msg.trim().length < 3) {
@@ -58,21 +84,26 @@ export default function FeedbackButton() {
   return (
     <>
       <button
-        onClick={() => setOpen(true)}
-        title="Reportar um problema ou ideia"
+        onClick={aoClicarBotao}
+        title={minimizado ? 'Toque de novo pra reportar um problema ou ideia' : 'Reportar um problema ou ideia'}
         aria-label="Reportar problema"
         className="floating-action-btn"
         style={{
-          position: 'fixed', left: 20, bottom: 'calc(20px + env(safe-area-inset-bottom, 0px))', zIndex: 1200,
-          display: 'flex', alignItems: 'center', gap: 8,
-          padding: '10px 14px', borderRadius: 999,
+          position: 'fixed',
+          // drawer de navegação (lateral esquerda) aberto → sai da frente,
+          // vai pra faixa livre à direita; nos demais overlays só minimiza.
+          left: drawerEsquerdo ? 'auto' : 20,
+          right: drawerEsquerdo ? 12 : 'auto',
+          bottom: 'calc(20px + env(safe-area-inset-bottom, 0px))', zIndex: 1200,
+          display: 'flex', alignItems: 'center', gap: minimizado ? 0 : 8,
+          padding: minimizado ? 10 : '10px 14px', borderRadius: 999,
           background: '#00B39D', color: 'white', border: 'none',
           boxShadow: '0 4px 16px rgba(0,0,0,0.18)', cursor: 'pointer',
           fontSize: 13, fontWeight: 600,
         }}
       >
         <MessageSquareWarning size={18} />
-        Reportar
+        {!minimizado && 'Reportar'}
       </button>
 
       {open && (
