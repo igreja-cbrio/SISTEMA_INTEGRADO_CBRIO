@@ -61,8 +61,9 @@ export default function FeedbackButton() {
         onClick={() => setOpen(true)}
         title="Reportar um problema ou ideia"
         aria-label="Reportar problema"
+        className="floating-action-btn"
         style={{
-          position: 'fixed', left: 20, bottom: 20, zIndex: 1200,
+          position: 'fixed', left: 20, bottom: 'calc(20px + env(safe-area-inset-bottom, 0px))', zIndex: 1200,
           display: 'flex', alignItems: 'center', gap: 8,
           padding: '10px 14px', borderRadius: 999,
           background: '#00B39D', color: 'white', border: 'none',

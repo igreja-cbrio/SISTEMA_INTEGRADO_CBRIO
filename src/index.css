@@ -307,6 +307,15 @@ table tbody tr:hover {
   .cbrio-card, .cbrio-interactive, .cbrio-kpi { transition: none !important; }
 }
 
+/* Botões flutuantes (Reportar/IA) somem enquanto um Dialog/Sheet Radix está
+   aberto — evita cobrir item de menu/modal (achado na revisão de
+   responsividade mobile 2026-07-27). Dialog e Sheet compartilham o mesmo
+   primitivo (@radix-ui/react-dialog), então role="dialog" + data-state="open"
+   cobre os dois. (:has degrada — navegador antigo simplesmente não esconde.) */
+body:has([data-state="open"][role="dialog"]) .floating-action-btn {
+  display: none;
+}
+
 /* Regra de ouro: DADO DENSO fica NÍTIDO. Card de vidro que contém tabela ou
    gráfico (recharts) perde o blur e vira sólido automaticamente — sem editar
    páginas. (:has é ignorado em navegadores antigos → degrada pro vidro.) */
