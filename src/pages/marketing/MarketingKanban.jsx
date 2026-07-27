@@ -257,7 +257,7 @@ export default function MarketingKanban() {
           <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
         </div>
       ) : (
-        <div className="flex gap-4 overflow-x-auto pb-2">
+        <div className="flex gap-4 overflow-x-auto pb-2 snap-x snap-mandatory sm:snap-none">
           {colunas.map(col => (
             col.key === 'triagem' ? (
               <TriagemColumn
@@ -311,7 +311,7 @@ function KanbanColumn({ col, isCoordenador, currentProfileId, onClickCard, onMud
 
   return (
     <div
-      className={`flex flex-col rounded-xl shrink-0 w-[280px] bg-muted/50 dark:bg-muted/20 transition-shadow ${dragOver ? 'ring-2 ring-primary/40' : ''}`}
+      className={`flex flex-col rounded-xl shrink-0 w-[85vw] sm:w-[280px] snap-center bg-muted/50 dark:bg-muted/20 transition-shadow ${dragOver ? 'ring-2 ring-primary/40' : ''}`}
       onDragOver={e => { if (!isCoordenador) return; e.preventDefault(); setDragOver(true); }}
       onDragLeave={() => setDragOver(false)}
       onDrop={e => {
@@ -351,7 +351,7 @@ function KanbanColumn({ col, isCoordenador, currentProfileId, onClickCard, onMud
 // ═══════════════════════════════════════════════════════════════════════
 function TriagemColumn({ col, campanhas, isCoordenador, onClickCampanha }) {
   return (
-    <div className="flex flex-col rounded-xl shrink-0 w-[280px] bg-muted/50 dark:bg-muted/20">
+    <div className="flex flex-col rounded-xl shrink-0 w-[85vw] sm:w-[280px] snap-center bg-muted/50 dark:bg-muted/20">
       <div className="flex items-center gap-2 px-3 py-2.5">
         <span className={`h-2.5 w-2.5 rounded-full ${col.dot}`} />
         <span className="text-sm font-semibold text-foreground">{col.label}</span>

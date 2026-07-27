@@ -52,7 +52,7 @@ function StatisticsCard({
       )}
       <div className="relative flex items-start justify-between">
         <div className="flex-1 min-w-0">
-          <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-[0.08em] truncate">{title}</p>
+          <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-[0.08em] leading-snug line-clamp-2">{title}</p>
           <div className="flex items-baseline gap-2 mt-1.5">
             <span className="text-[27px] leading-none font-extrabold tracking-tight tabular-nums text-foreground">{value}</span>
             {delta !== undefined && delta !== 0 && (
