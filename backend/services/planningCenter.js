@@ -464,7 +464,31 @@ async function upsertVolunteerQrCodes(supabase, volunteersMap) {
 // ── Batch upsert vol_profiles (the volunteer pool) ──────────────────────────
 // Returns { count, dbError } so callers can surface DB errors to the user.
 async function upsertVolunteerProfiles(supabase, volunteersMap) {
-  const entries = Array.from(volunteersMap.values());
+  let entries = Array.from(volunteersMap.values());
+  if (entries.length === 0) return { count: 0, dbError: null };
+
+  // Perfis editados à mão pela equipe (protegido_sync=true) ficam de FORA do
+  // upsert — o nome/e-mail/avatar editado não pode ser revertido pelo PCO.
+  // Tolerante à ausência da coluna (trata como nenhum protegido).
+  try {
+    const protegidos = new Set();
+    for (let offset = 0; ; offset += 1000) {
+      const { data, error } = await supabase
+        .from('vol_profiles')
+        .select('planning_center_id')
+        .eq('protegido_sync', true)
+        .not('planning_center_id', 'is', null)
+        .range(offset, offset + 999);
+      if (error) throw error;
+      for (const r of data || []) protegidos.add(String(r.planning_center_id));
+      if (!data || data.length < 1000) break;
+    }
+    if (protegidos.size) {
+      entries = entries.filter((v) => !protegidos.has(String(v.planning_center_person_id)));
+    }
+  } catch (e) {
+    console.warn('[PC] protegido_sync check:', e.message); // sem coluna → sem proteção
+  }
   if (entries.length === 0) return { count: 0, dbError: null };
 
   // ⚠️ Email só entra no upsert quando o PCO trouxe um valor. A maioria dos
