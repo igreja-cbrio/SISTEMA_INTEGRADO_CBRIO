@@ -2607,6 +2607,7 @@ export const voluntariado = {
     enviar: (id) => post(`/voluntariado/emails/${id}/enviar`, {}, { timeout: 300_000 }),
     agendar: (id, agendado_para) => post(`/voluntariado/emails/${id}/agendar`, { agendado_para }),
     cancelar: (id) => post(`/voluntariado/emails/${id}/cancelar`, {}),
+    reenviarErros: (id) => post(`/voluntariado/emails/${id}/reenviar-erros`, {}, { timeout: 300_000 }),
     // Assinatura global do módulo (texto + logo)
     config: () => get('/voluntariado/emails/config'),
     saveConfig: (assinatura_html) => put('/voluntariado/emails/config', { assinatura_html }),

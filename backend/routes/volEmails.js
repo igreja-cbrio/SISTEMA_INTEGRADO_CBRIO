@@ -484,4 +484,46 @@ router.post('/:id/cancelar', async (req, res) => {
   }
 });
 
+// POST /:id/reenviar-erros — recoloca os destinatários com status 'erro' na fila
+// (erro→pendente) e re-dispara. Útil pra blips transitórios do Graph.
+router.post('/:id/reenviar-erros', async (req, res) => {
+  try {
+    const { data: disparo } = await supabase
+      .from('vol_email_disparos')
+      .select('id, status')
+      .eq('id', req.params.id)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (!disparo) return res.status(404).json({ error: 'Disparo não encontrado' });
+    if (!['enviado', 'erro', 'enviando'].includes(disparo.status)) {
+      return res.status(409).json({ error: `Disparo "${disparo.status}" não tem envio pra reprocessar` });
+    }
+
+    const { data: resetados, error: rErr } = await supabase
+      .from('vol_email_disparo_destinatarios')
+      .update({ status: 'pendente', erro_msg: null, enviado_em: null })
+      .eq('disparo_id', disparo.id)
+      .eq('status', 'erro')
+      .select('id');
+    if (rErr) throw rErr;
+    if (!resetados?.length) return res.status(400).json({ error: 'Nenhum destinatário com erro pra reenviar' });
+
+    await supabase
+      .from('vol_email_disparos')
+      .update({ status: 'enviando' })
+      .eq('id', disparo.id);
+
+    const r = await drenarDisparos({ budgetMs: 240000, apenasDisparoId: disparo.id });
+    const { data: atual } = await supabase
+      .from('vol_email_disparos')
+      .select('*')
+      .eq('id', disparo.id)
+      .single();
+    res.json({ ...atual, reprocessados: resetados.length, drain: r });
+  } catch (e) {
+    console.error('[volEmails] reenviar-erros:', e.message);
+    res.status(500).json({ error: 'Erro ao reenviar os que falharam' });
+  }
+});
+
 module.exports = router;
