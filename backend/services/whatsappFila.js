@@ -16,11 +16,47 @@
 // tokenizado para em log/banco à toa).
 const { supabase } = require('../utils/supabase');
 const { sendTemplate, configurado } = require('./whatsappService');
+const { notificar } = require('./notificar');
 
 const TEMPLATE_LANG = process.env.WHATSAPP_TEMPLATE_LANG || 'pt_BR';
 
 // Backoff por tentativa (minutos): 30m → 2h → 6h → 12h → 24h.
 const BACKOFF_MIN = [30, 120, 360, 720, 1440];
+
+// Erro PERMANENTE não ganha retry: reenviar não muda o resultado (telefone
+// inválido/rejeitado, template inexistente, param errado). O retry com
+// backoff fica só pra falha passageira — o teto diário da Meta, que é o
+// motivo de a fila existir. (Marcos · 27/07: "enviado 1 vez; reenvia só se
+// deu problema no envio" — e problema definitivo avisa gente, não martela.)
+// invalid_phone = normalização local (whatsappService) · códigos = Meta.
+const CODIGOS_META_PERMANENTES = new Set([100, 131026, 131030, 132000, 132001, 132005, 132007, 132012]);
+function falhaPermanente(r) {
+  if (r.reason === 'invalid_phone') return true;
+  if (r.reason === 'api_error') return CODIGOS_META_PERMANENTES.has(Number(r.detail?.error?.code));
+  return false;
+}
+
+// Falha TERMINAL (permanente ou esgotou as tentativas) vira notificação pros
+// responsáveis do módulo do contexto ('grupos.pedido_novo_lider' → grupos ·
+// sem regra configurada, cai no fallback admin/diretor do notificar). Sem
+// isso o envio morre em silêncio — no teste de 26/07 a líder ficou sem os
+// links de aprovação e ninguém soube até olhar a fila na mão.
+async function avisarFalhaTerminal(e, razao) {
+  try {
+    const modulo = String(e.contexto || '').split('.')[0] || 'integracao';
+    await notificar({
+      modulo,
+      tipo: 'whatsapp_envio_falhou',
+      titulo: 'Mensagem de WhatsApp não entregue',
+      mensagem: `O template "${e.template}" para o telefone ${e.telefone} falhou de vez (${String(razao).slice(0, 140)}). Contexto: ${e.contexto || '—'}. Confira o telefone no cadastro e reenvie.`,
+      link: modulo === 'grupos' ? '/grupos' : null,
+      severidade: 'aviso',
+      chaveDedup: `wpp_envio_falha_${e.id}`,
+    });
+  } catch (err) {
+    console.warn('[whatsappFila] aviso de falha terminal:', err.message);
+  }
+}
 
 async function enfileirar({ telefone, template, params, contexto, refId, idioma }) {
   if (!configurado()) return { queued: false, sent: false, reason: 'disabled' };
@@ -72,7 +108,8 @@ async function tentarEnvio(id) {
     ? (r.detail?.error?.message || `HTTP ${r.status || '?'}`)
     : (r.reason || 'erro_desconhecido');
   const tentativas = r.reason === 'disabled' ? (e.tentativas || 0) : (e.tentativas || 0) + 1;
-  const esgotou = r.reason !== 'disabled' && tentativas >= (e.max_tentativas || 5);
+  const permanente = r.reason !== 'disabled' && falhaPermanente(r);
+  const esgotou = r.reason !== 'disabled' && (permanente || tentativas >= (e.max_tentativas || 5));
   const backoffMin = BACKOFF_MIN[Math.min(Math.max(tentativas - 1, 0), BACKOFF_MIN.length - 1)];
 
   await supabase.from('whatsapp_envios').update({
@@ -81,6 +118,8 @@ async function tentarEnvio(id) {
     erro: String(razao).slice(0, 500),
     proxima_tentativa_em: new Date(Date.now() + backoffMin * 60000).toISOString(),
   }).eq('id', id);
+
+  if (esgotou) await avisarFalhaTerminal(e, razao);
 
   return { sent: false, reason: razao };
 }

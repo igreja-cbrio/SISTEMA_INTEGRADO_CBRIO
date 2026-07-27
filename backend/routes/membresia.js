@@ -882,11 +882,41 @@ function normalizarCpfPayload(body, cpfAtual) {
   return null;
 }
 
+// Telefone: mesmo espírito do CPF acima — digits-only + tamanho de linha BR
+// (10-11 dígitos com DDD · 55 na frente é removido). Sem a guarda, telefone
+// corrompido entra no cadastro e some do WhatsApp/matching (caso real
+// 26/07/2026: líder com 21 dígitos — o número colado 2× — ficou sem receber
+// os avisos de pedido do grupo no lançamento). `telefoneAtual` (UPDATE):
+// valor idêntico ao já armazenado passa sem validar — grandfathering do
+// legado (senão um telefone antigo inválido travaria qualquer edição).
+// Retorna mensagem de erro ou null se ok (muta o body).
+function normalizarTelefonePayload(body, telefoneAtual) {
+  if (!body || body.telefone === undefined || body.telefone === null || body.telefone === '') {
+    if (body && (body.telefone === '' || body.telefone === null)) body.telefone = null;
+    return null;
+  }
+  const digitosPayload = String(body.telefone).replace(/\D/g, '');
+  const digitosAtual = String(telefoneAtual || '').replace(/\D/g, '');
+  if (digitosPayload && digitosAtual && digitosPayload === digitosAtual) {
+    body.telefone = digitosPayload;
+    return null;
+  }
+  let d = digitosPayload;
+  if (d.startsWith('55') && d.length > 11) d = d.slice(2);
+  if (d.length < 10 || d.length > 11) {
+    return 'Telefone inválido — informe DDD + número (10 ou 11 dígitos)';
+  }
+  body.telefone = d;
+  return null;
+}
+
 // POST /api/membresia/membros
 router.post('/membros', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const errCpf = normalizarCpfPayload(req.body);
     if (errCpf) return res.status(400).json({ error: errCpf });
+    const errTel = normalizarTelefonePayload(req.body);
+    if (errTel) return res.status(400).json({ error: errTel });
     const resultado = await acharOuCriarGuardado({
       nome: req.body?.nome, cpf: req.body?.cpf, telefone: req.body?.telefone,
       email: req.body?.email, dataNascimento: req.body?.data_nascimento,
@@ -913,15 +943,19 @@ router.post('/membros', authorize('admin', 'diretor'), async (req, res) => {
 // PUT /api/membresia/membros/:id
 router.put('/membros/:id', authorize('admin', 'diretor'), async (req, res) => {
   try {
-    // CPF atual do membro: idêntico ao payload passa sem DV (legado)
+    // CPF/telefone atuais do membro: idêntico ao payload passa sem validar (legado)
     let cpfAtual = null;
-    if (req.body?.cpf) {
+    let telefoneAtual = null;
+    if (req.body?.cpf || req.body?.telefone) {
       const { data: atual } = await supabase.from('mem_membros')
-        .select('cpf').eq('id', req.params.id).maybeSingle();
+        .select('cpf, telefone').eq('id', req.params.id).maybeSingle();
       cpfAtual = atual?.cpf || null;
+      telefoneAtual = atual?.telefone || null;
     }
     const errCpf = normalizarCpfPayload(req.body, cpfAtual);
     if (errCpf) return res.status(400).json({ error: errCpf });
+    const errTel = normalizarTelefonePayload(req.body, telefoneAtual);
+    if (errTel) return res.status(400).json({ error: errTel });
     const { data, error } = await supabase
       .from('mem_membros')
       .update(req.body)
@@ -1554,6 +1588,12 @@ router.put('/totem/membros/:id', async (req, res) => {
       if (req.body[f] !== undefined && req.body[f] !== null) updates[f] = req.body[f];
     }
     if (Object.keys(updates).length === 0) return res.status(400).json({ error: 'Nenhum campo para atualizar' });
+    if (updates.telefone !== undefined) {
+      const { data: atual } = await supabase.from('mem_membros')
+        .select('telefone').eq('id', id).maybeSingle();
+      const errTel = normalizarTelefonePayload(updates, atual?.telefone);
+      if (errTel) return res.status(400).json({ error: errTel });
+    }
     const { data, error } = await supabase.from('mem_membros').update(updates).eq('id', id).select().single();
     if (error) throw error;
     res.json(data);
