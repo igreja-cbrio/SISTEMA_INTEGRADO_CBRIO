@@ -42,15 +42,21 @@ export default function FeedbackButton() {
 
   if (!profile) return null; // só pra quem está logado
 
-  // Drawer lateral: o botão só se REALOCA (fica cheio, 1 toque já funciona —
-  // não sobrepõe nada ali). Nos demais overlays (modais/dialogs no meio da
-  // tela) ele MINIMIZA e exige confirmar com um 2º toque, pra evitar que a
-  // pessoa acerte sem querer algo que apareceu no lugar dele.
+  // Drawer lateral: o botão REALOCA pra faixa livre à direita — mas o drawer
+  // usa até 85vw, sobrando só ~56px em telas de 375px, onde o texto
+  // "Reportar" não cabe (ficava invadindo a borda do menu). Nesse caso vira
+  // só o ícone (compacto o bastante pra caber) e continua funcionando com 1
+  // toque normal, já que não sobrepõe mais nada. Nos demais overlays
+  // (modais/dialogs no meio da tela, sem faixa livre garantida) ele MINIMIZA
+  // e exige confirmar com um 2º toque, pra evitar que a pessoa acerte sem
+  // querer algo que apareceu no lugar dele.
   const minimizado = overlayAberto && !drawerEsquerdo && !armado;
+  const compacto = minimizado || drawerEsquerdo;
 
   function aoClicarBotao() {
+    if (drawerEsquerdo) { setOpen(true); return; } // realocado: 1 toque já funciona
     if (minimizado) { setArmado(true); return; } // 1º toque: só reexpande
-    setOpen(true); // realocado, já expandido, ou sem overlay: abre de vez
+    setOpen(true); // já expandido, ou sem overlay: abre de vez
   }
 
   async function enviar() {
@@ -85,25 +91,26 @@ export default function FeedbackButton() {
     <>
       <button
         onClick={aoClicarBotao}
-        title={minimizado ? 'Toque de novo pra reportar um problema ou ideia' : 'Reportar um problema ou ideia'}
+        title={compacto && !drawerEsquerdo ? 'Toque de novo pra reportar um problema ou ideia' : 'Reportar um problema ou ideia'}
         aria-label="Reportar problema"
         className="floating-action-btn"
         style={{
           position: 'fixed',
           // drawer de navegação (lateral esquerda) aberto → sai da frente,
-          // vai pra faixa livre à direita; nos demais overlays só minimiza.
+          // vai pra faixa livre à direita (compacto, cabe nos ~56px que sobram);
+          // nos demais overlays só minimiza no canto de sempre.
           left: drawerEsquerdo ? 'auto' : 20,
-          right: drawerEsquerdo ? 12 : 'auto',
+          right: drawerEsquerdo ? 8 : 'auto',
           bottom: 'calc(20px + env(safe-area-inset-bottom, 0px))', zIndex: 1200,
-          display: 'flex', alignItems: 'center', gap: minimizado ? 0 : 8,
-          padding: minimizado ? 10 : '10px 14px', borderRadius: 999,
+          display: 'flex', alignItems: 'center', gap: compacto ? 0 : 8,
+          padding: compacto ? 10 : '10px 14px', borderRadius: 999,
           background: '#00B39D', color: 'white', border: 'none',
           boxShadow: '0 4px 16px rgba(0,0,0,0.18)', cursor: 'pointer',
           fontSize: 13, fontWeight: 600,
         }}
       >
         <MessageSquareWarning size={18} />
-        {!minimizado && 'Reportar'}
+        {!compacto && 'Reportar'}
       </button>
 
       {open && (
