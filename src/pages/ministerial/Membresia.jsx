@@ -874,15 +874,17 @@ export default function Membresia() {
   const [timeline, setTimeline] = useState(null); // { eventos: [], total }
   const [loadingTimeline, setLoadingTimeline] = useState(false);
   const [possiveisDup, setPossiveisDup] = useState([]);
+  const [possiveisDupErro, setPossiveisDupErro] = useState(false);
   const [fundindo, setFundindo] = useState(false);
 
   // Possíveis duplicados desta pessoa (mesmo nome/telefone/email/cpf)
   useEffect(() => {
-    if (!selectedMembro?.id) { setPossiveisDup([]); return; }
+    if (!selectedMembro?.id) { setPossiveisDup([]); setPossiveisDupErro(false); return; }
     let cancelado = false;
+    setPossiveisDupErro(false);
     membresia.duplicados.doMembro(selectedMembro.id)
       .then(r => { if (!cancelado) setPossiveisDup(Array.isArray(r) ? r : []); })
-      .catch(() => { if (!cancelado) setPossiveisDup([]); });
+      .catch(() => { if (!cancelado) { setPossiveisDup([]); setPossiveisDupErro(true); } });
     return () => { cancelado = true; };
   }, [selectedMembro?.id]);
 
@@ -1681,6 +1683,12 @@ export default function Membresia() {
             </div>
 
             <div style={{ padding: '20px 32px 28px' }}>
+              {possiveisDupErro && (
+                <div style={{ marginBottom: 16, padding: 12, borderRadius: 12, border: '1px dashed #F09595', background: '#FCEBEB' }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: '#501313', marginBottom: 4 }}>Não foi possível consultar duplicados</div>
+                  <div style={{ fontSize: 11, color: '#791F1F' }}>Podem existir duplicados desta pessoa — a lista falhou ao carregar. Não é a mesma coisa que "sem duplicados".</div>
+                </div>
+              )}
               {possiveisDup.length > 0 && (
                 <div style={{ marginBottom: 16, padding: 12, borderRadius: 12, border: '1px solid rgba(245,158,11,0.4)', background: 'rgba(245,158,11,0.08)' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>

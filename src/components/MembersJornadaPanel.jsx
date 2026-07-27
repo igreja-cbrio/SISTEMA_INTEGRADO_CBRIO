@@ -440,10 +440,10 @@ function TabDetalhe({ detail, loading, onBack }) {
                 </span>
               </div>
               <div style={{ fontSize: 12, color: C.t3 }}>
-                {v.key === 'seguir' && (ativo ? 'Decisao registrada' : 'Sem registro de conversao')}
-                {v.key === 'conectar' && (ativo ? `Grupo: ${data.dados?.mem_grupos?.nome || 'Ativo'}` : 'Não esta em nenhum grupo')}
+                {v.key === 'seguir' && (ativo ? 'Decisão registrada' : 'Sem registro de conversão')}
+                {v.key === 'conectar' && (ativo ? `Grupo: ${data.dados?.mem_grupos?.nome || 'Ativo'}` : 'Não está em nenhum grupo')}
                 {v.key === 'investir' && (ativo ? 'Fez devocional no app' : 'Sem devocional recente')}
-                {v.key === 'servir' && (ativo ? `Ministério: ${data.dados?.mem_ministerios?.nome || 'Ativo'}` : 'Não esta servindo')}
+                {v.key === 'servir' && (ativo ? `Ministério: ${data.dados?.mem_ministerios?.nome || 'Ativo'}` : 'Não está servindo')}
                 {v.key === 'generosidade' && (ativo ? `Última contribuição: ${data.dados?.data || ''}` : 'Sem contribuição nos últimos 90 dias')}
               </div>
             </div>

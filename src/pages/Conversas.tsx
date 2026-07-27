@@ -15,8 +15,10 @@ type ResumoArea = { area: string | null; entrada?: boolean; novas: number; ativo
 
 function PainelAreas() {
   const [rows, setRows] = useState<ResumoArea[] | null>(null);
+  const [erro, setErro] = useState(false);
   const carregar = useCallback(() => {
-    waInbox.resumoAreas().then((r: any) => setRows(r?.areas || [])).catch(() => setRows([]));
+    setErro(false);
+    waInbox.resumoAreas().then((r: any) => setRows(r?.areas || [])).catch(() => { setRows([]); setErro(true); });
   }, []);
   useEffect(() => { carregar(); const t = setInterval(carregar, 20_000); return () => clearInterval(t); }, [carregar]);
 
@@ -44,6 +46,14 @@ function PainelAreas() {
           <tbody>
             {rows === null ? (
               <tr><td colSpan={4} className="py-10 text-center"><Loader2 className="h-5 w-5 animate-spin text-primary mx-auto" /></td></tr>
+            ) : erro ? (
+              <tr><td colSpan={4} className="py-6 px-4">
+                <div style={{ padding: '16px', background: '#FCEBEB', border: '1px dashed #F09595', borderRadius: 8, textAlign: 'center' }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: '#501313', marginBottom: 4 }}>Não foi possível carregar as áreas</div>
+                  <div style={{ fontSize: 11, color: '#791F1F', marginBottom: 10 }}>Falha ao consultar o resumo. A fila do WhatsApp pode não estar realmente vazia.</div>
+                  <button onClick={carregar} style={{ background: '#E24B4A', color: '#fff', border: 'none', borderRadius: 6, padding: '6px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Tentar de novo</button>
+                </div>
+              </td></tr>
             ) : rows.length === 0 ? (
               <tr><td colSpan={4} className="py-10 text-center text-sm text-muted-foreground">Nenhuma conversa ainda.</td></tr>
             ) : rows.map((r, i) => (
@@ -87,13 +97,15 @@ function Contador({ n, cor }: { n: number; cor: 'verde' | 'azul' | 'ambar' }) {
 type Pronta = { id: string; titulo: string; texto: string };
 function MensagensProntas() {
   const [lista, setLista] = useState<Pronta[] | null>(null);
+  const [erro, setErro] = useState(false);
   const [titulo, setTitulo] = useState('');
   const [texto, setTexto] = useState('');
   const [salvando, setSalvando] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
 
   const carregar = useCallback(() => {
-    waInbox.mensagensProntas().then((r: any) => setLista(r?.mensagens || [])).catch(() => setLista([]));
+    setErro(false);
+    waInbox.mensagensProntas().then((r: any) => setLista(r?.mensagens || [])).catch(() => { setLista([]); setErro(true); });
   }, []);
   useEffect(() => { carregar(); }, [carregar]);
 
@@ -125,6 +137,12 @@ function MensagensProntas() {
         <div className="max-h-[520px] divide-y divide-border/60 overflow-y-auto">
           {lista === null ? (
             <div className="flex justify-center p-8"><Loader2 className="h-5 w-5 animate-spin text-primary" /></div>
+          ) : erro ? (
+            <div style={{ margin: 16, padding: 16, background: '#FCEBEB', border: '1px dashed #F09595', borderRadius: 8, textAlign: 'center' }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: '#501313', marginBottom: 4 }}>Não foi possível carregar as mensagens</div>
+              <div style={{ fontSize: 11, color: '#791F1F', marginBottom: 10 }}>Suas mensagens prontas podem já existir — não recrie sem confirmar.</div>
+              <button onClick={carregar} style={{ background: '#E24B4A', color: '#fff', border: 'none', borderRadius: 6, padding: '6px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Tentar de novo</button>
+            </div>
           ) : lista.length === 0 ? (
             <div className="p-8 text-center text-sm text-muted-foreground">Nenhuma mensagem pronta ainda. Crie ao lado. →</div>
           ) : lista.map(m => (

@@ -1074,10 +1074,16 @@ function TrilhaPessoas({ canEdit, reloadKey, onNova, onEditVisita, onNovoParaPes
   const [fDe, setFDe] = useState('');
   const [fAte, setFAte] = useState('');
 
-  useEffect(() => {
+  const [erroTrilha, setErroTrilha] = useState(false);
+  const recarregarTrilha = () => {
     setLoading(true);
-    cuidadosApi.trilha().then((p: any[]) => setPessoas(Array.isArray(p) ? p : [])).catch(() => setPessoas([])).finally(() => setLoading(false));
-  }, [reloadKey]);
+    setErroTrilha(false);
+    cuidadosApi.trilha()
+      .then((p: any[]) => setPessoas(Array.isArray(p) ? p : []))
+      .catch(() => { setPessoas([]); setErroTrilha(true); })
+      .finally(() => setLoading(false));
+  };
+  useEffect(() => { recarregarTrilha(); /* eslint-disable-next-line */ }, [reloadKey]);
 
   // Sincroniza o painel aberto após recarregar (comentários, nome novo, etc.)
   useEffect(() => {
@@ -1173,6 +1179,12 @@ function TrilhaPessoas({ canEdit, reloadKey, onNova, onEditVisita, onNovoParaPes
       </div>
       {loading ? (
         <div className="text-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground inline" /></div>
+      ) : erroTrilha && pessoas.length === 0 ? (
+        <div style={{ padding: 24, background: '#FCEBEB', border: '1px dashed #F09595', borderRadius: 8, textAlign: 'center' }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: '#501313', marginBottom: 4 }}>Não foi possível carregar a trilha</div>
+          <div style={{ fontSize: 12, color: '#791F1F', marginBottom: 12 }}>Falha ao consultar os atendimentos. Isso não significa que não há histórico.</div>
+          <button onClick={recarregarTrilha} style={{ background: '#E24B4A', color: '#fff', border: 'none', borderRadius: 6, padding: '8px 16px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Tentar de novo</button>
+        </div>
       ) : filtradas.length === 0 ? (
         <div className="rounded-lg border border-border bg-card p-8 text-center text-muted-foreground text-sm">{pessoas.length === 0 ? 'Nenhum atendimento registrado ainda.' : (busca.trim() || temFiltro) ? 'Ninguém encontrado com esses filtros.' : 'Ninguém com esse nome/telefone.'}</div>
       ) : (
@@ -1364,6 +1376,7 @@ function CaixaEntrada({ canEdit, onAtendido, onPendentes }: {
 }) {
   const [itens, setItens] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [erroCarga, setErroCarga] = useState(false);
   const [fCanal, setFCanal] = useState('todos');
   const [fTipo, setFTipo] = useState('todos');
   const [fStatus, setFStatus] = useState('abertos');
@@ -1373,11 +1386,15 @@ function CaixaEntrada({ canEdit, onAtendido, onPendentes }: {
 
   async function carregar() {
     setLoading(true);
+    setErroCarga(false);
+    let falhou = false;
+    const safe = async (p: Promise<any>) => { try { return await p; } catch { falhou = true; return []; } };
     try {
       const [cui, app] = await Promise.all([
-        cuidadosApi.pedidos.list().catch(() => []),
-        cuidadosApi.pedidosApp.list().catch(() => []),
+        safe(cuidadosApi.pedidos.list()),
+        safe(cuidadosApi.pedidosApp.list()),
       ]);
+      if (falhou) setErroCarga(true);
       const norm: any[] = [];
       for (const p of (cui || [])) norm.push({
         fonte: 'cui', id: p.id, canal: p.canal || 'manual', tipo: p.tipo || 'outro',
@@ -1394,7 +1411,7 @@ function CaixaEntrada({ canEdit, onAtendido, onPendentes }: {
       norm.sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
       setItens(norm);
       if (onPendentes) onPendentes(norm.filter(x => x.status === 'pendente').length);
-    } catch { setItens([]); }
+    } catch { setItens([]); setErroCarga(true); }
     finally { setLoading(false); }
   }
   useEffect(() => { carregar(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
@@ -1468,6 +1485,12 @@ function CaixaEntrada({ canEdit, onAtendido, onPendentes }: {
 
       {loading ? (
         <div className="text-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground inline" /></div>
+      ) : erroCarga && itens.length === 0 ? (
+        <div style={{ padding: 24, background: '#FCEBEB', border: '1px dashed #F09595', borderRadius: 8, textAlign: 'center' }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: '#501313', marginBottom: 4 }}>Não foi possível carregar a caixa de entrada</div>
+          <div style={{ fontSize: 12, color: '#791F1F', marginBottom: 12 }}>Pode haver pedidos pendentes — a lista falhou ao carregar. Não trate como vazio.</div>
+          <button onClick={carregar} style={{ background: '#E24B4A', color: '#fff', border: 'none', borderRadius: 6, padding: '8px 16px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Tentar de novo</button>
+        </div>
       ) : filtrados.length === 0 ? (
         <div className="rounded-lg border border-border bg-card p-8 text-center text-muted-foreground text-sm">{itens.length === 0 ? 'Nenhum pedido na caixa de entrada.' : 'Nenhum pedido nos filtros atuais.'}</div>
       ) : (

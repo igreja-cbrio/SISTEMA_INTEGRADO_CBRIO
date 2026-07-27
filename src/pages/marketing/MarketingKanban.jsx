@@ -524,6 +524,8 @@ function CardDrawer({ card, onClose, onUpdated, tipos, destinos, membros, isCoor
   const open = !!card;
   const [edit, setEdit] = useState({});
   const [entregaveis, setEntregaveis] = useState([]);
+  const [erroEntreg, setErroEntreg] = useState(false);
+  const [erroChecklist, setErroChecklist] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadingRef, setUploadingRef] = useState(false);
   const [checklist, setChecklist] = useState([]);
@@ -542,8 +544,9 @@ function CardDrawer({ card, onClose, onUpdated, tipos, destinos, membros, isCoor
       estado: card.estado,
     });
     // Carrega entregaveis + checklist
-    api.entregaveis.list(card.id).then(setEntregaveis).catch(() => setEntregaveis([]));
-    api.checklist.list(card.id).then(setChecklist).catch(() => setChecklist([]));
+    setErroEntreg(false); setErroChecklist(false);
+    api.entregaveis.list(card.id).then(setEntregaveis).catch(() => { setEntregaveis([]); setErroEntreg(true); });
+    api.checklist.list(card.id).then(setChecklist).catch(() => { setChecklist([]); setErroChecklist(true); });
   }, [card]);
 
   async function salvar() {
@@ -795,7 +798,12 @@ function CardDrawer({ card, onClose, onUpdated, tipos, destinos, membros, isCoor
                   <div className="h-full bg-primary transition-all" style={{ width: `${checklistPct}%` }} />
                 </div>
               )}
-              {checklist.length === 0 ? (
+              {erroChecklist ? (
+                <div style={{ padding: 10, background: '#FCEBEB', border: '1px dashed #F09595', borderRadius: 6 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: '#501313' }}>Não foi possível carregar a checklist</div>
+                  <div style={{ fontSize: 11, color: '#791F1F' }}>Podem existir itens — a lista falhou ao carregar.</div>
+                </div>
+              ) : checklist.length === 0 ? (
                 <p className="text-xs text-muted-foreground">Sem itens · use frentes (ex: ID e Estratégia, Enxoval) pra agrupar.</p>
               ) : (
                 <div className="space-y-3">
@@ -913,7 +921,12 @@ function CardDrawer({ card, onClose, onUpdated, tipos, destinos, membros, isCoor
                   </label>
                 )}
               </div>
-              {entregaveisFinais.length === 0 ? (
+              {erroEntreg ? (
+                <div style={{ padding: 10, background: '#FCEBEB', border: '1px dashed #F09595', borderRadius: 6 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: '#501313' }}>Não foi possível carregar os entregáveis</div>
+                  <div style={{ fontSize: 11, color: '#791F1F' }}>Pode haver arquivos anexados — a lista falhou ao carregar.</div>
+                </div>
+              ) : entregaveisFinais.length === 0 ? (
                 <p className="text-xs text-muted-foreground py-3">Sem arquivos anexados</p>
               ) : (
                 <ul className="space-y-1">

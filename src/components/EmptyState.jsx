@@ -19,9 +19,10 @@
 // ============================================================================
 
 const TOM_CORES = {
-  positivo: { cor: '#10B981', bg: '#10B98118' },
-  neutro:   { cor: '#9CA3AF', bg: '#9CA3AF18' },
-  alerta:   { cor: '#F59E0B', bg: '#F59E0B18' },
+  positivo: { cor: '#10B981', bg: '#10B98118', borda: null, textoTitulo: null, textoMensagem: null },
+  neutro:   { cor: '#9CA3AF', bg: '#9CA3AF18', borda: null, textoTitulo: null, textoMensagem: null },
+  alerta:   { cor: '#F59E0B', bg: '#F59E0B18', borda: null, textoTitulo: null, textoMensagem: null },
+  erro:     { cor: '#E24B4A', bg: '#FCEBEB',   borda: '#F09595', textoTitulo: '#501313', textoMensagem: '#791F1F' },
 };
 
 export default function EmptyState({
@@ -32,15 +33,15 @@ export default function EmptyState({
   cta,           // { label, onClick }
   compacto = false,
 }) {
-  const { cor, bg } = TOM_CORES[tom] || TOM_CORES.neutro;
+  const { cor, bg, borda, textoTitulo, textoMensagem } = TOM_CORES[tom] || TOM_CORES.neutro;
 
   return (
     <div style={{
       padding: compacto ? '20px 16px' : '32px 20px',
       textAlign: 'center',
       borderRadius: 8,
-      background: 'var(--surface)',
-      border: '1px dashed var(--hairline)',
+      background: tom === 'erro' ? bg : 'var(--surface)',
+      border: `1px dashed ${borda || 'var(--hairline)'}`,
     }}>
       {Icone && (
         <div style={{
@@ -58,7 +59,7 @@ export default function EmptyState({
         <div style={{
           fontSize: compacto ? 13 : 14,
           fontWeight: 700,
-          color: 'var(--cbrio-text)',
+          color: textoTitulo || 'var(--cbrio-text)',
           marginBottom: 4,
         }}>
           {titulo}
@@ -67,7 +68,7 @@ export default function EmptyState({
       {mensagem && (
         <div style={{
           fontSize: compacto ? 11 : 12,
-          color: 'var(--cbrio-text3)',
+          color: textoMensagem || 'var(--cbrio-text3)',
           lineHeight: 1.5,
           maxWidth: 360,
           margin: '0 auto',
@@ -84,7 +85,7 @@ export default function EmptyState({
             borderRadius: 6,
             fontSize: 12,
             fontWeight: 600,
-            background: '#00B39D',
+            background: tom === 'erro' ? '#E24B4A' : '#00B39D',
             color: '#fff',
             border: 'none',
             cursor: 'pointer',
