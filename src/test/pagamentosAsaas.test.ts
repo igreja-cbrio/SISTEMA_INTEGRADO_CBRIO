@@ -58,19 +58,48 @@ describe('asaas · guarda de ambiente pela key', () => {
   // devolve uma promise que ninguém confere e o teste passa vazio.
   it('key de SANDBOX em produção lança', async () => {
     // O acidente que importa: o teste "passou" porque não cobrou nada.
+    vi.stubEnv('VERCEL_ENV', '');
     vi.stubEnv('NODE_ENV', 'production');
     vi.stubEnv('ASAAS_API_KEY', '$aact_hmlg_abc123');
     await expect(A.criarCobranca({ valor_centavos: 100 })).rejects.toThrow(/SANDBOX/);
   });
 
+  it('PREVIEW da Vercel ACEITA key de sandbox, apesar de NODE_ENV=production', async () => {
+    // A Vercel põe NODE_ENV=production em todo deploy, inclusive preview. Sem
+    // olhar VERCEL_ENV primeiro, a guarda barraria o sandbox exatamente no
+    // ambiente onde ele precisa rodar. O erro esperado aqui é de REDE (a
+    // chamada sai), nunca de ambiente.
+    vi.stubEnv('VERCEL_ENV', 'preview');
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('ASAAS_API_KEY', '$aact_hmlg_abc123');
+    await expect(A.criarCobranca({ valor_centavos: 100 })).rejects.not.toThrow(/SANDBOX|PRODUÇÃO/);
+  });
+
+  it('PRODUCTION da Vercel recusa key de sandbox', async () => {
+    vi.stubEnv('VERCEL_ENV', 'production');
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('ASAAS_API_KEY', '$aact_hmlg_abc123');
+    await expect(A.criarCobranca({ valor_centavos: 100 })).rejects.toThrow(/SANDBOX/);
+  });
+
+  it('PREVIEW da Vercel recusa key de PRODUÇÃO', async () => {
+    // O inverso, que é o acidente pior: preview cobrando dinheiro real.
+    vi.stubEnv('VERCEL_ENV', 'preview');
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('ASAAS_API_KEY', '$aact_prod_abc123');
+    await expect(A.criarCobranca({ valor_centavos: 100 })).rejects.toThrow(/PRODUÇÃO/);
+  });
+
   it('key de PRODUÇÃO fora de produção lança', async () => {
     // O acidente pior: um teste cobrando dinheiro real de alguém.
+    vi.stubEnv('VERCEL_ENV', '');
     vi.stubEnv('NODE_ENV', 'development');
     vi.stubEnv('ASAAS_API_KEY', '$aact_prod_abc123');
     await expect(A.criarCobranca({ valor_centavos: 100 })).rejects.toThrow(/PRODUÇÃO/);
   });
 
   it('sem ASAAS_API_KEY lança em vez de tentar chamar a API', async () => {
+    vi.stubEnv('VERCEL_ENV', '');
     vi.stubEnv('NODE_ENV', 'development');
     vi.stubEnv('ASAAS_API_KEY', '');
     await expect(A.criarCobranca({ valor_centavos: 100 })).rejects.toThrow(/não configurada/i);

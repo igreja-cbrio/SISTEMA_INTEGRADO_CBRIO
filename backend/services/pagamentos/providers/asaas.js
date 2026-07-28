@@ -63,7 +63,17 @@ const capacidades = Object.freeze({
 
 // ── Configuração ──────────────────────────────────────────────────────────
 
+/**
+ * ⚠️ `VERCEL_ENV` vem ANTES de `NODE_ENV`, e não é detalhe: a Vercel define
+ * `NODE_ENV=production` em TODO deploy, inclusive **preview**. Olhando só pro
+ * NODE_ENV, um preview seria tratado como produção e a guarda abaixo recusaria
+ * a key de sandbox — justamente no ambiente onde o sandbox precisa rodar.
+ *
+ * VERCEL_ENV distingue production | preview | development. Sem ela (rodando
+ * local ou fora da Vercel), cai no NODE_ENV.
+ */
 function ehProducao() {
+  if (process.env.VERCEL_ENV) return process.env.VERCEL_ENV === 'production';
   return process.env.NODE_ENV === 'production';
 }
 
@@ -75,11 +85,12 @@ function apiKey() {
   // cobrar de verdade num teste, e testar contra dinheiro real.
   const sandbox = k.startsWith('$aact_hmlg_');
   const producao = k.startsWith('$aact_prod_');
+  const ambiente = process.env.VERCEL_ENV || process.env.NODE_ENV || 'desconhecido';
   if (ehProducao() && sandbox) {
-    throw new Error('ASAAS_API_KEY é de SANDBOX ($aact_hmlg_) mas NODE_ENV=production — nada seria cobrado de verdade.');
+    throw new Error(`ASAAS_API_KEY é de SANDBOX ($aact_hmlg_) mas o ambiente é PRODUÇÃO (${ambiente}) — nada seria cobrado de verdade.`);
   }
   if (!ehProducao() && producao) {
-    throw new Error('ASAAS_API_KEY é de PRODUÇÃO ($aact_prod_) fora de produção — um teste cobraria dinheiro real.');
+    throw new Error(`ASAAS_API_KEY é de PRODUÇÃO ($aact_prod_) fora de produção (${ambiente}) — um teste cobraria dinheiro real.`);
   }
   return k;
 }

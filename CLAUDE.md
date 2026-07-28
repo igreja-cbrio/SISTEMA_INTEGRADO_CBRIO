@@ -4350,6 +4350,13 @@ elimina a Stripe é o parcelado, só isso.
 7. **A key carrega o ambiente no prefixo** (`$aact_hmlg_` = sandbox ·
    `$aact_prod_` = produção) → guarda que **lança no boot** se cruzarem. É a
    diferença entre "o teste não cobrou" e "o teste cobrou de verdade".
+   ⚠️ A guarda olha **`VERCEL_ENV` ANTES de `NODE_ENV`**, e isso não é detalhe:
+   a Vercel define `NODE_ENV=production` em **todo** deploy, inclusive
+   **preview**. Só pelo NODE_ENV, o preview seria tratado como produção e a
+   key de sandbox seria recusada — justamente no ambiente onde o sandbox
+   precisa rodar. Mesmo raciocínio no `baseUrl()` (preview usa a API de
+   sandbox). Testar sandbox = envs no escopo **Preview** da Vercel + webhook
+   apontando pro alias estável da branch, NUNCA a chave de sandbox em Production.
 8. `billingType: 'UNDEFINED'` faz o Asaas montar UMA página (`invoiceUrl`) onde
    o pagador escolhe Pix/cartão/boleto → checkout hospedado, e dado de cartão
    nunca passa pelo nosso Express.
