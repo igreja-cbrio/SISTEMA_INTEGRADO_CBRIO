@@ -283,7 +283,7 @@ export default function MarketingGenerosidade() {
           </Card>
         ) : mes ? (
           <>
-            <Card className="glass-solid relative overflow-hidden !border-white/15 !bg-[#006f6b] text-white shadow-xl">
+            <Card className="relative overflow-hidden !border-white/15 !bg-[#006f6b] text-white shadow-xl">
               <div
                 className="pointer-events-none absolute inset-0 opacity-50"
                 aria-hidden="true"
