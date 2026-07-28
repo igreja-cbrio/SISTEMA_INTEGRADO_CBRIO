@@ -2280,6 +2280,12 @@ export const apresentacaoCriancasPublico = {
     if (!res.ok) throw new Error('Erro ao buscar próxima data');
     return res.json();
   },
+  // Textos canônicos de consentimento (o snapshot gravado é sempre o do backend)
+  textos: async () => {
+    const res = await fetch(`${API}/public/apresentacao-criancas/textos`);
+    if (!res.ok) throw new Error('Erro ao buscar textos');
+    return res.json();
+  },
   inscrever: async (data) => {
     const res = await fetch(`${API}/public/apresentacao-criancas`, {
       method: 'POST',

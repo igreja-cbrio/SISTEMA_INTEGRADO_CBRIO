@@ -73,8 +73,18 @@ Celebra com só nome+telefone continuam válidas para sempre).
   imagem, menor_responsavel, whatsapp). O ESTADO do opt-in continua nas
   colunas `whatsapp_optin/_em` de cada tabela.
 - Rollout F3.1 porta a porta (1 PR cada, nesta ordem): **eventos externos ✅**
-  → apresentação → líderes → voluntariado → next → batismo → grupos.
+  → **apresentação ✅** → líderes → voluntariado → next → batismo → grupos.
   Plano de migração sem perda + bugs conhecidos: `docs/modulo-inscricoes/`.
+- **Porta 2 · Apresentação de crianças (2026-07-28 · migration `20260728170000`):**
+  por criança agora vai nome completo + nascimento + sexo (obrigatórios só p/
+  inscrições novas; `crianca_idade` legada é derivada do nascimento); e-mail do
+  responsável obrigatório; endereço opcional; **consentimento de MENOR
+  (`menor_responsavel`, art. 14 §1º) obrigatório** + imagem opcional + opt-in;
+  matcher read-only no responsável → `responsavel_membro_id` + vínculo
+  `kids_responsaveis` (parentesco só quando um único nome preenchido);
+  `kids_criancas` reusa por (nome, nascimento) — acabou a criança órfã
+  duplicada; dedup por (cpf, criança, data) → `ja_inscritas[]` na resposta;
+  CHECK de status entrou **NOT VALID** (validar depois de conferir DISTINCTs).
 - **Porta 1 · Eventos externos (2026-07-28 · migration `20260728150000`):**
   campos padrão obrigatórios só p/ inscrições NOVAS (legadas nome+telefone
   seguem válidas); dedup por CPF com fallback telefone — re-inscrição faz
