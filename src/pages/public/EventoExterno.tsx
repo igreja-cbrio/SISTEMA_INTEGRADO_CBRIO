@@ -12,7 +12,7 @@
 // label em cima, grid lado a lado (auto-fit 220px), cartão 720px, fonte 16
 // nos inputs (anti-zoom iOS) e container 100dvh + margin auto (fix do iPhone).
 import { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import confetti from 'canvas-confetti';
 import { eventoPublico } from '../../api';
 import AnimatedBackground from './AnimatedBackground';
@@ -248,6 +248,7 @@ const TEXTOS_FALLBACK = {
 
 export default function EventoExterno() {
   const { slug = '' } = useParams();
+  const navigate = useNavigate();
   const { C } = usePublicTheme();
   const [evento, setEvento] = useState<any>(null);
   const [carregando, setCarregando] = useState(true);
@@ -313,6 +314,20 @@ export default function EventoExterno() {
         consent_imagem: temCampoImagem ? consentImagem : undefined,
         dados, website,
       });
+      // Evento PAGO: a vaga ficou reservada e a pessoa vai pagar na página do
+      // provedor (um link serve Pix, cartão parcelado e boleto). ⚠️ Sem confete
+      // e sem "presença confirmada" aqui — nada de comemoração antes de o
+      // servidor dizer `pago`.
+      if (r.pagamento && r.checkout_url) {
+        window.location.href = r.checkout_url;
+        return;
+      }
+      if (r.pagamento) {
+        // Cobrança criada mas sem link (caso raro): manda pra tela de status,
+        // que consulta o provedor e reoferece o pagamento.
+        navigate(`/pagamento/${r.public_token}`);
+        return;
+      }
       setResultado({ numero: r.numero_sorte, jaInscrito: r.ja_inscrito, temSorteio: r.tem_sorteio });
       if (r.tem_sorteio) setTimeout(confete, 200);
     } catch (e: any) { setErro(e.message || 'Erro ao confirmar presença.'); }
@@ -422,6 +437,28 @@ export default function EventoExterno() {
                   {evento.vagas_restantes === 1
                     ? 'Última vaga!'
                     : `Restam ${evento.vagas_restantes} vagas`}
+                </div>
+              )}
+              {/* Evento pago: o valor aparece ANTES de a pessoa preencher. */}
+              {evento.pagamento_ativo && evento.valor_centavos > 0 && (
+                <div style={{
+                  marginBottom: 16, padding: '12px 14px', borderRadius: 12,
+                  background: '#00B39D12', border: '1px solid #00B39D33',
+                }}>
+                  <div style={{ fontSize: 12, color: C.text3, textTransform: 'uppercase', letterSpacing: 0.4 }}>Valor da inscrição</div>
+                  <div style={{ fontSize: 24, fontWeight: 800, color: '#00B39D', marginTop: 2 }}>
+                    {(evento.valor_centavos / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                  </div>
+                  <div style={{ fontSize: 12, color: C.text3, marginTop: 4 }}>
+                    Pagamento por Pix, cartão{evento.parcelas_max > 1 ? ` (em até ${evento.parcelas_max}x)` : ''} ou boleto.
+                    {' '}Ao enviar, você vai para a página de pagamento.
+                  </div>
+                  {evento.pagamento_expira_horas > 0 && (
+                    <div style={{ fontSize: 12, color: '#b45309', marginTop: 4 }}>
+                      {/* Prazo explícito: a vaga fica reservada e depois volta pra fila. */}
+                      Sua vaga fica reservada por {evento.pagamento_expira_horas}h até o pagamento.
+                    </div>
+                  )}
                 </div>
               )}
               {erro && <div style={{ background: '#ef444418', border: '1px solid #ef444440', borderRadius: 10, padding: '10px 14px', marginBottom: 16, fontSize: 13, color: '#ef4444' }}>{erro}</div>}

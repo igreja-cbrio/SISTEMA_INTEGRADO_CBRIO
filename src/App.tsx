@@ -289,6 +289,7 @@ const GovernancaRitual = lazyWithRetry(() => import('./pages/governanca/RitualPa
 // Mantido aqui apenas pra retrocompat de URL — redirect via Navigate.
 const InscricaoNext = lazyWithRetry(() => import('./pages/public/InscricaoNext'));
 const EventoExterno = lazyWithRetry(() => import('./pages/public/EventoExterno'));
+const PagamentoInscricao = lazyWithRetry(() => import('./pages/public/PagamentoInscricao'));
 // EventosExternos/EventoExternoDetalhe (gestão do ext) saíram das rotas na
 // virada pro /inscricoes (SPEC-04 · 2026-07-28); arquivos ficam no repo até
 // 1 ciclo sem divergência (rollback = restaurar as 2 rotas).
@@ -509,6 +510,8 @@ function AppRoutes() {
       <Route path="/batismo/acesso" element={<Suspense fallback={<Loading />}><BatismoAcesso /></Suspense>} />
       <Route path="/apresentacao-criancas" element={<Suspense fallback={<Loading />}><ApresentacaoCriancasPublica /></Suspense>} />
       <Route path="/evento/:slug" element={<Suspense fallback={<Loading />}><EventoExterno /></Suspense>} />
+      {/* Status do pagamento da inscrição · público, pelo public_token da cobrança */}
+      <Route path="/pagamento/:token" element={<Suspense fallback={<Loading />}><PagamentoInscricao /></Suspense>} />
       <Route path="/inscricao-grupos" element={<Suspense fallback={<Loading />}><InscricaoGrupos /></Suspense>} />
       <Route path="/inscricao-lideres" element={<Suspense fallback={<Loading />}><InscricaoLideres /></Suspense>} />
       {/* Líder aprova pedido de grupo pelo link do WhatsApp · token = credencial · sem login */}

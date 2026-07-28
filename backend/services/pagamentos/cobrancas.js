@@ -93,10 +93,21 @@ async function criarCobranca({
   const valor = centavos(valor_centavos);
   if (valor <= 0) throw new Error('valor_centavos deve ser maior que zero');
 
-  const existente = await porReferencia(referencia);
-  if (existente) return { cobranca: existente, reaproveitada: true };
-
   const adapter = providers.obter(providerNome);
+
+  const existente = await porReferencia(referencia);
+  if (existente) {
+    // ⚠️ Cobrança MEIO-CRIADA: a linha existe mas a chamada ao PSP falhou, então
+    // ela não tem `provider_cobranca_id` nem checkout. Devolvê-la como está
+    // seria um beco sem saída — a pessoa reenviaria o formulário pra sempre e
+    // receberia a mesma cobrança sem link de pagamento (e o cron de
+    // reconciliação também não a pega, porque filtra por provider_cobranca_id).
+    // Aqui retomamos: chama o PSP de novo sobre a MESMA linha.
+    const incompleta = !existente.provider_cobranca_id && existente.status === STATUS.CRIADA;
+    if (!incompleta) return { cobranca: existente, reaproveitada: true };
+    const retomada = await pedirAoProvider(adapter, existente);
+    return { cobranca: retomada, reaproveitada: true, retomada: true };
+  }
 
   const { data: nova, error: eIns } = await supabase.from('pag_cobrancas').insert({
     origem_tipo,
@@ -131,13 +142,29 @@ async function criarCobranca({
     throw eIns;
   }
 
+  const atualizada = await pedirAoProvider(adapter, nova);
+  return { cobranca: atualizada, reaproveitada: false };
+}
+
+/**
+ * Pede a cobrança ao PSP e grava o que ele devolveu na linha JÁ existente.
+ *
+ * Extraído porque serve dois caminhos: a criação normal e a retomada de uma
+ * cobrança meio-criada (PSP fora do ar na primeira tentativa).
+ */
+async function pedirAoProvider(adapter, linha) {
   let resposta;
   try {
-    resposta = await adapter.criarCobranca({ ...nova, valor_centavos: valor });
+    resposta = await adapter.criarCobranca(linha);
   } catch (e) {
+    // ⚠️ Guarda o motivo mas NÃO marca `falhou`. Na máquina de estados `falhou`
+    // é TERMINAL e significa "este pagamento não pode mais ser feito" — um
+    // timeout na nossa chamada ao PSP não é isso. Marcar falhou aqui tornaria a
+    // cobrança irrecuperável (terminal não transiciona, e o trigger do banco
+    // recusaria a retomada). Fica em `criada`, que é retomável.
     await supabase.from('pag_cobrancas')
-      .update({ status: STATUS.FALHOU, ultimo_erro: String(e.message).slice(0, 500) })
-      .eq('id', nova.id);
+      .update({ ultimo_erro: String(e.message).slice(0, 500) })
+      .eq('id', linha.id);
     throw e;
   }
 
@@ -153,17 +180,16 @@ async function criarCobranca({
   };
   if (resposta.metodo) patch.metodo = resposta.metodo;
   if (resposta.vencimento) patch.vencimento = resposta.vencimento;
-  if (resposta.status && resposta.status !== nova.status) {
-    const t = aplicarTransicao(nova.status, resposta.status);
+  if (resposta.status && resposta.status !== linha.status) {
+    const t = aplicarTransicao(linha.status, resposta.status);
     if (t.ok) patch.status = resposta.status;
     else console.error(`[pagamentos] provider devolveu status inválido na criação: ${t.motivo}`);
   }
 
-  const { data: atualizada, error: eUp } = await supabase.from('pag_cobrancas')
-    .update(patch).eq('id', nova.id).select(SELECT_COBRANCA).single();
-  if (eUp) throw eUp;
-
-  return { cobranca: atualizada, reaproveitada: false };
+  const { data, error } = await supabase.from('pag_cobrancas')
+    .update(patch).eq('id', linha.id).select(SELECT_COBRANCA).single();
+  if (error) throw error;
+  return data;
 }
 
 /** Soma da razão auxiliar. `tarifa` fora: é custo nosso, não pagamento. */

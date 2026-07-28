@@ -329,6 +329,11 @@ export const eventoPublico = {
   inscrever: (slug, data) => fetch(`${API}/public/evento/${encodeURIComponent(slug)}/inscrever`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
   }).then(async r => { const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j; }),
+  // Status da cobrança da inscrição paga. Acessado pelo `public_token`, nunca
+  // pelo uuid. Montado sob /public/evento de propósito: é lá que o limiter
+  // generoso vale (a tela faz polling e sob /api/public puro tomaria 429).
+  pagamento: (token) => fetch(`${API}/public/evento/pagamento/${encodeURIComponent(token)}`)
+    .then(async r => { const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j; }),
   // Upload de imagem de um campo do formulário (ex.: logo da empresa) · sem auth.
   uploadImagem: (slug, file) => {
     const fd = new FormData(); fd.append('arquivo', file);

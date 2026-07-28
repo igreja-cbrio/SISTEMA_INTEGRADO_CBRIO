@@ -24,6 +24,9 @@ const {
   honeypotPreenchido, TEXTOS,
 } = require('../services/inscricaoContrato');
 const { nomesMesmaPessoa } = require('../services/membroMatch');
+// Fachada do núcleo de pagamentos. ⚠️ NUNCA importar `providers/*` aqui — é o
+// que faz trocar de PSP custar 1 arquivo + 1 env (ver services/pagamentos/tipos.js).
+const pagamentos = require('../services/pagamentos');
 
 // Limiter próprio generoso (mesma lógica do publicGrupos/publicNps): o evento
 // inteiro sai por 1 IP de Wi-Fi — sem teto prático de inscrições (D9).
@@ -51,7 +54,7 @@ const uploadImg = multer({
 // aparecem (encerrado mostra "inscrições encerradas" em vez de sumir o link).
 async function eventoEspinhaPorSlug(slug) {
   const { data } = await supabase.from('insc_eventos')
-    .select('id, nome, slug, area, data, hora, local, descricao, campos, capa_url, vagas, inscricoes_abrem_em, inscricoes_encerram_em, msg_sucesso_titulo, msg_sucesso_texto, tem_sorteio, pagamento_ativo, valor_centavos, pagamento_metodos, pagamento_expira_horas, status')
+    .select('id, nome, slug, area, data, hora, local, descricao, campos, capa_url, vagas, inscricoes_abrem_em, inscricoes_encerram_em, msg_sucesso_titulo, msg_sucesso_texto, tem_sorteio, pagamento_ativo, valor_centavos, pagamento_metodos, pagamento_expira_horas, parcelas_max, juros_repassados, status')
     .eq('slug', slug).is('deleted_at', null).maybeSingle();
   if (!data || data.status === 'rascunho' || data.status === 'arquivado') return null;
   return data;
@@ -125,6 +128,106 @@ function validarExtras(evCampos, dadosBody) {
 
 function gerarSorteio() { return Math.floor(Math.random() * 9000) + 1000; } // 1000-9999
 
+// ── Pagamento (F3.3) ───────────────────────────────────────────────────────
+
+/** Métodos que o evento quer × o que o provider sabe cobrar. */
+function metodosDoEvento(ev) {
+  const desejados = Array.isArray(ev.pagamento_metodos) && ev.pagamento_metodos.length
+    ? ev.pagamento_metodos : null;
+  try {
+    return pagamentos.metodosDisponiveis(desejados);
+  } catch {
+    return desejados || [];
+  }
+}
+
+/**
+ * Evento pago só ABRE quando dá pra cobrar de verdade. Três formas de estar
+ * mal configurado, e nenhuma pode virar inscrição gratuita por acidente:
+ * marcado como pago sem valor, PSP não configurado, ou pagamentos desligados
+ * pelo kill switch.
+ */
+function bloqueioPagamento(ev) {
+  if (!ev.pagamento_ativo) return null;
+  if (!(Number(ev.valor_centavos) > 0)) {
+    return 'Este evento está marcado como pago mas ainda não tem valor definido. A equipe já foi avisada.';
+  }
+  if (!pagamentos.habilitado()) {
+    return 'O pagamento online está temporariamente indisponível. Tente novamente em alguns minutos.';
+  }
+  if (!pagamentos.pspConfigurado()) {
+    return 'O pagamento online deste evento ainda está sendo preparado. Volte em breve.';
+  }
+  return null;
+}
+
+function avisoPagamento(ev) {
+  return bloqueioPagamento(ev);
+}
+
+/** Referência idempotente da cobrança: reenvio do form devolve a MESMA. */
+const refCobranca = (inscricaoId) => `inscricao:${inscricaoId}`;
+
+/**
+ * Cria (ou recupera) a cobrança da inscrição e espelha em `insc_pagamentos`,
+ * que é a linha que a UI de inscrições lê. O estado canônico vive no motor.
+ */
+async function cobrarInscricao({ ev, inscricaoId, val, membroId }) {
+  const horas = Number(ev.pagamento_expira_horas) > 0 ? Number(ev.pagamento_expira_horas) : 48;
+  const { cobranca } = await pagamentos.criarCobranca({
+    origem_tipo: pagamentos.ORIGENS.INSCRICAO,
+    origem_id: inscricaoId,
+    referencia: refCobranca(inscricaoId),
+    valor_centavos: Number(ev.valor_centavos),
+    descricao: `Inscrição · ${ev.nome}`,
+    metodos_ofertados: metodosDoEvento(ev),
+    // NULL = vale o teto configurado na conta do PSP. Quem define o teto por
+    // evento é a data em que a igreja paga o local.
+    parcelas_max: ev.parcelas_max || null,
+    juros_repassados: ev.juros_repassados !== false,
+    expira_em: new Date(Date.now() + horas * 3600000).toISOString(),
+    pagador_nome: val.nomeCompleto,
+    pagador_cpf: val.cpf,
+    pagador_email: val.email,
+    pagador_telefone: val.telefone,
+    membro_id: membroId || null,
+    metadata: { evento_id: ev.id, evento_slug: ev.slug, evento_nome: ev.nome },
+  });
+
+  // Espelho pro painel. Best-effort e idempotente pela UNIQUE de cobranca_id —
+  // reenvio do formulário não cria segunda linha.
+  const { error } = await supabase.from('insc_pagamentos').insert({
+    inscricao_id: inscricaoId,
+    cobranca_id: cobranca.id,
+    metodo: cobranca.metodo || 'pix',   // a pessoa escolhe no checkout
+    provider: 'psp',
+    provider_ref: cobranca.provider_cobranca_id || null,
+    valor_centavos: cobranca.valor_centavos,
+    status: 'aguardando',
+    qr_payload: cobranca.pix_payload || null,
+    expira_em: cobranca.expira_em || null,
+  });
+  if (error && error.code !== '23505') {
+    console.error('[publicEvento espinha] espelho insc_pagamentos:', error.message);
+  }
+
+  return cobranca;
+}
+
+/** Resposta padrão do fluxo pago (o front redireciona pro checkout). */
+function respostaCobranca(cobranca, ev) {
+  return {
+    ok: true,
+    pagamento: true,
+    status: cobranca.status,
+    public_token: cobranca.public_token,
+    checkout_url: cobranca.checkout_url || null,
+    valor_centavos: cobranca.valor_centavos,
+    expira_em: cobranca.expira_em || null,
+    tem_sorteio: ev.tem_sorteio,
+  };
+}
+
 // GET /textos — textos canônicos de consentimento (o front EXIBE estes; o
 // snapshot gravado vem sempre do backend, então tela e registro nunca divergem)
 router.get('/textos', (_req, res) => {
@@ -135,16 +238,72 @@ router.get('/textos', (_req, res) => {
   });
 });
 
+// GET /pagamento/:token — status da cobrança pela página pública de pagamento.
+//
+// Montado NESTE router de propósito (fica `/api/public/evento/pagamento/:token`):
+// herda o limiter generoso daqui E o `skip()` do limiter global em server.js.
+// A tela faz polling — sob `/api/public` puro tomaria 429 no lançamento.
+// Declarado ANTES de `/:slug` só por clareza; `/:slug` casa 1 segmento e não
+// pegaria estas duas partes de qualquer forma.
+//
+// ⚠️ Acessado pelo `public_token`, NUNCA pelo uuid da cobrança (uuid vaza em
+// log/referer e é chave interna em outros lugares).
+router.get('/pagamento/:token', async (req, res) => {
+  try {
+    let cobranca = await pagamentos.consultarPorToken(req.params.token);
+    if (!cobranca) return res.status(404).json({ error: 'Cobrança não encontrada' });
+
+    // Rede de segurança nº 1: parado há mais de 2 min sem resolver → consulta o
+    // PSP na hora. O webhook é otimização de latência; ninguém deve ficar
+    // olhando "aguardando" porque uma entrega se perdeu.
+    const paradaHa = Date.now() - new Date(cobranca.updated_at).getTime();
+    if (['criada', 'aguardando_pagamento'].includes(cobranca.status) && paradaHa > 120000) {
+      try {
+        const r = await pagamentos.sincronizar(cobranca);
+        if (r?.cobranca) cobranca = r.cobranca;
+      } catch (e) {
+        console.error('[publicEvento] sincronizar cobrança:', e.message);
+      }
+    }
+
+    // Só o necessário pra tela. Nada de PII do pagador, metadata ou payload —
+    // a resposta é pública (o token é o único segredo).
+    res.json({
+      status: cobranca.status,
+      pago: cobranca.status === 'pago',
+      valor_centavos: cobranca.valor_centavos,
+      valor_pago_centavos: cobranca.valor_pago_centavos,
+      metodo: cobranca.metodo || null,
+      parcelas: cobranca.parcelas_total || null,
+      checkout_url: cobranca.checkout_url || null,
+      pix_payload: cobranca.pix_payload || null,
+      boleto_linha_digitavel: cobranca.boleto_linha_digitavel || null,
+      boleto_url: cobranca.boleto_url || null,
+      expira_em: cobranca.expira_em || null,
+      pago_em: cobranca.pago_em || null,
+      evento_nome: cobranca.metadata?.evento_nome || null,
+      evento_slug: cobranca.metadata?.evento_slug || null,
+    });
+  } catch (e) {
+    console.error('[publicEvento] status do pagamento:', e.message);
+    res.status(500).json({ error: 'Erro ao consultar o pagamento.' });
+  }
+});
+
 // GET /:slug — dados públicos do evento (espinha → ext)
 router.get('/:slug', async (req, res) => {
   try {
   const esp = await eventoEspinhaPorSlug(req.params.slug);
   if (esp) {
-    const pago = !!esp.pagamento_ativo; // Pix chega na F3.3 — até lá, pago não abre
-    // Curto-circuitos de propósito: evento pago não abre ainda, e evento SEM
-    // limite de vagas (o Celebra migrou com vagas=null) não gasta a RPC.
-    const ocup = (pago || esp.vagas == null) ? null : await ocupacaoEspinha(esp.id);
-    const encerradas = pago || await espinhaEncerrada(esp);
+    // Evento pago ABRE desde a F3.3 — o curto-circuito `pago ||` saiu. O de
+    // vagas continua: evento sem limite (o Celebra migrou com vagas=null) não
+    // gasta a RPC.
+    const ocup = esp.vagas == null ? null : await ocupacaoEspinha(esp.id);
+    // ⚠️ Evento pago MAL CONFIGURADO conta como fechado, senão a pessoa preenche
+    // o formulário inteiro e só então leva 503 do POST. O aviso explica por quê.
+    const bloqueio = bloqueioPagamento(esp);
+    const encerradas = !!bloqueio || await espinhaEncerrada(esp);
+    const pago = !!esp.pagamento_ativo && Number(esp.valor_centavos) > 0;
     return res.json({
       fonte: 'espinha',
       nome: esp.nome, slug: esp.slug, data: esp.data, hora: esp.hora, local: esp.local,
@@ -154,7 +313,14 @@ router.get('/:slug', async (req, res) => {
       inscricoes_encerradas: encerradas,
       vagas: esp.vagas ?? null,
       vagas_restantes: ocup ? ocup.restantes : null, // null = ilimitado
-      aviso: pago ? 'Este evento tem inscrição paga — as inscrições abrem em breve, junto com o pagamento por Pix.' : null,
+      // Pagamento: a tela mostra o valor ANTES de a pessoa preencher.
+      pagamento_ativo: pago,
+      valor_centavos: pago ? Number(esp.valor_centavos) : null,
+      pagamento_metodos: pago ? metodosDoEvento(esp) : [],
+      pagamento_expira_horas: pago ? (esp.pagamento_expira_horas || 48) : null,
+      // ⚠️ Evento marcado como pago mas sem valor (ou sem PSP configurado) NÃO
+      // pode receber inscrição gratuita por acidente — avisa e não abre.
+      aviso: avisoPagamento(esp),
       msg_sucesso_titulo: esp.msg_sucesso_titulo || null,
       msg_sucesso_texto: esp.msg_sucesso_texto || null,
     });
@@ -186,9 +352,11 @@ async function inscreverEspinha(req, res, ev) {
   if (await espinhaEncerrada(ev)) {
     return res.status(403).json({ error: 'As inscrições deste evento estão encerradas.' });
   }
-  if (ev.pagamento_ativo) {
-    return res.status(403).json({ error: 'Este evento tem inscrição paga — abre em breve, junto com o pagamento por Pix.' });
-  }
+  // Evento pago mal configurado (sem valor, PSP ausente, kill switch) NÃO abre —
+  // e sobretudo não vira inscrição gratuita por acidente.
+  const bloqueio = bloqueioPagamento(ev);
+  if (bloqueio) return res.status(503).json({ error: bloqueio });
+  const ehPago = !!ev.pagamento_ativo;
 
   // Campos padrão do contrato (D1–D9 + 28/07)
   const { erros, valores: val } = validarCamposPadrao(body);
@@ -240,18 +408,35 @@ async function inscreverEspinha(req, res, ev) {
       dados: mesclarDados(existente.dados, ex.respostas),
       dados_anterior: existente.dados || {},
     };
+    // Enriquecimento da linha legada: só preenche o que está VAZIO, nunca
+    // sobrescreve (vindo de origin/main — inscrição do Celebra tinha só
+    // nome+telefone e ganha o resto na re-inscrição).
     if (!existente.cpf && val.cpf) patch.cpf = val.cpf;
     if (!existente.email && val.email) patch.email = val.email;
     if (!existente.data_nascimento && val.dataNascimento) patch.data_nascimento = val.dataNascimento;
     if (!existente.sexo && val.sexo) patch.sexo = val.sexo;
     if (!existente.endereco && val.endereco) patch.endereco = val.endereco;
     if (!existente.telefone && val.telefone) patch.telefone = val.telefone;
-    if (existente.status === 'cancelada') patch.status = 'confirmada'; // voltou atrás → reativa
+    if (existente.status === 'cancelada') {
+      // Voltou atrás → reativa. ⚠️ Em evento PAGO reativa como `recebida`, não
+      // `confirmada`: confirmar aqui daria a vaga a quem não pagou.
+      patch.status = ehPago ? 'recebida' : 'confirmada';
+    }
     if (optin && !existente.whatsapp_optin) { patch.whatsapp_optin = true; patch.whatsapp_optin_em = new Date().toISOString(); }
     const { error: eUp } = await supabase.from('inscricoes').update(patch).eq('id', existente.id);
     if (eUp) console.error('[publicEvento espinha] merge re-inscrição:', eUp.message);
     consentimentos(existente.id, existente.membro_id || null)
       .catch((err) => console.error('[publicEvento espinha] consentimentos:', err.message));
+
+    if (ehPago) {
+      // Quem já pagou vê o comprovante; quem não pagou recebe o MESMO link
+      // (a `referencia` idempotente devolve a cobrança existente em vez de
+      // criar uma segunda — é assim que ninguém paga duas vezes).
+      const cobranca = await cobrarInscricao({
+        ev, inscricaoId: existente.id, val, membroId: existente.membro_id,
+      });
+      return res.json({ ...respostaCobranca(cobranca, ev), ja_inscrito: true });
+    }
     return res.json({ ok: true, ja_inscrito: true, numero_sorte: existente.numero_sorte, tem_sorteio: ev.tem_sorteio });
   }
 
@@ -270,7 +455,10 @@ async function inscreverEspinha(req, res, ev) {
     p_sexo: val.sexo,
     p_endereco: val.endereco,
     p_dados: ex.respostas,
-    p_status: 'confirmada',
+    // ⚠️ Evento pago nasce `recebida` = "vaga reservada, pagamento pendente".
+    // A vaga fica presa sob o advisory lock até pagar ou o cron expirar; quem
+    // promove pra `confirmada` é o handler do pagamento, nunca esta rota.
+    p_status: ehPago ? 'recebida' : 'confirmada',
     p_origem: 'formulario_publico',
     p_com_sorteio: !!ev.tem_sorteio,
     p_whatsapp_optin: optin,
@@ -281,8 +469,16 @@ async function inscreverEspinha(req, res, ev) {
     // Perdeu a corrida entre a conferência acima e o lock. Cada motivo tem
     // resposta própria — "sem vaga" NÃO pode virar "inscrito com sucesso".
     if (rpc?.motivo === 'duplicada') {
+      // Em evento pago, quem perdeu a corrida ainda precisa do link — devolve o
+      // da cobrança que já existe (a `referencia` idempotente garante que é a
+      // mesma, então ninguém paga duas vezes).
+      if (ehPago && rpc.id) {
+        const cobranca = await cobrarInscricao({ ev, inscricaoId: rpc.id, val, membroId: null });
+        return res.json({ ...respostaCobranca(cobranca, ev), ja_inscrito: true });
+      }
       // Busca a linha vencedora pra devolver o número da sorte — sem isso a
-      // tela mostrava "Seu número da sorte" com nada embaixo.
+      // tela mostrava "Seu número da sorte" com nada embaixo (vindo de
+      // origin/main).
       const { data: vencedora } = await supabase.from('inscricoes')
         .select('numero_sorte').eq('evento_id', ev.id).eq('cpf', val.cpf)
         .is('deleted_at', null).limit(1).maybeSingle();
@@ -319,9 +515,30 @@ async function inscreverEspinha(req, res, ev) {
   notificar({
     modulo: 'inscricoes', tipo: 'nova_inscricao',
     titulo: `Nova inscrição · ${ev.nome}`,
-    mensagem: `${val.nomeCompleto} se inscreveu em "${ev.nome}" (${ev.area}).`,
+    // Distingue explicitamente: em evento pago a vaga está RESERVADA, não
+    // confirmada. Dizer "se inscreveu" faria a equipe contar quem não pagou.
+    mensagem: ehPago
+      ? `${val.nomeCompleto} reservou vaga em "${ev.nome}" (${ev.area}) e está aguardando o pagamento.`
+      : `${val.nomeCompleto} se inscreveu em "${ev.nome}" (${ev.area}).`,
     link: '/inscricoes',
   }).catch((err) => console.error('[publicEvento espinha] notificar:', err.message));
+
+  if (ehPago) {
+    // A vaga já está reservada (`recebida`, sob o advisory lock). Se a cobrança
+    // falhar aqui, a inscrição fica pendente e o cron de expiração devolve a
+    // vaga — melhor que o inverso (cobrar sem vaga garantida).
+    try {
+      const cobranca = await cobrarInscricao({ ev, inscricaoId: ins.id, val, membroId: null });
+      return res.status(201).json(respostaCobranca(cobranca, ev));
+    } catch (e) {
+      console.error('[publicEvento espinha] criar cobrança:', e.message);
+      return res.status(502).json({
+        error: 'Sua vaga ficou reservada, mas não conseguimos gerar o pagamento agora. '
+          + 'Tente enviar o formulário de novo em alguns minutos — sua vaga não será perdida.',
+        vaga_reservada: true,
+      });
+    }
+  }
 
   return res.status(201).json({ ok: true, numero_sorte: ins.numero_sorte, tem_sorteio: ev.tem_sorteio });
 }
