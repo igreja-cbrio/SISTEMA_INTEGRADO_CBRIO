@@ -2677,6 +2677,8 @@ export const voluntariado = {
   atualizarInscricao: (id, status) => patch(`/voluntariado/inscricoes/${id}`, { status }),
   // Edita os dados da ficha (CPF, nascimento, nome da mãe, interesse, área direcionada)
   editarInscricao: (id, dados) => patch(`/voluntariado/inscricoes/${id}/dados`, dados),
+  // Marca a inscrição como desistente (desistiu de servir antes de integrar) · motivo opcional
+  desistirInscricao: (id, motivo) => post(`/voluntariado/inscricoes/${id}/desistiu`, { motivo }),
   // Distribuição de voluntários por área direcionada ("onde estão as pessoas")
   distribuicaoDirecionada: (params) => get('/voluntariado/inscricoes/por-direcionada' + (params ? '?' + new URLSearchParams(params) : '')),
   // Triagem de antecedentes criminais (Kids/Bridge)
