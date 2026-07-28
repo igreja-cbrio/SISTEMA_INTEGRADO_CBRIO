@@ -16,7 +16,7 @@ import {
   ArrowLeft, CalendarDays, Clock, MapPin, Users, Gift, Link2, MessageCircle,
   QrCode, Pencil, Trash2, Loader2, Search, ExternalLink, Ticket, Megaphone,
   ChevronDown, ChevronUp, ChevronsDownUp, ChevronsUpDown, Download, Repeat,
-  Printer, CreditCard,
+  Printer, CreditCard, ScanLine,
 } from 'lucide-react';
 import QrLinkDialog from '../components/QrLinkDialog';
 import { EventoModal } from './Inscricoes';
@@ -54,9 +54,11 @@ const STATUS_BADGE: Record<string, string> = {
 export default function InscricaoEventoDetalhe() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { modulePerms, profile } = useAuth();
+  const { modulePerms, profile, canAccessModule } = useAuth();
   const podeExportar = ['admin', 'diretor'].includes(profile?.role)
     || !!modulePerms?.inscricoes?.pode_exportar;
+  // Nível 2 da matriz = operar check-in (SPEC-08) — mesma régua da rota
+  const podeCheckin = canAccessModule(['inscricoes'], 'leitura', 2);
   const [ev, setEv] = useState<any>(null);
   const [areas, setAreas] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -318,6 +320,12 @@ export default function InscricaoEventoDetalhe() {
             <Button size="sm" variant="outline" onClick={copiar}><Link2 className="h-3.5 w-3.5 mr-1" /> Copiar link</Button>
             <a href={wa} target="_blank" rel="noreferrer"><Button size="sm" variant="outline"><MessageCircle className="h-3.5 w-3.5 mr-1 text-emerald-500" /> WhatsApp</Button></a>
             <Button size="sm" variant="outline" onClick={() => setQrOpen(true)}><QrCode className="h-3.5 w-3.5 mr-1" /> QR Code</Button>
+            {podeCheckin && (
+              <Button size="sm" variant="outline" onClick={() => navigate(`/inscricoes/evento/${id}/checkin`)}
+                title="Tela de check-in do dia: leitura do QR do comprovante + busca por nome/CPF">
+                <ScanLine className="h-3.5 w-3.5 mr-1" /> Check-in
+              </Button>
+            )}
             <a href={link} target="_blank" rel="noreferrer"><Button size="sm" variant="ghost"><ExternalLink className="h-3.5 w-3.5 mr-1" /> Abrir formulário</Button></a>
           </div>
         </div>

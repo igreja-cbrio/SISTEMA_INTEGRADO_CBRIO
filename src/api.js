@@ -315,6 +315,11 @@ export const inscricoesApi = {
   atualizarInscricao: (eventoId, inscricaoId, data) => patch(`/inscricoes/eventos/${eventoId}/inscricoes/${inscricaoId}`, data),
   excluirInscricao: (eventoId, inscricaoId) => del(`/inscricoes/eventos/${eventoId}/inscricoes/${inscricaoId}`),
   uploadCapa: (file) => { const fd = new FormData(); fd.append('arquivo', file); return requestFile('/inscricoes/upload-capa', fd); },
+  // Check-in do evento (SPEC-06) — tela fullscreen: QR do comprovante + busca
+  checkinEstado: (eventoId) => get(`/inscricoes/eventos/${eventoId}/checkin`),
+  checkinBuscar: (eventoId, q) => get(`/inscricoes/eventos/${eventoId}/checkin/buscar?q=${encodeURIComponent(q)}`),
+  checkinMarcar: (eventoId, data) => post(`/inscricoes/eventos/${eventoId}/checkin`, data),
+  checkinDesfazer: (eventoId, inscricaoId) => del(`/inscricoes/eventos/${eventoId}/checkin/${inscricaoId}`),
 };
 
 // Eventos Externos · formulário público de confirmação de presença (sem auth)
@@ -333,6 +338,9 @@ export const eventoPublico = {
   // pelo uuid. Montado sob /public/evento de propósito: é lá que o limiter
   // generoso vale (a tela faz polling e sob /api/public puro tomaria 429).
   pagamento: (token) => fetch(`${API}/public/evento/pagamento/${encodeURIComponent(token)}`)
+    .then(async r => { const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j; }),
+  // Comprovante da inscrição (SPEC-06) — a URL do QR (/i/c/<token>) cai aqui
+  comprovante: (token) => fetch(`${API}/public/evento/comprovante/${encodeURIComponent(token)}`)
     .then(async r => { const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j; }),
   // Upload de imagem de um campo do formulário (ex.: logo da empresa) · sem auth.
   uploadImagem: (slug, file) => {
