@@ -214,9 +214,11 @@ Padrão visual do Dashboard Semanal.
 O Marcos apontou que Next, batismo, grupos (temporadas) e apresentação de crianças **são todos recorrentes** e propôs trazer o gerenciamento pra cá. Desenho acordado em 2 tempos:
 
 1. **JÁ na F3.2 (só leitura/analytics):** a `vw_inscricoes_unificadas` ganha uma coluna `serie_chave` derivada por porta — batismo → série "batismo-mensal" (edição = `data_batismo`) · apresentação → "apresentacao-mensal" (`data_apresentacao`) · next → edição = turma (`origem_mes`) · grupos → edição = temporada. Com isso o **dashboard já compara** "Next de agosto × julho", "batismo mês × mês", "T2 × T1" — **sem mover a gestão de nenhum módulo** (Next/turmas, grupos/temporadas e os domingos calculados de batismo/apresentação continuam onde estão, funcionando).
-2. **Na F3.5 (migração das portas):** cada porta vira um `tipo` de série NATIVA da espinha (batismo = série mensal com horários/vagas; apresentação = série mensal; next = série por turma; grupos = temporada) — aí sim o gerenciamento da recorrência passa a ser daqui, uma porta por vez, com o mesmo protocolo de não-perda da SPEC-04.
+2. **Na F3.5 (migração das portas):** cada porta vira um `tipo` de série NATIVA da espinha (batismo = série mensal com horários/vagas; apresentação = série mensal; next = série por turma; grupos = temporada) — uma porta por vez, com o mesmo protocolo de não-perda da SPEC-04.
 
-Racional: mover a gestão agora = mexer em 4 operações vivas ao mesmo tempo (turmas do Next e temporadas de grupos são recém-construídas e maduras). A abstração de séries entrega o benefício analítico imediato e prepara o pouso da migração.
+**⚠️ Esclarecimento do Marcos (28/07 · princípio do módulo):** a migração **NUNCA tira a tela do líder**. O que muda na F3.5 é o **endereço onde a tela grava**, não quem opera: quando a coordenação abrir uma turma do Next ou a equipe abrir uma temporada de grupos **na MESMA tela de sempre**, o botão passa a criar, por baixo dos panos, a edição da série na espinha (+ a extensão com os detalhes específicos). As telas dos módulos viram **espelhos operacionais 100% integrados** — mexer lá É mexer aqui, automaticamente. O `/inscricoes` mostra a visão central da mesma coisa (e também pode operar dali — duas portas pro mesmo dado). Objetivo declarado do Marcos: **bons relatórios comparativos** — que já chegam na F3.2 via séries derivadas, sem esperar a F3.5.
+
+Racional dos 2 tempos: religar o endereço de gravação de 4 operações vivas ao mesmo tempo é risco desnecessário (turmas do Next e temporadas de grupos são recém-construídas); as séries derivadas entregam o analítico imediato e preparam o pouso da migração.
 
 ---
 
