@@ -318,11 +318,25 @@ const TIPOS_INSCRICAO = new Set([
   'aconselhamento', 'oracao', 'sos', 'contato',
 ]);
 const TIPOS_CUIDADOS = new Set(['aconselhamento', 'oracao', 'sos']);
-// Tipos que geram confirmação por WhatsApp (template cbrio_inscricao_confirmada)
+// Tipos que geram confirmação por WhatsApp (template cbrio_inscricao_confirmada).
+//
+// ⚠️ SÓ entra aqui o tipo que o fan-out (fn_app_inscricoes_fanout) realmente
+// MATERIALIZA numa tabela do módulo. `retiro`/`cursos`/`eventos` foram REMOVIDOS
+// em 2026-07-28: o fan-out não tem branch pra eles, então a linha ficava
+// invisível em `app_inscricoes` e a pessoa recebia "Inscrição confirmada" de uma
+// inscrição que não existia em lugar nenhum. Nunca dizer "confirmada" sem que a
+// inscrição exista de fato (no retiro, sem pagamento confirmado no servidor).
 const LABEL_INSCRICAO_WPP = {
   grupos: 'Grupos de Conexão', batismo: 'Batismo', next: 'NEXT',
-  voluntariado: 'Voluntariado', retiro: 'Retiro', cursos: 'Cursos', eventos: 'Eventos',
+  voluntariado: 'Voluntariado',
 };
+// Tipos aceitos mas SEM destino no fan-out — viram LEAD ("quero ir"): não
+// confirmam nada, só avisam a equipe pra alguém dar seguimento. Retiro tem
+// fluxo próprio (página pública com pagamento), não entra por aqui.
+const LABEL_INSCRICAO_LEAD = {
+  retiro: 'Retiro', cursos: 'Cursos', eventos: 'Eventos',
+};
+const MODULO_LEAD = { retiro: 'eventos', cursos: 'eventos', eventos: 'eventos' };
 const LABEL_CUIDADOS = { aconselhamento: 'aconselhamento', oracao: 'oração', sos: 'SOS' };
 // Mapeia a urgência pra cor do sino (SEV_COLORS no AppShell)
 const SEV_CUIDADOS = { sos: 'urgente', aconselhamento: 'aviso', oracao: 'info' };
@@ -460,6 +474,24 @@ router.post('/inscricoes', limiterStrict, tryAuth, async (req, res) => {
           refId: inserted.id, telefone: dados.telefone, nome: dados.nome, origem: 'app',
         });
       } catch (e) { console.warn('[APP] aconselhamento whatsapp:', e.message); }
+    }
+
+    // Lead sem destino no fan-out (retiro/cursos/eventos): NÃO confirma nada —
+    // só avisa a equipe, senão o registro fica invisível em `app_inscricoes` e
+    // ninguém dá seguimento (era o caso até 2026-07-28).
+    if (LABEL_INSCRICAO_LEAD[tipo]) {
+      const nome = dados.nome || req.user?.email || 'Alguém';
+      const label = LABEL_INSCRICAO_LEAD[tipo];
+      const msg = extrairMensagem(extras);
+      notificar({
+        modulo: MODULO_LEAD[tipo] || 'eventos',
+        tipo: `app_interesse_${tipo}`,
+        titulo: `Interesse em ${label} — ${nome}`,
+        mensagem: `${nome} demonstrou interesse em ${label} pelo app${msg ? `: "${String(msg).slice(0, 180)}"` : '.'} Entre em contato — não há inscrição confirmada.`,
+        link: '/eventos',
+        severidade: 'info',
+        chaveDedup: `app_interesse_${inserted.id}`,
+      }).catch(e => console.warn('[APP] inscricoes · notificar lead:', e.message));
     }
 
     // Confirmação ao membro via WhatsApp · template aprovado (no-op até configurar

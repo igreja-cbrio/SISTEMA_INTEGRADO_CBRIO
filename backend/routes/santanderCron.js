@@ -34,6 +34,37 @@ function checkCronSecret(req, res, next) {
 
 router.use(checkCronSecret);
 
+// Extrato do Santander normalizado · { transacoes: [...] }.
+//
+// A API devolve o formato cru do banco (`_content`) e o service exporta
+// `consultarExtrato` (NAO `extrato`). Este helper e' o unico ponto que conhece
+// a estrutura real do banco — os dois consumidores (sync do extrato e pix-sync)
+// passam por aqui. Estrutura de cada item:
+//   { transactionId, transactionDate, type, transactionName,
+//     creditDebitType: 'CREDITO'|'DEBITO', amount, partieNumber, ... }
+// Debito vira valor NEGATIVO (o consumidor filtra credito por valor > 0).
+async function extratoNormalizado({ inicio, fim, usarCache = false } = {}) {
+  const extratoApi = await contasService.consultarExtrato({ inicio, fim, usarCache });
+  const itens = Array.isArray(extratoApi?._content) ? extratoApi._content : [];
+  const transacoes = itens.map((t) => {
+    const isDebito = t.creditDebitType === 'DEBITO';
+    const valorAbs = Number(t.amount || 0);
+    return {
+      id: t.transactionId,
+      data: t.transactionDate,
+      valor: isDebito ? -valorAbs : valorAbs,
+      tipo: t.type,
+      descricao: t.transactionName,
+      partieNome: t.partieName || null,
+      partieDoc: t.partieDocumentNumber || null,
+      partieBranch: t.partieBranchCode || null,
+      partieAccount: t.partieNumber || null,
+      raw: t,
+    };
+  });
+  return { transacoes };
+}
+
 // ─────────────────────────────────────────────────────────────────────
 // POST /api/santander/cron/sync · sync diario do extrato
 // ─────────────────────────────────────────────────────────────────────
@@ -80,29 +111,8 @@ async function handlerSync(req, res) {
       });
     }
 
-    // 3. Pega extrato via API Santander · parsea formato Santander (_content)
-    const extratoApi = await contasService.consultarExtrato({ inicio, fim, usarCache: false });
-    const itens = Array.isArray(extratoApi?._content) ? extratoApi._content : [];
-
-    // Normaliza formato Santander · estrutura real:
-    //   { transactionId, transactionDate, type, transactionName,
-    //     creditDebitType: 'CREDITO'|'DEBITO', amount, partieNumber, partieBranchCode, ... }
-    const transacoes = itens.map(t => {
-      const isDebito = t.creditDebitType === 'DEBITO';
-      const valorAbs = Number(t.amount || 0);
-      return {
-        id: t.transactionId,
-        data: t.transactionDate,
-        valor: isDebito ? -valorAbs : valorAbs,
-        tipo: t.type,
-        descricao: t.transactionName,
-        partieNome: t.partieName || null,
-        partieDoc: t.partieDocumentNumber || null,
-        partieBranch: t.partieBranchCode || null,
-        partieAccount: t.partieNumber || null,
-        raw: t,
-      };
-    });
+    // 3. Pega extrato via API Santander · normalizado (formato Santander _content)
+    const { transacoes } = await extratoNormalizado({ inicio, fim, usarCache: false });
 
     if (transacoes.length === 0) {
       return res.json({
@@ -271,8 +281,10 @@ router.post('/pix-sync', async (req, res) => {
     }
 
     // ─── ESTRATEGIA 2: extrato regular (sempre roda · cobre TED/DOC/PIX out) ───
-    const extrato = await contasService.extrato({ inicio, fim, refresh: false });
-    if (!extrato?.transacoes) {
+    // Antes chamava contasService.extrato() — funcao INEXISTENTE (o export e'
+    // consultarExtrato) → TypeError a cada execucao, e a estrategia 2 nunca rodou.
+    const extrato = await extratoNormalizado({ inicio, fim, usarCache: false });
+    if (!extrato?.transacoes?.length) {
       return res.json({
         ok: true,
         conta_id: contaLocal.id,
