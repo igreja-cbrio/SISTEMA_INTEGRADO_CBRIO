@@ -1779,6 +1779,7 @@ export const marketing = {
   etiquetas:    () => get('/marketing/etiquetas'),
   membros:      () => get('/marketing/membros'),
   recorrentes:  () => get('/marketing/compromissos-recorrentes'),
+  generosidade: (ano) => get(`/marketing/generosidade?ano=${encodeURIComponent(ano)}`),
 
   // CRUD cards
   cards:        (params) => get('/marketing/cards' + (params ? '?' + new URLSearchParams(params) : '')),
