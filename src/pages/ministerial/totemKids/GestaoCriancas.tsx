@@ -951,8 +951,13 @@ function JornadaTab({ criancaId, c, onChanged }: { criancaId: string; c: any; on
 
   const MESES_ABREV = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
   const mesAno = (ym: string) => `${MESES_ABREV[Number(ym.slice(5, 7)) - 1] || ''}/${ym.slice(2, 4)}`;
-  const dados = (j?.frequencia?.porMes || []).map((p: any) => ({ mes: mesAno(p.mes), total: p.total }));
   const freq = j?.frequencia;
+  // Gráfico por DATA (cada dia que veio · acumulado) — mostra a frequência completa
+  // mesmo quando tudo cai no mesmo mês (antes virava 1 ponto só). Fallback: por mês.
+  const porDia = (freq?.porDia || []) as Array<{ data: string; acumulado: number }>;
+  const dados = porDia.length
+    ? porDia.map((p) => ({ mes: fmt(String(p.data).slice(0, 10)), total: p.acumulado }))
+    : (freq?.porMes || []).map((p: any) => ({ mes: mesAno(p.mes), total: p.total }));
   const SIT_COR: Record<string, string> = { frequente: 'text-emerald-600', regular: 'text-sky-600', esporadica: 'text-amber-600', afastada: 'text-red-600' };
 
   return (
@@ -974,7 +979,7 @@ function JornadaTab({ criancaId, c, onChanged }: { criancaId: string; c: any; on
 
       <div>
         <div className="text-xs text-muted-foreground mb-1">
-          Frequência (check-ins){freq ? ` · total ${freq.total}${freq.ultima ? ` · último ${fmt(String(freq.ultima).slice(0, 10))}` : ''}` : ''}
+          Frequência (dias com presença){freq ? ` · total ${freq.total}${freq.ultima ? ` · último ${fmt(String(freq.ultima).slice(0, 10))}` : ''}` : ''}
         </div>
         {dados.length === 0 ? (
           <p className="text-xs text-muted-foreground py-4 text-center">Sem check-ins registrados no sistema pra esta criança.</p>
