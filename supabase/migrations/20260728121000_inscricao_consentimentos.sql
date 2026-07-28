@@ -40,9 +40,11 @@ DECLARE atual TEXT[];
 BEGIN
   SELECT public.app_soft_deletable_tables() INTO atual;
   IF NOT ('inscricao_consentimentos' = ANY(atual)) THEN
+    -- array_append (não "|| 'literal'"): com literal solto o Postgres resolve
+    -- o || como array||array e tenta parsear a string como array → 22P02
     EXECUTE format(
       'CREATE OR REPLACE FUNCTION public.app_soft_deletable_tables() RETURNS TEXT[] LANGUAGE sql IMMUTABLE AS $f$ SELECT %L::TEXT[] $f$',
-      atual || 'inscricao_consentimentos'
+      array_append(atual, 'inscricao_consentimentos'::text)
     );
   END IF;
 END $$;
