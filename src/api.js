@@ -301,6 +301,10 @@ export const eventoPublico = {
   get: (slug) => fetch(`${API}/public/evento/${encodeURIComponent(slug)}`).then(async r => {
     const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j;
   }),
+  // Textos canônicos de consentimento (o snapshot gravado é sempre o do backend)
+  textos: () => fetch(`${API}/public/evento/textos`).then(async r => {
+    const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j;
+  }),
   inscrever: (slug, data) => fetch(`${API}/public/evento/${encodeURIComponent(slug)}/inscrever`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
   }).then(async r => { const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j; }),

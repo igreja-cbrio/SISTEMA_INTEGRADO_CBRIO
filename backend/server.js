@@ -63,13 +63,15 @@ app.use(rateLimit({
   windowMs: 15 * 60 * 1000,
   max: parseInt(process.env.RATE_LIMIT_MAX) || (process.env.NODE_ENV === 'production' ? 500 : 5000),
   message: { error: 'Muitas requisições. Tente novamente em alguns minutos.' },
-  // Isenta o NPS e a inscrição pública de grupos do teto global · num culto,
-  // dezenas de pessoas no MESMO WiFi (1 IP público) estourariam o limite por-IP.
-  // Ambos têm limiter próprio generoso (routes/publicNps.js · routes/publicGrupos.js
-  // · totem no lounge). Ver mounts abaixo.
+  // Isenta NPS, inscrição de grupos e eventos externos do teto global · num
+  // culto/evento presencial, dezenas de pessoas no MESMO WiFi (1 IP público)
+  // estourariam o limite por-IP. Todos têm limiter próprio generoso
+  // (routes/publicNps.js · routes/publicGrupos.js · routes/publicEventoExterno.js).
+  // Ver mounts abaixo.
   skip: (req) => process.env.NODE_ENV !== 'production'
     || req.path.startsWith('/api/public/nps')
-    || req.path.startsWith('/api/public/grupos'),
+    || req.path.startsWith('/api/public/grupos')
+    || req.path.startsWith('/api/public/evento'),
 }));
 app.use(hpp());
 app.use(compression());
@@ -160,6 +162,10 @@ app.use('/api/public/vol-email', require('./routes/publicVolEmail'));
 // é o totem do lounge (1 IP, muitas inscrições num domingo cheio). Usa o limiter
 // próprio generoso do routes/publicGrupos.js (mesma lógica do NPS acima).
 app.use('/api/public/grupos', require('./routes/publicGrupos'));
+// Eventos externos (Celebra etc.) montado ANTES do publicLimiter estrito:
+// evento presencial em massa = 1 IP de Wi-Fi; a 31ª pessoa era bloqueada.
+// Sem teto prático de inscrições (D9) · limiter próprio generoso no router.
+app.use('/api/public/evento', require('./routes/publicEventoExterno'));
 app.use('/api/public', publicLimiter);
 
 app.use('/api/public/rh-onboarding', require('./routes/publicRhOnboarding'));
@@ -168,7 +174,6 @@ app.use('/api/public/voluntariado', require('./routes/publicVoluntariado'));
 app.use('/api/public/next', require('./routes/publicNext'));
 app.use('/api/public/batismo', require('./routes/publicBatismo'));
 app.use('/api/public/apresentacao-criancas', require('./routes/publicApresentacao'));
-app.use('/api/public/evento', require('./routes/publicEventoExterno'));
 app.use('/api/public/decisao-online', require('./routes/publicDecisaoOnline'));
 // Webhook WhatsApp (público · sem auth, fora do publicLimiter pra não
 // perder entregas em rajada). Montado ANTES do admin /api/whatsapp.

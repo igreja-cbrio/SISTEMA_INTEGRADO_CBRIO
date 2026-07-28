@@ -72,9 +72,19 @@ Celebra com só nome+telefone continuam válidas para sempre).
   (migration `20260728121000` · append-only via backend · tipos: termos_lgpd,
   imagem, menor_responsavel, whatsapp). O ESTADO do opt-in continua nas
   colunas `whatsapp_optin/_em` de cada tabela.
-- Rollout F3.1 porta a porta (1 PR cada, nesta ordem): eventos externos →
-  apresentação → líderes → voluntariado → next → batismo → grupos.
+- Rollout F3.1 porta a porta (1 PR cada, nesta ordem): **eventos externos ✅**
+  → apresentação → líderes → voluntariado → next → batismo → grupos.
   Plano de migração sem perda + bugs conhecidos: `docs/modulo-inscricoes/`.
+- **Porta 1 · Eventos externos (2026-07-28 · migration `20260728150000`):**
+  campos padrão obrigatórios só p/ inscrições NOVAS (legadas nome+telefone
+  seguem válidas); dedup por CPF com fallback telefone — re-inscrição faz
+  merge preservador de `dados` (nunca sobrescreve com vazio; anterior em
+  `dados_anterior`) e ENRIQUECE linha legada em vez de duplicar; textos de
+  consentimento via `GET /api/public/evento/textos` (snapshot gravado = sempre
+  o canônico do backend); form-builder com key OPACA estável (`novaKeyCampo` —
+  editar o label NÃO regera a key, senão orfana respostas antigas); rota
+  montada ANTES do `publicLimiter` global (evento em massa = 1 IP) com limiter
+  próprio generoso (`EVENTO_PUBLIC_RATE_LIMIT_MAX`, padrão 1000/15min).
 - Teste: `node backend/services/inscricaoContrato.test.js`.
 
 ## Entradas · fluxo operacional de saneamento (2026-07-18)

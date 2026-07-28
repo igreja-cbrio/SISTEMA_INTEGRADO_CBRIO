@@ -126,14 +126,17 @@ export default function EventosExternos() {
   );
 }
 
-const slugCampo = (s: string) => (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 30) || `campo_${Date.now() % 1000}`;
+// key OPACA e ESTÁVEL, gerada 1x na criação do campo e NUNCA regerada — antes
+// a key era re-derivada do label a cada edição, o que ORFANAVA as respostas já
+// gravadas em `dados` (bug do Contrato de Inscrição · docs/modulo-inscricoes/).
+const novaKeyCampo = () => `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
 
 function CamposEditor({ campos, setCampos }: { campos: any[]; setCampos: (v: any[]) => void }) {
-  function add() { setCampos([...campos, { key: slugCampo(`campo ${campos.length + 1}`), label: '', tipo: 'texto', obrigatorio: true, opcoes: [] }]); }
-  function upd(i: number, patch: any) { const c = [...campos]; c[i] = { ...c[i], ...patch }; if (patch.label) c[i].key = slugCampo(patch.label); setCampos(c); }
+  function add() { setCampos([...campos, { key: novaKeyCampo(), label: '', tipo: 'texto', obrigatorio: true, opcoes: [] }]); }
+  function upd(i: number, patch: any) { const c = [...campos]; c[i] = { ...c[i], ...patch }; setCampos(c); }
   return (
     <div className="space-y-2">
-      <div className="text-xs font-medium text-muted-foreground">Campos do formulário <span className="font-normal">(além de Nome e WhatsApp, que são fixos)</span></div>
+      <div className="text-xs font-medium text-muted-foreground">Campos extras do formulário <span className="font-normal">(além dos padrão, que são fixos: Nome completo, WhatsApp, CPF, E-mail, Nascimento, Sexo e Endereço)</span></div>
       {campos.map((c, i) => (
         <div key={i} className="rounded-lg border border-border p-2 space-y-2">
           <div className="flex gap-2">
