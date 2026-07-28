@@ -1384,6 +1384,7 @@ export const patrimonio = {
   localizacoes: {
     list: () => get('/patrimonio/localizacoes'),
     create: (data) => post('/patrimonio/localizacoes', data),
+    update: (id, data) => put(`/patrimonio/localizacoes/${id}`, data),
     remove: (id) => del(`/patrimonio/localizacoes/${id}`),
   },
   bens: {
@@ -1399,6 +1400,16 @@ export const patrimonio = {
     list: () => get('/patrimonio/inventarios'),
     create: (data) => post('/patrimonio/inventarios', data),
     atualizar: (id, data) => patch(`/patrimonio/inventarios/${id}`, data),
+  },
+  revisao: {
+    responsaveis: () => get('/patrimonio/revisao/aux/responsaveis'),
+    ciclos: () => get('/patrimonio/revisao/ciclos'),
+    criarCiclo: (data) => post('/patrimonio/revisao/ciclos', data),
+    convocacao: (id) => get(`/patrimonio/revisao/convocacoes/${id}`),
+    iniciar: (id) => post(`/patrimonio/revisao/convocacoes/${id}/iniciar`, {}),
+    atualizarItem: (id, data) => put(`/patrimonio/revisao/itens/${id}`, data),
+    concluir: (id) => post(`/patrimonio/revisao/convocacoes/${id}/concluir`, {}),
+    indicadores: () => get('/patrimonio/revisao/indicadores'),
   },
 };
 
