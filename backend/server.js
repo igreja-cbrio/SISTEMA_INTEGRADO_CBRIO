@@ -207,6 +207,7 @@ app.use('/api/agente-batismo-next', require('./routes/agenteBatismoNext'));
 app.use('/api/integracao', require('./routes/integracao'));
 app.use('/api/relatorios', require('./routes/relatorios'));
 app.use('/api/eventos-externos', require('./routes/eventosExternos'));
+app.use('/api/inscricoes', require('./routes/inscricoes')); // Módulo central de inscrições (espinha · F3.2)
 app.use('/api/next', require('./routes/next'));
 const entradasRouter = require('./routes/nextBatismo');
 app.use('/api/entradas', entradasRouter);

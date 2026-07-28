@@ -38,7 +38,7 @@ const MOD_COLORS = { rh: '#8b5cf6', financeiro: '#10b981', logistica: '#ef4444',
 // o filtro cai no fallback do slug cru (minúsculo, sem acento).
 const MOD_LABELS = {
   rh: 'RH', financeiro: 'Financeiro', logistica: 'Logística', patrimonio: 'Patrimônio',
-  membresia: 'Membresia', eventos: 'Eventos', 'eventos-externos': 'Eventos Externos',
+  membresia: 'Membresia', eventos: 'Eventos', 'eventos-externos': 'Eventos Externos', inscricoes: 'Inscrições',
   projetos: 'Projetos', kpis: 'KPIs', cuidados: 'Cuidados', processos: 'Processos',
   nps: 'NPS', sistema: 'Sistema', integracao: 'Integração', next: 'NEXT',
   voluntariado: 'Voluntariado', grupos: 'Grupos', kids: 'Kids', batismos: 'Batismos',
@@ -138,6 +138,7 @@ const NAV_ITEMS = [
         items: [
           { label: 'Eventos', description: 'Ciclo criativo · fases · documentos · KPIs', icon: CalendarDays, path: '/eventos', perm: 'canAgenda' },
           { label: 'Eventos Externos', description: 'Confirmação de presença + sorteio · formulário público e calendário', icon: CalendarDays, path: '/eventos-externos', module: 'eventos-externos' },
+          { label: 'Inscrições', description: 'Módulo central de inscrições · calendário, eventos, séries e relatórios', icon: CalendarDays, path: '/inscricoes', module: 'inscricoes' },
           { label: 'Projetos', description: 'Acompanhamento de projetos com Kanban/Gantt', icon: FolderKanban, path: '/projetos', perm: 'canProjetos' },
           { label: 'Planejamento Estratégico', description: 'Plano plurianual · etapas e marcos (vigente: Expansão 2026–2029)', icon: Map, path: '/expansao', module: 'expansao' },
         ],

@@ -88,6 +88,16 @@ Celebra com só nome+telefone continuam válidas para sempre).
   `chk_inscricoes_contrato`: completude do contrato exigida SÓ quando
   `legado_fonte IS NULL` — linha migrada do Celebra (nome+telefone) entra
   intacta. **NADA consome ainda** — UI/página pública nas PRs seguintes.
+- **F3.2 · PR 2 — MÓDULO `/inscricoes` no ar (2026-07-28 · migration
+  `20260729010000` = catálogo+matriz seed de eventos-externos):** abas
+  **Calendário** (home) e **Eventos** (cards + form-builder com o bloco dos
+  campos padrão TRAVADOS + "Adicionar campo" com key opaca + **"Nova edição"**
+  — evento avulso vira série na hora; série gera edição com rótulo
+  YYYY-MM/YYYY); área OBRIGATÓRIA validada contra o catálogo `areas`;
+  eventos nascem em **rascunho** (a página pública da espinha chega na PR 3 —
+  publicar ainda não expõe formulário). Abas Todas/Pessoas/Dashboard visíveis
+  desabilitadas ("próximas entregas"). Backend `routes/inscricoes.js`
+  (authorizeModule 'inscricoes'; DELETE=nível 4 via app_soft_delete).
 - **Porta 7 · Grupos (2026-07-28 · migration `20260728235000` = M5):** e-mail
   obrigatório (D2) + anti-abreviação + endereço opcional (vai pro cadastro
   pendente, nunca sobrescreve membro) no form recém-lançado (toque mínimo);
