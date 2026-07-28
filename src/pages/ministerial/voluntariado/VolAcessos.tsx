@@ -12,6 +12,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { BirthDatePicker } from '@/components/ui/birth-date-picker';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -199,7 +200,7 @@ function CriarLoginDialog({ alvo, onClose, onDone }: { alvo: Acesso | null; onCl
   const [email, setEmail] = useState(alvo?.email || '');
   const [cpf, setCpf] = useState(alvo?.cpf || '');
   const [celular, setCelular] = useState(alvo?.telefone || '');
-  const [dataNascimento, setDataNascimento] = useState(alvo?.data_nascimento || '');
+  const [dataNascimento, setDataNascimento] = useState(alvo?.membresia?.data_nascimento || '');
   const [cargoSlug, setCargoSlug] = useState<string>('');
   const [senha, setSenha] = useState(senhaTemporaria());
 
@@ -261,7 +262,7 @@ function CriarLoginDialog({ alvo, onClose, onDone }: { alvo: Acesso | null; onCl
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground">Data de nascimento *</label>
-              <Input type="date" value={dataNascimento} onChange={(e) => setDataNascimento(e.target.value)} />
+              <BirthDatePicker value={dataNascimento} onChange={(v) => setDataNascimento(v)} />
             </div>
           </div>
           <div>
