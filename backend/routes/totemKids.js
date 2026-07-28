@@ -4852,6 +4852,7 @@ router.get('/voluntariado-inscricoes', authorizeModule('kids', 1), async (req, r
     let q = supabase.from('vol_inscricoes')
       .select('id, nome_completo, nome, sobrenome, telefone, email, status, ministerios_interesse, dom_predominante, data_inscricao, feedback, integrado_em')
       .eq('area', 'kids')
+      .is('deleted_at', null)
       .order('data_inscricao', { ascending: false, nullsFirst: false })
       .limit(1000);
     if (status) q = q.eq('status', status);
@@ -4873,7 +4874,7 @@ router.patch('/voluntariado-inscricoes/:id', authorizeModule('kids', 2), async (
     const { status, feedback } = req.body || {};
     // Só age em inscrição de área kids (trava de escopo).
     const { data: insc } = await supabase.from('vol_inscricoes')
-      .select('area').eq('id', req.params.id).maybeSingle();
+      .select('area').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
     if (!insc) return res.status(404).json({ error: 'Inscrição não encontrada.' });
     if (String(insc.area || '').toLowerCase() !== 'kids') {
       return res.status(403).json({ error: 'Esta inscrição não é do Kids.' });

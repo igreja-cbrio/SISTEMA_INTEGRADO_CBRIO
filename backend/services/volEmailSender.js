@@ -92,6 +92,7 @@ async function resolverSegmento(segmento = {}) {
         .from('vol_inscricoes')
         .select('id, nome_completo, nome, email, membro_id, status, area')
         .eq('status', status)
+        .is('deleted_at', null)
         .order('id')
         .range(from, from + PAGE - 1);
       if (area) q = q.eq('area', area);

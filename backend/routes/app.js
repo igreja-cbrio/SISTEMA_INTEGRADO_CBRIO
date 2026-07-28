@@ -621,6 +621,7 @@ router.get('/voluntariado/me', authApp, limiterNormal, async (req, res) => {
     if (orParts.length) {
       const { data: ins } = await supabase.from('vol_inscricoes')
         .select('id, status, area, ministerios_interesse, data_inscricao, enviado_lider_em, integrado_em')
+        .is('deleted_at', null)
         .or(orParts.join(',')).order('data_inscricao', { ascending: false }).limit(1).maybeSingle();
       inscricao = ins || null;
     }
@@ -661,6 +662,7 @@ router.post('/voluntariado/solicitar-area', authApp, limiterStrict, async (req, 
     // Dedup: já existe uma inscrição em aberto (em análise) pra essa pessoa?
     const { data: aberta } = await supabase.from('vol_inscricoes')
       .select('id, status, area')
+      .is('deleted_at', null)
       .eq('membro_id', membro.id)
       .in('status', ['inscrito', 'enviado_ministerio'])
       .limit(1).maybeSingle();
@@ -694,7 +696,7 @@ router.post('/voluntariado/solicitar-area', authApp, limiterStrict, async (req, 
     // pra logar/idempotência e dispara a mensagem de boas-vindas no WhatsApp.
     try {
       const { data: vi } = await supabase.from('vol_inscricoes')
-        .select('id').eq('membro_id', membro.id).eq('status', 'inscrito')
+        .select('id').eq('membro_id', membro.id).eq('status', 'inscrito').is('deleted_at', null)
         .order('data_inscricao', { ascending: false }).limit(1).maybeSingle();
       await dispararAuto('voluntariado_inscricao', {
         refId: vi?.id || null,
