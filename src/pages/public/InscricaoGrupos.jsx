@@ -106,6 +106,20 @@ export default function InscricaoGrupos() {
       return new URLSearchParams(window.location.search).get('temporada') || '';
     } catch { return ''; }
   }, []);
+  // ?temporada= vem impresso em QRs antigos e QR vive pra sempre (lição da
+  // virada do Celebra): se a temporada do link NÃO está com inscrições
+  // abertas, o parâmetro é IGNORADO e o form cai na temporada aberta — antes
+  // o QR antigo "vencia" a aberta e a pessoa via lista vazia (P3 sweep 28/07).
+  const [temporadaQr, setTemporadaQr] = useState(temporadaParam);
+  useEffect(() => {
+    if (!temporadaParam) return;
+    gruposPublic.temporadas()
+      .then((ts) => {
+        const t = (ts || []).find((x) => x.id === temporadaParam);
+        if (!t || !t.inscricoes_abertas) setTemporadaQr('');
+      })
+      .catch(() => { /* sem catálogo agora → mantém o parâmetro (comportamento antigo) */ });
+  }, [temporadaParam]);
   const grupoParam = useMemo(() => {
     try {
       return new URLSearchParams(window.location.search).get('grupo') || '';
@@ -480,7 +494,7 @@ export default function InscricaoGrupos() {
               <GrupoSelector
                 mode="full"
                 usePublicApi
-                temporadaId={temporadaParam || undefined}
+                temporadaId={temporadaQr || undefined}
                 preferirAberta
                 selectedGrupoId={grupoEscolhido?.id}
                 onSelect={setGrupoEscolhido}

@@ -19,6 +19,7 @@ import { eventoPublico } from '../../api';
 import AnimatedBackground from './AnimatedBackground';
 import { usePublicTheme, PublicThemeToggle } from './publicTheme';
 import { BirthDatePicker } from '../../components/ui/birth-date-picker';
+import { DatePicker } from '../../components/ui/date-picker';
 import {
   soDigitos, mascaraTelefone, mascaraCpf, cpfValido, telefoneValido,
   nomeCompletoValido, temAbreviacaoNome, validarNascimento, SEXOS, AVISO_OPTIN,
@@ -518,6 +519,14 @@ export default function EventoExterno() {
                   ) : c.tipo === 'imagem' ? (
                     <ImagemField key={c.key} slug={slug} label={c.label} value={dados[c.key] || ''} required={c.obrigatorio}
                       onChange={(url) => setDados(d => ({ ...d, [c.key]: url }))} onBusy={marcarBusy} />
+                  ) : c.tipo === 'data' ? (
+                    // Tipo 'data' do form-builder ganhou renderização própria
+                    // (P3 do sweep 28/07 — caía no input de texto livre e a
+                    // resposta vinha em qualquer formato). Grava ISO YYYY-MM-DD.
+                    <div key={c.key}>
+                      <Rotulo>{c.label}{c.obrigatorio ? ' *' : ''}</Rotulo>
+                      <DatePicker value={dados[c.key] || ''} onChange={(v) => setDados(d => ({ ...d, [c.key]: v }))} placeholder="dia/mês/ano" />
+                    </div>
                   ) : (
                     <Field key={c.key} id={c.key} label={c.label} value={dados[c.key] || ''} onChange={setCampo(c.key)}
                       required={c.obrigatorio} as={c.tipo === 'textarea' ? 'textarea' : 'input'} span={c.tipo === 'textarea'}

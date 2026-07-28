@@ -22,6 +22,7 @@ const { acharMembroGuardado } = require('../services/membroMatch');
 const { registrarObservacaoSegura } = require('../services/identidadeProgressiva');
 const {
   temAbreviacaoNome, splitNomeCompleto, registrarConsentimentos, SEXOS, TEXTOS,
+  cpfValido, emailValido,
 } = require('../services/inscricaoContrato');
 
 // Limiter GENEROSO do router (padrão grupos/NPS/eventos): o form roda em
@@ -51,10 +52,8 @@ function soDigitos(v) {
   return (v || '').toString().replace(/\D+/g, '');
 }
 
-function ehEmailValido(email) {
-  if (!email) return false;
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-}
+// emailValido/cpfValido agora vêm de services/inscricaoContrato (fonte única —
+// P3 do sweep 28/07: as cópias locais eram idênticas, mas cópia diverge um dia).
 
 // (temAbreviacaoNome agora vem de services/inscricaoContrato — fonte única)
 
@@ -62,23 +61,6 @@ function ehEmailValido(email) {
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function ehUuidValido(s) {
   return typeof s === 'string' && UUID_REGEX.test(s);
-}
-
-function cpfValido(cpf) {
-  const d = soDigitos(cpf);
-  if (d.length !== 11) return false;
-  if (/^(\d)\1{10}$/.test(d)) return false;
-  const calc = (base, fator) => {
-    let soma = 0;
-    for (let i = 0; i < base.length; i += 1) {
-      soma += parseInt(base[i], 10) * (fator - i);
-    }
-    const resto = (soma * 10) % 11;
-    return resto === 10 ? 0 : resto;
-  };
-  const dv1 = calc(d.slice(0, 9), 10);
-  const dv2 = calc(d.slice(0, 10), 11);
-  return dv1 === parseInt(d[9], 10) && dv2 === parseInt(d[10], 10);
 }
 
 function maskEmail(email) {
@@ -182,7 +164,7 @@ router.post('/request-login', publicLimiter, async (req, res) => {
       return res.status(404).json({ error: 'Cadastro não encontrado', needsRegistration: true });
     }
 
-    if (!result.email || !ehEmailValido(result.email)) {
+    if (!result.email || !emailValido(result.email)) {
       return res.status(400).json({
         error: 'Seu cadastro não tem email valido. Procure um líder para atualizar.',
       });
@@ -303,7 +285,7 @@ router.post('/register', publicLimiter, async (req, res) => {
     if (!full_name || full_name.trim().length < 3 || full_name.trim().length > 200) {
       return res.status(400).json({ error: 'Nome invalido (3-200 chars)' });
     }
-    if (!ehEmailValido(rawEmail)) return res.status(400).json({ error: 'Email invalido' });
+    if (!emailValido(rawEmail)) return res.status(400).json({ error: 'Email invalido' });
 
     const email = rawEmail.toLowerCase().trim().slice(0, 200);
     const cleanCpf = soDigitos(cpf);
@@ -440,7 +422,7 @@ router.post('/inscrever-form', async (req, res) => { // teto = limiterGeral do r
     }
 
     const cleanEmail = email ? String(email).toLowerCase().trim() : null;
-    if (!cleanEmail || !ehEmailValido(cleanEmail)) {
+    if (!cleanEmail || !emailValido(cleanEmail)) {
       return res.status(400).json({ error: 'E-mail inválido' });
     }
     const cleanTelefone = soDigitos(telefone);

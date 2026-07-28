@@ -336,11 +336,30 @@ que segue pendente:
   de MENOR obrigatório** (checkbox no TotemMembro com o texto canônico do
   `GET /textos` da apresentação + `registrarConsentimentos` na satélite,
   porta 'apresentacao').
-- **PENDENTE (P3 restante · sessão de refactor):** cópias locais de validação
-  (batismo/vol/next/grupos) fora da fonte única (`validarCamposPadrao`/
-  `processarIdentidade`); tipo `data` do form-builder sem renderização
-  própria; QR com `?temporada=` antiga vence a temporada aberta; endereço de
-  grupos write-only; e2e do Next morto (#nome/#sobrenome).
+- **P3-refactor FEITO (2026-07-28 · SEM migration · comportamento preservado):**
+  (1) **cpfValido/emailValido viraram imports de `inscricaoContrato`** nas 4
+  portas (batismo/vol/next/grupos) — as cópias locais eram idênticas ao
+  canônico (conferido lado a lado antes de trocar), então a troca é
+  zero-diff; `emailValido` foi EXPORTADO do contrato (regex única, sem
+  normalizar — quem normaliza é validarCamposPadrao) e o próprio
+  validarCamposPadrao passou a usá-lo. ⚠️ Decisão de escopo: NÃO migramos os
+  handlers inteiros pra `validarCamposPadrao` — portas vivas com mensagens/
+  fluxos próprios; o risco do sweep era a CÓPIA divergir, e o import resolve.
+  Cópias que FICARAM (fora do escopo do sweep): `publicMembresia.js` (porta
+  não listada — follow-up) e `publicDevocional.js` (módulo do Matheus — não
+  mexer sem alinhar). (2) tipo `data` do form-builder ganhou DatePicker no
+  form público (gravava texto livre em qualquer formato). (3) **QR com
+  `?temporada=` antiga não vence mais a aberta**: InscricaoGrupos valida o
+  param contra `inscricoes_abertas` e IGNORA temporada fechada (QR impresso
+  vive pra sempre — lição da virada); falha na consulta mantém o
+  comportamento antigo. (4) **endereço de grupos deixou de ser write-only**:
+  aprovarPedidoCore + promoverInscricaoLider agora copiam `endereco` do
+  cadastro pendente pro membro SÓ-ONDE-VAZIO (junto de foto/sexo/nascimento);
+  o descarte pra membro EXISTENTE permanece por decisão de 28/07 (endereço de
+  membro muda na Membresia, não por form de grupo). (5) e2e do Next
+  atualizado pro contrato (#nome_completo/CPF válido gerado/BirthDatePicker/
+  sexo/motivo/termos — os seletores #nome/#sobrenome estavam mortos); ⚠️ e2e
+  não foi EXECUTADO nesta entrega (exige app rodando + cria inscrição real).
 
 ## ⚠️ Módulo de Comunicação (WhatsApp central) · handoff pro MATHEUS (2026-07-28)
 

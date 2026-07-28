@@ -53,7 +53,7 @@ async function turmaAbertaAtual() {
 // Contrato de Inscrição (F3.1 · docs/modulo-inscricoes/) — utils da fonte única
 const {
   temAbreviacaoNome, splitNomeCompleto, validarNascimento,
-  registrarConsentimentos, SEXOS, TEXTOS,
+  registrarConsentimentos, SEXOS, TEXTOS, cpfValido, emailValido,
 } = require('../services/inscricaoContrato');
 
 // Motivos válidos da inscrição (slugs · espelham MOTIVO_OPTIONS do form)
@@ -61,23 +61,8 @@ const MOTIVOS_VALIDOS = ['recem_convertido', 'prestes_batizar', 'conhecer_cbrio'
 function motivoValido(m) { return MOTIVOS_VALIDOS.includes(String(m || '')) ? String(m) : null; }
 
 function soDigitos(s) { return String(s || '').replace(/\D/g, ''); }
-function ehEmailValido(s) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(s || '')); }
-function ehCpfValido(cpf) {
-  const c = soDigitos(cpf);
-  if (c.length !== 11) return false;
-  if (/^(\d)\1+$/.test(c)) return false;
-  // Algoritmo oficial dos dígitos verificadores
-  let soma = 0;
-  for (let i = 0; i < 9; i++) soma += parseInt(c[i]) * (10 - i);
-  let d1 = (soma * 10) % 11;
-  if (d1 === 10) d1 = 0;
-  if (d1 !== parseInt(c[9])) return false;
-  soma = 0;
-  for (let i = 0; i < 10; i++) soma += parseInt(c[i]) * (11 - i);
-  let d2 = (soma * 10) % 11;
-  if (d2 === 10) d2 = 0;
-  return d2 === parseInt(c[10]);
-}
+// emailValido/cpfValido agora vêm de services/inscricaoContrato (fonte única —
+// P3 do sweep 28/07: as cópias locais eram idênticas, mas cópia diverge um dia).
 
 // ----------------------------------------------------------------------------
 // GET /eventos - lista eventos agendados
@@ -133,7 +118,7 @@ router.post('/inscrever', async (req, res) => {
     if (temAbreviacaoNome([cleanNome, cleanSobrenome].filter(Boolean).join(' '))) {
       return res.status(400).json({ error: 'Escreva seu nome completo, sem abreviações' });
     }
-    if (!email || !ehEmailValido(email)) {
+    if (!email || !emailValido(email)) {
       return res.status(400).json({ error: 'Email invalido' });
     }
     const telDigitos = soDigitos(telefone);
@@ -159,7 +144,7 @@ router.post('/inscrever', async (req, res) => {
     // chave da identidade global — sem ele, a matrícula depende de sinal fraco
     // e vira candidata a duplicata. O walk-in do check-in continua sem exigir
     // (política "nunca travar o atendimento na hora").
-    if (!cpf || !ehCpfValido(cpf)) {
+    if (!cpf || !cpfValido(cpf)) {
       return res.status(400).json({ error: 'CPF obrigatório — confira os dígitos' });
     }
 
@@ -391,8 +376,8 @@ router.post('/checkin/:token/walkin', async (req, res) => {
     if (!verifyDirecionarToken(req.params.token)) return res.status(403).json({ error: 'Link inválido' });
     const { nome, sobrenome, cpf, telefone, email, data_nascimento } = req.body || {};
     if (!nome || String(nome).trim().length < 2) return res.status(400).json({ error: 'Informe o nome' });
-    if (cpf && !ehCpfValido(cpf)) return res.status(400).json({ error: 'CPF inválido' });
-    if (email && !ehEmailValido(email)) return res.status(400).json({ error: 'E-mail inválido' });
+    if (cpf && !cpfValido(cpf)) return res.status(400).json({ error: 'CPF inválido' });
+    if (email && !emailValido(email)) return res.status(400).json({ error: 'E-mail inválido' });
     const turma = await turmaAbertaAtual();
     if (!turma) return res.status(409).json({ error: 'Nenhuma turma aberta no momento' });
 
