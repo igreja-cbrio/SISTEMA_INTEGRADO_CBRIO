@@ -2796,6 +2796,18 @@ export const voluntariado = {
     copy: (from_service_id, to_service_id) => post('/voluntariado/schedules/copy', { from_service_id, to_service_id }),
     autoFill: (service_id, team_id) => post('/voluntariado/schedules/auto-fill', { service_id, team_id }),
   },
+  // Templates de escala (composição esperada do culto + pré-preenchimento)
+  scheduleTemplates: {
+    list: () => get('/voluntariado/schedule-templates'),
+    get: (id) => get(`/voluntariado/schedule-templates/${id}`),
+    create: (data) => post('/voluntariado/schedule-templates', data),
+    update: (id, data) => put(`/voluntariado/schedule-templates/${id}`, data),
+    remove: (id) => del(`/voluntariado/schedule-templates/${id}`),
+    porTipo: (serviceTypeId) => get(`/voluntariado/schedule-templates/por-tipo/${serviceTypeId}`),
+    apply: (id, service_id) => post(`/voluntariado/schedule-templates/${id}/apply`, { service_id }),
+  },
+  // Cobertura da escala de um culto (alvo × preenchidas)
+  escalaCobertura: (serviceId) => get(`/voluntariado/services/${serviceId}/escala-cobertura`),
   // Check-ins
   checkIns: {
     list: (params) => get('/voluntariado/check-ins' + (params ? '?' + new URLSearchParams(params) : '')),

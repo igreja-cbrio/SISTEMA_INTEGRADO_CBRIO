@@ -4207,4 +4207,271 @@ router.post('/acessos/criar-login', async (req, res) => {
   }
 });
 
+// ══════════════════════════════════════════════════════════════
+// TEMPLATES DE ESCALA (PR1)
+// Reusa vol_teams (=equipe/grupo) e vol_positions (=função). Um template é uma
+// composição esperada (equipe × função × quantidade + fixo) + pessoas-padrão.
+// Aplicar a um culto materializa vol_escala_culto_itens (o alvo/denominador) e
+// pré-preenche vol_schedules com as pessoas-padrão. Cobertura = alvo − preenchidas.
+// ══════════════════════════════════════════════════════════════
+const authEscalaEscrita = authorizeModule('voluntariado', 3);
+
+// Carrega um template completo (itens + pessoas + tipos de culto).
+async function carregarTemplate(id) {
+  const { data: tpl } = await supabase.from('vol_escala_templates')
+    .select('*').eq('id', id).is('deleted_at', null).maybeSingle();
+  if (!tpl) return null;
+  const [{ data: itens }, { data: tipos }] = await Promise.all([
+    supabase.from('vol_escala_template_itens')
+      .select('*, team:vol_teams(id,name), position:vol_positions(id,name)')
+      .eq('template_id', id).order('sort_order'),
+    supabase.from('vol_escala_template_tipos').select('service_type_id').eq('template_id', id),
+  ]);
+  const itemIds = (itens || []).map(i => i.id);
+  let pessoasPorItem = {};
+  if (itemIds.length) {
+    const { data: pessoas } = await supabase.from('vol_escala_template_item_pessoas')
+      .select('item_id, volunteer_id, volunteer:vol_profiles(id,full_name)')
+      .in('item_id', itemIds);
+    for (const p of pessoas || []) (pessoasPorItem[p.item_id] ||= []).push(p);
+  }
+  return {
+    ...tpl,
+    service_type_ids: (tipos || []).map(t => t.service_type_id),
+    itens: (itens || []).map(i => ({ ...i, pessoas: pessoasPorItem[i.id] || [] })),
+  };
+}
+
+// Substitui itens (+pessoas) e tipos de um template (usado no create/update).
+async function gravarItensETipos(templateId, itens, serviceTypeIds) {
+  if (Array.isArray(serviceTypeIds)) {
+    await supabase.from('vol_escala_template_tipos').delete().eq('template_id', templateId);
+    const rows = serviceTypeIds.filter(Boolean).map(st => ({ template_id: templateId, service_type_id: st }));
+    if (rows.length) await supabase.from('vol_escala_template_tipos').insert(rows);
+  }
+  if (Array.isArray(itens)) {
+    await supabase.from('vol_escala_template_itens').delete().eq('template_id', templateId);
+    for (let idx = 0; idx < itens.length; idx++) {
+      const it = itens[idx];
+      if (!it?.team_id) continue;
+      const { data: novo, error } = await supabase.from('vol_escala_template_itens')
+        .insert({
+          template_id: templateId,
+          team_id: it.team_id,
+          position_id: it.position_id || null,
+          quantidade: Math.max(1, parseInt(it.quantidade, 10) || 1),
+          fixo: !!it.fixo,
+          sort_order: it.sort_order ?? idx,
+        }).select('id').single();
+      if (error) throw new Error(error.message);
+      const pessoas = Array.isArray(it.pessoas) ? it.pessoas : [];
+      const pRows = pessoas
+        .map(p => (typeof p === 'string' ? p : p.volunteer_id))
+        .filter(Boolean)
+        .map(vid => ({ item_id: novo.id, volunteer_id: vid }));
+      if (pRows.length) await supabase.from('vol_escala_template_item_pessoas').insert(pRows);
+    }
+  }
+}
+
+// Lista templates (com contagem de itens e tipos ligados).
+router.get('/schedule-templates', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('vol_escala_templates')
+      .select('*, itens:vol_escala_template_itens(count), tipos:vol_escala_template_tipos(service_type_id)')
+      .is('deleted_at', null).order('sort_order').order('nome');
+    if (error) return res.status(400).json({ error: error.message });
+    res.json((data || []).map(t => ({
+      ...t,
+      itens_count: t.itens?.[0]?.count ?? 0,
+      service_type_ids: (t.tipos || []).map(x => x.service_type_id),
+      itens: undefined, tipos: undefined,
+    })));
+  } catch (e) { res.status(500).json({ error: 'Erro ao listar templates de escala' }); }
+});
+
+// Detalhe completo de um template.
+router.get('/schedule-templates/:id', async (req, res) => {
+  try {
+    const tpl = await carregarTemplate(req.params.id);
+    if (!tpl) return res.status(404).json({ error: 'Template não encontrado' });
+    res.json(tpl);
+  } catch (e) { res.status(500).json({ error: 'Erro ao carregar template' }); }
+});
+
+// Cria template (cabeçalho + itens + pessoas + tipos de culto).
+router.post('/schedule-templates', authEscalaEscrita, async (req, res) => {
+  try {
+    const { nome, descricao, ativo, sort_order, service_type_ids, itens } = req.body || {};
+    if (!nome || !nome.trim()) return res.status(400).json({ error: 'nome obrigatório' });
+    const { data: tpl, error } = await supabase.from('vol_escala_templates')
+      .insert({ nome: nome.trim(), descricao: descricao || null, ativo: ativo !== false, sort_order: sort_order || 0 })
+      .select('id').single();
+    if (error) return res.status(400).json({ error: error.message });
+    await gravarItensETipos(tpl.id, itens, service_type_ids);
+    res.json(await carregarTemplate(tpl.id));
+  } catch (e) { res.status(500).json({ error: e.message || 'Erro ao criar template' }); }
+});
+
+// Atualiza template (cabeçalho e, se enviados, substitui itens/tipos).
+router.put('/schedule-templates/:id', authEscalaEscrita, async (req, res) => {
+  try {
+    const { nome, descricao, ativo, sort_order, service_type_ids, itens } = req.body || {};
+    const patch = {};
+    if (nome !== undefined) patch.nome = String(nome).trim();
+    if (descricao !== undefined) patch.descricao = descricao || null;
+    if (ativo !== undefined) patch.ativo = !!ativo;
+    if (sort_order !== undefined) patch.sort_order = sort_order || 0;
+    if (Object.keys(patch).length) {
+      const { error } = await supabase.from('vol_escala_templates')
+        .update(patch).eq('id', req.params.id).is('deleted_at', null);
+      if (error) return res.status(400).json({ error: error.message });
+    }
+    await gravarItensETipos(req.params.id, itens, service_type_ids);
+    res.json(await carregarTemplate(req.params.id));
+  } catch (e) { res.status(500).json({ error: e.message || 'Erro ao atualizar template' }); }
+});
+
+// Remove template (soft-delete · reversível).
+router.delete('/schedule-templates/:id', authEscalaEscrita, async (req, res) => {
+  try {
+    const { error } = await supabase.from('vol_escala_templates')
+      .update({ deleted_at: new Date().toISOString() }).eq('id', req.params.id);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: 'Erro ao remover template' }); }
+});
+
+// Templates sugeridos para um tipo de culto (auto-sugestão ao montar a escala).
+router.get('/schedule-templates/por-tipo/:serviceTypeId', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('vol_escala_template_tipos')
+      .select('template:vol_escala_templates(*)')
+      .eq('service_type_id', req.params.serviceTypeId);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json((data || []).map(x => x.template).filter(t => t && !t.deleted_at && t.ativo));
+  } catch (e) { res.status(500).json({ error: 'Erro ao sugerir templates' }); }
+});
+
+// Aplica um template a um culto: materializa a composição esperada
+// (vol_escala_culto_itens) e pré-preenche vol_schedules com as pessoas-padrão.
+// Idempotente: reaplica sem duplicar itens nem re-escalar quem já está.
+router.post('/schedule-templates/:id/apply', authEscalaEscrita, async (req, res) => {
+  try {
+    const { service_id } = req.body || {};
+    if (!service_id) return res.status(400).json({ error: 'service_id obrigatório' });
+    const tpl = await carregarTemplate(req.params.id);
+    if (!tpl) return res.status(404).json({ error: 'Template não encontrado' });
+    const { data: svc } = await supabase.from('vol_services').select('id').eq('id', service_id).maybeSingle();
+    if (!svc) return res.status(404).json({ error: 'Culto não encontrado' });
+
+    // Escalas já existentes no culto: pra não re-escalar a mesma pessoa e pra
+    // achar o próximo slot_seq livre por função (o índice pc_unique inclui slot_seq).
+    const { data: jaEscalados } = await supabase.from('vol_schedules')
+      .select('volunteer_id, team_id, team_name, position_name, slot_seq, planning_center_person_id')
+      .eq('service_id', service_id);
+    const escaladoChave = new Set((jaEscalados || [])
+      .filter(s => s.volunteer_id).map(s => `${s.volunteer_id}:${s.team_id || ''}`));
+    // Só linhas sem pc_person_id compartilham o espaço de slot_seq (as do PCO usam 0
+    // mas têm pc_person_id != NULL, então nunca colidem com as do template).
+    const slotUsados = {};
+    const slotKey = (tn, pn) => `${tn || ''}::${pn || ''}`;
+    for (const s of jaEscalados || []) {
+      if (s.planning_center_person_id) continue;
+      (slotUsados[slotKey(s.team_name, s.position_name)] ||= new Set()).add(s.slot_seq || 0);
+    }
+    const proximoSlot = (tn, pn) => {
+      const set = (slotUsados[slotKey(tn, pn)] ||= new Set());
+      let n = 0; while (set.has(n)) n += 1; set.add(n); return n;
+    };
+
+    let itensCriados = 0, preenchidas = 0, vagasTotais = 0;
+    for (const it of tpl.itens) {
+      // 1) Composição esperada (alvo). Upsert por (service, team, position).
+      const { data: cItem, error: cErr } = await supabase.from('vol_escala_culto_itens')
+        .upsert({
+          service_id,
+          template_id: tpl.id,
+          template_item_id: it.id,
+          team_id: it.team_id,
+          position_id: it.position_id || null,
+          quantidade: it.quantidade,
+          fixo: it.fixo,
+          sort_order: it.sort_order,
+          deleted_at: null,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'service_id,team_id,position_id' })
+        .select('id').single();
+      if (cErr) throw new Error(cErr.message);
+      itensCriados += 1;
+      vagasTotais += it.quantidade;
+
+      // 2) Pré-preencher pessoas-padrão (respeitando a quantidade de vagas).
+      const teamName = it.team?.name || null;
+      const positionName = it.position?.name || null;
+      let usadas = 0;
+      for (const p of it.pessoas) {
+        if (usadas >= it.quantidade) break;
+        const chave = `${p.volunteer_id}:${it.team_id}`;
+        if (escaladoChave.has(chave)) { usadas += 1; continue; }
+        const nome = p.volunteer?.full_name || null;
+        const { error: sErr } = await supabase.from('vol_schedules').insert({
+          service_id,
+          volunteer_id: p.volunteer_id,
+          volunteer_name: nome,
+          team_id: it.team_id,
+          team_name: teamName,
+          position_id: it.position_id || null,
+          position_name: positionName,
+          source: 'template',
+          confirmation_status: 'pending',
+          escala_culto_item_id: cItem.id,
+          slot_seq: proximoSlot(teamName, positionName),
+        });
+        if (!sErr) { escaladoChave.add(chave); usadas += 1; preenchidas += 1; }
+      }
+    }
+    res.json({ ok: true, itens: itensCriados, vagas: vagasTotais, preenchidas });
+  } catch (e) { res.status(500).json({ error: e.message || 'Erro ao aplicar template' }); }
+});
+
+// Cobertura da escala de um culto: alvo (vol_escala_culto_itens) × preenchidas
+// (vol_schedules com voluntário). Agrupado por equipe.
+router.get('/services/:serviceId/escala-cobertura', async (req, res) => {
+  try {
+    const sid = req.params.serviceId;
+    const [{ data: alvo }, { data: sched }] = await Promise.all([
+      supabase.from('vol_escala_culto_itens')
+        .select('*, team:vol_teams(id,name), position:vol_positions(id,name)')
+        .eq('service_id', sid).is('deleted_at', null).order('sort_order'),
+      supabase.from('vol_schedules')
+        .select('id, volunteer_id, volunteer_name, team_id, position_id, confirmation_status, escala_culto_item_id')
+        .eq('service_id', sid),
+    ]);
+    const preenchidasPorItem = {};
+    const chave = (t, p) => `${t || ''}:${p || ''}`;
+    for (const s of sched || []) {
+      if (!s.volunteer_id) continue;
+      const k = s.escala_culto_item_id ? `item:${s.escala_culto_item_id}` : chave(s.team_id, s.position_id);
+      (preenchidasPorItem[k] ||= []).push(s);
+    }
+    const itens = (alvo || []).map(a => {
+      const pessoas = preenchidasPorItem[`item:${a.id}`] || preenchidasPorItem[chave(a.team_id, a.position_id)] || [];
+      return {
+        id: a.id, team_id: a.team_id, team: a.team?.name, position_id: a.position_id,
+        position: a.position?.name, fixo: a.fixo, alvo: a.quantidade,
+        preenchidas: pessoas.length, faltam: Math.max(0, a.quantidade - pessoas.length),
+        pessoas,
+      };
+    });
+    const totalAlvo = itens.reduce((s, i) => s + i.alvo, 0);
+    const totalPreench = itens.reduce((s, i) => s + i.preenchidas, 0);
+    res.json({
+      service_id: sid, itens,
+      resumo: { alvo: totalAlvo, preenchidas: totalPreench, faltam: Math.max(0, totalAlvo - totalPreench),
+        cobertura_pct: totalAlvo ? Math.round((totalPreench / totalAlvo) * 100) : null },
+    });
+  } catch (e) { res.status(500).json({ error: 'Erro ao calcular cobertura da escala' }); }
+});
+
 module.exports = router;
