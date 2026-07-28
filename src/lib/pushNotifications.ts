@@ -1,7 +1,13 @@
 // Web Push helpers para PWA do CBRio.
 // Registra o service worker, pede permissão e gerencia subscription.
 
-const API = (typeof window !== 'undefined' && (window as any).__API_BASE__) || '/api';
+declare global {
+  interface Window {
+    __API_BASE__?: string;
+  }
+}
+
+const API = (typeof window !== 'undefined' && window.__API_BASE__) || '/api';
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const padding = '='.repeat((4 - base64String.length % 4) % 4);
@@ -27,7 +33,10 @@ export function isPushSupported(): boolean {
 export async function registerServiceWorker(): Promise<ServiceWorkerRegistration | null> {
   if (!isPushSupported()) return null;
   try {
-    const reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+    const reg = await navigator.serviceWorker.register('/sw.js', {
+      scope: '/',
+      updateViaCache: 'none',
+    });
     await navigator.serviceWorker.ready;
     return reg;
   } catch (e) {
@@ -88,13 +97,13 @@ export async function unsubscribePush(): Promise<boolean> {
   const sub = await getCurrentSubscription();
   if (!sub) return true;
   const endpoint = sub.endpoint;
-  try { await sub.unsubscribe(); } catch {}
+  try { await sub.unsubscribe(); } catch { /* O endpoint local pode já ter expirado. */ }
   try {
     await fetch(`${API}/notificacoes/push/unsubscribe`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...authHeaders() },
       body: JSON.stringify({ endpoint }),
     });
-  } catch {}
+  } catch { /* A remoção local continua válida mesmo se a API estiver offline. */ }
   return true;
 }
