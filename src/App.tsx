@@ -12,6 +12,16 @@ import DemoAutoLogin from './pages/DemoAutoLogin';
 import { DEMO_MODE } from './lib/demo';
 import RedefinirSenha from './pages/RedefinirSenha';
 import { CbrioLoader } from './components/ui/cbrio-loader';
+import {
+  APP_UPDATE_CACHE_BUSTER_PARAM,
+  APP_UPDATE_RETRY_PARAM,
+  APP_UPDATE_RETRY_STARTED_PARAM,
+  APP_UPDATE_RETRY_WINDOW_MS,
+  MAX_APP_UPDATE_RETRIES,
+  getAppUpdateRetryCount,
+  hasNewAppVersion,
+  reloadForAppUpdate,
+} from './lib/appUpdate';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -37,60 +47,16 @@ const queryClient = new QueryClient({
 //   Firefox     : "error loading dynamically imported module"
 //   Safari/iOS  : "Importing a module script failed" + "'text/html' is not a valid JavaScript MIME type"
 //   Webpack     : "Loading chunk X failed" / "ChunkLoadError"
-const CHUNK_ERROR_RE = /Loading chunk|ChunkLoadError|Failed to fetch dynamically imported module|error loading dynamically imported module|Importing a module script failed|valid JavaScript MIME type|Expected a JavaScript(?: \w+)? module script|Unexpected token '?<'?/i;
+const CHUNK_ERROR_RE = /Loading chunk|ChunkLoadError|Failed to fetch dynamically imported module|error loading dynamically imported module|Importing a module script failed|valid JavaScript MIME type|Expected a JavaScript(?: \w+)? module script/i;
 
 // Conta tentativas via querystring (sobrevive ao reload, diferente de
 // sessionStorage que ficava preso entre deploys consecutivos e impedia
 // re-tentativas legítimas).
-const RETRY_PARAM = '_chunk_retry';
-const MAX_RETRIES = 3;
-
-function getRetryCount(): number {
-  try {
-    const v = new URL(window.location.href).searchParams.get(RETRY_PARAM);
-    return v ? parseInt(v, 10) || 0 : 0;
-  } catch { return 0; }
-}
-
 // Reload com cache-buster + limpeza de caches do browser/SW · usado quando
 // um chunk lazy quebra (deploy novo invalidou o hash que o HTML em cache
 // referência). Limpa tudo que pode estar segurando o HTML antigo.
-let hardReloadFired = false;
 async function hardReload() {
-  if (hardReloadFired) return; // vários chunk errors ao mesmo tempo → 1 reload só
-  hardReloadFired = true;
-  const limpar = (async () => {
-    try {
-      // Limpa Cache Storage (PWA / fetch cache)
-      if ('caches' in window) {
-        const keys = await caches.keys();
-        await Promise.all(keys.map(k => caches.delete(k)));
-      }
-      // Desregistra Service Workers (re-registra no próximo load se necessário)
-      if ('serviceWorker' in navigator) {
-        const regs = await navigator.serviceWorker.getRegistrations();
-        await Promise.all(regs.map(r => r.unregister()));
-      }
-      // Limpa flags antigos do retry baseado em sessionStorage (legado)
-      Object.keys(sessionStorage)
-        .filter(k => k.startsWith('chunk-retry-') || k === 'boundary-chunk-retry')
-        .forEach(k => sessionStorage.removeItem(k));
-    } catch { /* ignora — vamos recarregar de qualquer jeito */ }
-  })();
-  // ⚠️ A limpeza NUNCA pode travar o reload: se caches.delete/getRegistrations
-  // pendurar, o location.replace nunca rodava e a tela ficava PRETA pra sempre
-  // (lazyWithRetry já retornou uma promise que nunca resolve). Timeout garante
-  // que recarrega em ≤1.2s de qualquer jeito. 2026-06-30.
-  try { await Promise.race([limpar, new Promise((r) => setTimeout(r, 1200))]); } catch { /* ignora */ }
-  try {
-    const url = new URL(window.location.href);
-    const next = getRetryCount() + 1;
-    url.searchParams.set(RETRY_PARAM, String(next));
-    url.searchParams.set('_cb', String(Date.now()));
-    window.location.replace(url.toString());
-  } catch {
-    window.location.reload();
-  }
+  await reloadForAppUpdate();
 }
 
 // Chunk errors surgem muitas vezes FORA do ciclo de render do React — um import
@@ -101,14 +67,14 @@ async function hardReload() {
 // recarregam com cache-bust, respeitando o teto de retries. 2026-06-30.
 if (typeof window !== 'undefined') {
   const recuperarSeChunk = (msg: string) => {
-    if (CHUNK_ERROR_RE.test(msg || '') && getRetryCount() < MAX_RETRIES) hardReload();
+    if (CHUNK_ERROR_RE.test(msg || '') && getAppUpdateRetryCount() < MAX_APP_UPDATE_RETRIES) hardReload();
   };
   // capture:true pega erro de CARREGAMENTO de recurso (<script>/<link>), que não borbulha
   window.addEventListener('error', (e: ErrorEvent) => {
     const alvo = e.target as (HTMLScriptElement & HTMLLinkElement) | null;
     const src = alvo ? (alvo.src || alvo.href || '') : '';
     if (src && /\/assets\/.*\.(js|mjs|css)(\?|$)/.test(src)) {
-      if (getRetryCount() < MAX_RETRIES) hardReload();
+      if (getAppUpdateRetryCount() < MAX_APP_UPDATE_RETRIES) hardReload();
       return;
     }
     recuperarSeChunk(e.message || e.error?.message || '');
@@ -126,7 +92,7 @@ function lazyWithRetry<T extends ComponentType<Record<string, never>>>(factory: 
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err || '');
       const isChunkError = CHUNK_ERROR_RE.test(message);
-      if (isChunkError && getRetryCount() < MAX_RETRIES) {
+      if (isChunkError && getAppUpdateRetryCount() < MAX_APP_UPDATE_RETRIES) {
         hardReload();
         return new Promise<{ default: T }>(() => {}); // Nunca resolve — página vai recarregar
       }
@@ -135,18 +101,23 @@ function lazyWithRetry<T extends ComponentType<Record<string, never>>>(factory: 
   });
 }
 
-class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean; error: Error | null }> {
+class ErrorBoundary extends Component<
+  { children: ReactNode },
+  { hasError: boolean; error: Error | null; updating: boolean }
+> {
   constructor(props: { children: ReactNode }) {
     super(props);
-    this.state = { hasError: false, error: null };
+    this.state = { hasError: false, error: null, updating: false };
   }
   static getDerivedStateFromError(error: Error) {
-    return { hasError: true, error };
+    const updating = CHUNK_ERROR_RE.test(error?.message || '')
+      && getAppUpdateRetryCount() < MAX_APP_UPDATE_RETRIES;
+    return { hasError: true, error, updating };
   }
   componentDidCatch(error: Error) {
     // Se for chunk load error, tenta recarregar automaticamente (até MAX_RETRIES)
     const isChunkError = CHUNK_ERROR_RE.test(error?.message || '');
-    if (isChunkError && getRetryCount() < MAX_RETRIES) {
+    if (isChunkError && getAppUpdateRetryCount() < MAX_APP_UPDATE_RETRIES) {
       hardReload();
     }
   }
@@ -159,40 +130,36 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
           {isChunkError ? (
             <>
               <p style={{ color: '#888', maxWidth: 480 }}>
-                Houve uma atualização do sistema. Vamos limpar o cache e recarregar.
+                {this.state.updating
+                  ? 'Há uma nova versão do sistema. Estamos atualizando automaticamente; seu acesso e esta página serão mantidos.'
+                  : 'Não foi possível concluir a atualização automática. Tente novamente; seu acesso e esta página serão mantidos.'}
               </p>
               <button
-                onClick={async () => {
-                  // Forca limpeza total + remove o param de retry pra zerar o contador
-                  try {
-                    if ('caches' in window) {
-                      const keys = await caches.keys();
-                      await Promise.all(keys.map(k => caches.delete(k)));
-                    }
-                    if ('serviceWorker' in navigator) {
-                      const regs = await navigator.serviceWorker.getRegistrations();
-                      await Promise.all(regs.map(r => r.unregister()));
-                    }
-                  } catch {
-                    // Ignora falhas de limpeza; o reload abaixo ainda recupera o app.
-                  }
-                  sessionStorage.clear();
-                  // Limpa querystring (zera contador) e vai pra raiz
-                  window.location.replace('/?_cb=' + Date.now());
+                disabled={this.state.updating}
+                onClick={() => {
+                  this.setState({ updating: true });
+                  void reloadForAppUpdate({ resetRetries: true });
                 }}
-                style={{ padding: '10px 28px', borderRadius: 8, background: '#00B39D', color: '#fff', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 600 }}
+                style={{ padding: '10px 28px', borderRadius: 8, background: '#00B39D', color: '#fff', border: 'none', cursor: this.state.updating ? 'wait' : 'pointer', opacity: this.state.updating ? 0.75 : 1, fontSize: 14, fontWeight: 600 }}
               >
-                Limpar cache e recarregar
+                {this.state.updating ? 'Atualizando…' : 'Tentar atualizar agora'}
               </button>
               <p style={{ color: '#aaa', fontSize: 12, marginTop: 8 }}>
-                Se o problema persistir: feche o navegador e abra de novo, ou use uma aba anônima.
+                Alterações ainda não salvas nesta página podem ser perdidas.
               </p>
             </>
           ) : (
             <>
               <p style={{ color: '#888' }}>{this.state.error?.message || 'Erro inesperado na aplicação.'}</p>
-              <button onClick={() => { sessionStorage.clear(); hardReload(); }} style={{ padding: '8px 24px', borderRadius: 8, background: '#00B39D', color: '#fff', border: 'none', cursor: 'pointer' }}>
-                Recarregar
+              <button
+                disabled={this.state.updating}
+                onClick={() => {
+                  this.setState({ updating: true });
+                  void reloadForAppUpdate({ resetRetries: true });
+                }}
+                style={{ padding: '8px 24px', borderRadius: 8, background: '#00B39D', color: '#fff', border: 'none', cursor: this.state.updating ? 'wait' : 'pointer', opacity: this.state.updating ? 0.75 : 1 }}
+              >
+                {this.state.updating ? 'Atualizando…' : 'Tentar novamente'}
               </button>
             </>
           )}
@@ -761,22 +728,44 @@ function SitePublicoRoutes() {
 }
 
 export default function App() {
-  // Se o app rodar estável por 5s, a navegação deu certo → tira _chunk_retry/_cb
-  // da URL pra ZERAR o contador de retries (senão um retry grudado come as
-  // tentativas do próximo incidente) e deixa a URL limpa. O atraso de 5s é o que
-  // preserva o teto anti-loop: se um chunk falhar antes disso, o hardReload roda
-  // com o contador intacto. 2026-06-30.
+  // Ao abrir a aplicação, compara o entrypoint carregado com o HTML atual do
+  // deploy. Se a aba veio do cache ou do histórico, atualiza antes de o usuário
+  // navegar para um módulo e encontrar um chunk antigo.
+  useEffect(() => {
+    let cancelled = false;
+    const check = async () => {
+      const hasUpdate = await hasNewAppVersion();
+      if (!cancelled && hasUpdate && getAppUpdateRetryCount() < MAX_APP_UPDATE_RETRIES) {
+        void hardReload();
+      }
+    };
+    const timer = window.setTimeout(check, 800);
+    const handlePageShow = (event: PageTransitionEvent) => {
+      if (event.persisted) void check();
+    };
+    window.addEventListener('pageshow', handlePageShow);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+      window.removeEventListener('pageshow', handlePageShow);
+    };
+  }, []);
+
+  // Limpa o orçamento de recuperação só depois da janela anti-loop. Em rede
+  // lenta, 5s não bastavam: o contador sumia antes de um chunk falhar e a página
+  // podia recarregar indefinidamente.
   useEffect(() => {
     const t = setTimeout(() => {
       try {
         const url = new URL(window.location.href);
-        if (url.searchParams.has(RETRY_PARAM) || url.searchParams.has('_cb')) {
-          url.searchParams.delete(RETRY_PARAM);
-          url.searchParams.delete('_cb');
+        if (url.searchParams.has(APP_UPDATE_RETRY_PARAM) || url.searchParams.has(APP_UPDATE_CACHE_BUSTER_PARAM)) {
+          url.searchParams.delete(APP_UPDATE_RETRY_PARAM);
+          url.searchParams.delete(APP_UPDATE_RETRY_STARTED_PARAM);
+          url.searchParams.delete(APP_UPDATE_CACHE_BUSTER_PARAM);
           window.history.replaceState(null, '', url.pathname + url.search + url.hash);
         }
       } catch { /* ignora */ }
-    }, 5000);
+    }, APP_UPDATE_RETRY_WINDOW_MS);
     return () => clearTimeout(t);
   }, []);
   if (isSitePublicoHost()) {
