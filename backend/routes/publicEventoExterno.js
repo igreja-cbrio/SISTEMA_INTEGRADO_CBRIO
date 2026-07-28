@@ -284,7 +284,10 @@ router.get('/:slug', async (req, res) => {
     // Evento pago abre normalmente desde a F3.3 — o curto-circuito que forçava
     // "encerradas" saiu daqui.
     const ocup = await ocupacaoEspinha(esp.id);
-    const encerradas = await espinhaEncerrada(esp);
+    // ⚠️ Evento pago MAL CONFIGURADO conta como fechado, senão a pessoa preenche
+    // o formulário inteiro e só então leva 503 do POST. O aviso explica por quê.
+    const bloqueio = bloqueioPagamento(esp);
+    const encerradas = !!bloqueio || await espinhaEncerrada(esp);
     const pago = !!esp.pagamento_ativo && Number(esp.valor_centavos) > 0;
     return res.json({
       fonte: 'espinha',
