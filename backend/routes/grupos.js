@@ -1483,6 +1483,13 @@ async function promoverInscricaoLider(insc) {
       if (Object.keys(upd).length) await supabase.from('mem_membros').update(upd).eq('id', membroId);
     }
   }
+  // Opt-in marcado na candidatura propaga pro membro promovido (só liga) —
+  // mesma correção do aprovarPedidoCore (sweep 28/07).
+  if (cad.whatsapp_optin && membroId) {
+    await supabase.from('mem_membros')
+      .update({ whatsapp_optin: true, whatsapp_optin_em: cad.whatsapp_optin_em || new Date().toISOString() })
+      .eq('id', membroId).eq('whatsapp_optin', false);
+  }
   await supabase.from('mem_cadastros_pendentes').update({ status: 'aprovado' }).eq('id', insc.cadastro_pendente_id);
   await supabase.from('mem_lider_inscricoes')
     .update({ membro_id: membroId, cadastro_pendente_id: null, updated_at: new Date().toISOString() })
@@ -2214,6 +2221,15 @@ async function aprovarPedidoCore(pedidoId, user) {
             if (cad.data_nascimento && !mem.data_nascimento) upd.data_nascimento = cad.data_nascimento;
             if (Object.keys(upd).length) await supabase.from('mem_membros').update(upd).eq('id', membroId);
           }
+        }
+        // Opt-in de WhatsApp marcado na inscrição pública PROPAGA pro membro
+        // promovido — o comentário do form sempre prometeu isso, mas ninguém
+        // gravava (achado do sweep 28/07: quem pedia avisos nunca recebia).
+        // Só liga (false não desliga um optin que o membro já tinha).
+        if (cad.whatsapp_optin && membroId) {
+          await supabase.from('mem_membros')
+            .update({ whatsapp_optin: true, whatsapp_optin_em: cad.whatsapp_optin_em || new Date().toISOString() })
+            .eq('id', membroId).eq('whatsapp_optin', false);
         }
         // Marca cadastro como aprovado
         await supabase.from('mem_cadastros_pendentes')

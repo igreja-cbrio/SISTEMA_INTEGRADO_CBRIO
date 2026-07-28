@@ -23,13 +23,32 @@ function brtHojeRangeUtc() {
   return { start: start.toISOString(), end: end.toISOString() };
 }
 
-// Rate limit dedicado para inscrições (anti-spam)
+// Limiter GENEROSO no router (padrão grupos/NPS/eventos): o form roda em
+// Wi-Fi único (igreja) e o TOTEM de check-in dispara dezenas de POSTs do
+// mesmo IP numa turma — o teto antigo de 10/min no router inteiro dava 429
+// no operador depois da 10ª marcação (achado do sweep 28/07). Anti-spam
+// real = honeypot + validação do contrato.
 const limiter = rateLimit({
-  windowMs: 60 * 1000, // 1 min
-  max: 10,
-  message: { error: 'Muitas requisicoes. Aguarde um minuto.' },
+  windowMs: 15 * 60 * 1000,
+  max: parseInt(process.env.PUBLIC_FORM_RATE_LIMIT_MAX) || (process.env.NODE_ENV === 'production' ? 600 : 5000),
+  message: { error: 'Muitas requisições. Aguarde alguns minutos.' },
+  skip: () => process.env.NODE_ENV !== 'production',
+  standardHeaders: true,
+  legacyHeaders: false,
 });
 router.use(limiter);
+
+// Resolve a turma ABERTA do momento (a mais recente, se houver mais de uma).
+// ⚠️ Declarada AQUI (antes do primeiro uso, no POST /inscrever) de propósito:
+// era usada 80 linhas antes da declaração, salva só pelo hoisting de `async
+// function` — converter pra arrow const derrubava o form inteiro com TDZ
+// (mesmo padrão do bug do Ariel · sweep 28/07).
+async function turmaAbertaAtual() {
+  const { data } = await supabase.from('next_turmas')
+    .select('id, nome').eq('status', 'aberta').is('deleted_at', null)
+    .order('created_at', { ascending: false }).limit(1).maybeSingle();
+  return data || null;
+}
 
 // Contrato de Inscrição (F3.1 · docs/modulo-inscricoes/) — utils da fonte única
 const {
@@ -275,14 +294,6 @@ router.post('/inscrever', async (req, res) => {
 // Devocional é Fase 2b). Escreve na matrícula (mesmo motor do líder). Quando há
 // mais de uma turma aberta (2 por mês), o público cai na MAIS RECENTE (ver
 // turmaAbertaAtual) · o operador reorganiza quem vai em cada uma na aba Turmas.
-
-// Resolve a turma ABERTA do momento (a mais recente, se houver mais de uma).
-async function turmaAbertaAtual() {
-  const { data } = await supabase.from('next_turmas')
-    .select('id, nome').eq('status', 'aberta').is('deleted_at', null)
-    .order('created_at', { ascending: false }).limit(1).maybeSingle();
-  return data || null;
-}
 
 // GET /api/public/next/direcionar/:token — turma aberta + suas pessoas pra escolher o nome
 router.get('/direcionar/:token', async (req, res) => {

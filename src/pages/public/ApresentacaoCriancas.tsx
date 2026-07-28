@@ -137,6 +137,7 @@ export default function ApresentacaoCriancas() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [sent, setSent] = useState(false);
+  const [avisoJaInscritas, setAvisoJaInscritas] = useState<string[]>([]);
 
   const setCriancaCampo = (i: number, k: keyof Crianca, v: string) => {
     setCriancas(cs => cs.map((c, idx) => (idx === i ? { ...c, [k]: v } : c)));
@@ -185,7 +186,7 @@ export default function ApresentacaoCriancas() {
 
     setLoading(true);
     try {
-      await apresentacaoCriancasPublico.inscrever({
+      const r: any = await apresentacaoCriancasPublico.inscrever({
         nome_pai: form.nome_pai.trim() || null,
         nome_mae: form.nome_mae.trim() || null,
         criancas: criancasValidas,
@@ -198,7 +199,17 @@ export default function ApresentacaoCriancas() {
         whatsapp_optin: optin,
         website: form.website,
       });
-      setSent(true);
+      // A resposta DIZ o que aconteceu — mostrar "Inscrição enviada!" pra zero
+      // inscrição criada era o mesmo bug já corrigido no batismo. Reenvio com
+      // todas as crianças já inscritas NÃO cria nada e a pessoa precisa saber.
+      const jaInscritas: string[] = Array.isArray(r?.ja_inscritas) ? r.ja_inscritas : [];
+      const criadas: string[] = Array.isArray(r?.ids) ? r.ids : [];
+      if (!criadas.length && jaInscritas.length) {
+        setError(`${jaInscritas.join(', ')} já ${jaInscritas.length > 1 ? 'estavam inscritas' : 'estava inscrita'} para esta data — não criamos inscrição nova. Nossa equipe do Kids já tem o contato de vocês.`);
+      } else {
+        if (jaInscritas.length) setAvisoJaInscritas(jaInscritas);
+        setSent(true);
+      }
     } catch (err: any) {
       setError(err?.message || 'Erro ao enviar inscrição.');
     }
@@ -261,6 +272,11 @@ export default function ApresentacaoCriancas() {
               {proximaData && <>A próxima apresentação é em <strong>{formatDataLonga(proximaData)}</strong>. </>}
               Nossa equipe do Kids vai entrar em contato pelo telefone informado para agendar o horário.
             </p>
+            {avisoJaInscritas.length > 0 && (
+              <p style={{ fontSize: 12, color: '#00B39D', fontWeight: 600, marginTop: 10 }}>
+                {avisoJaInscritas.join(', ')} já {avisoJaInscritas.length > 1 ? 'estavam inscritas' : 'estava inscrita'} — mantivemos a inscrição original.
+              </p>
+            )}
           </div>
         ) : (
           <>

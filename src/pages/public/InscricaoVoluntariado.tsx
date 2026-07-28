@@ -231,6 +231,7 @@ export default function InscricaoVoluntariado() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [sent, setSent] = useState(false);
+  const [jaInscrito, setJaInscrito] = useState<string>('');
   // Consentimento LGPD pra consulta de antecedentes (obrigatório Kids/Bridge).
   const [consentAntecedentes, setConsentAntecedentes] = useState(false);
   const [aceitaTermos, setAceitaTermos] = useState(false);
@@ -262,8 +263,6 @@ export default function InscricaoVoluntariado() {
 
   const MAX_MINISTERIOS = 3;
   const selecionadas = opcoes.filter(o => ministerios.includes(o.label));
-  // Opções que exigem dados do menor (LGPD · CPF + nome da mae): Kids/Bridge.
-  const precisaDadosMenor = selecionadas.some(o => o.exige_dados_menor);
   // Deriva a área canonica (vol_inscricoes.area) a partir das opções marcadas.
   const deriveArea = (mins: string[]): string => {
     const areas = opcoes.filter(o => mins.includes(o.label)).map(o => o.area_canonica);
@@ -272,6 +271,13 @@ export default function InscricaoVoluntariado() {
     }
     return 'sede';
   };
+  // Dados do menor (LGPD · nome da mãe + antecedentes): exige quando alguma
+  // opção marcada tem a flag OU a área derivada é Kids/Bridge — a MESMA união
+  // que o servidor aplica. Critérios divergentes davam ou formulário
+  // insubmissível (server exigia campo que a tela não mostrava) ou
+  // consentimento de antecedentes colhido sem triagem aberta.
+  const precisaDadosMenor = selecionadas.some(o => o.exige_dados_menor)
+    || ['kids', 'bridge'].includes(deriveArea(ministerios));
 
   const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     let v = e.target.value;
@@ -316,7 +322,7 @@ export default function InscricaoVoluntariado() {
     submittingRef.current = true;
     setLoading(true);
     try {
-      await publicVoluntariado.inscreverForm({
+      const r: any = await publicVoluntariado.inscreverForm({
         nome_completo: form.nome_completo.trim(),
         email: form.email,
         telefone: form.telefone,
@@ -334,6 +340,10 @@ export default function InscricaoVoluntariado() {
         whatsapp_optin: whatsappOptin,
         website: form.website,
       });
+      // Reenvio de quem já está na triagem NÃO cria inscrição nova — a tela
+      // precisa dizer isso (o server manda a mensagem), não "Inscrição
+      // recebida! Em até 7 dias…" de novo (padrão já corrigido no batismo).
+      if (r?.ja_inscrito) setJaInscrito(r?.mensagem || 'Já recebemos a sua inscrição — a coordenação vai falar com você pelos contatos informados.');
       setSent(true);
     } catch (err: any) {
       setError(err?.message || 'Erro ao enviar inscrição');
@@ -385,12 +395,14 @@ export default function InscricaoVoluntariado() {
               fontSize: 28, marginBottom: 16,
             }}>&#10003;</div>
             <h2 style={{ fontSize: 18, fontWeight: 700, color: C.text, margin: 0 }}>
-              Inscrição recebida!
+              {jaInscrito ? 'Você já está inscrito(a)!' : 'Inscrição recebida!'}
             </h2>
             <p style={{ fontSize: 13, color: C.text3, marginTop: 10, lineHeight: 1.5 }}>
-              Recebemos sua inscrição. Em até 7 dias nossa equipe entra em contato
-              pelo WhatsApp ou e-mail pra falar dos próximos passos. Obrigado por
-              querer servir com a gente!
+              {jaInscrito || (
+                <>Recebemos sua inscrição. Em até 7 dias nossa equipe entra em contato
+                pelo WhatsApp ou e-mail pra falar dos próximos passos. Obrigado por
+                querer servir com a gente!</>
+              )}
             </p>
 
             <div style={{

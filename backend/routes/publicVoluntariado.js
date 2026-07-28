@@ -24,6 +24,21 @@ const {
   temAbreviacaoNome, splitNomeCompleto, registrarConsentimentos, SEXOS, TEXTOS,
 } = require('../services/inscricaoContrato');
 
+// Limiter GENEROSO do router (padrão grupos/NPS/eventos): o form roda em
+// Wi-Fi único da igreja — o teto global de 30/15min derrubava a fila do
+// lounge (sweep 28/07). Anti-spam real = honeypot + contrato.
+const limiterGeral = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: parseInt(process.env.PUBLIC_FORM_RATE_LIMIT_MAX) || (process.env.NODE_ENV === 'production' ? 600 : 5000),
+  skip: () => process.env.NODE_ENV !== 'production',
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Muitas requisições deste endereço. Tente novamente em alguns minutos.' },
+});
+router.use(limiterGeral);
+
+// Estrito (10/15min) SÓ nos endpoints de probing de dados/auth (lookup-cpf,
+// request-login, register) — a inscrição em si usa o teto generoso acima.
 const publicLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
@@ -390,7 +405,7 @@ router.post('/register', publicLimiter, async (req, res) => {
 // ============================================================================
 const AREAS_VALIDAS = new Set(['kids', 'sede', 'ami', 'bridge', 'online']);
 
-router.post('/inscrever-form', publicLimiter, async (req, res) => {
+router.post('/inscrever-form', async (req, res) => { // teto = limiterGeral do router (o estrito de 10 travava a fila do lounge)
   try {
     const {
       nome, sobrenome, nome_completo, email, telefone, cpf, data_nascimento,
@@ -460,15 +475,29 @@ router.post('/inscrever-form', publicLimiter, async (req, res) => {
       return res.status(400).json({ error: 'É preciso aceitar os termos para se inscrever' });
     }
 
-    // Kids/Bridge (menores · LGPD) exigem também nome da mãe e consentimento.
+    // Dados do menor (LGPD): exige quando alguma opção marcada tem a flag
+    // `exige_dados_menor` OU a área é Kids/Bridge — a MESMA união que o client
+    // aplica pra mostrar os campos. Critérios divergentes davam ou formulário
+    // insubmissível (400 citando campo que a tela não mostrava) ou o inverso,
+    // pior: consentimento de antecedentes colhido e triagem nunca aberta
+    // (opção de menor mapeada com area_canonica errada).
     const areaLower = String(area).toLowerCase();
-    const exigeDadosMenor = areaLower === 'kids' || areaLower === 'bridge';
+    let flagMenorDasOpcoes = false;
+    try {
+      const labels = Array.isArray(ministerios_interesse) ? ministerios_interesse.filter(Boolean) : [];
+      if (labels.length) {
+        const { data: opsMenor } = await supabase.from('vol_form_opcoes')
+          .select('id').in('label', labels).eq('exige_dados_menor', true).limit(1);
+        flagMenorDasOpcoes = !!(opsMenor && opsMenor.length);
+      }
+    } catch (e) { console.warn('[PublicVol/inscrever-form] opções de menor:', e.message); }
+    const exigeDadosMenor = flagMenorDasOpcoes || areaLower === 'kids' || areaLower === 'bridge';
     if (exigeDadosMenor && (!nome_mae || String(nome_mae).trim().length < 2)) {
-      return res.status(400).json({ error: 'Nome da mãe obrigatório para Kids/Bridge' });
+      return res.status(400).json({ error: 'Nome da mãe é obrigatório para servir em ministério com crianças e adolescentes' });
     }
-    // Kids/Bridge exigem consentimento explícito pra consulta de antecedentes (LGPD · dado sensível).
+    // Ministério com menores exige consentimento explícito pra consulta de antecedentes (LGPD · dado sensível).
     if (exigeDadosMenor && !consentimento_antecedentes) {
-      return res.status(400).json({ error: 'É necessário autorizar a consulta de antecedentes para servir no Kids/Bridge' });
+      return res.status(400).json({ error: 'É necessário autorizar a consulta de antecedentes para servir em ministério com crianças e adolescentes' });
     }
 
     const nomeCompleto = [cleanNome, cleanSobrenome].filter(Boolean).join(' ');

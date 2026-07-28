@@ -172,14 +172,20 @@ app.use('/api/public/grupos', require('./routes/publicGrupos'));
 // evento presencial em massa = 1 IP de Wi-Fi; a 31ª pessoa era bloqueada.
 // Sem teto prático de inscrições (D9) · limiter próprio generoso no router.
 app.use('/api/public/evento', require('./routes/publicEventoExterno'));
-app.use('/api/public', publicLimiter);
-
-app.use('/api/public/rh-onboarding', require('./routes/publicRhOnboarding'));
-app.use('/api/public/membresia', require('./routes/publicMembresia'));
+// As 4 portas de inscrição abaixo saíram do publicLimiter no sweep 28/07 —
+// mesma razão do NPS/grupos/eventos: domingo no Wi-Fi da igreja é 1 IP só, e
+// o teto de 30/15min derrubava o ~11º visitante (batismo consome 2-3 reqs por
+// carga de form). Cada router tem limiter próprio generoso (600/15min · env
+// PUBLIC_FORM_RATE_LIMIT_MAX); vol mantém 10/15min só no probing
+// (lookup-cpf/request-login/register) e batismo no GET /acesso.
 app.use('/api/public/voluntariado', require('./routes/publicVoluntariado'));
 app.use('/api/public/next', require('./routes/publicNext'));
 app.use('/api/public/batismo', require('./routes/publicBatismo'));
 app.use('/api/public/apresentacao-criancas', require('./routes/publicApresentacao'));
+app.use('/api/public', publicLimiter);
+
+app.use('/api/public/rh-onboarding', require('./routes/publicRhOnboarding'));
+app.use('/api/public/membresia', require('./routes/publicMembresia'));
 app.use('/api/public/decisao-online', require('./routes/publicDecisaoOnline'));
 // Webhook de pagamento (público · sem auth). Montado FORA de /api/public
 // (escapa o publicLimiter de 30/15min) e isento do limiter global no skip()

@@ -1,6 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Tag, ClipboardList, Trash2, Archive, Pencil, MapPin, ScanLine } from 'lucide-react';
 import { useAuth } from '../../../contexts/AuthContext';
+// Coordenador de Operações/Logística = quem tem o cargo lider-logistica (já
+// tem nível 4 no módulo patrimonio na matriz) — decisão do usuário 2026-07-29:
+// a permissão vem do Role do sistema, não de uma atribuição manual à parte.
+const CARGO_COORDENADOR_REVISAO = 'lider-logistica';
 import { patrimonio, logistica } from '../../../api';
 import { Button } from '../../../components/ui/button';
 import BarcodeScanner from '../../../components/BarcodeScanner';
@@ -30,6 +34,21 @@ const INV_STATUS = {
   em_andamento: { c: C.blue, bg: C.blueBg, label: 'Em andamento' },
   concluido: { c: C.green, bg: C.greenBg, label: 'Concluído' },
   cancelado: { c: C.red, bg: C.redBg, label: 'Cancelado' },
+};
+
+const CICLO_STATUS = {
+  aberto: { c: C.blue, bg: C.blueBg, label: 'Aberto' },
+  encerrado: { c: C.text3, bg: '#73737318', label: 'Encerrado' },
+};
+const CONVOCACAO_STATUS = {
+  pendente: { c: C.amber, bg: C.amberBg, label: 'Pendente' },
+  em_andamento: { c: C.blue, bg: C.blueBg, label: 'Em andamento' },
+  concluida: { c: C.green, bg: C.greenBg, label: 'Concluída' },
+};
+const STATUS_FISICO_ITEM = {
+  ok: { c: C.green, bg: C.greenBg, label: 'OK' },
+  danificado: { c: C.amber, bg: C.amberBg, label: 'Danificado' },
+  nao_encontrado: { c: C.red, bg: C.redBg, label: 'Não encontrado' },
 };
 
 const styles = {
@@ -98,12 +117,13 @@ function Input({ label, ...props }) { return (<div style={styles.formGroup}>{lab
 function Select({ label, children, ...props }) { return (<div style={styles.formGroup}>{label && <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">{label}</label>}<select className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" {...props}>{children}</select></div>); }
 function Badge({ status, map }) { const s = map[status] || { c: C.text3, bg: '#73737318', label: status }; return <span style={styles.badge(s.c, s.bg)}>{s.label}</span>; }
 
-const TABS = ['Dashboard', 'Bens', 'Categorias / Localizações', 'Inventários'];
+const TABS = ['Dashboard', 'Bens', 'Categorias / Localizações', 'Inventários', 'Revisão'];
 
 const fmtDateTime = (d) => d ? new Date(d).toLocaleString('pt-BR') : '—';
 
 export default function Patrimonio() {
-  const { isDiretor } = useAuth();
+  const { isAdmin: isDiretor, cargoSlug } = useAuth();
+  const isCoordenadorRevisao = isDiretor || cargoSlug === CARGO_COORDENADOR_REVISAO;
   const [tab, setTab] = useState(0);
   const [dash, setDash] = useState(null);
   const [bens, setBens] = useState([]);
@@ -126,6 +146,11 @@ export default function Patrimonio() {
 
   const [dashError, setDashError] = useState(false);
   const [indicadores, setIndicadores] = useState(null);
+  const [revisaoCiclos, setRevisaoCiclos] = useState([]);
+  const [revisaoIndic, setRevisaoIndic] = useState(null);
+  const [responsaveis, setResponsaveis] = useState([]);
+  const [modalNovoCiclo, setModalNovoCiclo] = useState(false);
+  const [modalConvocacao, setModalConvocacao] = useState(null);
   const loadDash = useCallback(async () => { try { setDashError(false); setDash(await patrimonio.dashboard()); } catch (e) { console.error(e); setDashError(true); setDash({ totalBens: 0, ativos: 0, manutencao: 0, baixados: 0, extraviados: 0, valorTotal: 0, porCategoria: {}, porLocalizacao: {}, inventariosAbertos: 0 }); } }, []);
   const loadIndicadores = useCallback(async () => { try { setIndicadores(await patrimonio.dashboardIndicadores()); } catch (e) { console.error(e); } }, []);
   const loadBens = useCallback(async () => {
@@ -135,8 +160,11 @@ export default function Patrimonio() {
   const loadCats = useCallback(async () => { try { setCategorias(await patrimonio.categorias.list()); } catch (e) { console.error(e); } }, []);
   const loadLocs = useCallback(async () => { try { setLocalizacoes(await patrimonio.localizacoes.list()); } catch (e) { console.error(e); } }, []);
   const loadInvs = useCallback(async () => { try { setInventarios(await patrimonio.inventarios.list()); } catch (e) { console.error(e); } }, []);
+  const loadRevisao = useCallback(async () => { try { setRevisaoCiclos(await patrimonio.revisao.ciclos()); } catch (e) { console.error(e); } }, []);
+  const loadRevisaoIndic = useCallback(async () => { try { setRevisaoIndic(await patrimonio.revisao.indicadores()); } catch (e) { console.error(e); } }, []);
+  const loadResponsaveis = useCallback(async () => { try { setResponsaveis(await patrimonio.revisao.responsaveis()); } catch (e) { console.error(e); } }, []);
 
-  useEffect(() => { loadDash(); loadIndicadores(); loadBens(); loadCats(); loadLocs(); loadInvs(); }, []);
+  useEffect(() => { loadDash(); loadIndicadores(); loadBens(); loadCats(); loadLocs(); loadInvs(); loadRevisao(); loadRevisaoIndic(); loadResponsaveis(); }, []);
   useEffect(() => { loadBens(); }, [filtroStatus, filtroCat, filtroLoc, busca]);
 
   async function saveBem(data) {
@@ -160,6 +188,11 @@ export default function Patrimonio() {
   async function removeLoc(id) { if (!confirm('Remover localização?')) return; try { await patrimonio.localizacoes.remove(id); loadLocs(); } catch (e) { setError(e.message); } }
   async function saveInv(data) { try { await patrimonio.inventarios.create(data); setModalInv(null); loadInvs(); loadDash(); } catch (e) { setError(e.message); } }
   async function updateInvStatus(id, status) { try { const upd = { status }; if (status === 'concluido') upd.data_fim = new Date().toISOString().slice(0, 10); await patrimonio.inventarios.atualizar(id, upd); loadInvs(); loadDash(); } catch (e) { setError(e.message); } }
+  async function criarCiclo(data) { try { await patrimonio.revisao.criarCiclo(data); setModalNovoCiclo(false); loadRevisao(); } catch (e) { setError(e.message); } }
+  async function abrirConvocacao(id) { try { setModalConvocacao(await patrimonio.revisao.convocacao(id)); } catch (e) { setError(e.message); } }
+  async function iniciarConvocacao(id) { try { await patrimonio.revisao.iniciar(id); await abrirConvocacao(id); loadRevisao(); } catch (e) { setError(e.message); } }
+  async function atualizarItemRevisao(itemId, data) { try { await patrimonio.revisao.atualizarItem(itemId, data); if (modalConvocacao) await abrirConvocacao(modalConvocacao.id); loadRevisao(); } catch (e) { setError(e.message); } }
+  async function concluirConvocacao(id) { if (!confirm('Concluir esta convocação? Confirma que a conferência física terminou.')) return; try { await patrimonio.revisao.concluir(id); setModalConvocacao(null); loadRevisao(); loadRevisaoIndic(); } catch (e) { setError(e.message); } }
 
 
   return (
@@ -198,11 +231,19 @@ export default function Patrimonio() {
       )}
       {tab === 2 && <CatLocTab categorias={categorias} localizacoes={localizacoes} newCat={newCat} setNewCat={setNewCat} addCat={addCat} removeCat={removeCat} newLoc={newLoc} setNewLoc={setNewLoc} addLoc={addLoc} removeLoc={removeLoc} isDiretor={isDiretor} />}
       {tab === 3 && <InventariosTab inventarios={inventarios} onNew={() => setModalInv({})} onUpdate={updateInvStatus} isDiretor={isDiretor} />}
+      {tab === 4 && (
+        <RevisaoTab ciclos={revisaoCiclos} indicadores={revisaoIndic}
+          onNovoCiclo={() => setModalNovoCiclo(true)} onAbrirConvocacao={abrirConvocacao}
+          isDiretor={isDiretor} isCoordenadorRevisao={isCoordenadorRevisao}
+        />
+      )}
 
       <BemFormModal open={!!modalBem} data={modalBem} categorias={categorias} localizacoes={localizacoes} onClose={() => setModalBem(null)} onSave={saveBem} />
       <BemDetailModal open={!!modalDetail} data={modalDetail} onClose={() => setModalDetail(null)} onEdit={(b) => { setModalDetail(null); setModalBem(b); }} onBaixar={baixarBem} onMov={(bemId) => setModalMov({ bem_id: bemId })} isDiretor={isDiretor} />
       <MovFormModal open={!!modalMov} data={modalMov} localizacoes={localizacoes} onClose={() => setModalMov(null)} onSave={saveMov} />
       <InvFormModal open={!!modalInv} onClose={() => setModalInv(null)} onSave={saveInv} />
+      <NovoCicloModal open={modalNovoCiclo} responsaveis={responsaveis} onClose={() => setModalNovoCiclo(false)} onSave={criarCiclo} />
+      <ConvocacaoModal open={!!modalConvocacao} data={modalConvocacao} onClose={() => setModalConvocacao(null)} onIniciar={iniciarConvocacao} onAtualizarItem={atualizarItemRevisao} onConcluir={concluirConvocacao} isDiretor={isCoordenadorRevisao} />
     </div>
   );
 }
@@ -387,22 +428,22 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
   return (
     <>
       <div style={styles.filterRow}>
-        <div style={{ display: 'flex', gap: 6, maxWidth: 320, flex: 1, minWidth: 220 }}>
+        <div style={{ display: 'flex', gap: 6, flex: '1 1 220px', minWidth: 200, maxWidth: 320 }}>
           <input className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" placeholder="🔍 Buscar por nome ou número..." value={busca} onChange={e => setBusca(e.target.value)} />
           <Button variant={scanning ? 'destructive' : 'outline'} size="icon" title="Escanear código de barras" onClick={() => { setScanError(''); setScanning(s => !s); }}>
             <ScanLine style={{ width: 16, height: 16 }} />
           </Button>
         </div>
-        <select className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)}>
+        <select style={styles.select} value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)}>
           <option value="">Todos os status</option>
           {Object.entries(STATUS_BEM).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
         </select>
-        <select className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={filtroCat} onChange={e => setFiltroCat(e.target.value)}>
+        <select style={styles.select} value={filtroCat} onChange={e => setFiltroCat(e.target.value)}>
           <option value="">Todas categorias</option>
           <option value="__sem__">— Sem categoria —</option>
           {categorias.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
         </select>
-        <select className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={filtroLoc} onChange={e => setFiltroLoc(e.target.value)}>
+        <select style={styles.select} value={filtroLoc} onChange={e => setFiltroLoc(e.target.value)}>
           <option value="">Todas localizações</option>
           <option value="__sem__">— Sem localização —</option>
           {localizacoes.map(l => <option key={l.id} value={l.id}>{l.nome}</option>)}
@@ -665,6 +706,138 @@ function MovFormModal({ open, data, localizacoes, onClose, onSave }) {
         <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Motivo</label>
         <textarea className="flex w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" style={{ minHeight: 60, resize: 'vertical' }} value={f.motivo || ''} onChange={e => upd('motivo', e.target.value)} />
       </div>
+    </Modal>
+  );
+}
+
+function RevisaoTab({ ciclos, indicadores, onNovoCiclo, onAbrirConvocacao, isDiretor, isCoordenadorRevisao }) {
+  const [expandido, setExpandido] = useState(null);
+  return (
+    <>
+      <div style={{ ...styles.card, padding: 16, marginBottom: 16 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: C.text2, textTransform: 'uppercase', letterSpacing: 0.5 }}>Coordenador do processo</div>
+        <div style={{ fontSize: 13, color: C.text2, marginTop: 2 }}>Quem ocupa o cargo <strong>Líder de Logística</strong> na matriz de permissões acompanha os indicadores e ajusta as rotinas de revisão.</div>
+      </div>
+      {indicadores && (
+        <div className="cbrio-stagger" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, marginBottom: 24 }}>
+          <PatStatCard label="Convocações concluídas" value={indicadores.total_convocacoes_concluidas ?? 0} bg="#3b82f6" svg={null} />
+          <PatStatCard label="Pontualidade" value={indicadores.pontualidade_pct != null ? `${indicadores.pontualidade_pct}%` : '—'} bg="#10b981" svg={null} />
+          <PatStatCard label="Tempo médio de execução" value={indicadores.tempo_medio_minutos != null ? `${indicadores.tempo_medio_minutos} min` : '—'} bg="#f59e0b" svg={null} />
+          <PatStatCard label="Divergências" value={indicadores.divergencia_pct != null ? `${indicadores.divergencia_pct}%` : '—'} bg="#ef4444" svg={null} />
+        </div>
+      )}
+      <div style={{ fontSize: 12, color: C.text3, marginBottom: 12 }}>
+        Pontualidade = cumpriu o prazo da convocação · Velocidade (tempo médio) sempre lida junto com divergências — execução rápida com muita divergência não é bom desempenho.
+      </div>
+      {isCoordenadorRevisao && <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}><Button onClick={onNovoCiclo}>+ Novo ciclo de revisão</Button></div>}
+      {ciclos.length === 0 && <div style={styles.empty}>Nenhum ciclo de revisão criado ainda</div>}
+      {ciclos.map(c => (
+        <div key={c.id} style={{ ...styles.card, marginBottom: 12 }}>
+          <div style={{ ...styles.cardHeader, cursor: 'pointer' }} onClick={() => setExpandido(expandido === c.id ? null : c.id)}>
+            <div>
+              <div style={styles.cardTitle}>Inventário {c.nome}</div>
+              <div style={{ fontSize: 12, color: C.text2, marginTop: 2 }}>
+                {fmtDate(c.data_inicio)} – {fmtDate(c.data_fim)} · Responsável: {c.profiles?.name || '—'} · {c.total_concluidas}/{c.total_convocacoes} localizações revisadas
+              </div>
+            </div>
+            <Badge status={c.status} map={CICLO_STATUS} />
+          </div>
+          {expandido === c.id && (
+            <div style={{ overflowX: 'auto' }}>
+              <table style={styles.table}>
+                <thead><tr>
+                  <th style={styles.th}>Localização</th><th style={styles.th}>Prazo</th><th style={styles.th}>Bens</th>
+                  <th style={styles.th}>Conferidos</th><th style={styles.th}>Divergências</th><th style={styles.th}>Status</th>
+                </tr></thead>
+                <tbody>
+                  {c.convocacoes.map(v => (
+                    <tr key={v.id} className="cbrio-row" style={{ cursor: 'pointer' }} onClick={() => onAbrirConvocacao(v.id)}>
+                      <td style={styles.td}>{v.pat_localizacoes?.nome || '—'}</td>
+                      <td style={styles.td}>{fmtDate(v.prazo)}</td>
+                      <td style={styles.td}>{v.total_bens_esperados}</td>
+                      <td style={styles.td}>{v.total_bens_conferidos}</td>
+                      <td style={styles.td}>{v.total_divergencias}</td>
+                      <td style={styles.td}><Badge status={v.status} map={CONVOCACAO_STATUS} /></td>
+                    </tr>
+                  ))}
+                  {c.convocacoes.length === 0 && <tr><td colSpan={6} style={{ ...styles.td, textAlign: 'center', color: C.text3 }}>Nenhuma localização com bens ativos para revisar</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      ))}
+    </>
+  );
+}
+
+function NovoCicloModal({ open, responsaveis, onClose, onSave }) {
+  const [f, setF] = useState({});
+  useEffect(() => { if (open) setF({ data_inicio: new Date().toISOString().slice(0, 10) }); }, [open]);
+  const upd = (k, v) => setF(p => ({ ...p, [k]: v }));
+  function handleSave() { if (!f.responsavel_id || !f.data_inicio) return; onSave(f); }
+  return (
+    <Modal open={open} onClose={onClose} title="Novo ciclo de revisão" footer={<Button onClick={handleSave}>Criar ciclo</Button>}>
+      <div style={{ fontSize: 13, color: C.text2, marginBottom: 12 }}>
+        Cria um ciclo trimestral (3 meses) e gera automaticamente uma convocação por localização com bens ativos, com prazos distribuídos ao longo do período.
+      </div>
+      <Select label="Responsável pelas revisões *" value={f.responsavel_id || ''} onChange={e => upd('responsavel_id', e.target.value)}>
+        <option value="">Selecionar</option>
+        {(responsaveis || []).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+      </Select>
+      <Input label="Data de início *" type="date" value={f.data_inicio || ''} onChange={e => upd('data_inicio', e.target.value)} />
+    </Modal>
+  );
+}
+
+function RevisaoItemRow({ item, disabled, onSave }) {
+  const conferido = item.encontrado !== null && item.encontrado !== undefined;
+  const [statusFisico, setStatusFisico] = useState(item.status_fisico || 'ok');
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: `1px solid ${C.border}`, gap: 8 }}>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 13, fontWeight: 600 }}>{item.pat_bens?.nome}</div>
+        <div style={{ fontSize: 11, color: C.text3, fontFamily: 'monospace' }}>{fmtCodigo(item.pat_bens?.codigo_barras)}</div>
+      </div>
+      {disabled ? (
+        conferido
+          ? <Badge status={item.status_fisico || (item.encontrado ? 'ok' : 'nao_encontrado')} map={STATUS_FISICO_ITEM} />
+          : <span style={{ fontSize: 12, color: C.text3 }}>Aguardando início</span>
+      ) : (
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
+          <select style={styles.select} value={statusFisico} onChange={e => { setStatusFisico(e.target.value); onSave({ encontrado: e.target.value !== 'nao_encontrado', status_fisico: e.target.value }); }}>
+            <option value="ok">Encontrado · OK</option>
+            <option value="danificado">Encontrado · Danificado</option>
+            <option value="nao_encontrado">Não encontrado</option>
+          </select>
+          {conferido && <span style={{ fontSize: 13, color: C.green }}>✓</span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ConvocacaoModal({ open, data, onClose, onIniciar, onAtualizarItem, onConcluir, isDiretor }) {
+  if (!data) return null;
+  const itens = data.itens || [];
+  const todosConferidos = itens.length > 0 && itens.every(i => i.encontrado !== null && i.encontrado !== undefined);
+  return (
+    <Modal open={open} onClose={onClose} title={`Revisão · ${data.pat_localizacoes?.nome || ''}`}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
+        <div style={{ fontSize: 13, color: C.text2, display: 'flex', alignItems: 'center', gap: 8 }}>Prazo: {fmtDate(data.prazo)} <Badge status={data.status} map={CONVOCACAO_STATUS} /></div>
+        {data.status === 'pendente' && isDiretor && <Button size="xs" onClick={() => onIniciar(data.id)}>Iniciar conferência</Button>}
+      </div>
+      {itens.length === 0 && <div style={styles.empty}>Nenhum bem nesta localização</div>}
+      {itens.map(item => (
+        <RevisaoItemRow key={item.id} item={item} disabled={data.status !== 'em_andamento'} onSave={(payload) => onAtualizarItem(item.id, payload)} />
+      ))}
+      {data.status === 'em_andamento' && isDiretor && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16, paddingTop: 12, borderTop: `1px solid ${C.border}` }}>
+          <Button onClick={() => onConcluir(data.id)} disabled={!todosConferidos} title={!todosConferidos ? 'Confira todos os bens antes de concluir' : ''}>
+            Concluir convocação
+          </Button>
+        </div>
+      )}
     </Modal>
   );
 }

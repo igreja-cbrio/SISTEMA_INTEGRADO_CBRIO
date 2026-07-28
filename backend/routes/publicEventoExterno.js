@@ -23,6 +23,7 @@ const {
   validarCamposPadrao, processarIdentidade, registrarConsentimentos,
   honeypotPreenchido, TEXTOS,
 } = require('../services/inscricaoContrato');
+const { nomesMesmaPessoa } = require('../services/membroMatch');
 // Fachada do núcleo de pagamentos. ⚠️ NUNCA importar `providers/*` aqui — é o
 // que faz trocar de PSP custar 1 arquivo + 1 env (ver services/pagamentos/tipos.js).
 const pagamentos = require('../services/pagamentos');
@@ -61,11 +62,18 @@ async function eventoEspinhaPorSlug(slug) {
 
 // Ocupação pela MESMA régua da fn_insc_inscrever (só `cancelada` devolve vaga).
 // Usada pra EXIBIR e pra decidir o 403 antecipado; a decisão que vale é a de
-// dentro do lock, na RPC.
+// dentro do lock, na RPC. NUNCA derruba a página: falha aqui degrada pra
+// "sem contagem" (null) — o formulário do evento AO VIVO não pode dar 500
+// porque a RPC de vagas soluçou.
 async function ocupacaoEspinha(eventoId) {
-  const { data, error } = await supabase.rpc('fn_insc_vagas', { p_evento_id: eventoId });
-  if (error) throw error;
-  return data || { vagas: null, ocupadas: 0, restantes: null };
+  try {
+    const { data, error } = await supabase.rpc('fn_insc_vagas', { p_evento_id: eventoId });
+    if (error) throw error;
+    return data || { vagas: null, ocupadas: 0, restantes: null };
+  } catch (e) {
+    console.error('[publicEvento espinha] fn_insc_vagas indisponível:', e.message);
+    return null;
+  }
 }
 
 async function espinhaEncerrada(ev) {
@@ -73,7 +81,12 @@ async function espinhaEncerrada(ev) {
   const agora = Date.now();
   if (ev.inscricoes_abrem_em && agora < new Date(ev.inscricoes_abrem_em).getTime()) return true;
   if (ev.inscricoes_encerram_em && agora > new Date(ev.inscricoes_encerram_em).getTime()) return true;
-  if (ev.vagas != null && (await ocupacaoEspinha(ev.id)).restantes <= 0) return true;
+  if (ev.vagas != null) {
+    const ocup = await ocupacaoEspinha(ev.id);
+    // fail-open na LEITURA: sem contagem, não fecha o form — quem decide de
+    // verdade é o lock da fn_insc_inscrever no POST.
+    if (ocup && ocup.restantes != null && ocup.restantes <= 0) return true;
+  }
   return false;
 }
 
@@ -279,11 +292,13 @@ router.get('/pagamento/:token', async (req, res) => {
 
 // GET /:slug — dados públicos do evento (espinha → ext)
 router.get('/:slug', async (req, res) => {
+  try {
   const esp = await eventoEspinhaPorSlug(req.params.slug);
   if (esp) {
-    // Evento pago abre normalmente desde a F3.3 — o curto-circuito que forçava
-    // "encerradas" saiu daqui.
-    const ocup = await ocupacaoEspinha(esp.id);
+    // Evento pago ABRE desde a F3.3 — o curto-circuito `pago ||` saiu. O de
+    // vagas continua: evento sem limite (o Celebra migrou com vagas=null) não
+    // gasta a RPC.
+    const ocup = esp.vagas == null ? null : await ocupacaoEspinha(esp.id);
     // ⚠️ Evento pago MAL CONFIGURADO conta como fechado, senão a pessoa preenche
     // o formulário inteiro e só então leva 503 do POST. O aviso explica por quê.
     const bloqueio = bloqueioPagamento(esp);
@@ -323,6 +338,12 @@ router.get('/:slug', async (req, res) => {
     msg_sucesso_titulo: ev.msg_sucesso_titulo || null,
     msg_sucesso_texto: ev.msg_sucesso_texto || null,
   });
+  } catch (e) {
+    // Único handler que ficava sem try/catch — erro aqui era 500 cru na
+    // página pública do evento ao vivo.
+    console.error('[publicEvento] GET /:slug:', e.message);
+    res.status(500).json({ error: 'Não foi possível carregar o evento agora. Tente de novo em instantes.' });
+  }
 });
 
 // ── POST /:slug/inscrever · ESPINHA ────────────────────────────────────────
@@ -358,17 +379,44 @@ async function inscreverEspinha(req, res, ev) {
     ],
   });
 
-  // Dedup por (evento, CPF) — re-inscrição faz merge preservador
+  // Dedup — re-inscrição faz merge preservador. Duas chaves, na ordem:
+  //   1. (evento, CPF) — linhas novas do contrato;
+  //   2. (evento, telefone) em linha SEM CPF **com nome batendo** — as ~100
+  //      inscrições migradas do Celebra não têm CPF (a coluna nem existia no
+  //      ext); sem este fallback, re-escanear o QR duplicava a pessoa e gerava
+  //      um SEGUNDO número da sorte pro palco. A guarda de nome
+  //      (nomesMesmaPessoa) evita colar na inscrição de um parente que usa o
+  //      mesmo telefone — nome divergente segue criando inscrição própria.
   const { data: dups, error: eDup } = await supabase.from('inscricoes')
-    .select('id, numero_sorte, dados, membro_id, whatsapp_optin, status')
+    .select('id, numero_sorte, dados, membro_id, whatsapp_optin, status, nome_completo, cpf, email, data_nascimento, sexo, endereco, telefone')
     .eq('evento_id', ev.id).eq('cpf', val.cpf).is('deleted_at', null).limit(2);
   if (eDup) throw eDup;
-  const existente = (dups || []).find(d => d.status !== 'cancelada') || (dups || [])[0] || null;
+  let existente = (dups || []).find(d => d.status !== 'cancelada') || (dups || [])[0] || null;
+  if (!existente && val.telefone) {
+    const { data: legadas, error: eLeg } = await supabase.from('inscricoes')
+      .select('id, numero_sorte, dados, membro_id, whatsapp_optin, status, nome_completo, cpf, email, data_nascimento, sexo, endereco, telefone')
+      .eq('evento_id', ev.id).eq('telefone', val.telefone).is('cpf', null).is('deleted_at', null).limit(5);
+    if (eLeg) throw eLeg;
+    existente = (legadas || []).find(d => nomesMesmaPessoa(d.nome_completo, val.nomeCompleto) && d.status !== 'cancelada')
+      || (legadas || []).find(d => nomesMesmaPessoa(d.nome_completo, val.nomeCompleto))
+      || null;
+  }
   if (existente) {
+    // Merge preservador + ENRIQUECIMENTO da linha legada: o que a pessoa
+    // acabou de digitar completa o contrato (nunca sobrescreve valor existente).
     const patch = {
       dados: mesclarDados(existente.dados, ex.respostas),
       dados_anterior: existente.dados || {},
     };
+    // Enriquecimento da linha legada: só preenche o que está VAZIO, nunca
+    // sobrescreve (vindo de origin/main — inscrição do Celebra tinha só
+    // nome+telefone e ganha o resto na re-inscrição).
+    if (!existente.cpf && val.cpf) patch.cpf = val.cpf;
+    if (!existente.email && val.email) patch.email = val.email;
+    if (!existente.data_nascimento && val.dataNascimento) patch.data_nascimento = val.dataNascimento;
+    if (!existente.sexo && val.sexo) patch.sexo = val.sexo;
+    if (!existente.endereco && val.endereco) patch.endereco = val.endereco;
+    if (!existente.telefone && val.telefone) patch.telefone = val.telefone;
     if (existente.status === 'cancelada') {
       // Voltou atrás → reativa. ⚠️ Em evento PAGO reativa como `recebida`, não
       // `confirmada`: confirmar aqui daria a vaga a quem não pagou.
@@ -428,7 +476,13 @@ async function inscreverEspinha(req, res, ev) {
         const cobranca = await cobrarInscricao({ ev, inscricaoId: rpc.id, val, membroId: null });
         return res.json({ ...respostaCobranca(cobranca, ev), ja_inscrito: true });
       }
-      return res.status(200).json({ ok: true, ja_inscrito: true, tem_sorteio: ev.tem_sorteio });
+      // Busca a linha vencedora pra devolver o número da sorte — sem isso a
+      // tela mostrava "Seu número da sorte" com nada embaixo (vindo de
+      // origin/main).
+      const { data: vencedora } = await supabase.from('inscricoes')
+        .select('numero_sorte').eq('evento_id', ev.id).eq('cpf', val.cpf)
+        .is('deleted_at', null).limit(1).maybeSingle();
+      return res.status(200).json({ ok: true, ja_inscrito: true, numero_sorte: vencedora?.numero_sorte ?? null, tem_sorteio: ev.tem_sorteio });
     }
     if (rpc?.motivo === 'sem_vaga') {
       return res.status(409).json({ error: 'As vagas deste evento acabaram de esgotar.', motivo: 'sem_vaga' });

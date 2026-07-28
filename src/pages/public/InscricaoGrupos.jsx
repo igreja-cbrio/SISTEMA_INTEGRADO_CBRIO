@@ -652,6 +652,13 @@ export default function InscricaoGrupos() {
                   📲 <strong>Quero receber avisos do meu grupo no WhatsApp</strong> — lembretes de encontro, materiais e recados da CBRio. Posso cancelar quando quiser.
                 </span>
               </label>
+              {/* Aviso do D4 — o mesmo das outras portas: sem opt-in, nem a
+                  confirmação da inscrição vai pelo WhatsApp. */}
+              {!optinWhats && (
+                <p style={{ fontSize: 11.5, color: C.text3, margin: '-6px 0 12px 2px' }}>
+                  Se você não marcar, não conseguiremos te enviar confirmações, lembretes e avisos pelo WhatsApp.
+                </p>
+              )}
 
               {error && (
                 <div style={{ padding: 10, marginBottom: 12, background: 'rgba(239,68,68,0.15)', border: '1px solid #ef4444', borderRadius: 8, color: '#fca5a5', fontSize: 12 }}>

@@ -9,14 +9,18 @@ const {
   registrarConsentimentos, TEXTOS,
 } = require('../services/inscricaoContrato');
 
-// Rate limit: 10 inscrições por IP a cada 15 min
+// Limiter GENEROSO do router (padrão grupos/NPS/eventos): o form roda em
+// Wi-Fi único (lounge da igreja num domingo) — 10/15min por IP dava 429 na
+// 11ª pessoa da fila (sweep 28/07). Anti-spam real = honeypot + contrato.
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 10,
+  max: parseInt(process.env.PUBLIC_FORM_RATE_LIMIT_MAX) || (process.env.NODE_ENV === 'production' ? 600 : 5000),
+  skip: () => process.env.NODE_ENV !== 'production',
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: 'Muitas inscrições deste endereço. Tente novamente mais tarde.' },
+  message: { error: 'Muitas requisições deste endereço. Tente novamente em alguns minutos.' },
 });
+router.use(limiter);
 
 // Rate limit dedicado pro acesso às fotos (leitura · mais generoso que o de
 // inscrição): uma família reabre/recarrega várias vezes. O token de 32 hex
@@ -150,7 +154,7 @@ router.get('/horarios', async (_req, res) => {
 
 // POST /api/public/batismo
 // Endpoint público (sem autenticação) que recebe inscrição do formulário.
-router.post('/', limiter, async (req, res) => {
+router.post('/', async (req, res) => { // limiter geral já está no router.use (contar 2x reduziria o teto pela metade)
   try {
     const {
       nome, sobrenome, nome_completo, email, telefone, cpf, data_nascimento, sexo,
