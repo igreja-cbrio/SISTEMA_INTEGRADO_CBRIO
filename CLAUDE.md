@@ -74,7 +74,29 @@ Celebra com só nome+telefone continuam válidas para sempre).
   colunas `whatsapp_optin/_em` de cada tabela.
 - Rollout F3.1 porta a porta (1 PR cada, nesta ordem): **eventos externos ✅**
   → **apresentação ✅** → **líderes ✅** → **voluntariado ✅** → **next ✅** →
-  batismo → grupos. Plano de migração + bugs: `docs/modulo-inscricoes/`.
+  **batismo ✅** → grupos. Plano de migração + bugs: `docs/modulo-inscricoes/`.
+- **Porta 6 · Batismo (2026-07-28 · SEM migration — a tabela já tinha tudo):**
+  nome vira campo único (split no server, tolera payload antigo); nascimento
+  ganhou validação real e o rótulo "(opcional)" mentiroso caiu; **sexo
+  obrigatório** (form manda canônico, server segue gravando `M/F`); **termos
+  LGPD + CONSENTIMENTO DE IMAGEM** (fotos da cerimônia — pré-requisito de
+  fotos→marketing da revisão estrutural) + optin na satélite; `GET /textos`;
+  **honeypot agora ponta-a-ponta** (front envia `website`, server trata);
+  **resposta `duplicado:true` agora é EXIBIDA** (antes o front mostrava
+  "Inscrição confirmada!" pra quem já estava inscrito); fix de fuso no
+  `proximoQuartoDomingoISO` (formato local, não UTC); horário obrigatório no
+  submit quando há horários; `status='rejeitado'` segue FORA do CHECK
+  (referências defensivas no código são vocabulário morto — não legalizar).
+
+## ⚠️ Módulo de Comunicação (WhatsApp central) · handoff pro MATHEUS (2026-07-28)
+
+Decisão do Marcos (bloco C da revisão estrutural): fundir Conversas + Menu das
+Conversas + Bot WhatsApp num módulo central com números, templates, mensagens
+automáticas/programadas, chat ao vivo, erros, atendentes e dashboard de
+custo/envios/respostas. **Contexto COMPLETO (inventário verificado no código +
+fases C0–C5 + decisões em aberto): `docs/modulo-comunicacao/contexto-e-plano.md`.**
+Regra de ouro: começar pelo **C0** (capturar `value.statuses` no webhook — sem
+isso não existe relatório) e NÃO reescrever o chat de /conversas.
 - **Porta 5 · Next (2026-07-28 · migration `20260728230000` = M7):** nome vira
   campo único (split no server, tolera payload antigo); **nascimento
   obrigatório+validado SÓ em `POST /inscrever`** — o walk-in do totem

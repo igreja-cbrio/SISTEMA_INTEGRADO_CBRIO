@@ -2305,6 +2305,11 @@ export const apresentacaoCriancasPublico = {
 };
 
 export const batismoPublico = {
+  // Textos canônicos de consentimento (o snapshot gravado é sempre o do backend)
+  textos: async () => {
+    const res = await fetch(`${API}/public/batismo/textos`);
+    const j = await res.json(); if (!res.ok) throw new Error(j.error || 'Erro'); return j;
+  },
   proximaData: async () => {
     const res = await fetch(`${API}/public/batismo/proxima-data`);
     if (!res.ok) throw new Error('Erro ao buscar próxima data');
