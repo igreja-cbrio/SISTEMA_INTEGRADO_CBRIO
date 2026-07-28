@@ -294,31 +294,6 @@ router.get('/revisao/aux/responsaveis', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao listar responsáveis' }); }
 });
 
-// Coordenador ÚNICO do processo de revisão (Coordenador de Operações/Logística
-// — decisão do usuário 2026-07-29: não é por localização). Acompanha os
-// indicadores e pode ajustar as rotinas de revisão; granularidade de poderes
-// fica pra uma próxima leva.
-router.get('/revisao/coordenador', async (req, res) => {
-  try {
-    const { data, error } = await supabase.from('pat_revisao_coordenador')
-      .select('*, profiles!coordenador_id(name, email)').eq('id', 1).maybeSingle();
-    if (error) return res.status(400).json({ error: error.message });
-    res.json(data || { id: 1, coordenador_id: null });
-  } catch (e) { res.status(500).json({ error: 'Erro ao buscar coordenador da revisão' }); }
-});
-
-router.put('/revisao/coordenador', async (req, res) => {
-  try {
-    const { coordenador_id } = req.body;
-    if (!coordenador_id) return res.status(400).json({ error: 'Coordenador é obrigatório' });
-    const { data, error } = await supabase.from('pat_revisao_coordenador')
-      .upsert({ id: 1, coordenador_id, updated_by: req.user.userId, updated_at: new Date().toISOString() })
-      .select('*, profiles!coordenador_id(name, email)').single();
-    if (error) return res.status(400).json({ error: error.message });
-    res.json(data);
-  } catch (e) { res.status(500).json({ error: 'Erro ao definir coordenador da revisão' }); }
-});
-
 router.get('/revisao/ciclos', async (req, res) => {
   try {
     const { data: ciclos, error } = await supabase.from('pat_revisao_ciclos')

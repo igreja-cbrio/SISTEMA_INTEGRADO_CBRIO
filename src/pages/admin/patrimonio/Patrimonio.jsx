@@ -1,6 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Tag, ClipboardList, Trash2, Archive, Pencil, MapPin, ScanLine } from 'lucide-react';
 import { useAuth } from '../../../contexts/AuthContext';
+// Coordenador de Operações/Logística = quem tem o cargo lider-logistica (já
+// tem nível 4 no módulo patrimonio na matriz) — decisão do usuário 2026-07-29:
+// a permissão vem do Role do sistema, não de uma atribuição manual à parte.
+const CARGO_COORDENADOR_REVISAO = 'lider-logistica';
 import { patrimonio, logistica } from '../../../api';
 import { Button } from '../../../components/ui/button';
 import BarcodeScanner from '../../../components/BarcodeScanner';
@@ -118,7 +122,8 @@ const TABS = ['Dashboard', 'Bens', 'Categorias / Localizações', 'Inventários'
 const fmtDateTime = (d) => d ? new Date(d).toLocaleString('pt-BR') : '—';
 
 export default function Patrimonio() {
-  const { isDiretor } = useAuth();
+  const { isDiretor, cargoSlug } = useAuth();
+  const isCoordenadorRevisao = isDiretor || cargoSlug === CARGO_COORDENADOR_REVISAO;
   const [tab, setTab] = useState(0);
   const [dash, setDash] = useState(null);
   const [bens, setBens] = useState([]);
@@ -146,7 +151,6 @@ export default function Patrimonio() {
   const [responsaveis, setResponsaveis] = useState([]);
   const [modalNovoCiclo, setModalNovoCiclo] = useState(false);
   const [modalConvocacao, setModalConvocacao] = useState(null);
-  const [coordenadorRevisao, setCoordenadorRevisao] = useState(null);
   const loadDash = useCallback(async () => { try { setDashError(false); setDash(await patrimonio.dashboard()); } catch (e) { console.error(e); setDashError(true); setDash({ totalBens: 0, ativos: 0, manutencao: 0, baixados: 0, extraviados: 0, valorTotal: 0, porCategoria: {}, porLocalizacao: {}, inventariosAbertos: 0 }); } }, []);
   const loadIndicadores = useCallback(async () => { try { setIndicadores(await patrimonio.dashboardIndicadores()); } catch (e) { console.error(e); } }, []);
   const loadBens = useCallback(async () => {
@@ -159,9 +163,8 @@ export default function Patrimonio() {
   const loadRevisao = useCallback(async () => { try { setRevisaoCiclos(await patrimonio.revisao.ciclos()); } catch (e) { console.error(e); } }, []);
   const loadRevisaoIndic = useCallback(async () => { try { setRevisaoIndic(await patrimonio.revisao.indicadores()); } catch (e) { console.error(e); } }, []);
   const loadResponsaveis = useCallback(async () => { try { setResponsaveis(await patrimonio.revisao.responsaveis()); } catch (e) { console.error(e); } }, []);
-  const loadCoordenadorRevisao = useCallback(async () => { try { setCoordenadorRevisao(await patrimonio.revisao.coordenador()); } catch (e) { console.error(e); } }, []);
 
-  useEffect(() => { loadDash(); loadIndicadores(); loadBens(); loadCats(); loadLocs(); loadInvs(); loadRevisao(); loadRevisaoIndic(); loadResponsaveis(); loadCoordenadorRevisao(); }, []);
+  useEffect(() => { loadDash(); loadIndicadores(); loadBens(); loadCats(); loadLocs(); loadInvs(); loadRevisao(); loadRevisaoIndic(); loadResponsaveis(); }, []);
   useEffect(() => { loadBens(); }, [filtroStatus, filtroCat, filtroLoc, busca]);
 
   async function saveBem(data) {
@@ -190,7 +193,6 @@ export default function Patrimonio() {
   async function iniciarConvocacao(id) { try { await patrimonio.revisao.iniciar(id); await abrirConvocacao(id); loadRevisao(); } catch (e) { setError(e.message); } }
   async function atualizarItemRevisao(itemId, data) { try { await patrimonio.revisao.atualizarItem(itemId, data); if (modalConvocacao) await abrirConvocacao(modalConvocacao.id); loadRevisao(); } catch (e) { setError(e.message); } }
   async function concluirConvocacao(id) { if (!confirm('Concluir esta convocação? Confirma que a conferência física terminou.')) return; try { await patrimonio.revisao.concluir(id); setModalConvocacao(null); loadRevisao(); loadRevisaoIndic(); } catch (e) { setError(e.message); } }
-  async function salvarCoordenadorRevisao(coordenador_id) { try { setCoordenadorRevisao(await patrimonio.revisao.setCoordenador(coordenador_id)); } catch (e) { setError(e.message); } }
 
 
   return (
@@ -231,8 +233,8 @@ export default function Patrimonio() {
       {tab === 3 && <InventariosTab inventarios={inventarios} onNew={() => setModalInv({})} onUpdate={updateInvStatus} isDiretor={isDiretor} />}
       {tab === 4 && (
         <RevisaoTab ciclos={revisaoCiclos} indicadores={revisaoIndic}
-          coordenador={coordenadorRevisao} responsaveis={responsaveis} onSalvarCoordenador={salvarCoordenadorRevisao}
-          onNovoCiclo={() => setModalNovoCiclo(true)} onAbrirConvocacao={abrirConvocacao} isDiretor={isDiretor}
+          onNovoCiclo={() => setModalNovoCiclo(true)} onAbrirConvocacao={abrirConvocacao}
+          isDiretor={isDiretor} isCoordenadorRevisao={isCoordenadorRevisao}
         />
       )}
 
@@ -241,7 +243,7 @@ export default function Patrimonio() {
       <MovFormModal open={!!modalMov} data={modalMov} localizacoes={localizacoes} onClose={() => setModalMov(null)} onSave={saveMov} />
       <InvFormModal open={!!modalInv} onClose={() => setModalInv(null)} onSave={saveInv} />
       <NovoCicloModal open={modalNovoCiclo} responsaveis={responsaveis} onClose={() => setModalNovoCiclo(false)} onSave={criarCiclo} />
-      <ConvocacaoModal open={!!modalConvocacao} data={modalConvocacao} onClose={() => setModalConvocacao(null)} onIniciar={iniciarConvocacao} onAtualizarItem={atualizarItemRevisao} onConcluir={concluirConvocacao} isDiretor={isDiretor} />
+      <ConvocacaoModal open={!!modalConvocacao} data={modalConvocacao} onClose={() => setModalConvocacao(null)} onIniciar={iniciarConvocacao} onAtualizarItem={atualizarItemRevisao} onConcluir={concluirConvocacao} isDiretor={isCoordenadorRevisao} />
     </div>
   );
 }
@@ -708,36 +710,14 @@ function MovFormModal({ open, data, localizacoes, onClose, onSave }) {
   );
 }
 
-function CoordenadorRevisaoCard({ coordenador, responsaveis, onSalvar, isDiretor }) {
-  const [editando, setEditando] = useState(false);
-  const [valor, setValor] = useState('');
-  useEffect(() => { if (editando) setValor(coordenador?.coordenador_id || ''); }, [editando, coordenador]);
-  return (
-    <div style={{ ...styles.card, padding: 16, marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-      <div>
-        <div style={{ fontSize: 12, fontWeight: 700, color: C.text2, textTransform: 'uppercase', letterSpacing: 0.5 }}>Coordenador de Operações/Logística</div>
-        <div style={{ fontSize: 14, fontWeight: 600, marginTop: 2 }}>{coordenador?.profiles?.name || 'Não definido'}</div>
-      </div>
-      {isDiretor && !editando && <Button variant="outline" size="xs" onClick={() => setEditando(true)}>{coordenador?.coordenador_id ? 'Trocar' : 'Definir'}</Button>}
-      {isDiretor && editando && (
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <select style={styles.select} value={valor} onChange={e => setValor(e.target.value)}>
-            <option value="">Selecionar</option>
-            {(responsaveis || []).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-          </select>
-          <Button size="xs" onClick={() => { if (valor) { onSalvar(valor); setEditando(false); } }}>Salvar</Button>
-          <Button variant="ghost" size="xs" onClick={() => setEditando(false)}>Cancelar</Button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function RevisaoTab({ ciclos, indicadores, coordenador, responsaveis, onSalvarCoordenador, onNovoCiclo, onAbrirConvocacao, isDiretor }) {
+function RevisaoTab({ ciclos, indicadores, onNovoCiclo, onAbrirConvocacao, isDiretor, isCoordenadorRevisao }) {
   const [expandido, setExpandido] = useState(null);
   return (
     <>
-      <CoordenadorRevisaoCard coordenador={coordenador} responsaveis={responsaveis} onSalvar={onSalvarCoordenador} isDiretor={isDiretor} />
+      <div style={{ ...styles.card, padding: 16, marginBottom: 16 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: C.text2, textTransform: 'uppercase', letterSpacing: 0.5 }}>Coordenador do processo</div>
+        <div style={{ fontSize: 13, color: C.text2, marginTop: 2 }}>Quem ocupa o cargo <strong>Líder de Logística</strong> na matriz de permissões acompanha os indicadores e ajusta as rotinas de revisão.</div>
+      </div>
       {indicadores && (
         <div className="cbrio-stagger" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, marginBottom: 24 }}>
           <PatStatCard label="Convocações concluídas" value={indicadores.total_convocacoes_concluidas ?? 0} bg="#3b82f6" svg={null} />
@@ -749,7 +729,7 @@ function RevisaoTab({ ciclos, indicadores, coordenador, responsaveis, onSalvarCo
       <div style={{ fontSize: 12, color: C.text3, marginBottom: 12 }}>
         Pontualidade = cumpriu o prazo da convocação · Velocidade (tempo médio) sempre lida junto com divergências — execução rápida com muita divergência não é bom desempenho.
       </div>
-      {isDiretor && <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}><Button onClick={onNovoCiclo}>+ Novo ciclo de revisão</Button></div>}
+      {isCoordenadorRevisao && <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}><Button onClick={onNovoCiclo}>+ Novo ciclo de revisão</Button></div>}
       {ciclos.length === 0 && <div style={styles.empty}>Nenhum ciclo de revisão criado ainda</div>}
       {ciclos.map(c => (
         <div key={c.id} style={{ ...styles.card, marginBottom: 12 }}>

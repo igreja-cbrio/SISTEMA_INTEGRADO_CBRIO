@@ -1407,8 +1407,6 @@ export const patrimonio = {
     atualizarItem: (id, data) => put(`/patrimonio/revisao/itens/${id}`, data),
     concluir: (id) => post(`/patrimonio/revisao/convocacoes/${id}/concluir`, {}),
     indicadores: () => get('/patrimonio/revisao/indicadores'),
-    coordenador: () => get('/patrimonio/revisao/coordenador'),
-    setCoordenador: (coordenador_id) => put('/patrimonio/revisao/coordenador', { coordenador_id }),
   },
 };
 
