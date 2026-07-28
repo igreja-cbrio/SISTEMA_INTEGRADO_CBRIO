@@ -1,5 +1,4 @@
-// Página pública · confirmação de presença de um evento externo (Celebra etc.).
-// Segue o layout dos outros formulários públicos (AnimatedBackground + tema).
+// Página pública · confirmação de presença de um evento (espinha + Celebra/ext).
 // Se o evento tem sorteio, revela o "número da sorte" com confete.
 //
 // PORTA 1 do Contrato de Inscrição (F3.1 · docs/modulo-inscricoes/): campos
@@ -8,6 +7,10 @@
 // imagem quando o evento tem campo de foto. Validações vêm de src/lib/inscricao
 // (fonte única — não recriar máscaras locais). O texto dos termos vem do
 // backend (GET /textos) — o snapshot gravado é sempre o canônico.
+//
+// Layout no MODELO DO GRUPOS (pedido do Marcos 28/07): campos em caixa com
+// label em cima, grid lado a lado (auto-fit 220px), cartão 720px, fonte 16
+// nos inputs (anti-zoom iOS) e container 100dvh + margin auto (fix do iPhone).
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import confetti from 'canvas-confetti';
@@ -27,55 +30,61 @@ function dataLonga(iso?: string | null) {
   return `${d.getDate()} de ${MESES[d.getMonth()]} de ${d.getFullYear()}`;
 }
 
-function Field({ id, label, value, onChange, required, as = 'input', inputMode }: {
+const SPAN: React.CSSProperties = { gridColumn: '1 / -1' };
+
+// Caixa padrão dos inputs (modelo do Grupos · ≥16px evita o zoom do iOS)
+function boxStyle(C: any, focused: boolean): React.CSSProperties {
+  return {
+    width: '100%', padding: '10px 12px', borderRadius: 8, boxSizing: 'border-box',
+    border: `1px solid ${focused ? '#00B39D' : C.inputBorder}`,
+    background: C.isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
+    color: C.text, fontSize: 16, outline: 'none', transition: 'border-color .15s',
+  };
+}
+
+function Rotulo({ children }: { children: React.ReactNode }) {
+  const { C } = usePublicTheme();
+  return <label style={{ fontSize: 12, color: C.text3, display: 'block', marginBottom: 4 }}>{children}</label>;
+}
+
+function Field({ id, label, value, onChange, required, as = 'input', inputMode, maxLength, span }: {
   id: string; label: string; value: string;
   onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
-  required?: boolean; as?: 'input' | 'textarea'; inputMode?: any;
+  required?: boolean; as?: 'input' | 'textarea'; inputMode?: any; maxLength?: number; span?: boolean;
 }) {
+  const { C } = usePublicTheme();
   const [focused, setFocused] = useState(false);
-  const active = focused || (value && String(value).length > 0);
   const Tag: any = as;
   return (
-    <div style={{ position: 'relative', marginBottom: 22 }}>
-      <Tag
-        id={id} name={id} value={value} inputMode={inputMode} rows={as === 'textarea' ? 3 : undefined}
+    <div style={span ? SPAN : undefined}>
+      <Rotulo>{label}{required ? ' *' : ''}</Rotulo>
+      <Tag id={id} name={id} value={value} inputMode={inputMode} maxLength={maxLength}
+        rows={as === 'textarea' ? 3 : undefined}
         onChange={onChange} onFocus={() => setFocused(true)} onBlur={() => setFocused(false)} required={required}
-        style={{
-          display: 'block', width: '100%', padding: '10px 0', fontSize: 14, color: 'var(--cbrio-text)',
-          background: 'transparent', border: 'none', borderBottom: `2px solid ${focused ? '#00B39D' : 'var(--cbrio-border)'}`,
-          outline: 'none', resize: 'vertical', transition: 'border-color .2s',
-        }}
-      />
-      <label htmlFor={id} style={{
-        position: 'absolute', left: 0, pointerEvents: 'none', transition: 'all .2s',
-        top: active ? -14 : 10, fontSize: active ? 11 : 14,
-        color: focused ? '#00B39D' : 'var(--cbrio-text3)',
-      }}>{label}{required ? ' *' : ''}</label>
+        style={{ ...boxStyle(C, focused), resize: as === 'textarea' ? 'vertical' : undefined }} />
     </div>
   );
 }
 
-// Lista suspensa (dropdown) · label flutuante + seta ▾.
-function SelectFloat({ id, label, value, onChange, required, opcoes }: {
+// Lista suspensa (dropdown) em caixa, com seta ▾.
+function SelectBox({ id, label, value, onChange, required, opcoes }: {
   id: string; label: string; value: string;
   onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void; required?: boolean; opcoes: string[];
 }) {
+  const { C } = usePublicTheme();
   const [focused, setFocused] = useState(false);
-  const active = focused || (value && String(value).length > 0);
   return (
-    <div style={{ position: 'relative', marginBottom: 22 }}>
-      <select id={id} name={id} value={value || ''} onChange={onChange} required={required}
-        onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
-        style={{
-          display: 'block', width: '100%', padding: '10px 0', fontSize: 14, color: 'var(--cbrio-text)',
-          background: 'transparent', border: 'none', borderBottom: `2px solid ${focused ? '#00B39D' : 'var(--cbrio-border)'}`,
-          outline: 'none', appearance: 'none', WebkitAppearance: 'none', cursor: 'pointer', transition: 'border-color .2s',
-        }}>
-        <option value=""></option>
-        {opcoes.map((o, i) => <option key={i} value={o} style={{ background: 'var(--cbrio-modal-bg)', color: 'var(--cbrio-text)' }}>{o}</option>)}
-      </select>
-      <label htmlFor={id} style={{ position: 'absolute', left: 0, pointerEvents: 'none', transition: 'all .2s', top: active ? -14 : 10, fontSize: active ? 11 : 14, color: focused ? '#00B39D' : 'var(--cbrio-text3)' }}>{label}{required ? ' *' : ''}</label>
-      <span style={{ position: 'absolute', right: 4, bottom: 12, pointerEvents: 'none', color: 'var(--cbrio-text3)', fontSize: 12 }}>▾</span>
+    <div>
+      <Rotulo>{label}{required ? ' *' : ''}</Rotulo>
+      <div style={{ position: 'relative' }}>
+        <select id={id} name={id} value={value || ''} onChange={onChange} required={required}
+          onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
+          style={{ ...boxStyle(C, focused), appearance: 'none', WebkitAppearance: 'none', cursor: 'pointer', paddingRight: 28 }}>
+          <option value="">Selecione…</option>
+          {opcoes.map((o, i) => <option key={i} value={o} style={{ background: 'var(--cbrio-modal-bg)', color: 'var(--cbrio-text)' }}>{o}</option>)}
+        </select>
+        <span style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: C.text3, fontSize: 12 }}>▾</span>
+      </div>
     </div>
   );
 }
@@ -84,6 +93,7 @@ function SelectFloat({ id, label, value, onChange, required, opcoes }: {
 function PillSelect({ label, value, onPick, required, opcoes, multi }: {
   label: string; value: string; onPick: (v: string) => void; required?: boolean; opcoes: string[]; multi?: boolean;
 }) {
+  const { C } = usePublicTheme();
   const sels = multi ? String(value || '').split(',').map(s => s.trim()).filter(Boolean) : [];
   const isSel = (o: string) => multi ? sels.includes(o) : value === o;
   function pick(o: string) {
@@ -92,8 +102,8 @@ function PillSelect({ label, value, onPick, required, opcoes, multi }: {
     onPick(novo.join(', '));
   }
   return (
-    <div style={{ marginBottom: 24 }}>
-      <div style={{ fontSize: 13, color: 'var(--cbrio-text3)', marginBottom: 10 }}>{label}{required ? ' *' : ''}{multi ? ' (pode marcar mais de uma)' : ''}</div>
+    <div style={SPAN}>
+      <Rotulo>{label}{required ? ' *' : ''}{multi ? ' (pode marcar mais de uma)' : ''}</Rotulo>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
         {opcoes.map((o, i) => {
           const sel = isSel(o);
@@ -101,9 +111,9 @@ function PillSelect({ label, value, onPick, required, opcoes, multi }: {
             <button key={i} type="button" onClick={() => pick(o)}
               style={{
                 padding: '9px 15px', borderRadius: 999, fontSize: 13.5, cursor: 'pointer', lineHeight: 1.1,
-                border: `1.5px solid ${sel ? '#00B39D' : 'var(--cbrio-border)'}`,
+                border: `1.5px solid ${sel ? '#00B39D' : C.inputBorder}`,
                 background: sel ? 'linear-gradient(90deg,#00B39D,#00d9bd)' : 'transparent',
-                color: sel ? '#fff' : 'var(--cbrio-text)', fontWeight: sel ? 700 : 500,
+                color: sel ? '#fff' : C.text, fontWeight: sel ? 700 : 500,
                 boxShadow: sel ? '0 4px 14px rgba(0,179,157,0.35)' : 'none', transition: 'all .15s',
               }}>{o}</button>
           );
@@ -119,6 +129,7 @@ const REDES_SOCIAIS = ['Instagram', 'Facebook', 'X (Twitter)', 'TikTok', 'YouTub
 function RedeSocialField({ label, value, onChange, required }: {
   label: string; value: string; onChange: (v: string) => void; required?: boolean;
 }) {
+  const { C } = usePublicTheme();
   const parse = (v: string) => { const s = String(v || ''); const i = s.indexOf(' · '); return i >= 0 ? [s.slice(0, i), s.slice(i + 3)] : ['', s]; };
   const [rede, setRede] = useState(() => parse(value)[0]);
   const [handle, setHandle] = useState(() => parse(value)[1]);
@@ -128,21 +139,20 @@ function RedeSocialField({ label, value, onChange, required }: {
     onChange(v);
   }
   return (
-    <div style={{ marginBottom: 24 }}>
-      <div style={{ fontSize: 13, color: 'var(--cbrio-text3)', marginBottom: 10 }}>{label}{required ? ' *' : ''}</div>
+    <div style={SPAN}>
+      <Rotulo>{label}{required ? ' *' : ''}</Rotulo>
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-        <div style={{ position: 'relative', flex: '0 0 140px' }}>
-          <select value={rede} onChange={e => { setRede(e.target.value); emit(e.target.value, handle); }}
-            required={required}
-            style={{ display: 'block', width: '100%', padding: '10px 0', fontSize: 14, color: 'var(--cbrio-text)', background: 'transparent', border: 'none', borderBottom: '2px solid var(--cbrio-border)', outline: 'none', appearance: 'none', WebkitAppearance: 'none', cursor: 'pointer' }}>
+        <div style={{ position: 'relative', flex: '0 0 150px' }}>
+          <select value={rede} onChange={e => { setRede(e.target.value); emit(e.target.value, handle); }} required={required}
+            style={{ ...boxStyle(C, false), appearance: 'none', WebkitAppearance: 'none', cursor: 'pointer', paddingRight: 26 }}>
             <option value="">Rede…</option>
             {REDES_SOCIAIS.map((o, i) => <option key={i} value={o} style={{ background: 'var(--cbrio-modal-bg)', color: 'var(--cbrio-text)' }}>{o}</option>)}
           </select>
-          <span style={{ position: 'absolute', right: 4, bottom: 12, pointerEvents: 'none', color: 'var(--cbrio-text3)', fontSize: 12 }}>▾</span>
+          <span style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: C.text3, fontSize: 12 }}>▾</span>
         </div>
         <input value={handle} onChange={e => { setHandle(e.target.value); emit(rede, e.target.value); }}
           onFocus={() => setFoco(true)} onBlur={() => setFoco(false)} placeholder="@usuário ou link"
-          style={{ flex: 1, minWidth: 160, padding: '10px 0', fontSize: 14, color: 'var(--cbrio-text)', background: 'transparent', border: 'none', borderBottom: `2px solid ${foco ? '#00B39D' : 'var(--cbrio-border)'}`, outline: 'none' }} />
+          style={{ ...boxStyle(C, foco), flex: 1, minWidth: 160, width: undefined }} />
       </div>
     </div>
   );
@@ -155,6 +165,7 @@ function ImagemField({ slug, label, value, onChange, onBusy, required }: {
   slug: string; label: string; value: string;
   onChange: (url: string) => void; onBusy: (busy: boolean) => void; required?: boolean;
 }) {
+  const { C } = usePublicTheme();
   const [subindo, setSubindo] = useState(false);
   const [erroLocal, setErroLocal] = useState('');
   async function enviar(file?: File) {
@@ -166,19 +177,19 @@ function ImagemField({ slug, label, value, onChange, onBusy, required }: {
     finally { setSubindo(false); onBusy(false); }
   }
   return (
-    <div style={{ marginBottom: 24 }}>
-      <div style={{ fontSize: 13, color: 'var(--cbrio-text3)', marginBottom: 10 }}>{label}{required ? ' *' : ''}</div>
+    <div style={SPAN}>
+      <Rotulo>{label}{required ? ' *' : ''}</Rotulo>
       {value ? (
         <div style={{ position: 'relative', display: 'inline-block' }}>
-          <img src={value} alt={label} style={{ maxHeight: 130, maxWidth: '100%', borderRadius: 12, border: '1px solid var(--cbrio-border)', display: 'block', background: '#fff' }} />
+          <img src={value} alt={label} style={{ maxHeight: 130, maxWidth: '100%', borderRadius: 12, border: `1px solid ${C.inputBorder}`, display: 'block', background: '#fff' }} />
           <button type="button" onClick={() => onChange('')} aria-label="Remover imagem"
             style={{ position: 'absolute', top: 6, right: 6, background: 'rgba(0,0,0,0.6)', color: '#fff', border: 'none', borderRadius: 999, width: 26, height: 26, cursor: 'pointer', fontSize: 16, lineHeight: 1 }}>×</button>
         </div>
       ) : (
         <label style={{
           display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, textAlign: 'center',
-          cursor: subindo ? 'default' : 'pointer', border: '1.5px dashed var(--cbrio-border)', borderRadius: 12,
-          padding: '22px 14px', fontSize: 13.5, color: 'var(--cbrio-text3)',
+          cursor: subindo ? 'default' : 'pointer', border: `1.5px dashed ${C.inputBorder}`, borderRadius: 12,
+          padding: '22px 14px', fontSize: 13.5, color: C.text3,
         }}>
           {subindo ? 'Enviando…' : '📷 Enviar imagem (PNG, JPG, WEBP)'}
           <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" disabled={subindo}
@@ -190,21 +201,22 @@ function ImagemField({ slug, label, value, onChange, onBusy, required }: {
   );
 }
 
-// Sexo em 2 pills (contrato: sempre e somente masculino/feminino · D8)
-function SexoPills({ value, onPick }: { value: string; onPick: (v: string) => void }) {
+// Sexo em 2 botões-caixa (contrato: sempre e somente masculino/feminino · D8)
+function SexoBox({ value, onPick }: { value: string; onPick: (v: string) => void }) {
+  const { C } = usePublicTheme();
   return (
-    <div style={{ marginBottom: 24 }}>
-      <div style={{ fontSize: 13, color: 'var(--cbrio-text3)', marginBottom: 10 }}>Sexo *</div>
+    <div>
+      <Rotulo>Sexo *</Rotulo>
       <div style={{ display: 'flex', gap: 8 }}>
         {SEXOS.map((o) => {
           const sel = value === o;
           return (
             <button key={o} type="button" onClick={() => onPick(o)} aria-pressed={sel}
               style={{
-                flex: 1, padding: '10px 15px', borderRadius: 999, fontSize: 13.5, cursor: 'pointer',
-                border: `1.5px solid ${sel ? '#00B39D' : 'var(--cbrio-border)'}`,
-                background: sel ? 'linear-gradient(90deg,#00B39D,#00d9bd)' : 'transparent',
-                color: sel ? '#fff' : 'var(--cbrio-text)', fontWeight: sel ? 700 : 500,
+                flex: 1, minHeight: 42, padding: '9px 10px', borderRadius: 8, fontSize: 13.5, cursor: 'pointer',
+                border: `1px solid ${sel ? '#00B39D' : C.inputBorder}`,
+                background: sel ? 'rgba(0,179,157,0.12)' : (C.isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)'),
+                color: sel ? '#00B39D' : C.text, fontWeight: sel ? 700 : 500,
                 textTransform: 'capitalize', transition: 'all .15s',
               }}>{o}</button>
           );
@@ -218,11 +230,12 @@ function SexoPills({ value, onPick }: { value: string; onPick: (v: string) => vo
 function ConsentBox({ checked, onChange, children }: {
   checked: boolean; onChange: (v: boolean) => void; children: React.ReactNode;
 }) {
+  const { C } = usePublicTheme();
   return (
-    <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start', marginBottom: 16, cursor: 'pointer' }}>
+    <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start', marginBottom: 14, cursor: 'pointer' }}>
       <input type="checkbox" checked={checked} onChange={e => onChange(e.target.checked)}
         style={{ marginTop: 3, width: 16, height: 16, accentColor: '#00B39D', flexShrink: 0 }} />
-      <span style={{ fontSize: 12, color: 'var(--cbrio-text3)', lineHeight: 1.5 }}>{children}</span>
+      <span style={{ fontSize: 12, color: C.text3, lineHeight: 1.5 }}>{children}</span>
     </label>
   );
 }
@@ -310,35 +323,41 @@ export default function EventoExterno() {
 
   return (
     <div style={{
-      minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
-      position: 'relative', overflow: 'hidden', padding: '40px 16px', background: C.pageBg,
+      // 100dvh + rolagem livre + cartão via margin:auto (mesmo fix do Grupos —
+      // o antigo 100vh + alignItems:center cortava o rodapé no iPhone).
+      minHeight: '100dvh', display: 'flex', position: 'relative',
+      padding: 'clamp(20px, 5vw, 40px) clamp(10px, 3vw, 16px)',
+      paddingBottom: 'calc(clamp(20px, 5vw, 40px) + env(safe-area-inset-bottom, 0px))',
+      background: C.pageBg,
     }}>
-      <AnimatedBackground />
+      <div aria-hidden="true" style={{ position: 'fixed', inset: 0, overflow: 'hidden', pointerEvents: 'none' }}>
+        <AnimatedBackground />
+      </div>
       <PublicThemeToggle />
 
       <div style={{
-        position: 'relative', zIndex: 1, width: '100%', maxWidth: 560,
+        position: 'relative', zIndex: 1, width: '100%', maxWidth: 720, margin: 'auto',
         background: C.card, backdropFilter: 'blur(24px)',
         border: `1px solid ${C.cardBorder}`, borderRadius: 20,
-        padding: 'clamp(28px, 6vw, 40px) clamp(18px, 5vw, 36px)',
+        padding: 'clamp(20px, 4.5vw, 32px) clamp(16px, 4vw, 28px)',
       }}>
         {evento?.capa_url && (
           <img src={evento.capa_url} alt={evento?.nome || 'capa'}
-            style={{ width: '100%', maxHeight: 200, objectFit: 'cover', borderRadius: 14, marginBottom: 20, display: 'block' }} />
+            style={{ width: '100%', maxHeight: 220, objectFit: 'cover', borderRadius: 14, marginBottom: 18, display: 'block' }} />
         )}
-        <div style={{ textAlign: 'center', marginBottom: 28 }}>
-          {!evento?.capa_url && <img src="/logo-cbrio-icon.png" alt="CBRio" style={{ width: 72, height: 72, marginBottom: 12, display: 'inline-block' }} />}
+        <div style={{ textAlign: 'center', marginBottom: 22 }}>
+          {!evento?.capa_url && <img src="/logo-cbrio-icon.png" alt="CBRio" style={{ width: 64, height: 64, marginBottom: 10, display: 'inline-block' }} />}
           {carregando ? (
             <p style={{ color: C.text3, fontSize: 14 }}>Carregando…</p>
           ) : erro && !evento ? (
             <p style={{ color: C.text3, fontSize: 14 }}>{erro}</p>
           ) : (
             <>
-              <h1 style={{ fontSize: 26, fontWeight: 800, margin: 0, letterSpacing: -0.5, background: 'linear-gradient(90deg, #00B39D, #00d9bd)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' }}>
+              <h1 style={{ fontSize: 'clamp(22px, 6vw, 27px)', fontWeight: 800, margin: 0, letterSpacing: -0.5, background: 'linear-gradient(90deg, #00B39D, #00d9bd)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' }}>
                 {evento?.nome}
               </h1>
               {(dataLonga(evento?.data) || evento?.hora) && (
-                <div style={{ display: 'inline-block', marginTop: 12, padding: '6px 16px', borderRadius: 999, background: 'rgba(0,179,157,0.12)', border: '1px solid rgba(0,179,157,0.3)', color: '#00B39D', fontSize: 14, fontWeight: 700 }}>
+                <div style={{ display: 'inline-block', marginTop: 10, padding: '6px 16px', borderRadius: 999, background: 'rgba(0,179,157,0.12)', border: '1px solid rgba(0,179,157,0.3)', color: '#00B39D', fontSize: 14, fontWeight: 700 }}>
                   {[dataLonga(evento?.data), evento?.hora].filter(Boolean).join(' · ')}
                 </div>
               )}
@@ -373,50 +392,52 @@ export default function EventoExterno() {
             <p style={{ textAlign: 'center', color: C.text3, fontSize: 14, padding: '20px 0' }}>{evento.aviso || 'As inscrições deste evento estão encerradas.'}</p>
           ) : (
             <form onSubmit={enviar}>
-              {erro && <div style={{ background: '#ef444418', border: '1px solid #ef444440', borderRadius: 10, padding: '10px 14px', marginBottom: 20, fontSize: 13, color: '#ef4444' }}>{erro}</div>}
+              {erro && <div style={{ background: '#ef444418', border: '1px solid #ef444440', borderRadius: 10, padding: '10px 14px', marginBottom: 16, fontSize: 13, color: '#ef4444' }}>{erro}</div>}
 
-              {/* Campos padrão do contrato (fixos em todo formulário) */}
-              <Field id="nome_completo" label="Nome completo (sem abreviar)" value={nomeCompleto} onChange={e => setNomeCompleto(e.target.value)} required />
-              <Field id="telefone" label="WhatsApp" value={telefone} onChange={e => setTelefone(mascaraTelefone(e.target.value))} required inputMode="tel" />
-              <Field id="cpf" label="CPF" value={cpf} onChange={e => setCpf(mascaraCpf(e.target.value))} required inputMode="numeric" />
-              <Field id="email" label="E-mail" value={email} onChange={e => setEmail(e.target.value)} required inputMode="email" />
-              <div style={{ marginBottom: 22 }}>
-                <div style={{ fontSize: 13, color: 'var(--cbrio-text3)', marginBottom: 8 }}>Data de nascimento *</div>
-                <BirthDatePicker value={nascimento} onChange={setNascimento} />
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(220px, 100%), 1fr))', gap: 12 }}>
+                {/* Campos padrão do contrato (fixos em todo formulário · ordem do Grupos) */}
+                <Field id="nome_completo" label="Nome completo (sem abreviar)" value={nomeCompleto} onChange={e => setNomeCompleto(e.target.value)} required />
+                <Field id="telefone" label="Celular / WhatsApp" value={telefone} onChange={e => setTelefone(mascaraTelefone(e.target.value))} required inputMode="tel" maxLength={16} />
+                <div>
+                  <Rotulo>Data de nascimento *</Rotulo>
+                  <BirthDatePicker value={nascimento} onChange={setNascimento} placeholder="dia/mês/ano" />
+                </div>
+                <SexoBox value={sexo} onPick={setSexo} />
+                <Field id="cpf" label="CPF" value={cpf} onChange={e => setCpf(mascaraCpf(e.target.value))} required inputMode="numeric" maxLength={14} />
+                <Field id="email" label="E-mail" value={email} onChange={e => setEmail(e.target.value)} required inputMode="email" />
+                <Field id="endereco" label="Endereço (opcional)" value={endereco} onChange={e => setEndereco(e.target.value)} />
+
+                {/* Campos específicos deste evento (form-builder) */}
+                {(evento.campos || []).map((c: any) => (
+                  c.tipo === 'select' ? (
+                    <SelectBox key={c.key} id={c.key} label={c.label} value={dados[c.key] || ''} onChange={setCampo(c.key)} required={c.obrigatorio} opcoes={c.opcoes || []} />
+                  ) : (c.tipo === 'escolha' || c.tipo === 'multi') ? (
+                    <PillSelect key={c.key} label={c.label} value={dados[c.key] || ''} required={c.obrigatorio} opcoes={c.opcoes || []} multi={c.tipo === 'multi'}
+                      onPick={(v) => setDados(d => ({ ...d, [c.key]: v }))} />
+                  ) : c.tipo === 'rede_social' ? (
+                    <RedeSocialField key={c.key} label={c.label} value={dados[c.key] || ''} required={c.obrigatorio}
+                      onChange={(v) => setDados(d => ({ ...d, [c.key]: v }))} />
+                  ) : c.tipo === 'imagem' ? (
+                    <ImagemField key={c.key} slug={slug} label={c.label} value={dados[c.key] || ''} required={c.obrigatorio}
+                      onChange={(url) => setDados(d => ({ ...d, [c.key]: url }))} onBusy={marcarBusy} />
+                  ) : (
+                    <Field key={c.key} id={c.key} label={c.label} value={dados[c.key] || ''} onChange={setCampo(c.key)}
+                      required={c.obrigatorio} as={c.tipo === 'textarea' ? 'textarea' : 'input'} span={c.tipo === 'textarea'}
+                      inputMode={c.tipo === 'email' ? 'email' : c.tipo === 'numero' ? 'numeric' : undefined} />
+                  )
+                ))}
               </div>
-              <SexoPills value={sexo} onPick={setSexo} />
-              <Field id="endereco" label="Endereço (opcional)" value={endereco} onChange={e => setEndereco(e.target.value)} />
-
-              {/* Campos específicos deste evento (form-builder) */}
-              {(evento.campos || []).map((c: any) => (
-                c.tipo === 'select' ? (
-                  <SelectFloat key={c.key} id={c.key} label={c.label} value={dados[c.key] || ''} onChange={setCampo(c.key)} required={c.obrigatorio} opcoes={c.opcoes || []} />
-                ) : (c.tipo === 'escolha' || c.tipo === 'multi') ? (
-                  <PillSelect key={c.key} label={c.label} value={dados[c.key] || ''} required={c.obrigatorio} opcoes={c.opcoes || []} multi={c.tipo === 'multi'}
-                    onPick={(v) => setDados(d => ({ ...d, [c.key]: v }))} />
-                ) : c.tipo === 'rede_social' ? (
-                  <RedeSocialField key={c.key} label={c.label} value={dados[c.key] || ''} required={c.obrigatorio}
-                    onChange={(v) => setDados(d => ({ ...d, [c.key]: v }))} />
-                ) : c.tipo === 'imagem' ? (
-                  <ImagemField key={c.key} slug={slug} label={c.label} value={dados[c.key] || ''} required={c.obrigatorio}
-                    onChange={(url) => setDados(d => ({ ...d, [c.key]: url }))} onBusy={marcarBusy} />
-                ) : (
-                  <Field key={c.key} id={c.key} label={c.label} value={dados[c.key] || ''} onChange={setCampo(c.key)}
-                    required={c.obrigatorio} as={c.tipo === 'textarea' ? 'textarea' : 'input'}
-                    inputMode={c.tipo === 'email' ? 'email' : undefined} />
-                )
-              ))}
 
               {/* Consentimentos (Contrato de Inscrição) */}
-              <div style={{ marginTop: 6 }}>
+              <div style={{ marginTop: 18 }}>
                 <ConsentBox checked={aceitaTermos} onChange={setAceitaTermos}>
-                  <b style={{ color: 'var(--cbrio-text)' }}>Li e aceito os termos *</b><br />{textos.termos_lgpd}
+                  <b style={{ color: C.text }}>Li e aceito os termos *</b><br />{textos.termos_lgpd}
                 </ConsentBox>
                 {temCampoImagem && (
                   <ConsentBox checked={consentImagem} onChange={setConsentImagem}>{textos.imagem}</ConsentBox>
                 )}
                 <ConsentBox checked={optin} onChange={setOptin}>
-                  📲 <b style={{ color: 'var(--cbrio-text)' }}>Quero receber avisos deste evento no WhatsApp</b><br />
+                  📲 <b style={{ color: C.text }}>Quero receber avisos deste evento no WhatsApp</b><br />
                   {textos.aviso_optin || AVISO_OPTIN}
                 </ConsentBox>
               </div>

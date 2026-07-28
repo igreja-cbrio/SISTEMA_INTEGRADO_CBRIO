@@ -376,8 +376,9 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
               const insc = det.matriculas.length;
               const pct = (n: number) => insc > 0 ? Math.round((n / insc) * 100) : 0;
               const unicos = det.matriculas.filter(m => presCount(m.id) >= 1).length;
+              const formados = det.matriculas.filter(m => m.status === 'formado').length;
               return (
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-3">
                   <StatCard label="Inscritos" value={insc} color={C.info} icon={Users} />
                   {[...det.encontros].sort((a, b) => (a.numero || 0) - (b.numero || 0)).map(e => {
                     const n = present[e.id]?.size || 0;
@@ -389,6 +390,8 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
                   })}
                   <StatCard label="Vieram ao menos 1x" value={unicos} sub={`${pct(unicos)}% dos inscritos`}
                     color={C.warn} icon={CheckCircle2} />
+                  <StatCard label="Formados" value={formados} sub={`${pct(formados)}% dos inscritos · presentes nos 2 encontros`}
+                    color={C.primary} icon={GraduationCap} />
                 </div>
               );
             })()}
