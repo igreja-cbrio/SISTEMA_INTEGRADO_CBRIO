@@ -68,10 +68,15 @@ app.use(rateLimit({
   // estourariam o limite por-IP. Todos têm limiter próprio generoso
   // (routes/publicNps.js · routes/publicGrupos.js · routes/publicEventoExterno.js).
   // Ver mounts abaixo.
+  // ⚠️ O webhook de pagamento também sai daqui: o PSP entrega de poucos IPs
+  // fixos e em rajada, então 500/15min por IP é atingível num lançamento. 429
+  // aqui = pagamento aprovado com inscrição não confirmada, e vários PSPs
+  // DESATIVAM o webhook depois de N falhas (falha silenciosa e permanente).
   skip: (req) => process.env.NODE_ENV !== 'production'
     || req.path.startsWith('/api/public/nps')
     || req.path.startsWith('/api/public/grupos')
-    || req.path.startsWith('/api/public/evento'),
+    || req.path.startsWith('/api/public/evento')
+    || req.path.startsWith('/api/pagamentos-webhook'),
 }));
 app.use(hpp());
 app.use(compression());
@@ -176,6 +181,10 @@ app.use('/api/public/next', require('./routes/publicNext'));
 app.use('/api/public/batismo', require('./routes/publicBatismo'));
 app.use('/api/public/apresentacao-criancas', require('./routes/publicApresentacao'));
 app.use('/api/public/decisao-online', require('./routes/publicDecisaoOnline'));
+// Webhook de pagamento (público · sem auth). Montado FORA de /api/public
+// (escapa o publicLimiter de 30/15min) e isento do limiter global no skip()
+// acima. Perder entrega aqui = pagamento aprovado sem inscrição confirmada.
+app.use('/api/pagamentos-webhook', require('./routes/pagamentosWebhook'));
 // Webhook WhatsApp (público · sem auth, fora do publicLimiter pra não
 // perder entregas em rajada). Montado ANTES do admin /api/whatsapp.
 app.use('/api/whatsapp/webhook', require('./routes/publicWhatsapp'));
