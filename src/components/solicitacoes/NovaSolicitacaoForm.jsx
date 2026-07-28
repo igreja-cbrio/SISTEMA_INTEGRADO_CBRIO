@@ -25,6 +25,7 @@ import { useState, useEffect, useRef } from 'react';
 import { solicitacoes as api } from '../../api';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
+import { DatePicker } from '../ui/date-picker';
 import { Label } from '../ui/label';
 import { Textarea } from '../ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
@@ -500,7 +501,7 @@ export default function NovaSolicitacaoForm({ prefill = null, categoriasPermitid
           <div className="grid grid-cols-3 gap-2">
             <div className="space-y-2">
               <Label className="text-xs">Data *</Label>
-              <Input type="date" value={form.data_uso} onChange={e => setForm(f => ({ ...f, data_uso: e.target.value }))} />
+              <DatePicker value={form.data_uso} onChange={v => setForm(f => ({ ...f, data_uso: v }))} />
             </div>
             <div className="space-y-2">
               <Label className="text-xs">Início</Label>
@@ -730,9 +731,9 @@ export default function NovaSolicitacaoForm({ prefill = null, categoriasPermitid
         <>
           <div className="space-y-2">
             <Label>Data da compra *</Label>
-            <Input type="date" max={new Date().toISOString().slice(0, 10)}
+            <DatePicker max={new Date().toISOString().slice(0, 10)}
               value={form.data_compra}
-              onChange={e => setForm(f => ({ ...f, data_compra: e.target.value }))} />
+              onChange={v => setForm(f => ({ ...f, data_compra: v }))} />
           </div>
           {/* Comprovante — drag and drop */}
           <div className="space-y-2">
@@ -791,7 +792,7 @@ export default function NovaSolicitacaoForm({ prefill = null, categoriasPermitid
       {form.categoria && form.categoria !== 'reserva_espaco' && (
         <div className="space-y-2">
           <Label>{isPagamento ? 'Vencimento *' : 'Data necessária (opcional)'}</Label>
-          <Input type="date" value={form.data_necessaria} onChange={e => setForm(f => ({ ...f, data_necessaria: e.target.value }))} />
+          <DatePicker value={form.data_necessaria} onChange={v => setForm(f => ({ ...f, data_necessaria: v }))} />
           <p className="text-xs text-muted-foreground">
             {isPagamento
               ? 'Quando o boleto/nota vence. Priorizamos pra não pagar com atraso.'
