@@ -308,6 +308,9 @@ export const inscricoesApi = {
   atualizarEvento: (id, data) => put(`/inscricoes/eventos/${id}`, data),
   excluirEvento: (id) => del(`/inscricoes/eventos/${id}`),
   novaEdicao: (id, data) => post(`/inscricoes/eventos/${id}/nova-edicao`, data),
+  sortear: (id, premio, permitirRepetir) => post(`/inscricoes/eventos/${id}/sortear`, { premio, permitir_repetir: !!permitirRepetir }),
+  atualizarInscricao: (eventoId, inscricaoId, data) => patch(`/inscricoes/eventos/${eventoId}/inscricoes/${inscricaoId}`, data),
+  excluirInscricao: (eventoId, inscricaoId) => del(`/inscricoes/eventos/${eventoId}/inscricoes/${inscricaoId}`),
   uploadCapa: (file) => { const fd = new FormData(); fd.append('arquivo', file); return requestFile('/inscricoes/upload-capa', fd); },
 };
 
