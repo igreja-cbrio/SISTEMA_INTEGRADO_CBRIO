@@ -4046,16 +4046,82 @@ DOMÍNIO que aponta pra ele** (migration `20260729020000` · aditiva).
   página pública `/evento/:slug`. `publicEventoExterno.js:127` já reservava a
   vaga do Pix: `const pago = !!esp.pagamento_ativo; // Pix chega na F3.3`.
 
-### Falta (F3.3 pagamento + painel)
+### ✅ Camada JS + webhook + crons (2026-07-28 · SEM migration)
 
-Adapter Asaas + `webhooks.js` + rota `/api/pagamentos-webhook` **fora dos rate
-limiters** (limiter global 500/15min e `publicLimiter` 30/15min derrubariam a
-rajada de retry do PSP em 429 = pagamento aprovado com inscrição não
-confirmada; adicionar o path ao `skip()` do global, padrão que o WhatsApp já
-usa) + crons de expiração/reconciliação (**o webhook é otimização de latência;
-o cron é a verdade**) + `imprimirListaRetiro.ts` agrupando por faixa de idade/
-sexo (molde: `imprimirListaPresencaBatismo.ts`) + aba "Inscrições" na ficha do
-membro (junta `inscricoes` + batismo + next + voluntariado + grupos).
+`backend/services/pagamentos/` completo, menos o adapter do PSP:
+
+| Arquivo | Papel |
+|---|---|
+| `index.js` | **FACHADA — é a única coisa que módulo de domínio importa.** `criarCobranca`, `sincronizar`, `marcarPagoManual`, `cancelar`, `estornar`, `expirarVencidas`, `reconciliar`, `capacidades`, `metodosDisponiveis`, `registrarHandler` |
+| `cobrancas.js` | persistência + transições. `valor_pago_centavos` é **derivado da soma de `pag_pagamentos`**, nunca copiado do payload (`tarifa` fora da soma: é custo nosso) |
+| `webhooks.js` | assinatura → `registrarEvento` (idempotência) → despacho + `reprocessarPendentes` (replay do payload guardado) |
+| `providers/{index,manual}.js` | registro + adapter de dinheiro fora do PSP |
+| `handlers/{index,inscricao}.js` | ganchos de domínio por `origem_tipo` |
+
+**Leis desta camada (além das 7 do núcleo):**
+
+- **Provider desconhecido LANÇA**, nunca cai no padrão em silêncio — silêncio
+  seria cobrança criada num provider que não sabe cobrar. `providers/index.js`
+  tenta `require('./asaas')` e só engole `MODULE_NOT_FOUND` (erro DENTRO do
+  adapter propaga). `pspConfigurado()` é false quando o env aponta pra adapter
+  ausente → não liga fluxo pago automático.
+- **`criarCobranca` grava a linha ANTES de falar com o PSP.** Se a chamada
+  externa morre no meio, a cobrança existe em `criada` com `ultimo_erro` e o
+  cron retoma. O inverso (PSP cria, a gente perde a linha) deixaria cobrança
+  órfã cobrável no PSP sem rastro aqui. Corrida na UNIQUE de `referencia` →
+  devolve a cobrança da outra requisição (o objetivo é UMA cobrança).
+- **`aplicarStatus` reconfere se o BANCO aceitou.** O trigger recusa transição
+  com WARNING e mantém o status antigo, sem abortar — se o JS não relesse, ele
+  chamaria `aoPagar` numa cobrança que continuou não-paga. Só dispara o handler
+  quando `data.status === novoStatus`.
+- **Sinal do valor vem do TIPO**, não do chamador: estorno gravado positivo
+  somaria como pagamento.
+- **`handlers.disparar` engole erro de propósito** (loga). O estado da cobrança
+  já foi persistido e não se desfaz porque o domínio falhou; a reconciliação
+  chama de novo — é pra isso que handler é idempotente.
+- **Handler `inscricao`**: cada UPDATE é condicionado ao status de ORIGEM
+  (`.eq('status','recebida')`), então reentrega é no-op. `pago` → `confirmada`.
+  `expirada`/`cancelada` → `cancelada` (libera vaga). **Inscrição já cancelada
+  NÃO é ressuscitada por pagamento atrasado** — notifica e espera decisão
+  humana (a vaga pode já ter ido pra outra pessoa). **Estorno/chargeback NÃO
+  cancelam a inscrição** — quem já está na logística (ônibus, quarto, comida)
+  não sai da lista por automação.
+- **`marcarPagoManual` exige `confirmado_por`.** Dinheiro entrando por decisão
+  humana sem autoria registrada torna a trilha de auditoria inútil. Taxa fica
+  `null` (não 0): dinheiro fora do PSP não tem tarifa, e null diz "não se
+  aplica".
+- **`cancelar` recusa cobrança com dinheiro dentro** — o caminho é estorno.
+
+**Rota `/api/pagamentos-webhook/:provider`** (`routes/pagamentosWebhook.js`),
+montada fora de `/api/public` **e** no `skip()` do limiter global. **Responde
+200 pra tudo menos assinatura inválida (401)** — 4xx/5xx viram reentrega
+eterna, e vários PSPs DESATIVAM o webhook depois de N falhas, o que transforma
+um problema de 15 min em falha silenciosa e permanente.
+
+**Crons no `vercel.json`:** `cron/expirar` `*/10` · `cron/reconciliar` `*/15`
+(**a verdade**; webhook é só latência) · `cron/replay` `20 * * * *`
+(reprocessa `status_processamento='erro'` sem depender do PSP). Todos com
+`CRON_SECRET` **fail-closed** (sem a env, ninguém roda).
+
+**Envs:** `PAG_ENABLED` (kill switch — recusa cobrança NOVA; consultar/expirar/
+reconciliar seguem, senão dinheiro já cobrado ficaria preso) ·
+`PAG_PROVIDER_PADRAO` (default `manual`) · `PAG_WEBHOOK_SECRET` ou
+`<PROVIDER>_WEBHOOK_SECRET` · `PAG_WEBHOOK_RATE_LIMIT_MAX`.
+Testes: `src/test/pagamentosNucleo.test.ts` (11) + `pagamentosMaquinaEstados`
+(16). **Nada cobra ainda** — falta o adapter e ligar a porta pública.
+
+### Falta (F3.3 · o que resta)
+
+`providers/asaas.js` (**escrever com o sandbox na mão** — parser de webhook
+contra documentação se reescreve inteiro no primeiro payload real; o registro
+já o carrega sozinho quando o arquivo existir) + ligar a porta pública (o 403
+de `pagamento_ativo` em `publicEventoExterno.js:162` vira: validar →
+`fn_insc_inscrever` com `p_status='recebida'` → `criarCobranca` → devolver
+checkout/QR; é o que finalmente dá escritor pro `'recebida'`) +
+`imprimirListaRetiro.ts` agrupando por faixa de idade/sexo (molde:
+`imprimirListaPresencaBatismo.ts`) + aba "Inscrições" na ficha do membro (junta
+`inscricoes` + batismo + next + voluntariado + grupos; ler pagamento pela
+`vw_insc_pagamento_estado`).
 
 ### ✅ Vaga atômica (migration `20260729030000` · pré-requisito de venda paga)
 

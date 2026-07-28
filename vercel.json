@@ -18,6 +18,18 @@
       "schedule": "*/5 * * * *"
     },
     {
+      "path": "/api/pagamentos-webhook/cron/expirar",
+      "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/pagamentos-webhook/cron/reconciliar",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/pagamentos-webhook/cron/replay",
+      "schedule": "20 * * * *"
+    },
+    {
       "path": "/api/totem-kids/cron/age-out",
       "schedule": "0 5 * * *"
     },
