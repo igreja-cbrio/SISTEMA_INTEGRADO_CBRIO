@@ -192,12 +192,14 @@ router.get('/unificadas', authorizeModule('inscricoes', 1), async (req, res) => 
 });
 
 // Lê a view unificada INTEIRA paginando o cap de 1000 do PostgREST (regra
-// permanente do CLAUDE.md) — base do rollup de pessoas e do dashboard.
-async function lerViewUnificada(filtro = (q) => q) {
+// permanente do CLAUDE.md) — base do rollup de pessoas, do dashboard e do
+// inventário de portas. `colunas` estreita o payload quando o consumidor não
+// precisa da linha inteira.
+async function lerViewUnificada(filtro = (q) => q, colunas = '*') {
   const out = [];
   for (let off = 0; ; off += 1000) {
     const { data, error } = await filtro(
-      supabase.from('vw_inscricoes_unificadas').select('*').range(off, off + 999)
+      supabase.from('vw_inscricoes_unificadas').select(colunas).range(off, off + 999)
     );
     if (error) throw error;
     out.push(...(data || []));
@@ -368,6 +370,98 @@ router.get('/unificadas/dashboard', authorizeModule('inscricoes', 1), async (req
   } catch (e) {
     console.error('[inscricoes] unificadas/dashboard:', e.message);
     res.status(500).json({ error: 'Erro no dashboard' });
+  }
+});
+
+// ── Portas públicas do sistema (inventário · pedido do Marcos 28/07) ────────
+// A aba Eventos mostra a espinha; este endpoint completa o "cérebro" com as
+// OUTRAS portas públicas de inscrição (grupos, next, batismo, apresentação,
+// voluntariado, líderes) — 1 card por porta, detalhe no modal. É INVENTÁRIO
+// somente-leitura: nenhuma escrita por aqui, nem super-admin — cada porta tem
+// lógica-satélite no módulo dono (broadcast de temporada, turma do totem, 4º
+// domingo calculado) e um segundo caminho de escrita antes da F3.5 é a classe
+// de bug que o desenho evita. "Operar daqui" chega com a F3.5 (SPEC-10 t2).
+const PORTAS_SISTEMA = [
+  { chave: 'grupos', nome: 'Grupos de conexão', portas: ['grupos'], link: '/inscricao-grupos', gestao: '/grupos', modulo: 'Grupos' },
+  { chave: 'grupos_lider', nome: 'Líderes e anfitriões', portas: ['grupos_lider'], link: '/inscricao-lideres', gestao: '/grupos', modulo: 'Grupos', continua: true },
+  { chave: 'next', nome: 'Next', portas: ['next', 'next_legado'], link: '/next', gestao: '/next', modulo: 'Next' },
+  { chave: 'batismo', nome: 'Batismo', portas: ['batismo'], link: '/inscricao-batismo', gestao: '/integracao', modulo: 'Integração', continua: true },
+  { chave: 'apresentacao', nome: 'Apresentação de crianças', portas: ['apresentacao_criancas', 'apresentacao_bebes'], link: '/apresentacao-criancas', gestao: '/kids', modulo: 'Kids', continua: true },
+  { chave: 'voluntariado', nome: 'Voluntariado', portas: ['voluntariado'], link: '/inscricao-voluntariado', gestao: '/ministerial/voluntariado', modulo: 'Voluntariado', continua: true },
+];
+
+// Aberto/fechado é BEST-EFFORT por porta (falha → null = "não sei", nunca 500):
+// grupos = temporada com inscrições abertas · next = turma aberta · demais são
+// portas contínuas (o formulário não fecha).
+async function statusPortas() {
+  const st = { grupos: { aberta: null, detalhe: null }, next: { aberta: null, detalhe: null } };
+  try {
+    const { data } = await supabase.from('mem_temporadas')
+      .select('label, inscricoes_abertas').eq('inscricoes_abertas', true).limit(1);
+    st.grupos = data && data.length
+      ? { aberta: true, detalhe: data[0].label || 'temporada aberta' }
+      : { aberta: false, detalhe: 'nenhuma temporada com inscrições abertas' };
+  } catch (e) { console.error('[inscricoes] portas/status grupos:', e.message); }
+  try {
+    const { data } = await supabase.from('next_turmas')
+      .select('nome').eq('status', 'aberta').is('deleted_at', null).limit(1);
+    st.next = data && data.length
+      ? { aberta: true, detalhe: data[0].nome || 'turma aberta' }
+      : { aberta: false, detalhe: 'nenhuma turma aberta' };
+  } catch (e) { console.error('[inscricoes] portas/status next:', e.message); }
+  return st;
+}
+
+// GET /portas — inventário das portas públicas + contagens/edições da view
+// unificada (as séries DERIVADAS do SPEC-10 t1 já dão edição por porta:
+// batismo/apresentação = mês, next = turma, grupos = temporada).
+router.get('/portas', authorizeModule('inscricoes', 1), async (_req, res) => {
+  try {
+    const todasPortas = PORTAS_SISTEMA.flatMap((p) => p.portas);
+    const [linhas, st] = await Promise.all([
+      lerViewUnificada(
+        (q) => q.in('porta', todasPortas),
+        'porta, edicao_rotulo, status_canonico, criado_em',
+      ),
+      statusPortas(),
+    ]);
+
+    const corte30d = new Date(Date.now() - 30 * 86400000).toISOString();
+    const porPorta = new Map();
+    for (const l of linhas) {
+      if (l.status_canonico === 'cancelada') continue;
+      if (!porPorta.has(l.porta)) porPorta.set(l.porta, []);
+      porPorta.get(l.porta).push(l);
+    }
+
+    const portas = PORTAS_SISTEMA.map((p) => {
+      const ls = p.portas.flatMap((v) => porPorta.get(v) || []);
+      const edicoes = new Map();
+      for (const l of ls) {
+        const rot = l.edicao_rotulo || 'sem edição';
+        const e = edicoes.get(rot) || { rotulo: rot, total: 0, ultima_em: null };
+        e.total += 1;
+        if (!e.ultima_em || l.criado_em > e.ultima_em) e.ultima_em = l.criado_em;
+        edicoes.set(rot, e);
+      }
+      const status = p.continua
+        ? { aberta: true, detalhe: 'porta contínua — o formulário não fecha' }
+        : (st[p.chave] || { aberta: null, detalhe: null });
+      return {
+        chave: p.chave, nome: p.nome, modulo: p.modulo,
+        link: p.link, gestao: p.gestao, continua: !!p.continua,
+        aberta: status.aberta, aberta_detalhe: status.detalhe,
+        total: ls.length,
+        ultimos_30d: ls.filter((l) => l.criado_em >= corte30d).length,
+        edicoes: [...edicoes.values()]
+          .sort((a, b) => String(b.ultima_em || '').localeCompare(String(a.ultima_em || '')))
+          .slice(0, 10),
+      };
+    });
+    res.json({ portas });
+  } catch (e) {
+    console.error('[inscricoes] portas:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar as portas públicas' });
   }
 });
 

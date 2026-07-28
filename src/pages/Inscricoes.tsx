@@ -13,6 +13,7 @@ import { inscricoesApi as api } from '../api';
 import InscricoesTodas from './InscricoesTodas';
 import InscricoesPessoas from './InscricoesPessoas';
 import InscricoesDashboard from './InscricoesDashboard';
+import InscricoesPortas from './InscricoesPortas';
 import { useAuth } from '../contexts/AuthContext';
 import { Card } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -568,6 +569,7 @@ export default function Inscricoes() {
       {aba === 'dashboard' && <InscricoesDashboard areas={areas} />}
 
       {aba === 'eventos' && (
+        <>
         <Card className="glass-solid p-4">
           {loading ? (
             <div className="flex justify-center py-8"><Loader2 className="h-5 w-5 animate-spin text-primary" /></div>
@@ -633,6 +635,11 @@ export default function Inscricoes() {
             </div>
           )}
         </Card>
+        {/* Inventário das OUTRAS portas públicas (grupos/next/batismo/…) —
+            1 card por porta, detalhe no modal; somente leitura (pedido do
+            Marcos 28/07 · gestão segue nos módulos até a F3.5) */}
+        <InscricoesPortas />
+        </>
       )}
 
       {modal?.tipo === 'novo' && <EventoModal areas={areas} onClose={() => setModal(null)} onSaved={() => { setModal(null); carregar(); }} />}

@@ -232,6 +232,23 @@ Celebra com só nome+telefone continuam válidas para sempre).
   setar o NOME na env** — até lá tudo no-op. A notificação interna de nova
   inscrição (bullet 1 da spec) já existia desde a PR 3; espelhos read-only =
   F3.5.
+- **Portas públicas do sistema na aba Eventos (2026-07-28 · SEM migration ·
+  pedido do Marcos):** o cérebro de inscrições mostra TODAS as portas públicas,
+  não só a espinha — **1 card por porta** (grupos, líderes, next, batismo,
+  apresentação, voluntariado; decisão do Marcos: detalhe no MODAL, senão a
+  lista explode — mesmo racional do card de série). `GET /inscricoes/portas`
+  (nível 1): catálogo `PORTAS_SISTEMA` no código (link público, módulo dono,
+  rota de gestão) + contagens/edições da view unificada (séries derivadas
+  SPEC-10 t1 = temporada/turma/mês) + aberto/fechado BEST-EFFORT (grupos =
+  `mem_temporadas.inscricoes_abertas` · next = `next_turmas.status='aberta'` ·
+  demais = contínuas; falha → null, nunca 500). Modal
+  (`InscricoesPortas.tsx`): status, link + copiar + QR, inscrições 30d/total,
+  edições recentes, botão "Gerenciar no módulo". **⚠️ INVENTÁRIO 100%
+  somente-leitura — nenhuma escrita por aqui, NEM super-admin** (cada porta tem
+  lógica-satélite no módulo dono: broadcast de temporada, turma do totem, 4º
+  domingo; segundo caminho de escrita antes da F3.5 é a classe de bug que o
+  desenho evita — "operar daqui" chega com a F3.5/SPEC-10 t2, quando o card
+  migra de seção). Marcos validou o formato em 28/07.
 - **Porta 7 · Grupos (2026-07-28 · migration `20260728235000` = M5):** e-mail
   obrigatório (D2) + anti-abreviação + endereço opcional (vai pro cadastro
   pendente, nunca sobrescreve membro) no form recém-lançado (toque mínimo);
