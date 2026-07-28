@@ -1,42 +1,18 @@
-import { useEffect, useState } from 'react';
+// PORTA 5 do Contrato de Inscrição (F3.1 · docs/modulo-inscricoes/): nome em
+// campo único (D1), nascimento OBRIGATÓRIO (D3 — só neste formulário; o
+// walk-in do totem não muda), sexo obrigatório e endereço opcional (28/07),
+// termos LGPD com snapshot, opt-in explícito (D4). O seletor de evento saiu
+// (o backend o descartava desde a migração pra turmas). Validações de
+// src/lib/inscricao (fonte única).
+import { useEffect, useRef, useState } from 'react';
 import { next as nextApi } from '../../api';
 import AnimatedBackground from './AnimatedBackground';
 import { usePublicTheme, PublicThemeToggle } from './publicTheme';
 import { BirthDatePicker } from '../../components/ui/birth-date-picker';
-
-// ── Helpers de mascara ──
-function soDigitos(v: string) { return (v || '').toString().replace(/\D+/g, ''); }
-
-function mascaraCpf(v: string) {
-  const d = soDigitos(v).slice(0, 11);
-  if (d.length <= 3) return d;
-  if (d.length <= 6) return `${d.slice(0, 3)}.${d.slice(3)}`;
-  if (d.length <= 9) return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6)}`;
-  return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`;
-}
-
-function mascaraTelefone(v: string) {
-  const d = soDigitos(v).slice(0, 11);
-  if (d.length <= 2) return d.length ? `(${d}` : '';
-  if (d.length <= 6) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
-  if (d.length <= 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
-  return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
-}
-
-function cpfValido(v: string) {
-  const d = soDigitos(v);
-  if (d.length !== 11) return false;
-  if (/^(\d)\1{10}$/.test(d)) return false;
-  const calc = (base: string, fator: number) => {
-    let soma = 0;
-    for (let i = 0; i < base.length; i += 1) soma += parseInt(base[i], 10) * (fator - i);
-    const resto = (soma * 10) % 11;
-    return resto === 10 ? 0 : resto;
-  };
-  const dv1 = calc(d.slice(0, 9), 10);
-  const dv2 = calc(d.slice(0, 10), 11);
-  return dv1 === parseInt(d[9], 10) && dv2 === parseInt(d[10], 10);
-}
+import {
+  soDigitos, mascaraCpf, mascaraTelefone, cpfValido, telefoneValido,
+  nomeCompletoValido, temAbreviacaoNome, validarNascimento, SEXOS, AVISO_OPTIN,
+} from '../../lib/inscricao';
 
 // ── Input com label flutuante (mesmo estilo do CadastroMembresia) ──
 function Field({
@@ -182,14 +158,17 @@ const MOTIVO_OPTIONS = [
   { value: 'servir_voluntario', label: 'Desejo servir como voluntário' },
 ];
 
+const TEXTOS_FALLBACK = {
+  termos_lgpd: 'Autorizo a Igreja CBRio a tratar os dados deste formulário para organizar o NEXT e me comunicar sobre ele, conforme a LGPD.',
+  aviso_optin: AVISO_OPTIN,
+};
+
 export default function InscricaoNext() {
   const { C } = usePublicTheme();
-  const [eventos, setEventos] = useState<Evento[]>([]);
   const [form, setForm] = useState({
-    evento_id: '',
-    nome: '', sobrenome: '',
+    nome_completo: '',
     cpf: '', telefone: '', email: '',
-    data_nascimento: '',
+    data_nascimento: '', sexo: '', endereco: '',
     motivo: '',
     observacoes: '',
     website: '', // honeypot
@@ -197,13 +176,15 @@ export default function InscricaoNext() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [sent, setSent] = useState(false);
+  const [aceitaTermos, setAceitaTermos] = useState(false);
   const [whatsappOptin, setWhatsappOptin] = useState(false);
+  const [textos, setTextos] = useState<any>(TEXTOS_FALLBACK);
+  const submittingRef = useRef(false);
 
   useEffect(() => {
-    nextApi.publicEventos().then((evs: Evento[]) => {
-      setEventos(evs || []);
-      if (evs && evs[0]) setForm(f => ({ ...f, evento_id: evs[0].id }));
-    }).catch(() => {});
+    nextApi.publicTextos()
+      .then((t: any) => { if (t?.termos_lgpd) setTextos(t); })
+      .catch(() => { /* fallback local */ });
   }, []);
 
   const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
@@ -215,26 +196,36 @@ export default function InscricaoNext() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submittingRef.current) return;
     setError('');
-    if (!form.nome || form.nome.trim().length < 2) return setError('Informe seu nome');
+    if (!nomeCompletoValido(form.nome_completo)) {
+      return setError(temAbreviacaoNome(form.nome_completo)
+        ? 'Escreva seu nome completo, sem abreviações'
+        : 'Informe seu nome completo');
+    }
     if (!form.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) return setError('Email inválido');
-    if (!form.telefone || soDigitos(form.telefone).length < 10) return setError('Telefone inválido');
+    if (!telefoneValido(form.telefone)) return setError('Telefone inválido');
     if (!form.cpf) return setError('Informe seu CPF');
     if (!cpfValido(form.cpf)) return setError('CPF inválido — confira os dígitos');
+    if (!validarNascimento(form.data_nascimento)) return setError('Informe sua data de nascimento');
+    if (!SEXOS.includes(form.sexo)) return setError('Selecione o sexo');
     if (!form.motivo) return setError('Selecione por que você quer participar do NEXT');
+    if (!aceitaTermos) return setError('É preciso aceitar os termos para se inscrever');
 
+    submittingRef.current = true;
     setLoading(true);
     try {
       await nextApi.publicInscrever({
-        evento_id: form.evento_id || null,
-        nome: form.nome.trim(),
-        sobrenome: form.sobrenome.trim() || null,
+        nome_completo: form.nome_completo.trim(),
         cpf: form.cpf,
         telefone: form.telefone,
         email: form.email,
-        data_nascimento: form.data_nascimento || null,
+        data_nascimento: form.data_nascimento,
+        sexo: form.sexo,
+        endereco: form.endereco.trim() || null,
         motivo: form.motivo || null,
         observacoes: form.observacoes || null,
+        aceita_termos: aceitaTermos,
         whatsapp_optin: whatsappOptin,
         website: form.website,
       });
@@ -243,14 +234,8 @@ export default function InscricaoNext() {
       setError(err?.message || 'Erro ao enviar inscrição');
     }
     setLoading(false);
+    submittingRef.current = false;
   };
-
-  const eventoOptions = eventos.map(ev => ({
-    value: ev.id,
-    label: new Date(ev.data + 'T12:00:00').toLocaleDateString('pt-BR', {
-      weekday: 'long', day: '2-digit', month: 'long',
-    }),
-  }));
 
   return (
     <div style={{
@@ -320,34 +305,42 @@ export default function InscricaoNext() {
             </div>
 
             <form onSubmit={handleSubmit}>
-              {eventoOptions.length > 0 && (
-                <>
-                  <SectionTitle>Evento</SectionTitle>
-                  <SelectField
-                    id="evento_id"
-                    label="Em qual domingo você vai participar?"
-                    value={form.evento_id}
-                    onChange={set('evento_id') as any}
-                    options={eventoOptions}
-                    required
-                  />
-                </>
-              )}
-
               <SectionTitle>Dados pessoais</SectionTitle>
-              <Row>
-                <Field id="nome" label="Nome" value={form.nome} onChange={set('nome')} required autoComplete="given-name" />
-                <Field id="sobrenome" label="Sobrenome" value={form.sobrenome} onChange={set('sobrenome')} autoComplete="family-name" />
-              </Row>
+              <Field id="nome_completo" label="Nome completo (sem abreviar)" value={form.nome_completo} onChange={set('nome_completo')} required autoComplete="name" />
               <Field id="email" label="Email" type="email" value={form.email} onChange={set('email')} required autoComplete="email" inputMode="email" />
               <Row>
                 <Field id="telefone" label="Telefone" value={form.telefone} onChange={set('telefone')} required placeholder="(00) 00000-0000" inputMode="tel" autoComplete="tel" />
                 <Field id="cpf" label="CPF" value={form.cpf} onChange={set('cpf')} required placeholder="000.000.000-00" inputMode="numeric" autoComplete="off" />
               </Row>
-              <div style={{ marginBottom: 20 }}>
-                <label style={{ display: 'block', fontSize: 11, color: 'var(--cbrio-text3)', marginBottom: 6 }}>Data de nascimento (opcional)</label>
-                <BirthDatePicker value={form.data_nascimento} onChange={(v) => setForm(f => ({ ...f, data_nascimento: v }))} />
-              </div>
+              <Row>
+                <div style={{ marginBottom: 20 }}>
+                  <label style={{ display: 'block', fontSize: 11, color: 'var(--cbrio-text3)', marginBottom: 6 }}>
+                    Data de nascimento <span style={{ color: '#ef4444' }}>*</span>
+                  </label>
+                  <BirthDatePicker value={form.data_nascimento} onChange={(v) => setForm(f => ({ ...f, data_nascimento: v }))} />
+                </div>
+                <div style={{ marginBottom: 20 }}>
+                  <label style={{ display: 'block', fontSize: 11, color: 'var(--cbrio-text3)', marginBottom: 6 }}>
+                    Sexo <span style={{ color: '#ef4444' }}>*</span>
+                  </label>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    {SEXOS.map((o) => {
+                      const sel = form.sexo === o;
+                      return (
+                        <button key={o} type="button" onClick={() => setForm(f => ({ ...f, sexo: o }))} aria-pressed={sel}
+                          style={{
+                            flex: 1, minHeight: 42, padding: '9px 10px', borderRadius: 999, fontSize: 13, cursor: 'pointer',
+                            fontWeight: sel ? 700 : 500, textTransform: 'capitalize',
+                            border: `1.5px solid ${sel ? '#00B39D' : 'var(--cbrio-border)'}`,
+                            background: sel ? 'linear-gradient(90deg,#00B39D,#00d9bd)' : 'transparent',
+                            color: sel ? '#fff' : 'var(--cbrio-text)', transition: 'all .15s',
+                          }}>{o}</button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </Row>
+              <Field id="endereco" label="Endereço (opcional)" value={form.endereco} onChange={set('endereco')} autoComplete="street-address" />
 
               <SectionTitle>Por que o NEXT?</SectionTitle>
               <SelectField
@@ -374,6 +367,24 @@ export default function InscricaoNext() {
                 display: 'flex', gap: 10, alignItems: 'flex-start',
                 background: C.isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
                 border: `1px solid ${C.inputBorder}`,
+                borderRadius: 12, padding: '14px 16px', margin: '4px 0 12px', cursor: 'pointer',
+              }}>
+                <input
+                  type="checkbox"
+                  checked={aceitaTermos}
+                  onChange={(e) => setAceitaTermos(e.target.checked)}
+                  style={{ marginTop: 3, width: 18, height: 18, accentColor: '#00B39D', flexShrink: 0 }}
+                />
+                <span style={{ fontSize: 12.5, color: C.text3, lineHeight: 1.55 }}>
+                  <strong style={{ color: C.text }}>Li e aceito os termos *</strong><br />
+                  {textos.termos_lgpd}
+                </span>
+              </label>
+
+              <label style={{
+                display: 'flex', gap: 10, alignItems: 'flex-start',
+                background: C.isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
+                border: `1px solid ${C.inputBorder}`,
                 borderRadius: 12, padding: '14px 16px', margin: '4px 0 16px', cursor: 'pointer',
               }}>
                 <input
@@ -384,8 +395,8 @@ export default function InscricaoNext() {
                 />
                 <span style={{ fontSize: 12.5, color: C.text3, lineHeight: 1.55 }}>
                   Aceito receber mensagens da CBRio no <strong>WhatsApp</strong> (avisos, lembretes
-                  e felicitações). Você pode cancelar quando quiser. Seus dados são tratados
-                  conforme a LGPD.
+                  e felicitações). {textos.aviso_optin || AVISO_OPTIN} Você pode cancelar quando
+                  quiser. Seus dados são tratados conforme a LGPD.
                 </span>
               </label>
 

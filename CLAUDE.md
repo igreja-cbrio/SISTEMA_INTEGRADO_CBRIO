@@ -73,8 +73,18 @@ Celebra com só nome+telefone continuam válidas para sempre).
   imagem, menor_responsavel, whatsapp). O ESTADO do opt-in continua nas
   colunas `whatsapp_optin/_em` de cada tabela.
 - Rollout F3.1 porta a porta (1 PR cada, nesta ordem): **eventos externos ✅**
-  → **apresentação ✅** → **líderes ✅** → **voluntariado ✅** → next → batismo
-  → grupos. Plano de migração sem perda + bugs: `docs/modulo-inscricoes/`.
+  → **apresentação ✅** → **líderes ✅** → **voluntariado ✅** → **next ✅** →
+  batismo → grupos. Plano de migração + bugs: `docs/modulo-inscricoes/`.
+- **Porta 5 · Next (2026-07-28 · migration `20260728230000` = M7):** nome vira
+  campo único (split no server, tolera payload antigo); **nascimento
+  obrigatório+validado SÓ em `POST /inscrever`** — o walk-in do totem
+  (`/checkin/:token/walkin`) segue "nunca travar o atendimento"; sexo
+  obrigatório liga o writer da coluna (canônico `masculino|feminino` + CHECK);
+  endereço opcional (coluna nova); termos+optin na satélite + `GET /textos`;
+  optin agora TAMBÉM persiste na matrícula (`whatsapp_optin/_em`);
+  `ja_voluntario` passou a checar por membro além de CPF; **saiu o seletor de
+  evento do form** (o backend descartava `evento_id` desde a migração pra
+  turmas); trigger `updated_at`.
 - **Porta 4 · Voluntariado (2026-07-28 · migration `20260728210000` = M6a):**
   nome vira campo único (split no server, tolera payload antigo); + sexo
   obrigatório e endereço opcional (colunas novas); termos LGPD obrigatório +

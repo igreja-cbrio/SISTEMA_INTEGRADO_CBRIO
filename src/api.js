@@ -333,6 +333,10 @@ export const decisaoOnline = {
 export const next = {
   // Public (sem auth) — para o formulário
   publicEventos: () => fetch(`${API}/public/next/eventos`).then(r => r.json()),
+  // Textos canônicos de consentimento (o snapshot gravado é sempre o do backend)
+  publicTextos: () => fetch(`${API}/public/next/textos`).then(async r => {
+    const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j;
+  }),
   publicInscrever: (data) => fetch(`${API}/public/next/inscrever`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
