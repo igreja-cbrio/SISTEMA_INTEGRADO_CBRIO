@@ -12,14 +12,24 @@
 // SEM WhatsApp em nenhuma etapa (fluxo assistido — a equipe sempre contata).
 // Identidade: mesmas regras do /inscricao-grupos (CPF obrigatório com DV,
 // nascimento, sexo) — o backend liga ao membro existente pelo matcher forte.
+//
+// PORTA 3 do Contrato de Inscrição (F3.1 · docs/modulo-inscricoes/): e-mail
+// obrigatório (D2), opt-in de WhatsApp EXPLÍCITO com checkbox default false
+// (D4 · 28/07, substitui o "concluir É o consentimento" de 24/07),
+// anti-abreviação no nome, teto de 11 dígitos no telefone. Validações de
+// src/lib/inscricao (fonte única).
 // ============================================================================
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { gruposPublic } from '../../api';
 import AnimatedBackground from './AnimatedBackground';
 import { usePublicTheme, PublicThemeToggle, PublicPaletteCtx, usePublicPalette } from './publicTheme';
 import { BirthDatePicker } from '../../components/ui/birth-date-picker';
 import { CheckCircle2, Camera, X, Users, Home } from 'lucide-react';
+import {
+  soDigitos, mascaraCpf, mascaraTelefone, cpfValido, telefoneValido,
+  nomeCompletoValido, temAbreviacaoNome, AVISO_OPTIN,
+} from '../../lib/inscricao';
 
 const TEXTO_CONSENTIMENTO = `Ao enviar este formulário, você autoriza a CBRio a utilizar seus dados pessoais para fins de comunicação com a igreja e participação na equipe de grupos de conexão, conforme a LGPD.`;
 
@@ -28,37 +38,6 @@ const FORM_VAZIO = {
   bairro: '', endereco: '', motivacao: '', website: '', foto_url: '',
 };
 
-function soDigitos(v) { return (v || '').toString().replace(/\D+/g, ''); }
-// Dígitos verificadores do CPF (mesma regra do backend — valida antes de enviar).
-function cpfValido(cpfMasked) {
-  const cpf = soDigitos(cpfMasked);
-  if (cpf.length !== 11 || /^(\d)\1{10}$/.test(cpf)) return false;
-  let s = 0;
-  for (let i = 0; i < 9; i++) s += parseInt(cpf[i]) * (10 - i);
-  let r = (s * 10) % 11;
-  if (r === 10) r = 0;
-  if (r !== parseInt(cpf[9])) return false;
-  s = 0;
-  for (let i = 0; i < 10; i++) s += parseInt(cpf[i]) * (11 - i);
-  r = (s * 10) % 11;
-  if (r === 10) r = 0;
-  return r === parseInt(cpf[10]);
-}
-function mascaraCpf(v) {
-  const d = soDigitos(v).slice(0, 11);
-  if (d.length <= 3) return d;
-  if (d.length <= 6) return `${d.slice(0, 3)}.${d.slice(3)}`;
-  if (d.length <= 9) return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6)}`;
-  return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`;
-}
-function mascaraTelefone(v) {
-  const d = soDigitos(v).slice(0, 11);
-  if (d.length <= 2) return `(${d}`;
-  if (d.length <= 7) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
-  if (d.length <= 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
-  return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
-}
-
 export default function InscricaoLideres() {
   const { C } = usePublicTheme();
 
@@ -66,6 +45,8 @@ export default function InscricaoLideres() {
   const [querLider, setQuerLider] = useState(false);
   const [querAnfitriao, setQuerAnfitriao] = useState(false);
   const [aceitaTermos, setAceitaTermos] = useState(false);
+  const [optin, setOptin] = useState(false); // D4 · explícito, default false
+  const submittingRef = useRef(false); // trava síncrona de duplo-toque
   const [errosCampos, setErrosCampos] = useState({});
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -104,8 +85,10 @@ export default function InscricaoLideres() {
 
   const validarCampos = () => {
     const erros = {};
-    if (!form.nome || form.nome.trim().length < 3) erros.nome = 'Digite o nome completo.';
-    if (soDigitos(form.telefone).length < 10) erros.telefone = 'Digite um celular válido com DDD.';
+    if (!nomeCompletoValido(form.nome)) {
+      erros.nome = temAbreviacaoNome(form.nome) ? 'Escreva o nome completo, sem abreviações.' : 'Digite o nome completo.';
+    }
+    if (!telefoneValido(form.telefone)) erros.telefone = 'Digite um celular válido com DDD.';
     if (!form.data_nascimento || !/^\d{4}-\d{2}-\d{2}$/.test(form.data_nascimento)) {
       erros.data_nascimento = 'Selecione uma data válida.';
     } else {
@@ -118,7 +101,7 @@ export default function InscricaoLideres() {
     const cpfDig = soDigitos(form.cpf);
     if (cpfDig.length !== 11) erros.cpf = 'Informe o CPF completo.';
     else if (!cpfValido(form.cpf)) erros.cpf = 'Este CPF não é válido — confira os números.';
-    if (form.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) erros.email = 'E-mail inválido.';
+    if (!form.email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) erros.email = 'Informe um e-mail válido.';
     if (!querLider && !querAnfitriao) erros.papel = 'Marque pelo menos uma opção: líder e/ou anfitrião.';
     // Anfitrião = quem cede a casa · o endereço é o dado (Marcos 17/07)
     if (querAnfitriao) {
@@ -130,6 +113,7 @@ export default function InscricaoLideres() {
   };
 
   const submit = async () => {
+    if (submittingRef.current) return;
     const erros = validarCampos();
     if (Object.keys(erros).length > 0) {
       setErrosCampos(erros);
@@ -139,12 +123,13 @@ export default function InscricaoLideres() {
       return;
     }
     setErrosCampos({});
+    submittingRef.current = true;
     setLoading(true); setError('');
     try {
       const r = await gruposPublic.inscreverLider({
         nome: form.nome.trim(),
         cpf: soDigitos(form.cpf),
-        email: form.email.trim() || null,
+        email: form.email.trim(),
         telefone: form.telefone,
         data_nascimento: form.data_nascimento || null,
         genero: form.genero || null,
@@ -155,9 +140,8 @@ export default function InscricaoLideres() {
         endereco: form.endereco.trim() || null,
         foto_url: form.foto_url || null,
         aceita_termos: aceitaTermos,
-        // Líder consente com WhatsApp por padrão (obrigatório do papel · o aviso
-        // no formulário explica; enviar aqui = ação afirmativa ao concluir).
-        whatsapp_optin: true,
+        // D4 (28/07): opt-in explícito — checkbox default false, nada implícito.
+        whatsapp_optin: optin,
         consentimento_texto: TEXTO_CONSENTIMENTO,
         website: form.website,
       });
@@ -169,12 +153,12 @@ export default function InscricaoLideres() {
       } else {
         setError(e.message || 'Não foi possível enviar. Tente novamente.');
       }
-    } finally { setLoading(false); }
+    } finally { setLoading(false); submittingRef.current = false; }
   };
 
   const resetForm = () => {
     setForm(FORM_VAZIO); setQuerLider(false); setQuerAnfitriao(false);
-    setAceitaTermos(false); setErrosCampos({}); setError(''); setEnviado(null);
+    setAceitaTermos(false); setOptin(false); setErrosCampos({}); setError(''); setEnviado(null);
   };
 
   const PAPEIS = [
@@ -307,7 +291,7 @@ export default function InscricaoLideres() {
                   {errosCampos.genero && <p style={{ fontSize: 11.5, color: '#ef4444', margin: '4px 0 0' }}>{errosCampos.genero}</p>}
                 </div>
                 <Field campo="cpf" error={errosCampos.cpf} label="CPF *" value={form.cpf} onChange={set('cpf', mascaraCpf)} maxLength={14} inputMode="numeric" />
-                <Field campo="email" error={errosCampos.email} label="E-mail (opcional)" type="email" value={form.email} onChange={set('email')} />
+                <Field campo="email" error={errosCampos.email} label="E-mail *" type="email" value={form.email} onChange={set('email')} />
                 <Field
                   campo="bairro"
                   error={errosCampos.bairro}
@@ -359,13 +343,18 @@ export default function InscricaoLideres() {
               {/* honeypot */}
               <input type="text" value={form.website} onChange={set('website')} style={{ position: 'absolute', left: -9999, opacity: 0 }} tabIndex={-1} autoComplete="off" />
 
-              {/* Aviso de WhatsApp · virar líder implica receber as mensagens
-                  operacionais (Marcos 2026-07-24). Concluir a inscrição É o
-                  consentimento — por isso não tem checkbox separado aqui. */}
+              {/* Opt-in de WhatsApp EXPLÍCITO (D4 · 28/07 — substitui o
+                  "concluir É o consentimento" de 24/07). Como líder as
+                  mensagens são operacionais (chamada do mês, materiais),
+                  então o texto deixa a consequência clara. */}
               <div style={{ background: 'rgba(0,179,157,0.10)', border: '1px solid rgba(0,179,157,0.45)', borderRadius: 10, padding: 12, marginBottom: 12 }}>
-                <p style={{ fontSize: 12, color: C.text, lineHeight: 1.5, margin: 0 }}>
-                  📲 Como líder, você vai <strong>receber mensagens da CBRio no WhatsApp</strong> (chamada do mês, materiais e avisos dos grupos). Ao concluir a inscrição você concorda em recebê-las — dá pra cancelar quando quiser, respondendo <strong>SAIR</strong>.
-                </p>
+                <label style={{ fontSize: 12, color: C.text, display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer', lineHeight: 1.5 }}>
+                  <input type="checkbox" checked={optin} onChange={e => setOptin(e.target.checked)}
+                    style={{ accentColor: '#00B39D', marginTop: 2, flexShrink: 0 }} />
+                  <span>
+                    📲 <strong>Quero receber as mensagens de líder no WhatsApp</strong> (chamada do mês, materiais e avisos dos grupos). {AVISO_OPTIN} Dá pra cancelar quando quiser respondendo <strong>SAIR</strong>.
+                  </span>
+                </label>
               </div>
 
               <div data-campo="aceita_termos" style={{ background: C.isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)', border: `1px solid ${errosCampos.aceita_termos ? '#ef4444' : C.cardBorder}`, borderRadius: 10, padding: 12, marginBottom: 12 }}>
