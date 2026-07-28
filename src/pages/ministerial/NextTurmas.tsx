@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import {
   Loader2, Plus, Users, GraduationCap, CalendarDays, Search,
   CheckCircle2, AlertTriangle, X, UserPlus, UserCheck, Sparkles, RotateCcw,
-  Share2, Copy, MessageCircle, Monitor, ArrowRightLeft,
+  Share2, Copy, MessageCircle, Monitor, ArrowRightLeft, Trash2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import QRCode from 'qrcode';
@@ -329,6 +329,16 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
     try { await nextApi.matriculas.setContato(m.id, feito); }
     catch (e: any) { toast.error(e?.message || 'Erro ao marcar contato'); load(); }
   };
+  const removerMatricula = async (m: Matricula) => {
+    const nome = `${m.nome}${m.sobrenome ? ' ' + m.sobrenome : ''}`;
+    if (!confirm(`Remover ${nome} desta turma? A pessoa sai da lista (dá pra reinscrever depois).`)) return;
+    try {
+      await nextApi.matriculas.remove(m.id);
+      setDet(d => d ? { ...d, matriculas: d.matriculas.filter(x => x.id !== m.id) } : d);
+      toast.success('Pessoa removida da turma.');
+      onChanged();
+    } catch (e: any) { toast.error(e?.message || 'Erro ao remover'); }
+  };
   // Ordenação da lista: por nome (padrão) ou por quem entrou por último (created_at desc).
   const matriculasOrdenadas = [...(det?.matriculas || [])].sort((a, b) => {
     if (ordem === 'recentes') return (b.created_at || '').localeCompare(a.created_at || '');
@@ -460,10 +470,16 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
                           </label>
                         </td>
                         <td className="text-center p-2">
-                          <button onClick={() => setTransferir(m)} title="Transferir pra outra turma"
-                            className="inline-flex items-center justify-center h-7 w-7 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
-                            <ArrowRightLeft className="h-3.5 w-3.5" />
-                          </button>
+                          <div className="inline-flex items-center gap-1">
+                            <button onClick={() => setTransferir(m)} title="Transferir pra outra turma"
+                              className="inline-flex items-center justify-center h-7 w-7 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
+                              <ArrowRightLeft className="h-3.5 w-3.5" />
+                            </button>
+                            <button onClick={() => removerMatricula(m)} title="Remover da turma"
+                              className="inline-flex items-center justify-center h-7 w-7 rounded-md text-muted-foreground hover:text-red-600 hover:bg-red-500/10 transition-colors">
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
