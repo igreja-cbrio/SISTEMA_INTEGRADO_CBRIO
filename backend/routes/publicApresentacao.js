@@ -257,6 +257,15 @@ router.post('/', limiter, async (req, res) => {
           const { error: eR } = await supabase.from('apresentacao_criancas')
             .update({ responsavel_membro_id: ident.membroId }).in('id', criados);
           if (eR) console.error('[publicApresentacao] responsavel_membro_id:', eR.message);
+          // Estado do opt-in persiste no membro (padrão batismo) — antes só o
+          // ATO ia pra satélite e o notificarMembro seguia tratando o
+          // responsável como não-optado (achado do sweep 28/07). Só liga.
+          if (optin) {
+            const { error: eO } = await supabase.from('mem_membros')
+              .update({ whatsapp_optin: true, whatsapp_optin_em: new Date().toISOString() })
+              .eq('id', ident.membroId).eq('whatsapp_optin', false).is('deleted_at', null);
+            if (eO) console.error('[publicApresentacao] optin membro:', eO.message);
+          }
           // parentesco só quando dá pra afirmar (um único nome preenchido)
           const parentesco = nomeMaeT && !nomePaiT ? 'mae' : (nomePaiT && !nomeMaeT ? 'pai' : null);
           for (const cid of criancaIds) {

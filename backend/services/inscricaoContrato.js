@@ -34,6 +34,11 @@ const TEXTOS = {
   imagem:
     'Autorizo o uso de fotos do evento em que eu (ou a criança sob minha ' +
     'responsabilidade) apareça nas mídias da Igreja CBRio.',
+  // Snapshot do item `whatsapp` da satélite — sem esta chave o consentimento
+  // era gravado com texto VAZIO nas 7 portas (achado do sweep 28/07).
+  whatsapp:
+    'Aceito receber confirmações, lembretes e avisos desta inscrição pelo ' +
+    'WhatsApp, no número informado. Posso pedir pra parar a qualquer momento.',
   aviso_optin: // D4 — exibido junto do checkbox de WhatsApp
     'Se você não marcar, não conseguiremos te enviar confirmações, lembretes e avisos pelo WhatsApp.',
 };

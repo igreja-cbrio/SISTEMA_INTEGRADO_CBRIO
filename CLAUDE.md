@@ -244,15 +244,20 @@ que segue pendente:
   nos dois lados (flag `exige_dados_menor` das opções marcadas ∪ área
   kids/bridge) — critérios divergentes davam form insubmissível ou
   antecedentes prometidos sem triagem aberta.
-- **PENDENTE (P1, aprovado pelo Marcos — próxima leva):** migration do CHECK
-  de `vol_inscricoes.status` += 'desistente' (o botão da #2075 viola o CHECK
-  vivo — 0 linhas no banco confirmado); `ja_inscritas`/dedup EXIBIDOS na
-  apresentação e no voluntariado (padrão batismo); renovação de grupos
-  gravando consentimento/opt-in/enriquecimento (hoje responde "Renovamos!"
-  sem escrever nada); opt-in propagado na aprovação de grupos/líderes +
-  estado persistido na apresentação; chave `whatsapp` no TEXTOS do
-  inscricaoContrato (snapshot hoje grava vazio nas 7 portas); gate de opt-in
-  no template de confirmação de grupos + AVISO_OPTIN no form.
+- **P1 FEITO (PR da onda 2 · migration `20260729070000`):** CHECK de
+  `vol_inscricoes.status` += 'desistente' (bloco descobre o nome real do
+  CHECK inline no catálogo antes de dropar); `ja_inscritas` EXIBIDA na
+  apresentação (0 criadas + já inscritas = erro claro, não sucesso falso) e
+  `ja_inscrito` no voluntariado (título/mensagem do server); **renovação de
+  grupos passou a gravar**: enriquecimento e opt-in subiram pra ANTES do
+  dedup e a resposta de renovação registra os termos na satélite (refId =
+  vínculo ativo ou pedido pendente); **opt-in propagado na aprovação**
+  (aprovarPedidoCore + promoverInscricaoLider: cadastro pendente com optin
+  liga o membro promovido — só liga, nunca desliga) + estado persistido no
+  membro na apresentação (padrão batismo); `TEXTOS.whatsapp` criado no
+  inscricaoContrato (snapshot do consentimento de WhatsApp gravava VAZIO nas
+  7 portas); template de confirmação de grupos GATED pelo opt-in (D4) +
+  AVISO_OPTIN exibido no form quando desmarcado.
 - **PENDENTE (P2/P3):** rate limit — batismo/apresentação/vol/next atrás do
   `publicLimiter` 30/15min (Wi-Fi único = 429; padrão: mover pra antes, como
   NPS/grupos/eventos) e limiter do router do Next (10/min) pega o totem de
