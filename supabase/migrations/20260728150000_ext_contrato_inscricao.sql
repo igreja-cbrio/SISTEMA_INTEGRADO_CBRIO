@@ -2,6 +2,13 @@
 -- Specs: docs/modulo-inscricoes/ (decisões D1–D9 + ajuste 28/07).
 -- SÓ ADD — nenhuma linha existente muda; inscrições antigas do Celebra
 -- (só nome+telefone) continuam válidas e visíveis para sempre.
+--
+-- ⚠️ APLICAÇÃO MANUAL: rodar em DUAS colagens separadas (1ª = ext_eventos,
+-- 2ª = ext_inscricoes) — DDL em 2 tabelas numa transação só deu deadlock
+-- (40P01) com o tráfego ao vivo em 2026-07-28. O lock_timeout abaixo evita
+-- ficar pendurado atrás de consulta longa: se falhar com "lock timeout",
+-- é só rodar de novo (tudo idempotente).
+SET lock_timeout = '10s';
 
 -- ext_eventos: regulariza o schema drift do capa_url (a coluna existe em
 -- produção sem migration; grep em supabase/ = 0 hits antes desta)
