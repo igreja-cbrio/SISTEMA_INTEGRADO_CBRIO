@@ -73,8 +73,17 @@ Celebra com só nome+telefone continuam válidas para sempre).
   imagem, menor_responsavel, whatsapp). O ESTADO do opt-in continua nas
   colunas `whatsapp_optin/_em` de cada tabela.
 - Rollout F3.1 porta a porta (1 PR cada, nesta ordem): **eventos externos ✅**
-  → **apresentação ✅** → líderes → voluntariado → next → batismo → grupos.
+  → **apresentação ✅** → **líderes ✅** → voluntariado → next → batismo → grupos.
   Plano de migração sem perda + bugs conhecidos: `docs/modulo-inscricoes/`.
+- **Porta 3 · Líderes/anfitriões (2026-07-28 · migration `20260728190000`):**
+  e-mail obrigatório; anti-abreviação no nome; teto 11 no telefone; coluna
+  `origem` (linhas antigas = formulario_publico, único writer que existiu);
+  dedup ganhou CPF via cadastro pendente; **opt-in de WhatsApp virou checkbox
+  EXPLÍCITO default false (D4 · substitui o "concluir É o consentimento" de
+  24/07)** — o optin só grava se marcado; termos+optin espelhados em
+  `inscricao_consentimentos` (porta `grupos_lider`, snapshot = texto exibido);
+  trigger `updated_at`. Optins históricos (gravados como true pelo fluxo
+  antigo): reclassificar com jurídico — decisão pendente, NÃO reverter em massa.
 - **Porta 2 · Apresentação de crianças (2026-07-28 · migration `20260728170000`):**
   por criança agora vai nome completo + nascimento + sexo (obrigatórios só p/
   inscrições novas; `crianca_idade` legada é derivada do nascimento); e-mail do

@@ -17,6 +17,7 @@ const { processarFila, enfileirarLote } = require('../services/whatsappFila');
 const { enviosAutomaticosAtivos } = require('../services/gruposEnviosConfig');
 const { registrarEventoPedido } = require('../services/grupoPedidoEventos');
 const { registrarObservacaoSegura } = require('../services/identidadeProgressiva');
+const { temAbreviacaoNome, registrarConsentimentos } = require('../services/inscricaoContrato');
 const { requireCron } = require('../utils/cronAuth');
 
 // ── Rate limit dedicado do totem de inscrição de grupos ──
@@ -727,17 +728,21 @@ router.post('/inscrever-lider', async (req, res) => {
     const {
       nome, cpf, email, telefone, data_nascimento, genero,
       quer_lider, quer_anfitriao, motivacao, bairro, endereco,
-      foto_url, aceita_termos, consentimento_texto,
+      foto_url, aceita_termos, consentimento_texto, whatsapp_optin,
       website, // honeypot
     } = req.body || {};
 
     if (website && String(website).trim() !== '') return res.status(201).json({ ok: true });
 
     if (!nome || nome.trim().length < 3) return res.status(400).json({ error: 'Digite o nome completo.', campo: 'nome' });
-    if (!telefone || soDigitos(telefone).length < 10) return res.status(400).json({ error: 'Digite um celular válido com DDD.', campo: 'telefone' });
+    if (nome.trim().split(/\s+/).length < 2 || temAbreviacaoNome(nome)) {
+      return res.status(400).json({ error: 'Escreva o nome completo, sem abreviações.', campo: 'nome' });
+    }
+    const telDigitos = soDigitos(telefone);
+    if (telDigitos.length < 10 || telDigitos.length > 11) return res.status(400).json({ error: 'Digite um celular válido com DDD.', campo: 'telefone' });
     if (!cpf || soDigitos(cpf).length !== 11) return res.status(400).json({ error: 'Informe o CPF completo.', campo: 'cpf' });
     if (!cpfValido(cpf)) return res.status(400).json({ error: 'Este CPF não é válido — confira os números.', campo: 'cpf' });
-    if (email && !ehEmailValido(email)) return res.status(400).json({ error: 'E-mail inválido.', campo: 'email' });
+    if (!email || !ehEmailValido(email)) return res.status(400).json({ error: 'Informe um e-mail válido.', campo: 'email' }); // D2: obrigatório
     if (!aceita_termos) return res.status(400).json({ error: 'É necessário aceitar os termos.', campo: 'aceita_termos' });
     if (!data_nascimento || !/^\d{4}-\d{2}-\d{2}$/.test(String(data_nascimento))) {
       return res.status(400).json({ error: 'Informe a data de nascimento.', campo: 'data_nascimento' });
@@ -766,8 +771,11 @@ router.post('/inscrever-lider', async (req, res) => {
     }
 
     const cpfLimpo = soDigitos(cpf);
-    const emailLimpo = email ? email.trim().toLowerCase() : null;
+    const emailLimpo = email.trim().toLowerCase();
     const fotoUrl = fotoUrlValida(foto_url) ? String(foto_url).slice(0, 1000) : null;
+    const optin = whatsapp_optin === true; // D4 (28/07): explícito, nunca implícito
+    const ip = (req.headers['x-forwarded-for'] || '').toString().split(',')[0].trim() || req.ip || null;
+    const userAgent = (req.headers['user-agent'] || '').toString().slice(0, 500);
 
     // Identidade: matcher compartilhado (CPF/chaves fortes) liga ao membro
     // existente; sem match, cria o cadastro pendente (Contrato de porta).
@@ -777,13 +785,23 @@ router.post('/inscrever-lider', async (req, res) => {
     });
     const membroId = achado?.membro_id || null;
 
-    // Anti-duplicata da CANDIDATURA: uma aberta (pendente/aceito) por pessoa.
-    const telDig = soDigitos(telefone);
+    // Anti-duplicata da CANDIDATURA: uma aberta (pendente/aceito) por pessoa —
+    // por membro, por telefone e (novo) por CPF via cadastro pendente, pra
+    // pegar quem se reinscreve com telefone diferente antes de virar membro.
+    const telDig = telDigitos;
+    let cadastrosMesmoCpf = [];
+    if (!membroId) {
+      const { data: cads } = await supabase.from('mem_cadastros_pendentes')
+        .select('id').eq('cpf', cpfLimpo).is('deleted_at', null).limit(100);
+      cadastrosMesmoCpf = (cads || []).map(c => c.id);
+    }
     const { data: abertas } = await supabase.from('mem_lider_inscricoes')
-      .select('id, membro_id, telefone')
+      .select('id, membro_id, cadastro_pendente_id, telefone')
       .in('status', ['pendente', 'aceito']).is('deleted_at', null).limit(1000);
     const jaTem = (abertas || []).some(i =>
-      (membroId && i.membro_id === membroId) || (telDig && soDigitos(i.telefone) === telDig));
+      (membroId && i.membro_id === membroId)
+      || (telDig && soDigitos(i.telefone) === telDig)
+      || (i.cadastro_pendente_id && cadastrosMesmoCpf.includes(i.cadastro_pendente_id)));
     if (jaTem) {
       return res.json({ ok: true, ja_inscrito: true, mensagem: 'Já recebemos a sua inscrição — a equipe de Grupos vai falar com você em breve.' });
     }
@@ -800,10 +818,9 @@ router.post('/inscrever-lider', async (req, res) => {
       }
     }
 
-    // Opt-in de WhatsApp OBRIGATÓRIO pro líder (Marcos 2026-07-24): virar líder
-    // implica receber as mensagens operacionais (chamada, renovação, materiais).
-    // Clicar em "virar líder" após o aviso É a ação afirmativa de consentimento.
-    if (membroId) {
+    // Opt-in de WhatsApp EXPLÍCITO (D4 · 2026-07-28, substitui o implícito de
+    // 24/07): só grava se a pessoa MARCOU o checkbox. "Só liga, nunca desliga".
+    if (membroId && optin) {
       try {
         await supabase.from('mem_membros')
           .update({ whatsapp_optin: true, whatsapp_optin_em: new Date().toISOString() })
@@ -813,8 +830,6 @@ router.post('/inscrever-lider', async (req, res) => {
 
     let cadastroPendenteId = null;
     if (!membroId) {
-      const ip = (req.headers['x-forwarded-for'] || '').toString().split(',')[0].trim() || req.ip || null;
-      const userAgent = (req.headers['user-agent'] || '').toString().slice(0, 500);
       const { data: cad, error: eCad } = await supabase.from('mem_cadastros_pendentes').insert({
         nome: nome.trim(),
         cpf: cpfLimpo,
@@ -832,10 +847,10 @@ router.post('/inscrever-lider', async (req, res) => {
         origem: 'qr_code',
         aceita_termos: !!aceita_termos,
         aceita_contato: true,
-        // Líder consente com WhatsApp por padrão (obrigatório do papel · propaga
-        // pro membro na aprovação do cadastro pendente).
-        whatsapp_optin: true,
-        whatsapp_optin_em: new Date().toISOString(),
+        // D4 (28/07): opt-in explícito do checkbox — propaga pro membro na
+        // aprovação do cadastro pendente só quando a pessoa marcou.
+        whatsapp_optin: optin,
+        whatsapp_optin_em: optin ? new Date().toISOString() : null,
         consentimento_texto: consentimento_texto ? String(consentimento_texto).slice(0, 2000) : null,
         status: 'pendente',
         ip_origem: ip,
@@ -866,11 +881,24 @@ router.post('/inscrever-lider', async (req, res) => {
       quer_anfitriao: querAnfitriao,
       motivacao: motivacao ? String(motivacao).trim().slice(0, 500) : null,
       status: 'pendente',
+      origem: 'formulario_publico',
     }).select('id').single();
     if (eInsc) {
       console.error('[public grupos inscrever-lider] inscricao:', eInsc.message);
       return res.status(500).json({ error: 'Erro ao registrar inscrição.' });
     }
+
+    // Atos de consentimento na satélite (Contrato de Inscrição) — o snapshot é
+    // o texto que a pessoa VIU (enviado pelo form e também gravado no cadastro
+    // pendente). Best-effort: a inscrição nunca é perdida por falha aqui.
+    registrarConsentimentos({
+      porta: 'grupos_lider', refId: insc.id, membroId,
+      ip, userAgent,
+      itens: [
+        { tipo: 'termos_lgpd', aceito: true, texto: consentimento_texto ? String(consentimento_texto).slice(0, 2000) : undefined },
+        { tipo: 'whatsapp', aceito: optin },
+      ],
+    }).catch((err) => console.error('[public grupos inscrever-lider] consentimentos:', err.message));
 
     // Só notificação in-app pra equipe — SEM WhatsApp (processo assistido).
     (async () => {
