@@ -31,6 +31,7 @@ const ROUTE_MODULE_MAP = {
   'relatorios':   ['relatorios'],
   'cuidados':     ['cuidados'],
   'conversas':    ['conversas'],
+  'comunicacao':  ['comunicacao'],
   'online':       ['online'],
   'wifi':         ['wifi'],
   'next':         ['next'],

@@ -111,6 +111,7 @@ app.use('/api/app', require('./routes/app'));               // Mobile app (sem a
 app.use('/api/auth/planning-center', require('./routes/authPlanningCenter'));
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/staff', require('./routes/staff'));           // App CBRio Staff (self-service do colaborador)
+app.use('/api/comunicacao', require('./routes/comunicacao')); // Módulo Comunicação (WhatsApp central)
 app.use('/api/revisoes', require('./routes/revisoes'));
 app.use('/api/events', require('./routes/events'));
 app.use('/api/projects', require('./routes/projects'));
