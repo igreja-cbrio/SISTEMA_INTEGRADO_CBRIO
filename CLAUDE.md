@@ -4134,6 +4134,37 @@ reconciliar seguem, senão dinheiro já cobrado ficaria preso) ·
 Testes: `src/test/pagamentosNucleo.test.ts` (11) + `pagamentosMaquinaEstados`
 (16). **Nada cobra ainda** — falta o adapter e ligar a porta pública.
 
+### ✅ Lista de inscritos: idade, sexo, pagamento e impressão agrupada (2026-07-28 · SEM migration)
+
+O que o Marcos pediu na abertura ("saber os inscritos, idade de cada um, forma
+de pagamento de cada um, imprimir a lista separada por idade ou faixa ou sexo"),
+sobre a tela que o Marcos Paulo já entregou (`InscricaoEventoDetalhe.tsx`).
+
+- **`GET /inscricoes/eventos/:id/inscricoes`** passou a devolver
+  `data_nascimento`, `sexo`, `membro_id` e um bloco `pagamento` lido da
+  **`vw_insc_pagamento_estado`** (best-effort: a lista abre mesmo se a view
+  faltar). **CPF continua fora de propósito** — é o campo mais sensível e serve
+  pro matcher, não pra tela. ⚠️ A leitura virou **paginada**: tinha
+  `.limit(2000)`, que o cap de 1000 do PostgREST truncava em silêncio (a lista
+  parecia completa).
+- **`src/lib/faixaEtaria.ts`** — espelho EXATO de `fn_faixa_etaria`
+  (<13 criança · 13–17 adolescente · 18–30 jovem · 31+ adulto). Existe em JS
+  porque chamar a função SQL por linha seria uma consulta por pessoa. ⚠️ **Se a
+  régua mudar no banco, mudar aqui também** — duas réguas fariam a lista
+  impressa discordar do KPI. Data é parseada como LOCAL (`+T00:00:00`): sem
+  isso, em fuso negativo, quem nasceu dia 1º vira um dia mais velho e no limiar
+  muda de faixa. 22 testes em `src/test/faixaEtaria.test.ts`.
+- **`src/lib/imprimirListaInscritos.ts`** — A4 no molde do
+  `imprimirListaPresencaBatismo` (`thead` repetido por folha,
+  `page-break-inside: avoid`, `escapeHtml`). Agrupa por **faixa / sexo / status
+  / pagamento / sem agrupar**, com subtotal por grupo e total geral. A ordem dos
+  grupos é a operacional (Criança→Adulto), não A-Z. Coluna redundante com o
+  agrupamento é omitida. Chave desconhecida vai pro fim em vez de desaparecer.
+  ⚠️ **Telefone/e-mail ficam FORA por padrão** — é PII que vira papel na mão de
+  voluntário; só sai marcando a caixa (com aviso na própria tela).
+- Idade, sexo e situação do pagamento aparecem na linha da pessoa e no detalhe;
+  o CSV ganhou nascimento/idade/faixa/sexo/pagamento/forma.
+
 ### Falta (F3.3 · o que resta)
 
 `providers/asaas.js` (**escrever com o sandbox na mão** — parser de webhook

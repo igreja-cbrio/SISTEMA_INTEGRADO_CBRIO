@@ -16,9 +16,33 @@ import {
   ArrowLeft, CalendarDays, Clock, MapPin, Users, Gift, Link2, MessageCircle,
   QrCode, Pencil, Trash2, Loader2, Search, ExternalLink, Ticket, Megaphone,
   ChevronDown, ChevronUp, ChevronsDownUp, ChevronsUpDown, Download, Repeat,
+  Printer, CreditCard,
 } from 'lucide-react';
 import QrLinkDialog from '../components/QrLinkDialog';
 import { EventoModal } from './Inscricoes';
+import { idadeEmAnos, faixaLabel, sexoLabel } from '../lib/faixaEtaria';
+import { imprimirListaInscritos, type Agrupamento } from '../lib/imprimirListaInscritos';
+
+const METODO_LABEL: Record<string, string> = {
+  pix: 'Pix', cartao: 'Cartão', boleto: 'Boleto', apple_pay: 'Apple Pay',
+  dinheiro: 'Dinheiro', transferencia: 'Transferência',
+};
+const PAG_BADGE: Record<string, string> = {
+  pago: 'bg-emerald-500/15 text-emerald-600',
+  pago_parcial: 'bg-amber-500/15 text-amber-600',
+  aguardando: 'bg-amber-500/15 text-amber-600',
+  aguardando_pagamento: 'bg-amber-500/15 text-amber-600',
+  pendente: 'bg-foreground/10 text-muted-foreground',
+  expirado: 'bg-red-500/10 text-red-600',
+  estornado: 'bg-red-500/10 text-red-600',
+  chargeback: 'bg-red-500/10 text-red-600',
+};
+const PAG_LABEL: Record<string, string> = {
+  pago: 'pago', pago_parcial: 'parcial', aguardando: 'aguardando',
+  aguardando_pagamento: 'aguardando', pendente: 'pendente', criada: 'pendente',
+  expirado: 'expirado', expirada: 'expirado', falhou: 'falhou',
+  estornado: 'estornado', estornado_parcial: 'estornado', chargeback: 'contestado',
+};
 
 const STATUS_BADGE: Record<string, string> = {
   rascunho: 'bg-amber-500/15 text-amber-600',
@@ -51,6 +75,7 @@ export default function InscricaoEventoDetalhe() {
   });
   const [anim, setAnim] = useState<{ fase: 'rolando' | 'fim'; premio: string; ganhador?: any } | null>(null);
   const [rolNum, setRolNum] = useState(0);
+  const [imprimirOpen, setImprimirOpen] = useState(false);
 
   function carregar() {
     if (!id) return;
@@ -155,9 +180,20 @@ export default function InscricaoEventoDetalhe() {
     if (!ev) return;
     const campos = (ev.campos || []) as any[];
     const esc = (v: any) => `"${String(v ?? '').replaceAll('"', '""')}"`;
-    const header = ['Nome completo', 'WhatsApp', 'E-mail', 'Nº da sorte', 'Status', 'Inscrição em', ...campos.map((c: any) => c.label)];
+    const header = [
+      'Nome completo', 'WhatsApp', 'E-mail', 'Nascimento', 'Idade', 'Faixa', 'Sexo',
+      'Pagamento', 'Forma', 'Nº da sorte', 'Status', 'Inscrição em',
+      ...campos.map((c: any) => c.label),
+    ];
     const linhas = (ev.inscritos || []).map((i: any) => [
-      i.nome_completo, i.telefone || '', i.email || '', i.numero_sorte ?? '', i.status,
+      i.nome_completo, i.telefone || '', i.email || '',
+      i.data_nascimento ? new Date(`${i.data_nascimento}T00:00:00`).toLocaleDateString('pt-BR') : '',
+      idadeEmAnos(i.data_nascimento) ?? '',
+      i.data_nascimento ? faixaLabel(i.data_nascimento, true) : '',
+      i.sexo ? sexoLabel(i.sexo) : '',
+      i.pagamento?.status_pagamento ? (PAG_LABEL[i.pagamento.status_pagamento] || i.pagamento.status_pagamento) : '',
+      i.pagamento?.metodo ? (METODO_LABEL[i.pagamento.metodo] || i.pagamento.metodo) : '',
+      i.numero_sorte ?? '', i.status,
       i.created_at ? new Date(i.created_at).toLocaleString('pt-BR') : '',
       ...campos.map((c: any) => {
         const v = i.dados?.[c.key];
@@ -220,6 +256,13 @@ export default function InscricaoEventoDetalhe() {
         nomeArquivo={`qr-${ev.slug}`}
         descricao="Imprima ou projete no telão — quem escanear cai direto no formulário de inscrição."
         onClose={() => setQrOpen(false)}
+      />
+    )}
+    {imprimirOpen && (
+      <ImprimirListaDialog
+        evento={ev}
+        inscritos={ev.inscritos || []}
+        onClose={() => setImprimirOpen(false)}
       />
     )}
     {inscSel && (
@@ -326,6 +369,10 @@ export default function InscricaoEventoDetalhe() {
           <div className="text-sm font-semibold flex items-center gap-1.5"><Users className="h-4 w-4 text-primary" /> Inscritos ({ativos.length})</div>
           {(ev.inscritos?.length || 0) > 0 && (
             <div className="flex items-center gap-2 flex-wrap">
+              <Button size="sm" variant="outline" className="h-8" onClick={() => setImprimirOpen(true)}
+                title="Imprimir a lista de participantes (por faixa de idade, sexo…)">
+                <Printer className="h-3.5 w-3.5 mr-1" /> Imprimir lista
+              </Button>
               {podeExportar && (
                 <Button size="sm" variant="outline" className="h-8" onClick={exportarCsv} title="Baixar a lista em CSV (Excel)">
                   <Download className="h-3.5 w-3.5 mr-1" /> Exportar CSV
@@ -389,6 +436,26 @@ export default function InscricaoEventoDetalhe() {
                           <Gift className="h-3 w-3" /> {ganhos.length > 1 ? `${ganhos.length} prêmios` : (ganhos[0].premio || 'Prêmio')}
                         </span>
                       )}
+                      {/* Idade e sexo: a operação do evento (quarto, ônibus,
+                          separação por faixa) precisa disso na linha, não só no
+                          detalhe. */}
+                      {idadeEmAnos(i.data_nascimento) != null && (
+                        <span className="text-[11px] text-muted-foreground shrink-0 tabular-nums"
+                          title={faixaLabel(i.data_nascimento)}>
+                          {idadeEmAnos(i.data_nascimento)} anos
+                        </span>
+                      )}
+                      {i.sexo && (
+                        <span className="text-[11px] text-muted-foreground shrink-0">{sexoLabel(i.sexo)}</span>
+                      )}
+                      {i.pagamento?.status_pagamento && (
+                        <span className={`inline-flex items-center gap-1 rounded-full text-[11px] font-medium px-2 py-0.5 shrink-0 ${PAG_BADGE[i.pagamento.status_pagamento] || 'bg-foreground/10 text-muted-foreground'}`}
+                          title={i.pagamento.metodo ? `Forma: ${METODO_LABEL[i.pagamento.metodo] || i.pagamento.metodo}` : undefined}>
+                          <CreditCard className="h-3 w-3" />
+                          {PAG_LABEL[i.pagamento.status_pagamento] || i.pagamento.status_pagamento}
+                          {i.pagamento.metodo ? ` · ${METODO_LABEL[i.pagamento.metodo] || i.pagamento.metodo}` : ''}
+                        </span>
+                      )}
                       {recolhido && respostas.length > 0 && (
                         <span className="text-[11px] text-muted-foreground shrink-0">{respostas.length} resposta{respostas.length > 1 ? 's' : ''}</span>
                       )}
@@ -449,6 +516,103 @@ export default function InscricaoEventoDetalhe() {
       </Card>
     </div>
     </>
+  );
+}
+
+// Escolha do agrupamento + colunas antes de mandar pra impressora.
+const AGRUPAMENTOS: { key: Agrupamento; label: string; dica: string }[] = [
+  { key: 'faixa', label: 'Faixa de idade', dica: 'Criança · Adolescente · Jovem · Adulto' },
+  { key: 'sexo', label: 'Sexo', dica: 'Feminino · Masculino' },
+  { key: 'status', label: 'Status', dica: 'Confirmadas · Aguardando pagamento' },
+  { key: 'pagamento', label: 'Pagamento', dica: 'Pago · Aguardando · Sem cobrança' },
+  { key: 'nenhum', label: 'Sem agrupar', dica: 'Uma lista só, em ordem alfabética' },
+];
+
+function ImprimirListaDialog({ evento, inscritos, onClose }: {
+  evento: any; inscritos: any[]; onClose: () => void;
+}) {
+  const [ag, setAg] = useState<Agrupamento>('faixa');
+  const [contato, setContato] = useState(false);
+  const [pagamento, setPagamento] = useState<boolean>(!!evento?.pagamento_ativo);
+  const [presenca, setPresenca] = useState(true);
+  const [incluirCanceladas, setIncluirCanceladas] = useState(false);
+
+  const total = inscritos.filter((i: any) => incluirCanceladas || i.status !== 'cancelada').length;
+  const semNascimento = inscritos.filter((i: any) => !i.data_nascimento
+    && (incluirCanceladas || i.status !== 'cancelada')).length;
+
+  function imprimir() {
+    imprimirListaInscritos(
+      { nome: evento.nome, data: evento.data, hora: evento.hora, local: evento.local },
+      inscritos,
+      { agrupamento: ag, colunas: { contato, pagamento, presenca }, incluirCanceladas },
+    );
+    onClose();
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-md flex flex-col max-h-[88vh]">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><Printer className="h-4 w-4 text-primary" /> Imprimir lista de participantes</DialogTitle>
+        </DialogHeader>
+        <div className="flex-1 overflow-y-auto min-h-0 space-y-3 text-sm">
+          <div>
+            <div className="text-[11px] text-muted-foreground uppercase tracking-wide mb-1.5">Agrupar por</div>
+            <div className="space-y-1.5">
+              {AGRUPAMENTOS.map(a => (
+                <button key={a.key} onClick={() => setAg(a.key)}
+                  className={`w-full text-left rounded-lg border px-3 py-2 transition-colors ${ag === a.key ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/40'}`}>
+                  <div className="font-medium">{a.label}</div>
+                  <div className="text-[11px] text-muted-foreground">{a.dica}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <div className="text-[11px] text-muted-foreground uppercase tracking-wide mb-1.5">Colunas</div>
+            <label className="flex items-start gap-2 py-1 cursor-pointer">
+              <input type="checkbox" checked={presenca} onChange={e => setPresenca(e.target.checked)} className="mt-0.5" />
+              <span>Quadradinho de presença <span className="text-muted-foreground">(pra marcar no dia)</span></span>
+            </label>
+            <label className="flex items-start gap-2 py-1 cursor-pointer">
+              <input type="checkbox" checked={pagamento} onChange={e => setPagamento(e.target.checked)} className="mt-0.5" />
+              <span>Pagamento <span className="text-muted-foreground">(situação e forma)</span></span>
+            </label>
+            <label className="flex items-start gap-2 py-1 cursor-pointer">
+              <input type="checkbox" checked={contato} onChange={e => setContato(e.target.checked)} className="mt-0.5" />
+              <span>
+                Telefone / e-mail
+                {/* Papel impresso circula e fica em cima de mesa. Fora por padrão. */}
+                <span className="block text-[11px] text-amber-600">Sai da tela e vira papel — marque só se for necessário.</span>
+              </span>
+            </label>
+            <label className="flex items-start gap-2 py-1 cursor-pointer">
+              <input type="checkbox" checked={incluirCanceladas} onChange={e => setIncluirCanceladas(e.target.checked)} className="mt-0.5" />
+              <span>Incluir inscrições canceladas <span className="text-muted-foreground">(riscadas)</span></span>
+            </label>
+          </div>
+
+          <div className="rounded-lg border border-border bg-foreground/[0.03] p-2.5 text-[12px] space-y-1">
+            <div><strong>{total}</strong> participante{total === 1 ? '' : 's'} na lista.</div>
+            {semNascimento > 0 && ag === 'faixa' && (
+              // Sem nascimento não há faixa — dizer isso antes evita a pessoa
+              // achar que a folha veio incompleta.
+              <div className="text-amber-600">
+                {semNascimento} sem data de nascimento — {semNascimento === 1 ? 'vai' : 'vão'} para um grupo "Sem data de nascimento" no fim.
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 pt-2">
+          <Button variant="outline" size="sm" onClick={onClose}>Cancelar</Button>
+          <Button size="sm" onClick={imprimir} disabled={!total}>
+            <Printer className="h-3.5 w-3.5 mr-1" /> Imprimir
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -636,7 +800,56 @@ function InscricaoDetalheDialog({ inscricao, campos, premios, eventoId, onSaved,
                     <span className="break-all">{inscricao.email}</span>
                   </div>
                 )}
+                {inscricao.data_nascimento && (
+                  <div className="rounded-lg border border-border p-2.5">
+                    <div className="text-[11px] text-muted-foreground uppercase tracking-wide mb-0.5">Nascimento</div>
+                    {new Date(`${inscricao.data_nascimento}T00:00:00`).toLocaleDateString('pt-BR')}
+                    <span className="text-muted-foreground">
+                      {' · '}{idadeEmAnos(inscricao.data_nascimento)} anos · {faixaLabel(inscricao.data_nascimento, true)}
+                    </span>
+                  </div>
+                )}
+                {inscricao.sexo && (
+                  <div className="rounded-lg border border-border p-2.5">
+                    <div className="text-[11px] text-muted-foreground uppercase tracking-wide mb-0.5">Sexo</div>
+                    {sexoLabel(inscricao.sexo)}
+                  </div>
+                )}
               </div>
+
+              {inscricao.pagamento && (
+                <div className="rounded-lg border border-border p-2.5">
+                  <div className="text-[11px] text-muted-foreground uppercase tracking-wide mb-1 flex items-center gap-1">
+                    <CreditCard className="h-3 w-3" /> Pagamento
+                  </div>
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                    <span className={`rounded-full text-xs font-medium px-2 py-0.5 ${PAG_BADGE[inscricao.pagamento.status_pagamento] || 'bg-foreground/10 text-muted-foreground'}`}>
+                      {PAG_LABEL[inscricao.pagamento.status_pagamento] || inscricao.pagamento.status_pagamento}
+                    </span>
+                    {inscricao.pagamento.metodo && (
+                      <span>{METODO_LABEL[inscricao.pagamento.metodo] || inscricao.pagamento.metodo}
+                        {inscricao.pagamento.parcelas_total > 1 ? ` · ${inscricao.pagamento.parcelas_total}x` : ''}
+                      </span>
+                    )}
+                    {inscricao.pagamento.cartao_last4 && (
+                      <span className="text-muted-foreground">
+                        {inscricao.pagamento.cartao_brand || 'cartão'} ····{inscricao.pagamento.cartao_last4}
+                      </span>
+                    )}
+                    {inscricao.pagamento.valor_centavos != null && (
+                      <span className="font-medium">
+                        R$ {(inscricao.pagamento.valor_centavos / 100).toFixed(2).replace('.', ',')}
+                        {inscricao.pagamento.valor_pago_centavos != null
+                          && inscricao.pagamento.valor_pago_centavos !== inscricao.pagamento.valor_centavos
+                          && ` (pago R$ ${(inscricao.pagamento.valor_pago_centavos / 100).toFixed(2).replace('.', ',')})`}
+                      </span>
+                    )}
+                    {inscricao.pagamento.pago_em && (
+                      <span className="text-muted-foreground">em {new Date(inscricao.pagamento.pago_em).toLocaleString('pt-BR')}</span>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {premios.length > 0 && (
                 <div className="rounded-lg border border-primary/40 bg-primary/5 p-2.5">

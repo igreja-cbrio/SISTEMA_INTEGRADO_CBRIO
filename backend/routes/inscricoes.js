@@ -176,16 +176,54 @@ router.get('/eventos/:id', authorizeModule('inscricoes', 1), async (req, res) =>
   }
 });
 
-// GET /eventos/:id/inscricoes — lista de inscritos (sem CPF no nível 1;
-// `dados` = respostas do form-builder, exibidas no detalhe do evento)
+// GET /eventos/:id/inscricoes — lista de inscritos.
+//
+// Devolve `data_nascimento` e `sexo` (base da idade, da faixa etária e das
+// listas impressas por faixa/sexo) e `membro_id` (vínculo com o cadastro).
+// **CPF continua fora** — é o campo de identificação mais sensível e serve pro
+// matcher, não pra tela; quem precisa vê no detalhe da pessoa.
+//
+// Pagamento vem de `vw_insc_pagamento_estado`, que já resolve o estado CANÔNICO
+// no motor `pag_cobrancas` quando há cobrança e cai no espelho de
+// `insc_pagamentos` quando o pagamento foi manual.
 router.get('/eventos/:id/inscricoes', authorizeModule('inscricoes', 1), async (req, res) => {
   try {
-    const { data, error } = await supabase.from('inscricoes')
-      .select('id, nome_completo, telefone, email, status, numero_sorte, whatsapp_optin, dados, created_at')
-      .eq('evento_id', req.params.id).is('deleted_at', null)
-      .order('created_at', { ascending: false }).limit(2000);
-    if (error) throw error;
-    res.json(data || []);
+    // ⚠️ Paginado: o PostgREST capa em 1000 linhas server-side e `.limit(2000)`
+    // NÃO contorna (o cap é do projeto, vale pra qualquer cliente). Um evento
+    // grande vinha truncado em silêncio — a lista parecia completa.
+    const COLS = 'id, nome_completo, telefone, email, data_nascimento, sexo, membro_id, status, numero_sorte, whatsapp_optin, dados, created_at';
+    const inscritos = [];
+    for (let offset = 0; offset < 20000; offset += 1000) {
+      const { data, error } = await supabase.from('inscricoes')
+        .select(COLS)
+        .eq('evento_id', req.params.id).is('deleted_at', null)
+        .order('created_at', { ascending: false })
+        .range(offset, offset + 999);
+      if (error) throw error;
+      inscritos.push(...(data || []));
+      if (!data || data.length < 1000) break;
+    }
+
+    // Best-effort: a view é recente e a lista não pode deixar de abrir se ela
+    // faltar num ambiente sem a migration aplicada.
+    let porInscricao = new Map();
+    try {
+      const pagamentos = [];
+      for (let offset = 0; offset < 20000; offset += 1000) {
+        const { data, error } = await supabase.from('vw_insc_pagamento_estado')
+          .select('inscricao_id, metodo, status_pagamento, valor_centavos, valor_pago_centavos, pago_em, parcelas_total, cartao_brand, cartao_last4')
+          .eq('evento_id', req.params.id)
+          .range(offset, offset + 999);
+        if (error) throw error;
+        pagamentos.push(...(data || []));
+        if (!data || data.length < 1000) break;
+      }
+      porInscricao = new Map(pagamentos.map((p) => [p.inscricao_id, p]));
+    } catch (e) {
+      console.error('[inscricoes] estado de pagamento indisponível:', e.message);
+    }
+
+    res.json(inscritos.map((i) => ({ ...i, pagamento: porInscricao.get(i.id) || null })));
   } catch (e) {
     console.error('[inscricoes] inscricoes do evento:', e.message);
     res.status(500).json({ error: 'Erro ao listar inscrições' });
