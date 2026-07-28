@@ -1,4 +1,6 @@
 import { useState, useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { voluntariado } from '../../../api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -43,6 +45,25 @@ export default function VolScheduleBuilder() {
   const totalScheduled = schedules.length;
   const confirmed = schedules.filter(s => s.confirmation_status === 'confirmed').length;
   const pending = schedules.filter(s => s.confirmation_status === 'pending').length;
+
+  // Cobertura: composição esperada (template aplicado) × preenchidas ao vivo.
+  const [addPreselectTeam, setAddPreselectTeam] = useState('');
+  const { data: coberturaRaw } = useQuery<any>({
+    queryKey: ['vol-escala-cobertura', selectedServiceId],
+    queryFn: () => voluntariado.escalaCobertura(selectedServiceId),
+    enabled: !!selectedServiceId,
+  });
+  const cobertura = useMemo(() => {
+    const itens = coberturaRaw?.itens || [];
+    const filled = (it: any) => schedules.filter((s: any) => s.volunteer_id && s.team_id === it.team_id &&
+      ((it.position_id && s.position_id === it.position_id) || (!it.position_id && !s.position_id))).length;
+    const calc = itens.map((it: any) => { const pre = filled(it); return { ...it, preenchidas: pre, faltam: Math.max(0, it.alvo - pre) }; });
+    const porEquipe: Record<string, any[]> = {};
+    for (const i of calc) (porEquipe[i.team || 'Equipe'] ||= []).push(i);
+    const alvo = calc.reduce((a: number, i: any) => a + i.alvo, 0);
+    const pre = calc.reduce((a: number, i: any) => a + i.preenchidas, 0);
+    return { itens: calc, porEquipe, alvo, preenchidas: pre, faltam: Math.max(0, alvo - pre), pct: alvo ? Math.round((pre / alvo) * 100) : null };
+  }, [coberturaRaw, schedules]);
 
   return (
     <div className="space-y-6">
@@ -90,6 +111,41 @@ export default function VolScheduleBuilder() {
             </Button>
           </div>
 
+          {/* Cobertura da escala (só quando um template foi aplicado ao culto) */}
+          {cobertura.alvo > 0 && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm flex items-center justify-between">
+                  <span>Cobertura da escala</span>
+                  <span className={cobertura.faltam ? 'text-yellow-600' : 'text-green-600'}>
+                    {cobertura.preenchidas}/{cobertura.alvo} vagas · {cobertura.pct}%
+                  </span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {Object.entries(cobertura.porEquipe).map(([team, itens]) => (
+                  <div key={team}>
+                    <div className="text-xs font-semibold text-muted-foreground mb-1">{team}</div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {(itens as any[]).map(it => (
+                        <span key={it.id}
+                          className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs ${it.faltam ? 'border-yellow-400 bg-yellow-50 text-yellow-800' : 'border-green-300 bg-green-50 text-green-700'}`}>
+                          <span>{it.position || 'Equipe toda'}</span>
+                          <span className="font-semibold">{it.preenchidas}/{it.alvo}</span>
+                          {it.faltam > 0 && (
+                            <button className="underline underline-offset-2" onClick={() => { setAddPreselectTeam(it.team_id); setShowAddVolunteer(true); }}>
+                              preencher
+                            </button>
+                          )}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
+
           {/* Schedule list by team */}
           {schedulesLoading ? (
             <div className="text-center py-8 text-muted-foreground">Carregando escala...</div>
@@ -134,7 +190,8 @@ export default function VolScheduleBuilder() {
           serviceId={selectedServiceId}
           teams={teams}
           existingSchedules={schedules}
-          onClose={() => setShowAddVolunteer(false)}
+          initialTeamId={addPreselectTeam}
+          onClose={() => { setShowAddVolunteer(false); setAddPreselectTeam(''); }}
         />
       )}
 
@@ -263,15 +320,18 @@ function AutoFillButton({ serviceId, teams }: { serviceId: string; teams: VolTea
   );
 }
 
-function AddVolunteerDialog({ serviceId, teams, existingSchedules, onClose }: {
-  serviceId: string; teams: VolTeam[]; existingSchedules: VolSchedule[]; onClose: () => void;
+function AddVolunteerDialog({ serviceId, teams, existingSchedules, initialTeamId, onClose }: {
+  serviceId: string; teams: VolTeam[]; existingSchedules: VolSchedule[]; initialTeamId?: string; onClose: () => void;
 }) {
   const createSchedule = useCreateSchedule();
   const sync = useSyncPlanningCenter();
   const { data: pool = [], isLoading: poolLoading, refetch } = useVolunteersPool();
-  const [selectedTeamId, setSelectedTeamId] = useState('');
+  const [selectedTeamId, setSelectedTeamId] = useState(initialTeamId || '');
   const [searchQuery, setSearchQuery] = useState('');
   const [addedIds, setAddedIds] = useState<Set<string>>(new Set());
+  // Quando o voluntário serve em mais de uma equipe e não há filtro de equipe,
+  // guarda qual vínculo (equipe/função) o coordenador escolheu por pessoa.
+  const [choice, setChoice] = useState<Record<string, number>>({});
 
   // Volunteers not yet on this service (existing + added in this session)
   const alreadyScheduledIds = useMemo(() => {
@@ -302,8 +362,13 @@ function AddVolunteerDialog({ serviceId, teams, existingSchedules, onClose }: {
   }, [pool, selectedTeamId, searchQuery, alreadyScheduledIds]);
 
   const handleAdd = (vol: any) => {
-    // Pick first team membership to pre-fill team/position
-    const tm = vol.team_members?.[0];
+    // Escolhe o vínculo (equipe/função) a usar: (1) se há filtro de equipe, o
+    // vínculo daquela equipe; (2) se a pessoa escolheu no seletor, o escolhido;
+    // (3) senão o primeiro. Fim do team_members[0] silencioso em quem serve em várias.
+    const mem = (vol.team_members || []) as any[];
+    let tm = mem[0];
+    if (selectedTeamId && selectedTeamId !== 'all') tm = mem.find(m => m.team_id === selectedTeamId) || tm;
+    else if (choice[vol.id] != null && mem[choice[vol.id]]) tm = mem[choice[vol.id]];
     createSchedule.mutate({
       service_id: serviceId,
       volunteer_id: vol.id,
@@ -419,6 +484,18 @@ function AddVolunteerDialog({ serviceId, teams, existingSchedules, onClose }: {
                         )}
                       </div>
                     </div>
+                    {/* Seletor de equipe quando serve em >1 e sem filtro de equipe */}
+                    {teams_of.length > 1 && (!selectedTeamId || selectedTeamId === 'all') && (
+                      <select
+                        className="h-8 shrink-0 rounded-md border bg-background px-1.5 text-xs max-w-[130px]"
+                        value={choice[vol.id] ?? 0}
+                        onChange={e => setChoice(prev => ({ ...prev, [vol.id]: parseInt(e.target.value, 10) }))}
+                      >
+                        {teams_of.map((tm: any, idx: number) => (
+                          <option key={tm.id} value={idx}>{tm.team?.name}{tm.position ? ` · ${tm.position.name}` : ''}</option>
+                        ))}
+                      </select>
+                    )}
                     {/* Add button */}
                     <Button
                       size="icon"
