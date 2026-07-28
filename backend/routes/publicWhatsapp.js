@@ -65,6 +65,20 @@ async function processarEvento(req) {
     console.warn('[whatsapp webhook] assinatura HMAC invalida · ignorando');
     return;
   }
+
+  // C0 · Statuses de entrega da Meta (delivered/read/failed) — SEMPRE processa,
+  // ANTES do gate de IA (recibo de entrega não é IA; precisa registrar mesmo
+  // com a IA desligada). Best-effort: nunca derruba o 200 do webhook.
+  for (const e of (req.body?.entry || [])) {
+    for (const ch of (e.changes || [])) {
+      const st = ch.value?.statuses;
+      if (Array.isArray(st) && st.length) {
+        await processarStatuses(st).catch(err =>
+          console.error('[whatsapp webhook] statuses:', err.message));
+      }
+    }
+  }
+
   // Respeita o toggle global da IA
   const { data: cfg } = await supabase.from('whatsapp_config').select('ia_ativa, institucional').eq('id', 1).maybeSingle();
   if (cfg && cfg.ia_ativa === false) return;
@@ -103,6 +117,61 @@ async function processarEvento(req) {
             console.error('[whatsapp webhook] mensagem:', err.message));
         }
       }
+    }
+  }
+}
+
+// C0 · Processa os recibos de status da Meta (value.statuses[]).
+// Cada item: { id (message_id/wamid), status: sent|delivered|read|failed,
+// timestamp (unix s), recipient_id, errors[] }. Casa por message_id com
+// whatsapp_envios (a fila grava o message_id no envio); se não achar, tenta o
+// chat (wa_mensagens.wa_message_id) e senão registra em whatsapp_status_orfaos
+// pra nada se perder. Idempotente: os UPDATE são guardados por `.is(col, null)`
+// (não sobrescrevem o 1º timestamp; reprocessar o mesmo status não regride).
+async function processarStatuses(statuses) {
+  for (const s of statuses) {
+    try {
+      const messageId = s?.id;
+      const st = s?.status;
+      if (!messageId || !st || st === 'sent') continue; // 'sent' já é o 'enviado' da fila
+      const ts = s.timestamp
+        ? new Date(Number(s.timestamp) * 1000).toISOString()
+        : new Date().toISOString();
+      const erroTxt = st === 'failed'
+        ? String(s.errors?.[0]?.title || s.errors?.[0]?.message || s.errors?.[0]?.code || 'failed').slice(0, 300)
+        : null;
+
+      const { data: envio } = await supabase.from('whatsapp_envios')
+        .select('id').eq('message_id', messageId).maybeSingle();
+
+      if (envio) {
+        if (st === 'delivered') {
+          await supabase.from('whatsapp_envios').update({ delivered_at: ts })
+            .eq('message_id', messageId).is('delivered_at', null);
+        } else if (st === 'read') {
+          // read implica delivered — preenche o delivered_at se ainda vazio
+          await supabase.from('whatsapp_envios').update({ read_at: ts })
+            .eq('message_id', messageId).is('read_at', null);
+          await supabase.from('whatsapp_envios').update({ delivered_at: ts })
+            .eq('message_id', messageId).is('delivered_at', null);
+        } else if (st === 'failed') {
+          await supabase.from('whatsapp_envios').update({ failed_at: ts, erro_status: erroTxt })
+            .eq('message_id', messageId).is('failed_at', null);
+        }
+        continue;
+      }
+
+      // Não é da fila: é do chat (outbound do inbox)? Se sim, deixa pra fase
+      // posterior (wa_mensagens ainda não tem colunas de status). Senão, órfão.
+      const { data: chat } = await supabase.from('wa_mensagens')
+        .select('id').eq('wa_message_id', messageId).maybeSingle();
+      if (!chat) {
+        await supabase.from('whatsapp_status_orfaos').insert({
+          message_id: messageId, status: st, status_timestamp: ts, erro: erroTxt, raw: s,
+        }).catch(() => {});
+      }
+    } catch (e) {
+      console.error('[whatsapp webhook] status item:', e.message);
     }
   }
 }
