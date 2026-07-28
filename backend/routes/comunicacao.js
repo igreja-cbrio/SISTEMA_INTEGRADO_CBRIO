@@ -132,7 +132,10 @@ router.post('/templates/sync', authorizeModule('comunicacao', 3), async (_req, r
 router.put('/templates/:id', authorizeModule('comunicacao', 3), async (req, res) => {
   const b = req.body || {};
   const patch = {};
-  ['modulo', 'ativo', 'exemplo'].forEach(k => { if (k in b) patch[k] = b[k]; }); // resto vem do sync
+  // 'categoria' é editável à mão (fallback quando o sync com a Meta não traz —
+  // ex.: token sem whatsapp_business_management) · o custo (C5) usa ela.
+  ['modulo', 'ativo', 'exemplo', 'categoria'].forEach(k => { if (k in b) patch[k] = b[k]; });
+  if ('categoria' in patch && patch.categoria) patch.categoria = String(patch.categoria).toLowerCase();
   const { data, error } = await supabase.from('wa_templates')
     .update(patch).eq('id', req.params.id).select().maybeSingle();
   if (error) return res.status(400).json({ error: error.message });
@@ -298,6 +301,77 @@ router.get('/envios/resumo', async (req, res) => {
   } catch (e) {
     console.error('[comunicacao] resumo:', e.message);
     res.status(500).json({ error: 'Erro no resumo de envios' });
+  }
+});
+
+// ── Custo estimado (C5) ──────────────────────────────────────────────
+// Modelo (estimativa · a Meta cobra por conversa iniciada por categoria):
+//   custo do envio = tarifa da CATEGORIA do template (wa_templates.categoria →
+//   wa_tarifas). Envio de TEXTO (tipo=texto · janela 24h = service) = grátis.
+//   Template sem categoria conhecida cai em 'nao_classificado' (tarifa 0 · mas
+//   COUNT exibido, com aviso pra classificar na aba Templates). É estimativa,
+//   não a fatura — as tarifas são editáveis em wa_tarifas.
+router.get('/custo', async (req, res) => {
+  try {
+    const meses = Math.min(parseInt(req.query.meses, 10) || 6, 12);
+    const desde = new Date(); desde.setMonth(desde.getMonth() - (meses - 1)); desde.setDate(1);
+    const desdeISO = desde.toISOString().slice(0, 10);
+
+    // Só o que SAIU (conversa iniciada): status enviado + os que a Meta confirmou.
+    const envios = await (async () => {
+      const out = []; let from = 0; const page = 1000;
+      while (true) {
+        const { data, error } = await supabase.from('whatsapp_envios')
+          .select('tipo, template, contexto, criado_em')
+          .eq('status', 'enviado').gte('criado_em', desdeISO)
+          .range(from, from + page - 1);
+        if (error) throw error;
+        out.push(...(data || []));
+        if (!data || data.length < page) break;
+        from += page;
+      }
+      return out;
+    })();
+
+    // Mapa template(nome) → categoria; e categoria → tarifa.
+    const { data: tpls } = await supabase.from('wa_templates').select('nome, categoria');
+    const catDoTemplate = new Map((tpls || []).map(t => [t.nome, t.categoria || null]));
+    const { data: tarifas } = await supabase.from('wa_tarifas').select('categoria, tarifa');
+    const tarifaDaCat = new Map((tarifas || []).map(t => [t.categoria, Number(t.tarifa) || 0]));
+
+    const porMes = {}, porModulo = {}, porCategoria = {};
+    let total = 0, naoClassificados = 0;
+    for (const e of envios) {
+      const mes = String(e.criado_em).slice(0, 7);
+      const modulo = String(e.contexto || 'sem_contexto').split('.')[0] || 'sem_contexto';
+      // Texto (janela 24h · service) = grátis. Template = tarifa da categoria.
+      let cat, custo;
+      if (e.tipo === 'texto') { cat = 'service'; custo = tarifaDaCat.get('service') || 0; }
+      else {
+        cat = catDoTemplate.get(e.template) || null;
+        if (!cat) { cat = 'nao_classificado'; naoClassificados += 1; custo = 0; }
+        else custo = tarifaDaCat.get(cat) || 0;
+      }
+      total += custo;
+      porMes[mes] = (porMes[mes] || 0) + custo;
+      porModulo[modulo] = (porModulo[modulo] || 0) + custo;
+      if (!porCategoria[cat]) porCategoria[cat] = { envios: 0, custo: 0 };
+      porCategoria[cat].envios += 1; porCategoria[cat].custo += custo;
+    }
+
+    const ord = (obj) => Object.entries(obj).map(([k, v]) => ({ chave: k, valor: v })).sort((a, b) => b.valor - a.valor);
+    res.json({
+      meses,
+      total: Math.round(total * 100) / 100,
+      envios_considerados: envios.length,
+      nao_classificados: naoClassificados,
+      por_mes: Object.entries(porMes).map(([mes, custo]) => ({ mes, custo: Math.round(custo * 100) / 100 })).sort((a, b) => a.mes.localeCompare(b.mes)),
+      por_modulo: ord(porModulo).map(x => ({ modulo: x.chave, custo: Math.round(x.valor * 100) / 100 })),
+      por_categoria: Object.entries(porCategoria).map(([categoria, v]) => ({ categoria, envios: v.envios, custo: Math.round(v.custo * 100) / 100 })).sort((a, b) => b.custo - a.custo),
+    });
+  } catch (e) {
+    console.error('[comunicacao] custo:', e.message);
+    res.status(500).json({ error: 'Erro ao calcular o custo' });
   }
 });
 
