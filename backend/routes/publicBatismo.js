@@ -4,6 +4,10 @@ const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const { acharOuCriarGuardado } = require('../services/membroMatch');
 const { registrarObservacaoSegura } = require('../services/identidadeProgressiva');
+const {
+  temAbreviacaoNome, splitNomeCompleto, validarNascimento, honeypotPreenchido,
+  registrarConsentimentos, TEXTOS,
+} = require('../services/inscricaoContrato');
 
 // Rate limit: 10 inscrições por IP a cada 15 min
 const limiter = rateLimit({
@@ -77,7 +81,10 @@ function proximoQuartoDomingoISO() {
     if (month > 11) { year += 1; month = 0; }
     q = quartoDomingo(year, month);
   }
-  return q.toISOString().slice(0, 10);
+  // Formato LOCAL (não toISOString/UTC): perto da meia-noite o UTC vira o dia
+  // seguinte e a data do batismo saía errada — mesmo fix do fmtLocalISO da
+  // apresentação de crianças.
+  return `${q.getFullYear()}-${String(q.getMonth() + 1).padStart(2, '0')}-${String(q.getDate()).padStart(2, '0')}`;
 }
 
 // GET /api/public/batismo/proxima-data
@@ -85,6 +92,16 @@ function proximoQuartoDomingoISO() {
 // para mostrar ao usuário quando ele será batizado.
 router.get('/proxima-data', (_req, res) => {
   res.json({ data_batismo: proximoQuartoDomingoISO() });
+});
+
+// GET /api/public/batismo/textos — textos canônicos de consentimento (o
+// snapshot gravado é sempre o do backend)
+router.get('/textos', (_req, res) => {
+  res.json({
+    termos_lgpd: TEXTOS.termos_lgpd,
+    imagem: TEXTOS.imagem,
+    aviso_optin: TEXTOS.aviso_optin,
+  });
 });
 
 // Conta inscrições ativas por horário numa data (pra calcular vagas restantes).
@@ -136,22 +153,41 @@ router.get('/horarios', async (_req, res) => {
 router.post('/', limiter, async (req, res) => {
   try {
     const {
-      nome, sobrenome, email, telefone, cpf, data_nascimento, sexo,
+      nome, sobrenome, nome_completo, email, telefone, cpf, data_nascimento, sexo,
       endereco, cep, tamanho_camisa, limitacao_mobilidade, motivo,
       observacoes, horario_culto, area_kpi, fez_next,
       // Novos · LGPD/integracao
       eh_crianca, possui_deficiencia, deficiencia_descricao,
+      aceita_termos, // termos LGPD (Contrato de Inscrição)
+      consent_imagem, // uso de imagem — fotos da cerimônia (opcional)
       whatsapp_optin, // consentimento p/ mensagens no WhatsApp (Marketing · LGPD)
     } = req.body || {};
 
+    // Honeypot agora tratado no server (antes era só no client — caminho morto)
+    if (honeypotPreenchido(req.body)) return res.status(200).json({ ok: true });
+
+    // D1: campo único "Nome completo" (split determinístico); tolera o payload
+    // antigo nome+sobrenome de abas abertas antes do deploy.
+    let nomeT = String(nome || '').trim();
+    let sobrenomeT = String(sobrenome || '').trim();
+    if (nome_completo && String(nome_completo).trim()) {
+      const s = splitNomeCompleto(nome_completo);
+      nomeT = s.nome;
+      sobrenomeT = s.sobrenome;
+    }
+
     // Validacoes básicas
-    if (!nome || !String(nome).trim() || String(nome).trim().length < 2) {
+    if (!nomeT || nomeT.length < 2) {
       return res.status(400).json({ error: 'Informe o nome.' });
     }
-    if (!sobrenome || !String(sobrenome).trim()) {
-      return res.status(400).json({ error: 'Informe o sobrenome.' });
+    if (!sobrenomeT) {
+      return res.status(400).json({ error: 'Informe o nome completo.' });
     }
-    if (!telefone || soDigitos(telefone).length < 10) {
+    if (temAbreviacaoNome(`${nomeT} ${sobrenomeT}`)) {
+      return res.status(400).json({ error: 'Escreva seu nome completo, sem abreviações.' });
+    }
+    const telNorm = soDigitos(telefone);
+    if (telNorm.length < 10 || telNorm.length > 11) {
       return res.status(400).json({ error: 'Informe um telefone valido (com DDD).' });
     }
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email).trim())) {
@@ -160,9 +196,14 @@ router.post('/', limiter, async (req, res) => {
     if (!cpf || !cpfValido(cpf)) {
       return res.status(400).json({ error: 'CPF é obrigatório e precisa ser válido.' });
     }
-    // Obrigatórios do form de batismo (pedido da gestão · 2026-07-24)
-    if (!data_nascimento) {
-      return res.status(400).json({ error: 'Informe a data de nascimento.' });
+    // Nascimento sempre foi obrigatório no server — agora com validação real
+    // (formato/data existente/não-futura) e o form perdeu o rótulo "(opcional)".
+    const nascValid = validarNascimento(data_nascimento);
+    if (!nascValid) {
+      return res.status(400).json({ error: 'Informe uma data de nascimento válida.' });
+    }
+    if (!aceita_termos) {
+      return res.status(400).json({ error: 'É preciso aceitar os termos para se inscrever.' });
     }
     const camisaNorm = tamanho_camisa ? String(tamanho_camisa).trim().toUpperCase() : null;
     if (!camisaNorm || !['PP', 'P', 'M', 'G', 'GG', 'XG', 'XGG'].includes(camisaNorm)) {
@@ -170,10 +211,7 @@ router.post('/', limiter, async (req, res) => {
     }
 
     const cpfNorm = cpf ? soDigitos(cpf) : null;
-    const telNorm = soDigitos(telefone);
     const emailNorm = String(email).trim().toLowerCase();
-    const nomeT = String(nome).trim();
-    const sobrenomeT = String(sobrenome).trim();
 
     // Guarda na origem (membroMatch · 2026-06-19): resolve-ou-cria UM membro
     // deduplicado (CPF → e-mail → telefone+nome → nome+nascimento · NUNCA
@@ -186,7 +224,7 @@ router.post('/', limiter, async (req, res) => {
       const r = await acharOuCriarGuardado({
         cpf: cpfNorm, email: emailNorm, telefone: telNorm,
         nome: `${nomeT} ${sobrenomeT}`.trim(),
-        dataNascimento: data_nascimento || null,
+        dataNascimento: nascValid,
         status: 'visitante',
         origem: 'batismo_formulario',
       });
@@ -264,13 +302,18 @@ router.post('/', limiter, async (req, res) => {
     if (motivo) obsParts.push(`Motivo: ${String(motivo).trim().slice(0, 500)}`);
     if (observacoes) obsParts.push(`Comentario: ${String(observacoes).trim().slice(0, 1000)}`);
     const cepNorm = cep ? String(cep).trim().slice(0, 20) : null;
-    // Sexo · paridade com o totem (armazenado como 'M'/'F' · opcional).
+    // Sexo · paridade com o totem (armazenado como 'M'/'F'). Aceita o
+    // vocabulário canônico do contrato (masculino|feminino) e o legado M/F.
+    // Obrigatório desde 28/07 (ajuste do contrato) — só para inscrições novas.
     const sexoNorm = (() => {
       const s = sexo ? String(sexo).trim().toUpperCase() : '';
       if (s === 'M' || s === 'MASCULINO') return 'M';
       if (s === 'F' || s === 'FEMININO') return 'F';
       return null;
     })();
+    if (!sexoNorm) {
+      return res.status(400).json({ error: 'Selecione masculino ou feminino.' });
+    }
 
     const AREAS_OK = ['kids', 'sede', 'bridge', 'ami', 'online'];
     const areaKpiValida = AREAS_OK.includes(area_kpi) ? area_kpi : 'sede';
@@ -289,7 +332,7 @@ router.post('/', limiter, async (req, res) => {
     const payload = {
       nome: nomeT,
       sobrenome: sobrenomeT,
-      data_nascimento: data_nascimento || null,
+      data_nascimento: nascValid,
       cpf: cpfNorm,
       telefone: telNorm,
       email: emailNorm,
@@ -328,8 +371,21 @@ router.post('/', limiter, async (req, res) => {
     await registrarObservacaoSegura({
       membroId, origem: 'batismo_formulario', origemId: data.id,
       nome: `${nomeT} ${sobrenomeT}`.trim(), cpf: cpfNorm,
-      telefone: telNorm, email: emailNorm, dataNascimento: data_nascimento || null,
+      telefone: telNorm, email: emailNorm, dataNascimento: nascValid,
     });
+
+    // Atos de consentimento na satélite (Contrato de Inscrição). O de IMAGEM
+    // (fotos da cerimônia) é o que destrava fotos→marketing na revisão
+    // estrutural. Best-effort: a inscrição nunca é perdida por falha aqui.
+    registrarConsentimentos({
+      porta: 'batismo', refId: data.id, membroId,
+      ip: req.ip || null, userAgent: (req.headers['user-agent'] || '').slice(0, 300) || null,
+      itens: [
+        { tipo: 'termos_lgpd', aceito: true },
+        { tipo: 'imagem', aceito: Boolean(consent_imagem) },
+        { tipo: 'whatsapp', aceito: !!whatsapp_optin },
+      ],
+    }).catch((e) => console.error('[publicBatismo] consentimentos:', e.message));
 
     // Notifica responsáveis pela integração (assincrono)
     notificar({
