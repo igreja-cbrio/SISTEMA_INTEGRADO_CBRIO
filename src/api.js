@@ -316,6 +316,8 @@ export const inscricoesApi = {
   excluirInscricao: (eventoId, inscricaoId) => del(`/inscricoes/eventos/${eventoId}/inscricoes/${inscricaoId}`),
   uploadCapa: (file) => { const fd = new FormData(); fd.append('arquivo', file); return requestFile('/inscricoes/upload-capa', fd); },
   // Check-in do evento (SPEC-06) — tela fullscreen: QR do comprovante + busca
+  // Inventário das portas públicas do sistema (grupos/next/batismo/…) — read-only
+  portas: () => get('/inscricoes/portas'),
   checkinEstado: (eventoId) => get(`/inscricoes/eventos/${eventoId}/checkin`),
   checkinBuscar: (eventoId, q) => get(`/inscricoes/eventos/${eventoId}/checkin/buscar?q=${encodeURIComponent(q)}`),
   checkinMarcar: (eventoId, data) => post(`/inscricoes/eventos/${eventoId}/checkin`, data),
