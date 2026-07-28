@@ -97,8 +97,6 @@ const NAV_ITEMS = [
         title: 'Configurações',
         items: [
           { label: 'Permissões', description: 'Matriz cargo × módulo + usuários (cargo, áreas, overrides)', icon: Shield, path: '/admin/permissoes', perm: 'isAdmin' },
-          { label: 'Bot WhatsApp', description: 'Líderes vinculados + coletas de dados pelo WhatsApp', icon: MessageSquare, path: '/admin/whatsapp', module: 'integracao', moduleMin: 3 },
-          { label: 'Menu das Conversas', description: 'Setores do bot de triagem (menu que o WhatsApp mostra)', icon: MessageSquare, path: '/admin/conversas-setores', module: 'conversas', moduleMin: 3 },
           { label: 'Feedback do piloto', description: 'Reportes dos testadores + erros capturados durante os testes', icon: Activity, path: '/admin/feedback', perm: 'isAdmin' },
           { label: 'Analytics do App', description: 'Painel ao vivo (online agora, cadastros) + uso e erros do app', icon: MonitorSmartphone, path: '/admin/app-analytics', superAdminOnly: true },
         ],
@@ -164,7 +162,7 @@ const NAV_ITEMS = [
           { label: 'Batismo', description: 'Inscrições, horários, agendamento e check-in de batismo', icon: Droplets, path: '/batismo', module: 'batismo' },
           { label: 'Membresia', description: 'Cadastros, trilha dos valores e Jornada', icon: BookOpen, path: '/ministerial/membresia', perm: 'canMembresia' },
           { label: 'Cuidados', description: 'Capelania e aconselhamento', icon: Heart, path: '/ministerial/cuidados', module: 'cuidados' },
-          { label: 'Conversas', description: 'Inbox de WhatsApp da igreja · receber e responder, triagem por área', icon: MessageSquare, path: '/conversas', module: 'conversas' },
+          { label: 'Comunicação', description: 'Central de WhatsApp · chat, envios, templates, atendentes e relatórios', icon: MessageSquare, path: '/comunicacao', module: 'comunicacao' },
           { label: 'Grupos', description: 'Grupos de conexão · pedidos · QR · mapa', icon: UsersRound, path: '/grupos', module: 'grupos', perm: 'canMembresia' },
           { label: 'Voluntariado', description: 'Check-in, escalas e QR codes', icon: HandHelping, path: '/ministerial/voluntariado', perm: 'canMembresia' },
           { label: 'Entradas', description: 'Porta de entrada · uma pessoa = um cadastro · liga inscrição ao membro e funde duplicados', icon: UserSearch, path: '/entradas', module: 'next-batismo' },

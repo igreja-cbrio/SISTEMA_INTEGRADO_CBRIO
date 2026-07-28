@@ -3050,6 +3050,56 @@ export const waInbox = {
   removerSetor: (id) => del(`/wa-inbox/setores/${id}`),
 };
 
+// Módulo Comunicação (central de WhatsApp · C3 backend · rotas /comunicacao/*)
+export const comunicacao = {
+  numeros: {
+    list: () => get('/comunicacao/numeros'),
+    criar: (body) => post('/comunicacao/numeros', body),
+    atualizar: (id, body) => put(`/comunicacao/numeros/${id}`, body),
+  },
+  templates: {
+    list: (params = {}) => {
+      const p = new URLSearchParams();
+      if (params.modulo) p.set('modulo', params.modulo);
+      if (params.status) p.set('status', params.status);
+      const qs = p.toString();
+      return get(`/comunicacao/templates${qs ? `?${qs}` : ''}`);
+    },
+    sync: () => post('/comunicacao/templates/sync', {}, { timeout: 120_000 }),
+    atualizar: (id, body) => put(`/comunicacao/templates/${id}`, body),
+  },
+  agendamentos: {
+    list: () => get('/comunicacao/agendamentos'),
+    criar: (body) => post('/comunicacao/agendamentos', body),
+    atualizar: (id, body) => put(`/comunicacao/agendamentos/${id}`, body),
+    remover: (id) => del(`/comunicacao/agendamentos/${id}`),
+  },
+  atendentes: {
+    list: () => get('/comunicacao/atendentes'),
+    criar: (body) => post('/comunicacao/atendentes', body),
+    atualizar: (id, body) => put(`/comunicacao/atendentes/${id}`, body),
+  },
+  tarifas: {
+    list: () => get('/comunicacao/tarifas'),
+    atualizar: (categoria, tarifa) => put(`/comunicacao/tarifas/${encodeURIComponent(categoria)}`, { tarifa }),
+  },
+  envios: {
+    list: (params = {}) => {
+      const p = new URLSearchParams();
+      ['status', 'contexto', 'telefone', 'de', 'ate', 'limit', 'offset'].forEach((k) => {
+        if (params[k] != null && params[k] !== '') p.set(k, params[k]);
+      });
+      const qs = p.toString();
+      return get(`/comunicacao/envios${qs ? `?${qs}` : ''}`);
+    },
+    resumo: (dias = 30) => get(`/comunicacao/envios/resumo?dias=${dias}`),
+  },
+  erros: {
+    list: () => get('/comunicacao/erros'),
+    reenviar: (id, telefone) => post(`/comunicacao/erros/${id}/reenviar`, telefone ? { telefone } : {}),
+  },
+};
+
 export const cuidados = {
   dashboard: () => get('/cuidados/dashboard'),
   dashboardSeries: (params) => get('/cuidados/dashboard-series' + (params ? '?' + new URLSearchParams(params) : '')),
