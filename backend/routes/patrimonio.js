@@ -19,6 +19,20 @@ router.get('/dashboard', async (req, res) => {
   }
 });
 
+// Indicadores adicionais (saneamento de cadastro, risco de extravio,
+// manutenção atrasada, tendência de baixas) — função separada de
+// pat_dashboard_stats (ver migration 20260728180000).
+router.get('/dashboard/indicadores', async (req, res) => {
+  try {
+    const { data, error } = await supabase.rpc('pat_dashboard_indicadores');
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('[PAT] Indicadores RPC falhou:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar indicadores de patrimônio' });
+  }
+});
+
 // ── CATEGORIAS ─────────────────────────────────────────────
 router.get('/categorias', async (req, res) => {
   try {
@@ -81,8 +95,12 @@ router.get('/bens', async (req, res) => {
     const { status, categoria_id, localizacao_id, busca } = req.query;
     let query = supabase.from('pat_bens').select('*, pat_categorias(nome), pat_localizacoes(nome)').order('nome');
     if (status) query = query.eq('status', status);
-    if (categoria_id) query = query.eq('categoria_id', categoria_id);
-    if (localizacao_id) query = query.eq('localizacao_id', localizacao_id);
+    // Sentinela "__sem__" filtra bens SEM categoria/localização — pra
+    // priorizar o saneamento de cadastro (pedido do usuário 2026-07-28).
+    if (categoria_id === '__sem__') query = query.is('categoria_id', null);
+    else if (categoria_id) query = query.eq('categoria_id', categoria_id);
+    if (localizacao_id === '__sem__') query = query.is('localizacao_id', null);
+    else if (localizacao_id) query = query.eq('localizacao_id', localizacao_id);
     // Busca por nome OU código de barras OU nº de série — permite achar o bem
     // pelo número, não só pelo nome (pedido do usuário 2026-07-27).
     if (busca) {

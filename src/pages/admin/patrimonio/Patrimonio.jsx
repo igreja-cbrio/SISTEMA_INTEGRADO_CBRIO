@@ -125,7 +125,9 @@ export default function Patrimonio() {
   const [saving, setSaving] = useState(false);
 
   const [dashError, setDashError] = useState(false);
+  const [indicadores, setIndicadores] = useState(null);
   const loadDash = useCallback(async () => { try { setDashError(false); setDash(await patrimonio.dashboard()); } catch (e) { console.error(e); setDashError(true); setDash({ totalBens: 0, ativos: 0, manutencao: 0, baixados: 0, extraviados: 0, valorTotal: 0, porCategoria: {}, porLocalizacao: {}, inventariosAbertos: 0 }); } }, []);
+  const loadIndicadores = useCallback(async () => { try { setIndicadores(await patrimonio.dashboardIndicadores()); } catch (e) { console.error(e); } }, []);
   const loadBens = useCallback(async () => {
     try { setLoading(true); const p = {}; if (filtroStatus) p.status = filtroStatus; if (filtroCat) p.categoria_id = filtroCat; if (filtroLoc) p.localizacao_id = filtroLoc; if (busca) p.busca = busca; setBens(await patrimonio.bens.list(p)); }
     catch (e) { console.error(e); } finally { setLoading(false); }
@@ -134,7 +136,7 @@ export default function Patrimonio() {
   const loadLocs = useCallback(async () => { try { setLocalizacoes(await patrimonio.localizacoes.list()); } catch (e) { console.error(e); } }, []);
   const loadInvs = useCallback(async () => { try { setInventarios(await patrimonio.inventarios.list()); } catch (e) { console.error(e); } }, []);
 
-  useEffect(() => { loadDash(); loadBens(); loadCats(); loadLocs(); loadInvs(); }, []);
+  useEffect(() => { loadDash(); loadIndicadores(); loadBens(); loadCats(); loadLocs(); loadInvs(); }, []);
   useEffect(() => { loadBens(); }, [filtroStatus, filtroCat, filtroLoc, busca]);
 
   async function saveBem(data) {
@@ -173,7 +175,18 @@ export default function Patrimonio() {
       )}
       <div style={styles.tabs}>{TABS.map((t, i) => <button key={t} style={styles.tab(tab === i)} onClick={() => setTab(i)}>{t}</button>)}</div>
 
-      {tab === 0 && <DashboardTab dash={dash} onNavigate={(targetTab, status) => { setFiltroStatus(status || ''); setTab(targetTab); }} />}
+      {tab === 0 && (
+        <DashboardTab
+          dash={dash}
+          indicadores={indicadores}
+          onNavigate={(targetTab, status) => { setFiltroStatus(status || ''); setTab(targetTab); }}
+          onNavigateFiltro={(f) => {
+            setFiltroStatus(''); setFiltroCat(f.categoria_id || ''); setFiltroLoc(f.localizacao_id || '');
+            setTab(1);
+          }}
+          onAbrirBem={openDetail}
+        />
+      )}
       {tab === 1 && (
         <BensTab bens={bens} loading={loading} busca={busca} setBusca={setBusca}
           filtroStatus={filtroStatus} setFiltroStatus={setFiltroStatus}
@@ -239,7 +252,7 @@ function PatStatCard({ label, value, bg, svg, onClick }) {
   );
 }
 
-function DashboardTab({ dash, onNavigate }) {
+function DashboardTab({ dash, indicadores, onNavigate, onNavigateFiltro, onAbrirBem }) {
   if (!dash) return <div style={styles.empty}>Carregando dashboard...</div>;
   // Tab 1 = Bens; filtra por status quando aplicável
   const kpis = [
@@ -250,11 +263,30 @@ function DashboardTab({ dash, onNavigate }) {
     { label: 'Extraviados', value: dash.extraviados, bg: '#ef4444', status: 'extraviado' },
     { label: 'Valor Total', value: fmtMoney(dash.valorTotal), bg: '#3b82f6', status: '' },
   ];
+  const totalBens = indicadores?.total_bens || dash.totalBens || 0;
+  const pct = (n) => totalBens ? `${Math.round((n / totalBens) * 100)}%` : '—';
+  const saneamento = indicadores ? [
+    { label: 'Sem Localização', value: `${indicadores.sem_localizacao} (${pct(indicadores.sem_localizacao)})`, bg: '#f59e0b', filtro: { localizacao_id: '__sem__' } },
+    { label: 'Sem Categoria', value: `${indicadores.sem_categoria} (${pct(indicadores.sem_categoria)})`, bg: '#f59e0b', filtro: { categoria_id: '__sem__' } },
+    { label: 'Sem Valor de Aquisição', value: `${indicadores.sem_valor} (${pct(indicadores.sem_valor)})`, bg: '#f59e0b', filtro: null },
+  ] : [];
   return (
     <>
       <div className="cbrio-stagger" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginBottom: 24 }}>
         {kpis.map((k, i) => <PatStatCard key={k.label} label={k.label} value={k.value} bg={k.bg} svg={PAT_STAT_SVGS[i % PAT_STAT_SVGS.length]} onClick={() => onNavigate(1, k.status)} />)}
       </div>
+
+      {/* Saneamento de cadastro — pedido do usuário 2026-07-28: indicadores
+          que viram lista de trabalho (clicável), não só números soltos. */}
+      {indicadores && (
+        <div style={{ marginBottom: 24 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: C.text2, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Saneamento de cadastro</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
+            {saneamento.map((k) => <PatStatCard key={k.label} label={k.label} value={k.value} bg={k.bg} svg={null} onClick={k.filtro ? () => onNavigateFiltro(k.filtro) : undefined} />)}
+          </div>
+        </div>
+      )}
+
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 24 }}>
         <div style={styles.card}>
           <div style={styles.cardHeader}><div style={styles.cardTitle}>Por Categoria</div></div>
@@ -279,6 +311,60 @@ function DashboardTab({ dash, onNavigate }) {
           </div>
         </div>
       </div>
+
+      {indicadores && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 24 }}>
+          <div style={styles.card}>
+            <div style={styles.cardHeader}><div style={styles.cardTitle}>Alto valor sem movimentação (365d+)</div></div>
+            <div style={{ padding: 16 }}>
+              {(indicadores.alto_valor_sem_movimentacao || []).map((b) => (
+                <div key={b.id} className="cbrio-row" style={{ cursor: 'pointer', display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: `1px solid ${C.border}` }} onClick={() => onAbrirBem(b.id)}>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600 }}>{b.nome}</div>
+                    <div style={{ fontSize: 11, color: C.text3 }}>{b.localizacao_nome || 'Sem localização'} · {b.dias_sem_mover != null ? `${b.dias_sem_mover}d sem mover` : 'Nunca movimentado'}</div>
+                  </div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: C.amber }}>{fmtMoney(b.valor_aquisicao)}</div>
+                </div>
+              ))}
+              {(!indicadores.alto_valor_sem_movimentacao || indicadores.alto_valor_sem_movimentacao.length === 0) && <div style={styles.empty}>Nenhum bem de alto valor parado</div>}
+            </div>
+          </div>
+          <div style={styles.card}>
+            <div style={styles.cardHeader}><div style={styles.cardTitle}>Manutenção atrasada (30d+)</div></div>
+            <div style={{ padding: 16 }}>
+              {(indicadores.manutencao_atrasada || []).map((b) => (
+                <div key={b.id} className="cbrio-row" style={{ cursor: 'pointer', display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: `1px solid ${C.border}` }} onClick={() => onAbrirBem(b.id)}>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600 }}>{b.nome}</div>
+                    <div style={{ fontSize: 11, color: C.text3 }}>{b.localizacao_nome || 'Sem localização'}</div>
+                  </div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: C.red }}>{b.dias_em_manutencao != null ? `${b.dias_em_manutencao}d` : '—'}</div>
+                </div>
+              ))}
+              {(!indicadores.manutencao_atrasada || indicadores.manutencao_atrasada.length === 0) && <div style={styles.empty}>Nenhuma manutenção atrasada</div>}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {indicadores?.tendencia_baixas_mensal?.length > 0 && (
+        <div style={{ ...styles.card, marginBottom: 24 }}>
+          <div style={styles.cardHeader}><div style={styles.cardTitle}>Tendência de baixas (últimos 12 meses)</div></div>
+          <div style={{ padding: 16, display: 'flex', gap: 8, alignItems: 'flex-end', height: 100, overflowX: 'auto' }}>
+            {indicadores.tendencia_baixas_mensal.map((m) => {
+              const max = Math.max(...indicadores.tendencia_baixas_mensal.map(x => x.total), 1);
+              return (
+                <div key={m.mes} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, minWidth: 36 }} title={`${m.mes}: ${m.total} baixa(s)`}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: C.text }}>{m.total}</div>
+                  <div style={{ width: 20, height: Math.max(4, (m.total / max) * 60), background: C.red, borderRadius: 3 }} />
+                  <div style={{ fontSize: 10, color: C.text3 }}>{m.mes.slice(5)}</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {dash.inventariosAbertos > 0 && (
         <div style={{ ...styles.card, borderLeft: `4px solid ${C.amber}`, padding: 16, fontSize: 13, color: C.text }}>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><ClipboardList style={{ width: 16, height: 16, color: '#00B39D' }} /> {dash.inventariosAbertos} inventário(s) em andamento</span>
@@ -313,10 +399,12 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
         </select>
         <select className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={filtroCat} onChange={e => setFiltroCat(e.target.value)}>
           <option value="">Todas categorias</option>
+          <option value="__sem__">— Sem categoria —</option>
           {categorias.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
         </select>
         <select className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={filtroLoc} onChange={e => setFiltroLoc(e.target.value)}>
           <option value="">Todas localizações</option>
+          <option value="__sem__">— Sem localização —</option>
           {localizacoes.map(l => <option key={l.id} value={l.id}>{l.nome}</option>)}
         </select>
         {isDiretor && <div style={{ marginLeft: 'auto' }}><Button onClick={onNew}>+ Novo Bem</Button></div>}
