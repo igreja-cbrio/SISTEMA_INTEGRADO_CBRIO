@@ -23,6 +23,7 @@ const STATUS_LABELS: Record<string, string> = {
   kids: 'Kids',
   nao_responde: 'Não responde',
   nao_pode_ou_duplicata: 'Não pode / duplicata',
+  desistente: 'Desistiu de servir',
 };
 
 const STATUS_COLORS: Record<string, string> = {
@@ -32,6 +33,7 @@ const STATUS_COLORS: Record<string, string> = {
   kids: 'bg-pink-500/10 text-pink-700 border-pink-500/20',
   nao_responde: 'bg-orange-500/10 text-orange-700 border-orange-500/20',
   nao_pode_ou_duplicata: 'bg-red-500/10 text-red-700 border-red-500/20',
+  desistente: 'bg-slate-500/10 text-slate-600 border-slate-500/20',
 };
 
 const ORIGEM_LABELS: Record<string, string> = {
@@ -174,6 +176,8 @@ export default function VolInscricoes() {
   const [editando, setEditando] = useState(false);
   const [integrarOpen, setIntegrarOpen] = useState(false);
   const [areasIntegrar, setAreasIntegrar] = useState<string[]>([]);
+  const [desistirOpen, setDesistirOpen] = useState(false);
+  const [motivoDesistir, setMotivoDesistir] = useState('');
   const [form, setForm] = useState<{ cpf: string; data_nascimento: string; nome_mae: string; ministerios_interesse: string; area_direcionada: string[]; feedback: string }>({
     cpf: '', data_nascimento: '', nome_mae: '', ministerios_interesse: '', area_direcionada: [], feedback: '',
   });
@@ -292,6 +296,20 @@ export default function VolInscricoes() {
       toast.success('Pessoa integrada.');
     },
     onError: (e: any) => toast.error(e?.message || 'Erro ao integrar.'),
+  });
+
+  // Desistiu de servir (antes de virar voluntário) · status terminal + motivo opcional.
+  const desistir = useMutation({
+    mutationFn: (motivo: string) => voluntariado.desistirInscricao(selected!.id, motivo),
+    onSuccess: (row: any) => {
+      setSelected((prev) => (prev ? { ...prev, ...row } : prev));
+      queryClient.invalidateQueries({ queryKey: ['vol', 'inscricoes-list'] });
+      queryClient.invalidateQueries({ queryKey: ['vol', 'inscricoes-summary'] });
+      setDesistirOpen(false);
+      setMotivoDesistir('');
+      toast.success('Marcado como desistente.');
+    },
+    onError: (e: any) => toast.error(e?.message || 'Erro ao registrar desistência.'),
   });
 
   const salvarDados = useMutation({
@@ -968,9 +986,59 @@ export default function VolInscricoes() {
                       Reverter integração
                     </Button>
                   )}
+                  {/* Desistiu de servir (nunca chegou a servir) · não vira voluntário, não conta como inativo */}
+                  {(selected.status === 'inscrito' || selected.status === 'enviado_ministerio') && (
+                    <Button size="sm" variant="ghost"
+                      className="text-slate-600 hover:text-slate-700"
+                      disabled={mudarStatus.isPending}
+                      onClick={() => { setMotivoDesistir(''); setDesistirOpen(true); }}>
+                      Desistiu de servir
+                    </Button>
+                  )}
+                  {selected.status === 'desistente' && (
+                    <Button size="sm" variant="outline" disabled={mudarStatus.isPending}
+                      onClick={() => mudarStatus.mutate({ id: selected.id, status: 'inscrito' })}>
+                      Reverter (voltar pra triagem)
+                    </Button>
+                  )}
                 </div>
               </div>
             </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Desistiu de servir · motivo opcional */}
+      <Dialog open={desistirOpen} onOpenChange={(v) => { if (!v) setDesistirOpen(false); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Desistiu de servir</DialogTitle>
+          </DialogHeader>
+          {selected && (
+            <div className="space-y-3">
+              <p className="text-xs text-muted-foreground">
+                Marca <b>{selected.nome_completo || selected.nome}</b> como <b>desistente</b> — a pessoa
+                não chegou a servir. Ela <b>não</b> entra no cadastro de voluntários nem na conta de
+                inativos. Dá pra reverter depois.
+              </p>
+              <div>
+                <label className="text-[11px] uppercase tracking-wide text-muted-foreground">Motivo (opcional)</label>
+                <Textarea rows={3} className="mt-1 resize-y"
+                  value={motivoDesistir}
+                  onChange={(e) => setMotivoDesistir(e.target.value)}
+                  placeholder="Ex.: conversou com o líder e preferiu não seguir agora." />
+              </div>
+              <div className="flex gap-2 pt-1 justify-end">
+                <Button size="sm" variant="ghost" disabled={desistir.isPending}
+                  onClick={() => setDesistirOpen(false)}>
+                  Cancelar
+                </Button>
+                <Button size="sm" disabled={desistir.isPending}
+                  onClick={() => desistir.mutate(motivoDesistir)}>
+                  {desistir.isPending ? 'Salvando...' : 'Confirmar desistência'}
+                </Button>
+              </div>
+            </div>
           )}
         </DialogContent>
       </Dialog>

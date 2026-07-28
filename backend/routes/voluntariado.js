@@ -3818,6 +3818,39 @@ router.patch('/inscricoes/:id/dados', async (req, res) => {
   }
 });
 
+// POST /api/voluntariado/inscricoes/:id/desistiu — a pessoa desistiu de servir
+// ANTES de virar voluntário (ex.: conversou com o líder e não quis seguir).
+// Status terminal 'desistente' + motivo opcional. NÃO cria vol_profile → não
+// entra no cadastro de voluntário nem na conta de inativos (esses vêm de
+// vw_vol_frequencia, que só olha quem realmente é voluntário). Endpoint
+// dedicado (não mexe na lógica de status existente). Reverter = mandar de
+// volta pra 'inscrito' pela ação normal de triagem.
+router.post('/inscricoes/:id/desistiu', async (req, res) => {
+  try {
+    const isAdmin = ['admin', 'diretor'].includes(req.user.role);
+    const lvl = Math.max(getEffectiveLevel(req, 'voluntariado') || 0, getEffectiveLevel(req, 'membresia') || 0);
+    if (!isAdmin && lvl < 3) {
+      return res.status(403).json({ error: 'Sem permissão para alterar a inscrição' });
+    }
+
+    const motivo = req.body?.motivo ? String(req.body.motivo).trim().slice(0, 500) : '';
+    const { data: atual } = await supabase.from('vol_inscricoes')
+      .select('feedback').eq('id', req.params.id).maybeSingle();
+    // Preserva o feedback existente e anexa a nota da desistência.
+    const nota = motivo ? `Desistiu de servir: ${motivo}` : 'Desistiu de servir.';
+    const feedback = atual?.feedback ? `${atual.feedback}\n${nota}` : nota;
+
+    const { data, error } = await supabase.from('vol_inscricoes')
+      .update({ status: 'desistente', feedback, updated_at: new Date().toISOString() })
+      .eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('[inscricao desistiu]', e.message);
+    res.status(500).json({ error: 'Erro ao registrar a desistência' });
+  }
+});
+
 // ══════════════════════════════════════════════════════════════
 // TRIAGEM DE ANTECEDENTES (Kids/Bridge) · PII sensível
 // Leitura/ação restrita a quem triagem (voluntariado/kids/bridge >=3).
