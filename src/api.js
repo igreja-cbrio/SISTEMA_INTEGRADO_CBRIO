@@ -3108,6 +3108,7 @@ export const comunicacao = {
     },
     resumo: (dias = 30) => get(`/comunicacao/envios/resumo?dias=${dias}`),
   },
+  custo: (meses = 6) => get(`/comunicacao/custo?meses=${meses}`),
   erros: {
     list: () => get('/comunicacao/erros'),
     reenviar: (id, telefone) => post(`/comunicacao/erros/${id}/reenviar`, telefone ? { telefone } : {}),

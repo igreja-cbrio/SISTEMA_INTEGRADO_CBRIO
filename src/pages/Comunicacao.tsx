@@ -45,7 +45,6 @@ function ErroBox({ msg, onRetry }: { msg: string; onRetry: () => void }) {
 
 // ═══ DASHBOARD ═══════════════════════════════════════════════════════
 type Resumo = { dias: number; total: number; enviados: number; pendentes: number; erros: number; entregues: number; lidos: number; falhos_meta: number };
-type Tarifa = { categoria: string; tarifa: number };
 
 function StatCard({ label, value, cor }: { label: string; value: number | string; cor?: string }) {
   return (
@@ -56,26 +55,31 @@ function StatCard({ label, value, cor }: { label: string; value: number | string
   );
 }
 
+type Custo = {
+  meses: number; total: number; envios_considerados: number; nao_classificados: number;
+  por_mes: { mes: string; custo: number }[];
+  por_modulo: { modulo: string; custo: number }[];
+  por_categoria: { categoria: string; envios: number; custo: number }[];
+};
+const brl = (v: number) => `R$ ${(Number(v) || 0).toFixed(2)}`;
+const mesLabel = (m: string) => {
+  const [a, mm] = m.split('-'); const M = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
+  return `${M[Number(mm) - 1] || mm}/${String(a).slice(2)}`;
+};
+
 function Dashboard() {
   const [dias, setDias] = useState(30);
   const [resumo, setResumo] = useState<Resumo | null>(null);
-  const [tarifas, setTarifas] = useState<Tarifa[] | null>(null);
+  const [custo, setCusto] = useState<Custo | null>(null);
   const [erro, setErro] = useState(false);
 
   const carregar = useCallback(() => {
-    setErro(false); setResumo(null);
+    setErro(false); setResumo(null); setCusto(null);
     comunicacao.envios.resumo(dias).then((r: Resumo) => setResumo(r)).catch(() => setErro(true));
-    comunicacao.tarifas.list().then((r: Tarifa[]) => setTarifas(r || [])).catch(() => setTarifas([]));
+    // Custo real por mês/módulo/categoria (janela fixa de 6 meses · independe do seletor de dias)
+    comunicacao.custo(6).then((r: Custo) => setCusto(r)).catch(() => setCusto(null));
   }, [dias]);
   useEffect(() => { carregar(); }, [carregar]);
-
-  // Estimativa simples de custo: usa a tarifa média das categorias cadastradas
-  // (o cálculo fino por categoria de cada envio é o C5). Aqui é só um indicativo.
-  const custoEstimado = useMemo(() => {
-    if (!resumo || !tarifas || tarifas.length === 0) return null;
-    const media = tarifas.reduce((a, t) => a + (Number(t.tarifa) || 0), 0) / tarifas.length;
-    return resumo.enviados * media;
-  }, [resumo, tarifas]);
 
   return (
     <div className="space-y-4">
@@ -106,24 +110,61 @@ function Dashboard() {
               <StatCard label="Erros" value={resumo.erros} cor="#dc2626" />
               <StatCard label="Falhas Meta" value={resumo.falhos_meta} cor="#dc2626" />
             </div>
-            <Card className="p-4">
-              <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Custo estimado (indicativo)</div>
-              {custoEstimado == null ? (
-                <p className="mt-1 text-sm text-muted-foreground">Cadastre as tarifas por categoria para ver a estimativa. O cálculo fino de custo por conversa é do próximo módulo.</p>
-              ) : (
-                <>
-                  <div className="mt-1 text-2xl font-bold tabular-nums">R$ {custoEstimado.toFixed(2)}</div>
-                  <p className="mt-1 text-[11px] text-muted-foreground">Estimativa grosseira = enviados × tarifa média. Detalhamento por categoria virá no C5.</p>
-                </>
-              )}
-              {tarifas && tarifas.length > 0 && (
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {tarifas.map((t) => (
-                    <Badge key={t.categoria} variant="secondary">{t.categoria}: R$ {Number(t.tarifa).toFixed(4)}</Badge>
-                  ))}
-                </div>
-              )}
-            </Card>
+            {/* Custo estimado real (últimos 6 meses · Σ envios × tarifa da categoria do template) */}
+            {custo && (
+              <div className="grid gap-3 lg:grid-cols-3">
+                <Card className="p-4">
+                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Custo estimado · {custo.meses} meses</div>
+                  <div className="mt-1 text-3xl font-bold tabular-nums" style={{ color: C.primary }}>{brl(custo.total)}</div>
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    {custo.envios_considerados} envios · texto (janela 24h) não custa.
+                  </p>
+                  {custo.nao_classificados > 0 && (
+                    <p className="mt-2 text-[11px] text-amber-600">
+                      ⚠️ {custo.nao_classificados} envio(s) de template <b>sem categoria</b> (custo não somado). Classifique na aba Templates pra estimativa fechar.
+                    </p>
+                  )}
+                  <div className="mt-3 flex flex-wrap gap-1.5">
+                    {custo.por_categoria.map((c) => (
+                      <Badge key={c.categoria} variant="secondary">{c.categoria}: {brl(c.custo)} ({c.envios})</Badge>
+                    ))}
+                  </div>
+                </Card>
+                <Card className="p-4">
+                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Por mês</div>
+                  <div className="mt-2 space-y-1.5">
+                    {custo.por_mes.length === 0 ? <p className="text-sm text-muted-foreground">Sem envios no período.</p>
+                      : custo.por_mes.map((m) => {
+                        const max = Math.max(...custo.por_mes.map((x) => x.custo), 0.01);
+                        return (
+                          <div key={m.mes} className="flex items-center gap-2 text-xs">
+                            <span className="w-12 text-muted-foreground">{mesLabel(m.mes)}</span>
+                            <div className="h-2 flex-1 rounded bg-muted">
+                              <div className="h-2 rounded" style={{ width: `${Math.max(3, (m.custo / max) * 100)}%`, background: C.primary }} />
+                            </div>
+                            <span className="w-16 text-right tabular-nums">{brl(m.custo)}</span>
+                          </div>
+                        );
+                      })}
+                  </div>
+                </Card>
+                <Card className="p-4">
+                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Por módulo</div>
+                  <div className="mt-2 space-y-1.5">
+                    {custo.por_modulo.length === 0 ? <p className="text-sm text-muted-foreground">—</p>
+                      : custo.por_modulo.slice(0, 8).map((m) => (
+                        <div key={m.modulo} className="flex items-center justify-between text-xs">
+                          <span className="text-muted-foreground">{m.modulo}</span>
+                          <span className="tabular-nums font-medium">{brl(m.custo)}</span>
+                        </div>
+                      ))}
+                  </div>
+                </Card>
+              </div>
+            )}
+            <p className="text-[11px] text-muted-foreground">
+              Estimativa (não é a fatura da Meta): custo = envios de template × tarifa da categoria. Conversa de serviço/janela 24h não custa.
+            </p>
           </>
         )}
     </div>
@@ -407,7 +448,7 @@ function Templates({ podeSync, podeEditar }: { podeSync: boolean; podeEditar: bo
   const [erro, setErro] = useState(false);
   const [sincronizando, setSincronizando] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState({ modulo: '', ativo: true });
+  const [editForm, setEditForm] = useState({ modulo: '', ativo: true, categoria: '' });
 
   const carregar = useCallback(() => {
     setErro(false);
@@ -425,9 +466,9 @@ function Templates({ podeSync, podeEditar }: { podeSync: boolean; podeEditar: bo
     } catch (e: unknown) { toast.error((e as Error)?.message || 'Erro ao sincronizar'); }
     finally { setSincronizando(false); }
   }
-  function editar(t: Template) { setEditId(t.id); setEditForm({ modulo: t.modulo || '', ativo: t.ativo !== false }); }
+  function editar(t: Template) { setEditId(t.id); setEditForm({ modulo: t.modulo || '', ativo: t.ativo !== false, categoria: t.categoria || '' }); }
   async function salvarEdit(id: string) {
-    try { await comunicacao.templates.atualizar(id, { modulo: editForm.modulo || null, ativo: editForm.ativo }); toast.success('Template atualizado'); setEditId(null); carregar(); }
+    try { await comunicacao.templates.atualizar(id, { modulo: editForm.modulo || null, ativo: editForm.ativo, categoria: editForm.categoria || null }); toast.success('Template atualizado'); setEditId(null); carregar(); }
     catch (e: unknown) { toast.error((e as Error)?.message || 'Erro'); }
   }
 
@@ -463,7 +504,19 @@ function Templates({ podeSync, podeEditar }: { podeSync: boolean; podeEditar: bo
                     <tr key={t.id} className="border-b border-border/60 hover:bg-muted/40">
                       <td className="px-3 py-2 font-medium">{t.nome}</td>
                       <td className="px-3 py-2 text-xs">{t.idioma || '—'}</td>
-                      <td className="px-3 py-2 text-xs">{t.categoria || '—'}</td>
+                      <td className="px-3 py-2 text-xs">
+                        {editId === t.id ? (
+                          <select className="h-8 rounded border border-input bg-background px-1 text-xs"
+                            value={editForm.categoria}
+                            onChange={(e) => setEditForm((f) => ({ ...f, categoria: e.target.value }))}>
+                            <option value="">— categoria —</option>
+                            <option value="utility">utility</option>
+                            <option value="marketing">marketing</option>
+                            <option value="authentication">authentication</option>
+                            <option value="service">service</option>
+                          </select>
+                        ) : (t.categoria || '—')}
+                      </td>
                       <td className="px-3 py-2"><SeloMeta s={t.status_meta} /></td>
                       <td className="px-3 py-2 text-center tabular-nums">{t.params_body ?? 0}</td>
                       <td className="px-3 py-2">
