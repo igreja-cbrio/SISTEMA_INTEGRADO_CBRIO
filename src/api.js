@@ -1709,8 +1709,10 @@ export const totemKids = {
   ausentes: (min = 3) => get(`/totem-kids/ausentes?min=${min}`),
   // Painel ao vivo dos pagers: { em_uso:[{pager_numero,crianca_nome,sala_nome,responsavel_nome}], pendentes:[...] }
   pagersEmUso: () => get('/totem-kids/pagers-em-uso'),
-  // Conferência/rastreio de devolução dos pagers de um dia (pager→criança→culto→devolvido)
-  pagersConferencia: (data) => get(`/totem-kids/pagers/conferencia${data ? `?data=${encodeURIComponent(data)}` : ''}`),
+  // Conferência/rastreio de devolução dos pagers (por CULTO · pager→criança→devolvido)
+  pagersConferencia: ({ culto_id, data } = {}) => get(`/totem-kids/pagers/conferencia${culto_id ? `?culto_id=${encodeURIComponent(culto_id)}` : (data ? `?data=${encodeURIComponent(data)}` : '')}`),
+  // Cultos com Kids pra escolher na conferência (mais recentes primeiro)
+  pagersCultos: () => get('/totem-kids/pagers/cultos'),
   // Pré-check-in pelo app do membro · o voluntário digita/escaneia o código
   preCheckin: {
     buscarCodigo: (codigo) => get(`/totem-kids/pre-checkin/codigo/${encodeURIComponent(codigo)}`),
