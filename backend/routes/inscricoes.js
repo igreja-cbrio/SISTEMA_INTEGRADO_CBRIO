@@ -11,6 +11,7 @@ const router = express.Router();
 const multer = require('multer');
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
+const { escapePostgrestValue } = require('../utils/sanitize');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 } });
 
@@ -142,6 +143,227 @@ router.put('/series/:id', authorizeModule('inscricoes', 3), async (req, res) => 
   } catch (e) {
     console.error('[inscricoes] atualizar série:', e.message);
     res.status(500).json({ error: 'Erro ao atualizar série' });
+  }
+});
+
+// GET /unificadas — busca única sobre TODAS as portas (SPEC-03 · aba "Todas
+// as inscrições" · vw_inscricoes_unificadas). Filtros: q (nome/CPF/telefone),
+// porta, status canônico, área, período (de/ate), page. A view é REVOGADA de
+// anon/authenticated — só o backend (service_role) lê.
+const PORTAS_UNIFICADAS = ['inscricoes', 'eventos_externos', 'batismo', 'apresentacao_criancas', 'apresentacao_bebes', 'grupos', 'grupos_lider', 'next', 'next_legado', 'voluntariado'];
+const STATUS_CANONICOS = ['recebida', 'em_tratamento', 'confirmada', 'concluida', 'nao_concluida', 'recusada', 'cancelada'];
+router.get('/unificadas', authorizeModule('inscricoes', 1), async (req, res) => {
+  try {
+    const page = Math.max(0, parseInt(req.query.page) || 0);
+    const porPagina = Math.min(1000, Math.max(10, parseInt(req.query.limit) || 50));
+    let q = supabase.from('vw_inscricoes_unificadas')
+      .select('*', { count: 'exact' })
+      .order('criado_em', { ascending: false })
+      .range(page * porPagina, page * porPagina + porPagina - 1);
+
+    if (PORTAS_UNIFICADAS.includes(req.query.porta)) q = q.eq('porta', req.query.porta);
+    if (STATUS_CANONICOS.includes(req.query.status)) q = q.eq('status_canonico', req.query.status);
+    if (req.query.area) q = q.eq('area_display', String(req.query.area).slice(0, 60));
+    if (/^\d{4}-\d{2}-\d{2}$/.test(String(req.query.de || ''))) q = q.gte('criado_em', `${req.query.de}T00:00:00-03:00`);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(String(req.query.ate || ''))) q = q.lte('criado_em', `${req.query.ate}T23:59:59-03:00`);
+
+    const busca = String(req.query.q || '').trim().slice(0, 120);
+    if (busca) {
+      const digits = busca.replace(/\D/g, '');
+      if (digits.length >= 8) {
+        // CPF/telefone (digits-only nas colunas *_norm — injeção impossível: só dígitos)
+        q = q.or(`cpf_norm.like.%${digits}%,telefone_norm.like.%${digits}%`);
+      } else {
+        q = q.ilike('nome_display', `%${escapePostgrestValue(busca)}%`);
+      }
+    }
+
+    const { data, error, count } = await q;
+    if (error) throw error;
+    res.json({ items: data || [], total: count ?? 0, page, porPagina });
+  } catch (e) {
+    console.error('[inscricoes] unificadas:', e.message);
+    res.status(500).json({ error: 'Erro na busca unificada' });
+  }
+});
+
+// Lê a view unificada INTEIRA paginando o cap de 1000 do PostgREST (regra
+// permanente do CLAUDE.md) — base do rollup de pessoas e do dashboard.
+async function lerViewUnificada(filtro = (q) => q) {
+  const out = [];
+  for (let off = 0; ; off += 1000) {
+    const { data, error } = await filtro(
+      supabase.from('vw_inscricoes_unificadas').select('*').range(off, off + 999)
+    );
+    if (error) throw error;
+    out.push(...(data || []));
+    if (!data || data.length < 1000) break;
+  }
+  return out;
+}
+
+// Âncora de pessoa (mesma régua do Cuidados/trilha · contrato de porta):
+// membro_id > CPF > telefone > nome normalizado.
+function chavePessoa(i) {
+  if (i.membro_id) return `m:${i.membro_id}`;
+  if (i.cpf_norm) return `c:${i.cpf_norm}`;
+  if (i.telefone_norm) return `t:${i.telefone_norm}`;
+  const nome = String(i.nome_display || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+  return `n:${nome}`;
+}
+
+// GET /unificadas/pessoas — rollup por PESSOA (aba Pessoas · nível ≥2, PII
+// concentrada). Default: só quem tem 2+ inscrições (o propósito da aba é
+// conferência de sobreposição); ?todas=1 pagina o universo; ?q= busca.
+router.get('/unificadas/pessoas', authorizeModule('inscricoes', 2), async (req, res) => {
+  try {
+    const linhas = await lerViewUnificada();
+    const mapa = new Map();
+    for (const i of linhas) {
+      const k = chavePessoa(i);
+      if (!mapa.has(k)) {
+        mapa.set(k, {
+          chave: k, membro_id: i.membro_id || null, nome: i.nome_display,
+          cpf: i.cpf_norm || null, telefone: i.telefone_norm || null,
+          areas: new Set(), portas: new Set(), inscricoes: [],
+        });
+      }
+      const p = mapa.get(k);
+      if (!p.membro_id && i.membro_id) p.membro_id = i.membro_id;
+      if (!p.cpf && i.cpf_norm) p.cpf = i.cpf_norm;
+      if (!p.telefone && i.telefone_norm) p.telefone = i.telefone_norm;
+      if (i.area_display) p.areas.add(i.area_display);
+      p.portas.add(i.porta);
+      p.inscricoes.push({
+        porta: i.porta, evento_rotulo: i.evento_rotulo, edicao_rotulo: i.edicao_rotulo,
+        criado_em: i.criado_em, status_canonico: i.status_canonico, rota_detalhe: i.rota_detalhe,
+      });
+    }
+
+    let pessoas = [...mapa.values()].map(p => ({
+      ...p,
+      areas: [...p.areas], portas: [...p.portas],
+      total: p.inscricoes.length,
+      inscricoes: p.inscricoes
+        .sort((a, b) => String(b.criado_em).localeCompare(String(a.criado_em)))
+        .slice(0, 20),
+    }));
+
+    const busca = String(req.query.q || '').trim().toLowerCase();
+    if (busca) {
+      const digits = busca.replace(/\D/g, '');
+      pessoas = pessoas.filter(p =>
+        String(p.nome || '').toLowerCase().includes(busca)
+        || (digits.length >= 4 && (String(p.cpf || '').includes(digits) || String(p.telefone || '').includes(digits))));
+    } else if (req.query.todas !== '1') {
+      pessoas = pessoas.filter(p => p.total >= 2);
+    }
+
+    pessoas.sort((a, b) => b.total - a.total || String(a.nome).localeCompare(String(b.nome)));
+    const page = Math.max(0, parseInt(req.query.page) || 0);
+    const porPagina = 50;
+    res.json({
+      total_pessoas: pessoas.length,
+      total_inscricoes: linhas.length,
+      page,
+      items: pessoas.slice(page * porPagina, (page + 1) * porPagina),
+    });
+  } catch (e) {
+    console.error('[inscricoes] unificadas/pessoas:', e.message);
+    res.status(500).json({ error: 'Erro no rollup de pessoas' });
+  }
+});
+
+// GET /unificadas/dashboard — agregações da aba Dashboard (SPEC-09) sobre a
+// view unificada, com filtros tempo/área/porta. Arrecadação vem de
+// insc_pagamentos pagos (nasce zerada — decisão do Marcos — e acorda sozinha
+// quando o Pix da F3.3 entrar). Comparecimento só conta portas mensuráveis
+// (compareceu IS NOT NULL). Fuso das séries diárias: America/Sao_Paulo.
+router.get('/unificadas/dashboard', authorizeModule('inscricoes', 1), async (req, res) => {
+  try {
+    const de = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.de || '')) ? String(req.query.de) : null;
+    const ate = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.ate || '')) ? String(req.query.ate) : null;
+    const linhas = await lerViewUnificada((q) => {
+      let f = q;
+      if (de) f = f.gte('criado_em', `${de}T00:00:00-03:00`);
+      if (ate) f = f.lte('criado_em', `${ate}T23:59:59-03:00`);
+      if (PORTAS_UNIFICADAS.includes(req.query.porta)) f = f.eq('porta', req.query.porta);
+      if (req.query.area) f = f.eq('area_display', String(req.query.area).slice(0, 60));
+      return f;
+    });
+    const validas = linhas.filter(l => l.status_canonico !== 'cancelada');
+
+    const hoje = new Date().toISOString().slice(0, 10);
+    const chaveEvento = (l) => l.evento_ref ? `${l.porta}:${l.evento_ref}` : (l.serie_chave ? `${l.serie_chave}:${l.edicao_rotulo || ''}` : null);
+    const eventos = new Map();
+    for (const l of validas) {
+      const k = chaveEvento(l);
+      if (!k) continue;
+      if (!eventos.has(k)) eventos.set(k, { rotulo: l.evento_rotulo, data: l.evento_data, total: 0 });
+      eventos.get(k).total += 1;
+    }
+    const realizados = [...eventos.values()].filter(e => e.data && e.data < hoje).length;
+
+    const mensuraveis = validas.filter(l => l.compareceu !== null && l.compareceu !== undefined);
+    const presentes = mensuraveis.filter(l => l.compareceu === true).length;
+
+    // arrecadação real (centavos) — pagos do motor; hoje 0 (Pix = F3.3)
+    let arrecadacao = 0;
+    try {
+      const { data: pagos } = await supabase.from('insc_pagamentos')
+        .select('valor_centavos').eq('status', 'pago').limit(10000);
+      arrecadacao = (pagos || []).reduce((s, p) => s + (p.valor_centavos || 0), 0);
+    } catch { /* tabela do motor pode evoluir na F3.3 — card fica em 0 */ }
+
+    // série diária (BRT)
+    const porDia = new Map();
+    const fmtBRT = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' });
+    for (const l of validas) {
+      const d = fmtBRT.format(new Date(l.criado_em));
+      porDia.set(d, (porDia.get(d) || 0) + 1);
+    }
+    const serieDiaria = [...porDia.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([data, total]) => ({ data, total }));
+
+    // comparador de edições (SPEC-10): série derivada/nativa → edições ordenadas
+    const series = new Map();
+    for (const l of validas) {
+      if (!l.serie_chave || !l.edicao_rotulo) continue;
+      if (!series.has(l.serie_chave)) series.set(l.serie_chave, new Map());
+      const ed = series.get(l.serie_chave);
+      ed.set(l.edicao_rotulo, (ed.get(l.edicao_rotulo) || 0) + 1);
+    }
+    const comparador = [...series.entries()]
+      .map(([serie, ed]) => ({
+        serie,
+        total: [...ed.values()].reduce((s, n) => s + n, 0),
+        edicoes: [...ed.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+          .map(([edicao, total]) => ({ edicao, total })),
+      }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 8);
+
+    const ranking = [...eventos.values()].sort((a, b) => b.total - a.total).slice(0, 10);
+    const porPorta = {};
+    for (const l of validas) porPorta[l.porta] = (porPorta[l.porta] || 0) + 1;
+
+    res.json({
+      cards: {
+        inscricoes_total: validas.length,
+        eventos_realizados: realizados,
+        media_por_evento: eventos.size ? Math.round((validas.length / eventos.size) * 10) / 10 : 0,
+        arrecadacao_centavos: arrecadacao,
+        comparecimento_pct: mensuraveis.length ? Math.round((presentes / mensuraveis.length) * 1000) / 10 : null,
+        comparecimento_base: mensuraveis.length,
+      },
+      serie_diaria: serieDiaria,
+      comparador,
+      ranking,
+      por_porta: porPorta,
+    });
+  } catch (e) {
+    console.error('[inscricoes] unificadas/dashboard:', e.message);
+    res.status(500).json({ error: 'Erro no dashboard' });
   }
 });
 
