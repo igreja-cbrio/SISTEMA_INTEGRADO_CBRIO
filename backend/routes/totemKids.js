@@ -2834,6 +2834,91 @@ router.get('/pagers-em-uso', authorizeModule('kids', 1), async (req, res) => {
   }
 });
 
+// PATCH /api/totem-kids/checkin/:id/pager-devolvido · marca/desmarca a DEVOLUÇÃO
+// do pager (distinto do checkout · o pai pode sair e levar o pager). Propaga por
+// família (checkin_grupo_id · um pager por família). body { devolvido: true|false }.
+router.patch('/checkin/:id/pager-devolvido', authorizeModule('kids', 2), async (req, res) => {
+  try {
+    const { data: alvo } = await supabase.from('kids_checkins')
+      .select('id, checkin_grupo_id, deleted_at')
+      .eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!alvo) return res.status(404).json({ error: 'Check-in não encontrado' });
+    const devolvido = req.body ? req.body.devolvido !== false : true; // default true
+    const patch = devolvido
+      ? { pager_devolvido_at: new Date().toISOString(), pager_devolvido_por: req.user?.userId || null }
+      : { pager_devolvido_at: null, pager_devolvido_por: null };
+    let q = supabase.from('kids_checkins').update(patch).is('deleted_at', null);
+    q = alvo.checkin_grupo_id ? q.eq('checkin_grupo_id', alvo.checkin_grupo_id) : q.eq('id', alvo.id);
+    const { error } = await q;
+    if (error) throw error;
+    res.json({ ok: true, devolvido });
+  } catch (e) {
+    console.error('[totemKids] pager devolvido:', e.message);
+    res.status(500).json({ error: 'Erro ao registrar devolução do pager' });
+  }
+});
+
+// GET /api/totem-kids/pagers/conferencia?data=YYYY-MM-DD · rastreio + conferência
+// de devolução dos pagers de um DIA. 1 linha por família×pager: quem levou o
+// pager, em qual culto, se já saiu (checkout) e se DEVOLVEU. Não-devolvido de quem
+// já saiu = pager foi pra casa (é o que a equipe precisa rastrear).
+router.get('/pagers/conferencia', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const data = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.data || ''))
+      ? String(req.query.data)
+      : new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10); // hoje BRT
+    // Check-ins COM pager cujo culto é do dia pedido.
+    const linhas = [];
+    for (let offset = 0; ; offset += 1000) {
+      const { data: chunk, error } = await supabase.from('kids_checkins')
+        .select(`
+          id, checkin_grupo_id, pager_numero, checkin_at, checkout_at, pager_devolvido_at,
+          responsavel_checkin_nome,
+          crianca:kids_criancas(nome),
+          sessao:kids_sessoes(culto:cultos(nome, data))
+        `)
+        .not('pager_numero', 'is', null).is('deleted_at', null)
+        .range(offset, offset + 999);
+      if (error) throw error;
+      if (!chunk || chunk.length === 0) break;
+      linhas.push(...chunk);
+      if (chunk.length < 1000) break;
+    }
+    // Filtra pelo dia do culto (fallback: dia do check-in em BRT) e agrupa por família×pager.
+    const grupos = new Map();
+    for (const l of linhas) {
+      const dataCulto = l.sessao?.culto?.data
+        ? String(l.sessao.culto.data).slice(0, 10)
+        : (l.checkin_at ? new Date(new Date(l.checkin_at).getTime() - 3 * 3600 * 1000).toISOString().slice(0, 10) : null);
+      if (dataCulto !== data) continue;
+      const chave = `${l.checkin_grupo_id || l.id}|${l.pager_numero}`;
+      const g = grupos.get(chave) || {
+        pager_numero: l.pager_numero,
+        culto: l.sessao?.culto?.nome || null,
+        criancas: [],
+        responsavel_nome: l.responsavel_checkin_nome || null,
+        checkin_at: l.checkin_at || null,
+        // "saiu" só se TODOS da família saíram; devolvido se QUALQUER linha marcou.
+        todos_sairam: true,
+        devolvido_at: null,
+        checkin_ids: [],
+      };
+      g.criancas.push(l.crianca?.nome || '—');
+      g.checkin_ids.push(l.id);
+      if (!l.checkout_at) g.todos_sairam = false;
+      if (l.pager_devolvido_at && (!g.devolvido_at || l.pager_devolvido_at > g.devolvido_at)) g.devolvido_at = l.pager_devolvido_at;
+      grupos.set(chave, g);
+    }
+    const lista = [...grupos.values()].sort((a, b) => (parseInt(a.pager_numero, 10) || 0) - (parseInt(b.pager_numero, 10) || 0));
+    const nao_devolvidos = lista.filter((g) => !g.devolvido_at).length;
+    const foram_pra_casa = lista.filter((g) => !g.devolvido_at && g.todos_sairam).length;
+    res.json({ data, lista, resumo: { total: lista.length, nao_devolvidos, foram_pra_casa } });
+  } catch (e) {
+    console.error('[totemKids] pagers conferencia:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar a conferência de pagers' });
+  }
+});
+
 // GET /api/totem-kids/checkins-abertos/buscar?nome=&pager= · busca check-ins
 // ABERTOS pro check-out sem etiqueta (Marcos 2026-07-27): a família perdeu o
 // código → acha pelo NOME da criança ou pelo NÚMERO do pager. Devolve lista
