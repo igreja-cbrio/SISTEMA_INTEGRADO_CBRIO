@@ -345,9 +345,12 @@ que segue pendente:
   validarCamposPadrao passou a usá-lo. ⚠️ Decisão de escopo: NÃO migramos os
   handlers inteiros pra `validarCamposPadrao` — portas vivas com mensagens/
   fluxos próprios; o risco do sweep era a CÓPIA divergir, e o import resolve.
-  Cópias que FICARAM (fora do escopo do sweep): `publicMembresia.js` (porta
-  não listada — follow-up) e `publicDevocional.js` (módulo do Matheus — não
-  mexer sem alinhar). (2) tipo `data` do form-builder ganhou DatePicker no
+  `publicMembresia.js` entrou no mesmo padrão no follow-up (PR seguinte, 28/07
+  — porta de PESSOA, mesma troca zero-diff; grandfathering de CPF legado
+  intocado nos call sites). Cópia que FICOU: `publicDevocional.js` (módulo do
+  Matheus — não mexer sem alinhar). ⚠️ Segue vivo o follow-up de 18/07:
+  `utils/cpf` é uma 2ª fonte (o membresia.js autenticado usa; o
+  `normalizarCpf` de lá NÃO valida DV) — consolidar exige sessão própria. (2) tipo `data` do form-builder ganhou DatePicker no
   form público (gravava texto livre em qualquer formato). (3) **QR com
   `?temporada=` antiga não vence mais a aberta**: InscricaoGrupos valida o
   param contra `inscricoes_abertas` e IGNORA temporada fechada (QR impresso
