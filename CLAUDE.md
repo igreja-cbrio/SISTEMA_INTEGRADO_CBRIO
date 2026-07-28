@@ -148,6 +148,25 @@ Celebra com só nome+telefone continuam válidas para sempre).
   de inscritos agora traz `dados`. Cards avulsos e edições da série linkam pro
   detalhe. **Pré-requisito da virada do Celebra** (a operação do dia 29/08 —
   conferir inscritos + sortear no palco — passa a existir no módulo novo).
+- **F3.2 · PR 6 — VIRADA do Eventos Externos pra espinha (2026-07-28 ·
+  migration `20260729040000` + script):** decisão do Marcos (checkpoint 28/07):
+  virada completa AGORA — o ext só tinha os 2 eventos do Celebra 2026, ambos
+  AO VIVO (85+15 inscrições, sorteio no palco 29/08), nenhum histórico
+  encerrado. Migration = `legado_ref/legado_fonte` em `insc_eventos` + UNIQUEs
+  parciais de idempotência nas duas tabelas. Script
+  `backend/scripts/_migrar_ext_espinha.cjs` (dry-run default · `--exec` ·
+  `--verificar`): copia eventos como RASCUNHO (área "Sede" — decisão Marcos) →
+  inscrições com id/created_at/nº da sorte/dados/soft-delete preservados →
+  verificação PRÉ-flip (aborta se contagem divergir) → **FLIP
+  rascunho→publicado = a virada** (fonte dupla passa a servir a espinha no
+  MESMO /evento/:slug; QRs intactos) → catch-up da janela → verificação FINAL
+  (SPEC-04 §3: contagens por evento + amostra 20 campo a campo + sorteios).
+  **ROLLBACK = soft-delete dos eventos migrados na espinha** (público volta ao
+  ext na hora). Junto: rota `/eventos-externos*` → redirect `/inscricoes`,
+  item saiu do menu (AppShell), **escrita nas rotas `/api/eventos-externos`
+  → 410** (leitura fica pra conferência; arquivos EventosExternos*.tsx ficam
+  no repo até 1 ciclo sem divergência — rollback = restaurar 2 rotas).
+  ext_* NÃO é dropado (SPEC-04 §4).
 - **Porta 7 · Grupos (2026-07-28 · migration `20260728235000` = M5):** e-mail
   obrigatório (D2) + anti-abreviação + endereço opcional (vai pro cadastro
   pendente, nunca sobrescreve membro) no form recém-lançado (toque mínimo);

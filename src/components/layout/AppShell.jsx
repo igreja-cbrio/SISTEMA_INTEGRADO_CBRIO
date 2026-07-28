@@ -137,8 +137,8 @@ const NAV_ITEMS = [
         title: 'Execução',
         items: [
           { label: 'Eventos', description: 'Ciclo criativo · fases · documentos · KPIs', icon: CalendarDays, path: '/eventos', perm: 'canAgenda' },
-          { label: 'Eventos Externos', description: 'Confirmação de presença + sorteio · formulário público e calendário', icon: CalendarDays, path: '/eventos-externos', module: 'eventos-externos' },
-          { label: 'Inscrições', description: 'Módulo central de inscrições · calendário, eventos, séries e relatórios', icon: CalendarDays, path: '/inscricoes', module: 'inscricoes' },
+          // "Eventos Externos" saiu do menu na virada pro /inscricoes (SPEC-04 · 2026-07-28); a rota redireciona.
+          { label: 'Inscrições', description: 'Módulo central de inscrições · calendário, eventos, séries e sorteios', icon: CalendarDays, path: '/inscricoes', module: 'inscricoes' },
           { label: 'Projetos', description: 'Acompanhamento de projetos com Kanban/Gantt', icon: FolderKanban, path: '/projetos', perm: 'canProjetos' },
           { label: 'Planejamento Estratégico', description: 'Plano plurianual · etapas e marcos (vigente: Expansão 2026–2029)', icon: Map, path: '/expansao', module: 'expansao' },
         ],
