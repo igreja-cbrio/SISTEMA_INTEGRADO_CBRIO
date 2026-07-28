@@ -50,6 +50,33 @@ Uma pessoa = um cadastro (`mem_membros`) = fonte única que todos os módulos
 leem. Módulo NÃO tem "base local de pessoas" — linha-satélite aponta pro
 membro via `membro_id`.
 
+## ⚠️ Contrato de Inscrição · toda porta pública de inscrição (F3.1 · 2026-07-28)
+
+Decisão do Marcos (specs completas em `docs/modulo-inscricoes/fase1-unificacao.md`
+e `fase2-specs.md` · decisões D1–D9 + ajuste 28/07): as 7 portas de inscrição
+(batismo, apresentação, grupos, líderes, next, voluntariado, eventos externos)
+convergem pro mesmo contrato de campos padrão — **nome completo em campo único
+sem abreviação** (split 1º token→nome, resto→sobrenome onde a tabela exige) ·
+**telefone 10–11 dígitos** digits-only · **CPF com DV** · **e-mail** ·
+**nascimento validado** · **sexo obrigatório (`masculino|feminino`, NUNCA
+"outro")** · **endereço fixo-opcional** · **termos LGPD com snapshot** ·
+**opt-in WhatsApp explícito default false**. Regras valem SÓ para inscrições
+novas — **dado legado nunca é alterado nem re-validado** (inscrições antigas do
+Celebra com só nome+telefone continuam válidas para sempre).
+
+- **Usar SEMPRE** `backend/services/inscricaoContrato.js` (validações,
+  `processarIdentidade` = matcher+observação, `registrarConsentimentos`,
+  textos canônicos) e `src/lib/inscricao.js` (máscaras/validações client).
+  NÃO recriar cópias locais de máscara/CPF — era assim que divergia.
+- **Consentimentos** vão para a tabela `inscricao_consentimentos`
+  (migration `20260728121000` · append-only via backend · tipos: termos_lgpd,
+  imagem, menor_responsavel, whatsapp). O ESTADO do opt-in continua nas
+  colunas `whatsapp_optin/_em` de cada tabela.
+- Rollout F3.1 porta a porta (1 PR cada, nesta ordem): eventos externos →
+  apresentação → líderes → voluntariado → next → batismo → grupos.
+  Plano de migração sem perda + bugs conhecidos: `docs/modulo-inscricoes/`.
+- Teste: `node backend/services/inscricaoContrato.test.js`.
+
 ## Entradas · fluxo operacional de saneamento (2026-07-18)
 
 Marcos definiu Entradas como uma **fila de exceções acionáveis**, não como
