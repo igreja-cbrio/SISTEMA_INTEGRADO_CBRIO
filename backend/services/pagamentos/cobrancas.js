@@ -235,6 +235,11 @@ async function registrarPagamento(cobranca, {
   provider_pagamento_id, e2e_id,
   pago_em, repassado_em,
   payload,
+  // Quando o ADAPTER sabe que este pagamento quita a cobrança inteira mesmo
+  // sem a soma fechar. É o caso do parcelado no cartão: o PSP cria N cobranças
+  // (uma por parcela) mas o pagador pagou tudo na primeira autorização. Sem
+  // isto a cobrança ficaria `pago_parcial` por 12 meses.
+  statusFinal,
 }) {
   const valor = centavos(valor_centavos);
   const negativo = tipo === TIPO_PAGAMENTO.ESTORNO
@@ -264,6 +269,22 @@ async function registrarPagamento(cobranca, {
   if (error && error.code !== '23505') throw error;
   const duplicado = !!error; // 23505 = mesma liquidação já registrada
 
+  // Reentrega do MESMO pagamento trazendo a data de repasse: o dinheiro ficou
+  // disponível. É o caso normal do Asaas (CONFIRMED chega primeiro, RECEIVED
+  // depois — no cartão, ~32 dias depois) e é o que amarra o repasse ao crédito
+  // no extrato. Atualiza em vez de duplicar a linha.
+  if (duplicado && repassado_em && provider_pagamento_id) {
+    const { error: eRep } = await supabase.from('pag_pagamentos')
+      .update({
+        repassado_em,
+        ...(liquido_centavos != null ? { liquido_centavos: centavos(liquido_centavos) } : {}),
+        ...(taxa_centavos != null ? { taxa_centavos: centavos(taxa_centavos) } : {}),
+      })
+      .eq('provider_pagamento_id', provider_pagamento_id)
+      .is('repassado_em', null);
+    if (eRep) console.error('[pagamentos] marcar repasse:', eRep.message);
+  }
+
   const pago = await somaPago(cobranca.id);
   const patch = { valor_pago_centavos: Math.max(0, pago) };
   if (metodo && !cobranca.metodo) patch.metodo = metodo;
@@ -277,7 +298,10 @@ async function registrarPagamento(cobranca, {
   // devolver não é "não ter pagado").
   if (negativo) return { duplicado, cobranca: comValor };
 
-  const derivado = statusPorValor(comValor);
+  // `statusFinal` do adapter vence a derivação pela soma. Aplicar o derivado
+  // primeiro disparia `aoPagarParcial` (notificação de "pagamento parcial")
+  // antes de `aoPagar` — dois avisos para um pagamento só.
+  const derivado = statusFinal || statusPorValor(comValor);
   if (!derivado) return { duplicado, cobranca: comValor };
   const r = await aplicarStatus(comValor, derivado, { pago_em: linha.pago_em });
   return { duplicado, cobranca: r.cobranca, aplicado: r.aplicado, motivo: r.motivo };

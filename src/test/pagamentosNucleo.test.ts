@@ -31,15 +31,23 @@ describe('pagamentos · registro de providers', () => {
     expect(() => P.obter('gateway_que_nao_existe')).toThrow(/não está registrado/);
   });
 
-  it('o padrão é manual até o PSP ser configurado', () => {
+  it('o padrão é manual quando a env não diz outra coisa', () => {
     expect(P.providerPadrao()).toBe('manual');
+    // `manual` é dinheiro fora do PSP — não conta como PSP configurado.
     expect(P.pspConfigurado()).toBe(false);
   });
 
   it('pspConfigurado é false quando PAG_PROVIDER_PADRAO aponta pro que não existe', () => {
-    // Env apontando pra adapter ausente NÃO pode ligar o fluxo pago automático.
-    vi.stubEnv('PAG_PROVIDER_PADRAO', 'asaas');
+    // Env apontando pra adapter ausente (erro de digitação, adapter ainda não
+    // escrito) NÃO pode ligar o fluxo pago automático.
+    vi.stubEnv('PAG_PROVIDER_PADRAO', 'gateway_inexistente');
     expect(P.pspConfigurado()).toBe(false);
+  });
+
+  it('o adapter do Asaas está registrado e é reconhecido como PSP', () => {
+    expect(P.existe('asaas')).toBe(true);
+    vi.stubEnv('PAG_PROVIDER_PADRAO', 'asaas');
+    expect(P.pspConfigurado()).toBe(true);
   });
 
   it('todo provider registrado cumpre o contrato do adapter', () => {
