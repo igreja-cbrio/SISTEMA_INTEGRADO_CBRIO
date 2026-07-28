@@ -268,12 +268,19 @@ que segue pendente:
   na rota = conta 2× (mesma instância) — os POSTs perderam o middleware
   por-rota por isso. Bomba de hoisting do publicNext desarmada
   (`turmaAbertaAtual` declarada antes do 1º uso, com comentário-guarda).
-- **PENDENTE (P3):** totem de bebês (`membresia.js` apresentacao-bebe) fora
-  do contrato (zero consentimento · validação fraca · sem dedup no POST);
-  cópias locais de validação (batismo/vol/next/grupos) fora da fonte única;
-  tipo `data` do form-builder sem renderização própria; QR com `?temporada=`
-  antiga vence a temporada aberta; endereço de grupos write-only; e2e do
-  Next morto (#nome/#sobrenome).
+- **P3-crítico FEITO (PR do totem de bebês):** a porta
+  `membresia.js POST /totem/apresentacao-bebe` entrou no contrato — nome
+  completo do bebê sem abreviação, `validarNascimento` real, **sexo
+  obrigatório** (aceita M/F e canônico, grava M/F; opção "Outro" saiu da
+  tela), **dedup no POST** (bebê+telefone+cerimônia → 409), **consentimento
+  de MENOR obrigatório** (checkbox no TotemMembro com o texto canônico do
+  `GET /textos` da apresentação + `registrarConsentimentos` na satélite,
+  porta 'apresentacao').
+- **PENDENTE (P3 restante · sessão de refactor):** cópias locais de validação
+  (batismo/vol/next/grupos) fora da fonte única (`validarCamposPadrao`/
+  `processarIdentidade`); tipo `data` do form-builder sem renderização
+  própria; QR com `?temporada=` antiga vence a temporada aberta; endereço de
+  grupos write-only; e2e do Next morto (#nome/#sobrenome).
 
 ## ⚠️ Módulo de Comunicação (WhatsApp central) · handoff pro MATHEUS (2026-07-28)
 
