@@ -22,9 +22,13 @@
 const router = require('express').Router();
 const multer = require('multer');
 const { authenticate, authorizeModule } = require('../middleware/auth');
-const { supabase } = require('../utils/supabase');
+const { supabase, query } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const spMarketing = require('../services/sharepointMarketing');
+const {
+  CAMPANHA_INICIO,
+  calcularGenerosidade,
+} = require('../services/marketingGenerosidade');
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -161,6 +165,71 @@ async function enrichCards(cards) {
     campanha: c.campanha_id ? (campanhaMap[c.campanha_id] || null) : null,
   }));
 }
+
+// ─── Generosidade · snapshot agregado para as telas do culto ────────────────
+
+router.get('/generosidade', authorizeModule('marketing', 1), async (req, res) => {
+  try {
+    const anoAtual = new Date().getFullYear();
+    const anoInicio = Number(CAMPANHA_INICIO.slice(0, 4));
+    const ano = req.query.ano === undefined ? anoAtual : Number(req.query.ano);
+
+    if (!Number.isInteger(ano) || ano < anoInicio || ano > anoAtual) {
+      return res.status(400).json({
+        error: `O ano deve estar entre ${anoInicio} e ${anoAtual}.`,
+      });
+    }
+
+    const inicio = `${CAMPANHA_INICIO}-01`;
+    const fim = `${ano + 1}-01-01`;
+
+    const [mensalResult, uploadResult] = await Promise.all([
+      query(
+        `SELECT
+           to_char(t.data_competencia, 'YYYY-MM') AS mes,
+           SUM(t.valor)::numeric AS arrecadado,
+           COUNT(*)::int AS qtd_lancamentos
+         FROM fin_transacoes t
+         JOIN fin_plano_contas pc ON pc.id = t.plano_contas_id
+         WHERE t.codigo_legado IS NOT NULL
+           AND t.tipo = 'receita'
+           AND t.status <> 'cancelado'
+           AND t.classe_movimento IN ('ordinaria', 'extraordinaria')
+           AND (pc.codigo = '3.01' OR pc.codigo LIKE '3.01.%')
+           AND t.data_competencia >= $1::date
+           AND t.data_competencia < $2::date
+         GROUP BY 1
+         ORDER BY 1`,
+        [inicio, fim],
+      ),
+      query(
+        `SELECT concluido_em, data_inicio, data_fim
+           FROM fin_uploads
+          WHERE tipo = 'balanco' AND status = 'concluido'
+          ORDER BY concluido_em DESC
+          LIMIT 1`,
+      ),
+    ]);
+
+    const snapshot = calcularGenerosidade(mensalResult.rows, ano);
+    const ultimoBalanco = uploadResult.rows[0] || null;
+
+    res.set('Cache-Control', 'private, no-store');
+    return res.json({
+      ...snapshot,
+      atualizado_em: ultimoBalanco?.concluido_em || null,
+      periodo_ultimo_balanco: ultimoBalanco
+        ? { inicio: ultimoBalanco.data_inicio, fim: ultimoBalanco.data_fim }
+        : null,
+      fonte: 'balanco_financeiro',
+    });
+  } catch (e) {
+    console.error('[MARKETING] generosidade:', e.message);
+    return res.status(500).json({
+      error: 'Não foi possível carregar os dados de generosidade.',
+    });
+  }
+});
 
 // ─── Catalogos ──────────────────────────────────────────────────────────────
 
