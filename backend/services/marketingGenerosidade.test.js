@@ -2,6 +2,7 @@ const assert = require('assert');
 const {
   META_CAMPUS,
   META_MENSAL,
+  agruparArrecadacaoMensal,
   calcularGenerosidade,
 } = require('./marketingGenerosidade');
 
@@ -35,5 +36,16 @@ const acimaDaMetaCampus = calcularGenerosidade([
 assert.equal(acimaDaMetaCampus.meses[0].campus_acumulado, 8_300_000);
 assert.equal(acimaDaMetaCampus.meses[0].percentual_campus, 103.75);
 assert.equal(acimaDaMetaCampus.meses[0].falta_meta_campus, 0);
+
+const agregado = agruparArrecadacaoMensal([
+  { data_competencia: '2026-01-03', valor: '400000.25' },
+  { data_competencia: '2026-01-28', valor: '600000.25' },
+  { data_competencia: '2026-02-01', valor: 250000 },
+  { data_competencia: null, valor: 999999 },
+]);
+assert.deepEqual(agregado, [
+  { mes: '2026-01', arrecadado: 1_000_000.50, qtd_lancamentos: 2 },
+  { mes: '2026-02', arrecadado: 250_000, qtd_lancamentos: 1 },
+]);
 
 console.log('marketingGenerosidade: regra mensal e acumulado do campus aprovados');

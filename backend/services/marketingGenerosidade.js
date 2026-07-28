@@ -17,6 +17,26 @@ function percentual(valor, meta) {
   return Math.round(((Number(valor) / Number(meta)) * 100 + Number.EPSILON) * 100) / 100;
 }
 
+function agruparArrecadacaoMensal(rows) {
+  const porMes = new Map();
+
+  for (const row of rows || []) {
+    const mes = String(row.data_competencia || '').slice(0, 7);
+    if (!/^\d{4}-\d{2}$/.test(mes)) continue;
+
+    const atual = porMes.get(mes) || {
+      mes,
+      arrecadado: 0,
+      qtd_lancamentos: 0,
+    };
+    atual.arrecadado = arredondarMoeda(atual.arrecadado + Number(row.valor || 0));
+    atual.qtd_lancamentos += 1;
+    porMes.set(mes, atual);
+  }
+
+  return [...porMes.values()].sort((a, b) => a.mes.localeCompare(b.mes));
+}
+
 /**
  * Monta o snapshot agregado que o Marketing pode consultar.
  *
@@ -90,5 +110,6 @@ module.exports = {
   META_CAMPUS,
   META_MENSAL,
   SALDO_INICIAL_CAMPUS,
+  agruparArrecadacaoMensal,
   calcularGenerosidade,
 };
