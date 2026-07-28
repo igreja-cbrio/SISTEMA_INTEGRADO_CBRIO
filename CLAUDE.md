@@ -110,6 +110,15 @@ Celebra com só nome+telefone continuam válidas para sempre).
   Publicar no /inscricoes agora EXPÕE o formulário; botão de copiar link nos
   cards; banner de transição no /eventos-externos. Falta da SPEC-04: backfill
   ext→espinha com contagens (próxima PR, com validação do Marcos).
+- **F3.2 · form público no modelo do Grupos (2026-07-28 · SEM migration):**
+  `EventoExterno.tsx` reescrito no layout do InscricaoGrupos — campos em
+  CAIXA (label em cima, fonte 16 anti-zoom iOS), grid lado a lado
+  (auto-fit 220px), cartão 720px, container 100dvh + margin:auto (fix
+  iPhone). Itens largos (textarea/pills/rede/imagem) ocupam a linha toda
+  (`gridColumn 1/-1`). ZERO mudança de lógica — validações/consentimentos/
+  payload/honeypot idênticos; vale pras DUAS fontes (espinha + ext).
+  Dados de teste do Marcos (evento "teste" + inscrição + série) soft-
+  deletados a pedido em 28/07.
 - **Porta 7 · Grupos (2026-07-28 · migration `20260728235000` = M5):** e-mail
   obrigatório (D2) + anti-abreviação + endereço opcional (vai pro cadastro
   pendente, nunca sobrescreve membro) no form recém-lançado (toque mínimo);
