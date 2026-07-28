@@ -59,11 +59,14 @@ async function slugUnico(base) {
   return `${base}-${Date.now().toString(36)}`;
 }
 
-// Área obrigatória (28/07) — SEMPRE do catálogo oficial `areas` (nunca lista paralela)
+// Área obrigatória (28/07) — SEMPRE do catálogo oficial `areas` (nunca lista
+// paralela). "Administração" é a opção agregada das áreas administrativas.
 async function areaValida(nome) {
-  if (!nome || !String(nome).trim()) return null;
+  const n = String(nome || '').trim();
+  if (!n) return null;
+  if (/^administra/i.test(n)) return 'Administração';
   const { data } = await supabase.from('areas')
-    .select('nome').eq('ativo', true).ilike('nome', String(nome).trim()).limit(1);
+    .select('nome').eq('ativo', true).ilike('nome', n).limit(1);
   return data && data.length ? data[0].nome : null;
 }
 
@@ -75,16 +78,21 @@ const CAMPOS_EVENTO = [
   'pagamento_ativo', 'valor_centavos', 'pagamento_expira_horas',
 ];
 
-// GET /areas — catálogo oficial pro select do form
+// GET /areas — catálogo oficial pro select do form.
+// Feedback do Marcos (28/07): áreas ADMINISTRATIVAS não fazem inscrição —
+// colapsam numa opção única "Administração" (RH, Patrimônio, T.I.,
+// Financeiro, Logística…). Detecção por nome do setor OU da área.
+const RE_ADMIN = /gest[aã]o|administra|operac|recursos humanos|\brh\b|patrim|financeir|log[íi]st|tecnologia|\bt\.?i\.?\b|jur[íi]dic|contab|secretar/i;
 router.get('/areas', authorizeModule('inscricoes', 1), async (_req, res) => {
   try {
     const { data, error } = await supabase.from('areas')
-      .select('id, nome').eq('ativo', true).order('nome');
+      .select('id, nome, setor:setores(nome)').eq('ativo', true).order('nome');
     if (error) throw error;
-    res.json(data || []);
+    const naoAdmin = (data || []).filter(a => !RE_ADMIN.test(a.nome || '') && !RE_ADMIN.test(a.setor?.nome || ''));
+    res.json([...naoAdmin.map(a => ({ id: a.id, nome: a.nome })), { id: 'administracao', nome: 'Administração' }]);
   } catch (e) {
     console.error('[inscricoes] areas:', e.message);
-    res.json([]);
+    res.json([{ id: 'administracao', nome: 'Administração' }]);
   }
 });
 
@@ -92,7 +100,7 @@ router.get('/areas', authorizeModule('inscricoes', 1), async (_req, res) => {
 router.get('/series', authorizeModule('inscricoes', 1), async (_req, res) => {
   try {
     const { data, error } = await supabase.from('insc_series')
-      .select('id, nome, slug_base, area, periodicidade, tipo, ativo')
+      .select('id, nome, slug_base, area, periodicidade, tipo, ativo, recorre_ate')
       .is('deleted_at', null).order('nome');
     if (error) throw error;
     res.json(data || []);
@@ -102,11 +110,36 @@ router.get('/series', authorizeModule('inscricoes', 1), async (_req, res) => {
   }
 });
 
+// PUT /series/:id — nome / recorrente-até / ativo
+router.put('/series/:id', authorizeModule('inscricoes', 3), async (req, res) => {
+  try {
+    const b = req.body || {};
+    const patch = {};
+    if (b.nome !== undefined) {
+      const nome = String(b.nome).trim();
+      if (nome.length < 2) return res.status(400).json({ error: 'Informe o nome da série' });
+      patch.nome = nome;
+    }
+    if (b.recorre_ate !== undefined) {
+      patch.recorre_ate = b.recorre_ate && /^\d{4}-\d{2}-\d{2}$/.test(String(b.recorre_ate))
+        ? String(b.recorre_ate) : null;
+    }
+    if (b.ativo !== undefined) patch.ativo = !!b.ativo;
+    const { data, error } = await supabase.from('insc_series')
+      .update(patch).eq('id', req.params.id).is('deleted_at', null).select('id').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('[inscricoes] atualizar série:', e.message);
+    res.status(500).json({ error: 'Erro ao atualizar série' });
+  }
+});
+
 // GET /eventos — lista com série + contagem de inscritos
 router.get('/eventos', authorizeModule('inscricoes', 1), async (_req, res) => {
   try {
     const { data, error } = await supabase.from('insc_eventos')
-      .select('id, nome, slug, area, tipo, data, hora, local, capa_url, status, vagas, tem_sorteio, checkin_ativo, pagamento_ativo, valor_centavos, edicao_rotulo, serie_id, serie:insc_series(id, nome, periodicidade), inscritos:inscricoes(count)')
+      .select('id, nome, slug, area, tipo, data, hora, local, capa_url, status, vagas, tem_sorteio, checkin_ativo, pagamento_ativo, valor_centavos, edicao_rotulo, serie_id, serie:insc_series(id, nome, periodicidade, recorre_ate, slug_base), inscritos:inscricoes(count)')
       .is('deleted_at', null)
       .order('data', { ascending: false, nullsFirst: false });
     if (error) throw error;
@@ -163,8 +196,10 @@ router.post('/eventos', authorizeModule('inscricoes', 3), async (req, res) => {
     let serieId = null;
     let edicao = null;
     if (periodicidade !== 'unica') {
+      const recorreAte = b.recorre_ate && /^\d{4}-\d{2}-\d{2}$/.test(String(b.recorre_ate))
+        ? String(b.recorre_ate) : null;
       const { data: serie, error: eS } = await supabase.from('insc_series').insert({
-        nome, slug_base: slug, area, periodicidade,
+        nome, slug_base: slug, area, periodicidade, recorre_ate: recorreAte,
         tipo: b.tipo === 'retiro' ? 'retiro' : 'evento',
       }).select('id').single();
       if (eS) throw eS;

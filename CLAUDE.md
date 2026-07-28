@@ -110,6 +110,20 @@ Celebra com só nome+telefone continuam válidas para sempre).
   Publicar no /inscricoes agora EXPÕE o formulário; botão de copiar link nos
   cards; banner de transição no /eventos-externos. Falta da SPEC-04: backfill
   ext→espinha com contagens (próxima PR, com validação do Marcos).
+- **F3.2 · PR 4 — feedback do teste do Marcos (2026-07-28 · migration
+  20260729020000):** aba Eventos AGRUPADA — série recorrente = **1 card**
+  ("um quadrado Next") que abre modal com TODAS as edições dentro (Publicar/
+  link/Editar por edição + Duplicar evento) — nunca 1 card por edição.
+  `insc_series.recorre_ate` (DATE, informativo: "mensal até X") — setável na
+  criação e editável no modal da série (PUT /series/:id nível 3). Botão
+  **Publicar de 1 clique** (card avulso + linha da edição) — resolve o
+  "Evento não encontrado" (evento nasce rascunho; copiar link de rascunho
+  agora avisa em toast). GET /areas **colapsa áreas administrativas** numa
+  opção única "Administração" (regex nome área/setor: RH, Patrimônio, T.I.,
+  Financeiro…; `areaValida` aceita); áreas de culto/ministeriais seguem
+  individuais. Máscara de hora hh:mm no modal ("1930"→"19:30"). "Nova
+  edição"→"Duplicar evento". Abas Todas/Pessoas/Dashboard seguem
+  desabilitadas por design (próximas entregas).
 - **Porta 7 · Grupos (2026-07-28 · migration `20260728235000` = M5):** e-mail
   obrigatório (D2) + anti-abreviação + endereço opcional (vai pro cadastro
   pendente, nunca sobrescreve membro) no form recém-lançado (toque mínimo);
