@@ -23,6 +23,7 @@ const ROUTE_MODULE_MAP = {
   'eventos':      ['eventos'],
   'events':       ['eventos'],
   'eventos-externos': ['eventos-externos'],
+  'inscricoes':   ['inscricoes'],
   'projects':     ['projetos'],
   'expansion':    ['expansao'],
   'solicitacoes': ['solicitacoes'],

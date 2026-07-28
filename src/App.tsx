@@ -289,6 +289,7 @@ const GovernancaRitual = lazyWithRetry(() => import('./pages/governanca/RitualPa
 const InscricaoNext = lazyWithRetry(() => import('./pages/public/InscricaoNext'));
 const EventoExterno = lazyWithRetry(() => import('./pages/public/EventoExterno'));
 const EventosExternos = lazyWithRetry(() => import('./pages/EventosExternos'));
+const Inscricoes = lazyWithRetry(() => import('./pages/Inscricoes'));
 const EventoExternoDetalhe = lazyWithRetry(() => import('./pages/EventoExternoDetalhe'));
 const NextDirecionar = lazyWithRetry(() => import('./pages/public/NextDirecionar'));
 const DecisaoOnline = lazyWithRetry(() => import('./pages/public/DecisaoOnline'));
@@ -636,6 +637,7 @@ function AppRoutes() {
         <Route path="/entradas" element={<ModuleGuard moduleSlug="next-batismo" nivelMinimo={1}><Suspense fallback={<Loading />}><NextBatismo /></Suspense></ModuleGuard>} />
         <Route path="/eventos-externos" element={<ModuleGuard moduleSlug="eventos-externos" nivelMinimo={1}><Suspense fallback={<Loading />}><EventosExternos /></Suspense></ModuleGuard>} />
         <Route path="/eventos-externos/:id" element={<ModuleGuard moduleSlug="eventos-externos" nivelMinimo={1}><Suspense fallback={<Loading />}><EventoExternoDetalhe /></Suspense></ModuleGuard>} />
+        <Route path="/inscricoes" element={<ModuleGuard moduleSlug="inscricoes" nivelMinimo={1}><Suspense fallback={<Loading />}><Inscricoes /></Suspense></ModuleGuard>} />
         <Route path="/governanca" element={<ModuleGuard moduleSlug="governanca" nivelMinimo={1}><Suspense fallback={<Loading />}><Governanca /></Suspense></ModuleGuard>} />
         <Route path="/governanca/:sigla" element={<ModuleGuard moduleSlug="governanca" nivelMinimo={1}><Suspense fallback={<Loading />}><GovernancaRitual /></Suspense></ModuleGuard>} />
         <Route path="/next-batismo" element={<Navigate to="/entradas" replace />} />

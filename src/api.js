@@ -296,6 +296,20 @@ export const eventosExternos = {
   uploadCapa: (file) => { const fd = new FormData(); fd.append('arquivo', file); return requestFile('/eventos-externos/upload-capa', fd); },
 };
 
+// Módulo de Inscrições · espinha (F3.2 · docs/modulo-inscricoes/fase2-specs.md)
+export const inscricoesApi = {
+  areas: () => get('/inscricoes/areas'),
+  series: () => get('/inscricoes/series'),
+  listarEventos: () => get('/inscricoes/eventos'),
+  evento: (id) => get(`/inscricoes/eventos/${id}`),
+  inscricoesDoEvento: (id) => get(`/inscricoes/eventos/${id}/inscricoes`),
+  criarEvento: (data) => post('/inscricoes/eventos', data),
+  atualizarEvento: (id, data) => put(`/inscricoes/eventos/${id}`, data),
+  excluirEvento: (id) => del(`/inscricoes/eventos/${id}`),
+  novaEdicao: (id, data) => post(`/inscricoes/eventos/${id}/nova-edicao`, data),
+  uploadCapa: (file) => { const fd = new FormData(); fd.append('arquivo', file); return requestFile('/inscricoes/upload-capa', fd); },
+};
+
 // Eventos Externos · formulário público de confirmação de presença (sem auth)
 export const eventoPublico = {
   get: (slug) => fetch(`${API}/public/evento/${encodeURIComponent(slug)}`).then(async r => {
