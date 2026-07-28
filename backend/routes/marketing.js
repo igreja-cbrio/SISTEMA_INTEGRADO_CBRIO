@@ -22,11 +22,12 @@
 const router = require('express').Router();
 const multer = require('multer');
 const { authenticate, authorizeModule } = require('../middleware/auth');
-const { supabase, query } = require('../utils/supabase');
+const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const spMarketing = require('../services/sharepointMarketing');
 const {
   CAMPANHA_INICIO,
+  agruparArrecadacaoMensal,
   calcularGenerosidade,
 } = require('../services/marketingGenerosidade');
 
@@ -168,6 +169,41 @@ async function enrichCards(cards) {
 
 // ─── Generosidade · snapshot agregado para as telas do culto ────────────────
 
+async function carregarGenerosidadeDoBalanco(inicio, fim) {
+  const { data: planos, error: planosError } = await supabase
+    .from('fin_plano_contas')
+    .select('id, codigo')
+    .or('codigo.eq.3.01,codigo.like.3.01.%');
+  if (planosError) throw planosError;
+
+  const planoIds = (planos || []).map((plano) => plano.id);
+  if (!planoIds.length) return [];
+
+  const linhas = [];
+  const pageSize = 1000;
+
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabase
+      .from('fin_transacoes')
+      .select('id, data_competencia, valor')
+      .not('codigo_legado', 'is', null)
+      .eq('tipo', 'receita')
+      .neq('status', 'cancelado')
+      .in('classe_movimento', ['ordinaria', 'extraordinaria'])
+      .in('plano_contas_id', planoIds)
+      .gte('data_competencia', inicio)
+      .lt('data_competencia', fim)
+      .order('id', { ascending: true })
+      .range(from, from + pageSize - 1);
+
+    if (error) throw error;
+    linhas.push(...(data || []));
+    if (!data || data.length < pageSize) break;
+  }
+
+  return agruparArrecadacaoMensal(linhas);
+}
+
 router.get('/generosidade', authorizeModule('marketing', 1), async (req, res) => {
   try {
     const anoAtual = new Date().getFullYear();
@@ -183,36 +219,20 @@ router.get('/generosidade', authorizeModule('marketing', 1), async (req, res) =>
     const inicio = `${CAMPANHA_INICIO}-01`;
     const fim = `${ano + 1}-01-01`;
 
-    const [mensalResult, uploadResult] = await Promise.all([
-      query(
-        `SELECT
-           to_char(t.data_competencia, 'YYYY-MM') AS mes,
-           SUM(t.valor)::numeric AS arrecadado,
-           COUNT(*)::int AS qtd_lancamentos
-         FROM fin_transacoes t
-         JOIN fin_plano_contas pc ON pc.id = t.plano_contas_id
-         WHERE t.codigo_legado IS NOT NULL
-           AND t.tipo = 'receita'
-           AND t.status <> 'cancelado'
-           AND t.classe_movimento IN ('ordinaria', 'extraordinaria')
-           AND (pc.codigo = '3.01' OR pc.codigo LIKE '3.01.%')
-           AND t.data_competencia >= $1::date
-           AND t.data_competencia < $2::date
-         GROUP BY 1
-         ORDER BY 1`,
-        [inicio, fim],
-      ),
-      query(
-        `SELECT concluido_em, data_inicio, data_fim
-           FROM fin_uploads
-          WHERE tipo = 'balanco' AND status = 'concluido'
-          ORDER BY concluido_em DESC
-          LIMIT 1`,
-      ),
+    const [mensalRows, uploadResult] = await Promise.all([
+      carregarGenerosidadeDoBalanco(inicio, fim),
+      supabase
+        .from('fin_uploads')
+        .select('concluido_em, data_inicio, data_fim')
+        .eq('tipo', 'balanco')
+        .eq('status', 'concluido')
+        .order('concluido_em', { ascending: false })
+        .limit(1),
     ]);
+    if (uploadResult.error) throw uploadResult.error;
 
-    const snapshot = calcularGenerosidade(mensalResult.rows, ano);
-    const ultimoBalanco = uploadResult.rows[0] || null;
+    const snapshot = calcularGenerosidade(mensalRows, ano);
+    const ultimoBalanco = uploadResult.data?.[0] || null;
 
     res.set('Cache-Control', 'private, no-store');
     return res.json({
