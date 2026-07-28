@@ -267,7 +267,7 @@ export default function EventoExterno() {
   const [erro, setErro] = useState('');
   const [enviando, setEnviando] = useState(false);
   const [subindoImg, setSubindoImg] = useState(0);
-  const [resultado, setResultado] = useState<{ numero: number; jaInscrito?: boolean; temSorteio?: boolean } | null>(null);
+  const [resultado, setResultado] = useState<{ numero: number | null; jaInscrito?: boolean; temSorteio?: boolean } | null>(null);
   const marcarBusy = (b: boolean) => setSubindoImg(n => Math.max(0, n + (b ? 1 : -1)));
 
   useEffect(() => {
@@ -372,20 +372,36 @@ export default function EventoExterno() {
             <div style={{ padding: '32px 20px', textAlign: 'center', background: '#00B39D18', border: '1px solid #00B39D40', borderRadius: 14 }}>
               <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#00B39D', color: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 28, marginBottom: 14 }}>&#10003;</div>
               <h2 style={{ fontSize: 18, fontWeight: 700, color: C.text, margin: 0 }}>{evento.msg_sucesso_titulo || 'Presença confirmada!'}</h2>
+              {/* Re-inscrição SEMPRE avisada — a mensagem custom do evento não
+                  pode suprimir o "você já estava confirmado" (a pessoa precisa
+                  saber que não criou uma inscrição nova). */}
+              {resultado.jaInscrito && (
+                <p style={{ fontSize: 13, color: '#00B39D', fontWeight: 600, marginTop: 8 }}>
+                  Você já estava confirmado(a) — atualizamos seus dados.
+                </p>
+              )}
               {/* Texto de agradecimento: custom do evento (se houver) ou o padrão */}
               {evento.msg_sucesso_texto ? (
                 <p style={{ fontSize: 13, color: C.text3, marginTop: 8, whiteSpace: 'pre-wrap' }}>{evento.msg_sucesso_texto}</p>
               ) : (
                 <p style={{ fontSize: 13, color: C.text3, marginTop: 8 }}>
-                  {resultado.jaInscrito ? 'Você já estava confirmado(a) — atualizamos seus dados.' : resultado.temSorteio ? 'Anota aí o seu número da sorte:' : `Te esperamos${evento?.nome ? ` no ${evento.nome}` : ''}!`}
+                  {resultado.jaInscrito ? null : resultado.temSorteio ? 'Anota aí o seu número da sorte:' : `Te esperamos${evento?.nome ? ` no ${evento.nome}` : ''}!`}
                 </p>
               )}
-              {resultado.temSorteio && (
+              {/* Bloco do número só quando o número EXISTE — no empate de
+                  corrida/linha sem sorte o server pode devolver null, e
+                  "Seu número da sorte" vazio é pior que nada. */}
+              {resultado.temSorteio && resultado.numero != null && (
                 <>
                   <div style={{ marginTop: 12, fontSize: 13, color: '#00B39D', fontWeight: 600 }}>Seu número da sorte</div>
                   <div style={{ fontSize: 64, fontWeight: 800, color: '#00B39D', lineHeight: 1.1, fontVariantNumeric: 'tabular-nums' }}>{resultado.numero}</div>
                   <p style={{ fontSize: 12, color: C.text3, marginTop: 6 }}>Guarde este número — vale pro sorteio!</p>
                 </>
+              )}
+              {resultado.temSorteio && resultado.numero == null && (
+                <p style={{ fontSize: 12, color: C.text3, marginTop: 10 }}>
+                  Seu número da sorte já foi gerado na sua primeira inscrição — se não anotou, procure a equipe no dia do evento.
+                </p>
               )}
             </div>
           ) : (evento.inscricoes_encerradas ?? !evento.form_ativo) ? (
