@@ -2055,6 +2055,7 @@ export const membresia = {
     list: (params) => get('/membresia/membros' + (params ? '?' + new URLSearchParams(params) : '')),
     get: (id) => get(`/membresia/membros/${id}`),
     timeline: (id) => get(`/membresia/membros/${id}/timeline`),
+    inscricoes: (id) => get(`/membresia/membros/${id}/inscricoes`),
     create: (data) => post('/membresia/membros', data),
     update: (id, data) => put(`/membresia/membros/${id}`, data),
     remove: (id) => del(`/membresia/membros/${id}`),

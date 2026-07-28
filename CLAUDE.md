@@ -4184,6 +4184,28 @@ sobre a tela que o Marcos Paulo já entregou (`InscricaoEventoDetalhe.tsx`).
 - Idade, sexo e situação do pagamento aparecem na linha da pessoa e no detalhe;
   o CSV ganhou nascimento/idade/faixa/sexo/pagamento/forma.
 
+### ✅ Aba "Inscrições" na ficha do membro (2026-07-28 · SEM migration)
+
+"Abrir um membro e ver as inscrições dele", em TODAS as portas — não só a
+espinha. `GET /membresia/membros/:id/inscricoes` junta `inscricoes` (com
+pagamento) + `ext_inscricoes` (eventos legados do Celebra) +
+`batismo_inscricoes` + `next_inscricoes` + `vol_inscricoes` +
+`mem_grupo_pedidos`, ordenado por data, com `por_porta` pra contagem no
+cabeçalho. **Kids fica FORA** — dado de menor, mesmo corte da timeline e do
+export LGPD.
+
+- É COMPLEMENTO da timeline, não substituto: a timeline é feed cronológico
+  misto; aqui a pergunta é "em que esta pessoa se inscreveu, e como pagou".
+- Pagamento resolvido em **UMA** consulta à `vw_insc_pagamento_estado` (`.in()`
+  em lotes de ≤200 — lista grande estoura a URL do PostgREST), best-effort.
+- No NEXT o status exibido é **`compareceu`** quando há `check_in_at` — é o
+  check-in que diz se a pessoa FOI, e é o marco que a jornada de 90d cobra.
+- Data da INSCRIÇÃO e data do EVENTO aparecem separadas: juntá-las faz ler
+  "inscrito em março" como "foi em março".
+- Junto: a **timeline ganhou a espinha** (`tipo: 'inscricao'` + cor no
+  `TIMELINE_COR`) — ela agregava todas as portas antigas mas não a nova, então
+  evento/retiro do módulo /inscricoes não aparecia na história da pessoa.
+
 ### Falta (F3.3 · o que resta)
 
 `providers/asaas.js` (**escrever com o sandbox na mão** — parser de webhook
