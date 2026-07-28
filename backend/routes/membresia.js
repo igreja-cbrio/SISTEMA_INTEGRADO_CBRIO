@@ -2098,7 +2098,16 @@ router.post('/totem/apresentacao-bebe', async (req, res) => {
       responsavel_membro_id, responsavel_nome, responsavel_telefone, responsavel_email,
       responsavel_cpf, responsavel_relacao,
       bebe_nome, bebe_data_nascimento, bebe_sexo, nome_pai, nome_mae, observacoes,
+      aceita_termos_menor,
     } = req.body || {};
+
+    // Contrato de Inscrição no totem (sweep 28/07 — a porta gravava PII de
+    // menor sem validação real nem consentimento registrado).
+    const {
+      validarNascimento: validarNascimentoContrato,
+      temAbreviacaoNome: temAbrevContrato,
+      registrarConsentimentos: registrarConsentimentosContrato,
+    } = require('../services/inscricaoContrato');
 
     if (!responsavel_nome || String(responsavel_nome).trim().length < 2) {
       return res.status(400).json({ error: 'Nome do responsável obrigatório' });
@@ -2113,15 +2122,40 @@ router.post('/totem/apresentacao-bebe', async (req, res) => {
     if (!cpfValido(cleanCpfResp)) {
       return res.status(400).json({ error: 'CPF do responsável é obrigatório e precisa ser válido.' });
     }
-    if (!bebe_nome || String(bebe_nome).trim().length < 1) {
-      return res.status(400).json({ error: 'Nome do bebe obrigatório' });
+    const bebeNomeLimpo = String(bebe_nome || '').trim().replace(/\s+/g, ' ');
+    if (bebeNomeLimpo.split(' ').length < 2 || temAbrevContrato(bebeNomeLimpo)) {
+      return res.status(400).json({ error: 'Escreva o nome completo do bebê (nome e sobrenome, sem abreviações)' });
     }
-    if (!bebe_data_nascimento) {
-      return res.status(400).json({ error: 'Data de nascimento do bebe obrigatória' });
+    if (!validarNascimentoContrato(bebe_data_nascimento)) {
+      return res.status(400).json({ error: 'Data de nascimento do bebê inválida' });
+    }
+    // Sexo obrigatório (D8): aceita M/F do totem e o canônico → grava M/F
+    // (vocabulário da coluna; 'outro' saiu da tela e não é aceito).
+    const sexoMap = { M: 'M', F: 'F', masculino: 'M', feminino: 'F' };
+    const cleanSexoBebe = sexoMap[String(bebe_sexo || '').trim()] || null;
+    if (!cleanSexoBebe) {
+      return res.status(400).json({ error: 'Selecione o sexo do bebê' });
+    }
+    if (!aceita_termos_menor) {
+      return res.status(400).json({ error: 'É preciso aceitar a autorização de responsável (LGPD art. 14) para agendar' });
     }
 
     const proxima = _proximoSegundoDomingo();
     const proximaStr = _fmtDate(proxima);
+
+    // Dedup no POST (antes só o GET /status avisava a UI): mesmo bebê, mesma
+    // cerimônia, mesmo responsável → não cria segunda linha.
+    const { data: jaAgendada } = await supabase
+      .from('apresentacao_bebes')
+      .select('id, bebe_nome')
+      .eq('data_apresentacao', proximaStr)
+      .eq('bebe_nome', bebeNomeLimpo)
+      .eq('responsavel_telefone', cleanTel)
+      .is('deleted_at', null)
+      .limit(1);
+    if (jaAgendada && jaAgendada.length) {
+      return res.status(409).json({ error: `${bebeNomeLimpo} já está com a apresentação agendada para ${proximaStr.split('-').reverse().join('/')}.` });
+    }
 
     // Culto da cerimônia: a apresentação é SEMPRE no culto das 10:00 (regra do
     // Marcos 2026-07-23 · sem escolha). Vincula ao culto de 10:00 do 2º domingo;
@@ -2165,9 +2199,9 @@ router.post('/totem/apresentacao-bebe', async (req, res) => {
         responsavel_telefone: cleanTel,
         responsavel_email: responsavel_email
           ? String(responsavel_email).toLowerCase().trim() : null,
-        bebe_nome: String(bebe_nome).trim(),
+        bebe_nome: bebeNomeLimpo,
         bebe_data_nascimento,
-        bebe_sexo: bebe_sexo || null,
+        bebe_sexo: cleanSexoBebe,
         nome_pai: nome_pai ? String(nome_pai).trim() : null,
         nome_mae: nome_mae ? String(nome_mae).trim() : null,
         observacoes: observacoes ? String(observacoes).trim().slice(0, 1000) : null,
@@ -2182,6 +2216,14 @@ router.post('/totem/apresentacao-bebe', async (req, res) => {
       .single();
 
     if (error) throw error;
+
+    // Consentimento de MENOR (art. 14 §1º) na satélite — independente de
+    // qualquer outro passo (padrão da porta pública pós-sweep 28/07).
+    registrarConsentimentosContrato({
+      porta: 'apresentacao', refId: data.id, membroId: respMembroId || null,
+      ip: req.ip || null, userAgent: req.headers['user-agent'] || null,
+      itens: [{ tipo: 'menor_responsavel', aceito: true }],
+    }).catch((e) => console.error('[TOTEM] bebe consentimento:', e.message));
 
     try {
       await notificar({

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { membresia, kpis as kpisApi } from '@/api';
+import { membresia, kpis as kpisApi, apresentacaoCriancasPublico } from '@/api';
 import { imprimirEtiquetaBatismo } from '@/lib/imprimirEtiquetaBatismo';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -2954,6 +2954,13 @@ function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onEndSession, onAct
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [aceitaTermosMenor, setAceitaTermosMenor] = useState(false);
+  // Texto canônico do consentimento de menor (art. 14 §1º) — o snapshot que o
+  // backend grava é sempre o canônico, então a tela busca o MESMO texto (rota
+  // pública de textos da apresentação) com fallback idêntico ao atual.
+  const [textoMenor, setTextoMenor] = useState(
+    'Declaro que sou pai, mãe ou responsável legal da criança informada e autorizo o tratamento dos dados pessoais dela (nome, data de nascimento) pela Igreja CBRio, exclusivamente para organização da apresentação e comunicação relacionada, conforme a LGPD (art. 14).'
+  );
 
   useEffect(() => {
     const params: any = {};
@@ -2965,6 +2972,9 @@ function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onEndSession, onAct
       })
       .catch(() => {})
       .finally(() => setLoading(false));
+    apresentacaoCriancasPublico.textos()
+      .then((t: any) => { if (t?.menor_responsavel) setTextoMenor(t.menor_responsavel); })
+      .catch(() => {});
   }, [member.id, member.pending, member.guest]);
 
   const setField = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
@@ -2976,11 +2986,13 @@ function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onEndSession, onAct
   };
 
   const handleSubmit = async () => {
-    if (!form.bebe_nome.trim()) { setError('Nome do bebê obrigatório'); return; }
+    if (form.bebe_nome.trim().split(/\s+/).length < 2) { setError('Escreva o nome completo do bebê (nome e sobrenome)'); return; }
     if (!form.bebe_data_nascimento) { setError('Data de nascimento do bebê obrigatória'); return; }
+    if (!form.bebe_sexo) { setError('Selecione o sexo do bebê'); return; }
     if (!form.responsavel_nome.trim()) { setError('Nome do responsável obrigatório'); return; }
     if (!cpfDvOk(form.responsavel_cpf)) { setError('CPF do responsável é obrigatório e precisa ser válido'); return; }
     if (form.responsavel_telefone.replace(/\D/g, '').length < 10) { setError('Telefone inválido'); return; }
+    if (!aceitaTermosMenor) { setError('É preciso aceitar a autorização de responsável para agendar a apresentação'); return; }
     setSaving(true); setError('');
     onActivity();
     try {
@@ -2993,10 +3005,11 @@ function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onEndSession, onAct
         responsavel_email: form.responsavel_email.trim() || null,
         bebe_nome: form.bebe_nome.trim(),
         bebe_data_nascimento: form.bebe_data_nascimento,
-        bebe_sexo: form.bebe_sexo || null,
+        bebe_sexo: form.bebe_sexo,
         nome_pai: form.nome_pai.trim() || null,
         nome_mae: form.nome_mae.trim() || null,
         observacoes: form.observacoes.trim() || null,
+        aceita_termos_menor: aceitaTermosMenor,
       });
       setStep('success');
     } catch (e: any) {
@@ -3128,12 +3141,12 @@ function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onEndSession, onAct
               <input type="date" value={form.bebe_data_nascimento} onChange={setField('bebe_data_nascimento')} className={inputCls} />
             </div>
             <div>
-              <label className="block text-xs text-white/40 mb-1">Sexo</label>
+              <label className="block text-xs text-white/40 mb-1">Sexo *</label>
+              {/* Contrato de Inscrição (D8): obrigatório, só menino/menina */}
               <select value={form.bebe_sexo} onChange={setField('bebe_sexo')} className={inputCls}>
                 <option value="">Selecionar</option>
                 <option value="M">Menino</option>
                 <option value="F">Menina</option>
-                <option value="outro">Outro</option>
               </select>
             </div>
           </div>
@@ -3189,6 +3202,14 @@ function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onEndSession, onAct
             <label className="block text-xs text-white/40 mb-1">Observações</label>
             <input value={form.observacoes} onChange={setField('observacoes')} className={inputCls} placeholder="Padrinhos, alergias, etc." />
           </div>
+
+          {/* Consentimento de MENOR (LGPD art. 14 §1º) — Contrato de Inscrição.
+              O texto exibido é o canônico do backend; o snapshot gravado idem. */}
+          <label className="flex items-start gap-3 rounded-2xl border border-[#EC4899]/40 bg-[#EC4899]/10 p-3 cursor-pointer" onClick={onActivity}>
+            <input type="checkbox" checked={aceitaTermosMenor} onChange={(e) => setAceitaTermosMenor(e.target.checked)}
+              className="mt-1 h-5 w-5 accent-[#EC4899] shrink-0" />
+            <span className="text-[12px] leading-relaxed text-white/70">{textoMenor} *</span>
+          </label>
 
           {error && <p className="text-red-400 text-sm text-center">{error}</p>}
 
