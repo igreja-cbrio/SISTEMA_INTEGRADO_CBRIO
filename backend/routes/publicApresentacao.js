@@ -228,9 +228,26 @@ router.post('/', limiter, async (req, res) => {
     if (!criados.length && !jaInscritas.length) return res.status(500).json({ error: 'Erro ao enviar inscrição.' });
 
     if (criados.length) {
+      // CONSENTIMENTO DE MENOR (art. 14 §1º) é INDEPENDENTE do matcher — antes
+      // vivia dentro do .then() da identidade, e uma falha lá apagava a prova
+      // legal justamente na porta de PII de menor. Grava SEMPRE (satélite é
+      // append-only); o vínculo com o membro fica na própria inscrição
+      // (responsavel_membro_id), que o matcher preenche em paralelo.
+      const gravarConsentimentos = (membroId) => Promise.all(criados.map((id) => registrarConsentimentos({
+        porta: 'apresentacao', refId: id, membroId: membroId || null,
+        ip: req.ip || null, userAgent: req.headers['user-agent'] || null,
+        itens: [
+          { tipo: 'menor_responsavel', aceito: true },
+          { tipo: 'whatsapp', aceito: optin },
+          { tipo: 'imagem', aceito: Boolean(consent_imagem) },
+        ],
+      })));
+      gravarConsentimentos(null)
+        .catch((err) => console.error('[publicApresentacao] consentimentos:', err.message));
+
       // Funil de identidade do RESPONSÁVEL (matcher read-only + observação) +
-      // vínculo criança↔responsável no Kids + consentimentos. Best-effort:
-      // a inscrição nunca é perdida por falha aqui.
+      // vínculo criança↔responsável no Kids. Best-effort: a inscrição nunca é
+      // perdida por falha aqui.
       const nomeResp = nomeMaeT || nomePaiT;
       processarIdentidade({
         nomeCompleto: nomeResp, cpf: cpfDig, email: emailNorm, telefone: tel,
@@ -243,23 +260,21 @@ router.post('/', limiter, async (req, res) => {
           // parentesco só quando dá pra afirmar (um único nome preenchido)
           const parentesco = nomeMaeT && !nomePaiT ? 'mae' : (nomePaiT && !nomeMaeT ? 'pai' : null);
           for (const cid of criancaIds) {
+            // ⚠️ LEI (Marcos 2026-06-14): vínculo de RETIRADA nunca é automático.
+            // O default da coluna é autorizado_buscar=true — um formulário
+            // público com CPF válido + nome/nascimento de criança já cadastrada
+            // viraria responsável autorizado no totem. Aqui entra SEMPRE false;
+            // autorização de busca só pelo fluxo com documentos
+            // (kids_vinculo_solicitacoes) ou pela equipe no atendimento.
             const { error: eV } = await supabase.from('kids_responsaveis').upsert({
               crianca_id: cid, membro_id: ident.membroId, parentesco,
-              observacao: `Vínculo criado pela inscrição pública de apresentação (${dataApresentacao}).`,
+              autorizado_buscar: false,
+              observacao: `Vínculo criado pela inscrição pública de apresentação (${dataApresentacao}) — retirada NÃO autorizada por esta via.`,
             }, { onConflict: 'crianca_id,membro_id', ignoreDuplicates: true });
             if (eV) console.error('[publicApresentacao] kids_responsaveis:', eV.message);
           }
         }
-        await Promise.all(criados.map((id) => registrarConsentimentos({
-          porta: 'apresentacao', refId: id, membroId: ident.membroId || null,
-          ip: req.ip || null, userAgent: req.headers['user-agent'] || null,
-          itens: [
-            { tipo: 'menor_responsavel', aceito: true },
-            { tipo: 'whatsapp', aceito: optin },
-            { tipo: 'imagem', aceito: Boolean(consent_imagem) },
-          ],
-        })));
-      }).catch((err) => console.error('[publicApresentacao] identidade/consentimentos:', err.message));
+      }).catch((err) => console.error('[publicApresentacao] identidade:', err.message));
 
       const nomes = lista.map(c => c.nome).join(', ');
       // Notifica diretamente a líder do Kids (Mariane Gaia) e a Milena. Se não

@@ -460,15 +460,29 @@ router.post('/inscrever-form', publicLimiter, async (req, res) => {
       return res.status(400).json({ error: 'É preciso aceitar os termos para se inscrever' });
     }
 
-    // Kids/Bridge (menores · LGPD) exigem também nome da mãe e consentimento.
+    // Dados do menor (LGPD): exige quando alguma opção marcada tem a flag
+    // `exige_dados_menor` OU a área é Kids/Bridge — a MESMA união que o client
+    // aplica pra mostrar os campos. Critérios divergentes davam ou formulário
+    // insubmissível (400 citando campo que a tela não mostrava) ou o inverso,
+    // pior: consentimento de antecedentes colhido e triagem nunca aberta
+    // (opção de menor mapeada com area_canonica errada).
     const areaLower = String(area).toLowerCase();
-    const exigeDadosMenor = areaLower === 'kids' || areaLower === 'bridge';
+    let flagMenorDasOpcoes = false;
+    try {
+      const labels = Array.isArray(ministerios_interesse) ? ministerios_interesse.filter(Boolean) : [];
+      if (labels.length) {
+        const { data: opsMenor } = await supabase.from('vol_form_opcoes')
+          .select('id').in('label', labels).eq('exige_dados_menor', true).limit(1);
+        flagMenorDasOpcoes = !!(opsMenor && opsMenor.length);
+      }
+    } catch (e) { console.warn('[PublicVol/inscrever-form] opções de menor:', e.message); }
+    const exigeDadosMenor = flagMenorDasOpcoes || areaLower === 'kids' || areaLower === 'bridge';
     if (exigeDadosMenor && (!nome_mae || String(nome_mae).trim().length < 2)) {
-      return res.status(400).json({ error: 'Nome da mãe obrigatório para Kids/Bridge' });
+      return res.status(400).json({ error: 'Nome da mãe é obrigatório para servir em ministério com crianças e adolescentes' });
     }
-    // Kids/Bridge exigem consentimento explícito pra consulta de antecedentes (LGPD · dado sensível).
+    // Ministério com menores exige consentimento explícito pra consulta de antecedentes (LGPD · dado sensível).
     if (exigeDadosMenor && !consentimento_antecedentes) {
-      return res.status(400).json({ error: 'É necessário autorizar a consulta de antecedentes para servir no Kids/Bridge' });
+      return res.status(400).json({ error: 'É necessário autorizar a consulta de antecedentes para servir em ministério com crianças e adolescentes' });
     }
 
     const nomeCompleto = [cleanNome, cleanSobrenome].filter(Boolean).join(' ');
