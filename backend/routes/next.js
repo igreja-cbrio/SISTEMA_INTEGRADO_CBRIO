@@ -474,6 +474,10 @@ router.get('/dashboard', async (_req, res) => {
 
 // Recalcula status (formado/matriculado) das matrículas de uma turma a partir
 // das presenças. NÃO seta 'incompleto' (isso só ao encerrar) nem mexe em 'desistiu'.
+// Exceção: quem já está 'incompleto' (turma encerrada) e AGORA aparece presente
+// em todos os encontros — porque a presença foi lançada depois do encerramento —
+// é PROMOVIDO a 'formado'. Nunca rebaixa 'incompleto' de volta pra 'matriculado'
+// (a turma está encerrada; quem não completou permanece incompleto).
 async function recomputarStatusTurma(turmaId) {
   if (!turmaId) return;
   const { data: encontros } = await supabase.from('next_encontros').select('id').eq('turma_id', turmaId);
@@ -488,9 +492,17 @@ async function recomputarStatusTurma(turmaId) {
     (pres || []).forEach(p => { if (p.presente) presByMat[p.matricula_id] = (presByMat[p.matricula_id] || 0) + 1; });
   }
   for (const m of mats) {
-    if (m.status === 'desistiu' || m.status === 'incompleto') continue;
+    if (m.status === 'desistiu') continue;
     const n = presByMat[m.id] || 0;
-    const novo = (totalEnc > 0 && n >= totalEnc) ? 'formado' : 'matriculado';
+    const completo = totalEnc > 0 && n >= totalEnc;
+    if (m.status === 'incompleto') {
+      // turma encerrada: só promove quando de fato completou; senão fica incompleto
+      if (completo) {
+        await supabase.from('next_matriculas').update({ status: 'formado', updated_at: new Date().toISOString() }).eq('id', m.id);
+      }
+      continue;
+    }
+    const novo = completo ? 'formado' : 'matriculado';
     if (novo !== m.status) {
       await supabase.from('next_matriculas').update({ status: novo, updated_at: new Date().toISOString() }).eq('id', m.id);
     }
