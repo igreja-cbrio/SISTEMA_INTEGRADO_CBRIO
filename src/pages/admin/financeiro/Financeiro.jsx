@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../../contexts/AuthContext';
 import { financeiro, financeiroV2 } from '../../../api';
 import { Button } from '../../../components/ui/button';
+import { DatePicker } from '@/components/ui/date-picker';
 import { exportPDF } from '../../../lib/export';
 import SantanderTab from './SantanderTab';
 import EstruturaFiscal from './EstruturaFiscal';
@@ -907,10 +908,10 @@ export default function Financeiro() {
           )}
           {filtroPeriodoModo === 'custom' && (
             <>
-              <input type="date" value={filtroInicio} onChange={e => setFiltroInicio(e.target.value)}
+              <DatePicker value={filtroInicio} onChange={v => setFiltroInicio(v)}
                 className="h-9 px-3 text-sm rounded-md border border-input bg-background" />
               <span className="text-xs text-muted-foreground">até</span>
-              <input type="date" value={filtroFim} onChange={e => setFiltroFim(e.target.value)}
+              <DatePicker value={filtroFim} onChange={v => setFiltroFim(v)}
                 className="h-9 px-3 text-sm rounded-md border border-input bg-background" />
             </>
           )}
@@ -1354,8 +1355,14 @@ export default function Financeiro() {
         </div>
         <Input label="Descrição *" value={form.descricao || ''} onChange={e => upd('descricao', e.target.value)} />
         <div style={styles.formRow}>
-          <Input label="Data competência *" type="date" value={form.data_competencia || ''} onChange={e => upd('data_competencia', e.target.value)} />
-          <Input label="Data pagamento" type="date" value={form.data_pagamento || ''} onChange={e => upd('data_pagamento', e.target.value)} />
+          <div style={styles.formGroup}>
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Data competência *</label>
+            <DatePicker value={form.data_competencia || ''} onChange={v => upd('data_competencia', v)} />
+          </div>
+          <div style={styles.formGroup}>
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Data pagamento</label>
+            <DatePicker value={form.data_pagamento || ''} onChange={v => upd('data_pagamento', v)} />
+          </div>
         </div>
         <Select label="Conta *" value={form.conta_id || ''} onChange={e => upd('conta_id', e.target.value)}>
           <option value="">Selecione...</option>
@@ -1490,8 +1497,14 @@ export default function Financeiro() {
           </Select>
         </div>
         <div style={styles.formRow}>
-          <Input label="Data Vencimento" type="date" value={form.data_vencimento || ''} onChange={e => upd('data_vencimento', e.target.value)} />
-          <Input label="Data Pagamento" type="date" value={form.data_pagamento || ''} onChange={e => upd('data_pagamento', e.target.value)} />
+          <div style={styles.formGroup}>
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Data Vencimento</label>
+            <DatePicker value={form.data_vencimento || ''} onChange={v => upd('data_vencimento', v)} />
+          </div>
+          <div style={styles.formGroup}>
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Data Pagamento</label>
+            <DatePicker value={form.data_pagamento || ''} onChange={v => upd('data_pagamento', v)} />
+          </div>
         </div>
         <Select label="Status" value={form.status || 'pendente'} onChange={e => upd('status', e.target.value)}>
           <option value="pendente">Pendente</option>

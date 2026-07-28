@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { BirthDatePicker } from '@/components/ui/birth-date-picker';
 import { Badge } from '@/components/ui/badge';
 import { GruposMapView } from '@/components/grupos/GruposMapView';
 import { QRCodeSVG } from 'qrcode.react';
@@ -890,12 +891,9 @@ function CpfInputScreen({ onBack, onLookup, onCompletarCadastro }: {
               <h1 className="text-2xl font-bold">Confirme quem é você</h1>
               <p className="text-white/50 text-sm mt-1">Informe sua data de nascimento para entrar com segurança.</p>
             </div>
-            <input
-              type="date"
+            <BirthDatePicker
               value={nascimento}
-              onChange={(e) => { setError(''); setNascimento(e.target.value); }}
-              max={format(new Date(), 'yyyy-MM-dd')}
-              autoFocus
+              onChange={(v) => { setError(''); setNascimento(v); }}
               className="w-full px-4 py-5 rounded-2xl border border-white/15 bg-white/5 text-white text-center text-2xl outline-none focus:border-[#00B39D] [color-scheme:dark]"
             />
             {error && (
@@ -1415,7 +1413,7 @@ function MeusDadosFlow({ opt, member, isDark, onBack, onDone, onActivity }: {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className={`block text-xs mb-1 ${label}`}>Data de nascimento</label>
-                <input value={form.data_nascimento} onChange={setField('data_nascimento')} type="date"
+                <BirthDatePicker value={form.data_nascimento} onChange={(v) => setField('data_nascimento')({ target: { value: v } } as any)}
                   className={`w-full px-3 py-2 rounded-xl border text-sm outline-none transition-colors ${input}`} />
               </div>
               <div>
@@ -2081,7 +2079,7 @@ function BatismoFlow({ opt, member, onBack, onDone, onEndSession, onActivity }: 
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs text-white/40 mb-1">Data de nascimento</label>
-              <input type="date" value={form.data_nascimento} onChange={setField('data_nascimento')} className={inputCls} />
+              <BirthDatePicker value={form.data_nascimento} onChange={(v) => setField('data_nascimento')({ target: { value: v } } as any)} className={inputCls} />
             </div>
             <div>
               <label className="block text-xs text-white/40 mb-1">Sexo</label>
@@ -2896,7 +2894,7 @@ function NextFlow({ opt, member, onBack, onDone, onEndSession, onActivity }: {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs text-white/40 mb-1">Data de nascimento</label>
-              <input type="date" value={form.data_nascimento} onChange={setField('data_nascimento')} className={inputCls} />
+              <BirthDatePicker value={form.data_nascimento} onChange={(v) => setField('data_nascimento')({ target: { value: v } } as any)} className={inputCls} />
             </div>
             <div>
               <label className="block text-xs text-white/40 mb-1">Sexo</label>
@@ -3138,7 +3136,7 @@ function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onEndSession, onAct
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs text-white/40 mb-1">Nascimento *</label>
-              <input type="date" value={form.bebe_data_nascimento} onChange={setField('bebe_data_nascimento')} className={inputCls} />
+              <BirthDatePicker value={form.bebe_data_nascimento} onChange={(v) => setField('bebe_data_nascimento')({ target: { value: v } } as any)} className={inputCls} />
             </div>
             <div>
               <label className="block text-xs text-white/40 mb-1">Sexo *</label>

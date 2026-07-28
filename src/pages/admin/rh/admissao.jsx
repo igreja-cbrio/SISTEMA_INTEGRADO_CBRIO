@@ -8,6 +8,7 @@
 import { useState, useRef } from 'react';
 import { Button } from '../../../components/ui/button';
 import { BirthDatePicker } from '../../../components/ui/birth-date-picker';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
 
 const C = {
@@ -289,7 +290,11 @@ export function AdmissaoFormModal({ data, onClose, onSave, saving }) {
             </div>
             <div style={styles.formRow}>
               <Input label="Salário / Valor Mensal (R$)" type="number" step="0.01" value={f.salario || ''} onChange={e => upd('salario', e.target.value)} />
-              <Input label="Data de Início *" type="date" value={f.data_inicio || ''} onChange={e => upd('data_inicio', e.target.value)} error={errors.data_inicio} />
+              <div style={styles.formGroup}>
+                <label style={styles.label}>Data de Início *</label>
+                <DatePicker value={f.data_inicio || ''} onChange={v => upd('data_inicio', v)} aria-invalid={!!errors.data_inicio} />
+                {errors.data_inicio && <div style={{ fontSize: 11, color: '#ef4444', marginTop: 2 }}>{errors.data_inicio}</div>}
+              </div>
             </div>
           </div>
 

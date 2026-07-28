@@ -7,6 +7,7 @@ import { hrefConversa } from '@/lib/conversas';
 import { totemKids as api } from '../../../api';
 import { Card } from '../../../components/ui/card';
 import { Input } from '../../../components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Badge } from '../../../components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
 import { toast } from 'sonner';
@@ -224,11 +225,9 @@ export default function ApresentacaoCriancas() {
                       {b.observacoes && <div className="text-[11px] text-muted-foreground truncate mt-0.5">{b.observacoes}</div>}
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
-                      <input
-                        type="date"
+                      <DatePicker
                         value={b.data_apresentacao || ''}
-                        onChange={(e) => mudarData(b.id, e.target.value)}
-                        title="Data da apresentação (turma)"
+                        onChange={(v) => mudarData(b.id, v)}
                         className="h-7 text-[11px] rounded-md border border-border bg-background px-1.5 text-muted-foreground"
                       />
                       <Select value={b.status || 'pendente'} onValueChange={(v) => mudarStatus(b.id, v)}>

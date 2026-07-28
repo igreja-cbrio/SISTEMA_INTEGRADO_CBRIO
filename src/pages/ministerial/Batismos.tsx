@@ -5,6 +5,7 @@ import useConfirmarSaida from '../../hooks/useConfirmarSaida';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { BirthDatePicker } from '../../components/ui/birth-date-picker';
+import { DatePicker } from '../../components/ui/date-picker';
 import { Label } from '../../components/ui/label';
 import { Textarea } from '../../components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../../components/ui/dialog';
@@ -1254,11 +1255,10 @@ function ModalDetalheBatismo({ batismo, labelHorario, onClose, onSaved }: {
             </div>
             <div>
               <Label htmlFor="data-bat" className="text-xs">Data do batismo</Label>
-              <Input
+              <DatePicker
                 id="data-bat"
-                type="date"
                 value={dataBatismo}
-                onChange={e => setDataBatismo(e.target.value)}
+                onChange={setDataBatismo}
               />
             </div>
           </div>

@@ -16,6 +16,8 @@ import { toast } from 'sonner';
 import { Baby, Search, Plus, Loader2, AlertCircle, Phone, Trash2, UserX, UserCheck, ArrowLeft, Camera, X, Copy, Sparkles, Pencil, MessageSquare } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer } from 'recharts';
 import DataNascimentoPicker from './DataNascimentoPicker';
+import { DatePicker } from '@/components/ui/date-picker';
+import { BirthDatePicker } from '@/components/ui/birth-date-picker';
 import useConfirmarSaida from '../../../hooks/useConfirmarSaida';
 
 const FAIXAS = [
@@ -365,7 +367,7 @@ function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; on
                 <Input className="mt-0.5 h-9" value={form.nome} onChange={e => setForm((f: any) => ({ ...f, nome: e.target.value }))} />
               </label>
               <label className="text-xs">Nascimento
-                <Input type="date" className="mt-0.5 h-9" value={form.data_nascimento || ''} onChange={e => setForm((f: any) => ({ ...f, data_nascimento: e.target.value }))} />
+                <BirthDatePicker className="mt-0.5 h-9" value={form.data_nascimento || ''} onChange={v => setForm((f: any) => ({ ...f, data_nascimento: v }))} />
               </label>
               <label className="text-xs">Sexo
                 <Select value={form.sexo || ''} onValueChange={v => setForm((f: any) => ({ ...f, sexo: v }))}>
@@ -393,10 +395,10 @@ function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; on
                 </label>
               )}
               <label className="text-xs">Conversão
-                <Input type="date" className="mt-0.5 h-9" value={form.data_conversao || ''} onChange={e => setForm((f: any) => ({ ...f, data_conversao: e.target.value }))} />
+                <DatePicker className="mt-0.5 h-9" value={form.data_conversao || ''} onChange={v => setForm((f: any) => ({ ...f, data_conversao: v }))} />
               </label>
               <label className="text-xs">Batismo
-                <Input type="date" className="mt-0.5 h-9" value={form.data_batismo || ''} onChange={e => setForm((f: any) => ({ ...f, data_batismo: e.target.value }))} />
+                <DatePicker className="mt-0.5 h-9" value={form.data_batismo || ''} onChange={v => setForm((f: any) => ({ ...f, data_batismo: v }))} />
               </label>
             </div>
             <label className="flex items-start gap-2 text-xs rounded-md border border-border p-2 cursor-pointer">
@@ -499,7 +501,7 @@ function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; on
                   <SelectTrigger className="w-36 h-9"><SelectValue /></SelectTrigger>
                   <SelectContent>{Object.entries(TIPO_ATEND).map(([k, l]) => <SelectItem key={k} value={k}>{l}</SelectItem>)}</SelectContent>
                 </Select>
-                <Input type="date" className="w-40 h-9" value={novoData} onChange={e => setNovoData(e.target.value)} />
+                <DatePicker className="w-40 h-9" value={novoData} onChange={setNovoData} />
               </div>
               <Textarea rows={2} placeholder="Ex.: ligamos para a mãe, criança está doente, volta semana que vem." value={novoDesc} onChange={e => setNovoDesc(e.target.value)} />
               <Button size="sm" onClick={addAtend} disabled={salvando}>{salvando ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Registrar atendimento'}</Button>
@@ -965,14 +967,14 @@ function JornadaTab({ criancaId, c, onChanged }: { criancaId: string; c: any; on
       <div className="grid grid-cols-2 gap-3">
         <div>
           <Label className="text-xs">Data de conversão</Label>
-          <Input type="date" value={conv} onChange={e => setConv(e.target.value)} />
+          <DatePicker value={conv} onChange={setConv} />
           {!conv && j?.conversao_sugerida && (
             <button className="text-[11px] text-primary mt-0.5" onClick={() => setConv(j.conversao_sugerida)}>usar 1ª decisão ({fmt(j.conversao_sugerida)})</button>
           )}
         </div>
         <div>
           <Label className="text-xs">Data de batismo</Label>
-          <Input type="date" value={bat} onChange={e => setBat(e.target.value)} />
+          <DatePicker value={bat} onChange={setBat} />
         </div>
       </div>
       <Button size="sm" onClick={salvar} disabled={salvando}>{salvando ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Salvar jornada'}</Button>

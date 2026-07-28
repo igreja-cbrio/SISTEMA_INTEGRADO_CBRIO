@@ -4,6 +4,7 @@ import { next as nextApi } from '../../api';
 import { hrefConversa } from '@/lib/conversas';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '../../components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../../components/ui/dialog';
 import { Badge } from '../../components/ui/badge';
@@ -267,8 +268,8 @@ function NovaTurmaModal({ onClose, onCreated }: { onClose: () => void; onCreated
             <p className="text-[11px] text-muted-foreground mt-1">Pode ter mais de uma turma aberta (ex.: 2 por mês — 1º/2º domingo e 3º/4º domingo). A lista de espera entra automaticamente só quando esta for a única turma aberta; com mais de uma, você organiza quem vai em cada uma.</p>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <div><Label>1º encontro</Label><Input type="date" value={data1} onChange={e => setData1(e.target.value)} /></div>
-            <div><Label>2º encontro</Label><Input type="date" value={data2} onChange={e => setData2(e.target.value)} /></div>
+            <div><Label>1º encontro</Label><DatePicker value={data1} onChange={setData1} /></div>
+            <div><Label>2º encontro</Label><DatePicker value={data2} onChange={setData2} /></div>
           </div>
         </div>
         <DialogFooter>
@@ -399,7 +400,7 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
               {det.encontros.map(e => (
                 <div key={e.id} className="rounded-lg border border-border p-2.5 flex items-center gap-2">
                   <span className="text-xs font-medium text-muted-foreground">Encontro {e.numero}</span>
-                  <Input type="date" value={e.data || ''} onChange={ev => setData(e.id, ev.target.value)} className="h-8 w-[150px]" />
+                  <DatePicker value={e.data || ''} onChange={v => setData(e.id, v)} className="h-8 w-[150px]" />
                 </div>
               ))}
             </div>

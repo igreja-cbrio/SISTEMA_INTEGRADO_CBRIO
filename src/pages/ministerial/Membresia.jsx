@@ -22,6 +22,7 @@ import { Button } from '../../components/ui/button';
 import Paginacao, { usePaginacaoLocal } from '../../components/Paginacao';
 import { Input } from '../../components/ui/input';
 import { BirthDatePicker } from '../../components/ui/birth-date-picker';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '../../components/ui/label';
 import { Textarea } from '../../components/ui/textarea';
 import {
@@ -2139,7 +2140,7 @@ export default function Membresia() {
                                 </div>
                                 <div>
                                   <Label style={{ fontSize: 11 }}>Data *</Label>
-                                  <Input type="date" value={contribForm.data} onChange={e => setContribForm(f => ({ ...f, data: e.target.value }))} />
+                                  <DatePicker value={contribForm.data} onChange={v => setContribForm(f => ({ ...f, data: v }))} />
                                 </div>
                                 <div>
                                   <Label style={{ fontSize: 11 }}>Forma de pagamento</Label>
@@ -2443,7 +2444,7 @@ export default function Membresia() {
                               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                                 <div>
                                   <Label style={{ fontSize: 11 }}>Data *</Label>
-                                  <Input type="date" value={checkinForm.data} onChange={e => setCheckinForm(f => ({ ...f, data: e.target.value }))} />
+                                  <DatePicker value={checkinForm.data} onChange={v => setCheckinForm(f => ({ ...f, data: v }))} />
                                 </div>
                                 <div>
                                   <Label style={{ fontSize: 11 }}>Ministério</Label>

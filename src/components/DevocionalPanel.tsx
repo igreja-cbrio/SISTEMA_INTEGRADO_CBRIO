@@ -3,6 +3,7 @@ import { bible as bibleApi, devocionais as devApi, pessoas as pessoasApi } from 
 import { useAuth } from '../contexts/AuthContext';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from './ui/label';
 import { Textarea } from './ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
@@ -271,7 +272,7 @@ export default function DevocionalPanel() {
           <div className="grid grid-cols-2 gap-2">
             <div>
               <Label className="text-xs">Data</Label>
-              <Input type="date" value={data} onChange={e => setData(e.target.value)} />
+              <DatePicker value={data} onChange={setData} />
             </div>
             <div>
               <Label className="text-xs">Tipo</Label>

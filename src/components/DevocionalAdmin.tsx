@@ -3,6 +3,7 @@ import { devocionalPlanos as planosApi, devocionais as devocionaisApi } from '..
 import { useAuth } from '../contexts/AuthContext';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from './ui/label';
 import { Textarea } from './ui/textarea';
 import { Card } from './ui/card';
@@ -346,11 +347,11 @@ function NovoPlanoModal({ onClose, onSaved }: { onClose: () => void; onSaved: (i
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label>Início</Label>
-              <Input type="date" value={form.data_inicio} onChange={e => setForm({ ...form, data_inicio: e.target.value })} />
+              <DatePicker value={form.data_inicio} onChange={v => setForm({ ...form, data_inicio: v })} />
             </div>
             <div>
               <Label>Fim</Label>
-              <Input type="date" value={form.data_fim} onChange={e => setForm({ ...form, data_fim: e.target.value })} />
+              <DatePicker value={form.data_fim} onChange={v => setForm({ ...form, data_fim: v })} />
             </div>
           </div>
         </div>
@@ -593,7 +594,7 @@ function ImportarDocxModal({ plano, createMode, onClose, onDone }: { plano?: Pla
               {createMode && (
                 <div className="grid grid-cols-2 gap-3">
                   <div><Label className="text-xs">Nome do devocional</Label><Input value={nome} onChange={(e) => setNome(e.target.value)} /></div>
-                  <div><Label className="text-xs">1º dia (início)</Label><Input type="date" value={inicio} onChange={(e) => setInicio(e.target.value)} /></div>
+                  <div><Label className="text-xs">1º dia (início)</Label><DatePicker value={inicio} onChange={setInicio} /></div>
                 </div>
               )}
 
@@ -654,8 +655,8 @@ function EditarPlanoModal({ plano, onClose, onSaved }: { plano: Plano; onClose: 
         <div className="space-y-3">
           <div><Label className="text-xs">Nome</Label><Input value={titulo} onChange={e => setTitulo(e.target.value)} placeholder="Ex.: Devocional da semana — Jó" /></div>
           <div className="grid grid-cols-2 gap-3">
-            <div><Label className="text-xs">Início</Label><Input type="date" value={dataInicio} onChange={e => setDataInicio(e.target.value)} /></div>
-            <div><Label className="text-xs">Fim</Label><Input type="date" value={dataFim} onChange={e => setDataFim(e.target.value)} /></div>
+            <div><Label className="text-xs">Início</Label><DatePicker value={dataInicio} onChange={setDataInicio} /></div>
+            <div><Label className="text-xs">Fim</Label><DatePicker value={dataFim} onChange={setDataFim} /></div>
           </div>
         </div>
         <DialogFooter>
@@ -830,12 +831,11 @@ function NovoItemModal({ plano, itens, onClose, onSaved }: { plano: Plano; itens
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label>Data *</Label>
-              <Input
-                type="date"
+              <DatePicker
                 min={plano.data_inicio}
                 max={plano.data_fim}
                 value={form.data}
-                onChange={e => setForm({ ...form, data: e.target.value })}
+                onChange={v => setForm({ ...form, data: v })}
               />
             </div>
             <div>

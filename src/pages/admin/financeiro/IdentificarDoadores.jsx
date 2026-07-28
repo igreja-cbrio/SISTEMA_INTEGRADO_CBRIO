@@ -5,6 +5,7 @@
 import { useState } from 'react';
 import { financeiroV2 } from '../../../api';
 import { Button } from '../../../components/ui/button';
+import { DatePicker } from '@/components/ui/date-picker';
 import { toast } from 'sonner';
 
 const C = {
@@ -93,8 +94,8 @@ export default function IdentificarDoadores() {
       </div>
 
       <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap', margin: '14px 0' }}>
-        <label style={{ fontSize: 12, color: C.text2 }}>De<br /><input type="date" value={inicio} onChange={e => setInicio(e.target.value)} style={inp} /></label>
-        <label style={{ fontSize: 12, color: C.text2 }}>Até<br /><input type="date" value={fim} onChange={e => setFim(e.target.value)} style={inp} /></label>
+        <label style={{ fontSize: 12, color: C.text2 }}>De<br /><DatePicker value={inicio} onChange={setInicio} style={inp} /></label>
+        <label style={{ fontSize: 12, color: C.text2 }}>Até<br /><DatePicker value={fim} onChange={setFim} style={inp} /></label>
         <Button variant="outline" onClick={previa} disabled={busy}>{busy ? '...' : 'Prévia (não grava)'}</Button>
         <Button onClick={conciliar} disabled={busy}>{busy ? '...' : 'Conciliar período'}</Button>
       </div>

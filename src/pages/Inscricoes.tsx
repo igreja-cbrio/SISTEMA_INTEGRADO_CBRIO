@@ -17,6 +17,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { Card } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { toast } from 'sonner';
 import {
@@ -202,12 +203,12 @@ export function EventoModal({ evento, areas, onClose, onSaved }: {
             {!ed && f.periodicidade !== 'unica' && (
               <div>
                 <label className="text-xs text-muted-foreground">Recorrente até (opcional)</label>
-                <Input type="date" value={f.recorre_ate || ''} onChange={set('recorre_ate')} />
+                <DatePicker value={f.recorre_ate || ''} onChange={set('recorre_ate')} />
               </div>
             )}
             <div>
               <label className="text-xs text-muted-foreground">Data</label>
-              <Input type="date" value={f.data || ''} onChange={set('data')} />
+              <DatePicker value={f.data || ''} onChange={set('data')} />
             </div>
             <div>
               <label className="text-xs text-muted-foreground">Hora</label>
@@ -326,7 +327,7 @@ function NovaEdicaoModal({ evento, onClose, onSaved }: { evento: any; onClose: (
           )}
           <div>
             <label className="text-xs text-muted-foreground">Data da nova edição *</label>
-            <Input type="date" value={data} onChange={e => setData(e.target.value)} />
+            <DatePicker value={data} onChange={setData} />
           </div>
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={onClose}>Cancelar</Button>
@@ -374,7 +375,7 @@ function SerieModal({ grupo, onClose, onEditar, onDuplicar, onPublicar, onCopiar
             <div className="flex items-end gap-1.5 ml-auto">
               <div>
                 <label className="text-[11px] text-muted-foreground block">Recorrente até (vazio = sem data final)</label>
-                <Input type="date" value={recorreAte} onChange={e => setRecorreAte(e.target.value)} className="h-8 text-xs" />
+                <DatePicker value={recorreAte} onChange={setRecorreAte} className="h-8 text-xs" />
               </div>
               {mudou && (
                 <Button size="sm" onClick={salvarRecorrencia} disabled={salvando} className="h-8">

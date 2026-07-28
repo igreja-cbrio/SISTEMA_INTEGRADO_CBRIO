@@ -3,6 +3,7 @@ import { ModuleHeader } from '../components/layout/ModuleHeader';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { nps as api, next as nextApi } from '../api';
+import { DatePicker } from '@/components/ui/date-picker';
 import { toast } from 'sonner';
 import {
   Plus, X, MessageSquare, Sparkles, Users, Link2, Copy, Check, Loader2,
@@ -865,7 +866,7 @@ function CreateModal({ onClose, onCreated }) {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <div>
               <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: C.t2, marginBottom: 6 }}>Encerramento (opcional)</label>
-              <input type="date" value={dataFim} onChange={e => setDataFim(e.target.value)} style={inp} />
+              <DatePicker value={dataFim} onChange={setDataFim} style={inp} />
             </div>
             <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderRadius: 8, border: `1px solid ${C.border}`, background: C.inputBg, cursor: 'pointer' }}>
               <input type="checkbox" checked={permitePublico} onChange={e => setPermitePublico(e.target.checked)} />
@@ -1032,7 +1033,7 @@ function EditModal({ pesquisa, onClose, onSaved }) {
           </div>
           <div>
             <label style={lbl}>Encerramento (opcional)</label>
-            <input type="date" value={dataFim} onChange={e => setDataFim(e.target.value)} style={inp} />
+            <DatePicker value={dataFim} onChange={setDataFim} style={inp} />
           </div>
         </div>
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: C.text, cursor: 'pointer' }}>

@@ -3,6 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { BirthDatePicker } from '@/components/ui/birth-date-picker';
 import { Loader2, AlertCircle } from 'lucide-react';
 import { cadastroPublico } from '@/api';
 import MemberWalletPass from './MemberWalletPass';
@@ -108,10 +109,9 @@ export default function MemberWalletDialog({ open, onOpenChange, initialCpf = ''
             </div>
             <div>
               <Label className="text-white/80">Data de nascimento</Label>
-              <Input
-                type="date"
+              <BirthDatePicker
                 value={dob}
-                onChange={(e) => setDob(e.target.value)}
+                onChange={(v) => setDob(v)}
                 className="bg-gray-800 border-gray-700 text-white rounded-xl"
               />
             </div>

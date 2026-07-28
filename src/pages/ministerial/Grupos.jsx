@@ -6,6 +6,7 @@ import { AbrirRotaMenu } from '../../components/grupos/AbrirRotaMenu';
 import { grupos as api, membresia, encaminhamentos } from '../../api';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '../../components/ui/label';
 import { Textarea } from '../../components/ui/textarea';
 import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
@@ -2528,7 +2529,7 @@ function ChamadaModal({ open, onClose, membros, onSubmit, encontroEdit }) {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 10 }}>
             <div>
               <Label style={{ fontSize: 11 }}>Data *</Label>
-              <Input type="date" value={data} onChange={e => setData(e.target.value)} max={new Date().toISOString().split('T')[0]} />
+              <DatePicker value={data} onChange={v => setData(v)} max={new Date().toISOString().split('T')[0]} />
             </div>
             <div>
               <Label style={{ fontSize: 11 }}>Tema (opcional)</Label>

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { revisoes } from '../api';
 import { toast } from 'sonner';
+import { DatePicker } from '@/components/ui/date-picker';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
@@ -293,13 +294,13 @@ export default function RevisaoDetalhe() {
           </div>
           <div>
             <label style={LABEL}>Data início</label>
-            <input type="date" value={form.date_start || ''} onChange={ev => setForm(f => ({ ...f, date_start: ev.target.value }))} style={INPUT} />
+            <DatePicker value={form.date_start || ''} onChange={v => setForm(f => ({ ...f, date_start: v }))} style={INPUT} />
           </div>
           <div>
             <label style={LABEL}>Data fim</label>
-            <input type="date" value={form.date_end || ''} onChange={ev => {
-              setForm(f => ({ ...f, date_end: ev.target.value }));
-              recalcImpacto(ev.target.value);
+            <DatePicker value={form.date_end || ''} onChange={v => {
+              setForm(f => ({ ...f, date_end: v }));
+              recalcImpacto(v);
             }} style={{ ...INPUT, borderColor: dateChanged ? C.primary : undefined, borderWidth: dateChanged ? 2 : 1 }} />
           </div>
           <div>
