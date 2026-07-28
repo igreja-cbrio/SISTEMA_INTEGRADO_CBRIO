@@ -3460,7 +3460,8 @@ router.get('/inscricoes-summary', async (req, res) => {
 
     let query = supabase
       .from('vol_inscricoes')
-      .select('data_inscricao, status, area');
+      .select('data_inscricao, status, area')
+      .is('deleted_at', null);
     if (ano) {
       query = query
         .gte('data_inscricao', `${ano}-01-01`)
@@ -3540,6 +3541,7 @@ router.get('/inscricoes', async (req, res) => {
         dom_predominante, ministerios_interesse, area_direcionada, participou_next,
         feedback, integrado_em, membro_id, origem
       `, { count: 'exact' })
+      .is('deleted_at', null)
       .order('data_inscricao', { ascending: false })
       .range(offset, offset + limit - 1);
 
@@ -3580,6 +3582,7 @@ router.get('/inscricoes/por-direcionada', async (req, res) => {
     while (true) {
       let q = supabase.from('vol_inscricoes')
         .select('area_direcionada, status')
+        .is('deleted_at', null)
         .not('area_direcionada', 'is', null)
         .order('data_inscricao', { ascending: false })
         .range(offset, offset + page - 1);
@@ -3630,7 +3633,7 @@ router.patch('/inscricoes/:id', async (req, res) => {
     // liberada (nada consta / aprovação manual / dispensa registrada).
     if (status === 'integrado') {
       const { data: insc } = await supabase.from('vol_inscricoes')
-        .select('area, area_direcionada').eq('id', req.params.id).maybeSingle();
+        .select('area, area_direcionada').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
 
       // Exige a área direcionada — não integra sem registrar onde a pessoa vai
       // de fato servir (é o que alimenta a estatística "onde estão os voluntários").
@@ -3722,7 +3725,7 @@ router.patch('/inscricoes/:id/dados', async (req, res) => {
         // DV (o modal da ficha sempre reenvia o cpf — sem isso, um CPF legado
         // DV-inválido travaria a edição de QUALQUER campo). DV só pra novo/alterado.
         const { data: atual } = await supabase.from('vol_inscricoes')
-          .select('cpf').eq('id', req.params.id).maybeSingle();
+          .select('cpf').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
         const atualNorm = String(atual?.cpf || '').replace(/\D+/g, '');
         if (!atualNorm || d !== atualNorm) {
           return res.status(400).json({ error: 'CPF inválido — confira os dígitos' });
@@ -3857,7 +3860,7 @@ router.post('/inscricoes/:id/antecedentes/consultar', async (req, res) => {
     if (nivelTriagem(req) < 3) return res.status(403).json({ error: 'Sem permissão' });
     const { data: insc } = await supabase.from('vol_inscricoes')
       .select('id, area, membro_id, nome_completo, nome, sobrenome, cpf, nome_mae, data_nascimento')
-      .eq('id', req.params.id).maybeSingle();
+      .eq('id', req.params.id).is('deleted_at', null).maybeSingle();
     if (!insc) return res.status(404).json({ error: 'Inscrição não encontrada' });
     const area = String(insc.area || '').toLowerCase();
     if (area !== 'kids' && area !== 'bridge') {

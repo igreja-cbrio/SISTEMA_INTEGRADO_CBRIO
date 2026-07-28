@@ -1,42 +1,16 @@
-import { useState, useEffect } from 'react';
+// PORTA 4 do Contrato de Inscrição (F3.1 · docs/modulo-inscricoes/): nome em
+// campo único (D1), sexo obrigatório e endereço fixo-opcional (28/07), termos
+// LGPD com snapshot, opt-in explícito (D4). Validações de src/lib/inscricao
+// (fonte única). O texto dos termos vem do backend (GET /textos).
+import { useState, useEffect, useRef } from 'react';
 import { publicVoluntariado } from '../../api';
 import AnimatedBackground from './AnimatedBackground';
 import { usePublicTheme, PublicThemeToggle, PublicPaletteCtx, usePublicPalette } from './publicTheme';
 import { BirthDatePicker } from '../../components/ui/birth-date-picker';
-
-// ── Helpers ──
-function soDigitos(v: string) { return (v || '').toString().replace(/\D+/g, ''); }
-
-function mascaraCpf(v: string) {
-  const d = soDigitos(v).slice(0, 11);
-  if (d.length <= 3) return d;
-  if (d.length <= 6) return `${d.slice(0, 3)}.${d.slice(3)}`;
-  if (d.length <= 9) return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6)}`;
-  return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`;
-}
-
-function mascaraTelefone(v: string) {
-  const d = soDigitos(v).slice(0, 11);
-  if (d.length <= 2) return d.length ? `(${d}` : '';
-  if (d.length <= 6) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
-  if (d.length <= 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
-  return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
-}
-
-function cpfValido(v: string) {
-  const d = soDigitos(v);
-  if (d.length !== 11) return false;
-  if (/^(\d)\1{10}$/.test(d)) return false;
-  const calc = (base: string, fator: number) => {
-    let soma = 0;
-    for (let i = 0; i < base.length; i += 1) soma += parseInt(base[i], 10) * (fator - i);
-    const resto = (soma * 10) % 11;
-    return resto === 10 ? 0 : resto;
-  };
-  const dv1 = calc(d.slice(0, 9), 10);
-  const dv2 = calc(d.slice(0, 10), 11);
-  return dv1 === parseInt(d[9], 10) && dv2 === parseInt(d[10], 10);
-}
+import {
+  soDigitos, mascaraCpf, mascaraTelefone, cpfValido, telefoneValido,
+  nomeCompletoValido, temAbreviacaoNome, validarNascimento, SEXOS, AVISO_OPTIN,
+} from '../../lib/inscricao';
 
 // ── Catalogos (espelham os valores reais que já existem em vol_inscricoes) ──
 const DONS = [
@@ -239,21 +213,15 @@ function ChipToggle({ checked, onChange, label }: {
   );
 }
 
-// Nome completo sem abreviação: rejeita partes com ponto ("J.") ou de 1 letra
-// (conectivos "de/da/do/das/dos/e" são permitidos).
-const CONECTIVOS_NOME = new Set(['de', 'da', 'do', 'das', 'dos', 'e']);
-function temAbreviacaoNome(s: string) {
-  return String(s || '').trim().split(/\s+/).some(p => {
-    const limpo = p.replace(/\./g, '');
-    if (CONECTIVOS_NOME.has(limpo.toLowerCase())) return false;
-    return p.includes('.') || limpo.length === 1;
-  });
-}
+const TEXTOS_FALLBACK = {
+  termos_lgpd: 'Autorizo a Igreja CBRio a tratar os dados deste formulário para organizar o voluntariado e me comunicar sobre ele, conforme a LGPD.',
+  aviso_optin: AVISO_OPTIN,
+};
 
 export default function InscricaoVoluntariado() {
   const [form, setForm] = useState({
-    nome: '', sobrenome: '', email: '', telefone: '',
-    cpf: '', data_nascimento: '', nome_mae: '',
+    nome_completo: '', email: '', telefone: '',
+    cpf: '', data_nascimento: '', sexo: '', endereco: '', nome_mae: '',
     participou_next: '',
     dom_predominante: '',
     website: '', // honeypot
@@ -265,7 +233,10 @@ export default function InscricaoVoluntariado() {
   const [sent, setSent] = useState(false);
   // Consentimento LGPD pra consulta de antecedentes (obrigatório Kids/Bridge).
   const [consentAntecedentes, setConsentAntecedentes] = useState(false);
+  const [aceitaTermos, setAceitaTermos] = useState(false);
   const [whatsappOptin, setWhatsappOptin] = useState(false);
+  const [textos, setTextos] = useState<any>(TEXTOS_FALLBACK);
+  const submittingRef = useRef(false);
   const { C } = usePublicTheme();
 
   // Opções vem do banco (gerenciadas no módulo de voluntariado). Fallback fica
@@ -284,6 +255,9 @@ export default function InscricaoVoluntariado() {
         }
       })
       .catch(() => { /* mantem fallback */ });
+    publicVoluntariado.textos()
+      .then((t: any) => { if (t?.termos_lgpd) setTextos(t); })
+      .catch(() => { /* fallback local */ });
   }, []);
 
   const MAX_MINISTERIOS = 3;
@@ -320,37 +294,43 @@ export default function InscricaoVoluntariado() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submittingRef.current) return;
     setError('');
-    if (!form.nome || form.nome.trim().length < 2) return setError('Informe seu nome');
-    if (!form.sobrenome || form.sobrenome.trim().length < 2) return setError('Informe seu sobrenome completo');
-    if (temAbreviacaoNome(form.nome) || temAbreviacaoNome(form.sobrenome)) {
-      return setError('Escreva seu nome completo, sem abreviações (ex.: "Maria da Silva Santos", não "Maria S.")');
+    if (!nomeCompletoValido(form.nome_completo)) {
+      return setError(temAbreviacaoNome(form.nome_completo)
+        ? 'Escreva seu nome completo, sem abreviações (ex.: "Maria da Silva Santos", não "Maria S.")'
+        : 'Informe seu nome completo');
     }
     if (!form.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) return setError('E-mail inválido');
-    if (!form.telefone || soDigitos(form.telefone).length < 10) return setError('Telefone inválido');
+    if (!telefoneValido(form.telefone)) return setError('Telefone inválido');
     if (!form.cpf) return setError('Informe seu CPF');
     if (!cpfValido(form.cpf)) return setError('CPF inválido');
-    if (!form.data_nascimento) return setError('Informe sua data de nascimento');
+    if (!validarNascimento(form.data_nascimento)) return setError('Informe sua data de nascimento');
+    if (!SEXOS.includes(form.sexo)) return setError('Selecione o sexo');
     if (ministerios.length === 0) return setError('Escolha ao menos uma área pra servir');
     if (!form.participou_next) return setError('Conta pra gente se você já participou do NEXT');
     if (precisaDadosMenor && (!form.nome_mae || form.nome_mae.trim().length < 2)) return setError('Nome da mãe obrigatório para Kids/Bridge');
     if (precisaDadosMenor && !consentAntecedentes) return setError('Autorize a consulta de antecedentes criminais para servir no Kids/Bridge');
+    if (!aceitaTermos) return setError('É preciso aceitar os termos para se inscrever');
 
+    submittingRef.current = true;
     setLoading(true);
     try {
       await publicVoluntariado.inscreverForm({
-        nome: form.nome.trim(),
-        sobrenome: form.sobrenome.trim(),
+        nome_completo: form.nome_completo.trim(),
         email: form.email,
         telefone: form.telefone,
         cpf: form.cpf || null,
         data_nascimento: form.data_nascimento || null,
+        sexo: form.sexo,
+        endereco: form.endereco.trim() || null,
         nome_mae: form.nome_mae || null,
         area: deriveArea(ministerios),
         participou_next: form.participou_next || null,
         dom_predominante: form.dom_predominante || null,
         ministerios_interesse: ministerios,
         consentimento_antecedentes: precisaDadosMenor ? consentAntecedentes : false,
+        aceita_termos: aceitaTermos,
         whatsapp_optin: whatsappOptin,
         website: form.website,
       });
@@ -359,6 +339,7 @@ export default function InscricaoVoluntariado() {
       setError(err?.message || 'Erro ao enviar inscrição');
     }
     setLoading(false);
+    submittingRef.current = false;
   };
 
   return (
@@ -454,21 +435,41 @@ export default function InscricaoVoluntariado() {
 
             <form onSubmit={handleSubmit}>
               <SectionTitle>Dados pessoais</SectionTitle>
-              <Row>
-                <Field id="nome" label="Nome (sem abreviar)" value={form.nome} onChange={set('nome')} required autoComplete="given-name" />
-                <Field id="sobrenome" label="Sobrenome completo (sem abreviar)" value={form.sobrenome} onChange={set('sobrenome')} required autoComplete="family-name" />
-              </Row>
+              <Field id="nome_completo" label="Nome completo (sem abreviar)" value={form.nome_completo} onChange={set('nome_completo')} required autoComplete="name" />
               <Field id="email" label="E-mail" type="email" value={form.email} onChange={set('email')} required autoComplete="email" inputMode="email" />
               <Row>
                 <Field id="telefone" label="Telefone (WhatsApp)" value={form.telefone} onChange={set('telefone')} required placeholder="(00) 00000-0000" inputMode="tel" autoComplete="tel" />
                 <Field id="cpf" label="CPF" value={form.cpf} onChange={set('cpf')} required placeholder="000.000.000-00" inputMode="numeric" autoComplete="off" />
               </Row>
-              <div style={{ marginBottom: 20 }}>
-                <label style={{ display: 'block', fontSize: 11, color: 'var(--cbrio-text3)', marginBottom: 6 }}>
-                  Data de nascimento <span style={{ color: '#ef4444' }}>*</span>
-                </label>
-                <BirthDatePicker value={form.data_nascimento} onChange={(v) => setForm(f => ({ ...f, data_nascimento: v }))} />
-              </div>
+              <Row>
+                <div style={{ marginBottom: 20 }}>
+                  <label style={{ display: 'block', fontSize: 11, color: 'var(--cbrio-text3)', marginBottom: 6 }}>
+                    Data de nascimento <span style={{ color: '#ef4444' }}>*</span>
+                  </label>
+                  <BirthDatePicker value={form.data_nascimento} onChange={(v) => setForm(f => ({ ...f, data_nascimento: v }))} />
+                </div>
+                <div style={{ marginBottom: 20 }}>
+                  <label style={{ display: 'block', fontSize: 11, color: 'var(--cbrio-text3)', marginBottom: 6 }}>
+                    Sexo <span style={{ color: '#ef4444' }}>*</span>
+                  </label>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    {SEXOS.map((o) => {
+                      const sel = form.sexo === o;
+                      return (
+                        <button key={o} type="button" onClick={() => setForm(f => ({ ...f, sexo: o }))} aria-pressed={sel}
+                          style={{
+                            flex: 1, minHeight: 42, padding: '9px 10px', borderRadius: 999, fontSize: 13, cursor: 'pointer',
+                            fontWeight: sel ? 700 : 500, textTransform: 'capitalize',
+                            border: `1.5px solid ${sel ? '#00B39D' : C.inputBorder}`,
+                            background: sel ? 'linear-gradient(90deg,#00B39D,#00d9bd)' : 'transparent',
+                            color: sel ? '#fff' : C.text, transition: 'all .15s',
+                          }}>{o}</button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </Row>
+              <Field id="endereco" label="Endereço (opcional)" value={form.endereco} onChange={set('endereco')} autoComplete="street-address" />
 
               <SectionTitle>Onde você quer servir</SectionTitle>
               <p style={{ fontSize: 12, color: C.text3, marginTop: -6, marginBottom: 14 }}>
@@ -556,6 +557,24 @@ export default function InscricaoVoluntariado() {
                 display: 'flex', gap: 10, alignItems: 'flex-start',
                 background: C.isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
                 border: `1px solid ${C.inputBorder}`,
+                borderRadius: 12, padding: '14px 16px', margin: '4px 0 12px', cursor: 'pointer',
+              }}>
+                <input
+                  type="checkbox"
+                  checked={aceitaTermos}
+                  onChange={(e) => setAceitaTermos(e.target.checked)}
+                  style={{ marginTop: 3, width: 18, height: 18, accentColor: '#00B39D', flexShrink: 0 }}
+                />
+                <span style={{ fontSize: 12.5, color: C.text3, lineHeight: 1.55 }}>
+                  <strong style={{ color: C.text }}>Li e aceito os termos *</strong><br />
+                  {textos.termos_lgpd}
+                </span>
+              </label>
+
+              <label style={{
+                display: 'flex', gap: 10, alignItems: 'flex-start',
+                background: C.isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
+                border: `1px solid ${C.inputBorder}`,
                 borderRadius: 12, padding: '14px 16px', margin: '4px 0 16px', cursor: 'pointer',
               }}>
                 <input
@@ -566,8 +585,8 @@ export default function InscricaoVoluntariado() {
                 />
                 <span style={{ fontSize: 12.5, color: C.text3, lineHeight: 1.55 }}>
                   Aceito receber mensagens da CBRio no <strong>WhatsApp</strong> (avisos, escalas,
-                  lembretes e felicitações). Você pode cancelar quando quiser. Seus dados são
-                  tratados conforme a LGPD.
+                  lembretes e felicitações). {textos.aviso_optin || AVISO_OPTIN} Você pode cancelar
+                  quando quiser. Seus dados são tratados conforme a LGPD.
                 </span>
               </label>
 

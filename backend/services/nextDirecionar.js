@@ -117,7 +117,7 @@ async function direcionarMatricula({ matriculaId, destinos = [], areas = [], use
       // "Quero servir" com áreas escolhidas → inscrição REAL no Voluntariado
       // (mesma tabela do formulário público), tag origem='next'. Dedup por matrícula.
       const { data: ja } = await supabase.from('vol_inscricoes').select('id')
-        .eq('next_matricula_id', m.id).limit(1).maybeSingle();
+        .eq('next_matricula_id', m.id).is('deleted_at', null).limit(1).maybeSingle();
       if (!ja) {
         await garantirMembro();
         const { labels, area } = await resolverAreasVol(areas);

@@ -20,6 +20,9 @@ const rateLimit = require('express-rate-limit');
 const { supabase } = require('../utils/supabase');
 const { acharMembroGuardado } = require('../services/membroMatch');
 const { registrarObservacaoSegura } = require('../services/identidadeProgressiva');
+const {
+  temAbreviacaoNome, splitNomeCompleto, registrarConsentimentos, SEXOS, TEXTOS,
+} = require('../services/inscricaoContrato');
 
 const publicLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -38,16 +41,7 @@ function ehEmailValido(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
-// Nome completo sem abreviação: rejeita partes com ponto ("J.") ou de 1 letra
-// (conectivos "de/da/do/das/dos/e" são permitidos).
-const CONECTIVOS_NOME = new Set(['de', 'da', 'do', 'das', 'dos', 'e']);
-function temAbreviacaoNome(s) {
-  return String(s || '').trim().split(/\s+/).some((p) => {
-    const limpo = p.replace(/\./g, '');
-    if (CONECTIVOS_NOME.has(limpo.toLowerCase())) return false;
-    return p.includes('.') || limpo.length === 1;
-  });
-}
+// (temAbreviacaoNome agora vem de services/inscricaoContrato — fonte única)
 
 // Valida que serviceId é UUID v4 (evita open redirect via path injection)
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -399,19 +393,28 @@ const AREAS_VALIDAS = new Set(['kids', 'sede', 'ami', 'bridge', 'online']);
 router.post('/inscrever-form', publicLimiter, async (req, res) => {
   try {
     const {
-      nome, sobrenome, email, telefone, cpf, data_nascimento, nome_mae,
+      nome, sobrenome, nome_completo, email, telefone, cpf, data_nascimento,
+      sexo, endereco, nome_mae,
       area, participou_next, dom_predominante, ministerios_interesse,
       consentimento_antecedentes, // Kids/Bridge · autoriza consulta de antecedentes
+      aceita_termos, // termos LGPD gerais (Contrato de Inscrição)
       whatsapp_optin, // consentimento p/ receber mensagens no WhatsApp (Marketing)
       website, // honeypot
     } = req.body || {};
 
     if (website) return res.status(200).json({ ok: true }); // bot
 
-    const cleanNome = String(nome || '').trim();
-    const cleanSobrenome = String(sobrenome || '').trim();
+    // D1: campo único "Nome completo" (split determinístico); tolera o payload
+    // antigo nome+sobrenome de abas abertas antes do deploy.
+    let cleanNome = String(nome || '').trim();
+    let cleanSobrenome = String(sobrenome || '').trim();
+    if (nome_completo && String(nome_completo).trim()) {
+      const s = splitNomeCompleto(nome_completo);
+      cleanNome = s.nome;
+      cleanSobrenome = s.sobrenome;
+    }
     if (cleanNome.length < 2) return res.status(400).json({ error: 'Nome obrigatório' });
-    if (cleanSobrenome.length < 2) return res.status(400).json({ error: 'Informe seu sobrenome completo' });
+    if (cleanSobrenome.length < 2) return res.status(400).json({ error: 'Informe seu nome completo' });
     // Nome completo sem abreviação ("Maria S." / "J. Silva" não valem).
     if (temAbreviacaoNome(cleanNome) || temAbreviacaoNome(cleanSobrenome)) {
       return res.status(400).json({ error: 'Escreva seu nome completo, sem abreviações' });
@@ -447,6 +450,15 @@ router.post('/inscrever-form', publicLimiter, async (req, res) => {
     if (!area || !AREAS_VALIDAS.has(String(area).toLowerCase())) {
       return res.status(400).json({ error: 'Selecione uma área' });
     }
+    // Contrato (28/07): sexo obrigatório; endereço fixo-opcional; termos gerais.
+    const cleanSexo = String(sexo || '').toLowerCase();
+    if (!SEXOS.includes(cleanSexo)) {
+      return res.status(400).json({ error: 'Selecione masculino ou feminino' });
+    }
+    const cleanEndereco = endereco ? String(endereco).trim().slice(0, 300) : null;
+    if (!aceita_termos) {
+      return res.status(400).json({ error: 'É preciso aceitar os termos para se inscrever' });
+    }
 
     // Kids/Bridge (menores · LGPD) exigem também nome da mãe e consentimento.
     const areaLower = String(area).toLowerCase();
@@ -480,6 +492,27 @@ router.post('/inscrever-form', publicLimiter, async (req, res) => {
       console.warn('[PublicVol/inscrever-form] match membro:', e.message);
     }
 
+    // Dedup (novo · antes reenviar DUPLICAVA): candidatura aberta por CPF ou
+    // membro em status inscrito/enviado_ministerio → responde "já recebemos".
+    try {
+      const orParts = [`cpf.eq.${cleanCpf}`];
+      if (membroId) orParts.push(`membro_id.eq.${membroId}`);
+      const { data: aberta } = await supabase.from('vol_inscricoes')
+        .select('id, status')
+        .or(orParts.join(','))
+        .in('status', ['inscrito', 'enviado_ministerio'])
+        .is('deleted_at', null)
+        .limit(1);
+      if (aberta && aberta.length) {
+        return res.json({
+          ok: true, ja_inscrito: true, id: aberta[0].id,
+          mensagem: 'Já recebemos a sua inscrição — a coordenação de voluntários vai falar com você em breve.',
+        });
+      }
+    } catch (e) {
+      console.warn('[PublicVol/inscrever-form] dedup:', e.message);
+    }
+
     const { data: insc, error: insErr } = await supabase
       .from('vol_inscricoes')
       .insert({
@@ -490,6 +523,8 @@ router.post('/inscrever-form', publicLimiter, async (req, res) => {
         email: cleanEmail,
         telefone: cleanTelefone,
         data_nascimento: cleanDataNascimento,
+        sexo: cleanSexo,
+        endereco: cleanEndereco,
         nome_mae: nome_mae ? String(nome_mae).trim() : null,
         data_inscricao: new Date().toISOString(),
         participou_next: participou_next ? String(participou_next).trim() : null,
@@ -518,6 +553,17 @@ router.post('/inscrever-form', publicLimiter, async (req, res) => {
       nome: nomeCompleto, cpf: cleanCpf, telefone: cleanTelefone,
       email: cleanEmail, dataNascimento: cleanDataNascimento || null,
     });
+
+    // Atos de consentimento na satélite (o de ANTECEDENTES continua no sistema
+    // próprio vol_background_checks — não duplicar). Best-effort.
+    registrarConsentimentos({
+      porta: 'voluntariado', refId: insc.id, membroId,
+      ip: req.ip || null, userAgent: (req.headers['user-agent'] || '').slice(0, 300) || null,
+      itens: [
+        { tipo: 'termos_lgpd', aceito: true },
+        { tipo: 'whatsapp', aceito: !!whatsapp_optin },
+      ],
+    }).catch((e) => console.error('[PublicVol/inscrever-form] consentimentos:', e.message));
 
     // Opt-in de WhatsApp: se a pessoa consentiu E já casou com um membro,
     // grava o consentimento direto no mem_membros (só liga, nunca desliga um
@@ -583,6 +629,12 @@ router.post('/inscrever-form', publicLimiter, async (req, res) => {
     console.error('[PublicVol/inscrever-form] error:', err.message);
     res.status(500).json({ error: 'Erro ao registrar inscrição' });
   }
+});
+
+// GET /textos — textos canônicos de consentimento (o snapshot gravado é
+// sempre o do backend)
+router.get('/textos', (_req, res) => {
+  res.json({ termos_lgpd: TEXTOS.termos_lgpd, aviso_optin: TEXTOS.aviso_optin });
 });
 
 // ---------------------------------------------------------------------------

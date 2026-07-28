@@ -73,8 +73,18 @@ Celebra com só nome+telefone continuam válidas para sempre).
   imagem, menor_responsavel, whatsapp). O ESTADO do opt-in continua nas
   colunas `whatsapp_optin/_em` de cada tabela.
 - Rollout F3.1 porta a porta (1 PR cada, nesta ordem): **eventos externos ✅**
-  → **apresentação ✅** → **líderes ✅** → voluntariado → next → batismo → grupos.
-  Plano de migração sem perda + bugs conhecidos: `docs/modulo-inscricoes/`.
+  → **apresentação ✅** → **líderes ✅** → **voluntariado ✅** → next → batismo
+  → grupos. Plano de migração sem perda + bugs: `docs/modulo-inscricoes/`.
+- **Porta 4 · Voluntariado (2026-07-28 · migration `20260728210000` = M6a):**
+  nome vira campo único (split no server, tolera payload antigo); + sexo
+  obrigatório e endereço opcional (colunas novas); termos LGPD obrigatório +
+  optin espelhados na satélite; **dedup novo** (CPF/membro × status
+  inscrito|enviado_ministerio — antes reenviar DUPLICAVA); `GET /textos`.
+  ⚠️ **Soft-delete em 2 ETAPAS**: M6a criou `deleted_at` + TODOS os leitores
+  JS filtrando (`voluntariado.js`, `app.js`, `totemKids.js`,
+  `nextDirecionar.js`, `volEmailSender.js`); **NÃO soft-deletar
+  vol_inscricoes até a M6b** (whitelist + contadores SQL do fanout/KPI
+  nativo) — até lá a coluna fica NULL e exclusão continua sendo a rota atual.
 - **Porta 3 · Líderes/anfitriões (2026-07-28 · migration `20260728190000`):**
   e-mail obrigatório; anti-abreviação no nome; teto 11 no telefone; coluna
   `origem` (linhas antigas = formulario_publico, único writer que existiu);
