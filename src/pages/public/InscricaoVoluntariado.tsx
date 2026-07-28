@@ -262,8 +262,6 @@ export default function InscricaoVoluntariado() {
 
   const MAX_MINISTERIOS = 3;
   const selecionadas = opcoes.filter(o => ministerios.includes(o.label));
-  // Opções que exigem dados do menor (LGPD · CPF + nome da mae): Kids/Bridge.
-  const precisaDadosMenor = selecionadas.some(o => o.exige_dados_menor);
   // Deriva a área canonica (vol_inscricoes.area) a partir das opções marcadas.
   const deriveArea = (mins: string[]): string => {
     const areas = opcoes.filter(o => mins.includes(o.label)).map(o => o.area_canonica);
@@ -272,6 +270,13 @@ export default function InscricaoVoluntariado() {
     }
     return 'sede';
   };
+  // Dados do menor (LGPD · nome da mãe + antecedentes): exige quando alguma
+  // opção marcada tem a flag OU a área derivada é Kids/Bridge — a MESMA união
+  // que o servidor aplica. Critérios divergentes davam ou formulário
+  // insubmissível (server exigia campo que a tela não mostrava) ou
+  // consentimento de antecedentes colhido sem triagem aberta.
+  const precisaDadosMenor = selecionadas.some(o => o.exige_dados_menor)
+    || ['kids', 'bridge'].includes(deriveArea(ministerios));
 
   const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     let v = e.target.value;

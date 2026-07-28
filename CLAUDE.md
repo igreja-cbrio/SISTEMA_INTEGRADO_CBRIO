@@ -212,6 +212,56 @@ Celebra com só nome+telefone continuam válidas para sempre).
   submit quando há horários; `status='rejeitado'` segue FORA do CHECK
   (referências defensivas no código são vocabulário morto — não legalizar).
 
+## Sweep dos formulários de inscrição · achados e correções (2026-07-28)
+
+Auditoria multi-agente das 7 portas pós-módulo de inscrições (pedido do
+Marcos). Relatório completo ficou na conversa; aqui o que virou código e o
+que segue pendente:
+
+- **Fix TDZ (reporte do Ariel · PR #2113):** a aba /ministerial/voluntariado/
+  inscricoes quebrava com "Cannot access 'R' before initialization" — o
+  `useMemo` de `interessesPessoa` (PR #2073) referenciava
+  `areasDirecionamento` declarado 104 linhas abaixo. Bloco movido pra cima.
+  ⚠️ Lição: array de deps de hook avalia NO RENDER — const usada em
+  useMemo/useQuery precisa estar declarada ANTES. Verificador determinístico:
+  `npx tsc -p tsconfig.app.json --noEmit` e filtrar TS2448/TS2454 (o
+  `npx tsc --noEmit` cru NÃO checa nada — o tsconfig raiz é só references).
+  Mesmo padrão latente: `publicNext.js` usa `turmaAbertaAtual()` antes da
+  declaração (salvo por hoisting de `async function` — NÃO converter pra
+  arrow const sem mover).
+- **P0 Celebra (PR #2115):** dedup da espinha com fallback por telefone p/
+  linha migrada sem CPF (guarda `nomesMesmaPessoa`); merge enriquece a linha
+  legada; GET /:slug com try/catch + RPC de vagas best-effort fail-open;
+  corrida devolve o nº da sorte; front esconde nº vazio e SEMPRE avisa
+  re-inscrição.
+- **P0 segurança de menor (PR desta seção):** form público de apresentação
+  grava `kids_responsaveis` com **autorizado_buscar: false SEMPRE** (o
+  default true da coluna dava vínculo de RETIRADA de criança a qualquer um
+  com CPF válido + nome/nascimento de criança cadastrada — a lei do vínculo
+  documentado vale pra TODA porta pública); consentimento de menor (art. 14)
+  saiu de dentro do `.then()` do matcher (falha de identidade não apaga mais
+  a prova legal); "exige dados de menor" no voluntariado virou a MESMA união
+  nos dois lados (flag `exige_dados_menor` das opções marcadas ∪ área
+  kids/bridge) — critérios divergentes davam form insubmissível ou
+  antecedentes prometidos sem triagem aberta.
+- **PENDENTE (P1, aprovado pelo Marcos — próxima leva):** migration do CHECK
+  de `vol_inscricoes.status` += 'desistente' (o botão da #2075 viola o CHECK
+  vivo — 0 linhas no banco confirmado); `ja_inscritas`/dedup EXIBIDOS na
+  apresentação e no voluntariado (padrão batismo); renovação de grupos
+  gravando consentimento/opt-in/enriquecimento (hoje responde "Renovamos!"
+  sem escrever nada); opt-in propagado na aprovação de grupos/líderes +
+  estado persistido na apresentação; chave `whatsapp` no TEXTOS do
+  inscricaoContrato (snapshot hoje grava vazio nas 7 portas); gate de opt-in
+  no template de confirmação de grupos + AVISO_OPTIN no form.
+- **PENDENTE (P2/P3):** rate limit — batismo/apresentação/vol/next atrás do
+  `publicLimiter` 30/15min (Wi-Fi único = 429; padrão: mover pra antes, como
+  NPS/grupos/eventos) e limiter do router do Next (10/min) pega o totem de
+  check-in; cópias locais de validação (batismo/vol/next/grupos) fora da
+  fonte única; totem de bebês (`membresia.js` apresentacao-bebe) 100% fora
+  do contrato (zero consentimento); tipo `data` do form-builder sem
+  renderização própria; QR com `?temporada=` antiga vence a temporada
+  aberta; endereço de grupos write-only; e2e do Next morto (#nome/#sobrenome).
+
 ## ⚠️ Módulo de Comunicação (WhatsApp central) · handoff pro MATHEUS (2026-07-28)
 
 Decisão do Marcos (bloco C da revisão estrutural): fundir Conversas + Menu das
