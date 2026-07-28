@@ -460,8 +460,17 @@ function Templates({ podeSync, podeEditar }: { podeSync: boolean; podeEditar: bo
     setSincronizando(true);
     try {
       const r: Record<string, unknown> = await comunicacao.templates.sync();
-      const qtd = r?.total ?? r?.sincronizados ?? r?.count ?? '';
-      toast.success(`Sincronizado com a Meta${qtd !== '' ? ` · ${qtd} templates` : ''}`);
+      const qtd = Number(r?.sincronizados ?? r?.total ?? r?.count ?? 0);
+      if (r?.erro) {
+        // A Meta recusou a leitura do catálogo (token sem whatsapp_business_management,
+        // WABA não atribuída ao System User, ou WHATSAPP_BUSINESS_ACCOUNT_ID errado).
+        // Mostra a mensagem crua da Meta pra dar pra diagnosticar sem abrir os logs.
+        toast.error(`Meta recusou o catálogo: ${String(r.erro)}`, { duration: 12000 });
+      } else if (qtd === 0) {
+        toast.warning('Sincronizou, mas a Meta não retornou nenhum template. Confira o WHATSAPP_BUSINESS_ACCOUNT_ID.', { duration: 10000 });
+      } else {
+        toast.success(`Sincronizado com a Meta · ${qtd} templates com status/categoria`);
+      }
       carregar();
     } catch (e: unknown) { toast.error((e as Error)?.message || 'Erro ao sincronizar'); }
     finally { setSincronizando(false); }
