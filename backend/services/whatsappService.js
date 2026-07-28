@@ -146,9 +146,21 @@ async function notificarMembro(membroId, chave, params = [], { idioma = TEMPLATE
     const to = normalizarTelefone(m.telefone);
     if (!to) return { skipped: 'telefone_invalido' };
 
-    const r = await waSender.sendTemplate(to, templateName, idioma, params);
+    // C2: sai pela FILA (registro universal + retry + statuses do C0). O envio
+    // continua imediato (enfileirar tenta na hora); com o kill-switch global
+    // desligado (WHATSAPP_ENABLED) fica pendente e sai quando religar.
+    // Require lazy: a fila importa este arquivo (evita ciclo no load).
+    const { enfileirar } = require('./whatsappFila');
+    const r = await enfileirar({
+      telefone: to,
+      template: templateName,
+      params,
+      idioma,
+      contexto: `app.${chave}`,
+      refId: membroId,
+    });
     if (!r.sent) {
-      console.warn('[WPP] notificarMembro %s falhou: %j', chave, { reason: r.reason, status: r.status });
+      console.warn('[WPP] notificarMembro %s não saiu na hora: %j', chave, { reason: r.reason, queued: r.queued });
     }
     return r;
   } catch (e) {

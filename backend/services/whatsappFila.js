@@ -15,7 +15,7 @@
 // o comportamento do sistema fica idêntico ao de hoje (e nenhum link
 // tokenizado para em log/banco à toa).
 const { supabase } = require('../utils/supabase');
-const { sendTemplate, configurado } = require('./whatsappService');
+const { sendTemplate, sendText, configurado } = require('./whatsappService');
 const { notificar } = require('./notificar');
 
 const TEMPLATE_LANG = process.env.WHATSAPP_TEMPLATE_LANG || 'pt_BR';
@@ -48,7 +48,7 @@ async function avisarFalhaTerminal(e, razao) {
       modulo,
       tipo: 'whatsapp_envio_falhou',
       titulo: 'Mensagem de WhatsApp não entregue',
-      mensagem: `O template "${e.template}" para o telefone ${e.telefone} falhou de vez (${String(razao).slice(0, 140)}). Contexto: ${e.contexto || '—'}. Confira o telefone no cadastro e reenvie.`,
+      mensagem: `${e.tipo === 'texto' ? 'A mensagem de texto' : `O template "${e.template}"`} para o telefone ${e.telefone} falhou de vez (${String(razao).slice(0, 140)}). Contexto: ${e.contexto || '—'}. Confira o telefone no cadastro e reenvie.`,
       link: modulo === 'grupos' ? '/grupos' : null,
       severidade: 'aviso',
       chaveDedup: `wpp_envio_falha_${e.id}`,
@@ -58,13 +58,18 @@ async function avisarFalhaTerminal(e, razao) {
   }
 }
 
-async function enfileirar({ telefone, template, params, contexto, refId, idioma }) {
+// C2: aceita TEMPLATE (proativo) ou TEXTO (janela 24h · `texto`). Toda saída
+// fica registrada — é a fila que dá o histórico universal do módulo Comunicação.
+async function enfileirar({ telefone, template, texto, params, contexto, refId, idioma }) {
   if (!configurado()) return { queued: false, sent: false, reason: 'disabled' };
-  if (!telefone || !template) return { queued: false, sent: false, reason: 'dados_incompletos' };
+  if (!telefone || (!template && !texto)) return { queued: false, sent: false, reason: 'dados_incompletos' };
+  const tipo = texto && !template ? 'texto' : 'template';
 
   const { data: row, error } = await supabase.from('whatsapp_envios').insert({
     telefone,
-    template,
+    tipo,
+    template: tipo === 'template' ? template : null,
+    texto: tipo === 'texto' ? String(texto) : null,
     idioma: idioma || TEMPLATE_LANG,
     params: Array.isArray(params) ? params : [],
     contexto: contexto || null,
@@ -75,7 +80,9 @@ async function enfileirar({ telefone, template, params, contexto, refId, idioma 
     // Fila indisponível (ex.: migration ainda não aplicada) → degrada pro
     // envio direto, sem retry — melhor entregar do que travar o fluxo.
     console.error('[whatsappFila] insert falhou (envio direto):', error.message);
-    const direto = await sendTemplate(telefone, template, idioma || TEMPLATE_LANG, params || []);
+    const direto = tipo === 'texto'
+      ? await sendText(telefone, texto)
+      : await sendTemplate(telefone, template, idioma || TEMPLATE_LANG, params || []);
     return { queued: false, sent: direto.sent === true, reason: direto.sent ? null : (direto.reason || 'api_error'), messageId: direto.messageId || null };
   }
 
@@ -89,7 +96,9 @@ async function tentarEnvio(id) {
   if (error || !e) return { sent: false, reason: 'nao_encontrado' };
   if (e.status !== 'pendente') return { sent: false, reason: `status_${e.status}` };
 
-  const r = await sendTemplate(e.telefone, e.template, e.idioma, Array.isArray(e.params) ? e.params : []);
+  const r = e.tipo === 'texto'
+    ? await sendText(e.telefone, e.texto)
+    : await sendTemplate(e.telefone, e.template, e.idioma, Array.isArray(e.params) ? e.params : []);
 
   if (r.sent) {
     await supabase.from('whatsapp_envios').update({
@@ -132,15 +141,20 @@ async function tentarEnvio(id) {
 async function enfileirarLote(itens) {
   if (!configurado()) return { queued: 0, motivo: 'disabled' };
   const linhas = (itens || [])
-    .filter(i => i && i.telefone && i.template)
-    .map(i => ({
-      telefone: i.telefone,
-      template: i.template,
-      idioma: i.idioma || TEMPLATE_LANG,
-      params: Array.isArray(i.params) ? i.params : [],
-      contexto: i.contexto || null,
-      ref_id: i.refId || null,
-    }));
+    .filter(i => i && i.telefone && (i.template || i.texto))
+    .map(i => {
+      const tipo = i.texto && !i.template ? 'texto' : 'template';
+      return {
+        telefone: i.telefone,
+        tipo,
+        template: tipo === 'template' ? i.template : null,
+        texto: tipo === 'texto' ? String(i.texto) : null,
+        idioma: i.idioma || TEMPLATE_LANG,
+        params: Array.isArray(i.params) ? i.params : [],
+        contexto: i.contexto || null,
+        ref_id: i.refId || null,
+      };
+    });
   if (!linhas.length) return { queued: 0 };
   const { data, error } = await supabase.from('whatsapp_envios').insert(linhas).select('id');
   if (error) {
