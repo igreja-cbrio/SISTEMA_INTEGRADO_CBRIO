@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
+const { escapePostgrestValue } = require('../utils/sanitize');
 
 router.use(authenticate, authorizeModule('patrimonio'));
 
@@ -82,7 +83,12 @@ router.get('/bens', async (req, res) => {
     if (status) query = query.eq('status', status);
     if (categoria_id) query = query.eq('categoria_id', categoria_id);
     if (localizacao_id) query = query.eq('localizacao_id', localizacao_id);
-    if (busca) query = query.ilike('nome', `%${busca}%`);
+    // Busca por nome OU código de barras OU nº de série — permite achar o bem
+    // pelo número, não só pelo nome (pedido do usuário 2026-07-27).
+    if (busca) {
+      const b = escapePostgrestValue(busca.trim());
+      query = query.or(`nome.ilike.%${b}%,codigo_barras.ilike.%${b}%,numero_serie.ilike.%${b}%`);
+    }
     const { data, error } = await query;
     if (error) return res.status(400).json({ error: error.message });
     res.json(data);

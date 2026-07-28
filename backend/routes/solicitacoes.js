@@ -4523,10 +4523,27 @@ router.post('/:id/atender-estoque', async (req, res) => {
       return res.status(400).json({ error: 'Solicitação já encerrada.' });
     }
 
+    // Bloqueio de saldo negativo (pedido do usuário 2026-07-27 · antes era só
+    // aviso visual no front, sem trava no servidor). Checa o saldo ATUAL de
+    // cada produto antes de gravar qualquer saída — se algum item pedir mais
+    // do que existe, a atendimento inteira é rejeitada (nada é gravado).
+    const produtoIds = [...new Set(itens.map(it => it.produto_id).filter(Boolean))];
+    const { data: saldos, error: saldoErr } = await supabase.from('vw_log_estoque_saldo')
+      .select('id, nome, saldo').in('id', produtoIds);
+    if (saldoErr) return res.status(400).json({ error: 'Erro ao checar saldo do estoque: ' + saldoErr.message });
+    const saldoPorId = new Map((saldos || []).map(s => [s.id, s]));
+
     const rows = [];
     for (const it of itens) {
       const qtd = Number(it.quantidade);
       if (!it.produto_id || !qtd || qtd <= 0) return res.status(400).json({ error: 'Item inválido (produto + quantidade > 0).' });
+      const prod = saldoPorId.get(it.produto_id);
+      const saldoAtual = Number(prod?.saldo || 0);
+      if (qtd > saldoAtual) {
+        return res.status(400).json({
+          error: `Saldo insuficiente em "${prod?.nome || it.produto_id}": disponível ${saldoAtual}, pedido ${qtd}.`,
+        });
+      }
       rows.push({
         produto_id: it.produto_id, tipo: 'saida', quantidade: qtd,
         data_movimentacao: new Date().toISOString().slice(0, 10),

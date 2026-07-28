@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { Tag, ClipboardList, Trash2, Pencil, MapPin } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { Tag, ClipboardList, Trash2, Archive, Pencil, MapPin, ScanLine } from 'lucide-react';
 import { useAuth } from '../../../contexts/AuthContext';
 import { patrimonio, logistica } from '../../../api';
 import { Button } from '../../../components/ui/button';
@@ -98,7 +98,7 @@ function Input({ label, ...props }) { return (<div style={styles.formGroup}>{lab
 function Select({ label, children, ...props }) { return (<div style={styles.formGroup}>{label && <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">{label}</label>}<select className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" {...props}>{children}</select></div>); }
 function Badge({ status, map }) { const s = map[status] || { c: C.text3, bg: '#73737318', label: status }; return <span style={styles.badge(s.c, s.bg)}>{s.label}</span>; }
 
-const TABS = ['Dashboard', 'Bens', 'Scanner', 'Categorias / Localizações', 'Inventários'];
+const TABS = ['Dashboard', 'Bens', 'Categorias / Localizações', 'Inventários'];
 
 const fmtDateTime = (d) => d ? new Date(d).toLocaleString('pt-BR') : '—';
 
@@ -140,8 +140,15 @@ export default function Patrimonio() {
   async function saveBem(data) {
     try { if (data.id) await patrimonio.bens.update(data.id, data); else await patrimonio.bens.create(data); setModalBem(null); loadBens(); loadDash(); } catch (e) { setError(e.message); }
   }
-  async function deleteBem(id) { if (!confirm('Remover este bem?')) return; try { await patrimonio.bens.remove(id); loadBens(); loadDash(); setModalDetail(null); } catch (e) { setError(e.message); } }
+  async function baixarBem(id) {
+    if (!confirm('Dar baixa neste bem? Ele sai de "ativo" (fica marcado como baixado), mas o cadastro e o histórico de movimentações são preservados — dá pra reativar depois editando o status.')) return;
+    try { await patrimonio.bens.remove(id); loadBens(); loadDash(); setModalDetail(null); } catch (e) { setError(e.message); }
+  }
   async function openDetail(id) { try { setModalDetail(await patrimonio.bens.get(id)); } catch (e) { setError(e.message); } }
+  async function openDetailPorCodigo(codigo) {
+    try { setModalDetail(await patrimonio.bens.porCodigo(codigo)); }
+    catch (e) { setError(`Nenhum bem encontrado para o código "${codigo}".`); }
+  }
   async function saveMov(bemId, data) {
     try { await patrimonio.bens.movimentar(bemId, data); setModalMov(null); openDetail(bemId); loadBens(); loadDash(); } catch (e) { setError(e.message); }
   }
@@ -172,15 +179,15 @@ export default function Patrimonio() {
           filtroStatus={filtroStatus} setFiltroStatus={setFiltroStatus}
           filtroCat={filtroCat} setFiltroCat={setFiltroCat} filtroLoc={filtroLoc} setFiltroLoc={setFiltroLoc}
           categorias={categorias} localizacoes={localizacoes}
-          onNew={() => setModalBem({})} onDetail={openDetail} onDelete={deleteBem} isDiretor={isDiretor}
+          onNew={() => setModalBem({})} onDetail={openDetail} onDetailPorCodigo={openDetailPorCodigo}
+          onBaixar={baixarBem} isDiretor={isDiretor}
         />
       )}
-      {tab === 2 && <ScannerTab localizacoes={localizacoes} onMov={saveMov} onDetail={openDetail} />}
-      {tab === 3 && <CatLocTab categorias={categorias} localizacoes={localizacoes} newCat={newCat} setNewCat={setNewCat} addCat={addCat} removeCat={removeCat} newLoc={newLoc} setNewLoc={setNewLoc} addLoc={addLoc} removeLoc={removeLoc} isDiretor={isDiretor} />}
-      {tab === 4 && <InventariosTab inventarios={inventarios} onNew={() => setModalInv({})} onUpdate={updateInvStatus} isDiretor={isDiretor} />}
+      {tab === 2 && <CatLocTab categorias={categorias} localizacoes={localizacoes} newCat={newCat} setNewCat={setNewCat} addCat={addCat} removeCat={removeCat} newLoc={newLoc} setNewLoc={setNewLoc} addLoc={addLoc} removeLoc={removeLoc} isDiretor={isDiretor} />}
+      {tab === 3 && <InventariosTab inventarios={inventarios} onNew={() => setModalInv({})} onUpdate={updateInvStatus} isDiretor={isDiretor} />}
 
       <BemFormModal open={!!modalBem} data={modalBem} categorias={categorias} localizacoes={localizacoes} onClose={() => setModalBem(null)} onSave={saveBem} />
-      <BemDetailModal open={!!modalDetail} data={modalDetail} onClose={() => setModalDetail(null)} onEdit={(b) => { setModalDetail(null); setModalBem(b); }} onDelete={deleteBem} onMov={(bemId) => setModalMov({ bem_id: bemId })} isDiretor={isDiretor} />
+      <BemDetailModal open={!!modalDetail} data={modalDetail} onClose={() => setModalDetail(null)} onEdit={(b) => { setModalDetail(null); setModalBem(b); }} onBaixar={baixarBem} onMov={(bemId) => setModalMov({ bem_id: bemId })} isDiretor={isDiretor} />
       <MovFormModal open={!!modalMov} data={modalMov} localizacoes={localizacoes} onClose={() => setModalMov(null)} onSave={saveMov} />
       <InvFormModal open={!!modalInv} onClose={() => setModalInv(null)} onSave={saveInv} />
     </div>
@@ -281,12 +288,25 @@ function DashboardTab({ dash, onNavigate }) {
   );
 }
 
-function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus, filtroCat, setFiltroCat, filtroLoc, setFiltroLoc, categorias, localizacoes, onNew, onDetail, onDelete, isDiretor }) {
+function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus, filtroCat, setFiltroCat, filtroLoc, setFiltroLoc, categorias, localizacoes, onNew, onDetail, onDetailPorCodigo, onBaixar, isDiretor }) {
   const { pageItems: bensPag, paginacaoProps: bensPagProps } = usePaginacaoLocal(bens, 25);
+  const [scanning, setScanning] = useState(false);
+  const [scanError, setScanError] = useState('');
+
+  function handleDetected(code) {
+    setScanning(false);
+    onDetailPorCodigo(code);
+  }
+
   return (
     <>
       <div style={styles.filterRow}>
-        <input className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" style={{ maxWidth: 280 }} placeholder="🔍 Buscar por nome..." value={busca} onChange={e => setBusca(e.target.value)} />
+        <div style={{ display: 'flex', gap: 6, maxWidth: 320, flex: 1, minWidth: 220 }}>
+          <input className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" placeholder="🔍 Buscar por nome ou número..." value={busca} onChange={e => setBusca(e.target.value)} />
+          <Button variant={scanning ? 'destructive' : 'outline'} size="icon" title="Escanear código de barras" onClick={() => { setScanError(''); setScanning(s => !s); }}>
+            <ScanLine style={{ width: 16, height: 16 }} />
+          </Button>
+        </div>
         <select className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)}>
           <option value="">Todos os status</option>
           {Object.entries(STATUS_BEM).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
@@ -301,6 +321,17 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
         </select>
         {isDiretor && <div style={{ marginLeft: 'auto' }}><Button onClick={onNew}>+ Novo Bem</Button></div>}
       </div>
+
+      {scanning && (
+        <div style={{ ...styles.card, marginBottom: 16, padding: 20, maxWidth: 400 }}>
+          <BarcodeScanner active={scanning} onDetect={handleDetected} onError={(msg) => { setScanError(msg); setScanning(false); }} />
+          <div style={{ fontSize: 13, color: C.text2, marginTop: 8, textAlign: 'center' }}>Aponte a câmera para o código de barras do patrimônio</div>
+        </div>
+      )}
+      {scanError && (
+        <div style={{ background: '#ef444418', border: '1px solid #ef4444', borderRadius: 8, padding: '10px 14px', marginBottom: 16, color: '#ef4444', fontSize: 13 }}>{scanError}</div>
+      )}
+
       <div style={styles.card}>
         <div style={{ overflowX: 'auto' }}>
           <table style={styles.table}>
@@ -321,7 +352,7 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
                   <td style={styles.td}>{[b.marca, b.modelo].filter(Boolean).join(' ') || '—'}</td>
                   <td style={styles.td}>{fmtMoney(b.valor_aquisicao)}</td>
                   <td style={styles.td}><Badge status={b.status} map={STATUS_BEM} /></td>
-                  {isDiretor && <td style={styles.td}><Button variant="ghost" size="xs" onClick={e => { e.stopPropagation(); onDelete(b.id); }}><Trash2 style={{ width: 14, height: 14 }} /></Button></td>}
+                  {isDiretor && <td style={styles.td}>{b.status !== 'baixado' && <Button variant="ghost" size="xs" title="Dar baixa" onClick={e => { e.stopPropagation(); onBaixar(b.id); }}><Archive style={{ width: 14, height: 14 }} /></Button>}</td>}
                 </tr>
               ))}
             </tbody>
@@ -477,7 +508,7 @@ function BemFormModal({ open, data, categorias, localizacoes, onClose, onSave })
   );
 }
 
-function BemDetailModal({ open, data, onClose, onEdit, onDelete, onMov, isDiretor }) {
+function BemDetailModal({ open, data, onClose, onEdit, onBaixar, onMov, isDiretor }) {
   if (!data) return null;
   return (
     <Modal open={open} onClose={onClose} title={data.nome}>
@@ -511,7 +542,9 @@ function BemDetailModal({ open, data, onClose, onEdit, onDelete, onMov, isDireto
       {isDiretor && (
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', paddingTop: 12, borderTop: `1px solid ${C.border}` }}>
           <Button variant="outline" onClick={() => onEdit(data)}><Pencil style={{ width: 14, height: 14, display: 'inline', verticalAlign: 'middle', marginRight: 4 }} />Editar</Button>
-          <Button variant="destructive" onClick={() => onDelete(data.id)}><Trash2 style={{ width: 14, height: 14, display: 'inline', verticalAlign: 'middle', marginRight: 4 }} />Remover</Button>
+          {data.status !== 'baixado' && (
+            <Button variant="destructive" onClick={() => onBaixar(data.id)}><Archive style={{ width: 14, height: 14, display: 'inline', verticalAlign: 'middle', marginRight: 4 }} />Dar baixa</Button>
+          )}
         </div>
       )}
     </Modal>
@@ -565,254 +598,4 @@ function InvFormModal({ open, onClose, onSave }) {
   );
 }
 
-// ═══════════════════════════════════════════════════════════
-// TAB: Scanner de Código de Barras
-// ═══════════════════════════════════════════════════════════
-const MOV_TIPO_COLORS = {
-  entrada: { c: C.green, bg: C.greenBg, label: 'Entrada', icon: '📥' },
-  saida: { c: C.red, bg: C.redBg, label: 'Saída', icon: '📤' },
-  transferencia: { c: C.blue, bg: C.blueBg, label: 'Transferência', icon: '🔄' },
-  manutencao: { c: C.amber, bg: C.amberBg, label: 'Manutenção', icon: '🔧' },
-  baixa: { c: '#737373', bg: '#73737318', label: 'Baixa', icon: '❌' },
-};
-
-function ScannerTab({ localizacoes, onMov, onDetail }) {
-  const [scanning, setScanning] = useState(false);
-  const [codigo, setCodigo] = useState('');
-  const [bem, setBem] = useState(null);
-  const [notFound, setNotFound] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [showMov, setShowMov] = useState(false);
-  const [movForm, setMovForm] = useState({ tipo: 'transferencia', localizacao_origem_id: '', localizacao_destino_id: '', motivo: '' });
-  const [saving, setSaving] = useState(false);
-  const [recentScans, setRecentScans] = useState([]);
-  const [scanError, setScanError] = useState('');
-  const inputRef = useRef(null);
-
-  async function buscarPorCodigo(code) {
-    if (!code) return;
-    setLoading(true); setNotFound(false); setBem(null);
-    try {
-      const data = await patrimonio.bens.porCodigo(code);
-      setBem(data);
-      setRecentScans(prev => [{ codigo: code, nome: data.nome, status: data.status, time: new Date() }, ...prev.slice(0, 9)]);
-    } catch (e) {
-      setNotFound(true);
-    }
-    setLoading(false);
-  }
-
-  function handleDetected(code) {
-    setCodigo(code);
-    setScanning(false);
-    buscarPorCodigo(code);
-  }
-
-  function handleKeyDown(e) {
-    if (e.key === 'Enter' && codigo.trim()) {
-      buscarPorCodigo(codigo.trim());
-    }
-  }
-
-  async function handleRegistrarMov() {
-    if (!bem) return;
-    setSaving(true);
-    try {
-      await onMov(bem.id, movForm);
-      setShowMov(false);
-      setMovForm({ tipo: 'transferencia', localizacao_origem_id: '', localizacao_destino_id: '', motivo: '' });
-      // Recarregar o bem para ver movimentação atualizada
-      buscarPorCodigo(codigo);
-    } catch (e) { setScanError(e.message); }
-    setSaving(false);
-  }
-
-  return (
-    <>
-      {scanError && (
-        <div style={{ background: '#ef444418', border: '1px solid #ef4444', borderRadius: 8, padding: '12px 16px', marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: '#ef4444', fontSize: 13 }}>
-          <span>{scanError}</span>
-          <button onClick={() => setScanError('')} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 16, fontWeight: 700, padding: '0 4px' }}>&#10005;</button>
-        </div>
-      )}
-      {/* Barra de busca + botão scanner */}
-      <div style={{ ...styles.card, marginBottom: 16, padding: 20 }}>
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: scanning ? 16 : 0 }}>
-          <span style={{ fontSize: 24 }}>🏷️</span>
-          <input
-            ref={inputRef}
-            className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            style={{ flex: 1, fontSize: 16, fontFamily: 'monospace', fontWeight: 700, padding: '12px 16px' }}
-            placeholder="Digite o código de barras e pressione Enter"
-            value={codigo}
-            onChange={e => setCodigo(e.target.value)}
-            onKeyDown={handleKeyDown}
-            autoFocus
-          />
-          <Button variant={scanning ? 'destructive' : 'default'} onClick={() => setScanning(s => !s)}>
-            {scanning ? '⏹ Parar' : '📷 Escanear'}
-          </Button>
-        </div>
-
-        {/* Camera preview (usa BarcodeDetector nativo ou ZXing como fallback) */}
-        {scanning && (
-          <div style={{ maxWidth: 400, margin: '0 auto' }}>
-            <BarcodeScanner
-              active={scanning}
-              onDetect={handleDetected}
-              onError={(msg) => { setScanError(msg); setScanning(false); }}
-            />
-            <div style={{ fontSize: 13, color: C.text2, marginTop: 8, textAlign: 'center' }}>Aponte a câmera para o código de barras do patrimônio</div>
-          </div>
-        )}
-      </div>
-
-      {/* Loading */}
-      {loading && <div style={{ ...styles.card, padding: 40, textAlign: 'center', marginBottom: 16 }}><div style={{ color: C.text2, fontSize: 14 }}>Buscando patrimônio...</div></div>}
-
-      {/* Not found */}
-      {notFound && (
-        <div style={{ ...styles.card, padding: 24, marginBottom: 16, borderLeft: `4px solid ${C.red}` }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <span style={{ fontSize: 28 }}>❌</span>
-            <div>
-              <div style={{ fontSize: 16, fontWeight: 700, color: C.text }}>Patrimônio não encontrado</div>
-              <div style={{ fontSize: 13, color: C.text2 }}>Código <strong style={{ fontFamily: 'monospace' }}>{codigo}</strong> não está cadastrado no sistema.</div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Resultado — ficha do bem */}
-      {bem && (
-        <div style={{ ...styles.card, marginBottom: 16 }}>
-          <div style={{ padding: 20, borderBottom: `1px solid ${C.border}` }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
-              <div>
-                <div style={{ fontSize: 20, fontWeight: 800, color: C.text }}>{bem.nome}</div>
-                <div style={{ fontSize: 13, color: C.text2, fontFamily: 'monospace', marginTop: 4 }}>Cód: {fmtCodigo(bem.codigo_barras)}</div>
-              </div>
-              <Badge status={bem.status} map={STATUS_BEM} />
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px 20px', marginTop: 16 }}>
-              <div><div style={{ fontSize: 11, color: C.text3, textTransform: 'uppercase', fontWeight: 600 }}>Categoria</div><div style={{ fontSize: 14, fontWeight: 500, color: C.text }}>{bem.pat_categorias?.nome || '—'}</div></div>
-              <div><div style={{ fontSize: 11, color: C.text3, textTransform: 'uppercase', fontWeight: 600 }}>Localização</div><div style={{ fontSize: 14, fontWeight: 500, color: C.text }}>{bem.pat_localizacoes?.nome || '—'}</div></div>
-              <div><div style={{ fontSize: 11, color: C.text3, textTransform: 'uppercase', fontWeight: 600 }}>Marca/Modelo</div><div style={{ fontSize: 14, fontWeight: 500, color: C.text }}>{[bem.marca, bem.modelo].filter(Boolean).join(' ') || '—'}</div></div>
-              <div><div style={{ fontSize: 11, color: C.text3, textTransform: 'uppercase', fontWeight: 600 }}>N° Série</div><div style={{ fontSize: 14, fontWeight: 500, color: C.text }}>{bem.numero_serie || '—'}</div></div>
-              <div><div style={{ fontSize: 11, color: C.text3, textTransform: 'uppercase', fontWeight: 600 }}>Valor Aquisição</div><div style={{ fontSize: 14, fontWeight: 500, color: C.text }}>{fmtMoney(bem.valor_aquisicao)}</div></div>
-              <div><div style={{ fontSize: 11, color: C.text3, textTransform: 'uppercase', fontWeight: 600 }}>Data Aquisição</div><div style={{ fontSize: 14, fontWeight: 500, color: C.text }}>{fmtDate(bem.data_aquisicao)}</div></div>
-            </div>
-
-            {/* Ações */}
-            <div style={{ display: 'flex', gap: 8, marginTop: 16, flexWrap: 'wrap' }}>
-              <Button onClick={() => { setShowMov(true); setMovForm({ tipo: 'transferencia', localizacao_origem_id: bem.localizacao_id || '', localizacao_destino_id: '', motivo: '' }); }}>
-                🔄 Registrar Movimentação
-              </Button>
-              <Button variant="outline" onClick={() => onDetail(bem.id)}>
-                📋 Ver Detalhes Completos
-              </Button>
-            </div>
-          </div>
-
-          {/* Form de movimentação inline */}
-          {showMov && (
-            <div style={{ padding: 20, background: 'var(--cbrio-input-bg)', borderBottom: `1px solid ${C.border}` }}>
-              <div style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 12 }}>Nova Movimentação</div>
-              <div style={styles.formGroup}>
-                <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Tipo de Movimentação *</label>
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                  {Object.entries(MOV_TIPO_COLORS).map(([k, v]) => (
-                    <button key={k} onClick={() => setMovForm(f => ({ ...f, tipo: k }))}
-                      style={{ padding: '8px 14px', borderRadius: 8, border: `2px solid ${movForm.tipo === k ? v.c : C.border}`,
-                        background: movForm.tipo === k ? v.bg : 'transparent', color: movForm.tipo === k ? v.c : C.text2,
-                        fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'all 0.15s' }}>
-                      {v.icon} {v.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              {['transferencia'].includes(movForm.tipo) && (
-                <div style={styles.formRow}>
-                  <Select label="Origem" value={movForm.localizacao_origem_id || ''} onChange={e => setMovForm(f => ({ ...f, localizacao_origem_id: e.target.value }))}>
-                    <option value="">Local atual ({bem.pat_localizacoes?.nome || '—'})</option>
-                    {localizacoes.map(l => <option key={l.id} value={l.id}>{l.nome}</option>)}
-                  </Select>
-                  <Select label="Destino *" value={movForm.localizacao_destino_id || ''} onChange={e => setMovForm(f => ({ ...f, localizacao_destino_id: e.target.value }))}>
-                    <option value="">Selecione...</option>
-                    {localizacoes.map(l => <option key={l.id} value={l.id}>{l.nome}</option>)}
-                  </Select>
-                </div>
-              )}
-              {['entrada', 'saida'].includes(movForm.tipo) && (
-                <Select label="Localização" value={movForm.localizacao_destino_id || ''} onChange={e => setMovForm(f => ({ ...f, localizacao_destino_id: e.target.value }))}>
-                  <option value="">Selecione...</option>
-                  {localizacoes.map(l => <option key={l.id} value={l.id}>{l.nome}</option>)}
-                </Select>
-              )}
-              <div style={styles.formGroup}>
-                <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Motivo / Observação</label>
-                <textarea className="flex w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" style={{ minHeight: 60, resize: 'vertical' }}
-                  value={movForm.motivo || ''} onChange={e => setMovForm(f => ({ ...f, motivo: e.target.value }))} />
-              </div>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <Button onClick={handleRegistrarMov} disabled={saving}>
-                  {saving ? 'Registrando...' : 'Confirmar Movimentação'}
-                </Button>
-                <Button variant="ghost" onClick={() => setShowMov(false)}>Cancelar</Button>
-              </div>
-            </div>
-          )}
-
-          {/* Histórico de movimentações */}
-          {(bem.movimentacoes || []).length > 0 && (
-            <div style={{ padding: '0' }}>
-              <div style={{ padding: '12px 20px', fontSize: 11, fontWeight: 700, color: C.text2, textTransform: 'uppercase', borderBottom: `1px solid ${C.border}` }}>
-                Histórico de Movimentações ({bem.movimentacoes.length})
-              </div>
-              {bem.movimentacoes.map(m => (
-                <div key={m.id} style={{ padding: '10px 20px', borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <span style={{ fontSize: 18 }}>{MOV_TIPO_COLORS[m.tipo]?.icon || '📋'}</span>
-                    <div>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>
-                        <Badge status={m.tipo} map={MOV_TIPO_COLORS} />
-                        {m.origem?.nome && m.destino?.nome && <span style={{ fontSize: 12, color: C.text2, marginLeft: 8 }}>{m.origem.nome} → {m.destino.nome}</span>}
-                      </div>
-                      {m.motivo && <div style={{ fontSize: 12, color: C.text3, marginTop: 2 }}>{m.motivo}</div>}
-                    </div>
-                  </div>
-                  <div style={{ textAlign: 'right' }}>
-                    <div style={{ fontSize: 12, color: C.text2 }}>{fmtDateTime(m.data_movimentacao)}</div>
-                    <div style={{ fontSize: 11, color: C.text3 }}>{m.profiles?.name || '—'}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Leituras recentes */}
-      {recentScans.length > 0 && !bem && (
-        <div style={styles.card}>
-          <div style={styles.cardHeader}><div style={styles.cardTitle}>Leituras Recentes</div></div>
-          {recentScans.map((s, i) => (
-            <div key={i} style={{ padding: '10px 20px', borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}
-              onClick={() => { setCodigo(s.codigo); buscarPorCodigo(s.codigo); }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <span style={{ fontFamily: 'monospace', fontSize: 13, fontWeight: 600, color: C.primary }}>{fmtCodigo(s.codigo)}</span>
-                <span style={{ fontSize: 13, color: C.text }}>{s.nome}</span>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <Badge status={s.status} map={STATUS_BEM} />
-                <span style={{ fontSize: 11, color: C.text3 }}>{s.time.toLocaleTimeString('pt-BR')}</span>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </>
-  );
-}
 
