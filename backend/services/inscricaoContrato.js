@@ -77,6 +77,14 @@ function honeypotPreenchido(body) {
   return Boolean(String((body && body.website) || '').trim());
 }
 
+// Regex ÚNICA do e-mail (a mesma dos forms client) — era re-declarada em
+// grupos/next/voluntariado (P3 do sweep 28/07: cópia local diverge um dia).
+// Não normaliza de propósito: valida o que recebeu; quem normaliza pra gravar
+// é normalizarEmail/validarCamposPadrao.
+function emailValido(v) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || ''));
+}
+
 // Valida o bloco de campos padrão. Retorna { erros, valores } — erros vazio = ok.
 // opts existe SÓ para exceções documentadas (ex.: walk-in do totem não exige
 // nascimento); o default é o contrato pleno.
@@ -100,7 +108,7 @@ function validarCamposPadrao(body = {}, opts = {}) {
   if (exigirCpf && !cpf) erros.cpf = 'Informe um CPF válido.';
 
   const email = normalizarEmail(body.email);
-  const emailOk = Boolean(email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email));
+  const emailOk = Boolean(email && emailValido(email));
   if (exigirEmail && !emailOk) erros.email = 'Informe um e-mail válido.';
   else if (!exigirEmail && body.email && !emailOk) erros.email = 'E-mail inválido.';
 
@@ -190,6 +198,7 @@ module.exports = {
   validarNascimento,
   splitNomeCompleto,
   honeypotPreenchido,
+  emailValido,
   validarCamposPadrao,
   processarIdentidade,
   registrarConsentimentos,

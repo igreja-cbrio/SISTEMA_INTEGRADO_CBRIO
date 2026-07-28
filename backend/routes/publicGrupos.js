@@ -17,7 +17,7 @@ const { processarFila, enfileirarLote } = require('../services/whatsappFila');
 const { enviosAutomaticosAtivos } = require('../services/gruposEnviosConfig');
 const { registrarEventoPedido } = require('../services/grupoPedidoEventos');
 const { registrarObservacaoSegura } = require('../services/identidadeProgressiva');
-const { temAbreviacaoNome, registrarConsentimentos } = require('../services/inscricaoContrato');
+const { temAbreviacaoNome, registrarConsentimentos, cpfValido, emailValido } = require('../services/inscricaoContrato');
 const { requireCron } = require('../utils/cronAuth');
 
 // ── Rate limit dedicado do totem de inscrição de grupos ──
@@ -259,21 +259,8 @@ router.get('/lideres/:liderId/grupos', async (req, res) => {
 const { notificar } = require('../services/notificar');
 
 function soDigitos(v) { return (v || '').toString().replace(/\D+/g, ''); }
-function cpfValido(cpfMasked) {
-  const cpf = soDigitos(cpfMasked);
-  if (cpf.length !== 11 || /^(\d)\1{10}$/.test(cpf)) return false;
-  let s = 0;
-  for (let i = 0; i < 9; i++) s += parseInt(cpf[i]) * (10 - i);
-  let r = (s * 10) % 11;
-  if (r === 10) r = 0;
-  if (r !== parseInt(cpf[9])) return false;
-  s = 0;
-  for (let i = 0; i < 10; i++) s += parseInt(cpf[i]) * (11 - i);
-  r = (s * 10) % 11;
-  if (r === 10) r = 0;
-  return r === parseInt(cpf[10]);
-}
-function ehEmailValido(e) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e || ''); }
+// emailValido/cpfValido agora vêm de services/inscricaoContrato (fonte única —
+// P3 do sweep 28/07: as cópias locais eram idênticas, mas cópia diverge um dia).
 
 // Só aceita foto_url que o NOSSO /upload-foto devolveu (bucket público
 // fotos-membros do próprio Supabase) — nunca uma URL externa arbitrária, que
@@ -442,7 +429,7 @@ router.post('/inscrever', async (req, res) => {
     // identificar a pessoa, é a chave forte do dedup/vínculo com o membro.
     if (!cpf || soDigitos(cpf).length !== 11) return res.status(400).json({ error: 'Informe o CPF completo.', campo: 'cpf' });
     if (!cpfValido(cpf)) return res.status(400).json({ error: 'Este CPF não é válido — confira os números.', campo: 'cpf' });
-    if (!email || !ehEmailValido(email)) return res.status(400).json({ error: 'Informe um e-mail válido.', campo: 'email' }); // D2: obrigatório
+    if (!email || !emailValido(email)) return res.status(400).json({ error: 'Informe um e-mail válido.', campo: 'email' }); // D2: obrigatório
     if (!aceita_termos) return res.status(400).json({ error: 'É necessário aceitar os termos.', campo: 'aceita_termos' });
     // Nascimento e sexo OBRIGATÓRIOS (Marcos · 2026-07-10).
     if (!data_nascimento || !/^\d{4}-\d{2}-\d{2}$/.test(String(data_nascimento))) {
@@ -782,7 +769,7 @@ router.post('/inscrever-lider', async (req, res) => {
     if (telDigitos.length < 10 || telDigitos.length > 11) return res.status(400).json({ error: 'Digite um celular válido com DDD.', campo: 'telefone' });
     if (!cpf || soDigitos(cpf).length !== 11) return res.status(400).json({ error: 'Informe o CPF completo.', campo: 'cpf' });
     if (!cpfValido(cpf)) return res.status(400).json({ error: 'Este CPF não é válido — confira os números.', campo: 'cpf' });
-    if (!email || !ehEmailValido(email)) return res.status(400).json({ error: 'Informe um e-mail válido.', campo: 'email' }); // D2: obrigatório
+    if (!email || !emailValido(email)) return res.status(400).json({ error: 'Informe um e-mail válido.', campo: 'email' }); // D2: obrigatório
     if (!aceita_termos) return res.status(400).json({ error: 'É necessário aceitar os termos.', campo: 'aceita_termos' });
     if (!data_nascimento || !/^\d{4}-\d{2}-\d{2}$/.test(String(data_nascimento))) {
       return res.status(400).json({ error: 'Informe a data de nascimento.', campo: 'data_nascimento' });
