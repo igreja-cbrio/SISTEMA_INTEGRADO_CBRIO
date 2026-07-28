@@ -79,6 +79,9 @@ async function sincronizar(cobrancaOuId) {
       provider_pagamento_id: remoto.provider_pagamento_id,
       e2e_id: remoto.e2e_id, repassado_em: remoto.repassado_em,
       payload: remoto.bruto || null,
+      // Mesma regra do webhook: sem isto o cron de reconciliação discordaria
+      // dele no parcelado (soma não fecha → pago_parcial).
+      statusFinal: remoto.quita_cobranca ? STATUS.PAGO : undefined,
     });
     return { ok: true, cobranca: r.cobranca, duplicado: r.duplicado };
   }

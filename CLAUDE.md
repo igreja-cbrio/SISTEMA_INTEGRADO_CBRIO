@@ -4161,9 +4161,12 @@ um problema de 15 min em falha silenciosa e permanente.
 
 **Cron: UM só no `vercel.json`** — `cron/tick` `*/10`, que faz expirar +
 reconciliar (limite 50) + replay numa passada. ⚠️ **É de propósito:** o projeto
-já tinha 44 crons e o teto do plano Pro é 40 — cron a mais pode simplesmente
-não registrar, e "cron de expiração que nunca roda" = vaga paga que nunca é
-liberada, falha silenciosa da pior classe. As três etapas são idempotentes, uma
+já tem **45 crons** no `vercel.json` e o teto do plano Pro é 40 — cron a mais
+pode simplesmente não registrar, e "cron de expiração que nunca roda" = vaga
+paga que nunca é liberada, falha silenciosa da pior classe. ⚠️ **Conferir na aba
+Cron Jobs da Vercel quais dos 45 estão realmente registrados** — se truncar, os
+últimos da lista (posições 43–45) são três agentes de IA da jornada do
+convertido, que param sem avisar. As três etapas são idempotentes, uma
 não aborta as outras, e as rotas avulsas (`cron/expirar|reconciliar|replay`)
 seguem existindo pra disparo manual/depuração. `CRON_SECRET` **fail-closed**.
 
@@ -4233,18 +4236,90 @@ export LGPD.
   `TIMELINE_COR`) — ela agregava todas as portas antigas mas não a nova, então
   evento/retiro do módulo /inscricoes não aparecia na história da pessoa.
 
+### ✅ Adapter do Asaas (2026-07-28 · SEM migration)
+
+`providers/asaas.js` — **o único arquivo do sistema que conhece a linguagem do
+Asaas**. String de status do PSP, nome de campo, formato de payload: tudo morre
+ali. `'PAYMENT_RECEIVED'` em qualquer outro arquivo é bug de arquitetura.
+
+**A escolha foi REVERIFICADA na documentação em 28/07** (não é memória): a
+página de installments da Stripe lista Mastercard Installments, México e Japão —
+**Brasil não está lá**, e parcelar é requisito. ⚠️ Correção de registro: a
+afirmação anterior de que "o Pix da Stripe é invite-only" está **errada** — a
+página de suporte da Stripe lista Pix e boleto como suportados no Brasil. O que
+elimina a Stripe é o parcelado, só isso.
+
+**Fatos da API que não são óbvios (e cujo desconhecimento custa caro):**
+
+1. **`PAYMENT_CONFIRMED` ≠ `PAYMENT_RECEIVED`, e no cartão há ~32 dias entre os
+   dois.** Confirmado = o pagador pagou. Recebido = o dinheiro está disponível.
+   **A PESSOA é confirmada no CONFIRMED** (esperar o RECEIVED faria quem paga
+   com cartão passar um mês fora da lista do retiro); **o DINHEIRO é marcado no
+   RECEIVED** (`repassado_em`, que é o que concilia com o extrato). É exatamente
+   por isso que o núcleo separa razão auxiliar de caixa.
+2. **Parcelado no cartão vira N cobranças no Asaas**, uma por parcela, cada uma
+   com id e eventos próprios — mas o pagador autorizou tudo na primeira. Daí o
+   `quita_cobranca` do adapter → `statusFinal` em `registrarPagamento`. **Sem
+   isso a cobrança ficaria `pago_parcial` por 12 meses e a inscrição nunca seria
+   confirmada.**
+3. **`PAYMENT_OVERDUE` NÃO expira nada.** Vencido no Asaas ≠ expirado nosso: Pix
+   e boleto seguem pagáveis. Quem libera a vaga é o nosso cron, pelo
+   `expira_em`. Mapear OVERDUE pra `expirada` liberaria a vaga de quem ainda vai
+   pagar.
+4. **A verificação do webhook NÃO é HMAC**: o Asaas devolve no header
+   `asaas-access-token` o token que VOCÊ cadastrou no painel → comparação
+   `timingSafeEqual`. `rawBody` fica sem uso no adapter (o contrato o recebe
+   porque outros PSPs assinam o corpo). **Fail-closed** sem segredo.
+5. **A fila de webhook é INTERROMPIDA após 15 falhas consecutivas** e as
+   pendências ficam guardadas só **14 dias**. É a razão de responder 200 pra
+   tudo menos assinatura inválida — e por que token inválido agora
+   **`notificar()` na primeira ocorrência** (dedup por dia): token mal
+   configurado, em silêncio, viraria pagamento aprovado que nunca chega.
+6. Header `access_token` (não Bearer) **+ `User-Agent` EXIGIDO** — sem ele a
+   chamada falha de um jeito difícil de diagnosticar.
+7. **A key carrega o ambiente no prefixo** (`$aact_hmlg_` = sandbox ·
+   `$aact_prod_` = produção) → guarda que **lança no boot** se cruzarem. É a
+   diferença entre "o teste não cobrou" e "o teste cobrou de verdade".
+8. `billingType: 'UNDEFINED'` faz o Asaas montar UMA página (`invoiceUrl`) onde
+   o pagador escolhe Pix/cartão/boleto → checkout hospedado, e dado de cartão
+   nunca passa pelo nosso Express.
+9. **Taxa = `value` − `netValue`, os dois do payload.** Não viola a lei 6 (é a
+   única forma como o Asaas expressa a tarifa); o proibido é derivar de tabela
+   de preço nossa.
+10. Sandbox (`sandbox.asaas.com`, API `api-sandbox.asaas.com/v3`) **não exige
+    CNPJ nem contrato** e **não tem endpoint pra confirmar pagamento** — usa-se
+    os botões da interface. É assim que se testa CONFIRMED e RECEIVED separados.
+
+Mudanças no núcleo que o parcelado exigiu: `registrarPagamento` aceita
+`statusFinal` (o derivado da soma disparia `aoPagarParcial` antes de `aoPagar` —
+dois avisos pra um pagamento) e, na reentrega do mesmo pagamento com
+`repassado_em`, **atualiza a linha em vez de duplicar** (é o CONFIRMED→RECEIVED
+normal). `sincronizar` passa o mesmo `statusFinal`, senão o cron discordaria do
+webhook no parcelado.
+
+Testes: `src/test/pagamentosAsaas.test.ts` (31) — mapa completo de eventos,
+OVERDUE que não expira, guardas de ambiente, idempotência por id de EVENTO (não
+de pagamento) e uma asserção de que o evento normalizado **não carrega
+PAN/CVV/validade/nome impresso**.
+
+**Envs:** `ASAAS_API_KEY` · `ASAAS_BASE_URL` (opcional, default por `NODE_ENV`)
+· `ASAAS_WEBHOOK_SECRET` · `PAG_PROVIDER_PADRAO=asaas`. Nenhuma obrigatória: sem
+elas o sistema segue no provider `manual`.
+
+**Abrir conta (associação/igreja):** CNPJ + razão social · **estatuto registrado
+em cartório** · **ata da eleição da diretoria atual** (prova o mandato) · docs
+do presidente ou tesoureiro · procuração se quem opera não é o representante.
+⚠️ **Avisar o Asaas por escrito do volume do lançamento** — CNPJ religioso com
+~150 transações em 72h é o padrão que dispara retenção de saldo por 30–90 dias.
+
 ### Falta (F3.3 · o que resta)
 
-`providers/asaas.js` (**escrever com o sandbox na mão** — parser de webhook
-contra documentação se reescreve inteiro no primeiro payload real; o registro
-já o carrega sozinho quando o arquivo existir) + ligar a porta pública (o 403
-de `pagamento_ativo` em `publicEventoExterno.js:162` vira: validar →
-`fn_insc_inscrever` com `p_status='recebida'` → `criarCobranca` → devolver
-checkout/QR; é o que finalmente dá escritor pro `'recebida'`) +
-`imprimirListaRetiro.ts` agrupando por faixa de idade/sexo (molde:
-`imprimirListaPresencaBatismo.ts`) + aba "Inscrições" na ficha do membro (junta
-`inscricoes` + batismo + next + voluntariado + grupos; ler pagamento pela
-`vw_insc_pagamento_estado`).
+Ligar a porta pública: o 403 de `pagamento_ativo` em
+`publicEventoExterno.js:170` (e o curto-circuito do `GET` nas linhas 129–143)
+vira validar → `fn_insc_inscrever` com `p_status='recebida'` → `criarCobranca` →
+devolver `checkout_url`. É o que finalmente dá escritor pro `'recebida'` do
+CHECK. Mais `GET /api/public/pagamento/:public_token` (status + `sincronizar`
+quando pendente há >2 min) e a página `/pagamento/:token`.
 
 ### ✅ Vaga atômica (migration `20260729030000` · pré-requisito de venda paga)
 

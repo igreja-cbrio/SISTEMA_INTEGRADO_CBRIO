@@ -19,6 +19,7 @@
 // o que permite replay sem depender de reentrega do PSP.
 
 const { supabase } = require('../../utils/supabase');
+const { notificar } = require('../notificar');
 const providers = require('./providers');
 const cobrancas = require('./cobrancas');
 const { STATUS, TIPO_PAGAMENTO } = require('./tipos');
@@ -88,6 +89,22 @@ async function processar({ providerNome, rawBody, headers, payload }) {
   const assinatura = adapter.verificarAssinatura(rawBody, headers, segredoDe(adapter.nome));
   if (!assinatura.ok) {
     console.error(`[pagamentos/webhook] assinatura inválida (${adapter.nome}): ${assinatura.motivo}`);
+    // ⚠️ Seguimos recusando (quem posta sem o segredo não pode ser aceito), MAS
+    // isto conta como falha pro PSP — e o Asaas INTERROMPE a fila de
+    // sincronização depois de 15 falhas consecutivas, guardando as pendências
+    // por só 14 dias. Token mal configurado, sem aviso, viraria pagamento
+    // aprovado que nunca chega. Então chamamos gente na PRIMEIRA ocorrência.
+    notificar({
+      modulo: 'inscricoes', tipo: 'webhook_pagamento_recusado',
+      titulo: `Webhook de pagamento recusado · ${adapter.nome}`,
+      mensagem: `O webhook do ${adapter.nome} chegou com token inválido (${assinatura.motivo}). `
+        + 'Confira o token cadastrado no painel do provedor contra a env do sistema. '
+        + 'ATENÇÃO: após 15 falhas seguidas o provedor pausa a fila e pagamentos deixam de chegar.',
+      link: '/inscricoes',
+      severidade: 'alta',
+      // Dedup por dia: 15 entregas recusadas viram 1 aviso, não 15.
+      chaveDedup: `pag_token_invalido_${adapter.nome}_${new Date().toISOString().slice(0, 10)}`,
+    }).catch((e) => console.error('[pagamentos/webhook] notificar token inválido:', e.message));
     return { http: 401, corpo: { error: 'assinatura inválida' } };
   }
 
@@ -147,6 +164,9 @@ async function processar({ providerNome, rawBody, headers, payload }) {
         e2e_id: evento.e2e_id,
         repassado_em: evento.repassado_em,
         payload,
+        // Parcelado: o adapter sabe que o pagador quitou tudo na primeira
+        // autorização, mesmo que a soma das parcelas só feche em meses.
+        statusFinal: evento.quita_cobranca ? STATUS.PAGO : undefined,
       });
       // Estorno/chargeback não saem da soma — precisam do status explícito.
       if (TIPO_POR_STATUS[evento.status]) {
@@ -213,6 +233,7 @@ async function reprocessarPendentes({ limite = 50 } = {}) {
           provider_pagamento_id: evento.provider_pagamento_id,
           e2e_id: evento.e2e_id, repassado_em: evento.repassado_em,
           payload: ev.payload,
+          statusFinal: evento.quita_cobranca ? STATUS.PAGO : undefined,
         });
       } else if (evento.status) {
         await cobrancas.aplicarStatus(cobranca, evento.status);
