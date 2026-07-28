@@ -876,24 +876,40 @@ type ConfPager = {
   devolvido_at: string | null;
   checkin_ids: string[];
 };
+type ConfCulto = { culto_id: string; nome: string; data: string; tem_pager: boolean };
 function ConferenciaPagers() {
-  const hojeBrt = new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10);
-  const [data, setData] = useState(hojeBrt);
+  const [cultos, setCultos] = useState<ConfCulto[]>([]);
+  const [cultoId, setCultoId] = useState<string>('');
   const [lista, setLista] = useState<ConfPager[]>([]);
   const [resumo, setResumo] = useState<{ total: number; nao_devolvidos: number; foram_pra_casa: number } | null>(null);
   const [loading, setLoading] = useState(false);
   const [salvando, setSalvando] = useState<string | null>(null);
 
+  const fmtData = (d: string) => { const [y, m, dd] = String(d).slice(0, 10).split('-'); return `${dd}/${m}/${y?.slice(2)}`; };
+  const labelCulto = (c: ConfCulto) => `${c.nome || 'Culto'} · ${fmtData(c.data)}`;
+
+  // Carrega os cultos com Kids e seleciona o mais recente.
+  useEffect(() => {
+    (async () => {
+      try {
+        const cs = (await totemKids.pagersCultos()) as ConfCulto[];
+        setCultos(cs || []);
+        if (cs && cs.length) setCultoId((prev) => prev || cs[0].culto_id);
+      } catch (e: any) { toast.error(e?.message || 'Erro ao listar cultos'); }
+    })();
+  }, []);
+
   async function carregar() {
+    if (!cultoId) { setLista([]); setResumo(null); return; }
     setLoading(true);
     try {
-      const r = await totemKids.pagersConferencia(data);
+      const r = await totemKids.pagersConferencia({ culto_id: cultoId });
       setLista(r?.lista || []);
       setResumo(r?.resumo || null);
     } catch (e: any) { toast.error(e?.message || 'Erro ao carregar pagers'); }
     setLoading(false);
   }
-  useEffect(() => { carregar(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [data]);
+  useEffect(() => { carregar(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [cultoId]);
 
   async function marcar(g: ConfPager, devolvido: boolean) {
     if (!g.checkin_ids.length) return;
@@ -912,8 +928,13 @@ function ConferenciaPagers() {
           <BellRing className="h-3.5 w-3.5" /> Conferência de pagers
         </div>
         <div className="flex items-center gap-2">
-          <input type="date" value={data} onChange={(e) => setData(e.target.value)}
-            className="h-7 rounded-md border bg-background px-2 text-xs" />
+          <select value={cultoId} onChange={(e) => setCultoId(e.target.value)}
+            className="h-7 rounded-md border bg-background px-2 text-xs max-w-[220px]">
+            {cultos.length === 0 && <option value="">Sem cultos</option>}
+            {cultos.map((c) => (
+              <option key={c.culto_id} value={c.culto_id}>{labelCulto(c)}{c.tem_pager ? '' : ' (sem pager)'}</option>
+            ))}
+          </select>
           <Button size="sm" variant="ghost" className="h-7 px-2" onClick={carregar} disabled={loading}>
             <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
           </Button>
@@ -922,7 +943,7 @@ function ConferenciaPagers() {
 
       {resumo && resumo.total > 0 && (
         <div className="flex flex-wrap gap-3 text-xs">
-          <span className="text-muted-foreground">{resumo.total} pager(s) no dia</span>
+          <span className="text-muted-foreground">{resumo.total} pager(s) no culto</span>
           {resumo.nao_devolvidos > 0 && <span className="text-amber-600 font-medium">{resumo.nao_devolvidos} não devolvido(s)</span>}
           {resumo.foram_pra_casa > 0 && <span className="text-red-600 font-semibold">{resumo.foram_pra_casa} foi(ram) pra casa (saiu sem devolver)</span>}
         </div>
@@ -931,7 +952,7 @@ function ConferenciaPagers() {
       {loading ? (
         <div className="py-4 text-center"><Loader2 className="h-4 w-4 animate-spin inline text-muted-foreground" /></div>
       ) : lista.length === 0 ? (
-        <div className="text-xs text-muted-foreground">Nenhum pager entregue neste dia.</div>
+        <div className="text-xs text-muted-foreground">Nenhum pager entregue neste culto.</div>
       ) : (
         <div className="flex flex-col gap-1.5">
           {lista.map((g) => {
