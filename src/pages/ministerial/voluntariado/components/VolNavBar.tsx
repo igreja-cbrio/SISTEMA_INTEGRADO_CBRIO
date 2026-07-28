@@ -2,7 +2,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import {
   Home, QrCode, ClipboardCheck, Calendar, BarChart3, Settings, Users, CalendarPlus,
   Church, CalendarOff, LayoutDashboard, List, ScanLine, User, History, CalendarCheck,
-  Inbox, UserPlus, Activity, ChevronDown, KeyRound, Mail, ShieldCheck,
+  Inbox, UserPlus, Activity, ChevronDown, KeyRound, Mail, ShieldCheck, LayoutTemplate,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@/components/ui/dropdown-menu';
@@ -20,6 +20,7 @@ const STAFF_GRUPOS: Grupo[] = [
       { label: 'Check-in', icon: ClipboardCheck, path: `${BASE}/checkin` },
       { label: 'Escalas', icon: Calendar, path: `${BASE}/escalas` },
       { label: 'Montar Escala', icon: CalendarPlus, path: `${BASE}/montar-escala` },
+      { label: 'Templates de escala', icon: LayoutTemplate, path: `${BASE}/templates-escala` },
       { label: 'Tipos de Culto', icon: Church, path: `${BASE}/tipos-culto` },
       { label: 'Disponibilidade', icon: CalendarOff, path: `${BASE}/disponibilidade` },
     ],

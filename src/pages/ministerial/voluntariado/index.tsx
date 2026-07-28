@@ -27,6 +27,7 @@ import VolAcessos from './VolAcessos';
 import VolSupervisores from './VolSupervisores';
 import VolEmails from './VolEmails';
 import VolScanTotem from './VolScanTotem';
+import VolTemplatesEscala from './VolTemplatesEscala';
 import VolNavBar from './components/VolNavBar';
 
 export default function Voluntariado() {
@@ -55,6 +56,7 @@ export default function Voluntariado() {
         <Route path="checkin" element={<VolCheckin />} />
         <Route path="escalas" element={<VolEscalas />} />
         <Route path="montar-escala" element={<VolScheduleBuilder />} />
+        <Route path="templates-escala" element={<VolTemplatesEscala />} />
         <Route path="equipes" element={<VolEquipes />} />
         <Route path="tipos-culto" element={<VolTiposCulto />} />
         <Route path="disponibilidade" element={<VolDisponibilidade />} />
