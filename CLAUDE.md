@@ -148,6 +148,28 @@ Celebra com só nome+telefone continuam válidas para sempre).
   de inscritos agora traz `dados`. Cards avulsos e edições da série linkam pro
   detalhe. **Pré-requisito da virada do Celebra** (a operação do dia 29/08 —
   conferir inscritos + sortear no palco — passa a existir no módulo novo).
+- **F3.2 · PR 7 — as 3 abas finais do /inscricoes (2026-07-28 · migration
+  `20260729050000` = `vw_inscricoes_unificadas`):** módulo COMPLETO nas 5 abas.
+  A view (M9 da F1 + SPEC-03/09/10) é UNION ALL das **10 fontes** (espinha,
+  ext residual pós-virada via `NOT EXISTS legado_ref`, batismo, apresentação
+  ×2, grupos, líderes, next matrículas, next legado, voluntariado) com
+  **ontologia canônica de 7 estados** (CASE por porta · original preservado em
+  `status_original`), normalizações SÓ na leitura, **área derivada por porta**
+  (`fn_insc_area_display`), **séries DERIVADAS do SPEC-10 tempo 1**
+  (`serie_chave`/`edicao_rotulo`: batismo/apresentação = mensal, next = turma,
+  grupos = temporada), `compareceu` (check-in por porta mensurável) e
+  `evento_data`. **REVOKE anon/authenticated** — acesso só via backend.
+  Endpoints em routes/inscricoes.js: `GET /unificadas` (busca única
+  nome/CPF/telefone + filtros porta/status/área/período, paginação
+  server-side, `escapePostgrestValue` na busca), `GET /unificadas/pessoas`
+  (rollup por pessoa · âncora membro_id>CPF>telefone>nome · **nível ≥2** ·
+  default só 2+ inscrições) e `GET /unificadas/dashboard` (cards SPEC-09 +
+  série diária BRT + comparador edição×edição + ranking + por porta;
+  arrecadação lê `insc_pagamentos` pagos — nasce 0 e acorda com o Pix).
+  Abas: `InscricoesTodas.tsx` (tabela + export CSV gated `pode_exportar`),
+  `InscricoesPessoas.tsx` (chips por inscrição + link Membresia; "sem
+  cadastro" aponta Entradas), `InscricoesDashboard.tsx` (stat tiles + área/
+  barras hue único da casa via `gradFill`, 1 eixo, labels seletivos).
 - **F3.2 · PR 6 — VIRADA do Eventos Externos pra espinha (2026-07-28 ·
   migration `20260729040000` + script):** decisão do Marcos (checkpoint 28/07):
   virada completa AGORA — o ext só tinha os 2 eventos do Celebra 2026, ambos

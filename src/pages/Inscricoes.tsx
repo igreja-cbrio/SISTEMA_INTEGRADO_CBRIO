@@ -10,6 +10,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { inscricoesApi as api } from '../api';
+import InscricoesTodas from './InscricoesTodas';
+import InscricoesPessoas from './InscricoesPessoas';
+import InscricoesDashboard from './InscricoesDashboard';
+import { useAuth } from '../contexts/AuthContext';
 import { Card } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -423,7 +427,10 @@ function SerieModal({ grupo, onClose, onEditar, onDuplicar, onPublicar, onCopiar
 
 export default function Inscricoes() {
   const navigate = useNavigate();
-  const [aba, setAba] = useState<'calendario' | 'eventos'>('calendario');
+  const { getAccessLevel } = useAuth();
+  // Aba Pessoas concentra PII (rollup por CPF/telefone) — SPEC-01: nível ≥2
+  const podePessoas = getAccessLevel(['inscricoes']) >= 2;
+  const [aba, setAba] = useState<'calendario' | 'eventos' | 'todas' | 'pessoas' | 'dashboard'>('calendario');
   const [eventos, setEventos] = useState<any[]>([]);
   const [areas, setAreas] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -498,9 +505,9 @@ export default function Inscricoes() {
   const ABAS = [
     { key: 'calendario', label: 'Calendário', on: true },
     { key: 'eventos', label: 'Eventos', on: true },
-    { key: 'todas', label: 'Todas as inscrições', on: false },
-    { key: 'pessoas', label: 'Pessoas', on: false },
-    { key: 'dashboard', label: 'Dashboard', on: false },
+    { key: 'todas', label: 'Todas as inscrições', on: true },
+    { key: 'pessoas', label: 'Pessoas', on: podePessoas, motivo: podePessoas ? undefined : 'Requer nível 2 no módulo (dados concentrados de pessoas)' },
+    { key: 'dashboard', label: 'Dashboard', on: true },
   ];
 
   return (
@@ -516,7 +523,7 @@ export default function Inscricoes() {
       <div className="flex gap-1.5 flex-wrap">
         {ABAS.map(a => (
           <button key={a.key} disabled={!a.on} onClick={() => a.on && setAba(a.key as any)}
-            title={a.on ? undefined : 'Chega nas próximas entregas'}
+            title={a.on ? undefined : ((a as any).motivo || 'Chega nas próximas entregas')}
             className={`px-3 py-1.5 rounded-full text-sm border transition-colors ${aba === a.key ? 'bg-primary text-primary-foreground border-primary' : a.on ? 'border-border hover:border-primary/50' : 'border-border opacity-40 cursor-not-allowed'}`}>
             {a.label}
           </button>
@@ -554,6 +561,10 @@ export default function Inscricoes() {
           </div>
         </Card>
       )}
+
+      {aba === 'todas' && <InscricoesTodas areas={areas} />}
+      {aba === 'pessoas' && podePessoas && <InscricoesPessoas />}
+      {aba === 'dashboard' && <InscricoesDashboard areas={areas} />}
 
       {aba === 'eventos' && (
         <Card className="glass-solid p-4">
