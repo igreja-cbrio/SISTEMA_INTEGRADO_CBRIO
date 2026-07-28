@@ -9,7 +9,12 @@ const { supabase } = require('../utils/supabase');
 
 const GRAPH_VERSION = process.env.WHATSAPP_GRAPH_VERSION || 'v21.0';
 const WABA = process.env.WHATSAPP_BUSINESS_ACCOUNT_ID;
-const TOKEN = process.env.WHATSAPP_ACCESS_TOKEN || process.env.WHATSAPP_TOKEN;
+// Ler o catálogo da Meta exige o escopo `whatsapp_business_management` (o token
+// de ENVIO só tem `whatsapp_business_messaging`). Preferimos um token dedicado
+// de leitura (WHATSAPP_MGMT_TOKEN) — assim dá pra habilitar o sync SEM tocar no
+// token de envio (zero risco de derrubar disparo). Fallback: o token de envio,
+// caso ele já tenha os dois escopos.
+const TOKEN = process.env.WHATSAPP_MGMT_TOKEN || process.env.WHATSAPP_ACCESS_TOKEN || process.env.WHATSAPP_TOKEN;
 
 // Dono lógico por env legado (rastreia a migração env → tabela).
 const ENV_MODULO = {
