@@ -532,58 +532,11 @@ router.post('/inscrever', async (req, res) => {
     );
     let membroId = achado?.membro_id || null;
 
-    // Resposta amigável de "já existe" — usada no sou_eu e quando o CPF já tem
-    // participação/pedido, pra o modal "é você?" sempre ter uma saída (sem loop).
-    // Reinscrição de quem JÁ está no grupo = RENOVAÇÃO (Marcos: na virada de
-    // temporada todo mundo pode se reinscrever no próprio grupo — não é trava,
-    // é confirmação de permanência).
-    const jaExiste = (tipo) => tipo === 'membro_ativo'
-      ? res.json({ ok: true, ja_membro: true, renovado: true, mensagem: 'Renovamos a sua inscrição no grupo para esta temporada. Nos vemos no encontro!' })
-      : res.json({ ok: true, ja_pedido: true, mensagem: 'Seu pedido já está registrado — o líder vai te chamar em breve.' });
-
-    // Anti-duplicata. Duas fontes complementares:
-    //  (a) DIRETA por membro resolvido — casa exatamente com o índice único
-    //      (grupo,membro) do pedido e com o roster, cobrindo os matches que o
-    //      acharMembroGuardado faz por chave que o scan fuzzy não pontua (e-mail
-    //      sozinho, nascimento+nome). É o que evita o 409 no INSERT (loop do modal).
-    //  (b) FUZZY (nome/telefone/e-mail ≥2, ou CPF) contra roster+pedidos do grupo
-    //      — pega reenvio de NÃO-membro / match fraco. Pulada no confirmar_novo.
-    let dup = null;
-    if (membroId) {
-      const { data: ativo } = await supabase.from('mem_grupo_membros')
-        .select('id').eq('grupo_id', grupo_id).eq('membro_id', membroId).is('saiu_em', null).is('deleted_at', null).limit(1);
-      if (ativo && ativo.length) dup = { tipo: 'membro_ativo' };
-      else {
-        const { data: ped } = await supabase.from('mem_grupo_pedidos')
-          .select('id').eq('grupo_id', grupo_id).eq('membro_id', membroId).eq('status', 'pendente').is('deleted_at', null).limit(1);
-        if (ped && ped.length) dup = { tipo: 'pedido_pendente' };
-      }
-    }
-    if (!dup && !confirmar_novo) {
-      dup = await checarDuplicataInscricao(grupo_id, incoming);
-    }
-
-    if (dup) {
-      // Match FORTE (membro resolvido pelo matcher) já ATIVO neste grupo =
-      // reinscrição no próprio grupo → renovação direta, sem modal.
-      if (dup.tipo === 'membro_ativo' && membroId) return jaExiste('membro_ativo');
-      // "Sim, sou eu" OU um CPF que já tem participação/pedido → não duplica.
-      // (Sob confirmar_novo só se chega aqui pelo check direto por CPF: mesmo
-      // "não sou eu" não cria 2 pedidos do MESMO CPF no mesmo grupo.)
-      if (sou_eu === true || confirmar_novo === true) return jaExiste(dup.tipo);
-      return res.status(409).json({
-        codigo: 'possivel_duplicado',
-        onde: dup.tipo,
-        error: dup.tipo === 'membro_ativo'
-          ? 'Parece que você já participa deste grupo.'
-          : 'Já recebemos um pedido parecido para este grupo.',
-      });
-    }
-
     // Já é membro: aproveita foto, sexo e data de nascimento declarados quando
     // o cadastro ainda não os tem (enriquecimento só-onde-vazio — nunca
-    // sobrescreve o que existe). O nascimento agora é obrigatório no form
-    // justamente pra povoar a base.
+    // sobrescreve o que existe). Roda ANTES do dedup de propósito: a RENOVAÇÃO
+    // (caso dominante da virada de temporada) respondia cedo e jogava fora o
+    // que a pessoa acabou de declarar (achado do sweep 28/07).
     if (membroId && (fotoUrl || generoLimpo || data_nascimento)) {
       const { data: mem } = await supabase.from('mem_membros').select('foto_url, genero, data_nascimento').eq('id', membroId).maybeSingle();
       if (mem) {
@@ -596,8 +549,9 @@ router.post('/inscrever', async (req, res) => {
     }
 
     // Opt-in de WhatsApp: se consentiu e já casou com um membro, grava direto
-    // (só liga). Sem membro, o consentimento vai no cadastro pendente abaixo e
-    // é propagado na aprovação.
+    // (só liga). Também antes do dedup — renovação marcando o checkbox contava
+    // zero antes. Sem membro, vai no cadastro pendente e é propagado na
+    // aprovação (aprovarPedidoCore).
     if (whatsapp_optin && membroId) {
       try {
         await supabase.from('mem_membros')
@@ -606,6 +560,69 @@ router.post('/inscrever', async (req, res) => {
       } catch (e) {
         console.warn('[public grupos inscrever] optin membro:', e.message);
       }
+    }
+
+    // Resposta amigável de "já existe" — usada no sou_eu e quando o CPF já tem
+    // participação/pedido, pra o modal "é você?" sempre ter uma saída (sem loop).
+    // Reinscrição de quem JÁ está no grupo = RENOVAÇÃO (Marcos: na virada de
+    // temporada todo mundo pode se reinscrever no próprio grupo — não é trava,
+    // é confirmação de permanência). A renovação também REGISTRA o aceite dos
+    // termos na satélite (a pessoa acabou de aceitar de novo; refId = vínculo
+    // ativo ou pedido pendente que motivou a resposta).
+    const jaExiste = (tipo, refRenovacao = null) => {
+      if (refRenovacao) {
+        registrarConsentimentos({
+          porta: 'grupos', refId: refRenovacao, membroId,
+          ip: ipInsc, userAgent: uaInsc,
+          itens: [
+            { tipo: 'termos_lgpd', aceito: true, texto: consentimento_texto ? String(consentimento_texto).slice(0, 2000) : undefined },
+            { tipo: 'whatsapp', aceito: !!whatsapp_optin },
+          ],
+        }).catch((err) => console.error('[public grupos inscrever] consentimentos renovação:', err.message));
+      }
+      return tipo === 'membro_ativo'
+        ? res.json({ ok: true, ja_membro: true, renovado: true, mensagem: 'Renovamos a sua inscrição no grupo para esta temporada. Nos vemos no encontro!' })
+        : res.json({ ok: true, ja_pedido: true, mensagem: 'Seu pedido já está registrado — o líder vai te chamar em breve.' });
+    };
+
+    // Anti-duplicata. Duas fontes complementares:
+    //  (a) DIRETA por membro resolvido — casa exatamente com o índice único
+    //      (grupo,membro) do pedido e com o roster, cobrindo os matches que o
+    //      acharMembroGuardado faz por chave que o scan fuzzy não pontua (e-mail
+    //      sozinho, nascimento+nome). É o que evita o 409 no INSERT (loop do modal).
+    //  (b) FUZZY (nome/telefone/e-mail ≥2, ou CPF) contra roster+pedidos do grupo
+    //      — pega reenvio de NÃO-membro / match fraco. Pulada no confirmar_novo.
+    let dup = null;
+    let refRenovacao = null;
+    if (membroId) {
+      const { data: ativo } = await supabase.from('mem_grupo_membros')
+        .select('id').eq('grupo_id', grupo_id).eq('membro_id', membroId).is('saiu_em', null).is('deleted_at', null).limit(1);
+      if (ativo && ativo.length) { dup = { tipo: 'membro_ativo' }; refRenovacao = ativo[0].id; }
+      else {
+        const { data: ped } = await supabase.from('mem_grupo_pedidos')
+          .select('id').eq('grupo_id', grupo_id).eq('membro_id', membroId).eq('status', 'pendente').is('deleted_at', null).limit(1);
+        if (ped && ped.length) { dup = { tipo: 'pedido_pendente' }; refRenovacao = ped[0].id; }
+      }
+    }
+    if (!dup && !confirmar_novo) {
+      dup = await checarDuplicataInscricao(grupo_id, incoming);
+    }
+
+    if (dup) {
+      // Match FORTE (membro resolvido pelo matcher) já ATIVO neste grupo =
+      // reinscrição no próprio grupo → renovação direta, sem modal.
+      if (dup.tipo === 'membro_ativo' && membroId) return jaExiste('membro_ativo', refRenovacao);
+      // "Sim, sou eu" OU um CPF que já tem participação/pedido → não duplica.
+      // (Sob confirmar_novo só se chega aqui pelo check direto por CPF: mesmo
+      // "não sou eu" não cria 2 pedidos do MESMO CPF no mesmo grupo.)
+      if (sou_eu === true || confirmar_novo === true) return jaExiste(dup.tipo, refRenovacao);
+      return res.status(409).json({
+        codigo: 'possivel_duplicado',
+        onde: dup.tipo,
+        error: dup.tipo === 'membro_ativo'
+          ? 'Parece que você já participa deste grupo.'
+          : 'Já recebemos um pedido parecido para este grupo.',
+      });
     }
 
     let cadastroPendenteId = null;
@@ -717,15 +734,19 @@ router.post('/inscrever', async (req, res) => {
         });
 
         // Mensagem 1 pra PESSOA: «recebemos sua inscrição» (utility
-        // cbrio_inscricao_confirmada — a tela de sucesso do form já promete
-        // a confirmação no WhatsApp). Via fila: registra e reenvia sozinho
-        // se o envio bater no teto diário da Meta.
-        await enviarInscricaoConfirmada({
-          telefone,
-          nome: nome.trim(),
-          grupoNome: grupo.nome,
-          pedidoId: pedido.id,
-        });
+        // cbrio_inscricao_confirmada). Via fila: registra e reenvia sozinho
+        // se o envio bater no teto diário da Meta. GATED pelo opt-in (D4):
+        // quem não marcou o checkbox não recebe — é exatamente o que o aviso
+        // do formulário promete ("se você não marcar, não conseguiremos te
+        // enviar confirmações…").
+        if (whatsapp_optin) {
+          await enviarInscricaoConfirmada({
+            telefone,
+            nome: nome.trim(),
+            grupoNome: grupo.nome,
+            pedidoId: pedido.id,
+          });
+        }
       } catch (err) { console.error('[public grupos inscrever notify]', err.message); }
     })();
 
