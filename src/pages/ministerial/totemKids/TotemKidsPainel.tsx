@@ -402,6 +402,11 @@ export default function TotemKidsPainel() {
             </Button>
           </CardContent>
         </Card>
+        {/* Conferência de pagers continua acessível mesmo sem culto hoje — escolha
+            a data pra ver o histórico dos pagers de cultos anteriores. */}
+        <div className="mt-4">
+          <ConferenciaPagers />
+        </div>
       </div>
     );
   }
