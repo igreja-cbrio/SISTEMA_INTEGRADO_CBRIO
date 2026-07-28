@@ -537,6 +537,10 @@ export default function TotemKidsPainel() {
         </div>
       )}
 
+      {/* Conferência de pagers do dia (Mari 2026-07-28): rastreio pager→criança→culto
+          + devolução. "Foram pra casa" = já saiu (checkout) e não devolveu. */}
+      <ConferenciaPagers />
+
       {/* Totais do culto selecionado */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
         <Card><CardContent className="p-3 sm:p-4">
@@ -850,6 +854,112 @@ export default function TotemKidsPainel() {
           )}
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+// ── Conferência de pagers do dia ────────────────────────────────────────────
+// Rastreio (pager → criança → culto) + controle de DEVOLUÇÃO. Distinto do
+// checkout: o pai pode retirar a criança e levar o pager sem querer — aqui a
+// equipe confere quem devolveu e vê quem "foi pra casa" com o pager.
+type ConfPager = {
+  pager_numero: string;
+  culto: string | null;
+  criancas: string[];
+  responsavel_nome: string | null;
+  todos_sairam: boolean;
+  devolvido_at: string | null;
+  checkin_ids: string[];
+};
+function ConferenciaPagers() {
+  const hojeBrt = new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10);
+  const [data, setData] = useState(hojeBrt);
+  const [lista, setLista] = useState<ConfPager[]>([]);
+  const [resumo, setResumo] = useState<{ total: number; nao_devolvidos: number; foram_pra_casa: number } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [salvando, setSalvando] = useState<string | null>(null);
+
+  async function carregar() {
+    setLoading(true);
+    try {
+      const r = await totemKids.pagersConferencia(data);
+      setLista(r?.lista || []);
+      setResumo(r?.resumo || null);
+    } catch (e: any) { toast.error(e?.message || 'Erro ao carregar pagers'); }
+    setLoading(false);
+  }
+  useEffect(() => { carregar(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [data]);
+
+  async function marcar(g: ConfPager, devolvido: boolean) {
+    if (!g.checkin_ids.length) return;
+    setSalvando(g.pager_numero);
+    try {
+      await totemKids.checkin.pagerDevolvido(g.checkin_ids[0], devolvido);
+      await carregar();
+    } catch (e: any) { toast.error(e?.message || 'Erro ao registrar devolução'); }
+    setSalvando(null);
+  }
+
+  return (
+    <div className="rounded-xl border bg-card p-3 space-y-2">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="text-[11px] uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
+          <BellRing className="h-3.5 w-3.5" /> Conferência de pagers
+        </div>
+        <div className="flex items-center gap-2">
+          <input type="date" value={data} onChange={(e) => setData(e.target.value)}
+            className="h-7 rounded-md border bg-background px-2 text-xs" />
+          <Button size="sm" variant="ghost" className="h-7 px-2" onClick={carregar} disabled={loading}>
+            <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+          </Button>
+        </div>
+      </div>
+
+      {resumo && resumo.total > 0 && (
+        <div className="flex flex-wrap gap-3 text-xs">
+          <span className="text-muted-foreground">{resumo.total} pager(s) no dia</span>
+          {resumo.nao_devolvidos > 0 && <span className="text-amber-600 font-medium">{resumo.nao_devolvidos} não devolvido(s)</span>}
+          {resumo.foram_pra_casa > 0 && <span className="text-red-600 font-semibold">{resumo.foram_pra_casa} foi(ram) pra casa (saiu sem devolver)</span>}
+        </div>
+      )}
+
+      {loading ? (
+        <div className="py-4 text-center"><Loader2 className="h-4 w-4 animate-spin inline text-muted-foreground" /></div>
+      ) : lista.length === 0 ? (
+        <div className="text-xs text-muted-foreground">Nenhum pager entregue neste dia.</div>
+      ) : (
+        <div className="flex flex-col gap-1.5">
+          {lista.map((g) => {
+            const foiPraCasa = !g.devolvido_at && g.todos_sairam;
+            return (
+              <div key={g.pager_numero}
+                className={`flex items-center gap-2 text-sm rounded-md px-2 py-1.5 border ${foiPraCasa ? 'border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/30' : 'border-transparent'}`}>
+                <span className="shrink-0 inline-flex items-center justify-center min-w-[2.2rem] h-7 px-2 rounded-md bg-amber-600 text-white font-mono font-bold">{g.pager_numero}</span>
+                <div className="min-w-0 flex-1">
+                  <div className="font-medium truncate">{g.criancas.join(', ')}</div>
+                  <div className="text-[11px] text-muted-foreground truncate">
+                    {g.culto || 'culto —'}
+                    {g.todos_sairam ? ' · já saiu' : ' · na sala'}
+                    {g.responsavel_nome ? ` · ${g.responsavel_nome}` : ''}
+                  </div>
+                </div>
+                {g.devolvido_at ? (
+                  <button type="button" onClick={() => marcar(g, false)} disabled={salvando === g.pager_numero}
+                    className="shrink-0 inline-flex items-center gap-1 text-xs text-emerald-600 font-medium"
+                    title="Devolvido — clique pra desfazer">
+                    <CheckCircle2 className="h-4 w-4" /> Devolvido
+                  </button>
+                ) : (
+                  <Button size="sm" variant={foiPraCasa ? 'default' : 'outline'} className="h-7 shrink-0"
+                    onClick={() => marcar(g, true)} disabled={salvando === g.pager_numero}>
+                    {salvando === g.pager_numero ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Devolvido'}
+                  </Button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

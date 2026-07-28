@@ -1702,11 +1702,15 @@ export const totemKids = {
     // Número do pager entregue (rastreio · propaga por família). Vazio limpa.
     // Conflito de número → { ok:false, conflito:true, em_uso:[...] } (não bloqueia o check-in).
     setPager: (id, pager_numero) => patch(`/totem-kids/checkin/${id}/pager`, { pager_numero }),
+    // Marca/desmarca a devolução do pager (propaga por família).
+    pagerDevolvido: (id, devolvido = true) => patch(`/totem-kids/checkin/${id}/pager-devolvido`, { devolvido }),
   },
   cultosDoDia: (data) => get(`/totem-kids/cultos-do-dia?data=${encodeURIComponent(data)}`),
   ausentes: (min = 3) => get(`/totem-kids/ausentes?min=${min}`),
   // Painel ao vivo dos pagers: { em_uso:[{pager_numero,crianca_nome,sala_nome,responsavel_nome}], pendentes:[...] }
   pagersEmUso: () => get('/totem-kids/pagers-em-uso'),
+  // Conferência/rastreio de devolução dos pagers de um dia (pager→criança→culto→devolvido)
+  pagersConferencia: (data) => get(`/totem-kids/pagers/conferencia${data ? `?data=${encodeURIComponent(data)}` : ''}`),
   // Pré-check-in pelo app do membro · o voluntário digita/escaneia o código
   preCheckin: {
     buscarCodigo: (codigo) => get(`/totem-kids/pre-checkin/codigo/${encodeURIComponent(codigo)}`),
