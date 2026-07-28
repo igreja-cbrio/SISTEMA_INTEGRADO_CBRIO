@@ -103,7 +103,11 @@ const TABS = ['Dashboard', 'Bens', 'Categorias / Localizações', 'Inventários'
 const fmtDateTime = (d) => d ? new Date(d).toLocaleString('pt-BR') : '—';
 
 export default function Patrimonio() {
-  const { isDiretor } = useAuth();
+  // isAdmin (role admin OU diretor) — a tela usava só isDiretor, que excluía
+  // quem tem role='admin' de qualquer ação (Novo Bem, Editar, Dar baixa,
+  // Registrar movimentação, Categorias/Localizações); achado do usuário
+  // 2026-07-28 ao notar o popup do bem sem nenhuma ação disponível.
+  const { isAdmin: isDiretor } = useAuth();
   const [tab, setTab] = useState(0);
   const [dash, setDash] = useState(null);
   const [bens, setBens] = useState([]);
@@ -301,21 +305,21 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
   return (
     <>
       <div style={styles.filterRow}>
-        <div style={{ display: 'flex', gap: 6, maxWidth: 320, flex: 1, minWidth: 220 }}>
+        <div style={{ display: 'flex', gap: 6, flex: '1 1 220px', minWidth: 200, maxWidth: 320 }}>
           <input className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" placeholder="🔍 Buscar por nome ou número..." value={busca} onChange={e => setBusca(e.target.value)} />
           <Button variant={scanning ? 'destructive' : 'outline'} size="icon" title="Escanear código de barras" onClick={() => { setScanError(''); setScanning(s => !s); }}>
             <ScanLine style={{ width: 16, height: 16 }} />
           </Button>
         </div>
-        <select className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)}>
+        <select style={styles.select} value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)}>
           <option value="">Todos os status</option>
           {Object.entries(STATUS_BEM).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
         </select>
-        <select className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={filtroCat} onChange={e => setFiltroCat(e.target.value)}>
+        <select style={styles.select} value={filtroCat} onChange={e => setFiltroCat(e.target.value)}>
           <option value="">Todas categorias</option>
           {categorias.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
         </select>
-        <select className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={filtroLoc} onChange={e => setFiltroLoc(e.target.value)}>
+        <select style={styles.select} value={filtroLoc} onChange={e => setFiltroLoc(e.target.value)}>
           <option value="">Todas localizações</option>
           {localizacoes.map(l => <option key={l.id} value={l.id}>{l.nome}</option>)}
         </select>
