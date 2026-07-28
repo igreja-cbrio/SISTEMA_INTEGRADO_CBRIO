@@ -19,8 +19,26 @@
 ### Schema (migrations F2 — todas idempotentes, padrão PII do CLAUDE.md: RLS + audit)
 
 ```sql
+-- SÉRIES & RECORRÊNCIA (decisão Marcos · 28/07): todo evento pode pertencer a
+-- uma série com periodicidade (Celebra mensal, retiro anual…). "Duplicar
+-- evento" = criar a PRÓXIMA EDIÇÃO da série (form/config copiados, data nova,
+-- geração por BOTÃO — nunca criação automática fantasma). O dashboard compara
+-- edição × edição anterior × mesma edição do ano passado.
+insc_series (
+  id uuid PK, nome text NOT NULL, slug_base text NOT NULL UNIQUE,
+  area text NOT NULL,                        -- catálogo oficial `areas` (culto ou ministerial)
+  periodicidade text NOT NULL DEFAULT 'unica'
+    CHECK (periodicidade IN ('unica','semanal','mensal','anual','custom')),
+  tipo text NOT NULL DEFAULT 'evento' CHECK (tipo IN ('evento','retiro')),  -- amplia na F3.5
+  ativo boolean NOT NULL DEFAULT true,
+  created_at/updated_at/deleted_at
+)
+
 insc_eventos (
   id uuid PK, nome text NOT NULL, slug text NOT NULL UNIQUE,
+  serie_id uuid REFERENCES insc_series(id),  -- NULL = evento avulso
+  edicao_rotulo text,                        -- ex.: '2026-08' (mensal) · '2026' (anual)
+  area text NOT NULL,                        -- OBRIGATÓRIA (decisão 28/07) — herda da série quando houver
   tipo text NOT NULL DEFAULT 'evento' CHECK (tipo IN ('evento','retiro')),  -- amplia na F3.5
   descricao text, data date, hora text, local text, capa_url text,
   campos jsonb NOT NULL DEFAULT '[]',            -- SÓ os extras (form-builder; key estável)
@@ -86,14 +104,24 @@ insc_sorteios ( id, evento_id, premio, numero_sorteado, inscricao_id, ganhador_n
 
 ---
 
-## SPEC-01 · Módulo `/inscricoes` (UI staff)
+## SPEC-01 · Módulo `/inscricoes` (UI staff) — **5 ABAS (fechadas com o Marcos · 28/07)**
 
 **Menu:** grupo Planejamento (substitui "Eventos Externos"; a rota `/eventos-externos` redireciona). Catálogo: slug `inscricoes` (padrão "adicionar novo módulo" do CLAUDE.md — INSERT em `modulos` + seed da matriz copiando de `eventos-externos`).
 
-**Telas:**
-1. **Lista de eventos** — cards (capa, nome, data, status, inscritos/vagas, pagos se pago, check-ins). Filtro rascunho/publicado/encerrado/arquivado. Botão "Novo evento".
+**Estrutura de abas:**
+
+| # | Aba | Conteúdo |
+|---|---|---|
+| 1 | **Calendário** (home) | O mês com todos os eventos de inscrição (cores por área); clique → detalhe; "Novo evento" dali |
+| 2 | **Eventos** | Lista/cards + criar/editar (form-builder) + detalhe do evento com inscritos, **check-in**, **sorteio**, **pagamentos** e QR/link — check-in e sorteio são FERRAMENTAS DO EVENTO, não abas do módulo. Botão **"Nova edição"** (duplica config/form pra próxima data da série) |
+| 3 | **Todas as inscrições** | Busca única sobre TODAS as portas (view unificada + espinha) — filtros porta/área/status/período + export (`pode_exportar`) + deep-link pro módulo dono |
+| 4 | **Pessoas** | Rollup por pessoa: nome, CPF, área(s), nº de inscrições + chips de onde se inscreveu (evento+porta+data); **2+ inscrições destacado no topo** ("apenas para conferência" — Marcos); link pra ficha na Membresia ou pro Entradas quando órfã de membro. **Nível ≥2** (PII concentrada) |
+| 5 | **Dashboard** | SPEC-09 |
+
+**Detalhe das telas de evento:**
+1. **Lista de eventos** — cards (capa, nome, data, área, série/edição, status, inscritos/vagas, pagos se pago, check-ins). Filtros: rascunho/publicado/encerrado/arquivado, área, série.
 2. **Criar/editar evento** — abas:
-   - **Básico:** nome, slug (auto), tipo, data/hora/local, descrição, capa, vagas, janela de inscrições, mensagens de sucesso/WhatsApp.
+   - **Básico:** nome, slug (auto), tipo, **área (obrigatória · catálogo oficial `areas` — NUNCA lista paralela, regra "setores ≠ áreas")**, **série/periodicidade** (avulso · semanal · mensal · anual), data/hora/local, descrição, capa, vagas, janela de inscrições, mensagens de sucesso/WhatsApp.
    - **Formulário:** bloco fixo no topo, visível e **não removível**: *"Campos padrão em todos os formulários: Nome completo · Telefone · CPF · E-mail · Data de nascimento · Sexo · Endereço (opcional) · Aceite de termos · Opt-in WhatsApp"*; abaixo, **"➕ Adicionar campo"** — tipos: texto, textarea, e-mail-extra, select, escolha, múltipla, rede social, imagem, número, data. **`key` gerada 1× na criação e NUNCA regerada** ao editar o rótulo (fix do bug da F1); reordenação drag; obrigatório on/off por campo; campo tipo imagem liga automaticamente o consentimento de imagem no form público.
    - **Pagamento** (se `pagamento_ativo`): valor, métodos, prazo de expiração, texto do comprovante.
    - **Sorteio:** liga/desliga + prêmios (espelho do ext).
@@ -174,9 +202,21 @@ Modo check-in por evento (`checkin_ativo`): tela fullscreen (padrão totem) com 
 
 ---
 
-## SPEC-09 · Relatórios
+## SPEC-09 · Dashboard (aba 5 — desenho do Marcos · 28/07)
 
-Por evento: funil (inscritos → pagos → presentes), série diária de inscrições, origem, exportação. Geral: eventos por período, ticket médio (pagos), comparativo entre edições (mesmo slug-base). Padrão visual do Dashboard Semanal.
+**Cards:** eventos realizados · inscrições totais · **média de inscrições por evento** · **arrecadação total** (nasce ZERADO até a F3.3/Pix — decisão do Marcos) · **taxa de comparecimento** (presentes ÷ inscritos, via check-in) — todos com **filtros de tempo, área e evento**.
+**Gráficos:** série temporal de inscrições (ritmo da divulgação) · **comparador de edições** (evento × edição anterior × mesma edição do ano passado — habilitado pelas séries) · ranking de eventos.
+**Por evento:** funil inscritos → pagos → presentes; origem; exportação.
+Padrão visual do Dashboard Semanal.
+
+## SPEC-10 · Séries & recorrências — inclusive das PORTAS LEGADAS (decisão 28/07)
+
+O Marcos apontou que Next, batismo, grupos (temporadas) e apresentação de crianças **são todos recorrentes** e propôs trazer o gerenciamento pra cá. Desenho acordado em 2 tempos:
+
+1. **JÁ na F3.2 (só leitura/analytics):** a `vw_inscricoes_unificadas` ganha uma coluna `serie_chave` derivada por porta — batismo → série "batismo-mensal" (edição = `data_batismo`) · apresentação → "apresentacao-mensal" (`data_apresentacao`) · next → edição = turma (`origem_mes`) · grupos → edição = temporada. Com isso o **dashboard já compara** "Next de agosto × julho", "batismo mês × mês", "T2 × T1" — **sem mover a gestão de nenhum módulo** (Next/turmas, grupos/temporadas e os domingos calculados de batismo/apresentação continuam onde estão, funcionando).
+2. **Na F3.5 (migração das portas):** cada porta vira um `tipo` de série NATIVA da espinha (batismo = série mensal com horários/vagas; apresentação = série mensal; next = série por turma; grupos = temporada) — aí sim o gerenciamento da recorrência passa a ser daqui, uma porta por vez, com o mesmo protocolo de não-perda da SPEC-04.
+
+Racional: mover a gestão agora = mexer em 4 operações vivas ao mesmo tempo (turmas do Next e temporadas de grupos são recém-construídas e maduras). A abstração de séries entrega o benefício analítico imediato e prepara o pouso da migração.
 
 ---
 
