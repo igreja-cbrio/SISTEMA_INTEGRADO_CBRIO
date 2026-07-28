@@ -4057,12 +4057,40 @@ o cron é a verdade**) + `imprimirListaRetiro.ts` agrupando por faixa de idade/
 sexo (molde: `imprimirListaPresencaBatismo.ts`) + aba "Inscrições" na ficha do
 membro (junta `inscricoes` + batismo + next + voluntariado + grupos).
 
-⚠️ **VAGA NÃO É ATÔMICA na espinha** (`publicEventoExterno.js:60-71`):
-`inscritosEspinha()` faz `count(*)` e o insert vem depois — duas pessoas no
-mesmo segundo passam as duas. Em evento gratuito é tolerável; **em evento PAGO
-com vaga finita significa receber dinheiro de quem não vai ter lugar.** Antes de
-abrir venda: `SELECT count` + `INSERT` → RPC com `pg_advisory_xact_lock` por
-evento. É pré-requisito da F3.3, não polimento.
+### ✅ Vaga atômica (migration `20260729030000` · pré-requisito de venda paga)
+
+A vaga era conferida com `count(*)` (`inscritosEspinha`) e o INSERT vinha ~160
+linhas depois, sem nada serializando — 300 pessoas no minuto do lançamento
+passavam TODAS pela conferência. Em evento gratuito é tolerável; **em evento
+PAGO com vaga finita significa receber dinheiro de quem não vai ter lugar.**
+
+**`fn_insc_inscrever(...)` é o ÚNICO caminho de criação de inscrição** —
+conferir janela/vaga/duplicidade, gerar `numero_sorte` e inserir acontecem no
+MESMO comando, serializados por `pg_advisory_xact_lock(1937, hashtext(evento_id))`.
+Não inserir em `inscricoes` direto (nem no painel, nem em import) sem
+reproduzir a trava.
+
+- **Advisory e não `FOR UPDATE` na linha do evento**: travar `insc_eventos`
+  faria qualquer edição do painel (publicar, mudar horário) disputar lock com a
+  fila de inscrição. Advisory é mutex nomeado, não toca em dado. Lock de
+  **transação** → liberado no fim do statement mesmo com exceção. Serializa por
+  evento (lançamento de um retiro não segura fila de outro).
+- **Regra de negócio NUNCA vira exceção**: devolve `{ok, motivo}` (`sem_vaga`,
+  `encerrado`, `duplicada`, `sorteio_esgotado`, `evento_inexistente`) e quem
+  chama decide o HTTP. ⚠️ `sem_vaga` responde **409**, nunca "inscrito com
+  sucesso" — o `catch (23505) → ja_inscrito: true` anterior mascarava corrida de
+  vaga como sucesso.
+- **`recebida` OCUPA vaga** (só `cancelada` devolve). É o ponto do fluxo pago: a
+  vaga fica reservada até pagar ou o cron expirar. `fn_insc_vagas(evento_id)`
+  devolve `{vagas, ocupadas, restantes}` pela MESMA régua — o `GET
+  /public/evento/:slug` expõe `vagas_restantes` e a página mostra "Restam N
+  vagas" / "Última vaga!" (aviso, pode ficar 1-2 defasado; quem decide é o lock).
+- Junto: `eventoEspinhaPorSlug` passou a selecionar `valor_centavos`,
+  `pagamento_metodos` e `pagamento_expira_horas` (a F3.3 precisa deles na porta
+  pública) e `pagamento_metodos` entrou no CRUD de evento com sanitização
+  própria — fica FORA do loop de `CAMPOS_EVENTO` porque é `TEXT[]` e string crua
+  quebraria o insert (métodos aceitos: pix/cartao/boleto/apple_pay; dinheiro e
+  transferência são lançamento manual, não opção da pessoa).
 
 ⚠️ **O MCP do Supabase está barrado por aprovação neste ambiente**
 (`apply_migration` e `execute_sql` retornam `requires approval`). Migration nova

@@ -50,17 +50,19 @@ const uploadImg = multer({
 // aparecem (encerrado mostra "inscrições encerradas" em vez de sumir o link).
 async function eventoEspinhaPorSlug(slug) {
   const { data } = await supabase.from('insc_eventos')
-    .select('id, nome, slug, area, data, hora, local, descricao, campos, capa_url, vagas, inscricoes_abrem_em, inscricoes_encerram_em, msg_sucesso_titulo, msg_sucesso_texto, tem_sorteio, pagamento_ativo, status')
+    .select('id, nome, slug, area, data, hora, local, descricao, campos, capa_url, vagas, inscricoes_abrem_em, inscricoes_encerram_em, msg_sucesso_titulo, msg_sucesso_texto, tem_sorteio, pagamento_ativo, valor_centavos, pagamento_metodos, pagamento_expira_horas, status')
     .eq('slug', slug).is('deleted_at', null).maybeSingle();
   if (!data || data.status === 'rascunho' || data.status === 'arquivado') return null;
   return data;
 }
 
-async function inscritosEspinha(eventoId) {
-  const { count } = await supabase.from('inscricoes')
-    .select('id', { count: 'exact', head: true })
-    .eq('evento_id', eventoId).neq('status', 'cancelada').is('deleted_at', null);
-  return count || 0;
+// Ocupação pela MESMA régua da fn_insc_inscrever (só `cancelada` devolve vaga).
+// Usada pra EXIBIR e pra decidir o 403 antecipado; a decisão que vale é a de
+// dentro do lock, na RPC.
+async function ocupacaoEspinha(eventoId) {
+  const { data, error } = await supabase.rpc('fn_insc_vagas', { p_evento_id: eventoId });
+  if (error) throw error;
+  return data || { vagas: null, ocupadas: 0, restantes: null };
 }
 
 async function espinhaEncerrada(ev) {
@@ -68,7 +70,7 @@ async function espinhaEncerrada(ev) {
   const agora = Date.now();
   if (ev.inscricoes_abrem_em && agora < new Date(ev.inscricoes_abrem_em).getTime()) return true;
   if (ev.inscricoes_encerram_em && agora > new Date(ev.inscricoes_encerram_em).getTime()) return true;
-  if (ev.vagas != null && (await inscritosEspinha(ev.id)) >= ev.vagas) return true;
+  if (ev.vagas != null && (await ocupacaoEspinha(ev.id)).restantes <= 0) return true;
   return false;
 }
 
@@ -125,6 +127,9 @@ router.get('/:slug', async (req, res) => {
   const esp = await eventoEspinhaPorSlug(req.params.slug);
   if (esp) {
     const pago = !!esp.pagamento_ativo; // Pix chega na F3.3 — até lá, pago não abre
+    // `pago` faz curto-circuito de propósito: sem pagamento ligado ainda, não
+    // vale gastar a consulta de ocupação.
+    const ocup = pago ? null : await ocupacaoEspinha(esp.id);
     const encerradas = pago || await espinhaEncerrada(esp);
     return res.json({
       fonte: 'espinha',
@@ -133,6 +138,8 @@ router.get('/:slug', async (req, res) => {
       campos: Array.isArray(esp.campos) ? esp.campos : [], capa_url: esp.capa_url || null,
       inscricoes_encerram_em: esp.inscricoes_encerram_em || null,
       inscricoes_encerradas: encerradas,
+      vagas: esp.vagas ?? null,
+      vagas_restantes: ocup ? ocup.restantes : null, // null = ilimitado
       aviso: pago ? 'Este evento tem inscrição paga — as inscrições abrem em breve, junto com o pagamento por Pix.' : null,
       msg_sucesso_titulo: esp.msg_sucesso_titulo || null,
       msg_sucesso_texto: esp.msg_sucesso_texto || null,
@@ -204,41 +211,47 @@ async function inscreverEspinha(req, res, ev) {
     return res.json({ ok: true, ja_inscrito: true, numero_sorte: existente.numero_sorte, tem_sorteio: ev.tem_sorteio });
   }
 
-  // Número da sorte (só quando o evento tem sorteio)
-  let numero = null;
-  if (ev.tem_sorteio) {
-    for (let t = 0; t < 25; t++) {
-      const cand = gerarSorteio();
-      const { data: existe, error: eNum } = await supabase.from('inscricoes')
-        .select('id').eq('evento_id', ev.id).eq('numero_sorte', cand).limit(1);
-      if (eNum) throw eNum;
-      if (!existe || !existe.length) { numero = cand; break; }
-    }
-    if (numero == null) return res.status(503).json({ error: 'Não foi possível gerar o número agora. Tente de novo.' });
-  }
+  // Criação ATÔMICA: conferir vaga/janela/duplicidade, gerar numero_sorte e
+  // inserir acontecem dentro de um advisory lock por evento (RPC
+  // fn_insc_inscrever). É o que impede o evento de estourar a vaga quando 300
+  // pessoas apertam "inscrever" no mesmo minuto — a conferência em JS acima é
+  // só pra dar erro bonito antes, não é a que decide.
+  const { data: rpc, error } = await supabase.rpc('fn_insc_inscrever', {
+    p_evento_id: ev.id,
+    p_nome_completo: val.nomeCompleto,
+    p_telefone: val.telefone,
+    p_cpf: val.cpf,
+    p_email: val.email,
+    p_data_nascimento: val.dataNascimento,
+    p_sexo: val.sexo,
+    p_endereco: val.endereco,
+    p_dados: ex.respostas,
+    p_status: 'confirmada',
+    p_origem: 'formulario_publico',
+    p_com_sorteio: !!ev.tem_sorteio,
+    p_whatsapp_optin: optin,
+  });
+  if (error) throw error;
 
-  const { data: ins, error } = await supabase.from('inscricoes').insert({
-    evento_id: ev.id,
-    nome_completo: val.nomeCompleto,
-    telefone: val.telefone,
-    cpf: val.cpf,
-    email: val.email,
-    data_nascimento: val.dataNascimento,
-    sexo: val.sexo,
-    endereco: val.endereco,
-    dados: ex.respostas,
-    status: 'confirmada',
-    origem: 'formulario_publico',
-    numero_sorte: numero,
-    whatsapp_optin: optin,
-    whatsapp_optin_em: optin ? new Date().toISOString() : null,
-  }).select('id, numero_sorte').single();
-  if (error) {
-    if (error.code === '23505') { // corrida no UNIQUE (evento,cpf) ou número
+  if (!rpc?.ok) {
+    // Perdeu a corrida entre a conferência acima e o lock. Cada motivo tem
+    // resposta própria — "sem vaga" NÃO pode virar "inscrito com sucesso".
+    if (rpc?.motivo === 'duplicada') {
       return res.status(200).json({ ok: true, ja_inscrito: true, tem_sorteio: ev.tem_sorteio });
     }
-    throw error;
+    if (rpc?.motivo === 'sem_vaga') {
+      return res.status(409).json({ error: 'As vagas deste evento acabaram de esgotar.', motivo: 'sem_vaga' });
+    }
+    if (rpc?.motivo === 'encerrado') {
+      return res.status(403).json({ error: 'As inscrições deste evento estão encerradas.' });
+    }
+    if (rpc?.motivo === 'sorteio_esgotado') {
+      return res.status(503).json({ error: 'Não foi possível gerar o número agora. Tente de novo.' });
+    }
+    console.error('[publicEvento espinha] inscrever recusado:', rpc?.motivo);
+    return res.status(409).json({ error: 'Não foi possível concluir a inscrição. Tente de novo.' });
   }
+  const ins = { id: rpc.id, numero_sorte: rpc.numero_sorte };
 
   // Funil de identidade (matcher read-only + observação) + consentimentos.
   processarIdentidade({
