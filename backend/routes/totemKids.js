@@ -2339,10 +2339,13 @@ router.get('/criancas/:id/jornada', authorizeModule('kids', 1), async (req, res)
     dias.forEach((ymd) => { porMesMap[ymd.slice(0, 7)] = (porMesMap[ymd.slice(0, 7)] || 0) + 1; });
 
     const porMes = Object.entries(porMesMap).map(([mes, total]) => ({ mes, total })).sort((a, b) => a.mes.localeCompare(b.mes));
+    // Série POR DATA (cada dia que veio) + acumulado — o gráfico por mês vira 1
+    // ponto só quando toda a frequência está no mesmo mês (parecia "incompleto").
+    const porDia = dias.map((data, i) => ({ data, acumulado: i + 1 }));
     const dec = lista.filter((c) => c.fez_decisao_jesus).map((c) => c.decisao_jesus_em || c.checkin_at).filter(Boolean).sort();
     res.json({
       familia_membros,
-      frequencia: { porMes, ultima, total },
+      frequencia: { porMes, porDia, ultima, total },
       conversao_sugerida: dec.length ? String(dec[0]).slice(0, 10) : null,
     });
   } catch (e) {
