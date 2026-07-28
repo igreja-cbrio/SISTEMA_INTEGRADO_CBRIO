@@ -1,10 +1,12 @@
-// Módulo de Inscrições · F3.2 PR 2 — abas Calendário + Eventos (specs:
+// Módulo de Inscrições · F3.2 — abas Calendário + Eventos (specs:
 // docs/modulo-inscricoes/fase2-specs.md · 5 abas fechadas com o Marcos 28/07;
 // Todas as inscrições, Pessoas e Dashboard chegam nas PRs seguintes).
 // Todo evento nasce com os CAMPOS PADRÃO travados do Contrato de Inscrição
 // (bloco informativo no form) + campos extras do form-builder (key opaca
-// estável) + área obrigatória do catálogo oficial + séries/edições
-// ("Nova edição" copia o formulário pra próxima data — recorrência).
+// estável) + área obrigatória do catálogo oficial + séries/edições.
+// Feedback 28/07: série recorrente = UM card na aba Eventos ("um quadrado
+// Next") com TODAS as edições dentro do modal + "recorrente até" editável;
+// botão Publicar de 1 clique; máscara hh:mm; "Duplicar evento".
 import { useEffect, useMemo, useState } from 'react';
 import { inscricoesApi as api } from '../api';
 import { Card } from '../components/ui/card';
@@ -14,12 +16,13 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/
 import { toast } from 'sonner';
 import {
   CalendarDays, ClipboardList, Plus, Loader2, ChevronLeft, ChevronRight,
-  Users, Trash2, CopyPlus, Image as ImageIcon, Lock, Link2,
+  Users, Trash2, CopyPlus, Image as ImageIcon, Lock, Link2, Repeat, Megaphone,
 } from 'lucide-react';
 
 const MESES = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
 const DIAS = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S'];
 const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const fmtData = (s?: string | null) => s ? new Date(s + 'T00:00:00').toLocaleDateString('pt-BR') : '';
 
 const PERIODICIDADES = [
   { value: 'unica', label: 'Avulso (sem recorrência)' },
@@ -27,6 +30,7 @@ const PERIODICIDADES = [
   { value: 'mensal', label: 'Mensal' },
   { value: 'anual', label: 'Anual' },
 ];
+const PERIOD_LABEL: Record<string, string> = { semanal: 'Semanal', mensal: 'Mensal', anual: 'Anual', custom: 'Recorrente' };
 
 const STATUS_BADGE: Record<string, string> = {
   rascunho: 'bg-amber-500/15 text-amber-600',
@@ -34,6 +38,12 @@ const STATUS_BADGE: Record<string, string> = {
   encerrado: 'bg-foreground/10 text-muted-foreground',
   arquivado: 'bg-foreground/10 text-muted-foreground',
 };
+
+// Máscara hh:mm — digitou "1930" vira "19:30" sozinho (feedback do Marcos)
+function mascaraHora(v: string): string {
+  const d = v.replace(/\D/g, '').slice(0, 4);
+  return d.length <= 2 ? d : `${d.slice(0, 2)}:${d.slice(2)}`;
+}
 
 // key opaca estável (mesma regra do backend — o server regenera se inválida)
 const novaKeyCampo = () => `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
@@ -86,7 +96,7 @@ function CamposEditor({ campos, setCampos }: { campos: any[]; setCampos: (v: any
 const EVENTO_VAZIO = {
   nome: '', area: '', periodicidade: 'unica', tipo: 'evento',
   data: '', hora: '', local: '', descricao: '', capa_url: '',
-  vagas: '', inscricoes_encerram_em: '',
+  vagas: '', inscricoes_encerram_em: '', recorre_ate: '',
   msg_sucesso_titulo: '', msg_sucesso_texto: '', msg_whatsapp: '',
   tem_sorteio: false, checkin_ativo: false,
   pagamento_ativo: false, valor_centavos: '',
@@ -143,7 +153,11 @@ function EventoModal({ evento, areas, onClose, onSaved }: {
         valor_centavos: f.pagamento_ativo && f.valor_centavos !== '' ? Math.round(Number(String(f.valor_centavos).replace(',', '.')) * 100) : null,
       };
       if (ed) { payload.status = f.status; await api.atualizarEvento(evento.id, payload); }
-      else { payload.periodicidade = f.periodicidade; await api.criarEvento(payload); }
+      else {
+        payload.periodicidade = f.periodicidade;
+        if (f.periodicidade !== 'unica') payload.recorre_ate = f.recorre_ate || null;
+        await api.criarEvento(payload);
+      }
       toast.success(ed ? 'Evento atualizado' : 'Evento criado (em rascunho)');
       onSaved();
     } catch (e: any) { toast.error(e?.message || 'Erro ao salvar'); } finally { setSalvando(false); }
@@ -154,6 +168,12 @@ function EventoModal({ evento, areas, onClose, onSaved }: {
       <DialogContent className="max-w-2xl max-h-[88vh] overflow-y-auto">
         <DialogHeader><DialogTitle>{ed ? 'Editar evento' : 'Novo evento de inscrição'}</DialogTitle></DialogHeader>
         <div className="space-y-3 text-sm">
+          {ed && evento?.serie && (
+            <div className="rounded-lg border border-primary/30 bg-primary/5 px-2.5 py-2 text-xs text-muted-foreground flex items-center gap-2">
+              <Repeat className="h-3.5 w-3.5 text-primary shrink-0" />
+              <span>Edição <b className="text-foreground">{evento.edicao_rotulo}</b> da série <b className="text-foreground">{evento.serie.nome}</b> · {PERIOD_LABEL[evento.serie.periodicidade] || evento.serie.periodicidade}{evento.serie.recorre_ate ? ` até ${fmtData(evento.serie.recorre_ate)}` : ' · sem data final'} — todas as edições ficam no card da série, na aba Eventos.</span>
+            </div>
+          )}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="sm:col-span-2">
               <label className="text-xs text-muted-foreground">Nome *</label>
@@ -174,13 +194,20 @@ function EventoModal({ evento, areas, onClose, onSaved }: {
                 </select>
               </div>
             )}
+            {!ed && f.periodicidade !== 'unica' && (
+              <div>
+                <label className="text-xs text-muted-foreground">Recorrente até (opcional)</label>
+                <Input type="date" value={f.recorre_ate || ''} onChange={set('recorre_ate')} />
+              </div>
+            )}
             <div>
               <label className="text-xs text-muted-foreground">Data</label>
               <Input type="date" value={f.data || ''} onChange={set('data')} />
             </div>
             <div>
               <label className="text-xs text-muted-foreground">Hora</label>
-              <Input value={f.hora || ''} onChange={set('hora')} placeholder="19h30" />
+              <Input value={f.hora || ''} onChange={e => setF((s: any) => ({ ...s, hora: mascaraHora(e.target.value) }))}
+                placeholder="19:30" inputMode="numeric" maxLength={5} />
             </div>
             <div className="sm:col-span-2">
               <label className="text-xs text-muted-foreground">Local</label>
@@ -274,16 +301,16 @@ function NovaEdicaoModal({ evento, onClose, onSaved }: { evento: any; onClose: (
     setSalvando(true);
     try {
       await api.novaEdicao(evento.id, { data, ...(avulso ? { periodicidade } : {}) });
-      toast.success('Nova edição criada (em rascunho) — formulário e configurações copiados');
+      toast.success('Evento duplicado (em rascunho) — formulário e configurações copiados');
       onSaved();
-    } catch (e: any) { toast.error(e?.message || 'Erro ao criar edição'); } finally { setSalvando(false); }
+    } catch (e: any) { toast.error(e?.message || 'Erro ao duplicar'); } finally { setSalvando(false); }
   }
   return (
     <Dialog open onOpenChange={(v) => { if (!v) onClose(); }}>
       <DialogContent className="max-w-sm">
-        <DialogHeader><DialogTitle>Nova edição · {evento.nome}</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle>Duplicar evento · {evento.nome}</DialogTitle></DialogHeader>
         <div className="space-y-3 text-sm">
-          <p className="text-xs text-muted-foreground">Copia o formulário e as configurações pra próxima data. O dashboard compara as edições entre si.</p>
+          <p className="text-xs text-muted-foreground">Copia o formulário e as configurações pra próxima data — vira uma nova edição da série. O dashboard compara as edições entre si.</p>
           {avulso && (
             <div>
               <label className="text-xs text-muted-foreground">Este evento vira uma série</label>
@@ -298,7 +325,90 @@ function NovaEdicaoModal({ evento, onClose, onSaved }: { evento: any; onClose: (
           </div>
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={onClose}>Cancelar</Button>
-            <Button onClick={criar} disabled={salvando}>{salvando ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Criar edição'}</Button>
+            <Button onClick={criar} disabled={salvando}>{salvando ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Duplicar'}</Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// "Um quadrado Next" — modal da série com TODAS as edições dentro (feedback 28/07)
+function SerieModal({ grupo, onClose, onEditar, onDuplicar, onPublicar, onCopiarLink, onSaved }: {
+  grupo: { serie: any; edicoes: any[] }; onClose: () => void;
+  onEditar: (e: any) => void; onDuplicar: (e: any) => void;
+  onPublicar: (e: any) => Promise<void>; onCopiarLink: (e: any) => void; onSaved: () => void;
+}) {
+  const { serie, edicoes } = grupo;
+  const [recorreAte, setRecorreAte] = useState(serie.recorre_ate || '');
+  const [salvando, setSalvando] = useState(false);
+  const mudou = (recorreAte || '') !== (serie.recorre_ate || '');
+
+  async function salvarRecorrencia() {
+    setSalvando(true);
+    try {
+      await api.atualizarSerie(serie.id, { recorre_ate: recorreAte || null });
+      toast.success(recorreAte ? `Recorrente até ${fmtData(recorreAte)}` : 'Série sem data final');
+      onSaved();
+    } catch (e: any) { toast.error(e?.message || 'Erro ao salvar'); } finally { setSalvando(false); }
+  }
+
+  return (
+    <Dialog open onOpenChange={(v) => { if (!v) onClose(); }}>
+      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><Repeat className="h-4 w-4 text-primary" /> {serie.nome}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3 text-sm">
+          <div className="flex items-end gap-2 flex-wrap">
+            <div className="text-xs text-muted-foreground">
+              <span className="rounded bg-primary/10 text-primary px-1.5 py-0.5">{PERIOD_LABEL[serie.periodicidade] || serie.periodicidade}</span>
+              <span className="ml-2">{edicoes.length} {edicoes.length === 1 ? 'edição' : 'edições'}</span>
+            </div>
+            <div className="flex items-end gap-1.5 ml-auto">
+              <div>
+                <label className="text-[11px] text-muted-foreground block">Recorrente até (vazio = sem data final)</label>
+                <Input type="date" value={recorreAte} onChange={e => setRecorreAte(e.target.value)} className="h-8 text-xs" />
+              </div>
+              {mudou && (
+                <Button size="sm" onClick={salvarRecorrencia} disabled={salvando} className="h-8">
+                  {salvando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Salvar'}
+                </Button>
+              )}
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            {edicoes.map(e => (
+              <div key={e.id} className="rounded-lg border border-border px-2.5 py-2 flex items-center gap-2 flex-wrap">
+                <div className="flex-1 min-w-[150px]">
+                  <div className="text-sm font-medium">{e.edicao_rotulo || e.nome}</div>
+                  <div className="text-xs text-muted-foreground flex items-center gap-2">
+                    {e.data && <span>{fmtData(e.data)}{e.hora ? ` · ${e.hora}` : ''}</span>}
+                    <span className="inline-flex items-center gap-1"><Users className="h-3 w-3" /> {e.inscritos}{e.vagas ? `/${e.vagas}` : ''}</span>
+                    <span className={`rounded px-1.5 py-0.5 ${STATUS_BADGE[e.status] || ''}`}>{e.status}</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1">
+                  {e.status === 'rascunho' && (
+                    <Button size="sm" className="h-7 text-xs" onClick={() => onPublicar(e)} title="Coloca o formulário no ar agora">
+                      <Megaphone className="h-3 w-3 mr-1" /> Publicar
+                    </Button>
+                  )}
+                  <Button size="sm" variant="outline" className="h-7" title="Copiar o link público" onClick={() => onCopiarLink(e)}>
+                    <Link2 className="h-3 w-3" />
+                  </Button>
+                  <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => onEditar(e)}>Editar</Button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex justify-between items-center pt-1">
+            <Button size="sm" variant="outline" onClick={() => onDuplicar(edicoes[0])} title="Copiar formulário e configurações pra próxima data">
+              <CopyPlus className="h-3.5 w-3.5 mr-1" /> Duplicar evento
+            </Button>
+            <Button variant="outline" onClick={onClose}>Fechar</Button>
           </div>
         </div>
       </DialogContent>
@@ -312,7 +422,7 @@ export default function Inscricoes() {
   const [areas, setAreas] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [mesRef, setMesRef] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
-  const [modal, setModal] = useState<{ tipo: 'novo' | 'editar' | 'edicao'; evento?: any } | null>(null);
+  const [modal, setModal] = useState<{ tipo: 'novo' | 'editar' | 'edicao' | 'serie'; evento?: any; serieId?: string } | null>(null);
 
   function carregar() {
     setLoading(true);
@@ -329,6 +439,25 @@ export default function Inscricoes() {
     return m;
   }, [eventos]);
 
+  // Aba Eventos agrupada: série recorrente = 1 card com as edições dentro
+  const { grupos, avulsos } = useMemo(() => {
+    const map = new Map<string, { serie: any; edicoes: any[] }>();
+    const av: any[] = [];
+    eventos.forEach(e => {
+      if (e.serie_id && e.serie) {
+        const g = map.get(e.serie_id) || { serie: e.serie, edicoes: [] };
+        g.edicoes.push(e); map.set(e.serie_id, g);
+      } else av.push(e);
+    });
+    map.forEach(g => g.edicoes.sort((a, b) => (b.data || '').localeCompare(a.data || '')));
+    return { grupos: [...map.values()], avulsos: av };
+  }, [eventos]);
+
+  const grupoAberto = useMemo(
+    () => modal?.tipo === 'serie' ? grupos.find(g => g.serie.id === modal.serieId) || null : null,
+    [modal, grupos],
+  );
+
   const celulas = useMemo(() => {
     const ini = new Date(mesRef.getFullYear(), mesRef.getMonth(), 1);
     const fimDia = new Date(mesRef.getFullYear(), mesRef.getMonth() + 1, 0).getDate();
@@ -344,6 +473,20 @@ export default function Inscricoes() {
     if (!window.confirm(`Excluir o evento "${ev.nome}"? (exclusão segura — dá pra restaurar)`)) return;
     try { await api.excluirEvento(ev.id); toast.success('Evento excluído'); carregar(); }
     catch (e: any) { toast.error(e?.message || 'Sem permissão pra excluir'); }
+  }
+
+  async function publicar(ev: any) {
+    try {
+      await api.atualizarEvento(ev.id, { status: 'publicado' });
+      toast.success(`"${ev.nome}" publicado — o link já está no ar`);
+      carregar();
+    } catch (e: any) { toast.error(e?.message || 'Erro ao publicar'); }
+  }
+
+  function copiarLink(ev: any) {
+    navigator.clipboard.writeText(`${window.location.origin}/evento/${ev.slug}`);
+    if (ev.status === 'publicado') toast.success('Link copiado — formulário no ar');
+    else toast.warning('Link copiado, mas o evento está em RASCUNHO — clique em Publicar pra ativar');
   }
 
   const ABAS = [
@@ -414,27 +557,51 @@ export default function Inscricoes() {
             <p className="text-sm text-muted-foreground py-6 text-center">Nenhum evento na espinha ainda — crie o primeiro. (Os eventos do módulo antigo migram na próxima entrega, sem perder nada.)</p>
           ) : (
             <div className="space-y-2">
-              {eventos.map(e => (
+              {grupos.map(g => {
+                const totalInscritos = g.edicoes.reduce((s, e) => s + (Number(e.inscritos) || 0), 0);
+                return (
+                  <button key={g.serie.id} onClick={() => setModal({ tipo: 'serie', serieId: g.serie.id })}
+                    className="w-full rounded-lg border border-primary/40 bg-primary/5 p-3 flex items-center gap-3 flex-wrap text-left hover:bg-primary/10 transition-colors">
+                    <div className="flex-1 min-w-[220px]">
+                      <div className="font-medium text-sm flex items-center gap-2">
+                        <Repeat className="h-3.5 w-3.5 text-primary" /> {g.serie.nome}
+                        <span className="text-[10px] rounded-full bg-primary/15 text-primary px-1.5 py-0.5">
+                          {PERIOD_LABEL[g.serie.periodicidade] || g.serie.periodicidade}{g.serie.recorre_ate ? ` até ${fmtData(g.serie.recorre_ate)}` : ''}
+                        </span>
+                      </div>
+                      <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5 flex-wrap">
+                        <span className="rounded bg-foreground/8 px-1.5 py-0.5">{g.edicoes[0]?.area}</span>
+                        <span>{g.edicoes.length} {g.edicoes.length === 1 ? 'edição' : 'edições'}</span>
+                        <span className="inline-flex items-center gap-1"><Users className="h-3 w-3" /> {totalInscritos} no total</span>
+                        {g.edicoes[0]?.data && <span>última: {fmtData(g.edicoes[0].data)}</span>}
+                      </div>
+                    </div>
+                    <span className="text-xs text-primary font-medium">Ver edições →</span>
+                  </button>
+                );
+              })}
+              {avulsos.map(e => (
                 <div key={e.id} className="rounded-lg border border-border p-3 flex items-center gap-3 flex-wrap">
                   <div className="flex-1 min-w-[220px]">
-                    <div className="font-medium text-sm flex items-center gap-2">
-                      {e.nome}
-                      {e.serie && <span className="text-[10px] rounded-full bg-primary/10 text-primary px-1.5 py-0.5">{e.serie.periodicidade} · {e.edicao_rotulo || 'edição'}</span>}
-                    </div>
+                    <div className="font-medium text-sm">{e.nome}</div>
                     <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5 flex-wrap">
                       <span className="rounded bg-foreground/8 px-1.5 py-0.5">{e.area}</span>
-                      {e.data && <span>{new Date(e.data + 'T00:00:00').toLocaleDateString('pt-BR')}</span>}
+                      {e.data && <span>{fmtData(e.data)}</span>}
                       <span className="inline-flex items-center gap-1"><Users className="h-3 w-3" /> {e.inscritos}{e.vagas ? `/${e.vagas}` : ''}</span>
                       <span className={`rounded px-1.5 py-0.5 ${STATUS_BADGE[e.status] || ''}`}>{e.status}</span>
                     </div>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <Button size="sm" variant="outline" title="Copiar o link público (/evento/…)"
-                      onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/evento/${e.slug}`); toast.success('Link copiado — o formulário abre quando o evento estiver Publicado'); }}>
+                    {e.status === 'rascunho' && (
+                      <Button size="sm" onClick={() => publicar(e)} title="Coloca o formulário no ar agora">
+                        <Megaphone className="h-3.5 w-3.5 mr-1" /> Publicar
+                      </Button>
+                    )}
+                    <Button size="sm" variant="outline" title="Copiar o link público (/evento/…)" onClick={() => copiarLink(e)}>
                       <Link2 className="h-3.5 w-3.5" />
                     </Button>
                     <Button size="sm" variant="outline" onClick={() => setModal({ tipo: 'edicao', evento: e })} title="Copiar formulário e configurações pra próxima data">
-                      <CopyPlus className="h-3.5 w-3.5 mr-1" /> Nova edição
+                      <CopyPlus className="h-3.5 w-3.5 mr-1" /> Duplicar evento
                     </Button>
                     <Button size="sm" variant="outline" onClick={() => setModal({ tipo: 'editar', evento: e })}>Editar</Button>
                     <button onClick={() => excluir(e)} className="text-red-500 p-1.5" title="Excluir (soft)"><Trash2 className="h-4 w-4" /></button>
@@ -449,6 +616,13 @@ export default function Inscricoes() {
       {modal?.tipo === 'novo' && <EventoModal areas={areas} onClose={() => setModal(null)} onSaved={() => { setModal(null); carregar(); }} />}
       {modal?.tipo === 'editar' && <EventoModal evento={modal.evento} areas={areas} onClose={() => setModal(null)} onSaved={() => { setModal(null); carregar(); }} />}
       {modal?.tipo === 'edicao' && <NovaEdicaoModal evento={modal.evento} onClose={() => setModal(null)} onSaved={() => { setModal(null); carregar(); }} />}
+      {grupoAberto && (
+        <SerieModal grupo={grupoAberto} onClose={() => setModal(null)}
+          onEditar={(e) => setModal({ tipo: 'editar', evento: e })}
+          onDuplicar={(e) => setModal({ tipo: 'edicao', evento: e })}
+          onPublicar={publicar} onCopiarLink={copiarLink}
+          onSaved={carregar} />
+      )}
     </div>
   );
 }

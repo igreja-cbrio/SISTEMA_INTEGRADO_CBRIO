@@ -300,6 +300,7 @@ export const eventosExternos = {
 export const inscricoesApi = {
   areas: () => get('/inscricoes/areas'),
   series: () => get('/inscricoes/series'),
+  atualizarSerie: (id, data) => put(`/inscricoes/series/${id}`, data),
   listarEventos: () => get('/inscricoes/eventos'),
   evento: (id) => get(`/inscricoes/eventos/${id}`),
   inscricoesDoEvento: (id) => get(`/inscricoes/eventos/${id}/inscricoes`),
