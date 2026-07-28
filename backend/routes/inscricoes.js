@@ -12,6 +12,7 @@ const multer = require('multer');
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { escapePostgrestValue } = require('../utils/sanitize');
+const { verificarTokenComprovante, extrairToken } = require('../services/inscricaoComprovante');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 } });
 
@@ -551,6 +552,203 @@ router.post('/eventos/:id/sortear', authorizeModule('inscricoes', 3), async (req
   } catch (e) {
     console.error('[inscricoes] sortear:', e.message);
     res.status(500).json({ error: 'Erro ao sortear' });
+  }
+});
+
+// ── Check-in (SPEC-06) ──────────────────────────────────────────────────────
+// Nível 2 da matriz = "operar check-in" (SPEC-08). O duplo check-in é barrado
+// pelo UNIQUE de insc_checkins.inscricao_id — a resposta AVISA em vez de errar
+// (critério de aceite da spec). O dashboard já lê `compareceu` da view
+// unificada; marcar aqui acorda o card de comparecimento sozinho.
+
+// GET /eventos/:id/checkin — estado da tela: evento + contadores + lista.
+// A tela recarrega isso em polling curto (contador ao vivo).
+router.get('/eventos/:id/checkin', authorizeModule('inscricoes', 2), async (req, res) => {
+  try {
+    const { data: ev, error: eEv } = await supabase.from('insc_eventos')
+      .select('id, nome, slug, data, hora, local, status, checkin_ativo, tem_sorteio, pagamento_ativo, vagas')
+      .eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (eEv) throw eEv;
+    if (!ev) return res.status(404).json({ error: 'Evento não encontrado' });
+
+    // Lista SEM CPF (mesma régua da lista de inscritos — o documento não viaja
+    // pra tela; busca por CPF é server-side no /checkin/buscar). Paginado pelo
+    // cap de 1000 do PostgREST.
+    const lista = [];
+    for (let off = 0; off < 20000; off += 1000) {
+      const { data, error } = await supabase.from('inscricoes')
+        .select('id, nome_completo, telefone, numero_sorte, status')
+        .eq('evento_id', req.params.id).is('deleted_at', null)
+        .order('nome_completo')
+        .range(off, off + 999);
+      if (error) throw error;
+      lista.push(...(data || []));
+      if (!data || data.length < 1000) break;
+    }
+
+    // insc_checkins não tem evento_id — filtra pelo embed !inner da inscrição.
+    const marcas = new Map();
+    for (let off = 0; off < 20000; off += 1000) {
+      const { data, error } = await supabase.from('insc_checkins')
+        .select('inscricao_id, em, modo, inscricao:inscricoes!inner(evento_id)')
+        .eq('inscricao.evento_id', req.params.id)
+        .range(off, off + 999);
+      if (error) throw error;
+      for (const c of (data || [])) marcas.set(c.inscricao_id, c);
+      if (!data || data.length < 1000) break;
+    }
+
+    const itens = lista.map((i) => ({
+      id: i.id, nome_completo: i.nome_completo, telefone: i.telefone,
+      numero_sorte: i.numero_sorte, status: i.status,
+      checkin_em: marcas.get(i.id)?.em || null,
+      checkin_modo: marcas.get(i.id)?.modo || null,
+    }));
+    const ativos = itens.filter((i) => i.status !== 'cancelada');
+    res.json({
+      evento: ev,
+      inscritos: ativos.length,
+      presentes: ativos.filter((i) => i.checkin_em).length,
+      lista: itens,
+    });
+  } catch (e) {
+    console.error('[inscricoes] checkin/estado:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar o check-in' });
+  }
+});
+
+// GET /eventos/:id/checkin/buscar?q= — busca por CPF/telefone no SERVIDOR.
+// O CPF não viaja na lista da tela; quando a portaria digita um documento, a
+// consulta roda aqui e devolve só os candidatos (digits-only no filtro —
+// injeção impossível no .or()).
+router.get('/eventos/:id/checkin/buscar', authorizeModule('inscricoes', 2), async (req, res) => {
+  try {
+    const digits = String(req.query.q || '').replace(/\D/g, '').slice(0, 14);
+    if (digits.length < 4) return res.json([]);
+    const { data, error } = await supabase.from('inscricoes')
+      .select('id, nome_completo, telefone, numero_sorte, status')
+      .eq('evento_id', req.params.id).is('deleted_at', null)
+      .or(`cpf.like.%${digits}%,telefone.like.%${digits}%`)
+      .limit(20);
+    if (error) throw error;
+    const ids = (data || []).map((i) => i.id);
+    const marcas = new Map();
+    if (ids.length) {
+      const { data: cks } = await supabase.from('insc_checkins')
+        .select('inscricao_id, em').in('inscricao_id', ids);
+      for (const c of (cks || [])) marcas.set(c.inscricao_id, c.em);
+    }
+    res.json((data || []).map((i) => ({ ...i, checkin_em: marcas.get(i.id) || null })));
+  } catch (e) {
+    console.error('[inscricoes] checkin/buscar:', e.message);
+    res.status(500).json({ error: 'Erro na busca' });
+  }
+});
+
+// POST /eventos/:id/checkin — marca presença. Body: { token } (QR do
+// comprovante) OU { inscricao_id } (busca). `confirmar_pendente: true` libera
+// entrada com pagamento pendente — decisão de quem está na porta, auditada
+// pelo `por`, nunca da automação.
+router.post('/eventos/:id/checkin', authorizeModule('inscricoes', 2), async (req, res) => {
+  try {
+    const { data: ev } = await supabase.from('insc_eventos')
+      .select('id, nome, checkin_ativo').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!ev) return res.status(404).json({ error: 'Evento não encontrado' });
+    if (!ev.checkin_ativo) {
+      return res.status(409).json({
+        error: 'O check-in não está ativado neste evento — ative nas configurações do evento.',
+        motivo: 'checkin_inativo',
+      });
+    }
+
+    const b = req.body || {};
+    let inscricaoId = null;
+    let modo = 'busca';
+    if (b.token) {
+      inscricaoId = verificarTokenComprovante(extrairToken(b.token));
+      modo = 'qr';
+      if (!inscricaoId) {
+        return res.status(422).json({ error: 'QR inválido — não é um comprovante de inscrição.', motivo: 'qr_invalido' });
+      }
+    } else if (typeof b.inscricao_id === 'string' && /^[0-9a-f-]{36}$/i.test(b.inscricao_id)) {
+      inscricaoId = b.inscricao_id;
+    }
+    if (!inscricaoId) return res.status(400).json({ error: 'Informe a inscrição ou o QR do comprovante.' });
+
+    const { data: ins } = await supabase.from('inscricoes')
+      .select('id, evento_id, nome_completo, numero_sorte, status')
+      .eq('id', inscricaoId).is('deleted_at', null).maybeSingle();
+    if (!ins) return res.status(404).json({ error: 'Inscrição não encontrada neste evento.', motivo: 'nao_encontrada' });
+    if (ins.evento_id !== req.params.id) {
+      // Comprovante VÁLIDO de OUTRO evento (ex.: QR do Celebra na porta dos
+      // Patrocinadores) é um caso distinto de "não inscrito" — a portaria
+      // precisa saber pra onde mandar a pessoa.
+      let outroNome = null;
+      try {
+        const { data: outro } = await supabase.from('insc_eventos')
+          .select('nome').eq('id', ins.evento_id).maybeSingle();
+        outroNome = outro?.nome || null;
+      } catch { /* nome é cosmético */ }
+      return res.status(409).json({
+        error: `Este comprovante é de outro evento${outroNome ? ` (${outroNome})` : ''}.`,
+        motivo: 'outro_evento', evento_nome: outroNome, nome: ins.nome_completo,
+      });
+    }
+    if (ins.status === 'cancelada') {
+      return res.status(409).json({
+        error: `A inscrição de ${ins.nome_completo} está cancelada.`,
+        motivo: 'cancelada', nome: ins.nome_completo,
+      });
+    }
+    if (ins.status === 'recebida' && !b.confirmar_pendente) {
+      return res.status(409).json({
+        error: `${ins.nome_completo} está com o pagamento pendente.`,
+        motivo: 'pagamento_pendente', nome: ins.nome_completo, inscricao_id: ins.id,
+      });
+    }
+
+    const { data: marcado, error: eIns } = await supabase.from('insc_checkins')
+      .insert({ inscricao_id: ins.id, por: req.user?.id || null, modo })
+      .select('em').single();
+    if (eIns) {
+      if (eIns.code === '23505') {
+        // Duplo check-in AVISADO (critério da SPEC-06) — não é erro de tela.
+        const { data: c } = await supabase.from('insc_checkins')
+          .select('em').eq('inscricao_id', ins.id).maybeSingle();
+        return res.json({
+          ok: true, ja_checkin: true, em: c?.em || null,
+          inscricao: { id: ins.id, nome_completo: ins.nome_completo, numero_sorte: ins.numero_sorte },
+        });
+      }
+      throw eIns;
+    }
+    res.status(201).json({
+      ok: true, em: marcado.em,
+      pendente: ins.status === 'recebida' || undefined,
+      inscricao: { id: ins.id, nome_completo: ins.nome_completo, numero_sorte: ins.numero_sorte },
+    });
+  } catch (e) {
+    console.error('[inscricoes] checkin:', e.message);
+    res.status(500).json({ error: 'Erro ao marcar o check-in' });
+  }
+});
+
+// DELETE /eventos/:id/checkin/:inscricaoId — desfaz um check-in errado.
+// insc_checkins não tem deleted_at (é marca operacional, fora da whitelist de
+// soft-delete) — desfazer é DELETE direto mesmo; a regra nº 2 vale pra tabelas
+// COM deleted_at.
+router.delete('/eventos/:id/checkin/:inscricaoId', authorizeModule('inscricoes', 2), async (req, res) => {
+  try {
+    const { data: ins } = await supabase.from('inscricoes')
+      .select('id').eq('id', req.params.inscricaoId)
+      .eq('evento_id', req.params.id).maybeSingle();
+    if (!ins) return res.status(404).json({ error: 'Inscrição não encontrada' });
+    const { error } = await supabase.from('insc_checkins').delete().eq('inscricao_id', req.params.inscricaoId);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[inscricoes] desfazer checkin:', e.message);
+    res.status(500).json({ error: 'Erro ao desfazer o check-in' });
   }
 });
 

@@ -189,6 +189,31 @@ Celebra com só nome+telefone continuam válidas para sempre).
   → 410** (leitura fica pra conferência; arquivos EventosExternos*.tsx ficam
   no repo até 1 ciclo sem divergência — rollback = restaurar 2 rotas).
   ext_* NÃO é dropado (SPEC-04 §4).
+- **F3.4 · SPEC-06 — CHECK-IN QR (2026-07-28 · SEM migration):** comprovante
+  com QR na tela de sucesso + tela de check-in do dia (operação do Celebra
+  29/08). **Token ASSINADO em vez de coluna nova** — HMAC-SHA256 do id da
+  inscrição (`services/inscricaoComprovante.js` · segredo = `INSC_QR_SECRET`
+  opcional com fallback no `CRON_SECRET`; sem segredo é fail-closed, NUNCA
+  literal — lição do MEM_QR_SALT); vale retroativo pras ~100 inscrições
+  migradas do Celebra sem backfill. O QR codifica a URL pública `/i/c/<token>`
+  (`InscricaoComprovante.tsx` — a pessoa reabre quando quiser; portaria
+  escaneia o MESMO QR). Token aparece na tela de sucesso do form (fonte
+  espinha), na re-inscrição e — evento pago — na tela `/pagamento/:token` SÓ
+  com `pago` do servidor. Tela `/inscricoes/evento/:id/checkin`
+  (`InscricaoEventoCheckin.tsx` · nível 2 = operar check-in, SPEC-08): leitura
+  de QR CONTÍNUA (html5-qrcode; a do voluntariado para no 1º scan), busca por
+  nome local + **CPF/telefone server-side** (`/checkin/buscar` — CPF não viaja
+  na lista, mesma régua do detalhe), contadores ao vivo (polling 15s),
+  "Inscrever na hora" = form público (mesma validação), tela cheia via
+  Fullscreen API. Backend em routes/inscricoes.js: GET/POST
+  `/eventos/:id/checkin` + DELETE desfazer — **duplo check-in AVISADO** (23505
+  do UNIQUE vira `ja_checkin` com hora, não erro); `cancelada` bloqueia;
+  **`recebida` (pago pendente) só entra com `confirmar_pendente`** = decisão
+  de quem está na porta, auditada pelo `por`; comprovante de OUTRO evento é
+  erro distinto (diz qual). POST exige `checkin_ativo` (botão Ativar na tela ·
+  PUT nível 3). Marcar check-in acorda sozinho o card de comparecimento do
+  dashboard (`compareceu` da view unificada já media). Falta da F3.4: SPEC-07
+  (confirmação WhatsApp da espinha via fila, opt-in D4).
 - **Porta 7 · Grupos (2026-07-28 · migration `20260728235000` = M5):** e-mail
   obrigatório (D2) + anti-abreviação + endereço opcional (vai pro cadastro
   pendente, nunca sobrescreve membro) no form recém-lançado (toque mínimo);
