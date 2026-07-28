@@ -298,7 +298,15 @@ async function listarParaExpirar(limite = 200) {
   return (data || []).filter(podeExpirar);
 }
 
-/** Cobranças não-finais dos últimos N dias (cron de reconciliação). */
+/**
+ * Cobranças não-finais dos últimos N dias (cron de reconciliação).
+ *
+ * ⚠️ Ordena por `updated_at` ASC, não `created_at`: com limite menor que a fila
+ * (o tick usa 50), ordenar pela criação re-checaria PARA SEMPRE as 50 mais
+ * antigas e as novas nunca seriam consultadas. Como `reconciliar` toca a linha
+ * ao fim de cada tentativa, "menos recentemente verificada primeiro" vira
+ * round-robin e a fila inteira rotaciona.
+ */
 async function listarParaReconciliar({ dias = 30, limite = 200 } = {}) {
   const desde = new Date(Date.now() - dias * 86400000).toISOString();
   const { data, error } = await supabase.from('pag_cobrancas')
@@ -307,10 +315,21 @@ async function listarParaReconciliar({ dias = 30, limite = 200 } = {}) {
     .gte('created_at', desde)
     .not('provider_cobranca_id', 'is', null)
     .is('deleted_at', null)
-    .order('created_at', { ascending: true })
+    .order('updated_at', { ascending: true })
     .limit(limite);
   if (error) throw error;
   return data || [];
+}
+
+/**
+ * Marca "conferi esta cobrança agora" sem mudar nada de negócio — é o que faz
+ * a rotação de `listarParaReconciliar` avançar quando o PSP não trouxe novidade.
+ * O trigger de `updated_at` cuida do carimbo.
+ */
+async function tocarReconciliacao(cobrancaId) {
+  const { error } = await supabase.from('pag_cobrancas')
+    .update({ updated_at: new Date().toISOString() }).eq('id', cobrancaId);
+  if (error) console.error('[pagamentos] tocar reconciliação:', error.message);
 }
 
 module.exports = {
@@ -322,4 +341,5 @@ module.exports = {
   somaPago,
   listarParaExpirar,
   listarParaReconciliar,
+  tocarReconciliacao,
 };

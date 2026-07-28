@@ -4098,10 +4098,19 @@ montada fora de `/api/public` **e** no `skip()` do limiter global. **Responde
 eterna, e vários PSPs DESATIVAM o webhook depois de N falhas, o que transforma
 um problema de 15 min em falha silenciosa e permanente.
 
-**Crons no `vercel.json`:** `cron/expirar` `*/10` · `cron/reconciliar` `*/15`
-(**a verdade**; webhook é só latência) · `cron/replay` `20 * * * *`
-(reprocessa `status_processamento='erro'` sem depender do PSP). Todos com
-`CRON_SECRET` **fail-closed** (sem a env, ninguém roda).
+**Cron: UM só no `vercel.json`** — `cron/tick` `*/10`, que faz expirar +
+reconciliar (limite 50) + replay numa passada. ⚠️ **É de propósito:** o projeto
+já tinha 44 crons e o teto do plano Pro é 40 — cron a mais pode simplesmente
+não registrar, e "cron de expiração que nunca roda" = vaga paga que nunca é
+liberada, falha silenciosa da pior classe. As três etapas são idempotentes, uma
+não aborta as outras, e as rotas avulsas (`cron/expirar|reconciliar|replay`)
+seguem existindo pra disparo manual/depuração. `CRON_SECRET` **fail-closed**.
+
+⚠️ `listarParaReconciliar` ordena por **`updated_at` ASC, não `created_at`**, e
+`reconciliar` **toca a linha ao fim de cada tentativa** (inclusive sem novidade
+e inclusive em falha). Sem isso, limite menor que a fila re-checaria pra sempre
+as 50 mais antigas e as novas nunca seriam consultadas — e uma cobrança que
+sempre erra prenderia a vez. Round-robin é requisito, não detalhe.
 
 **Envs:** `PAG_ENABLED` (kill switch — recusa cobrança NOVA; consultar/expirar/
 reconciliar seguem, senão dinheiro já cobrado ficaria preso) ·

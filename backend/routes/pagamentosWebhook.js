@@ -2,9 +2,13 @@
 // Webhook do PSP + crons de pagamento.
 //
 // POST /api/pagamentos-webhook/:provider   - entrega do PSP (público, sem auth)
-// GET  /api/pagamentos-webhook/cron/expirar      - CRON_SECRET
-// GET  /api/pagamentos-webhook/cron/reconciliar  - CRON_SECRET
-// GET  /api/pagamentos-webhook/cron/replay       - CRON_SECRET
+// GET  /api/pagamentos-webhook/cron/tick   - expirar + reconciliar + replay (CRON_SECRET)
+// GET  /api/pagamentos-webhook/cron/expirar|reconciliar|replay - avulsos (CRON_SECRET)
+//
+// ⚠️ SÓ o `tick` está no vercel.json, de propósito: o projeto já tem 44 crons
+// e o teto do plano Pro é 40 — cron a mais pode simplesmente não registrar, e
+// "cron de expiração que nunca roda" = vaga paga que nunca é liberada, falha
+// silenciosa. Os três avulsos ficam pra disparo manual/depuração.
 //
 // ⚠️ MONTADO FORA DOS DOIS RATE LIMITERS. Por que isso é obrigatório:
 //   · o `publicLimiter` é 30/15min — o PSP entrega em rajada de poucos IPs;
@@ -65,8 +69,40 @@ router.post('/:provider', limiter, async (req, res) => {
 
 // ── Crons ──────────────────────────────────────────────────────────────────
 
+// O ÚNICO agendado (*/10). Faz as três coisas numa passada; todas são
+// idempotentes, então rodar junto não muda o resultado — só economiza slot de
+// cron. Nenhuma etapa aborta as outras: expiração é DB puro e barata, enquanto
+// a reconciliação depende do PSP e é a que pode falhar por rede.
+router.get('/cron/tick', async (req, res) => {
+  if (!cronAutorizado(req)) return res.status(401).json({ error: 'não autorizado' });
+  const out = {};
+  // Expirar primeiro: libera vaga o quanto antes, e não depende de rede.
+  try {
+    out.expirar = await pagamentos.expirarVencidas({ limite: 200 });
+  } catch (e) {
+    out.expirar = { erro: e.message };
+    console.error('[pagamentosWebhook] tick/expirar:', e.message);
+  }
+  // Reconciliar com limite menor que o avulso: roda 6x por hora, então 50 por
+  // passada dá 300 consultas/h ao PSP e rotaciona a fila inteira (a ordenação
+  // por updated_at faz round-robin — ver cobrancas.listarParaReconciliar).
+  try {
+    out.reconciliar = await pagamentos.reconciliar({ dias: 30, limite: 50 });
+  } catch (e) {
+    out.reconciliar = { erro: e.message };
+    console.error('[pagamentosWebhook] tick/reconciliar:', e.message);
+  }
+  try {
+    out.replay = await pagamentos.reprocessarWebhooksPendentes({ limite: 20 });
+  } catch (e) {
+    out.replay = { erro: e.message };
+    console.error('[pagamentosWebhook] tick/replay:', e.message);
+  }
+  res.json({ ok: true, ...out });
+});
+
 // Expira cobrança vencida e dispara o handler do domínio (que libera a vaga).
-// Nunca expira quem já pagou algo.
+// Nunca expira quem já pagou algo. Avulso: use pra depurar/forçar.
 router.get('/cron/expirar', async (req, res) => {
   if (!cronAutorizado(req)) return res.status(401).json({ error: 'não autorizado' });
   try {

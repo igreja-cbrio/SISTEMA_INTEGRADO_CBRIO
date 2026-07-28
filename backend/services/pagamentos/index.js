@@ -188,17 +188,31 @@ async function expirarVencidas({ limite = 200 } = {}) {
   return r;
 }
 
-/** Cron de reconciliação. O webhook é latência; ISTO é a verdade. */
+/**
+ * Cron de reconciliação. O webhook é latência; ISTO é a verdade.
+ *
+ * Toca a linha ao fim de CADA tentativa (mesmo sem novidade e mesmo em falha):
+ * é o que faz `listarParaReconciliar` — que ordena por `updated_at` — rotacionar
+ * a fila inteira em vez de re-checar sempre as mesmas mais antigas.
+ */
 async function reconciliar({ dias = 30, limite = 200 } = {}) {
   const lista = await cobrancas.listarParaReconciliar({ dias, limite });
   const r = { total: lista.length, atualizadas: 0, iguais: 0, falhas: 0 };
   for (const c of lista) {
     try {
       const res = await sincronizar(c);
-      if (res.semMudanca) r.iguais += 1; else r.atualizadas += 1;
+      if (res.semMudanca) {
+        r.iguais += 1;
+        await cobrancas.tocarReconciliacao(c.id);
+      } else {
+        r.atualizadas += 1;   // sincronizar já escreveu, updated_at subiu
+      }
     } catch (e) {
       r.falhas += 1;
       console.error(`[pagamentos] reconciliar ${c.id}:`, e.message);
+      // Toca mesmo em falha: senão uma cobrança que sempre erra (id inválido no
+      // PSP, por exemplo) prende a vez e as outras nunca são conferidas.
+      await cobrancas.tocarReconciliacao(c.id);
     }
   }
   return r;
