@@ -8,6 +8,7 @@
 // Next") com TODAS as edições dentro do modal + "recorrente até" editável;
 // botão Publicar de 1 clique; máscara hh:mm; "Duplicar evento".
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { inscricoesApi as api } from '../api';
 import { Card } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -110,7 +111,7 @@ function isoParaInputLocal(iso?: string | null): string {
   return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 }
 
-function EventoModal({ evento, areas, onClose, onSaved }: {
+export function EventoModal({ evento, areas, onClose, onSaved }: {
   evento?: any; areas: any[]; onClose: () => void; onSaved: () => void;
 }) {
   const ed = !!evento;
@@ -339,6 +340,7 @@ function SerieModal({ grupo, onClose, onEditar, onDuplicar, onPublicar, onCopiar
   onEditar: (e: any) => void; onDuplicar: (e: any) => void;
   onPublicar: (e: any) => Promise<void>; onCopiarLink: (e: any) => void; onSaved: () => void;
 }) {
+  const navigate = useNavigate();
   const { serie, edicoes } = grupo;
   const [recorreAte, setRecorreAte] = useState(serie.recorre_ate || '');
   const [salvando, setSalvando] = useState(false);
@@ -395,6 +397,9 @@ function SerieModal({ grupo, onClose, onEditar, onDuplicar, onPublicar, onCopiar
                       <Megaphone className="h-3 w-3 mr-1" /> Publicar
                     </Button>
                   )}
+                  <Button size="sm" variant="outline" className="h-7" title="Inscritos e sorteio desta edição" onClick={() => navigate(`/inscricoes/evento/${e.id}`)}>
+                    <Users className="h-3 w-3" />
+                  </Button>
                   <Button size="sm" variant="outline" className="h-7" title="Copiar o link público" onClick={() => onCopiarLink(e)}>
                     <Link2 className="h-3 w-3" />
                   </Button>
@@ -417,6 +422,7 @@ function SerieModal({ grupo, onClose, onEditar, onDuplicar, onPublicar, onCopiar
 }
 
 export default function Inscricoes() {
+  const navigate = useNavigate();
   const [aba, setAba] = useState<'calendario' | 'eventos'>('calendario');
   const [eventos, setEventos] = useState<any[]>([]);
   const [areas, setAreas] = useState<any[]>([]);
@@ -582,21 +588,25 @@ export default function Inscricoes() {
               })}
               {avulsos.map(e => (
                 <div key={e.id} className="rounded-lg border border-border p-3 flex items-center gap-3 flex-wrap">
-                  <div className="flex-1 min-w-[220px]">
-                    <div className="font-medium text-sm">{e.nome}</div>
+                  <button className="flex-1 min-w-[220px] text-left" onClick={() => navigate(`/inscricoes/evento/${e.id}`)}
+                    title="Abrir o evento (inscritos e sorteio)">
+                    <div className="font-medium text-sm hover:text-primary transition-colors">{e.nome}</div>
                     <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5 flex-wrap">
                       <span className="rounded bg-foreground/8 px-1.5 py-0.5">{e.area}</span>
                       {e.data && <span>{fmtData(e.data)}</span>}
                       <span className="inline-flex items-center gap-1"><Users className="h-3 w-3" /> {e.inscritos}{e.vagas ? `/${e.vagas}` : ''}</span>
                       <span className={`rounded px-1.5 py-0.5 ${STATUS_BADGE[e.status] || ''}`}>{e.status}</span>
                     </div>
-                  </div>
+                  </button>
                   <div className="flex items-center gap-1.5">
                     {e.status === 'rascunho' && (
                       <Button size="sm" onClick={() => publicar(e)} title="Coloca o formulário no ar agora">
                         <Megaphone className="h-3.5 w-3.5 mr-1" /> Publicar
                       </Button>
                     )}
+                    <Button size="sm" variant="outline" onClick={() => navigate(`/inscricoes/evento/${e.id}`)} title="Inscritos e sorteio">
+                      <Users className="h-3.5 w-3.5" />
+                    </Button>
                     <Button size="sm" variant="outline" title="Copiar o link público (/evento/…)" onClick={() => copiarLink(e)}>
                       <Link2 className="h-3.5 w-3.5" />
                     </Button>

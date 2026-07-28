@@ -160,26 +160,28 @@ router.get('/eventos', authorizeModule('inscricoes', 1), async (_req, res) => {
   }
 });
 
-// GET /eventos/:id — detalhe
+// GET /eventos/:id — detalhe (com sorteios embutidos, pro painel do evento)
 router.get('/eventos/:id', authorizeModule('inscricoes', 1), async (req, res) => {
   try {
     const { data, error } = await supabase.from('insc_eventos')
-      .select('*, serie:insc_series(id, nome, periodicidade, slug_base), inscritos:inscricoes(count)')
+      .select('*, serie:insc_series(id, nome, periodicidade, slug_base), inscritos:inscricoes(count), sorteios:insc_sorteios(id, premio, numero_sorteado, inscricao_id, ganhador_nome, sorteado_em)')
       .eq('id', req.params.id).is('deleted_at', null).maybeSingle();
     if (error) throw error;
     if (!data) return res.status(404).json({ error: 'Evento não encontrado' });
-    res.json({ ...data, inscritos: data.inscritos?.[0]?.count ?? 0 });
+    const sorteios = (data.sorteios || []).sort((a, b) => String(b.sorteado_em).localeCompare(String(a.sorteado_em)));
+    res.json({ ...data, inscritos: data.inscritos?.[0]?.count ?? 0, sorteios });
   } catch (e) {
     console.error('[inscricoes] evento:', e.message);
     res.status(500).json({ error: 'Erro ao carregar evento' });
   }
 });
 
-// GET /eventos/:id/inscricoes — lista de inscritos (sem CPF no nível 1)
+// GET /eventos/:id/inscricoes — lista de inscritos (sem CPF no nível 1;
+// `dados` = respostas do form-builder, exibidas no detalhe do evento)
 router.get('/eventos/:id/inscricoes', authorizeModule('inscricoes', 1), async (req, res) => {
   try {
     const { data, error } = await supabase.from('inscricoes')
-      .select('id, nome_completo, telefone, email, status, numero_sorte, whatsapp_optin, created_at')
+      .select('id, nome_completo, telefone, email, status, numero_sorte, whatsapp_optin, dados, created_at')
       .eq('evento_id', req.params.id).is('deleted_at', null)
       .order('created_at', { ascending: false }).limit(2000);
     if (error) throw error;
@@ -187,6 +189,105 @@ router.get('/eventos/:id/inscricoes', authorizeModule('inscricoes', 1), async (r
   } catch (e) {
     console.error('[inscricoes] inscricoes do evento:', e.message);
     res.status(500).json({ error: 'Erro ao listar inscrições' });
+  }
+});
+
+// PATCH /eventos/:id/inscricoes/:inscricaoId — corrigir uma inscrição
+// (nome/telefone/e-mail/status + respostas). `dados` é MESCLADO sobre o
+// existente (nunca substituído inteiro — mesma régua do eventos-externos);
+// valor string vazia = limpa a resposta daquela chave.
+router.patch('/eventos/:id/inscricoes/:inscricaoId', authorizeModule('inscricoes', 3), async (req, res) => {
+  try {
+    const { data: atual } = await supabase.from('inscricoes')
+      .select('id, dados').eq('id', req.params.inscricaoId)
+      .eq('evento_id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!atual) return res.status(404).json({ error: 'Inscrição não encontrada' });
+
+    const patch = {};
+    if (typeof req.body?.nome_completo === 'string' && req.body.nome_completo.trim().length >= 2) {
+      patch.nome_completo = req.body.nome_completo.trim().slice(0, 200);
+    }
+    if ('telefone' in (req.body || {})) patch.telefone = String(req.body.telefone || '').replace(/\D/g, '') || null;
+    if ('email' in (req.body || {})) patch.email = req.body.email ? String(req.body.email).toLowerCase().trim().slice(0, 200) : null;
+    if (req.body?.status !== undefined) {
+      // 'recebida' é exclusiva do fluxo de pagamento — manual só confirma/cancela
+      if (!['confirmada', 'cancelada'].includes(req.body.status)) {
+        return res.status(400).json({ error: 'Status inválido' });
+      }
+      patch.status = req.body.status;
+    }
+    if (req.body?.dados && typeof req.body.dados === 'object' && !Array.isArray(req.body.dados)) {
+      const dados = { ...(atual.dados || {}) };
+      for (const [k, v] of Object.entries(req.body.dados)) {
+        const key = String(k).slice(0, 80);
+        if (v === null || v === undefined || String(v).trim() === '') delete dados[key];
+        else dados[key] = String(v).slice(0, 500); // mesma régua do form público
+      }
+      patch.dados = dados;
+    }
+    if (!Object.keys(patch).length) return res.status(400).json({ error: 'Nada pra atualizar' });
+
+    const { data, error } = await supabase.from('inscricoes')
+      .update(patch)
+      .eq('id', req.params.inscricaoId).eq('evento_id', req.params.id).is('deleted_at', null)
+      .select('id, nome_completo, telefone, email, status, numero_sorte, whatsapp_optin, dados, created_at').maybeSingle();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('[inscricoes] atualizar inscrição:', e.message);
+    res.status(500).json({ error: 'Erro ao atualizar a inscrição' });
+  }
+});
+
+// DELETE /eventos/:id/inscricoes/:inscricaoId — soft delete (ex.: inscrição
+// de teste). Some da lista, das contagens e dos sorteios seguintes.
+router.delete('/eventos/:id/inscricoes/:inscricaoId', authorizeModule('inscricoes', 3), async (req, res) => {
+  try {
+    const { data: atual } = await supabase.from('inscricoes')
+      .select('id').eq('id', req.params.inscricaoId)
+      .eq('evento_id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!atual) return res.status(404).json({ error: 'Inscrição não encontrada' });
+    const { error } = await supabase.rpc('app_soft_delete', {
+      p_table_name: 'inscricoes', p_row_id: req.params.inscricaoId, p_deleted_by: req.user?.id ?? null,
+    });
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[inscricoes] excluir inscrição:', e.message);
+    res.status(500).json({ error: 'Erro ao excluir a inscrição' });
+  }
+});
+
+// POST /eventos/:id/sortear — sorteia um inscrito (espelho do eventos-externos).
+// Body: { premio, permitir_repetir }. Pool = inscrições ativas não-canceladas
+// com número da sorte; por padrão exclui quem já ganhou neste evento.
+router.post('/eventos/:id/sortear', authorizeModule('inscricoes', 3), async (req, res) => {
+  try {
+    const { premio, permitir_repetir } = req.body || {};
+    const { data: inscritos } = await supabase.from('inscricoes')
+      .select('id, nome_completo, numero_sorte')
+      .eq('evento_id', req.params.id).is('deleted_at', null)
+      .neq('status', 'cancelada').not('numero_sorte', 'is', null);
+    if (!inscritos || !inscritos.length) return res.status(400).json({ error: 'Sem inscritos pra sortear' });
+    let elegiveis = inscritos;
+    if (!permitir_repetir) {
+      const { data: jaSorteados } = await supabase.from('insc_sorteios')
+        .select('inscricao_id').eq('evento_id', req.params.id);
+      const ganhos = new Set((jaSorteados || []).map(s => s.inscricao_id));
+      elegiveis = inscritos.filter(i => !ganhos.has(i.id));
+    }
+    if (!elegiveis.length) return res.status(400).json({ error: 'Todos os inscritos já foram sorteados (marque "permitir repetir" pra sortear de novo)' });
+    const g = elegiveis[Math.floor(Math.random() * elegiveis.length)];
+    const { data: sorteio, error } = await supabase.from('insc_sorteios').insert({
+      evento_id: req.params.id, premio: premio ? String(premio).trim().slice(0, 200) : null,
+      numero_sorteado: g.numero_sorte, inscricao_id: g.id, ganhador_nome: g.nome_completo,
+      sorteado_por: req.user?.id || null,
+    }).select('*').single();
+    if (error) throw error;
+    res.status(201).json(sorteio);
+  } catch (e) {
+    console.error('[inscricoes] sortear:', e.message);
+    res.status(500).json({ error: 'Erro ao sortear' });
   }
 });
 

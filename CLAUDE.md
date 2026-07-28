@@ -133,6 +133,21 @@ Celebra com só nome+telefone continuam válidas para sempre).
   individuais. Máscara de hora hh:mm no modal ("1930"→"19:30"). "Nova
   edição"→"Duplicar evento". Abas Todas/Pessoas/Dashboard seguem
   desabilitadas por design (próximas entregas).
+- **F3.2 · PR 5 — detalhe do evento da espinha (2026-07-28 · SEM migration):**
+  página `/inscricoes/evento/:id` (`InscricaoEventoDetalhe.tsx` · adaptação da
+  tela do Eventos Externos, MESMA UX: roleta animada, prêmio a prêmio,
+  inscritos expansíveis, edição de inscrição com `dados` MESCLADO) plugada na
+  espinha + o que ela tem a mais: badge de status + **Publicar** no cabeçalho,
+  **cancelar/reativar inscrição** (status confirmada|cancelada — 'recebida' é
+  exclusiva do fluxo de pagamento), **exportar CSV** (só com `pode_exportar`
+  da matriz; separador `;` + BOM pro Excel). Backend novo em
+  `routes/inscricoes.js`: `POST /eventos/:id/sortear` (pool = ativas
+  não-canceladas COM número da sorte; exclui já sorteados; `permitir_repetir`),
+  `PATCH/DELETE /eventos/:id/inscricoes/:inscricaoId` (merge preservador /
+  app_soft_delete nível 3), `GET /eventos/:id` agora embute `sorteios`, lista
+  de inscritos agora traz `dados`. Cards avulsos e edições da série linkam pro
+  detalhe. **Pré-requisito da virada do Celebra** (a operação do dia 29/08 —
+  conferir inscritos + sortear no palco — passa a existir no módulo novo).
 - **Porta 7 · Grupos (2026-07-28 · migration `20260728235000` = M5):** e-mail
   obrigatório (D2) + anti-abreviação + endereço opcional (vai pro cadastro
   pendente, nunca sobrescreve membro) no form recém-lançado (toque mínimo);
