@@ -1,21 +1,25 @@
 // Página pública · confirmação de presença de um evento externo (Celebra etc.).
 // Segue o layout dos outros formulários públicos (AnimatedBackground + tema).
 // Se o evento tem sorteio, revela o "número da sorte" com confete.
+//
+// PORTA 1 do Contrato de Inscrição (F3.1 · docs/modulo-inscricoes/): campos
+// padrão fixos (nome completo, WhatsApp, CPF, e-mail, nascimento, sexo;
+// endereço opcional) + termos LGPD + opt-in explícito (D4) + consentimento de
+// imagem quando o evento tem campo de foto. Validações vêm de src/lib/inscricao
+// (fonte única — não recriar máscaras locais). O texto dos termos vem do
+// backend (GET /textos) — o snapshot gravado é sempre o canônico.
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import confetti from 'canvas-confetti';
 import { eventoPublico } from '../../api';
 import AnimatedBackground from './AnimatedBackground';
 import { usePublicTheme, PublicThemeToggle } from './publicTheme';
+import { BirthDatePicker } from '../../components/ui/birth-date-picker';
+import {
+  soDigitos, mascaraTelefone, mascaraCpf, cpfValido, telefoneValido,
+  nomeCompletoValido, temAbreviacaoNome, validarNascimento, SEXOS, AVISO_OPTIN,
+} from '../../lib/inscricao';
 
-function soDigitos(v: string) { return (v || '').toString().replace(/\D+/g, ''); }
-function mascaraTelefone(v: string) {
-  const d = soDigitos(v).slice(0, 11);
-  if (d.length <= 2) return d.length ? `(${d}` : '';
-  if (d.length <= 6) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
-  if (d.length <= 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
-  return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
-}
 const MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
 function dataLonga(iso?: string | null) {
   if (!iso) return '';
@@ -186,13 +190,65 @@ function ImagemField({ slug, label, value, onChange, onBusy, required }: {
   );
 }
 
+// Sexo em 2 pills (contrato: sempre e somente masculino/feminino · D8)
+function SexoPills({ value, onPick }: { value: string; onPick: (v: string) => void }) {
+  return (
+    <div style={{ marginBottom: 24 }}>
+      <div style={{ fontSize: 13, color: 'var(--cbrio-text3)', marginBottom: 10 }}>Sexo *</div>
+      <div style={{ display: 'flex', gap: 8 }}>
+        {SEXOS.map((o) => {
+          const sel = value === o;
+          return (
+            <button key={o} type="button" onClick={() => onPick(o)} aria-pressed={sel}
+              style={{
+                flex: 1, padding: '10px 15px', borderRadius: 999, fontSize: 13.5, cursor: 'pointer',
+                border: `1.5px solid ${sel ? '#00B39D' : 'var(--cbrio-border)'}`,
+                background: sel ? 'linear-gradient(90deg,#00B39D,#00d9bd)' : 'transparent',
+                color: sel ? '#fff' : 'var(--cbrio-text)', fontWeight: sel ? 700 : 500,
+                textTransform: 'capitalize', transition: 'all .15s',
+              }}>{o}</button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// Checkbox de consentimento (termos / imagem / opt-in) com texto pequeno.
+function ConsentBox({ checked, onChange, children }: {
+  checked: boolean; onChange: (v: boolean) => void; children: React.ReactNode;
+}) {
+  return (
+    <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start', marginBottom: 16, cursor: 'pointer' }}>
+      <input type="checkbox" checked={checked} onChange={e => onChange(e.target.checked)}
+        style={{ marginTop: 3, width: 16, height: 16, accentColor: '#00B39D', flexShrink: 0 }} />
+      <span style={{ fontSize: 12, color: 'var(--cbrio-text3)', lineHeight: 1.5 }}>{children}</span>
+    </label>
+  );
+}
+
+const TEXTOS_FALLBACK = {
+  termos_lgpd: 'Autorizo a Igreja CBRio a tratar os dados deste formulário para organizar esta atividade e me comunicar sobre ela, conforme a LGPD.',
+  imagem: 'Autorizo o uso de fotos do evento em que eu apareça nas mídias da Igreja CBRio.',
+  aviso_optin: AVISO_OPTIN,
+};
+
 export default function EventoExterno() {
   const { slug = '' } = useParams();
   const { C } = usePublicTheme();
   const [evento, setEvento] = useState<any>(null);
   const [carregando, setCarregando] = useState(true);
-  const [nome, setNome] = useState('');
+  const [nomeCompleto, setNomeCompleto] = useState('');
   const [telefone, setTelefone] = useState('');
+  const [cpf, setCpf] = useState('');
+  const [email, setEmail] = useState('');
+  const [nascimento, setNascimento] = useState('');
+  const [sexo, setSexo] = useState('');
+  const [endereco, setEndereco] = useState('');
+  const [aceitaTermos, setAceitaTermos] = useState(false);
+  const [optin, setOptin] = useState(false);
+  const [consentImagem, setConsentImagem] = useState(false);
+  const [textos, setTextos] = useState<any>(TEXTOS_FALLBACK);
   const [dados, setDados] = useState<Record<string, string>>({});
   const [website, setWebsite] = useState('');
   const [erro, setErro] = useState('');
@@ -203,7 +259,10 @@ export default function EventoExterno() {
 
   useEffect(() => {
     eventoPublico.get(slug).then(setEvento).catch(e => setErro(e.message || 'Evento não encontrado')).finally(() => setCarregando(false));
+    eventoPublico.textos().then((t: any) => { if (t?.termos_lgpd) setTextos(t); }).catch(() => { /* fallback local */ });
   }, [slug]);
+
+  const temCampoImagem = (evento?.campos || []).some((c: any) => c.tipo === 'imagem');
 
   function confete() {
     const cores = ['#00B39D', '#00d9bd', '#ffd166', '#ef476f', '#118ab2'];
@@ -215,15 +274,32 @@ export default function EventoExterno() {
   async function enviar(e: React.FormEvent) {
     e.preventDefault();
     setErro('');
-    if (nome.trim().length < 2) { setErro('Informe seu nome.'); return; }
-    if (soDigitos(telefone).length < 10) { setErro('Informe um telefone válido (com DDD).'); return; }
+    if (!nomeCompletoValido(nomeCompleto)) {
+      setErro(temAbreviacaoNome(nomeCompleto) ? 'Escreva o nome completo, sem abreviações.' : 'Informe seu nome completo.');
+      return;
+    }
+    if (!telefoneValido(telefone)) { setErro('Informe um telefone válido (com DDD).'); return; }
+    if (!cpfValido(cpf)) { setErro('Informe um CPF válido.'); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) { setErro('Informe um e-mail válido.'); return; }
+    if (!validarNascimento(nascimento)) { setErro('Informe sua data de nascimento.'); return; }
+    if (!SEXOS.includes(sexo)) { setErro('Selecione o sexo.'); return; }
+    if (!aceitaTermos) { setErro('É preciso aceitar os termos para se inscrever.'); return; }
     if (subindoImg > 0) { setErro('Aguarde o envio da imagem terminar.'); return; }
     for (const c of (evento?.campos || [])) {
       if (c.obrigatorio && !String(dados[c.key] || '').trim()) { setErro(`Preencha: ${c.label}`); return; }
     }
     setEnviando(true);
     try {
-      const r = await eventoPublico.inscrever(slug, { nome, telefone, dados, website });
+      const r = await eventoPublico.inscrever(slug, {
+        nome_completo: nomeCompleto.trim(),
+        telefone, cpf: soDigitos(cpf), email: email.trim(),
+        data_nascimento: nascimento, sexo,
+        endereco: endereco.trim() || null,
+        aceita_termos: aceitaTermos,
+        whatsapp_optin: optin,
+        consent_imagem: temCampoImagem ? consentImagem : undefined,
+        dados, website,
+      });
       setResultado({ numero: r.numero_sorte, jaInscrito: r.ja_inscrito, temSorteio: r.tem_sorteio });
       if (r.tem_sorteio) setTimeout(confete, 200);
     } catch (e: any) { setErro(e.message || 'Erro ao confirmar presença.'); }
@@ -282,7 +358,7 @@ export default function EventoExterno() {
                 <p style={{ fontSize: 13, color: C.text3, marginTop: 8, whiteSpace: 'pre-wrap' }}>{evento.msg_sucesso_texto}</p>
               ) : (
                 <p style={{ fontSize: 13, color: C.text3, marginTop: 8 }}>
-                  {resultado.jaInscrito ? 'Você já estava confirmado(a).' : resultado.temSorteio ? 'Anota aí o seu número da sorte:' : `Te esperamos${evento?.nome ? ` no ${evento.nome}` : ''}!`}
+                  {resultado.jaInscrito ? 'Você já estava confirmado(a) — atualizamos seus dados.' : resultado.temSorteio ? 'Anota aí o seu número da sorte:' : `Te esperamos${evento?.nome ? ` no ${evento.nome}` : ''}!`}
                 </p>
               )}
               {resultado.temSorteio && (
@@ -298,8 +374,20 @@ export default function EventoExterno() {
           ) : (
             <form onSubmit={enviar}>
               {erro && <div style={{ background: '#ef444418', border: '1px solid #ef444440', borderRadius: 10, padding: '10px 14px', marginBottom: 20, fontSize: 13, color: '#ef4444' }}>{erro}</div>}
-              <Field id="nome" label="Qual é o seu nome?" value={nome} onChange={e => setNome(e.target.value)} required />
+
+              {/* Campos padrão do contrato (fixos em todo formulário) */}
+              <Field id="nome_completo" label="Nome completo (sem abreviar)" value={nomeCompleto} onChange={e => setNomeCompleto(e.target.value)} required />
               <Field id="telefone" label="WhatsApp" value={telefone} onChange={e => setTelefone(mascaraTelefone(e.target.value))} required inputMode="tel" />
+              <Field id="cpf" label="CPF" value={cpf} onChange={e => setCpf(mascaraCpf(e.target.value))} required inputMode="numeric" />
+              <Field id="email" label="E-mail" value={email} onChange={e => setEmail(e.target.value)} required inputMode="email" />
+              <div style={{ marginBottom: 22 }}>
+                <div style={{ fontSize: 13, color: 'var(--cbrio-text3)', marginBottom: 8 }}>Data de nascimento *</div>
+                <BirthDatePicker value={nascimento} onChange={setNascimento} />
+              </div>
+              <SexoPills value={sexo} onPick={setSexo} />
+              <Field id="endereco" label="Endereço (opcional)" value={endereco} onChange={e => setEndereco(e.target.value)} />
+
+              {/* Campos específicos deste evento (form-builder) */}
               {(evento.campos || []).map((c: any) => (
                 c.tipo === 'select' ? (
                   <SelectFloat key={c.key} id={c.key} label={c.label} value={dados[c.key] || ''} onChange={setCampo(c.key)} required={c.obrigatorio} opcoes={c.opcoes || []} />
@@ -318,6 +406,21 @@ export default function EventoExterno() {
                     inputMode={c.tipo === 'email' ? 'email' : undefined} />
                 )
               ))}
+
+              {/* Consentimentos (Contrato de Inscrição) */}
+              <div style={{ marginTop: 6 }}>
+                <ConsentBox checked={aceitaTermos} onChange={setAceitaTermos}>
+                  <b style={{ color: 'var(--cbrio-text)' }}>Li e aceito os termos *</b><br />{textos.termos_lgpd}
+                </ConsentBox>
+                {temCampoImagem && (
+                  <ConsentBox checked={consentImagem} onChange={setConsentImagem}>{textos.imagem}</ConsentBox>
+                )}
+                <ConsentBox checked={optin} onChange={setOptin}>
+                  📲 <b style={{ color: 'var(--cbrio-text)' }}>Quero receber avisos deste evento no WhatsApp</b><br />
+                  {textos.aviso_optin || AVISO_OPTIN}
+                </ConsentBox>
+              </div>
+
               <input value={website} onChange={e => setWebsite(e.target.value)} tabIndex={-1} autoComplete="off" style={{ display: 'none' }} aria-hidden="true" />
               <button type="submit" disabled={enviando || subindoImg > 0} style={{
                 width: '100%', marginTop: 8, padding: '13px', borderRadius: 12,
