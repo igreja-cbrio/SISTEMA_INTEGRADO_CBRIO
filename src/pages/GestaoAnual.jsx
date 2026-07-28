@@ -3,6 +3,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { events as eventsApi, projects as projectsApi, planejamento as planejamentoApi } from '../api';
 import { toast } from 'sonner';
 import { CalendarDays, FolderKanban, Plus, Sparkles } from 'lucide-react';
+import { DatePicker } from '@/components/ui/date-picker';
 
 // ── Tema ────────────────────────────────────────────────────
 const C = {
@@ -219,8 +220,8 @@ export default function GestaoAnual() {
                   <div style={{ padding: '12px 18px', borderBottom: `1px solid ${C.border}`, background: C.bg, display: 'flex', flexDirection: 'column', gap: 8 }}>
                     <input autoFocus style={input} placeholder="Nome do evento" value={novoEv.name}
                       onChange={e => setNovoEv(p => ({ ...p, name: e.target.value }))} />
-                    <input type="date" style={input} value={novoEv.date} min={`${ano}-01-01`} max={`${ano}-12-31`}
-                      onChange={e => setNovoEv(p => ({ ...p, date: e.target.value }))} />
+                    <DatePicker style={input} value={novoEv.date} min={`${ano}-01-01`} max={`${ano}-12-31`}
+                      onChange={v => setNovoEv(p => ({ ...p, date: v }))} />
                     <div style={{ display: 'flex', gap: 8 }}>
                       <button style={btn('primary')} disabled={saving} onClick={criarEvento}>{saving ? '…' : 'Adicionar'}</button>
                       <button style={btn('ghost')} onClick={() => setNovoEv(null)}>Cancelar</button>

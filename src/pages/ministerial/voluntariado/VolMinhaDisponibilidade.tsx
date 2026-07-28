@@ -4,6 +4,7 @@ import { ptBR } from 'date-fns/locale';
 import { RefreshCw, CalendarOff, Check, Search, X, ChevronDown, ChevronRight } from 'lucide-react';
 import { toast } from 'sonner';
 import { useMyServices, useToggleServiceUnavailability } from './hooks';
+import { DatePicker } from '@/components/ui/date-picker';
 
 const TYPE_COLORS: Record<string, string> = {
   'Quarta com Deus': '#6366f1',
@@ -131,10 +132,9 @@ export default function VolMinhaDisponibilidade() {
       {/* Busca por data */}
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
-        <input
-          type="date"
+        <DatePicker
           value={searchDate}
-          onChange={e => setSearchDate(e.target.value)}
+          onChange={setSearchDate}
           className="w-full h-10 rounded-md border border-input bg-background pl-9 pr-8 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
         />
         {searchDate && (

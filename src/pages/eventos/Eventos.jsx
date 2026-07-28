@@ -11,6 +11,7 @@ import BudgetPanel from './components/BudgetPanel';
 import { Button } from '../../components/ui/button';
 import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import CompletionSection from '../../components/CompletionSection';
+import { DatePicker } from '@/components/ui/date-picker';
 
 // ── Tema ────────────────────────────────────────────────────
 const C = {
@@ -3131,7 +3132,7 @@ export default function Eventos() {
             })}
             <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
               <input style={{ ...styles.inlineInput, flex: 2 }} placeholder="Título da reunião..." value={occMeetingTitle} onChange={e => setOccMeetingTitle(e.target.value)} />
-              <input type="date" style={{ ...styles.inlineInput, flex: 1 }} value={occMeetingDate} onChange={e => setOccMeetingDate(e.target.value)} />
+              <DatePicker style={{ ...styles.inlineInput, flex: 1 }} value={occMeetingDate} onChange={v => setOccMeetingDate(v)} />
               <button style={styles.inlineBtn} onClick={() => addOccMeeting(expandedOcc.id)}>+</button>
             </div>
           </div>

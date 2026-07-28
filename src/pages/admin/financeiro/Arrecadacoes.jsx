@@ -8,6 +8,7 @@ import { Button } from '../../../components/ui/button';
 import { Badge } from '../../../components/ui/badge';
 import EmptyState from '../../../components/EmptyState';
 import { AlertTriangle } from 'lucide-react';
+import { DatePicker } from '@/components/ui/date-picker';
 import { financeiroV2 } from '../../../api';
 
 const fmtMoney = (v) => v == null ? '—' : Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -140,10 +141,10 @@ export default function Arrecadacoes() {
 
             {modo === 'custom' && (
               <>
-                <input type="date" value={inicioCustom} onChange={e => setInicioCustom(e.target.value)}
+                <DatePicker value={inicioCustom} onChange={setInicioCustom}
                   className="px-2 py-1 text-xs rounded border bg-background" />
                 <span className="text-xs text-muted-foreground">até</span>
-                <input type="date" value={fimCustom} onChange={e => setFimCustom(e.target.value)}
+                <DatePicker value={fimCustom} onChange={setFimCustom}
                   className="px-2 py-1 text-xs rounded border bg-background" />
               </>
             )}

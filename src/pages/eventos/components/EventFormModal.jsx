@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
+import { DatePicker } from '@/components/ui/date-picker';
 
 const C = { dark: 'var(--cbrio-text)', t2: 'var(--cbrio-text2)', border: 'var(--cbrio-border)', accent: '#00B39D' };
 
@@ -94,7 +95,10 @@ export default function EventFormModal({ event, categories, onSave, onClose }) {
         <form onSubmit={handleSubmit}>
           <Field label="Nome *" value={f.name} onChange={v => upd('name', v)} />
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <Field label="Data *" type="date" value={f.date} onChange={v => upd('date', v)} style={{ flex: 1 }} />
+            <div style={{ flex: 1, marginBottom: 12 }}>
+              <label style={labelStyle}>Data *</label>
+              <DatePicker value={f.date} onChange={v => upd('date', v)} />
+            </div>
             <div style={{ flex: 1 }}>
               <label style={labelStyle}>Categoria</label>
               <Select value={f.category_id || '__none__'} onValueChange={v => upd('category_id', v === '__none__' ? '' : v)}>

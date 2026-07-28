@@ -12,6 +12,7 @@ import { tarefas as api } from '../api';
 import { Card, CardContent } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Textarea } from '../components/ui/textarea';
 import { Checkbox } from '../components/ui/checkbox';
 import { Badge } from '../components/ui/badge';
@@ -398,7 +399,7 @@ function TarefaModal({ tarefa, onClose, onSaved }) {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs font-medium text-muted-foreground block mb-1">Prazo (opcional)</label>
-              <Input type="date" value={data} onChange={e => setData(e.target.value)} />
+              <DatePicker value={data} onChange={v => setData(v)} />
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground block mb-1">Horário</label>

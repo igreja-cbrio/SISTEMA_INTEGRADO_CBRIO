@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { expansion, users } from '../api';
 import { AlertTriangle } from 'lucide-react';
+import { DatePicker } from '@/components/ui/date-picker';
 
 // ── Tema (CSS vars para dark/light mode) ──────────────────
 const C = {
@@ -1841,10 +1842,10 @@ function MilestoneFormModal({ open, data, saving, onSave, onClose, usersList }) 
         </div>
         <div style={styles.formRow}>
           <Field label="Data Início">
-            <input type="date" style={styles.input} value={form.date_start || ''} onChange={e => set('date_start', e.target.value)} />
+            <DatePicker style={styles.input} value={form.date_start || ''} onChange={v => set('date_start', v)} />
           </Field>
           <Field label="Data Fim">
-            <input type="date" style={styles.input} value={form.date_end || ''} onChange={e => set('date_end', e.target.value)} />
+            <DatePicker style={styles.input} value={form.date_end || ''} onChange={v => set('date_end', v)} />
           </Field>
         </div>
         <div style={styles.formRow}>
@@ -1954,10 +1955,10 @@ function TaskFormModal({ open, data, milestoneId, saving, onSave, onClose, users
         </div>
         <div style={styles.formRow}>
           <Field label="Data Início">
-            <input type="date" style={styles.input} value={form.start_date || ''} onChange={e => set('start_date', e.target.value)} />
+            <DatePicker style={styles.input} value={form.start_date || ''} onChange={v => set('start_date', v)} />
           </Field>
           <Field label="Prazo">
-            <input type="date" style={styles.input} value={form.deadline || ''} onChange={e => set('deadline', e.target.value)} />
+            <DatePicker style={styles.input} value={form.deadline || ''} onChange={v => set('deadline', v)} />
           </Field>
         </div>
         {isEdit && (
@@ -2069,10 +2070,10 @@ function PlanoFormModal({ open, data, saving, onSave, onClose }) {
       </Field>
       <div style={styles.formRow}>
         <Field label="Início">
-          <input type="date" style={styles.input} value={form.periodo_inicio || ''} onChange={e => set('periodo_inicio', e.target.value)} />
+          <DatePicker style={styles.input} value={form.periodo_inicio || ''} onChange={v => set('periodo_inicio', v)} />
         </Field>
         <Field label="Fim">
-          <input type="date" style={styles.input} value={form.periodo_fim || ''} onChange={e => set('periodo_fim', e.target.value)} />
+          <DatePicker style={styles.input} value={form.periodo_fim || ''} onChange={v => set('periodo_fim', v)} />
         </Field>
       </div>
       <Field label="Líder">

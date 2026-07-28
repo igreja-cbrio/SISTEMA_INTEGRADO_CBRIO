@@ -11,6 +11,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs'
 import { Card } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Badge } from '../components/ui/badge';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -224,8 +225,8 @@ function Envios() {
           </Select>
           <Input className="h-9" placeholder="Contexto" value={filtros.contexto} onChange={(e) => setFiltros((f) => ({ ...f, contexto: e.target.value }))} />
           <Input className="h-9" placeholder="Telefone" value={filtros.telefone} onChange={(e) => setFiltros((f) => ({ ...f, telefone: e.target.value }))} />
-          <Input className="h-9" type="date" value={filtros.de} onChange={(e) => setFiltros((f) => ({ ...f, de: e.target.value }))} />
-          <Input className="h-9" type="date" value={filtros.ate} onChange={(e) => setFiltros((f) => ({ ...f, ate: e.target.value }))} />
+          <DatePicker className="h-9" value={filtros.de} onChange={(v) => setFiltros((f) => ({ ...f, de: v }))} />
+          <DatePicker className="h-9" value={filtros.ate} onChange={(v) => setFiltros((f) => ({ ...f, ate: v }))} />
           <Button className="h-9" onClick={aplicar}>Filtrar</Button>
         </div>
       </Card>

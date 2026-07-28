@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { DatePicker } from '@/components/ui/date-picker';
 
 export default function MeetingFormModal({ onSave, onClose }) {
   const [f, setF] = useState({
@@ -54,7 +55,10 @@ export default function MeetingFormModal({ onSave, onClose }) {
 
         <form onSubmit={handleSubmit}>
           <Field label="Título *" value={f.title} onChange={v => upd('title', v)} />
-          <Field label="Data *" type="date" value={f.date} onChange={v => upd('date', v)} />
+          <div style={{ marginBottom: 12 }}>
+            <label style={labelStyle}>Data *</label>
+            <DatePicker value={f.date} onChange={v => upd('date', v)} style={inputStyle} />
+          </div>
           <Field label="Participantes (separados por vírgula)" value={f.participants} onChange={v => upd('participants', v)} />
           <div style={{ marginBottom: 12 }}>
             <label style={labelStyle}>Decisões tomadas</label>
@@ -86,7 +90,7 @@ export default function MeetingFormModal({ onSave, onClose }) {
                     style={{ ...inputStyle, flex: 1 }} />
                   <input placeholder="Área" value={p.area} onChange={e => updPendency(i, 'area', e.target.value)}
                     style={{ ...inputStyle, flex: 1 }} />
-                  <input type="date" value={p.deadline} onChange={e => updPendency(i, 'deadline', e.target.value)}
+                  <DatePicker value={p.deadline} onChange={v => updPendency(i, 'deadline', v)}
                     style={{ ...inputStyle, flex: 1 }} />
                 </div>
               </div>

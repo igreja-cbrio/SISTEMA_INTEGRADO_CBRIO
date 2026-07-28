@@ -18,6 +18,7 @@ import { toast } from 'sonner';
 import { wifi as wifiApi } from '../../api';
 import Paginacao from '../../components/Paginacao';
 import { formatErro } from '../../lib/formatErro';
+import { DatePicker } from '@/components/ui/date-picker';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
@@ -263,8 +264,8 @@ function FiltroBar({ servicos, value, onChange }) {
         <option value="">Todos os dias</option>
         {dias.map(d => <option key={d} value={d}>{DIAS[d]}</option>)}
       </select>
-      <input type="date" value={value.de} onChange={e => set({ de: e.target.value })} style={selStyle} title="De" />
-      <input type="date" value={value.ate} onChange={e => set({ ate: e.target.value })} style={selStyle} title="Até" />
+      <DatePicker value={value.de} onChange={v => set({ de: v })} style={selStyle} title="De" />
+      <DatePicker value={value.ate} onChange={v => set({ ate: v })} style={selStyle} title="Até" />
     </div>
   );
 }

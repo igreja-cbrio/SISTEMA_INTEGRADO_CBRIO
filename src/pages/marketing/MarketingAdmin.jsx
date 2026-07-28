@@ -6,6 +6,7 @@ import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
 import { Input } from '../../components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '../../components/ui/label';
 import { Textarea } from '../../components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
@@ -677,8 +678,8 @@ function NovoOverrideForm({ membros, onSuccess }) {
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-2">
           <Label>Semana (segunda) *</Label>
-          <Input type="date" value={form.semana_inicio}
-            onChange={e => setForm(f => ({ ...f, semana_inicio: e.target.value }))} />
+          <DatePicker value={form.semana_inicio}
+            onChange={v => setForm(f => ({ ...f, semana_inicio: v }))} />
         </div>
         <div className="space-y-2">
           <Label>Horas disponíveis *</Label>

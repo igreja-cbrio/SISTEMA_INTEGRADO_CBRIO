@@ -5,6 +5,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { voluntariado } from '@/api';
 import { format, parseISO } from 'date-fns';
@@ -389,10 +390,9 @@ function MyAvailabilityTab() {
       {/* Busca por data */}
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
-        <Input
-          type="date"
+        <DatePicker
           value={searchDate}
-          onChange={e => setSearchDate(e.target.value)}
+          onChange={setSearchDate}
           className="pl-9 pr-8"
         />
         {searchDate && (

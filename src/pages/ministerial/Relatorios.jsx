@@ -5,6 +5,7 @@ import { relatorios as api } from '../../api';
 import { exportPDF } from '../../lib/export';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '../../components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
@@ -113,11 +114,11 @@ export default function Relatorios() {
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">Início</Label>
-              <Input type="date" value={inicio} onChange={e => setInicio(e.target.value)} />
+              <DatePicker value={inicio} onChange={setInicio} />
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">Fim</Label>
-              <Input type="date" value={fim} onChange={e => setFim(e.target.value)} />
+              <DatePicker value={fim} onChange={setFim} />
             </div>
           </div>
 

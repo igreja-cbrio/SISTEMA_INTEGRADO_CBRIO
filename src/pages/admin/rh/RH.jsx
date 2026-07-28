@@ -20,6 +20,7 @@ import TabAvaliacoes from './TabAvaliacoes';
 import TabExtras from './TabExtras';
 import TabFeriasCalendar from './TabFeriasCalendar';
 import TabPCS from './TabPCS';
+import { DatePicker } from '@/components/ui/date-picker';
 
 // ── Toast de feedback ───────────────────────────────────────
 function Toast({ message, type = 'error', onClose }) {
@@ -73,8 +74,8 @@ function DesligarModal({ func, onClose, onConfirm }) {
           {func.nome ? <strong className="text-foreground">{func.nome}</strong> : 'O colaborador'} fica como <strong>inativo</strong> — o registro e o histórico <strong>não são apagados</strong> e dá pra reativar depois.
         </p>
         <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Data do desligamento</label>
-        <input type="date" value={data} onChange={e => setData(e.target.value)} max={hoje}
-          className="mt-1 mb-3 flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+        <DatePicker value={data} onChange={v => setData(v)} max={hoje}
+          className="mt-1 mb-3" />
         <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Motivo (opcional)</label>
         <textarea value={motivo} onChange={e => setMotivo(e.target.value)} rows={3} placeholder="Ex.: pedido de demissão, fim de contrato…"
           className="mt-1 mb-4 flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring resize-none" />
@@ -1948,7 +1949,10 @@ function FuncionarioFormModal({ open, data, onClose, onSave, funcionarios = [], 
         </FormSelect>
       </div>
       <div style={styles.formRow}>
-        <Input label="Data Admissão *" type="date" value={f.data_admissao || ''} onChange={e => upd('data_admissao', e.target.value)} />
+        <div style={styles.formGroup}>
+          <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Data Admissão *</label>
+          <DatePicker value={f.data_admissao || ''} onChange={v => upd('data_admissao', v)} />
+        </div>
         {podeRemun && <Input label="Salário (R$)" type="number" value={f.salario || ''} onChange={e => upd('salario', e.target.value)} />}
       </div>
       {/* O gestor direto é definido na seção "Hierarquia" da ficha (editor canônico,
@@ -1958,7 +1962,10 @@ function FuncionarioFormModal({ open, data, onClose, onSave, funcionarios = [], 
           <FormSelect label="Status" value={f.status || 'ativo'} onChange={e => upd('status', e.target.value)}>
             {Object.entries(STATUS_COLORS).map(([k, v]) => <SelectItem key={k} value={k}>{v.label}</SelectItem>)}
           </FormSelect>
-          <Input label="Data Demissão" type="date" value={f.data_demissao || ''} onChange={e => upd('data_demissao', e.target.value)} />
+          <div style={styles.formGroup}>
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Data Demissão</label>
+            <DatePicker value={f.data_demissao || ''} onChange={v => upd('data_demissao', v)} />
+          </div>
         </div>
       )}
       {/* Foto — upload + drag & drop */}
@@ -2026,8 +2033,14 @@ function TreinamentoFormModal({ open, data, onClose, onSave }) {
       footer={<Button onClick={() => onSave(f)}>Salvar</Button>}>
       <Input label="Título *" value={f.titulo || ''} onChange={e => upd('titulo', e.target.value)} />
       <div style={styles.formRow}>
-        <Input label="Data Início *" type="date" value={f.data_inicio || ''} onChange={e => upd('data_inicio', e.target.value)} />
-        <Input label="Data Fim" type="date" value={f.data_fim || ''} onChange={e => upd('data_fim', e.target.value)} />
+        <div style={styles.formGroup}>
+          <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Data Início *</label>
+          <DatePicker value={f.data_inicio || ''} onChange={v => upd('data_inicio', v)} />
+        </div>
+        <div style={styles.formGroup}>
+          <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Data Fim</label>
+          <DatePicker value={f.data_fim || ''} onChange={v => upd('data_fim', v)} />
+        </div>
       </div>
       <Input label="Instrutor" value={f.instrutor || ''} onChange={e => upd('instrutor', e.target.value)} />
       <div style={styles.formGroup}>
@@ -3240,7 +3253,10 @@ function DocumentoFormModal({ open, data, onClose, onSave }) {
         <SelectItem value="certificado">Certificado</SelectItem>
         <SelectItem value="outro">Outro</SelectItem>
       </FormSelect>
-      <Input label="Data de Expiração" type="date" value={f.data_expiracao || ''} onChange={e => upd('data_expiracao', e.target.value)} />
+      <div style={styles.formGroup}>
+        <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Data de Expiração</label>
+        <DatePicker value={f.data_expiracao || ''} onChange={v => upd('data_expiracao', v)} />
+      </div>
     </Modal>
   );
 }

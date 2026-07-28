@@ -6,6 +6,7 @@ import { eventosExternos as api } from '../api';
 import { Card } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { toast } from 'sonner';
 import {
@@ -244,7 +245,7 @@ export function EventoFormModal({ evento, onClose, onSaved }: { evento?: any; on
           </div>
           <Input placeholder="Nome do evento (ex.: Celebra)" value={f.nome} onChange={e => setF({ ...f, nome: e.target.value })} />
           <div className="grid grid-cols-2 gap-2">
-            <Input type="date" value={f.data || ''} onChange={e => setF({ ...f, data: e.target.value })} />
+            <DatePicker value={f.data || ''} onChange={v => setF({ ...f, data: v })} />
             <Input placeholder="Horário (ex.: 8h30)" value={f.hora} onChange={e => setF({ ...f, hora: e.target.value })} />
           </div>
           <div>

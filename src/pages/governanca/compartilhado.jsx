@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { toast } from 'sonner';
+import { DatePicker } from '@/components/ui/date-picker';
 import { governanca as gov } from '../../api';
 import { formatErro } from '../../lib/formatErro';
 import useConfirmarSaida from '../../hooks/useConfirmarSaida';
@@ -243,7 +244,7 @@ export function DetalheReuniao({ id, canEdit, onClose, onChange }) {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="text-xs font-medium" style={{ color: C.t2 }}>Data</label>
-                <input type="date" disabled={ro} value={form.date} onChange={e => set('date', e.target.value)} style={inputStyle} />
+                <DatePicker disabled={ro} value={form.date} onChange={v => set('date', v)} style={inputStyle} />
               </div>
               <div>
                 <label className="text-xs font-medium" style={{ color: C.t2 }}>Status</label>
@@ -358,8 +359,8 @@ export function DetalheReuniao({ id, canEdit, onClose, onChange }) {
                         <input value={p.responsavel || ''} placeholder="Responsável"
                           onChange={e => setPropostas(ps => ps.map((x, j) => j === i ? { ...x, responsavel: e.target.value } : x))}
                           style={{ ...inputStyle, flex: '1 1 110px', width: 'auto', fontSize: 13 }} />
-                        <input type="date" value={p.prazo || ''}
-                          onChange={e => setPropostas(ps => ps.map((x, j) => j === i ? { ...x, prazo: e.target.value } : x))}
+                        <DatePicker value={p.prazo || ''}
+                          onChange={v => setPropostas(ps => ps.map((x, j) => j === i ? { ...x, prazo: v } : x))}
                           style={{ ...inputStyle, width: 'auto', fontSize: 13 }} />
                       </div>
                     ))}
@@ -418,7 +419,7 @@ export function DetalheReuniao({ id, canEdit, onClose, onChange }) {
                 <div className="flex flex-wrap items-end gap-2 mt-2">
                   <input value={novaTarefa.titulo} onChange={e => setNovaTarefa(t => ({ ...t, titulo: e.target.value }))} placeholder="Nova pendência…" style={{ ...inputStyle, flex: '2 1 180px', width: 'auto' }} onKeyDown={e => { if (e.key === 'Enter') addTarefa(); }} />
                   <input value={novaTarefa.responsavel} onChange={e => setNovaTarefa(t => ({ ...t, responsavel: e.target.value }))} placeholder="Responsável" style={{ ...inputStyle, flex: '1 1 120px', width: 'auto' }} />
-                  <input type="date" value={novaTarefa.prazo} onChange={e => setNovaTarefa(t => ({ ...t, prazo: e.target.value }))} style={{ ...inputStyle, width: 'auto' }} />
+                  <DatePicker value={novaTarefa.prazo} onChange={v => setNovaTarefa(t => ({ ...t, prazo: v }))} style={{ ...inputStyle, width: 'auto' }} />
                   <button onClick={addTarefa} className="text-sm px-3 py-2 rounded-lg text-white" style={{ background: C.primary }}><Plus size={15} /></button>
                 </div>
               )}
@@ -474,7 +475,7 @@ export function NovaReuniaoModal({ types, dataPadrao, onClose, onSaved }) {
           </div>
           <div>
             <label className="text-xs font-medium" style={{ color: C.t2 }}>Data</label>
-            <input type="date" value={date} onChange={e => setDate(e.target.value)} style={inputStyle} />
+            <DatePicker value={date} onChange={setDate} style={inputStyle} />
           </div>
           <p className="text-xs" style={{ color: C.t3 }}>A reunião entra no ciclo do mês da data escolhida.</p>
         </div>

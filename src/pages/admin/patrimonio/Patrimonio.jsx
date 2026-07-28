@@ -7,6 +7,7 @@ import { useAuth } from '../../../contexts/AuthContext';
 const CARGO_COORDENADOR_REVISAO = 'lider-logistica';
 import { patrimonio, logistica } from '../../../api';
 import { Button } from '../../../components/ui/button';
+import { DatePicker } from '@/components/ui/date-picker';
 import BarcodeScanner from '../../../components/BarcodeScanner';
 import Paginacao, { usePaginacaoLocal } from '../../../components/Paginacao';
 
@@ -620,7 +621,7 @@ function BemFormModal({ open, data, categorias, localizacoes, onClose, onSave })
         <Input label="Valor Aquisição (R$)" type="number" value={f.valor_aquisicao || ''} onChange={e => upd('valor_aquisicao', e.target.value)} />
       </div>
       <div style={styles.formRow}>
-        <Input label="Data Aquisição" type="date" value={f.data_aquisicao || ''} onChange={e => upd('data_aquisicao', e.target.value)} />
+        <div style={styles.formGroup}><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Data Aquisição</label><DatePicker value={f.data_aquisicao || ''} onChange={v => upd('data_aquisicao', v)} /></div>
         {f.id && <Select label="Status" value={f.status || 'ativo'} onChange={e => upd('status', e.target.value)}>
           {Object.entries(STATUS_BEM).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
         </Select>}
@@ -785,7 +786,7 @@ function NovoCicloModal({ open, responsaveis, onClose, onSave }) {
         <option value="">Selecionar</option>
         {(responsaveis || []).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
       </Select>
-      <Input label="Data de início *" type="date" value={f.data_inicio || ''} onChange={e => upd('data_inicio', e.target.value)} />
+      <div style={styles.formGroup}><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Data de início *</label><DatePicker value={f.data_inicio || ''} onChange={v => upd('data_inicio', v)} /></div>
     </Modal>
   );
 }
@@ -850,7 +851,7 @@ function InvFormModal({ open, onClose, onSave }) {
     <Modal open={open} onClose={onClose} title="Novo Inventário"
       footer={<Button onClick={() => onSave(f)}>Criar</Button>}>
       <Input label="Nome *" value={f.nome || ''} onChange={e => upd('nome', e.target.value)} />
-      <Input label="Data Início *" type="date" value={f.data_inicio || ''} onChange={e => upd('data_inicio', e.target.value)} />
+      <div style={styles.formGroup}><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Data Início *</label><DatePicker value={f.data_inicio || ''} onChange={v => upd('data_inicio', v)} /></div>
       <div style={styles.formGroup}>
         <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Observações</label>
         <textarea className="flex w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" style={{ minHeight: 60, resize: 'vertical' }} value={f.observacoes || ''} onChange={e => upd('observacoes', e.target.value)} />

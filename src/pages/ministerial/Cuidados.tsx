@@ -12,6 +12,7 @@ import NextConvite from '../../components/NextConvite';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/tabs';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '../../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../../components/ui/dialog';
@@ -220,7 +221,7 @@ function AcompanhamentoModal({ open, onClose, onSaved, atendentes, initial }: {
             {form.agendar && (
               <div className="space-y-2 mt-2">
                 <div className="grid grid-cols-2 gap-3">
-                  <div><Label>Data *</Label><Input type="date" value={form.agendamento_data} onChange={e => setForm({ ...form, agendamento_data: e.target.value })} /></div>
+                  <div><Label>Data *</Label><DatePicker value={form.agendamento_data} onChange={v => setForm({ ...form, agendamento_data: v })} /></div>
                   <div><Label>Hora</Label><Input type="time" value={form.agendamento_hora} onChange={e => setForm({ ...form, agendamento_hora: e.target.value })} /></div>
                 </div>
                 <div>
@@ -635,7 +636,7 @@ function ConvertidoModal({
             <div><Label>CPF</Label><CpfMembroLookup value={form.cpf} onChange={v => setForm({ ...form, cpf: v })} onMembro={setMembro} /></div>
           )}
           <div><Label>Telefone</Label><Input value={form.telefone} onChange={e => setForm({ ...form, telefone: e.target.value })} /></div>
-          <div><Label>Data do culto</Label><Input type="date" value={form.data_culto} onChange={e => setForm({ ...form, data_culto: e.target.value })} /></div>
+          <div><Label>Data do culto</Label><DatePicker value={form.data_culto} onChange={v => setForm({ ...form, data_culto: v })} /></div>
           <div className="flex items-center gap-4 flex-wrap">
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.cadastrado} onChange={e => setForm({ ...form, cadastrado: e.target.checked })} />Cadastrado</label>
           </div>
@@ -890,7 +891,7 @@ function VisitaModal({ open, onClose, onSaved, initial }: {
           <div><Label>Pessoa *</Label><Input value={form.nome} onChange={e => setForm({ ...form, nome: e.target.value })} placeholder="Quem foi visitado / atendido" /></div>
           <div className="grid grid-cols-2 gap-3">
             <div><Label>Telefone</Label><Input value={form.telefone} onChange={e => setForm({ ...form, telefone: e.target.value })} /></div>
-            <div><Label>Data *</Label><Input type="date" value={form.data_visita} onChange={e => setForm({ ...form, data_visita: e.target.value })} /></div>
+            <div><Label>Data *</Label><DatePicker value={form.data_visita} onChange={v => setForm({ ...form, data_visita: v })} /></div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -1169,11 +1170,11 @@ function TrilhaPessoas({ canEdit, reloadKey, onNova, onEditVisita, onNovoParaPes
         </div>
         <div className="space-y-1">
           <Label className="text-[11px] text-muted-foreground">De</Label>
-          <Input type="date" value={fDe} onChange={e => setFDe(e.target.value)} className="h-9 w-[150px]" />
+          <DatePicker value={fDe} onChange={setFDe} className="h-9 w-[150px]" />
         </div>
         <div className="space-y-1">
           <Label className="text-[11px] text-muted-foreground">Até</Label>
-          <Input type="date" value={fAte} onChange={e => setFAte(e.target.value)} className="h-9 w-[150px]" />
+          <DatePicker value={fAte} onChange={setFAte} className="h-9 w-[150px]" />
         </div>
         {temFiltro && <Button variant="ghost" size="sm" className="h-9" onClick={limparFiltros}><X className="h-3.5 w-3.5 mr-1" />Limpar filtros</Button>}
       </div>
@@ -1300,7 +1301,7 @@ function AtenderPedidoModal({ pedido, canEdit, onClose, onSaved }: {
             <div><Label>Qual? *</Label><Input value={tipoOutro} onChange={e => setTipoOutro(e.target.value)} placeholder="Descreva o tipo" /></div>
           )}
           <div className="grid grid-cols-2 gap-3">
-            <div><Label>Data</Label><Input type="date" value={data} onChange={e => setData(e.target.value)} /></div>
+            <div><Label>Data</Label><DatePicker value={data} onChange={setData} /></div>
             {ehSessao && <div><Label>Hora</Label><Input type="time" value={hora} onChange={e => setHora(e.target.value)} /></div>}
           </div>
           <div><Label>Quem vai atender</Label><Input value={responsavel} onChange={e => setResponsavel(e.target.value)} placeholder="Pastor / líder" /></div>

@@ -37,6 +37,7 @@ import {
 import { rh } from '../../../api';
 import { C, TIPO_FERIAS, FERIAS_STATUS } from '../../../lib/theme';
 import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
+import { DatePicker } from '@/components/ui/date-picker';
 
 const VACATION_COLORS = {
   ferias: { dot: 'bg-blue-500', badge: 'bg-blue-500/10 text-blue-400 border border-blue-500/20', label: 'Férias' },
@@ -520,13 +521,13 @@ export default function TabFeriasCalendar({ funcs, onAprovar }) {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Data Início *</label>
-                <input type="date" className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  value={form.data_inicio || ''} onChange={e => upd('data_inicio', e.target.value)} />
+                <DatePicker className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  value={form.data_inicio || ''} onChange={v => upd('data_inicio', v)} />
               </div>
               <div>
                 <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Data Fim *</label>
-                <input type="date" className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  value={form.data_fim || ''} onChange={e => upd('data_fim', e.target.value)} />
+                <DatePicker className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  value={form.data_fim || ''} onChange={v => upd('data_fim', v)} />
               </div>
             </div>
             <div>

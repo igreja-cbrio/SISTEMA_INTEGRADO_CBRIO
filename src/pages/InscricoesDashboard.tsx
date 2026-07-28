@@ -11,6 +11,7 @@ import { inscricoesApi as api } from '../api';
 import { Card } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { toast } from 'sonner';
 import { Loader2, FilterX, TrendingUp, CalendarCheck2, Users, Coins, DoorOpen, Percent } from 'lucide-react';
 import {
@@ -105,11 +106,11 @@ export default function InscricoesDashboard({ areas }: { areas: any[] }) {
         <div className="flex items-end gap-2 flex-wrap">
           <div>
             <label className="text-[11px] text-muted-foreground block">De</label>
-            <Input type="date" value={filtros.de} onChange={set('de')} className="h-9 w-36" />
+            <DatePicker value={filtros.de} onChange={v => set('de')(v)} className="h-9 w-36" />
           </div>
           <div>
             <label className="text-[11px] text-muted-foreground block">Até (vazio = hoje)</label>
-            <Input type="date" value={filtros.ate} onChange={set('ate')} className="h-9 w-36" />
+            <DatePicker value={filtros.ate} onChange={v => set('ate')(v)} className="h-9 w-36" />
           </div>
           <div>
             <label className="text-[11px] text-muted-foreground block">Área</label>
