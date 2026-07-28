@@ -974,7 +974,7 @@ function JornadaTab({ criancaId, c, onChanged }: { criancaId: string; c: any; on
 
       <div>
         <div className="text-xs text-muted-foreground mb-1">
-          Frequência (check-ins){freq ? ` · total ${freq.total}${freq.ultima ? ` · último ${fmt(String(freq.ultima).slice(0, 10))}` : ''}` : ''}
+          Frequência (dias com presença){freq ? ` · total ${freq.total}${freq.ultima ? ` · último ${fmt(String(freq.ultima).slice(0, 10))}` : ''}` : ''}
         </div>
         {dados.length === 0 ? (
           <p className="text-xs text-muted-foreground py-4 text-center">Sem check-ins registrados no sistema pra esta criança.</p>

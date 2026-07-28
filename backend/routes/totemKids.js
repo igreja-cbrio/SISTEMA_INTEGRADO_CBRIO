@@ -2326,17 +2326,17 @@ router.get('/criancas/:id/jornada', authorizeModule('kids', 1), async (req, res)
       .select('checkin_at, fez_decisao_jesus, decisao_jesus_em')
       .eq('crianca_id', id).is('deleted_at', null).order('checkin_at');
     const lista = cis || [];
+    // Frequência conta DIAS DISTINTOS (BRT), não cultos: a criança que vem no
+    // 11:30 conta 1 no domingo — vir a mais de um culto no mesmo dia é 1 dia só,
+    // e não vir aos outros cultos do dia NÃO é falta. (dedup igual à análise de IA)
+    const diaBrt = (ts) => ts ? new Date(new Date(ts).getTime() - 3 * 3600 * 1000).toISOString().slice(0, 10) : null;
+    const diasSet = new Set();
+    lista.forEach((c) => { const d = diaBrt(c.checkin_at); if (d) diasSet.add(d); });
+    const dias = [...diasSet].sort();
+    const total = dias.length;
+    const ultima = dias.length ? dias[dias.length - 1] : null;
     const porMesMap = {};
-    let ultima = null;     // 'YYYY-MM-DD'
-    let total = 0;
-    const addCheckin = (dataYmd) => {
-      if (!dataYmd) return;
-      const ymd = String(dataYmd).slice(0, 10);
-      porMesMap[ymd.slice(0, 7)] = (porMesMap[ymd.slice(0, 7)] || 0) + 1;
-      if (!ultima || ymd > ultima) ultima = ymd;
-      total += 1;
-    };
-    lista.forEach((c) => addCheckin(c.checkin_at));
+    dias.forEach((ymd) => { porMesMap[ymd.slice(0, 7)] = (porMesMap[ymd.slice(0, 7)] || 0) + 1; });
 
     const porMes = Object.entries(porMesMap).map(([mes, total]) => ({ mes, total })).sort((a, b) => a.mes.localeCompare(b.mes));
     const dec = lista.filter((c) => c.fez_decisao_jesus).map((c) => c.decisao_jesus_em || c.checkin_at).filter(Boolean).sort();
