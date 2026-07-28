@@ -146,6 +146,7 @@ export default function Patrimonio() {
   const [responsaveis, setResponsaveis] = useState([]);
   const [modalNovoCiclo, setModalNovoCiclo] = useState(false);
   const [modalConvocacao, setModalConvocacao] = useState(null);
+  const [coordenadorRevisao, setCoordenadorRevisao] = useState(null);
   const loadDash = useCallback(async () => { try { setDashError(false); setDash(await patrimonio.dashboard()); } catch (e) { console.error(e); setDashError(true); setDash({ totalBens: 0, ativos: 0, manutencao: 0, baixados: 0, extraviados: 0, valorTotal: 0, porCategoria: {}, porLocalizacao: {}, inventariosAbertos: 0 }); } }, []);
   const loadIndicadores = useCallback(async () => { try { setIndicadores(await patrimonio.dashboardIndicadores()); } catch (e) { console.error(e); } }, []);
   const loadBens = useCallback(async () => {
@@ -158,8 +159,9 @@ export default function Patrimonio() {
   const loadRevisao = useCallback(async () => { try { setRevisaoCiclos(await patrimonio.revisao.ciclos()); } catch (e) { console.error(e); } }, []);
   const loadRevisaoIndic = useCallback(async () => { try { setRevisaoIndic(await patrimonio.revisao.indicadores()); } catch (e) { console.error(e); } }, []);
   const loadResponsaveis = useCallback(async () => { try { setResponsaveis(await patrimonio.revisao.responsaveis()); } catch (e) { console.error(e); } }, []);
+  const loadCoordenadorRevisao = useCallback(async () => { try { setCoordenadorRevisao(await patrimonio.revisao.coordenador()); } catch (e) { console.error(e); } }, []);
 
-  useEffect(() => { loadDash(); loadIndicadores(); loadBens(); loadCats(); loadLocs(); loadInvs(); loadRevisao(); loadRevisaoIndic(); loadResponsaveis(); }, []);
+  useEffect(() => { loadDash(); loadIndicadores(); loadBens(); loadCats(); loadLocs(); loadInvs(); loadRevisao(); loadRevisaoIndic(); loadResponsaveis(); loadCoordenadorRevisao(); }, []);
   useEffect(() => { loadBens(); }, [filtroStatus, filtroCat, filtroLoc, busca]);
 
   async function saveBem(data) {
@@ -188,7 +190,7 @@ export default function Patrimonio() {
   async function iniciarConvocacao(id) { try { await patrimonio.revisao.iniciar(id); await abrirConvocacao(id); loadRevisao(); } catch (e) { setError(e.message); } }
   async function atualizarItemRevisao(itemId, data) { try { await patrimonio.revisao.atualizarItem(itemId, data); if (modalConvocacao) await abrirConvocacao(modalConvocacao.id); loadRevisao(); } catch (e) { setError(e.message); } }
   async function concluirConvocacao(id) { if (!confirm('Concluir esta convocação? Confirma que a conferência física terminou.')) return; try { await patrimonio.revisao.concluir(id); setModalConvocacao(null); loadRevisao(); loadRevisaoIndic(); } catch (e) { setError(e.message); } }
-  async function setCoordenadorLoc(id, coordenador_id) { try { await patrimonio.localizacoes.update(id, { coordenador_id }); loadLocs(); } catch (e) { setError(e.message); } }
+  async function salvarCoordenadorRevisao(coordenador_id) { try { setCoordenadorRevisao(await patrimonio.revisao.setCoordenador(coordenador_id)); } catch (e) { setError(e.message); } }
 
 
   return (
@@ -225,10 +227,11 @@ export default function Patrimonio() {
           onBaixar={baixarBem} isDiretor={isDiretor}
         />
       )}
-      {tab === 2 && <CatLocTab categorias={categorias} localizacoes={localizacoes} newCat={newCat} setNewCat={setNewCat} addCat={addCat} removeCat={removeCat} newLoc={newLoc} setNewLoc={setNewLoc} addLoc={addLoc} removeLoc={removeLoc} isDiretor={isDiretor} responsaveis={responsaveis} onSetCoordenador={setCoordenadorLoc} />}
+      {tab === 2 && <CatLocTab categorias={categorias} localizacoes={localizacoes} newCat={newCat} setNewCat={setNewCat} addCat={addCat} removeCat={removeCat} newLoc={newLoc} setNewLoc={setNewLoc} addLoc={addLoc} removeLoc={removeLoc} isDiretor={isDiretor} />}
       {tab === 3 && <InventariosTab inventarios={inventarios} onNew={() => setModalInv({})} onUpdate={updateInvStatus} isDiretor={isDiretor} />}
       {tab === 4 && (
         <RevisaoTab ciclos={revisaoCiclos} indicadores={revisaoIndic}
+          coordenador={coordenadorRevisao} responsaveis={responsaveis} onSalvarCoordenador={salvarCoordenadorRevisao}
           onNovoCiclo={() => setModalNovoCiclo(true)} onAbrirConvocacao={abrirConvocacao} isDiretor={isDiretor}
         />
       )}
@@ -488,7 +491,7 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
   );
 }
 
-function CatLocTab({ categorias, localizacoes, newCat, setNewCat, addCat, removeCat, newLoc, setNewLoc, addLoc, removeLoc, isDiretor, responsaveis, onSetCoordenador }) {
+function CatLocTab({ categorias, localizacoes, newCat, setNewCat, addCat, removeCat, newLoc, setNewLoc, addLoc, removeLoc, isDiretor }) {
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
       <div style={styles.card}>
@@ -520,14 +523,8 @@ function CatLocTab({ categorias, localizacoes, newCat, setNewCat, addCat, remove
           )}
           {localizacoes.length === 0 && <div style={styles.empty}>Nenhuma localização</div>}
           {localizacoes.map(l => (
-            <div key={l.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: `1px solid ${C.border}`, gap: 8 }}>
-              <span style={{ fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 4, flex: 1, minWidth: 0 }}><MapPin style={{ width: 14, height: 14, color: '#00B39D', flexShrink: 0 }} /> <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.nome}</span></span>
-              {isDiretor && (
-                <select style={{ ...styles.select, fontSize: 12, padding: '4px 8px' }} value={l.coordenador_id || ''} title="Coordenador da área" onChange={e => onSetCoordenador(l.id, e.target.value)}>
-                  <option value="">Sem coordenador</option>
-                  {(responsaveis || []).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-                </select>
-              )}
+            <div key={l.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: `1px solid ${C.border}` }}>
+              <span style={{ fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 4 }}><MapPin style={{ width: 14, height: 14, color: '#00B39D' }} /> {l.nome}</span>
               {isDiretor && <Button variant="ghost" size="xs" onClick={() => removeLoc(l.id)}><Trash2 style={{ width: 14, height: 14 }} /></Button>}
             </div>
           ))}
@@ -711,10 +708,36 @@ function MovFormModal({ open, data, localizacoes, onClose, onSave }) {
   );
 }
 
-function RevisaoTab({ ciclos, indicadores, onNovoCiclo, onAbrirConvocacao, isDiretor }) {
+function CoordenadorRevisaoCard({ coordenador, responsaveis, onSalvar, isDiretor }) {
+  const [editando, setEditando] = useState(false);
+  const [valor, setValor] = useState('');
+  useEffect(() => { if (editando) setValor(coordenador?.coordenador_id || ''); }, [editando, coordenador]);
+  return (
+    <div style={{ ...styles.card, padding: 16, marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+      <div>
+        <div style={{ fontSize: 12, fontWeight: 700, color: C.text2, textTransform: 'uppercase', letterSpacing: 0.5 }}>Coordenador de Operações/Logística</div>
+        <div style={{ fontSize: 14, fontWeight: 600, marginTop: 2 }}>{coordenador?.profiles?.name || 'Não definido'}</div>
+      </div>
+      {isDiretor && !editando && <Button variant="outline" size="xs" onClick={() => setEditando(true)}>{coordenador?.coordenador_id ? 'Trocar' : 'Definir'}</Button>}
+      {isDiretor && editando && (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <select style={styles.select} value={valor} onChange={e => setValor(e.target.value)}>
+            <option value="">Selecionar</option>
+            {(responsaveis || []).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+          </select>
+          <Button size="xs" onClick={() => { if (valor) { onSalvar(valor); setEditando(false); } }}>Salvar</Button>
+          <Button variant="ghost" size="xs" onClick={() => setEditando(false)}>Cancelar</Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RevisaoTab({ ciclos, indicadores, coordenador, responsaveis, onSalvarCoordenador, onNovoCiclo, onAbrirConvocacao, isDiretor }) {
   const [expandido, setExpandido] = useState(null);
   return (
     <>
+      <CoordenadorRevisaoCard coordenador={coordenador} responsaveis={responsaveis} onSalvar={onSalvarCoordenador} isDiretor={isDiretor} />
       {indicadores && (
         <div className="cbrio-stagger" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, marginBottom: 24 }}>
           <PatStatCard label="Convocações concluídas" value={indicadores.total_convocacoes_concluidas ?? 0} bg="#3b82f6" svg={null} />
