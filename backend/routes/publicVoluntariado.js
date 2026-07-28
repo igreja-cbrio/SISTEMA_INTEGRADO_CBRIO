@@ -24,6 +24,21 @@ const {
   temAbreviacaoNome, splitNomeCompleto, registrarConsentimentos, SEXOS, TEXTOS,
 } = require('../services/inscricaoContrato');
 
+// Limiter GENEROSO do router (padrão grupos/NPS/eventos): o form roda em
+// Wi-Fi único da igreja — o teto global de 30/15min derrubava a fila do
+// lounge (sweep 28/07). Anti-spam real = honeypot + contrato.
+const limiterGeral = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: parseInt(process.env.PUBLIC_FORM_RATE_LIMIT_MAX) || (process.env.NODE_ENV === 'production' ? 600 : 5000),
+  skip: () => process.env.NODE_ENV !== 'production',
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Muitas requisições deste endereço. Tente novamente em alguns minutos.' },
+});
+router.use(limiterGeral);
+
+// Estrito (10/15min) SÓ nos endpoints de probing de dados/auth (lookup-cpf,
+// request-login, register) — a inscrição em si usa o teto generoso acima.
 const publicLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
@@ -390,7 +405,7 @@ router.post('/register', publicLimiter, async (req, res) => {
 // ============================================================================
 const AREAS_VALIDAS = new Set(['kids', 'sede', 'ami', 'bridge', 'online']);
 
-router.post('/inscrever-form', publicLimiter, async (req, res) => {
+router.post('/inscrever-form', async (req, res) => { // teto = limiterGeral do router (o estrito de 10 travava a fila do lounge)
   try {
     const {
       nome, sobrenome, nome_completo, email, telefone, cpf, data_nascimento,

@@ -258,14 +258,22 @@ que segue pendente:
   inscricaoContrato (snapshot do consentimento de WhatsApp gravava VAZIO nas
   7 portas); template de confirmação de grupos GATED pelo opt-in (D4) +
   AVISO_OPTIN exibido no form quando desmarcado.
-- **PENDENTE (P2/P3):** rate limit — batismo/apresentação/vol/next atrás do
-  `publicLimiter` 30/15min (Wi-Fi único = 429; padrão: mover pra antes, como
-  NPS/grupos/eventos) e limiter do router do Next (10/min) pega o totem de
-  check-in; cópias locais de validação (batismo/vol/next/grupos) fora da
-  fonte única; totem de bebês (`membresia.js` apresentacao-bebe) 100% fora
-  do contrato (zero consentimento); tipo `data` do form-builder sem
-  renderização própria; QR com `?temporada=` antiga vence a temporada
-  aberta; endereço de grupos write-only; e2e do Next morto (#nome/#sobrenome).
+- **P2 FEITO (PR da onda 3):** batismo/apresentação/voluntariado/next saíram
+  do `publicLimiter` 30/15min (mounts antes dele no server.js, padrão
+  NPS/grupos/eventos) — cada router ganhou limiter próprio generoso
+  (600/15min · env `PUBLIC_FORM_RATE_LIMIT_MAX`); o Next trocou o 10/min do
+  router inteiro (que dava 429 no TOTEM de check-in na 10ª marcação) pelo
+  generoso; estritos de 10/15min ficaram SÓ no probing (vol lookup-cpf/
+  request-login/register · batismo GET /acesso). ⚠️ Limiter no `router.use` E
+  na rota = conta 2× (mesma instância) — os POSTs perderam o middleware
+  por-rota por isso. Bomba de hoisting do publicNext desarmada
+  (`turmaAbertaAtual` declarada antes do 1º uso, com comentário-guarda).
+- **PENDENTE (P3):** totem de bebês (`membresia.js` apresentacao-bebe) fora
+  do contrato (zero consentimento · validação fraca · sem dedup no POST);
+  cópias locais de validação (batismo/vol/next/grupos) fora da fonte única;
+  tipo `data` do form-builder sem renderização própria; QR com `?temporada=`
+  antiga vence a temporada aberta; endereço de grupos write-only; e2e do
+  Next morto (#nome/#sobrenome).
 
 ## ⚠️ Módulo de Comunicação (WhatsApp central) · handoff pro MATHEUS (2026-07-28)
 
