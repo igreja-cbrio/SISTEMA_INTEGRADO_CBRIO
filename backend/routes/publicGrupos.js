@@ -433,12 +433,16 @@ router.post('/inscrever', async (req, res) => {
     // (feedback do teste 2026-07-13: "todo erro deve dizer claramente onde está").
     if (!grupo_id) return res.status(400).json({ error: 'Grupo obrigatório.' });
     if (!nome || nome.trim().length < 3) return res.status(400).json({ error: 'Digite o nome completo.', campo: 'nome' });
-    if (!telefone || soDigitos(telefone).length < 10) return res.status(400).json({ error: 'Digite um celular válido com DDD.', campo: 'telefone' });
+    if (nome.trim().split(/\s+/).length < 2 || temAbreviacaoNome(nome)) {
+      return res.status(400).json({ error: 'Escreva o nome completo, sem abreviações.', campo: 'nome' });
+    }
+    const telInscDigitos = soDigitos(telefone);
+    if (telInscDigitos.length < 10 || telInscDigitos.length > 11) return res.status(400).json({ error: 'Digite um celular válido com DDD.', campo: 'telefone' });
     // CPF OBRIGATÓRIO (Marcos · 2026-07-13, feedback do teste) — além de
     // identificar a pessoa, é a chave forte do dedup/vínculo com o membro.
     if (!cpf || soDigitos(cpf).length !== 11) return res.status(400).json({ error: 'Informe o CPF completo.', campo: 'cpf' });
     if (!cpfValido(cpf)) return res.status(400).json({ error: 'Este CPF não é válido — confira os números.', campo: 'cpf' });
-    if (email && !ehEmailValido(email)) return res.status(400).json({ error: 'E-mail inválido.', campo: 'email' });
+    if (!email || !ehEmailValido(email)) return res.status(400).json({ error: 'Informe um e-mail válido.', campo: 'email' }); // D2: obrigatório
     if (!aceita_termos) return res.status(400).json({ error: 'É necessário aceitar os termos.', campo: 'aceita_termos' });
     // Nascimento e sexo OBRIGATÓRIOS (Marcos · 2026-07-10).
     if (!data_nascimento || !/^\d{4}-\d{2}-\d{2}$/.test(String(data_nascimento))) {
@@ -459,8 +463,13 @@ router.post('/inscrever', async (req, res) => {
     if (!generoLimpo) return res.status(400).json({ error: 'Marque o sexo (masculino ou feminino).', campo: 'genero' });
 
     const cpfLimpo = cpf ? soDigitos(cpf) : null;
-    const emailLimpo = email ? email.trim().toLowerCase() : null;
+    const emailLimpo = email.trim().toLowerCase();
     const fotoUrl = fotoUrlValida(foto_url) ? String(foto_url).slice(0, 1000) : null;
+    // Endereço fixo-opcional (ajuste 28/07 do contrato) — vai pro cadastro da
+    // pessoa (não pro pedido); membro existente não tem o perfil sobrescrito.
+    const enderecoLimpo = req.body?.endereco ? String(req.body.endereco).trim().slice(0, 300) : null;
+    const ipInsc = (req.headers['x-forwarded-for'] || '').toString().split(',')[0].trim() || req.ip || null;
+    const uaInsc = (req.headers['user-agent'] || '').toString().slice(0, 500);
 
     // Verifica se grupo existe e esta ativo
     const { data: grupo } = await supabase.from('mem_grupos')
@@ -602,16 +611,15 @@ router.post('/inscrever', async (req, res) => {
     let cadastroPendenteId = null;
     if (!membroId) {
       // Cria cadastro pendente
-      const ip = (req.headers['x-forwarded-for'] || '').toString().split(',')[0].trim() || req.ip || null;
-      const userAgent = (req.headers['user-agent'] || '').toString().slice(0, 500);
       const { data: cad, error: eCad } = await supabase.from('mem_cadastros_pendentes').insert({
         nome: nome.trim(),
         cpf: cpfLimpo,
         email: emailLimpo,
-        telefone: telefone || null,
+        telefone: telInscDigitos || null, // digits-only (contrato · 28/07)
         data_nascimento: data_nascimento || null,
         genero: generoLimpo,
         foto_url: fotoUrl,
+        endereco: enderecoLimpo,
         origem: 'qr_code',
         aceita_termos: !!aceita_termos,
         aceita_contato: true,
@@ -619,8 +627,8 @@ router.post('/inscrever', async (req, res) => {
         whatsapp_optin_em: whatsapp_optin ? new Date().toISOString() : null,
         consentimento_texto: consentimento_texto ? String(consentimento_texto).slice(0, 2000) : null,
         status: 'pendente',
-        ip_origem: ip,
-        user_agent: userAgent,
+        ip_origem: ipInsc,
+        user_agent: uaInsc,
         // "não sou eu" persiste: a aprovação só pode religar este cadastro por
         // CPF (soChaveForte) — nunca por e-mail/telefone de família.
         nao_vincular_fraco: confirmar_novo === true,
@@ -648,7 +656,7 @@ router.post('/inscrever', async (req, res) => {
       grupo_id,
       nome: nome.trim(),
       email: emailLimpo,
-      telefone: telefone || null,
+      telefone: telInscDigitos || null, // digits-only (contrato · 28/07; legado é backfillado na migration)
       origem: 'formulario_publico',
       observacao: obsPartes.length ? obsPartes.join(' · ').slice(0, 500) : null,
       status: 'pendente',
@@ -668,6 +676,17 @@ router.post('/inscrever', async (req, res) => {
 
     // Linha do tempo do pedido (histórico da caixa de entrada)
     registrarEventoPedido(pedido.id, 'criado', { grupo: grupo.nome, origem: 'formulario_publico' });
+
+    // Atos de consentimento na satélite (Contrato de Inscrição · porta grupos).
+    // O snapshot é o texto que a pessoa VIU (também fica no cadastro pendente).
+    registrarConsentimentos({
+      porta: 'grupos', refId: pedido.id, membroId,
+      ip: ipInsc, userAgent: uaInsc,
+      itens: [
+        { tipo: 'termos_lgpd', aceito: true, texto: consentimento_texto ? String(consentimento_texto).slice(0, 2000) : undefined },
+        { tipo: 'whatsapp', aceito: !!whatsapp_optin },
+      ],
+    }).catch((err) => console.error('[public grupos inscrever] consentimentos:', err.message));
 
     // Notifica líder do grupo (se tiver login) + admins via fallback
     (async () => {

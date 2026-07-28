@@ -25,13 +25,16 @@ import { usePublicTheme, PublicThemeToggle, PublicPaletteCtx, usePublicPalette }
 import GrupoSelector from '../../components/grupos/GrupoSelector';
 import { BirthDatePicker } from '../../components/ui/birth-date-picker';
 import { CheckCircle2, ArrowLeft, Users, Camera, X, HelpCircle, User, CalendarClock } from 'lucide-react';
+// Contrato de Inscrição (F3.1 · porta 7 · docs/modulo-inscricoes/): validadores
+// da fonte única — só os que não colidem com os helpers locais deste form.
+import { nomeCompletoValido, temAbreviacaoNome } from '../../lib/inscricao';
 
 const TEXTO_CONSENTIMENTO = `Ao enviar este formulário, você autoriza a CBRio a utilizar seus dados pessoais para fins de comunicação com a igreja e participação em grupo de conexão, conforme a LGPD.`;
 
 const IDLE_MS = 90_000; // totem: volta ao início após ~90s sem interação
 
 const FORM_VAZIO = {
-  nome: '', cpf: '', email: '', telefone: '',
+  nome: '', cpf: '', email: '', telefone: '', endereco: '',
   data_nascimento: '', genero: '', observacao: '', website: '', foto_url: '',
 };
 
@@ -255,7 +258,9 @@ export default function InscricaoGrupos() {
   // nome, telefone, nascimento, sexo, CPF (Marcos · 2026-07-13) e aceite.
   const validarCampos = () => {
     const erros = {};
-    if (!form.nome || form.nome.trim().length < 3) erros.nome = 'Digite o nome completo.';
+    if (!nomeCompletoValido(form.nome)) {
+      erros.nome = temAbreviacaoNome(form.nome) ? 'Escreva o nome completo, sem abreviações.' : 'Digite o nome completo.';
+    }
     const tel = soDigitos(form.telefone);
     if (tel.length < 10 || tel.length > 11) erros.telefone = 'Digite um celular válido com DDD.';
     if (!form.data_nascimento) {
@@ -272,7 +277,7 @@ export default function InscricaoGrupos() {
     const cpfDig = soDigitos(form.cpf);
     if (cpfDig.length !== 11) erros.cpf = 'Informe o CPF completo.';
     else if (!cpfValido(form.cpf)) erros.cpf = 'Este CPF não é válido — confira os números.';
-    if (form.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) erros.email = 'E-mail inválido.';
+    if (!form.email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) erros.email = 'Informe um e-mail válido.';
     if (!aceitaTermos) erros.aceita_termos = 'É necessário aceitar os termos para enviar.';
     return erros;
   };
@@ -361,8 +366,9 @@ export default function InscricaoGrupos() {
         grupo_id: grupoEscolhido.id,
         nome: form.nome.trim(),
         cpf: soDigitos(form.cpf), // obrigatório (Marcos · 2026-07-13) — validado acima
-        email: form.email.trim() || null,
+        email: form.email.trim(),
         telefone: form.telefone,
+        endereco: form.endereco.trim() || null,
         data_nascimento: form.data_nascimento || null, // já em ISO (validado acima)
         genero: form.genero || null,
         observacao: form.observacao || null,
@@ -567,7 +573,8 @@ export default function InscricaoGrupos() {
                   {errosCampos.genero && <p style={{ fontSize: 11.5, color: '#ef4444', margin: '4px 0 0' }}>{errosCampos.genero}</p>}
                 </div>
                 <Field campo="cpf" error={errosCampos.cpf} label="CPF *" value={form.cpf} onChange={set('cpf', mascaraCpf)} maxLength={14} inputMode="numeric" />
-                <Field campo="email" error={errosCampos.email} label="E-mail (opcional)" type="email" value={form.email} onChange={set('email')} />
+                <Field campo="email" error={errosCampos.email} label="E-mail *" type="email" value={form.email} onChange={set('email')} />
+                <Field campo="endereco" error={errosCampos.endereco} label="Endereço (opcional)" value={form.endereco} onChange={set('endereco')} />
               </div>
 
               {/* Grupo de outro gênero (única trava · 14/07) — BLOQUEIA com
