@@ -7,6 +7,7 @@ const { notificar } = require('../services/notificar');
 const { uploadModuleFile, SHAREPOINT_CONFIGURED } = require('../services/storageService');
 const { acharMembroGuardado } = require('../services/membroMatch');
 const { registrarObservacaoSegura } = require('../services/identidadeProgressiva');
+const { cpfValido, emailValido } = require('../services/inscricaoContrato');
 
 const uploadMw = multer({
   storage: multer.memoryStorage(),
@@ -33,28 +34,10 @@ function soDigitos(v) {
   return (v || '').toString().replace(/\D+/g, '');
 }
 
-function ehEmailValido(email) {
-  if (!email) return false;
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-}
-
-// Valida CPF (algoritmo oficial). Aceita entrada com ou sem máscara.
-function cpfValido(cpf) {
-  const d = soDigitos(cpf);
-  if (d.length !== 11) return false;
-  if (/^(\d)\1{10}$/.test(d)) return false;
-  const calc = (base, fator) => {
-    let soma = 0;
-    for (let i = 0; i < base.length; i += 1) {
-      soma += parseInt(base[i], 10) * (fator - i);
-    }
-    const resto = (soma * 10) % 11;
-    return resto === 10 ? 0 : resto;
-  };
-  const dv1 = calc(d.slice(0, 9), 10);
-  const dv2 = calc(d.slice(0, 10), 11);
-  return dv1 === parseInt(d[9], 10) && dv2 === parseInt(d[10], 10);
-}
+// emailValido/cpfValido agora vêm de services/inscricaoContrato (fonte única —
+// mesma troca zero-diff do P3 #2134; membresia é porta de PESSOA e segue o
+// mesmo contrato de porta). O grandfathering de CPF legado continua nos call
+// sites (valor idêntico ao armazenado passa sem DV — validação é só do novo).
 
 // POST /api/public/membresia/upload-foto — upload de foto pelo formulário público
 router.post('/upload-foto', cadastroLimiter, uploadMw.single('foto'), async (req, res) => {
@@ -320,7 +303,7 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
     if (!data_nascimento) {
       return res.status(400).json({ error: 'Data de nascimento é obrigatória.' });
     }
-    if (email && !ehEmailValido(email)) {
+    if (email && !emailValido(email)) {
       return res.status(400).json({ error: 'E-mail inválido.' });
     }
     if (senha !== undefined && senha !== null && senha !== '') {
