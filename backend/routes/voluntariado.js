@@ -1,7 +1,7 @@
 const router = require('express').Router();
 const { authenticate, authorizeModule, getEffectiveLevel, bustPermissionCaches } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
-const { acharOuCriarGuardado, acharMembroGuardado } = require('../services/membroMatch');
+const { acharOuCriarGuardado, acharMembroGuardado, normalizarTelefone } = require('../services/membroMatch');
 const { reconciliarCpfTardio } = require('../services/cpfReconciliar');
 const { cpfValido } = require('../utils/cpf');
 const { getPCCredentials, fetchWithRetry, PC_SERVICES_BASE, assignVolunteersToTeams, syncTeamMembersFromSchedules, fetchAllServiceTypes } = require('../services/planningCenter');
@@ -4146,7 +4146,7 @@ router.get('/acessos/cargos', async (req, res) => {
 router.post('/acessos/criar-login', async (req, res) => {
   if (!soAdmin(req, res)) return;
   try {
-    const { vol_profile_id, nome, email, cpf, data_nascimento, cargo_slug, senha } = req.body || {};
+    const { vol_profile_id, nome, email, cpf, telefone, data_nascimento, cargo_slug, senha } = req.body || {};
     const mail = String(email || '').toLowerCase().trim();
     if (!nome || !mail) return res.status(400).json({ error: 'Nome e e-mail são obrigatórios.' });
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(mail)) return res.status(400).json({ error: 'E-mail inválido.' });
@@ -4195,6 +4195,36 @@ router.post('/acessos/criar-login', async (req, res) => {
     if (vol_profile_id) {
       await supabase.from('vol_profiles').update({ auth_user_id: uid }).eq('id', vol_profile_id);
     }
+
+    // 5. Pessoa canônica (mem_membros) via matcher — grava CPF/telefone/nascimento.
+    //    Contrato de porta: normaliza, roteia pelo matcher canônico, enriquece só
+    //    campos VAZIOS (nunca sobrescreve o principal) e vincula o login
+    //    (profiles.membro_id + espelha telefone/nascimento). Best-effort.
+    try {
+      const cpfDigits = String(cpf || '').replace(/\D/g, '');
+      const telDigits = normalizarTelefone(telefone) || '';
+      const dob = data_nascimento || null;
+      if (nome && (cpfDigits || telDigits || dob)) {
+        const membro = await acharOuCriarGuardado({
+          nome, email: mail, cpf: cpfDigits || null, telefone: telefone || null,
+          dataNascimento: dob, extra: dob ? { data_nascimento: dob } : {},
+          origem: 'voluntariado_acesso',
+        });
+        if (membro?.id) {
+          const { data: m } = await supabase.from('mem_membros')
+            .select('cpf, telefone, data_nascimento').eq('id', membro.id).maybeSingle();
+          const patch = {};
+          if (cpfDigits && !m?.cpf) patch.cpf = cpfDigits;
+          if (telDigits && !m?.telefone) patch.telefone = telDigits;
+          if (dob && !m?.data_nascimento) patch.data_nascimento = dob;
+          if (Object.keys(patch).length) await supabase.from('mem_membros').update(patch).eq('id', membro.id);
+          const pPatch = { membro_id: membro.id };
+          if (telDigits) pPatch.telefone = telDigits;
+          if (dob) pPatch.data_nascimento = dob;
+          await supabase.from('profiles').update(pPatch).eq('id', uid);
+        }
+      }
+    } catch (e) { console.warn('[criar-login] pessoa canônica:', e.message); }
 
     bustPermissionCaches();
     res.json({
