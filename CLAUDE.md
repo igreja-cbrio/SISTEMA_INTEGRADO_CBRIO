@@ -72,9 +72,22 @@ Celebra com só nome+telefone continuam válidas para sempre).
   (migration `20260728121000` · append-only via backend · tipos: termos_lgpd,
   imagem, menor_responsavel, whatsapp). O ESTADO do opt-in continua nas
   colunas `whatsapp_optin/_em` de cada tabela.
-- Rollout F3.1 porta a porta (1 PR cada, nesta ordem): **eventos externos ✅**
-  → **apresentação ✅** → **líderes ✅** → **voluntariado ✅** → **next ✅** →
-  **batismo ✅** → grupos. Plano de migração + bugs: `docs/modulo-inscricoes/`.
+- Rollout F3.1 **CONCLUÍDO (2026-07-28)**: eventos externos ✅ apresentação ✅
+  líderes ✅ voluntariado ✅ next ✅ batismo ✅ **grupos ✅** — as 7 portas no
+  contrato. Plano de migração + bugs: `docs/modulo-inscricoes/`. Próximas
+  fases: **M6b** (whitelist soft-delete de vol_inscricoes + contadores SQL) e
+  **F3.2** (espinha `inscricoes` + módulo /inscricoes + migração do ext —
+  specs em `docs/modulo-inscricoes/fase2-specs.md`).
+- **Porta 7 · Grupos (2026-07-28 · migration `20260728235000` = M5):** e-mail
+  obrigatório (D2) + anti-abreviação + endereço opcional (vai pro cadastro
+  pendente, nunca sobrescreve membro) no form recém-lançado (toque mínimo);
+  telefone passa a gravar **digits-only** no pedido e no cadastro (legado
+  backfillado com BACKUP em `_bk_20260728_grupo_pedidos_telefone`;
+  `contato_divergente` não muda — já normalizava os 2 lados); termos+optin na
+  satélite (porta `grupos`, snapshot = texto exibido); **CHECK de origem
+  ganhou app|totem|mapa → DESTRAVOU o fanout do app** (validado: preenche
+  membro_id ⇒ XOR ok; limitação: pedido via app não dispara WhatsApp pro
+  líder — é trigger SQL; follow-up do módulo de Comunicação).
 - **Porta 6 · Batismo (2026-07-28 · SEM migration — a tabela já tinha tudo):**
   nome vira campo único (split no server, tolera payload antigo); nascimento
   ganhou validação real e o rótulo "(opcional)" mentiroso caiu; **sexo
