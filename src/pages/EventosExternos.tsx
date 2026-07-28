@@ -65,6 +65,13 @@ export default function EventosExternos() {
         <Button onClick={() => setNovoOpen(true)}><Plus className="h-4 w-4 mr-1" /> Novo evento</Button>
       </div>
 
+      {/* Transição pro módulo central (F3.2 · SPEC-04): eventos novos nascem lá;
+          este módulo segue cuidando dos já criados até a migração dos dados. */}
+      <div className="rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-muted-foreground flex items-center gap-2 flex-wrap">
+        <span>🧭 <b className="text-foreground">Eventos novos agora nascem no módulo Inscrições</b> — mesmo link público, com séries/edições e área. Este módulo segue cuidando dos eventos já criados até a migração (sem perder nada).</span>
+        <a href="/inscricoes" className="text-primary font-semibold hover:underline">Abrir Inscrições →</a>
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         {/* Calendário */}
         <Card className="glass-solid p-4 lg:col-span-2">

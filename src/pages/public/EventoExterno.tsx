@@ -370,7 +370,7 @@ export default function EventoExterno() {
               )}
             </div>
           ) : (evento.inscricoes_encerradas ?? !evento.form_ativo) ? (
-            <p style={{ textAlign: 'center', color: C.text3, fontSize: 14, padding: '20px 0' }}>As inscrições deste evento estão encerradas.</p>
+            <p style={{ textAlign: 'center', color: C.text3, fontSize: 14, padding: '20px 0' }}>{evento.aviso || 'As inscrições deste evento estão encerradas.'}</p>
           ) : (
             <form onSubmit={enviar}>
               {erro && <div style={{ background: '#ef444418', border: '1px solid #ef444440', borderRadius: 10, padding: '10px 14px', marginBottom: 20, fontSize: 13, color: '#ef4444' }}>{erro}</div>}
