@@ -392,6 +392,22 @@ export default function EventoExterno() {
             <p style={{ textAlign: 'center', color: C.text3, fontSize: 14, padding: '20px 0' }}>{evento.aviso || 'As inscrições deste evento estão encerradas.'}</p>
           ) : (
             <form onSubmit={enviar}>
+              {/* Vagas limitadas: mostrar ANTES de preencher. A conferência que
+                  vale é a do servidor (dentro do lock) — aqui é só aviso, então
+                  pode ficar 1 ou 2 vagas defasado num lançamento movimentado. */}
+              {typeof evento.vagas_restantes === 'number' && (
+                <div style={{
+                  marginBottom: 16, padding: '8px 14px', borderRadius: 999, display: 'inline-block',
+                  fontSize: 12.5, fontWeight: 600,
+                  background: evento.vagas_restantes <= 10 ? '#f59e0b18' : '#00B39D18',
+                  border: `1px solid ${evento.vagas_restantes <= 10 ? '#f59e0b40' : '#00B39D40'}`,
+                  color: evento.vagas_restantes <= 10 ? '#b45309' : '#00B39D',
+                }}>
+                  {evento.vagas_restantes === 1
+                    ? 'Última vaga!'
+                    : `Restam ${evento.vagas_restantes} vagas`}
+                </div>
+              )}
               {erro && <div style={{ background: '#ef444418', border: '1px solid #ef444440', borderRadius: 10, padding: '10px 14px', marginBottom: 16, fontSize: 13, color: '#ef4444' }}>{erro}</div>}
 
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(220px, 100%), 1fr))', gap: 12 }}>

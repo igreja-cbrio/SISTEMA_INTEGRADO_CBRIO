@@ -78,6 +78,16 @@ const CAMPOS_EVENTO = [
   'pagamento_ativo', 'valor_centavos', 'pagamento_expira_horas',
 ];
 
+// `pagamento_metodos` é TEXT[] e fica FORA do loop de whitelist de propósito:
+// string crua no lugar de array quebra o insert. Só os métodos que o checkout
+// público oferece — dinheiro/transferência são lançamento manual, não opção da
+// pessoa. Vocabulário alinhado a services/pagamentos/tipos.js (METODOS).
+const METODOS_CHECKOUT = ['pix', 'cartao', 'boleto', 'apple_pay'];
+function sanitizeMetodos(v) {
+  if (!Array.isArray(v)) return null;
+  return [...new Set(v.map((m) => String(m).trim()).filter((m) => METODOS_CHECKOUT.includes(m)))];
+}
+
 // GET /areas — catálogo oficial pro select do form.
 // Feedback do Marcos (28/07): áreas ADMINISTRATIVAS não fazem inscrição —
 // colapsam numa opção única "Administração" (RH, Patrimônio, T.I.,
@@ -215,6 +225,8 @@ router.post('/eventos', authorizeModule('inscricoes', 3), async (req, res) => {
       created_by: req.user?.id || null,
     };
     for (const k of CAMPOS_EVENTO) if (b[k] !== undefined && k !== 'nome') payload[k] = b[k];
+    const metodos = sanitizeMetodos(b.pagamento_metodos);
+    if (metodos) payload.pagamento_metodos = metodos;
 
     const { data, error } = await supabase.from('insc_eventos').insert(payload).select('id, slug').single();
     if (error) throw error;
@@ -242,6 +254,10 @@ router.put('/eventos/:id', authorizeModule('inscricoes', 3), async (req, res) =>
       patch.area = area;
     }
     if (b.campos !== undefined) patch.campos = sanitizeCampos(b.campos);
+    if (b.pagamento_metodos !== undefined) {
+      const metodos = sanitizeMetodos(b.pagamento_metodos);
+      if (metodos) patch.pagamento_metodos = metodos;
+    }
     if (b.status !== undefined) {
       if (!['rascunho', 'publicado', 'encerrado', 'arquivado'].includes(b.status)) {
         return res.status(400).json({ error: 'Status inválido' });
