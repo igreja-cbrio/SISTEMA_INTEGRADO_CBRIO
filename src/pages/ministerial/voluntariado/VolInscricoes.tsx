@@ -172,6 +172,8 @@ export default function VolInscricoes() {
   const [selected, setSelected] = useState<InscricaoRow | null>(null);
   const [obs, setObs] = useState('');
   const [editando, setEditando] = useState(false);
+  const [integrarOpen, setIntegrarOpen] = useState(false);
+  const [areasIntegrar, setAreasIntegrar] = useState<string[]>([]);
   const [form, setForm] = useState<{ cpf: string; data_nascimento: string; nome_mae: string; ministerios_interesse: string; area_direcionada: string[]; feedback: string }>({
     cpf: '', data_nascimento: '', nome_mae: '', ministerios_interesse: '', area_direcionada: [], feedback: '',
   });
@@ -198,8 +200,6 @@ export default function VolInscricoes() {
   });
   const check = bg?.check || null;
   const integracaoBloqueada = selKidsBridge && (!check || !BG_LIBERADO.has(check.status));
-  // Integrar exige a área direcionada definida (onde a pessoa vai servir).
-  const semDirecionada = !!selected && !(selected.area_direcionada && selected.area_direcionada.length);
 
   const consultarBg = useMutation({
     mutationFn: () => voluntariado.consultarAntecedentes(selected!.id),
@@ -250,6 +250,49 @@ export default function VolInscricoes() {
         ? f.area_direcionada.filter((x) => x !== m)
         : [...f.area_direcionada, m],
     }));
+
+  // Áreas que a PESSOA escolheu na inscrição (ministerios_interesse é a string
+  // "Louvor, Kids, ..."). É a base do seletor ao integrar. Fallback: lista geral.
+  const interessesPessoa = useMemo(() => {
+    const raw = String(selected?.ministerios_interesse || '')
+      .split(/[,;/]+/).map((s) => s.trim()).filter(Boolean);
+    const uniq = Array.from(new Set(raw));
+    return uniq.length ? uniq : areasDirecionamento;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected?.ministerios_interesse, areasDirecionamento]);
+
+  // Opções do seletor de integração = interesses da pessoa ∪ o que já foi direcionado.
+  const opcoesIntegrar = useMemo(
+    () => Array.from(new Set([...interessesPessoa, ...(selected?.area_direcionada || [])])),
+    [interessesPessoa, selected?.area_direcionada],
+  );
+
+  const abrirIntegrar = () => {
+    if (!selected) return;
+    const pre = (selected.area_direcionada && selected.area_direcionada.length)
+      ? selected.area_direcionada
+      : (interessesPessoa.length === 1 ? [...interessesPessoa] : []);
+    setAreasIntegrar(pre);
+    setIntegrarOpen(true);
+  };
+  const toggleAreaIntegrar = (m: string) =>
+    setAreasIntegrar((a) => (a.includes(m) ? a.filter((x) => x !== m) : [...a, m]));
+
+  // Grava a área direcionada escolhida E integra, num passo só.
+  const integrarComAreas = useMutation({
+    mutationFn: async (areas: string[]) => {
+      await voluntariado.editarInscricao(selected!.id, { area_direcionada: areas });
+      return voluntariado.atualizarInscricao(selected!.id, 'integrado');
+    },
+    onSuccess: () => {
+      setSelected((prev) => (prev ? { ...prev, status: 'integrado', area_direcionada: areasIntegrar } : prev));
+      queryClient.invalidateQueries({ queryKey: ['vol', 'inscricoes-list'] });
+      queryClient.invalidateQueries({ queryKey: ['vol', 'inscricoes-summary'] });
+      setIntegrarOpen(false);
+      toast.success('Pessoa integrada.');
+    },
+    onError: (e: any) => toast.error(e?.message || 'Erro ao integrar.'),
+  });
 
   const salvarDados = useMutation({
     mutationFn: () => voluntariado.editarInscricao(selected!.id, {
@@ -895,14 +938,6 @@ export default function VolInscricoes() {
                   </div>
                 )}
 
-                {/* Aviso: integrar exige a área direcionada */}
-                {semDirecionada && (selected.status === 'inscrito' || selected.status === 'enviado_ministerio') && (
-                  <p className="text-xs text-amber-600 pt-3">
-                    Para integrar, defina a <b>Área direcionada</b> (onde a pessoa vai servir) em{' '}
-                    <button type="button" className="underline font-medium" onClick={abrirEdicao}>Editar dados</button>.
-                  </p>
-                )}
-
                 {/* Ações de triagem · inscrito → enviado ao ministério → integrado */}
                 <div className="flex flex-wrap gap-2 pt-4 mt-2 border-t">
                   {selected.status === 'inscrito' && (
@@ -913,13 +948,11 @@ export default function VolInscricoes() {
                   )}
                   {(selected.status === 'inscrito' || selected.status === 'enviado_ministerio') && (
                     <Button size="sm" variant="default"
-                      disabled={mudarStatus.isPending || integracaoBloqueada || semDirecionada}
+                      disabled={mudarStatus.isPending || integracaoBloqueada}
                       title={integracaoBloqueada
                         ? 'Triagem de antecedentes pendente — libere a verificação antes de integrar'
-                        : semDirecionada
-                          ? 'Defina a Área direcionada (em "Editar dados") antes de integrar'
-                          : undefined}
-                      onClick={() => mudarStatus.mutate({ id: selected.id, status: 'integrado' })}>
+                        : 'Escolher a(s) área(s) e integrar'}
+                      onClick={abrirIntegrar}>
                       Integrar
                     </Button>
                   )}
@@ -938,6 +971,65 @@ export default function VolInscricoes() {
                 </div>
               </div>
             </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Integrar · escolher a(s) área(s) — todas ou só uma */}
+      <Dialog open={integrarOpen} onOpenChange={(v) => { if (!v) setIntegrarOpen(false); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Integrar — escolher a(s) área(s)</DialogTitle>
+          </DialogHeader>
+          {selected && (
+            <div className="space-y-3">
+              <p className="text-xs text-muted-foreground">
+                {interessesPessoa.length > 1
+                  ? <>A pessoa se inscreveu em <b>mais de uma área</b>. Escolha onde integrá-la — marque todas ou só uma.</>
+                  : <>Confirme a área onde a pessoa vai servir.</>}
+              </p>
+              {String(selected.ministerios_interesse || '').trim() && (
+                <p className="text-[11px] text-muted-foreground">
+                  Áreas de interesse: <span className="text-foreground">{selected.ministerios_interesse}</span>
+                </p>
+              )}
+
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="outline" className="h-7 text-xs"
+                  onClick={() => setAreasIntegrar([...opcoesIntegrar])}>
+                  Marcar todas
+                </Button>
+                <Button size="sm" variant="ghost" className="h-7 text-xs"
+                  onClick={() => setAreasIntegrar([])}>
+                  Limpar
+                </Button>
+              </div>
+
+              <div className="flex flex-wrap gap-1.5">
+                {opcoesIntegrar.map((m) => {
+                  const on = areasIntegrar.includes(m);
+                  return (
+                    <button key={m} type="button" onClick={() => toggleAreaIntegrar(m)}
+                      className={`px-2.5 py-1 rounded-full text-xs border transition-colors ${on ? 'bg-[#00B39D] text-white border-[#00B39D]' : 'bg-background text-muted-foreground border-border hover:border-[#00B39D]/50'}`}>
+                      {m}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="flex gap-2 pt-2 justify-end">
+                <Button size="sm" variant="ghost" disabled={integrarComAreas.isPending}
+                  onClick={() => setIntegrarOpen(false)}>
+                  Cancelar
+                </Button>
+                <Button size="sm" disabled={integrarComAreas.isPending || areasIntegrar.length === 0}
+                  onClick={() => integrarComAreas.mutate(areasIntegrar)}>
+                  {integrarComAreas.isPending
+                    ? 'Integrando...'
+                    : `Integrar${areasIntegrar.length ? ` em ${areasIntegrar.length} área${areasIntegrar.length > 1 ? 's' : ''}` : ''}`}
+                </Button>
+              </div>
+            </div>
           )}
         </DialogContent>
       </Dialog>
