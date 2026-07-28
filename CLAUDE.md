@@ -236,11 +236,16 @@ isso não existe relatório) e NÃO reescrever o chat de /conversas.
   obrigatório e endereço opcional (colunas novas); termos LGPD obrigatório +
   optin espelhados na satélite; **dedup novo** (CPF/membro × status
   inscrito|enviado_ministerio — antes reenviar DUPLICAVA); `GET /textos`.
-  ⚠️ **Soft-delete em 2 ETAPAS**: M6a criou `deleted_at` + TODOS os leitores
-  JS filtrando (`voluntariado.js`, `app.js`, `totemKids.js`,
-  `nextDirecionar.js`, `volEmailSender.js`); **NÃO soft-deletar
-  vol_inscricoes até a M6b** (whitelist + contadores SQL do fanout/KPI
-  nativo) — até lá a coluna fica NULL e exclusão continua sendo a rota atual.
+  Soft-delete em 2 etapas: M6a criou `deleted_at` + TODOS os leitores JS
+  filtrando (`voluntariado.js`, `app.js`, `totemKids.js`, `nextDirecionar.js`,
+  `volEmailSender.js`); **M6b CONCLUÍDA (2026-07-28 · migration
+  `20260729060000`)**: vol_inscricoes na whitelist `app_soft_deletable_tables`
+  + patch DINÂMICO (pg_get_functiondef + regexp_replace, técnica da
+  20260722250000 — imune a drift) nos contadores SQL: ramos
+  `solicitacoes_servir_recebidas/alocadas` de `_kpi_agregar_dado` e dedup de
+  voluntariado do `fn_app_inscricoes_fanout` ignoram soft-deletadas (inscrição
+  excluída não bloqueia re-inscrição pelo app). **Soft-delete de
+  vol_inscricoes LIBERADO — sempre via `app_soft_delete`.**
 - **Porta 3 · Líderes/anfitriões (2026-07-28 · migration `20260728190000`):**
   e-mail obrigatório; anti-abreviação no nome; teto 11 no telefone; coluna
   `origem` (linhas antigas = formulario_publico, único writer que existiu);
