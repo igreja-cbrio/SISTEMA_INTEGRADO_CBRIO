@@ -15,6 +15,7 @@ import {
   DollarSign, HandCoins, Sparkles, Activity, Inbox,
   Copy, Share2, Download, QrCode, Camera, ScanLine,
   TrendingUp, ArrowRightLeft, GitMerge, ShieldCheck, Loader2, BookOpen, Flame,
+  ClipboardList, CreditCard, Ticket,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '../../components/ui/button';
@@ -52,6 +53,7 @@ const TIMELINE_COR = {
   jornada: '#00B39D', conversao: '#8b5cf6', aconselhamento: '#00B39D',
   encaminhamento: '#00B39D', decisao: '#8b5cf6',
   voluntariado: '#f59e0b', nota: '#94a3b8',
+  inscricao: '#0ea5e9',   // espinha de inscrições (eventos e retiros)
 };
 
 const STATUS_MAP = {
@@ -867,6 +869,8 @@ export default function Membresia() {
   const [indicandoServir, setIndicandoServir] = useState(false);
   const [devocionalHist, setDevocionalHist] = useState(null); // { data: [], resumo: {} }
   const [loadingDevocional, setLoadingDevocional] = useState(false);
+  const [inscHist, setInscHist] = useState(null); // { itens: [], total, por_porta }
+  const [loadingInsc, setLoadingInsc] = useState(false);
   const [wifiHist, setWifiHist] = useState(null); // { tem_wifi, total_logins, conexoes: [] }
   const [loadingWifi, setLoadingWifi] = useState(false);
   const [faceHist, setFaceHist] = useState(null); // { total, ultima, itens: [] }
@@ -912,6 +916,18 @@ export default function Membresia() {
       .then(r => { if (!cancelado) setDevocionalHist(r); })
       .catch(() => { if (!cancelado) setDevocionalHist({ data: [], resumo: null }); })
       .finally(() => { if (!cancelado) setLoadingDevocional(false); });
+    return () => { cancelado = true; };
+  }, [selectedMembro?.id, activeTab]);
+
+  // Inscrições da pessoa em TODAS as portas · carrega ao abrir a aba
+  useEffect(() => {
+    if (!selectedMembro?.id || activeTab !== 'inscricoes') return;
+    let cancelado = false;
+    setLoadingInsc(true);
+    membresia.membros.inscricoes(selectedMembro.id)
+      .then(r => { if (!cancelado) setInscHist(r); })
+      .catch(() => { if (!cancelado) setInscHist({ itens: [], total: 0, por_porta: {} }); })
+      .finally(() => { if (!cancelado) setLoadingInsc(false); });
     return () => { cancelado = true; };
   }, [selectedMembro?.id, activeTab]);
 
@@ -1114,6 +1130,7 @@ export default function Membresia() {
     setShowContribForm(false);
     setVolStatus(null);
     setDevocionalHist(null);
+    setInscHist(null);
     setWifiHist(null);
     setTimeline(null);
     setFaceHist(null);
@@ -1716,6 +1733,7 @@ export default function Membresia() {
                   {[
                     { key: 'info', label: 'Informações', icon: Users },
                     { key: 'timeline', label: 'Linha do tempo', icon: Clock },
+                    { key: 'inscricoes', label: 'Inscrições', icon: ClipboardList },
                     { key: 'familia', label: 'Família', icon: Home },
                     { key: 'grupo', label: 'Grupo', icon: Users },
                     { key: 'generosidade', label: 'Generosidade', icon: HandCoins },
@@ -2566,6 +2584,105 @@ export default function Membresia() {
                 </TabsContent>
 
                 {/* Aba: Devocional · check-ins do app */}
+                {/* Aba: Inscrições — todas as portas num lugar só */}
+                <TabsContent value="inscricoes" className="mt-4">
+                  {loadingInsc ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: C.text3, fontSize: 13, padding: '24px 0', justifyContent: 'center' }}>
+                      <Loader2 style={{ width: 16, height: 16 }} className="animate-spin" /> Carregando inscrições…
+                    </div>
+                  ) : !inscHist || inscHist.itens?.length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: '32px 0', color: C.text3 }}>
+                      <ClipboardList style={{ width: 32, height: 32, margin: '0 auto 8px', opacity: 0.4 }} />
+                      <div style={{ fontSize: 14, color: C.text2 }}>Nenhuma inscrição registrada</div>
+                      <div style={{ fontSize: 12, marginTop: 4 }}>
+                        Eventos, retiros, batismo, NEXT, voluntariado e pedidos de grupo aparecem aqui.
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      {/* Contagem por porta */}
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 14 }}>
+                        {Object.entries(inscHist.por_porta || {}).map(([porta, n]) => (
+                          <span key={porta} style={{
+                            fontSize: 12, padding: '4px 10px', borderRadius: 999,
+                            background: C.primaryBg, border: `1px solid ${C.primary}30`, color: C.text2,
+                          }}>
+                            {porta}: <strong style={{ color: C.text }}>{n}</strong>
+                          </span>
+                        ))}
+                      </div>
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        {inscHist.itens.map((i, idx) => {
+                          const cancelado = ['cancelada', 'cancelado', 'rejeitado'].includes(String(i.status));
+                          return (
+                            <div key={`${i.fonte}-${idx}`} style={{
+                              padding: 12, borderRadius: 10, border: `1px solid ${C.border}`,
+                              background: 'var(--cbrio-input-bg)', opacity: cancelado ? 0.6 : 1,
+                            }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                                <span style={{
+                                  fontSize: 10.5, textTransform: 'uppercase', letterSpacing: 0.4,
+                                  padding: '2px 7px', borderRadius: 5, background: `${C.primary}18`, color: C.primary, fontWeight: 600,
+                                }}>{i.porta}</span>
+                                <span style={{ fontSize: 14, fontWeight: 600, color: C.text, textDecoration: cancelado ? 'line-through' : 'none' }}>
+                                  {i.titulo}
+                                </span>
+                                {i.status && (
+                                  <span style={{ fontSize: 11.5, color: cancelado ? '#ef4444' : C.text3 }}>{i.status}</span>
+                                )}
+                                {i.numero_sorte != null && (
+                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 11, color: C.primary, fontWeight: 600 }}>
+                                    <Ticket style={{ width: 11, height: 11 }} /> Nº {i.numero_sorte}
+                                  </span>
+                                )}
+                                {i.link && (
+                                  <a href={i.link} style={{ marginLeft: 'auto', fontSize: 11.5, color: C.primary }}>abrir →</a>
+                                )}
+                              </div>
+                              <div style={{ fontSize: 11.5, color: C.text3, marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+                                <span>inscrição em {new Date(i.data).toLocaleDateString('pt-BR')}</span>
+                                {i.data_evento && (
+                                  <span>
+                                    {/* Data do EVENTO é diferente da data da inscrição — separar
+                                        evita ler "inscrito em março" como "foi em março". */}
+                                    evento em {new Date(String(i.data_evento).length <= 10 ? `${i.data_evento}T00:00:00` : i.data_evento).toLocaleDateString('pt-BR')}
+                                  </span>
+                                )}
+                                {i.local && <span>{i.local}</span>}
+                                {i.detalhe && <span>{i.detalhe}</span>}
+                              </div>
+                              {i.pagamento && (
+                                <div style={{
+                                  marginTop: 8, paddingTop: 8, borderTop: `1px solid ${C.border}`,
+                                  fontSize: 12, display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center',
+                                }}>
+                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: C.text3 }}>
+                                    <CreditCard style={{ width: 12, height: 12 }} />
+                                    {i.pagamento.status_pagamento}
+                                  </span>
+                                  {i.pagamento.metodo && <span style={{ color: C.text2 }}>{i.pagamento.metodo}{i.pagamento.parcelas_total > 1 ? ` · ${i.pagamento.parcelas_total}x` : ''}</span>}
+                                  {i.pagamento.valor_centavos != null && (
+                                    <span style={{ color: C.text, fontWeight: 600 }}>
+                                      R$ {(i.pagamento.valor_centavos / 100).toFixed(2).replace('.', ',')}
+                                    </span>
+                                  )}
+                                  {i.pagamento.pago_em && (
+                                    <span style={{ color: C.text3 }}>pago em {new Date(i.pagamento.pago_em).toLocaleDateString('pt-BR')}</span>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div style={{ fontSize: 11, color: C.text3, marginTop: 10 }}>
+                        {inscHist.total} inscriç{inscHist.total === 1 ? 'ão' : 'ões'} · Kids fica fora desta lista (dado de menor).
+                      </div>
+                    </>
+                  )}
+                </TabsContent>
+
                 <TabsContent value="devocional" className="mt-4">
                   {loadingDevocional ? (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: C.text3, fontSize: 13, padding: '24px 0', justifyContent: 'center' }}>

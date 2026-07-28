@@ -743,7 +743,7 @@ router.get('/membros/:id/timeline', authorizeModule('membros', 1), async (req, r
 
     const [
       trilha, grupos, contribs, devos, next, batismos, jornada,
-      convertidos, acompanh, encaminh, decisoes, historico, checkins,
+      convertidos, acompanh, encaminh, decisoes, historico, checkins, inscEspinha,
     ] = await Promise.all([
       supabase.from('mem_trilha_valores').select('etapa, concluida, data_conclusao, created_at').eq('membro_id', id),
       supabase.from('mem_grupo_membros').select('entrou_em, saiu_em, motivo_saida, grupo:mem_grupos(nome)').eq('membro_id', id),
@@ -760,6 +760,11 @@ router.get('/membros/:id/timeline', authorizeModule('membros', 1), async (req, r
       volProfile?.id
         ? supabase.from('vol_check_ins').select('checked_in_at, method, service:vol_services(name, scheduled_at)').eq('volunteer_id', volProfile.id).order('checked_in_at', { ascending: false }).limit(100)
         : Promise.resolve({ data: [] }),
+      // Espinha de inscrições (F3.2) — faltava aqui: a timeline agregava todas
+      // as portas antigas mas não a nova, então evento/retiro do módulo
+      // /inscricoes não aparecia na história da pessoa.
+      supabase.from('inscricoes').select('created_at, status, evento:insc_eventos(nome, tipo)')
+        .eq('membro_id', id).is('deleted_at', null).order('created_at', { ascending: false }).limit(100),
     ]);
 
     (trilha.data || []).forEach((t) => t.concluida && add('trilha', t.data_conclusao || t.created_at, `Trilha: ${t.etapa}`, 'Etapa concluída', '/ministerial/membresia'));
@@ -784,12 +789,160 @@ router.get('/membros/:id/timeline', authorizeModule('membros', 1), async (req, r
     (decisoes.data || []).forEach((d) => add('decisao', d.registrado_em || d.culto?.data, `Decisão no culto`, d.tipo_decisao, '/integracao'));
     (historico.data || []).forEach((h) => add('nota', h.data, h.descricao, 'Registro manual', '/ministerial/membresia'));
     (checkins.data || []).forEach((ci) => add('voluntariado', ci.checked_in_at, 'Check-in de voluntariado', ci.service?.name || null, '/voluntariado'));
+    (inscEspinha.data || []).forEach((i) => add(
+      'inscricao',
+      i.created_at,
+      `Inscrição · ${i.evento?.nome || (i.evento?.tipo === 'retiro' ? 'retiro' : 'evento')}`,
+      i.status === 'confirmada' ? null : i.status,
+      '/inscricoes',
+    ));
 
     eventos.sort((a, b) => (a.data < b.data ? 1 : -1));
     res.json({ eventos, total: eventos.length });
   } catch (e) {
     console.error('[membresia] timeline:', e.message);
     res.status(500).json({ error: 'Erro ao montar linha do tempo' });
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────────
+// GET /api/membresia/membros/:id/inscricoes
+//
+// "Abrir um membro e ver as inscrições dele" — TODAS as portas num lugar só,
+// não só a espinha nova. É o complemento da timeline (que é feed cronológico
+// misto): aqui a pergunta é "em que esta pessoa se inscreveu, e como pagou".
+//
+// Fontes: espinha (`inscricoes`, com pagamento) · eventos externos legados
+// (`ext_inscricoes`) · batismo · NEXT · voluntariado · pedido de grupo.
+// NÃO inclui Kids — dado de menor, mesmo corte que a timeline e o export LGPD.
+//
+// Read-only, uma query .eq por fonte (poucas linhas por pessoa).
+// ────────────────────────────────────────────────────────────────────────
+router.get('/membros/:id/inscricoes', authorizeModule('membros', 1), async (req, res) => {
+  try {
+    const id = req.params.id;
+
+    const [espinha, ext, batismo, next, vol, grupoPed] = await Promise.all([
+      supabase.from('inscricoes')
+        .select('id, status, created_at, numero_sorte, evento:insc_eventos(id, nome, data, hora, local, tipo, pagamento_ativo, valor_centavos)')
+        .eq('membro_id', id).is('deleted_at', null).order('created_at', { ascending: false }).limit(200),
+      supabase.from('ext_inscricoes')
+        .select('id, created_at, numero_sorte, evento:ext_eventos(id, nome, data, local)')
+        .eq('membro_id', id).is('deleted_at', null).order('created_at', { ascending: false }).limit(200),
+      supabase.from('batismo_inscricoes')
+        .select('id, status, created_at, data_batismo')
+        .eq('membro_id', id).is('deleted_at', null).order('created_at', { ascending: false }).limit(50),
+      supabase.from('next_inscricoes')
+        .select('id, created_at, check_in_at, evento:next_eventos(id, titulo, data_inicio)')
+        .eq('membro_id', id).order('created_at', { ascending: false }).limit(50),
+      supabase.from('vol_inscricoes')
+        .select('id, status, area, data_inscricao, created_at, ministerios_interesse')
+        .eq('membro_id', id).is('deleted_at', null).order('created_at', { ascending: false }).limit(50),
+      supabase.from('mem_grupo_pedidos')
+        .select('id, status, created_at, decidido_em, grupo:mem_grupos(id, nome)')
+        .eq('membro_id', id).order('created_at', { ascending: false }).limit(50),
+    ]);
+
+    // Pagamento das inscrições da espinha, em UMA consulta (não uma por linha).
+    // Best-effort: a view é recente e a aba não pode deixar de abrir sem ela.
+    const idsEspinha = (espinha.data || []).map((i) => i.id);
+    let pagPorInscricao = new Map();
+    if (idsEspinha.length) {
+      try {
+        // `.in()` em lotes de 200 (a URL do PostgREST estoura com lista grande).
+        for (let i = 0; i < idsEspinha.length; i += 200) {
+          const { data, error } = await supabase.from('vw_insc_pagamento_estado')
+            .select('inscricao_id, metodo, status_pagamento, valor_centavos, valor_pago_centavos, pago_em, parcelas_total')
+            .in('inscricao_id', idsEspinha.slice(i, i + 200));
+          if (error) throw error;
+          for (const p of data || []) pagPorInscricao.set(p.inscricao_id, p);
+        }
+      } catch (e) {
+        console.error('[membresia] pagamento das inscrições indisponível:', e.message);
+      }
+    }
+
+    const itens = [];
+    const push = (o) => { if (o.data) itens.push(o); };
+
+    (espinha.data || []).forEach((i) => push({
+      fonte: 'inscricoes',
+      porta: i.evento?.tipo === 'retiro' ? 'Retiro' : 'Evento',
+      titulo: i.evento?.nome || 'Evento',
+      data: i.created_at,
+      data_evento: i.evento?.data || null,
+      local: i.evento?.local || null,
+      status: i.status,
+      numero_sorte: i.numero_sorte ?? null,
+      pagamento: pagPorInscricao.get(i.id) || null,
+      link: i.evento?.id ? `/inscricoes/evento/${i.evento.id}` : '/inscricoes',
+    }));
+
+    (ext.data || []).forEach((i) => push({
+      fonte: 'ext_inscricoes',
+      porta: 'Evento',
+      titulo: i.evento?.nome || 'Evento externo',
+      data: i.created_at,
+      data_evento: i.evento?.data || null,
+      local: i.evento?.local || null,
+      status: 'confirmada',
+      numero_sorte: i.numero_sorte ?? null,
+      pagamento: null,
+      link: i.evento?.id ? `/eventos-externos/${i.evento.id}` : '/eventos-externos',
+    }));
+
+    (batismo.data || []).forEach((b) => push({
+      fonte: 'batismo_inscricoes',
+      porta: 'Batismo',
+      titulo: 'Batismo',
+      data: b.created_at,
+      data_evento: b.data_batismo || null,
+      status: b.status,
+      link: '/batismo',
+    }));
+
+    (next.data || []).forEach((n) => push({
+      fonte: 'next_inscricoes',
+      porta: 'NEXT',
+      titulo: n.evento?.titulo || 'NEXT',
+      data: n.created_at,
+      data_evento: n.evento?.data_inicio || null,
+      // O check-in é o que diz se a pessoa FOI, não só se se inscreveu — é o
+      // marco que a jornada de 90 dias cobra.
+      status: n.check_in_at ? 'compareceu' : 'inscrita',
+      link: '/next',
+    }));
+
+    (vol.data || []).forEach((v) => push({
+      fonte: 'vol_inscricoes',
+      porta: 'Voluntariado',
+      titulo: `Voluntariado${v.area ? ` · ${v.area}` : ''}`,
+      data: v.data_inscricao || v.created_at,
+      detalhe: v.ministerios_interesse || null,
+      status: v.status,
+      link: '/voluntariado',
+    }));
+
+    (grupoPed.data || []).forEach((p) => push({
+      fonte: 'mem_grupo_pedidos',
+      porta: 'Grupo de conexão',
+      titulo: p.grupo?.nome ? `Grupo ${p.grupo.nome}` : 'Grupo de conexão',
+      data: p.created_at,
+      data_evento: p.decidido_em || null,
+      status: p.status,
+      link: '/grupos',
+    }));
+
+    itens.sort((a, b) => (a.data < b.data ? 1 : -1));
+
+    // Resumo pra cabeçalho da aba (contagem por porta, sem recontar no front).
+    const porPorta = {};
+    for (const i of itens) porPorta[i.porta] = (porPorta[i.porta] || 0) + 1;
+
+    res.json({ itens, total: itens.length, por_porta: porPorta });
+  } catch (e) {
+    console.error('[membresia] inscrições do membro:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar as inscrições da pessoa' });
   }
 });
 
