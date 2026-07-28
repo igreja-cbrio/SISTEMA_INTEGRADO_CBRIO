@@ -17,13 +17,17 @@ const {
   processarIdentidade, registrarConsentimentos, normalizarCpf, normalizarEmail,
 } = require('../services/inscricaoContrato');
 
+// Limiter GENEROSO do router (padrão grupos/NPS/eventos): Wi-Fi único da
+// igreja — 10/15min por IP dava 429 na 11ª família (sweep 28/07).
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 10,
+  max: parseInt(process.env.PUBLIC_FORM_RATE_LIMIT_MAX) || (process.env.NODE_ENV === 'production' ? 600 : 5000),
+  skip: () => process.env.NODE_ENV !== 'production',
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: 'Muitas inscrições deste endereço. Tente novamente mais tarde.' },
+  message: { error: 'Muitas requisições deste endereço. Tente novamente em alguns minutos.' },
 });
+router.use(limiter);
 
 // 2º domingo de um mês (year, month 0-11)
 function segundoDomingo(year, month) {
@@ -85,7 +89,7 @@ router.get('/textos', (_req, res) => {
 });
 
 // POST /api/public/apresentacao-criancas
-router.post('/', limiter, async (req, res) => {
+router.post('/', async (req, res) => { // limiter geral já está no router.use (contar 2x reduziria o teto pela metade)
   try {
     const body = req.body || {};
     const {
