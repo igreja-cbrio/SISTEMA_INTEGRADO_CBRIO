@@ -19,6 +19,7 @@
 
 const { supabase } = require('../../../utils/supabase');
 const { notificar } = require('../../notificar');
+const { enviarConfirmacaoInscricao } = require('../../inscricaoWhatsapp');
 const { STATUS } = require('../tipos');
 
 const origem_tipo = 'inscricao';
@@ -55,7 +56,7 @@ async function espelhar(cobranca, extra = {}) {
 async function carregarInscricao(cobranca) {
   if (!cobranca.origem_id) return null;
   const { data, error } = await supabase.from('inscricoes')
-    .select('id, evento_id, nome_completo, status, membro_id, evento:insc_eventos(id, nome)')
+    .select('id, evento_id, nome_completo, telefone, whatsapp_optin, status, membro_id, evento:insc_eventos(id, nome, data, hora)')
     .eq('id', cobranca.origem_id).is('deleted_at', null).maybeSingle();
   if (error) throw error;
   return data || null;
@@ -101,6 +102,16 @@ async function aoPagar(cobranca) {
     mensagem: `${insc.nome_completo} pagou a inscrição (R$ ${(cobranca.valor_pago_centavos / 100).toFixed(2)}) e está confirmado(a).`,
     link: '/inscricoes',
   }).catch((e) => console.error('[pagamentos/inscricao] notificar:', e.message));
+
+  // Confirmação por WhatsApp pro INSCRITO (SPEC-07) — dentro do gate
+  // `confirmouAgora`, então a reentrega do webhook/reconciliação NÃO reenvia
+  // (o UPDATE condicionado já foi no-op e retornou antes). Opt-in (D4) e
+  // kill-switch (env do template) são checados no serviço. Fire-and-forget:
+  // handler de pagamento nunca falha porque o WhatsApp soluçou.
+  enviarConfirmacaoInscricao({
+    inscricaoId: insc.id, nome: insc.nome_completo, telefone: insc.telefone,
+    optin: !!insc.whatsapp_optin, evento: insc.evento,
+  }).catch((e) => console.error('[pagamentos/inscricao] confirmação WhatsApp:', e.message));
 }
 
 async function aoPagarParcial(cobranca) {

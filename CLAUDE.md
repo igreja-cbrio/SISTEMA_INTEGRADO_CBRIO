@@ -212,8 +212,26 @@ Celebra com só nome+telefone continuam válidas para sempre).
   de quem está na porta, auditada pelo `por`; comprovante de OUTRO evento é
   erro distinto (diz qual). POST exige `checkin_ativo` (botão Ativar na tela ·
   PUT nível 3). Marcar check-in acorda sozinho o card de comparecimento do
-  dashboard (`compareceu` da view unificada já media). Falta da F3.4: SPEC-07
-  (confirmação WhatsApp da espinha via fila, opt-in D4).
+  dashboard (`compareceu` da view unificada já media).
+- **F3.4 · SPEC-07 — confirmação WhatsApp da espinha (2026-07-28 · SEM
+  migration):** `services/inscricaoWhatsapp.js` → fila `whatsapp_envios`
+  (retry/backoff · falha TERMINAL avisa gente; contexto `inscricoes.confirmacao`
+  roteia o aviso pro módulo). **Regras: opt-in D4 é lei (sem
+  `whatsapp_optin=true` NÃO envia) · kill-switch = env
+  `WHATSAPP_TEMPLATE_INSCRICAO_EVENTO` (vazia = no-op gracioso, padrão
+  notificarMembro) · dispara SÓ em transição real** — evento gratuito: inscrição
+  NOVA na porta pública (nasce confirmada); evento pago: dentro do gate
+  `confirmouAgora` do handler `pagamentos/handlers/inscricao.js`
+  (recebida→confirmada — reentrega de webhook não reenvia). Re-inscrição/merge
+  NÃO reenvia (fila sem dedup por contexto — re-escaneada de QR viraria spam).
+  Mensagem: {{1}} 1º nome · {{2}} evento · {{3}} data/hora · {{4}} **link do
+  comprovante /i/c/<token> como variável de body** (técnica do
+  grupos_renovacao_temporada). **PRA ATIVAR: criar template UTILITY pt_BR
+  `inscricao_evento_confirmacao` na Meta** ("Oi {{1}}! Sua inscrição no {{2}}
+  está confirmada. 📅 {{3}} · Seu comprovante (apresente na entrada): {{4}}") **e
+  setar o NOME na env** — até lá tudo no-op. A notificação interna de nova
+  inscrição (bullet 1 da spec) já existia desde a PR 3; espelhos read-only =
+  F3.5.
 - **Porta 7 · Grupos (2026-07-28 · migration `20260728235000` = M5):** e-mail
   obrigatório (D2) + anti-abreviação + endereço opcional (vai pro cadastro
   pendente, nunca sobrescreve membro) no form recém-lançado (toque mínimo);

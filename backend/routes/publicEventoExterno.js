@@ -25,6 +25,7 @@ const {
 } = require('../services/inscricaoContrato');
 const { nomesMesmaPessoa } = require('../services/membroMatch');
 const { gerarTokenComprovante, verificarTokenComprovante } = require('../services/inscricaoComprovante');
+const { enviarConfirmacaoInscricao } = require('../services/inscricaoWhatsapp');
 // Fachada do núcleo de pagamentos. ⚠️ NUNCA importar `providers/*` aqui — é o
 // que faz trocar de PSP custar 1 arquivo + 1 env (ver services/pagamentos/tipos.js).
 const pagamentos = require('../services/pagamentos');
@@ -579,6 +580,18 @@ async function inscreverEspinha(req, res, ev) {
       : `${val.nomeCompleto} se inscreveu em "${ev.nome}" (${ev.area}).`,
     link: '/inscricoes',
   }).catch((err) => console.error('[publicEvento espinha] notificar:', err.message));
+
+  // Confirmação por WhatsApp (SPEC-07) — SÓ evento gratuito: nasce
+  // `confirmada` aqui; em evento pago quem confirma é o handler do pagamento
+  // (recebida→confirmada), e a mensagem sai de lá. Fire-and-forget: a fila tem
+  // retry/backoff e falha terminal avisa gente — nunca decide o fluxo.
+  // Re-inscrição/merge não passa por aqui (anti-spam de re-escaneada de QR).
+  if (!ehPago) {
+    enviarConfirmacaoInscricao({
+      inscricaoId: ins.id, nome: val.nomeCompleto, telefone: val.telefone,
+      optin, evento: ev,
+    }).catch((err) => console.error('[publicEvento espinha] confirmação WhatsApp:', err.message));
+  }
 
   if (ehPago) {
     // A vaga já está reservada (`recebida`, sob o advisory lock). Se a cobrança
