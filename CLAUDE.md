@@ -78,6 +78,16 @@ Celebra com só nome+telefone continuam válidas para sempre).
   fases: **M6b** (whitelist soft-delete de vol_inscricoes + contadores SQL) e
   **F3.2** (espinha `inscricoes` + módulo /inscricoes + migração do ext —
   specs em `docs/modulo-inscricoes/fase2-specs.md`).
+- **F3.2 · PR 1 — ESPINHA criada (2026-07-28 · migration `20260729000100`):**
+  6 tabelas novas (`insc_series` recorrência/edições · `insc_eventos` ·
+  `inscricoes` tronco · `insc_pagamentos` sem deleted_at, financeiro não se
+  apaga · `insc_checkins` · `insc_sorteios`) + RLS por
+  `current_user_module_level('inscricoes')` (slug entra no catálogo na PR do
+  módulo — até lá só service_role/super-admin) + audit de PII em
+  inscricoes/pagamentos + whitelist soft-delete (series/eventos/inscricoes).
+  `chk_inscricoes_contrato`: completude do contrato exigida SÓ quando
+  `legado_fonte IS NULL` — linha migrada do Celebra (nome+telefone) entra
+  intacta. **NADA consome ainda** — UI/página pública nas PRs seguintes.
 - **Porta 7 · Grupos (2026-07-28 · migration `20260728235000` = M5):** e-mail
   obrigatório (D2) + anti-abreviação + endereço opcional (vai pro cadastro
   pendente, nunca sobrescreve membro) no form recém-lançado (toque mínimo);
