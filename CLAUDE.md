@@ -94,10 +94,22 @@ Celebra com só nome+telefone continuam válidas para sempre).
   campos padrão TRAVADOS + "Adicionar campo" com key opaca + **"Nova edição"**
   — evento avulso vira série na hora; série gera edição com rótulo
   YYYY-MM/YYYY); área OBRIGATÓRIA validada contra o catálogo `areas`;
-  eventos nascem em **rascunho** (a página pública da espinha chega na PR 3 —
-  publicar ainda não expõe formulário). Abas Todas/Pessoas/Dashboard visíveis
+  eventos nascem em **rascunho**. Abas Todas/Pessoas/Dashboard visíveis
   desabilitadas ("próximas entregas"). Backend `routes/inscricoes.js`
   (authorizeModule 'inscricoes'; DELETE=nível 4 via app_soft_delete).
+- **F3.2 · PR 3 — página pública da espinha (2026-07-28 · SEM migration):**
+  `/evento/:slug` virou **FONTE DUPLA** em `publicEventoExterno.js` — resolve
+  PRIMEIRO na espinha (insc_eventos `publicado`; rascunho/arquivado = 404;
+  encerrado mostra "encerradas") e cai no ext quando o slug não existe lá →
+  **QRs antigos do Celebra intactos, eventos novos no mesmo endereço**.
+  Espinha inscreve com o contrato pleno: dedup por (evento,cpf) com merge
+  preservador (re-inscrição reativa cancelada), vagas contadas, número da
+  sorte SÓ quando tem_sorteio, matcher read-only (`inscricoes_formulario`) +
+  consentimentos porta `inscricoes`, notificação módulo `inscricoes`.
+  **Evento `pagamento_ativo` NÃO abre** até o Pix (F3.3) — aviso na página.
+  Publicar no /inscricoes agora EXPÕE o formulário; botão de copiar link nos
+  cards; banner de transição no /eventos-externos. Falta da SPEC-04: backfill
+  ext→espinha com contagens (próxima PR, com validação do Marcos).
 - **Porta 7 · Grupos (2026-07-28 · migration `20260728235000` = M5):** e-mail
   obrigatório (D2) + anti-abreviação + endereço opcional (vai pro cadastro
   pendente, nunca sobrescreve membro) no form recém-lançado (toque mínimo);

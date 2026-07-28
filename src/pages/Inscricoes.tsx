@@ -14,7 +14,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/
 import { toast } from 'sonner';
 import {
   CalendarDays, ClipboardList, Plus, Loader2, ChevronLeft, ChevronRight,
-  Users, Trash2, CopyPlus, Image as ImageIcon, Lock,
+  Users, Trash2, CopyPlus, Image as ImageIcon, Lock, Link2,
 } from 'lucide-react';
 
 const MESES = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
@@ -251,7 +251,7 @@ function EventoModal({ evento, areas, onClose, onSaved }: {
                 <option value="encerrado">Encerrado</option>
                 <option value="arquivado">Arquivado</option>
               </select>
-              <p className="text-[11px] text-muted-foreground mt-1">A página pública da espinha chega na próxima entrega — até lá, publicar não expõe o formulário.</p>
+              <p className="text-[11px] text-muted-foreground mt-1">Publicado = o formulário público fica NO AR em /evento/{'{slug}'} (mesmo endereço dos QRs do Celebra). Evento pago só abre na fase do Pix.</p>
             </div>
           )}
           <div className="flex justify-end gap-2 pt-2">
@@ -429,6 +429,10 @@ export default function Inscricoes() {
                     </div>
                   </div>
                   <div className="flex items-center gap-1.5">
+                    <Button size="sm" variant="outline" title="Copiar o link público (/evento/…)"
+                      onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/evento/${e.slug}`); toast.success('Link copiado — o formulário abre quando o evento estiver Publicado'); }}>
+                      <Link2 className="h-3.5 w-3.5" />
+                    </Button>
                     <Button size="sm" variant="outline" onClick={() => setModal({ tipo: 'edicao', evento: e })} title="Copiar formulário e configurações pra próxima data">
                       <CopyPlus className="h-3.5 w-3.5 mr-1" /> Nova edição
                     </Button>
