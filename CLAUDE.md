@@ -3901,3 +3901,154 @@ colisão UNIQUE (edge case raro · exige nova migration CREATE OR REPLACE); 2ª 
 `normalizarCpf` em `utils/cpf` não valida DV (armadilha p/ código futuro); colisão de
 número das migrations `20260717170000`/`20260718120000`/`20260718190000` (cada uma tem
 gêmea de grupos/crons no mesmo número — ao aplicar manualmente, rodar as DUAS de cada par).
+
+## Pagamentos · núcleo provider-agnostic + retiro pago pelo sistema (2026-07-28)
+
+Pedido do Marcos: vender a inscrição do **retiro** pelo próprio sistema (PIX,
+cartão parcelado, boleto, e Apple Pay se der), com lista de inscritos por
+idade, vínculo automático ao cadastro da pessoa, forma de pagamento por
+inscrito, rastreabilidade e impressão da lista por faixa de idade/sexo.
+
+⚠️ **O retiro NÃO é módulo novo** — é um evento da espinha de inscrições (F3.2),
+com `pagamento_ativo=true`. Esta seção cobre só a camada de PAGAMENTO. Ver a
+consolidação com `insc_pagamentos` mais abaixo.
+
+### Decisão do gateway (fechada · não reabrir sem motivo novo)
+
+**PSP brasileiro único (Asaas), checkout hospedado, página pública web.** O que
+elimina as alternativas é fato verificado, não preferência:
+
+- **Stripe está fora pra cartão**: não faz **parcelamento no Brasil**, e
+  parcelar é requisito declarado essencial. (PIX lá também é invite-only.)
+  Segue vivo só onde já está: 3 Edge Functions `generosidade-*` no app,
+  desligadas por feature flag.
+- **Santander não é adquirente** — nunca fará cartão/parcelado/Apple Pay. Segue
+  no que já faz: **leitura** de extrato/saldo pra conciliação. O PIX cobrança e
+  o boleto existem em código mas estão desligados, com paths de API **não
+  confirmados** (`pixCobrancaService.js` testa 8 candidatos), **sem webhook**, e
+  boleto exige convênio de cobrança com a agência.
+- **Juros do parcelado = repassados ao inscrito** (a igreja recebe cheio, sem
+  antecipação). As 3 opções ficam configuráveis por edição no schema.
+- **Boleto e Apple Pay ficam pra fase 2**: boleto prende vaga por 3 dias em
+  evento com data fixa; Apple Pay exige merchant/domínio novo, reescrever
+  `modules/apple-pay` (hoje Stripe-only) **e não faz parcelado**.
+- **O inscrito paga em página pública** (`/retiro/<slug>`), fora do login; o app
+  só abre o link no navegador. Tira a Apple do caminho (a Generosidade já foi
+  travada por guideline 3.2.2(iv)), tira o PCI de cima de nós, e a venda não
+  depende de release aprovado.
+
+### Núcleo entregue (migration `20260728120000` · APLICADA em prod · PR #2082)
+
+`backend/services/pagamentos/` — serve QUALQUER módulo que precise cobrar
+(retiro, cursos, eventos, e o módulo de inscrições genérico do Marcos quando
+existir). Contrato = `pag_cobrancas.origem_tipo` + um handler registrado no JS.
+
+**⚠️ LEIS deste núcleo (não regredir):**
+
+1. **Dinheiro SEMPRE em centavos inteiros.** Nenhum float, em nenhuma coluna.
+2. **`status` é canônico do CBRio, nunca a string do PSP.** Todo mapeamento vive
+   em `providers/<nome>.js`. `if (status === 'RECEIVED')` fora de um adapter
+   está no lugar errado. Nenhum módulo de domínio importa `providers/*` — só a
+   fachada (é o que faz trocar de PSP custar 1 arquivo + 1 env).
+3. **Idempotência do webhook É a UNIQUE** `pag_webhook_eventos(provider,
+   evento_id)` + `ON CONFLICT DO NOTHING`: processa só quem conseguiu inserir.
+   Dedup por SELECT-depois-INSERT **não é dedup** — duas entregas concorrentes
+   do PSP veem ambas "não existe" e ambas inserem. Foi o bug do
+   `generosidade-webhook` do app (que, aliás, **não grava linha nenhuma**:
+   `origem:'app'` viola o CHECK e `membro_id:null` viola o NOT NULL de
+   `mem_contribuicoes` — **não usar como referência**).
+4. **`pago` NUNCA regride** (trigger `fn_pag_cobrancas_transicao` + espelho em
+   `maquinaEstados.js`). Webhook fora de ordem não pode despagar inscrição
+   confirmada. Transição inválida → `RAISE WARNING` e mantém o status antigo,
+   **não aborta**: exception em handler de webhook vira retry infinito no PSP.
+5. **NUNCA armazenar PAN/CVV/validade/nome impresso.** Só `cartao_brand` e
+   `cartao_last4` como o PSP devolveu. Dado de cartão não entra no nosso banco,
+   nos nossos logs, nem no nosso Express — a tokenização é no PSP/cliente.
+6. **`pag_pagamentos` é razão auxiliar e NUNCA é somada em view financeira.** O
+   caixa recebe **1 receita por REPASSE** do PSP em `fin_transacoes` (+ 1
+   despesa de tarifa), conciliada contra o crédito do extrato. Somar as duas
+   camadas é exatamente como nasce a dupla contagem (a de ~R$ 1,5 mi veio desse
+   mecanismo). `liquido`/`taxa` vêm do **payload do PSP**, nunca calculados —
+   a taxa varia por método, parcela e antecipação. `vw_pag_invariantes` é a rede
+   que grita quando divergir; ler no fechamento.
+7. **Nenhuma confirmação sem `status='pago'` lido do servidor** — WhatsApp,
+   push, e-mail, tela de sucesso, confete. Nada.
+
+Estado no banco: 3 tabelas · `pag_cobrancas` na whitelist de soft-delete ·
+2 triggers (transição + audit) · 10 policies de RLS (`pag_webhook_eventos` só
+legível por super-admin — payload cru do PSP) · `vw_pag_invariantes`.
+Testes: `src/test/pagamentosMaquinaEstados.test.ts` (16 casos).
+
+### Buraco negro do `retiro` fechado (PR #2081)
+
+`retiro`/`cursos`/`eventos` eram aceitos em `TIPOS_INSCRICAO` **e** estavam em
+`LABEL_INSCRICAO_WPP`, mas `fn_app_inscricoes_fanout` não tem branch pra
+nenhum: a linha ficava invisível em `app_inscricoes` (`status='processado'`) e a
+pessoa recebia **"Inscrição confirmada"** de inscrição que não existia. Os três
+viraram **lead** (`LABEL_INSCRICAO_LEAD` → `notificar()` dizendo explicitamente
+que não há inscrição confirmada). **Retiro NÃO passa por `app_inscricoes`/
+fan-out** — aquele fan-out envolve cada branch em `EXCEPTION WHEN OTHERS` e
+marca `processado` de qualquer jeito; falha silenciosa marcada como sucesso é
+veneno pra fluxo com dinheiro.
+
+Junto: `santanderCron.js` chamava `contasService.extrato()` — **função
+inexistente** (o export é `consultarExtrato`) → TypeError a cada execução, e a
+"ESTRATÉGIA 2: extrato regular" do `/pix-sync` **nunca rodou**. Virou o helper
+`extratoNormalizado()`, único ponto que conhece o formato cru `_content` do
+banco. É pré-requisito de conciliar o repasse do PSP contra o extrato.
+
+### ⚠️ CONSOLIDAÇÃO com a espinha de inscrições (28/07 · decisão do Marcos)
+
+O núcleo `pag_*` e a espinha de inscrições (`20260729000100` · F3.2 PR 1) foram
+construídos **no mesmo dia, em frentes paralelas**, e as duas criaram tabela de
+pagamento. As duas estavam INERTES (nenhum código lia nenhuma) quando o conflito
+foi detectado. Decisão: **`pag_*` é o MOTOR · `insc_pagamentos` é a linha de
+DOMÍNIO que aponta pra ele** (migration `20260729020000` · aditiva).
+
+- `pag_cobrancas` → cobrança + estado canônico · `pag_pagamentos` → razão
+  auxiliar (liquidação/estorno/tarifa, líquido+taxa) · `insc_pagamentos` →
+  "esta inscrição tem esta cobrança" (`cobranca_id` FK), com os campos que a UI
+  de inscrições já lê. Ler pela **`vw_insc_pagamento_estado`** (o estado vem do
+  motor quando há cobrança; cai no espelho em pagamento manual).
+- Motivo de o motor ser o núcleo: `insc_pagamentos.webhook_log JSONB` guarda
+  histórico mas **não dá idempotência** (anexar em array JSON não impede
+  processar o mesmo evento 2×, e não há UNIQUE por evento do PSP — o furo que
+  quebrou o `generosidade-webhook`), e não tinha trava de transição contra
+  webhook fora de ordem despagar inscrição confirmada. `webhook_log` **continua
+  existindo** como histórico legível; só não é mais o mecanismo de idempotência.
+- ⚠️ **NÃO criar tabelas `ret_*`.** O retiro é uma linha em `insc_eventos` com
+  `pagamento_ativo=true`. A `inscricoes` já exige `cpf`+`data_nascimento`+`sexo`
+  no `chk_inscricoes_contrato` (= idade, faixa via `fn_faixa_etaria` e a
+  impressão por sexo saem de graça), e já tem vagas, `numero_sorte`, check-in e
+  página pública `/evento/:slug`. `publicEventoExterno.js:127` já reservava a
+  vaga do Pix: `const pago = !!esp.pagamento_ativo; // Pix chega na F3.3`.
+
+### Falta (F3.3 pagamento + painel)
+
+Adapter Asaas + `webhooks.js` + rota `/api/pagamentos-webhook` **fora dos rate
+limiters** (limiter global 500/15min e `publicLimiter` 30/15min derrubariam a
+rajada de retry do PSP em 429 = pagamento aprovado com inscrição não
+confirmada; adicionar o path ao `skip()` do global, padrão que o WhatsApp já
+usa) + crons de expiração/reconciliação (**o webhook é otimização de latência;
+o cron é a verdade**) + `imprimirListaRetiro.ts` agrupando por faixa de idade/
+sexo (molde: `imprimirListaPresencaBatismo.ts`) + aba "Inscrições" na ficha do
+membro (junta `inscricoes` + batismo + next + voluntariado + grupos).
+
+⚠️ **VAGA NÃO É ATÔMICA na espinha** (`publicEventoExterno.js:60-71`):
+`inscritosEspinha()` faz `count(*)` e o insert vem depois — duas pessoas no
+mesmo segundo passam as duas. Em evento gratuito é tolerável; **em evento PAGO
+com vaga finita significa receber dinheiro de quem não vai ter lugar.** Antes de
+abrir venda: `SELECT count` + `INSERT` → RPC com `pg_advisory_xact_lock` por
+evento. É pré-requisito da F3.3, não polimento.
+
+⚠️ **O MCP do Supabase está barrado por aprovação neste ambiente**
+(`apply_migration` e `execute_sql` retornam `requires approval`). Migration nova
+= colar o SQL na conversa e o Marcos roda no SQL Editor.
+
+**Caminho crítico que NÃO é código** (bloqueia a venda, não o build): abrir a
+conta no PSP no CNPJ da igreja avisando por escrito o volume do lançamento
+(CNPJ religioso + 150 transações em 72h é o padrão que dispara retenção de
+saldo por 30-90 dias); política de reembolso escrita (venda pela internet tem 7
+dias de arrependimento por CDC art. 49 independente da política, e ela precisa
+dizer quem come a taxa do gateway); classificação contábil da receita por
+escrito; e quando a igreja paga o local — isso decide o teto de parcelas.
