@@ -4312,14 +4312,63 @@ do presidente ou tesoureiro · procuração se quem opera não é o representant
 ⚠️ **Avisar o Asaas por escrito do volume do lançamento** — CNPJ religioso com
 ~150 transações em 72h é o padrão que dispara retenção de saldo por 30–90 dias.
 
-### Falta (F3.3 · o que resta)
+### ✅ Porta pública ligada (2026-07-28 · migration `20260729040000`)
 
-Ligar a porta pública: o 403 de `pagamento_ativo` em
-`publicEventoExterno.js:170` (e o curto-circuito do `GET` nas linhas 129–143)
-vira validar → `fn_insc_inscrever` com `p_status='recebida'` → `criarCobranca` →
-devolver `checkout_url`. É o que finalmente dá escritor pro `'recebida'` do
-CHECK. Mais `GET /api/public/pagamento/:public_token` (status + `sincronizar`
-quando pendente há >2 min) e a página `/pagamento/:token`.
+O 403 de `pagamento_ativo` saiu. Fluxo pago: validar (contrato inteiro, nada
+muda) → `fn_insc_inscrever` com **`p_status='recebida'`** (vaga reservada sob o
+advisory lock) → `criarCobranca` → o front redireciona pro `checkout_url`. É o
+que finalmente dá **escritor** pro `'recebida'` do CHECK.
+
+**Regras da porta paga (não regredir):**
+
+- **Evento pago mal configurado NÃO abre** e sobretudo não vira inscrição
+  gratuita por acidente: `bloqueioPagamento()` recusa (503, com texto pra
+  pessoa) quando está marcado como pago **sem valor**, quando o **PSP não está
+  configurado**, ou quando o **kill switch** `PAG_ENABLED=0` está ligado. O
+  `GET` do evento devolve o mesmo texto em `aviso`.
+- **Re-inscrição de cancelada reativa como `recebida`, não `confirmada`**, em
+  evento pago — confirmar ali daria a vaga a quem não pagou.
+- **Reenvio do formulário devolve a MESMA cobrança** (`referencia` =
+  `inscricao:<id>`), inclusive no caminho de corrida `duplicada` da RPC. É assim
+  que ninguém paga duas vezes.
+- **A vaga é reservada ANTES de cobrar.** Se a cobrança falhar, responde 502
+  dizendo que a vaga está reservada e que reenviar o formulário não a perde (o
+  cron de expiração devolve depois). O inverso — cobrar sem vaga garantida —
+  seria estornar gente.
+- **`insc_pagamentos` é espelho, não fonte**: gravado no insert com
+  `cobranca_id`; a UNIQUE de `cobranca_id` faz o reenvio não criar segunda linha.
+
+**`GET /api/public/evento/pagamento/:token`** — status pela página pública.
+⚠️ Montado sob `/public/evento` **de propósito**: herda o limiter generoso dali
+E o `skip()` do limiter global; a tela faz polling e sob `/api/public` puro
+tomaria 429 no lançamento. Acessado pelo **`public_token`**, nunca pelo uuid.
+Quando a cobrança está parada há >2 min, consulta o PSP na hora (rede de
+segurança nº 1) — ninguém fica olhando "aguardando" porque uma entrega se
+perdeu. A resposta expõe só o necessário: **nada de PII do pagador, metadata ou
+payload**.
+
+**Página `/pagamento/:token`** (`src/pages/public/PagamentoInscricao.tsx`):
+status em vocabulário de usuário (não o status canônico cru), QR do Pix +
+copiar, botão de pagar, polling de 6s que **para sozinho** ao resolver, e
+consulta imediata no `visibilitychange` (voltar do checkout). ⚠️ **Confete e
+"pagamento confirmado" só com `pago === true` lido do servidor** — voltar do
+checkout não é pagar.
+
+**Migration `20260729040000`** (⚠️ **aplicar ANTES do merge** — o `select` do
+evento pede as colunas novas e o PostgREST erra a consulta inteira se faltarem,
+derrubando `/evento/:slug`): `insc_eventos.parcelas_max` (1–21, NULL = teto da
+conta do PSP) e `juros_repassados` (default true). É **por evento** porque quem
+define o teto de parcelas é **quando a igreja paga o local** — retiro em
+novembro e em março admitem números diferentes.
+
+**Fix no núcleo, junto:** cobrança **meio-criada** (linha existe, chamada ao PSP
+falhou) era um beco sem saída — `porReferencia` devolvia ela pra sempre, sem
+checkout, e o cron de reconciliação também não a pegava (filtra por
+`provider_cobranca_id`). Agora `criarCobranca` **retoma** sobre a mesma linha
+(helper `pedirAoProvider`). E o erro de chamada **não marca mais `falhou`**:
+`falhou` é TERMINAL na máquina e significa "não pode mais ser pago" — timeout na
+nossa chamada não é isso, e marcar ali tornava a cobrança irrecuperável (o
+trigger recusaria a retomada).
 
 ### ✅ Vaga atômica (migration `20260729030000` · pré-requisito de venda paga)
 

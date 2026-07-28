@@ -77,6 +77,9 @@ const CAMPOS_EVENTO = [
   'msg_sucesso_titulo', 'msg_sucesso_texto', 'msg_whatsapp',
   'tem_sorteio', 'premios', 'checkin_ativo',
   'pagamento_ativo', 'valor_centavos', 'pagamento_expira_horas',
+  // Teto de parcelas e quem paga os juros — por EVENTO, porque quem define é a
+  // data em que a igreja paga o local (migration 20260729040000).
+  'parcelas_max', 'juros_repassados',
 ];
 
 // `pagamento_metodos` é TEXT[] e fica FORA do loop de whitelist de propósito:
