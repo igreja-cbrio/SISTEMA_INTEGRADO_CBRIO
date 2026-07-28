@@ -216,7 +216,6 @@ const CruzamentosPessoas = lazyWithRetry(() => import('./pages/admin/Cruzamentos
 const SolicitacoesResponsaveis = lazyWithRetry(() => import('./pages/admin/SolicitacoesResponsaveis'));
 const SolicitacoesFluxo = lazyWithRetry(() => import('./pages/admin/SolicitacoesFluxo'));
 const PermissoesAdmin = lazyWithRetry(() => import('./pages/admin/Permissoes'));
-const WhatsappAdmin = lazyWithRetry(() => import('./pages/admin/Whatsapp'));
 const FeedbackAdmin = lazyWithRetry(() => import('./pages/admin/Feedback'));
 const AppAnalytics = lazyWithRetry(() => import('./pages/admin/AppAnalytics'));
 const MeusKpis = lazyWithRetry(() => import('./pages/MeusKpis'));
@@ -306,8 +305,9 @@ const TotemMembro = lazyWithRetry(() => import('./pages/TotemMembro'));
 const VolSelfCheckin = lazyWithRetry(() => import('./pages/ministerial/voluntariado/VolSelfCheckin'));
 const PcCallback = lazyWithRetry(() => import('./pages/auth/PcCallback'));
 const Cuidados = lazyWithRetry(() => import('./pages/ministerial/Cuidados'));
-const Conversas = lazyWithRetry(() => import('./pages/Conversas'));
-const ConversasSetores = lazyWithRetry(() => import('./pages/admin/ConversasSetores'));
+const Comunicacao = lazyWithRetry(() => import('./pages/Comunicacao'));
+// Conversas / ConversasSetores viraram abas dentro de Comunicação (import interno).
+// As rotas antigas abaixo agora redirecionam pra /comunicacao.
 const DevocionalMovido = lazyWithRetry(() => import('./pages/devocional/DevocionalMovido'));
 const Integracao = lazyWithRetry(() => import('./pages/ministerial/Integracao'));
 const Batismo = lazyWithRetry(() => import('./pages/ministerial/Batismos'));
@@ -651,8 +651,11 @@ function AppRoutes() {
             unificada em /grupos?tab=entrada é o único lugar de triagem. */}
         <Route path="/grupos/pedidos" element={<Navigate to="/grupos?tab=entrada" replace />} />
         <Route path="/ministerial/cuidados" element={<ModuleGuard moduleSlug="cuidados"><Suspense fallback={<Loading />}><Cuidados /></Suspense></ModuleGuard>} />
-        <Route path="/conversas" element={<ModuleGuard moduleSlug="conversas"><Suspense fallback={<Loading />}><Conversas /></Suspense></ModuleGuard>} />
-        <Route path="/admin/conversas-setores" element={<ModuleGuard moduleSlug="conversas" nivelMinimo={3}><Suspense fallback={<Loading />}><ConversasSetores /></Suspense></ModuleGuard>} />
+        {/* Módulo central de Comunicação (C4) · absorve Conversas + Bot WhatsApp + Menu das Conversas */}
+        <Route path="/comunicacao" element={<ModuleGuard moduleSlug="comunicacao"><Suspense fallback={<Loading />}><Comunicacao /></Suspense></ModuleGuard>} />
+        {/* Redirects das rotas antigas → não quebrar bookmarks/links */}
+        <Route path="/conversas" element={<Navigate to="/comunicacao?tab=conversas" replace />} />
+        <Route path="/admin/conversas-setores" element={<Navigate to="/comunicacao?tab=bot" replace />} />
         <Route path="/wifi" element={<ModuleGuard moduleSlug="wifi"><Suspense fallback={<Loading />}><WifiModulo /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/devocional" element={<Navigate to="/ministerial/cuidados?tab=devocional" replace />} />
         <Route path="/ministerial/jornada" element={<Navigate to="/ministerial/membresia" replace />} />
@@ -711,7 +714,8 @@ function AppRoutes() {
         <Route path="/admin/permissoes" element={<Suspense fallback={<Loading />}><PermissoesAdmin /></Suspense>} />
         <Route path="/admin/feedback" element={<Suspense fallback={<Loading />}><FeedbackAdmin /></Suspense>} />
         <Route path="/admin/app-analytics" element={<SuperAdminGuard><Suspense fallback={<Loading />}><AppAnalytics /></Suspense></SuperAdminGuard>} />
-        <Route path="/admin/whatsapp" element={<ModuleGuard moduleSlug="integracao" nivelMinimo={3}><Suspense fallback={<Loading />}><WhatsappAdmin /></Suspense></ModuleGuard>} />
+        {/* Bot WhatsApp virou aba dentro de Comunicação */}
+        <Route path="/admin/whatsapp" element={<Navigate to="/comunicacao?tab=bot" replace />} />
         {/* Apresentações: módulo desativado (2026-07-06 · pedido do Matheus) — rota redireciona */}
         <Route path="/admin/apresentacoes" element={<Navigate to="/dashboard" replace />} />
         <Route path="/admin/apresentacoes/*" element={<Navigate to="/dashboard" replace />} />
