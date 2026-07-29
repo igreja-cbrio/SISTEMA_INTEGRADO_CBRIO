@@ -213,7 +213,7 @@ router.delete('/localizacoes/:id', async (req, res) => {
 router.get('/bens', async (req, res) => {
   try {
     const { status, categoria_id, localizacao_id, busca } = req.query;
-    let query = supabase.from('pat_bens').select('*, pat_categorias(nome, vida_util_meses), pat_localizacoes(nome), alerta:pat_revisao_itens!alerta_divergencia_item_id(data_revisao, localizacao_encontrada:pat_localizacoes!localizacao_encontrada_id(nome))').order('nome');
+    let query = supabase.from('pat_bens').select('*, pat_categorias(nome, vida_util_meses), pat_localizacoes(nome), responsavel:profiles!responsavel_id(name), alerta:pat_revisao_itens!alerta_divergencia_item_id(data_revisao, localizacao_encontrada:pat_localizacoes!localizacao_encontrada_id(nome))').order('nome');
     if (status) query = query.eq('status', status);
     // Sentinela "__sem__" filtra bens SEM categoria/localização — pra
     // priorizar o saneamento de cadastro (pedido do usuário 2026-07-28).
@@ -257,7 +257,7 @@ router.get('/bens/barcode/:codigo', async (req, res) => {
     console.log('[PATRIMONIO] barcode lookup variants:', list);
 
     const { data, error } = await supabase.from('pat_bens')
-      .select('*, pat_categorias(nome, vida_util_meses), pat_localizacoes(nome), alerta:pat_revisao_itens!alerta_divergencia_item_id(data_revisao, localizacao_encontrada:pat_localizacoes!localizacao_encontrada_id(nome))')
+      .select('*, pat_categorias(nome, vida_util_meses), pat_localizacoes(nome), responsavel:profiles!responsavel_id(name), alerta:pat_revisao_itens!alerta_divergencia_item_id(data_revisao, localizacao_encontrada:pat_localizacoes!localizacao_encontrada_id(nome))')
       .in('codigo_barras', list);
 
     if (error) {
@@ -284,7 +284,7 @@ router.get('/bens/barcode/:codigo', async (req, res) => {
 router.get('/bens/:id', async (req, res) => {
   try {
     const { data: bem, error } = await supabase.from('pat_bens')
-      .select('*, pat_categorias(nome, vida_util_meses), pat_localizacoes(nome), alerta:pat_revisao_itens!alerta_divergencia_item_id(data_revisao, localizacao_encontrada:pat_localizacoes!localizacao_encontrada_id(nome))').eq('id', req.params.id).single();
+      .select('*, pat_categorias(nome, vida_util_meses), pat_localizacoes(nome), responsavel:profiles!responsavel_id(name), alerta:pat_revisao_itens!alerta_divergencia_item_id(data_revisao, localizacao_encontrada:pat_localizacoes!localizacao_encontrada_id(nome))').eq('id', req.params.id).single();
     if (error) return res.status(404).json({ error: 'Bem não encontrado' });
     const { data: movs } = await supabase.from('pat_movimentacoes')
       .select('*, profiles!responsavel_id(name)').eq('bem_id', req.params.id).order('data_movimentacao', { ascending: false });
@@ -294,10 +294,10 @@ router.get('/bens/:id', async (req, res) => {
 
 router.post('/bens', async (req, res) => {
   try {
-    const { codigo_barras, nome, descricao, categoria_id, localizacao_id, numero_serie, marca, modelo, valor_aquisicao, data_aquisicao, observacoes } = req.body;
+    const { codigo_barras, nome, descricao, categoria_id, localizacao_id, numero_serie, marca, modelo, valor_aquisicao, data_aquisicao, observacoes, numero_nf, tem_garantia, garantia_ate, responsavel_id } = req.body;
     if (!codigo_barras || !nome) return res.status(400).json({ error: 'Código de barras e nome são obrigatórios' });
     const { data, error } = await supabase.from('pat_bens')
-      .insert({ codigo_barras, nome, descricao: descricao || null, categoria_id: categoria_id || null, localizacao_id: localizacao_id || null, numero_serie: numero_serie || null, marca: marca || null, modelo: modelo || null, valor_aquisicao: valor_aquisicao || null, data_aquisicao: data_aquisicao || null, observacoes: observacoes || null, created_by: req.user.userId })
+      .insert({ codigo_barras, nome, descricao: descricao || null, categoria_id: categoria_id || null, localizacao_id: localizacao_id || null, numero_serie: numero_serie || null, marca: marca || null, modelo: modelo || null, valor_aquisicao: valor_aquisicao || null, data_aquisicao: data_aquisicao || null, observacoes: observacoes || null, numero_nf: numero_nf || null, tem_garantia: !!tem_garantia, garantia_ate: garantia_ate || null, responsavel_id: responsavel_id || null, created_by: req.user.userId })
       .select().single();
     if (error) return res.status(400).json({ error: error.message });
     res.json(data);
@@ -306,12 +306,17 @@ router.post('/bens', async (req, res) => {
 
 router.put('/bens/:id', async (req, res) => {
   try {
-    const { codigo_barras, nome, descricao, categoria_id, localizacao_id, numero_serie, marca, modelo, valor_aquisicao, data_aquisicao, status, observacoes } = req.body;
+    const { codigo_barras, nome, descricao, categoria_id, localizacao_id, numero_serie, marca, modelo, valor_aquisicao, data_aquisicao, status, observacoes, numero_nf, tem_garantia, garantia_ate, responsavel_id, data_baixa } = req.body;
     // Reatribuir a localização (edição manual do cadastro) é decisão humana —
     // limpa o alerta de "localização pendente de reavaliação" (hierarquia
     // 2026-07-29). Se localizacao_id não veio no payload, o alerta é preservado.
-    const update = { codigo_barras, nome, descricao: descricao || null, categoria_id: categoria_id || null, localizacao_id: localizacao_id || null, numero_serie: numero_serie || null, marca: marca || null, modelo: modelo || null, valor_aquisicao: valor_aquisicao || null, data_aquisicao: data_aquisicao || null, status, observacoes: observacoes || null };
+    const update = { codigo_barras, nome, descricao: descricao || null, categoria_id: categoria_id || null, localizacao_id: localizacao_id || null, numero_serie: numero_serie || null, marca: marca || null, modelo: modelo || null, valor_aquisicao: valor_aquisicao || null, data_aquisicao: data_aquisicao || null, status, observacoes: observacoes || null, numero_nf: numero_nf || null, tem_garantia: !!tem_garantia, garantia_ate: garantia_ate || null, responsavel_id: responsavel_id || null };
     if (localizacao_id !== undefined) { update.localizacao_pendente = false; update.alerta_divergencia_item_id = null; }
+    // Data de baixa acompanha o status editado direto no cadastro (item 4 ·
+    // 2026-07-29): entra em "baixado" grava a data (a informada ou hoje);
+    // sai de "baixado" limpa — não fica data de baixa órfã num bem reativado.
+    if (status === 'baixado') update.data_baixa = data_baixa || new Date().toISOString().slice(0, 10);
+    else if (status !== undefined) update.data_baixa = null;
     const { data, error } = await supabase.from('pat_bens')
       .update(update)
       .eq('id', req.params.id).select().single();
@@ -327,7 +332,7 @@ router.delete('/bens/:id', async (req, res) => {
     const { error: movErr } = await supabase.from('pat_movimentacoes')
       .insert({ bem_id: req.params.id, tipo: 'baixa', responsavel_id: req.user.userId, motivo: req.body?.motivo || null, created_by: req.user.userId });
     if (movErr) return res.status(400).json({ error: movErr.message });
-    const { error } = await supabase.from('pat_bens').update({ status: 'baixado' }).eq('id', req.params.id);
+    const { error } = await supabase.from('pat_bens').update({ status: 'baixado', data_baixa: new Date().toISOString().slice(0, 10) }).eq('id', req.params.id);
     if (error) return res.status(400).json({ error: error.message });
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: 'Erro ao dar baixa no bem' }); }

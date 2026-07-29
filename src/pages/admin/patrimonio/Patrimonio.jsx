@@ -308,7 +308,7 @@ export default function Patrimonio() {
         />
       )}
 
-      <BemFormModal open={!!modalBem} data={modalBem} categorias={categorias} locOptions={locOptions} onClose={() => setModalBem(null)} onSave={saveBem} />
+      <BemFormModal open={!!modalBem} data={modalBem} categorias={categorias} locOptions={locOptions} responsaveis={responsaveis} onClose={() => setModalBem(null)} onSave={saveBem} />
       <BemDetailModal open={!!modalDetail} data={modalDetail} onClose={() => setModalDetail(null)} onEdit={(b) => { setModalDetail(null); setModalBem(b); }} onBaixar={baixarBem} onMov={(bemId) => setModalMov({ bem_id: bemId })} onDispensarAlerta={dispensarAlerta} isDiretor={isDiretor} />
       <MovFormModal open={!!modalMov} data={modalMov} locOptions={locOptions} onClose={() => setModalMov(null)} onSave={saveMov} />
       <InvFormModal open={!!modalInv} onClose={() => setModalInv(null)} onSave={saveInv} />
@@ -806,11 +806,17 @@ function MovimentacoesTab({ list, total, page, pageSize, loading, onPageChange, 
   );
 }
 
-function BemFormModal({ open, data, categorias, locOptions, onClose, onSave }) {
+function BemFormModal({ open, data, categorias, locOptions, responsaveis, onClose, onSave }) {
   const [f, setF] = useState({});
   const [formError, setFormError] = useState('');
   useEffect(() => { if (data) { setF({ ...data }); setFormError(''); } }, [data]);
   const upd = (k, v) => setF(p => ({ ...p, [k]: v }));
+  // Sugestão automática do responsável (pedido do usuário 2026-07-29, item 4):
+  // ao escolher a localização, se ainda não há responsável definido, sugere
+  // quem é o coordenador daquela localização — só sugestão, sempre editável.
+  function updLocalizacao(v) {
+    setF(p => (p.responsavel_id ? { ...p, localizacao_id: v } : { ...p, localizacao_id: v, responsavel_id: locOptions.find(l => l.id === v)?.coordenador_id || p.responsavel_id }));
+  }
   function handleSave() {
     if (!f.nome || !f.nome.trim()) { setFormError('Nome é obrigatório.'); return; }
     if (!f.codigo_barras || !f.codigo_barras.trim()) { setFormError('Código de barras é obrigatório.'); return; }
@@ -836,7 +842,7 @@ function BemFormModal({ open, data, categorias, locOptions, onClose, onSave }) {
           <option value="">Selecionar</option>
           {categorias.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
         </Select>
-        <Select label="Localização" value={f.localizacao_id || ''} onChange={e => upd('localizacao_id', e.target.value)}>
+        <Select label="Localização" value={f.localizacao_id || ''} onChange={e => updLocalizacao(e.target.value)}>
           <option value="">Selecionar</option>
           {locOptions.map(l => <option key={l.id} value={l.id}>{locIndent(l.depth)}{l.nome}</option>)}
         </Select>
@@ -851,10 +857,30 @@ function BemFormModal({ open, data, categorias, locOptions, onClose, onSave }) {
       </div>
       <div style={styles.formRow}>
         <div style={styles.formGroup}><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Data Aquisição</label><DatePicker value={f.data_aquisicao || ''} onChange={v => upd('data_aquisicao', v)} /></div>
+        <Input label="Nº da NF" value={f.numero_nf || ''} onChange={e => upd('numero_nf', e.target.value)} />
+      </div>
+      <div style={styles.formRow}>
+        <Select label="Responsável pelo bem" value={f.responsavel_id || ''} onChange={e => upd('responsavel_id', e.target.value)}>
+          <option value="">Selecionar</option>
+          {(responsaveis || []).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+        </Select>
         {f.id && <Select label="Status" value={f.status || 'ativo'} onChange={e => upd('status', e.target.value)}>
           {Object.entries(STATUS_BEM).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
         </Select>}
       </div>
+      <div style={styles.formRow}>
+        <div style={styles.formGroup}>
+          <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Garantia</label>
+          <select className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={f.tem_garantia ? 'sim' : 'nao'} onChange={e => upd('tem_garantia', e.target.value === 'sim')}>
+            <option value="nao">Sem garantia</option>
+            <option value="sim">Com garantia</option>
+          </select>
+        </div>
+        {f.tem_garantia && <div style={styles.formGroup}><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Garantia até</label><DatePicker value={f.garantia_ate || ''} onChange={v => upd('garantia_ate', v)} /></div>}
+      </div>
+      {f.id && f.status === 'baixado' && (
+        <div style={styles.formGroup}><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Data da baixa</label><DatePicker value={f.data_baixa || ''} onChange={v => upd('data_baixa', v)} /></div>
+      )}
       <div style={styles.formGroup}>
         <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Descrição</label>
         <textarea className="flex w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" style={{ minHeight: 50, resize: 'vertical' }} value={f.descricao || ''} onChange={e => upd('descricao', e.target.value)} />
@@ -888,6 +914,10 @@ function BemDetailModal({ open, data, onClose, onEdit, onBaixar, onMov, onDispen
         <div><span style={{ fontSize: 11, color: C.text2 }}>Nº Série:</span><div style={{ fontSize: 14 }}>{data.numero_serie || '—'}</div></div>
         <div><span style={{ fontSize: 11, color: C.text2 }}>Valor Aquisição:</span><div style={{ fontSize: 14, fontWeight: 600 }}>{fmtMoney(data.valor_aquisicao)}</div></div>
         <div><span style={{ fontSize: 11, color: C.text2 }}>Data Aquisição:</span><div style={{ fontSize: 14 }}>{fmtDate(data.data_aquisicao)}</div></div>
+        <div><span style={{ fontSize: 11, color: C.text2 }}>Nº da NF:</span><div style={{ fontSize: 14 }}>{data.numero_nf || '—'}</div></div>
+        <div><span style={{ fontSize: 11, color: C.text2 }}>Garantia:</span><div style={{ fontSize: 14 }}>{data.tem_garantia ? `Sim${data.garantia_ate ? ` (até ${fmtDate(data.garantia_ate)})` : ''}` : 'Não'}</div></div>
+        <div><span style={{ fontSize: 11, color: C.text2 }}>Responsável:</span><div style={{ fontSize: 14 }}>{data.responsavel?.name || '—'}</div></div>
+        {data.status === 'baixado' && <div><span style={{ fontSize: 11, color: C.text2 }}>Data da baixa:</span><div style={{ fontSize: 14 }}>{fmtDate(data.data_baixa)}</div></div>}
       </div>
       {data.depreciacao && (
         <div style={{ padding: '8px 12px', background: 'var(--cbrio-input-bg)', borderRadius: 8, marginBottom: 12, fontSize: 13 }}>
