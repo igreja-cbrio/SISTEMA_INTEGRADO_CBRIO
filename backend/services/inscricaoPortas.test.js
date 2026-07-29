@@ -38,4 +38,33 @@ const catalogo = catalogoPublico();
 assert.equal(catalogo.find((p) => p.chave === 'eventos').escritor, 'espinha_com_fallback_ext',
   'fallback do Eventos Externos é garantia de rollback e não pode sumir');
 
-console.log('inscricaoPortas: 7 portas, 10 fontes e rotas/aliases protegidos');
+// ── Sentido INVERSO: App.tsx → catálogo ────────────────────────────────────
+// A asserção de cima protege contra REMOVER/RENOMEAR porta existente. Esta
+// protege contra CRIAR porta nova sem registrá-la: sem ela, um formulário de
+// inscrição novo entraria em produção fora da view unificada, do inventário e
+// do contrato, sem quebrar teste nenhum.
+// Limite conhecido: casa por padrão de nome. Porta nova com rota sem
+// "inscri/inscrever/apresentacao" (ex.: `/censo`) continua passando batido —
+// ao criar porta, registrar em PORTAS_INSCRICAO é regra, não só teste.
+const ROTAS_INTERNAS = new Set([
+  // Telas do sistema (atrás de login) que casam com o padrão mas NÃO são porta
+  // pública de inscrição. Entrada nova aqui é decisão consciente.
+  '/inscricoes',
+  '/inscricoes/evento/:id',
+  '/inscricoes/evento/:id/checkin',
+  '/admin/grupos/qrcode-inscricao',
+  '/ministerial/totem-kids/apresentacao',
+  '/ministerial/totem-kids/voluntariado-inscricoes',
+]);
+const rotasDoCatalogo = new Set(PORTAS_INSCRICAO.flatMap((p) => p.rotasPublicas));
+const PADRAO_PORTA = /inscri|inscrever|apresentacao/i;
+for (const match of app.matchAll(/path="([^"]+)"/g)) {
+  const rota = match[1];
+  if (!PADRAO_PORTA.test(rota)) continue;
+  assert.ok(
+    rotasDoCatalogo.has(rota) || ROTAS_INTERNAS.has(rota),
+    `rota com cara de porta de inscrição fora do catálogo: ${rota} — registre em PORTAS_INSCRICAO (inscricaoPortas.js) ou em ROTAS_INTERNAS deste teste`,
+  );
+}
+
+console.log('inscricaoPortas: 7 portas, 10 fontes, rotas/aliases protegidos e catálogo fechado nos 2 sentidos');

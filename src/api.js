@@ -152,7 +152,11 @@ const get = (path, opts) => request(path, { ...opts });
 const post = (path, body, opts) => request(path, { method: 'POST', body: JSON.stringify(body), ...opts });
 const put = (path, body) => request(path, { method: 'PUT', body: JSON.stringify(body) });
 const patch = (path, body) => request(path, { method: 'PATCH', body: JSON.stringify(body) });
-const del = (path) => request(path, { method: 'DELETE' });
+// DELETE aceita corpo opcional: rotas que registram MOTIVO da exclusão (ex.:
+// desfazer check-in, que grava no ledger append-only) precisam mandar payload.
+const del = (path, body) => request(path, body === undefined
+  ? { method: 'DELETE' }
+  : { method: 'DELETE', body: JSON.stringify(body) });
 
 export const users = {
   list: () => get('/auth/users'),
@@ -320,10 +324,12 @@ export const inscricoesApi = {
   portas: () => get('/inscricoes/portas'),
   qrs: (qs) => get(`/inscricoes/qrs${qs ? `?${qs}` : ''}`),
   revogarQr: (id, motivo) => patch(`/inscricoes/qrs/${id}/revogar`, { motivo }),
+  reativarQr: (id, motivo) => patch(`/inscricoes/qrs/${id}/reativar`, { motivo }),
   checkinEstado: (eventoId) => get(`/inscricoes/eventos/${eventoId}/checkin`),
   checkinBuscar: (eventoId, q) => get(`/inscricoes/eventos/${eventoId}/checkin/buscar?q=${encodeURIComponent(q)}`),
   checkinMarcar: (eventoId, data) => post(`/inscricoes/eventos/${eventoId}/checkin`, data),
-  checkinDesfazer: (eventoId, inscricaoId) => del(`/inscricoes/eventos/${eventoId}/checkin/${inscricaoId}`),
+  checkinDesfazer: (eventoId, inscricaoId, motivo) => del(`/inscricoes/eventos/${eventoId}/checkin/${inscricaoId}`, { motivo }),
+  checkinHistorico: (eventoId) => get(`/inscricoes/eventos/${eventoId}/checkin/historico`),
 };
 
 // Eventos Externos · formulário público de confirmação de presença (sem auth)

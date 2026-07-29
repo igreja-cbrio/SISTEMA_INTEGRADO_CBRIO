@@ -568,7 +568,7 @@ export default function Inscricoes() {
 
       {aba === 'todas' && <InscricoesTodas areas={areas} />}
       {aba === 'pessoas' && podePessoas && <InscricoesPessoas />}
-      {aba === 'qrs' && podePessoas && <InscricoesQrInventario />}
+      {aba === 'qrs' && podePessoas && <InscricoesQrInventario eventos={eventos} />}
       {aba === 'dashboard' && <InscricoesDashboard areas={areas} />}
 
       {aba === 'eventos' && (

@@ -513,36 +513,81 @@ router.get('/portas', authorizeModule('inscricoes', 1), async (_req, res) => {
   }
 });
 
+// Inventário de QR · o inventário e a reativação chegaram em duas migrations
+// (20260729090000 cria as tabelas · 20260729100000 acrescenta a reativação), e
+// o deploy é em duas etapas: tabela/coluna ausente NÃO pode virar 500 na tela.
+const QR_SELECT_BASE = `id, primeira_emissao_em, ultima_emissao_em, emissoes, canais,
+  revogado_em, revogado_por, revogacao_motivo,
+  inscricao:inscricoes!inner(id, nome_completo, status, evento_id,
+    evento:insc_eventos!inner(id, nome, slug))`;
+const QR_SELECT_REATIVACAO = ', reativado_em, reativado_por, reativacao_motivo';
+const tabelaAusente = (error) => !!error && ['PGRST205', '42P01'].includes(error.code);
+const colunaAusente = (error) => !!error && ['42703', 'PGRST204'].includes(error.code);
+
+// Nomes dos operadores (revogou/reativou) resolvidos em UMA consulta. É rótulo:
+// falha aqui não derruba o inventário.
+async function nomesDeOperadores(ids) {
+  const unicos = [...new Set(ids.filter(Boolean))];
+  if (!unicos.length) return {};
+  try {
+    const { data } = await supabase.from('profiles').select('id, name').in('id', unicos.slice(0, 200));
+    return Object.fromEntries((data || []).map((p) => [p.id, p.name]));
+  } catch { return {}; }
+}
+
 // GET /qrs — inventário seguro: identifica pessoa/evento e estado, mas nunca
 // devolve o token bruto (a tabela guarda somente SHA-256). Tokens antigos não
 // registrados seguem válidos e aparecem na diferença `elegiveis - registrados`.
+// Busca e paginação são SERVER-SIDE: filtrar só a página carregada esconderia
+// a maior parte das pessoas num evento do tamanho do Celebra.
 router.get('/qrs', authorizeModule('inscricoes', 2), async (req, res) => {
   try {
     const page = Math.max(0, parseInt(req.query.page) || 0);
     const limit = Math.min(200, Math.max(20, parseInt(req.query.limit) || 50));
     const eventoId = /^[0-9a-f-]{36}$/i.test(String(req.query.evento_id || ''))
       ? String(req.query.evento_id) : null;
+    const busca = String(req.query.q || '').trim().slice(0, 120);
 
-    let listaQuery = supabase.from('insc_qr_tokens')
-      .select(`id, primeira_emissao_em, ultima_emissao_em, emissoes, canais,
-        revogado_em, revogacao_motivo,
-        inscricao:inscricoes!inner(id, nome_completo, status, evento_id,
-          evento:insc_eventos!inner(id, nome, slug))`, { count: 'exact' })
-      .order('ultima_emissao_em', { ascending: false })
-      .range(page * limit, page * limit + limit - 1);
-    if (eventoId) listaQuery = listaQuery.eq('inscricao.evento_id', eventoId);
-    if (req.query.estado === 'ativo') listaQuery = listaQuery.is('revogado_em', null);
-    if (req.query.estado === 'revogado') listaQuery = listaQuery.not('revogado_em', 'is', null);
+    const montarLista = (select) => {
+      let q = supabase.from('insc_qr_tokens')
+        .select(select, { count: 'exact' })
+        .order('ultima_emissao_em', { ascending: false })
+        .range(page * limit, page * limit + limit - 1);
+      if (eventoId) q = q.eq('inscricao.evento_id', eventoId);
+      if (busca) q = q.ilike('inscricao.nome_completo', `%${escapePostgrestValue(busca)}%`);
+      if (req.query.estado === 'ativo') q = q.is('revogado_em', null);
+      if (req.query.estado === 'revogado') q = q.not('revogado_em', 'is', null);
+      return q;
+    };
+
+    let lista = await montarLista(QR_SELECT_BASE + QR_SELECT_REATIVACAO);
+    let temReativacao = true;
+    if (colunaAusente(lista.error)) {
+      // Migration da reativação ainda não entrou — inventário abre sem ela.
+      temReativacao = false;
+      lista = await montarLista(QR_SELECT_BASE);
+    }
+    if (tabelaAusente(lista.error)) {
+      return res.json({
+        items: [], total_registrados: 0, total_elegiveis: 0, total_paginas: 0,
+        page: 0, por_pagina: limit, reativacao_disponivel: false, inventario_disponivel: false,
+        aviso: 'O inventário de QR ainda não foi criado no banco (migration pendente).',
+      });
+    }
+    if (lista.error) throw lista.error;
 
     let elegiveisQuery = supabase.from('inscricoes')
       .select('*', { count: 'exact', head: true })
       .is('deleted_at', null).neq('status', 'cancelada');
     if (eventoId) elegiveisQuery = elegiveisQuery.eq('evento_id', eventoId);
-
-    const [{ data, error, count }, elegiveis] = await Promise.all([listaQuery, elegiveisQuery]);
-    if (error) throw error;
+    const elegiveis = await elegiveisQuery;
     if (elegiveis.error) throw elegiveis.error;
-    const itens = (data || []).map((item) => ({
+
+    const dados = lista.data || [];
+    const nomes = await nomesDeOperadores(
+      dados.flatMap((item) => [item.revogado_por, item.reativado_por]),
+    );
+    const itens = dados.map((item) => ({
       id: item.id,
       primeira_emissao_em: item.primeira_emissao_em,
       ultima_emissao_em: item.ultima_emissao_em,
@@ -551,15 +596,23 @@ router.get('/qrs', authorizeModule('inscricoes', 2), async (req, res) => {
       ativo: !item.revogado_em,
       revogado_em: item.revogado_em,
       revogacao_motivo: item.revogacao_motivo,
+      revogado_por_nome: nomes[item.revogado_por] || null,
+      reativado_em: item.reativado_em ?? null,
+      reativacao_motivo: item.reativacao_motivo ?? null,
+      reativado_por_nome: nomes[item.reativado_por] || null,
       inscricao: item.inscricao,
     }));
+    const total = lista.count ?? 0;
     res.json({
       items: itens,
-      total_registrados: count ?? 0,
+      total_registrados: total,
       total_ativos_pagina: itens.filter((item) => item.ativo).length,
       total_elegiveis: elegiveis.count ?? 0,
+      total_paginas: Math.max(1, Math.ceil(total / limit)),
       page,
       por_pagina: limit,
+      inventario_disponivel: true,
+      reativacao_disponivel: temReativacao,
     });
   } catch (e) {
     console.error('[inscricoes] inventário QR:', e.message);
@@ -587,6 +640,41 @@ router.patch('/qrs/:id/revogar', authorizeModule('inscricoes', 3), async (req, r
   } catch (e) {
     console.error('[inscricoes] revogar QR:', e.message);
     res.status(500).json({ error: 'Erro ao revogar o QR' });
+  }
+});
+
+// PATCH /qrs/:id/reativar — desfaz a revogação. Existe porque o comprovante é
+// HMAC determinístico do id da inscrição: revogar NÃO gira segredo e NÃO gera
+// QR novo, então sem volta um clique errado tirava a pessoa do check-in por QR
+// para sempre. O histórico (quem revogou/reativou e por quê) fica em
+// app_audit_log via trigger — a revogação não é apagada da trilha, só do estado.
+router.patch('/qrs/:id/reativar', authorizeModule('inscricoes', 3), async (req, res) => {
+  try {
+    const motivo = String(req.body?.motivo || '').trim().slice(0, 500);
+    if (motivo.length < 3) return res.status(400).json({ error: 'Informe o motivo da reativação' });
+    const { data, error } = await supabase.from('insc_qr_tokens')
+      .update({
+        revogado_em: null,
+        revogado_por: null,
+        revogacao_motivo: null,
+        reativado_em: new Date().toISOString(),
+        reativado_por: req.user?.id || null,
+        reativacao_motivo: motivo,
+      })
+      .eq('id', req.params.id).not('revogado_em', 'is', null)
+      .select('id, reativado_em').maybeSingle();
+    if (colunaAusente(error)) {
+      return res.status(409).json({
+        error: 'A reativação de QR depende de uma migration ainda não aplicada no banco.',
+        motivo: 'migration_pendente',
+      });
+    }
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'QR revogado não encontrado' });
+    res.json({ ok: true, ...data });
+  } catch (e) {
+    console.error('[inscricoes] reativar QR:', e.message);
+    res.status(500).json({ error: 'Erro ao reativar o QR' });
   }
 });
 
@@ -1015,6 +1103,46 @@ router.delete('/eventos/:id/checkin/:inscricaoId', authorizeModule('inscricoes',
   } catch (e) {
     console.error('[inscricoes] desfazer checkin:', e.message);
     res.status(500).json({ error: 'Erro ao desfazer o check-in' });
+  }
+});
+
+// GET /eventos/:id/checkin/historico — LEITURA do ledger append-only
+// (`insc_checkin_eventos`). Sem isso a trilha existia só pra quem abre o SQL
+// Editor: a pergunta real da portaria é "quem liberou a entrada dessa pessoa
+// com pagamento pendente?" e ela precisa ser respondida na tela.
+router.get('/eventos/:id/checkin/historico', authorizeModule('inscricoes', 2), async (req, res) => {
+  try {
+    const limit = Math.min(300, Math.max(20, parseInt(req.query.limit) || 100));
+    const { data, error } = await supabase.from('insc_checkin_eventos')
+      .select(`id, acao, modo, motivo, em, ator_id, metadata,
+        inscricao:inscricoes(id, nome_completo)`)
+      .eq('evento_id', req.params.id)
+      .order('em', { ascending: false })
+      .limit(limit);
+    // Ledger ainda não criado no banco (deploy em duas etapas) — a tela mostra
+    // o aviso em vez de um erro vermelho.
+    if (tabelaAusente(error)) {
+      return res.json({ disponivel: false, items: [], aviso: 'A trilha de check-in ainda não foi criada no banco (migration pendente).' });
+    }
+    if (error) throw error;
+    const nomes = await nomesDeOperadores((data || []).map((l) => l.ator_id));
+    res.json({
+      disponivel: true,
+      items: (data || []).map((l) => ({
+        id: l.id,
+        acao: l.acao,
+        modo: l.modo,
+        motivo: l.motivo,
+        em: l.em,
+        por_nome: nomes[l.ator_id] || null,
+        override_pendente: !!l.metadata?.override_pendente,
+        nome_completo: l.inscricao?.nome_completo || null,
+        inscricao_id: l.inscricao?.id || null,
+      })),
+    });
+  } catch (e) {
+    console.error('[inscricoes] histórico de check-in:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar a trilha do check-in' });
   }
 });
 

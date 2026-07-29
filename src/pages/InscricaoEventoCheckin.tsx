@@ -17,7 +17,7 @@ import { Button } from '../components/ui/button';
 import { toast } from 'sonner';
 import {
   ArrowLeft, Camera, CameraOff, CheckCircle2, Loader2, Maximize2, Minimize2,
-  Search, UserPlus, Users, Undo2, AlertTriangle,
+  Search, UserPlus, Users, Undo2, AlertTriangle, History,
 } from 'lucide-react';
 
 type ItemLista = {
@@ -36,6 +36,24 @@ type Feedback = {
   pendenteId?: string;
 };
 
+type HistItem = {
+  id: string; acao: string; modo: string | null; motivo: string | null;
+  em: string; por_nome: string | null; override_pendente: boolean;
+  nome_completo: string | null; inscricao_id: string | null;
+};
+type Historico = { disponivel: boolean; items: HistItem[]; aviso?: string };
+
+const ACAO_ROTULO: Record<string, string> = {
+  checkin: 'entrada',
+  checkin_override_pendente: 'liberada com pendência',
+  desfeito: 'desfeito',
+};
+const ACAO_ESTILO: Record<string, string> = {
+  checkin: 'bg-emerald-500/15 text-emerald-600',
+  checkin_override_pendente: 'bg-amber-500/15 text-amber-600',
+  desfeito: 'bg-red-500/15 text-red-600',
+};
+
 const hora = (iso?: string | null) => iso ? new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '';
 const norm = (s: string) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 
@@ -51,6 +69,10 @@ export default function InscricaoEventoCheckin() {
   const [marcando, setMarcando] = useState<string | null>(null);
   const [lendo, setLendo] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
+  // Trilha só carrega sob demanda — a tela do dia roda em polling curto e não
+  // vale puxar o ledger a cada 15s.
+  const [historico, setHistorico] = useState<Historico | null>(null);
+  const [carregandoHist, setCarregandoHist] = useState(false);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const scannerRef = useRef<Html5Qrcode | null>(null);
@@ -126,6 +148,7 @@ export default function InscricaoEventoCheckin() {
       setBusca('');
       buscaRef.current?.focus();
       carregar();
+      if (historico) carregarHistorico();
     } catch (e: any) {
       if (e?.motivo === 'pagamento_pendente' && e?.inscricao_id) {
         mostrarFeedback({ tipo: 'aviso', titulo: e?.nome || 'Pagamento pendente', detalhe: 'O pagamento desta inscrição ainda não foi confirmado.', pendenteId: e.inscricao_id });
@@ -147,13 +170,31 @@ export default function InscricaoEventoCheckin() {
     marcar({ inscricao_id: inscricaoId, confirmar_pendente: true, motivo_override: motivo.trim() });
   }
 
+  // O motivo VAI pro ledger append-only (o prompt substitui o confirm: uma
+  // caixa só, e a trilha deixa de registrar sempre o mesmo texto genérico).
   async function desfazer(i: ItemLista) {
-    if (!window.confirm(`Desfazer o check-in de ${i.nome_completo}?`)) return;
+    const motivo = window.prompt(`Desfazer o check-in de ${i.nome_completo}? Informe o motivo:`, 'erro de leitura na portaria');
+    if (!motivo?.trim()) return;
     try {
-      await api.checkinDesfazer(id, i.id);
+      await api.checkinDesfazer(id, i.id, motivo.trim());
       toast.success('Check-in desfeito');
       carregar();
+      if (historico) carregarHistorico();
     } catch (e: any) { toast.error(e?.message || 'Erro ao desfazer'); }
+  }
+
+  function carregarHistorico() {
+    if (!id) return;
+    setCarregandoHist(true);
+    api.checkinHistorico(id)
+      .then((h: any) => setHistorico({ disponivel: h?.disponivel !== false, items: Array.isArray(h?.items) ? h.items : [], aviso: h?.aviso }))
+      .catch((e: any) => { setHistorico({ disponivel: true, items: [] }); toast.error(e?.message || 'Erro ao carregar a trilha'); })
+      .finally(() => setCarregandoHist(false));
+  }
+  function alternarHistorico() {
+    if (historico) { setHistorico(null); return; }
+    setHistorico({ disponivel: true, items: [] });
+    carregarHistorico();
   }
 
   // ── Leitor de QR (contínuo) ──────────────────────────────────────────────
@@ -368,17 +409,56 @@ export default function InscricaoEventoCheckin() {
             </div>
           </Card>
 
-          {/* Leitor de QR */}
-          <Card className="glass-solid p-4">
-            <div className="text-sm font-semibold mb-2">Ler QR do comprovante</div>
-            <div id="insc-checkin-qr" className="w-full rounded-xl overflow-hidden bg-black/20" style={{ minHeight: lendo ? 260 : 0 }} />
-            <Button onClick={lendo ? desligarCamera : ligarCamera} variant={lendo ? 'destructive' : 'default'} className="w-full mt-3 gap-2">
-              {lendo ? <><CameraOff className="h-4 w-4" /> Parar leitura</> : <><Camera className="h-4 w-4" /> Ligar câmera</>}
-            </Button>
-            <p className="text-[11px] text-muted-foreground mt-2 leading-relaxed">
-              A leitura fica ligada direto — aponte um QR atrás do outro. Quem não tiver o comprovante entra pela busca ao lado.
-            </p>
-          </Card>
+          <div className="space-y-4">
+            {/* Leitor de QR */}
+            <Card className="glass-solid p-4">
+              <div className="text-sm font-semibold mb-2">Ler QR do comprovante</div>
+              <div id="insc-checkin-qr" className="w-full rounded-xl overflow-hidden bg-black/20" style={{ minHeight: lendo ? 260 : 0 }} />
+              <Button onClick={lendo ? desligarCamera : ligarCamera} variant={lendo ? 'destructive' : 'default'} className="w-full mt-3 gap-2">
+                {lendo ? <><CameraOff className="h-4 w-4" /> Parar leitura</> : <><Camera className="h-4 w-4" /> Ligar câmera</>}
+              </Button>
+              <p className="text-[11px] text-muted-foreground mt-2 leading-relaxed">
+                A leitura fica ligada direto — aponte um QR atrás do outro. Quem não tiver o comprovante entra pela busca ao lado.
+              </p>
+            </Card>
+
+            {/* Trilha da portaria (ledger append-only) — responde "quem liberou
+                a entrada dessa pessoa com pagamento pendente?" na própria tela. */}
+            <Card className="glass-solid p-4">
+              <button onClick={alternarHistorico} className="w-full flex items-center gap-2 text-sm font-semibold">
+                <History className="h-4 w-4 text-primary" />
+                Trilha da portaria
+                <span className="ml-auto text-xs text-muted-foreground">{historico ? 'ocultar' : 'ver'}</span>
+              </button>
+              {historico && (
+                <div className="mt-3">
+                  {carregandoHist && <div className="flex justify-center py-4"><Loader2 className="h-4 w-4 animate-spin text-primary" /></div>}
+                  {!carregandoHist && historico.disponivel === false && (
+                    <p className="text-xs text-amber-600">{historico.aviso || 'Trilha indisponível no banco.'}</p>
+                  )}
+                  {!carregandoHist && historico.disponivel !== false && historico.items.length === 0 && (
+                    <p className="text-xs text-muted-foreground">Nenhum movimento registrado ainda.</p>
+                  )}
+                  <div className="divide-y divide-border/60 max-h-[40vh] overflow-y-auto">
+                    {historico.items.map(h => (
+                      <div key={h.id} className="py-2 text-xs">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className={`rounded-full px-2 py-0.5 font-semibold ${ACAO_ESTILO[h.acao] || 'bg-foreground/10 text-muted-foreground'}`}>
+                            {ACAO_ROTULO[h.acao] || h.acao}
+                          </span>
+                          <span className="font-medium break-words">{h.nome_completo || 'Inscrição'}</span>
+                          <span className="ml-auto text-muted-foreground">{hora(h.em)}</span>
+                        </div>
+                        <div className="text-muted-foreground mt-0.5">
+                          {h.por_nome || 'operador não identificado'}{h.modo ? ` · ${h.modo === 'qr' ? 'QR' : 'busca'}` : ''}{h.motivo ? ` — ${h.motivo}` : ''}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </Card>
+          </div>
         </div>
       </div>
     </div>
