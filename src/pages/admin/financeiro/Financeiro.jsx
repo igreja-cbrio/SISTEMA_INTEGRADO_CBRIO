@@ -13,6 +13,7 @@ import Conciliacao from './Conciliacao';
 import IdentificarDoadores from './IdentificarDoadores';
 import { CartoesConfig, FaturaModal } from './CartoesFaturas';
 import NotasCompras from './NotasCompras';
+import BancoComprovantes from './BancoComprovantes';
 import DashboardOverview from './DashboardOverview';
 import DreAuto from './DreAuto';
 import Analises from './Analises';
@@ -351,7 +352,7 @@ const TABS = [
   'Análises', 'DRE', 'Generosidade', 'Banco',
   'Operacional', 'Gestão', 'Configuração',
 ];
-const SUBS_OPERACIONAL = ['Contas', 'Recorrentes', 'Reembolsos', 'Importar extratos', 'Fila de classificação', 'Conciliação', 'Calendário', 'Notas de compras', 'Identificar doadores'];
+const SUBS_OPERACIONAL = ['Contas', 'Recorrentes', 'Reembolsos', 'Importar extratos', 'Fila de classificação', 'Conciliação', 'Calendário', 'Notas de compras', 'Identificar doadores', 'Comprovantes'];
 const SUBS_GESTAO = ['Solicitações', 'Alertas', 'Fechamento', 'Auditoria'];
 const SUBS_DRE = ['DRE Auto', 'Por Centro de Custo', 'Comparativo Temporal'];
 
@@ -492,6 +493,7 @@ export default function Financeiro() {
   const [filtroInicio, setFiltroInicio] = useState('');
   const [filtroFim, setFiltroFim] = useState('');
   const [filtroBusca, setFiltroBusca] = useState('');
+  const [filtroSemDoc, setFiltroSemDoc] = useState(false); // só transações sem comprovante e sem NF
 
   // Filtro contas a pagar
   const [filtroPagarStatus, setFiltroPagarStatus] = useState('');
@@ -557,6 +559,7 @@ export default function Financeiro() {
       if (filtroTipo) params.tipo = filtroTipo;
       if (filtroStatus) params.status = filtroStatus;
       if (filtroBusca) params.busca = filtroBusca;
+      if (filtroSemDoc) params.sem_documento = 'true';
 
       // Período · monta inicio/fim conforme modo
       if (filtroPeriodoModo === 'mes') {
@@ -574,7 +577,7 @@ export default function Financeiro() {
       setTransacoes(await financeiro.transacoes.list(params));
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
-  }, [filtroContaId, filtroTipo, filtroStatus, filtroBusca, filtroPeriodoModo, filtroAno, filtroMesNum, filtroInicio, filtroFim]);
+  }, [filtroContaId, filtroTipo, filtroStatus, filtroBusca, filtroSemDoc, filtroPeriodoModo, filtroAno, filtroMesNum, filtroInicio, filtroFim]);
 
   const loadContasPagar = useCallback(async () => {
     try {
@@ -982,11 +985,21 @@ export default function Financeiro() {
           </div>
         </div>
 
+        {/* Conciliação · só transações sem comprovante E sem nota fiscal */}
+        <div className="flex items-center gap-2 mb-3">
+          <button type="button" onClick={() => setFiltroSemDoc(v => !v)}
+            className={`inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border text-sm ${filtroSemDoc ? 'text-white border-transparent' : 'text-muted-foreground border-input bg-background'}`}
+            style={filtroSemDoc ? { background: '#00B39D' } : {}}>
+            {filtroSemDoc ? '✓ ' : ''}Só sem comprovante / nota fiscal
+          </button>
+          {filtroSemDoc && <span className="text-[11px] text-muted-foreground">Mostra, no período, o que ainda falta documentar (conciliação).</span>}
+        </div>
+
         {/* Limpar */}
-        {(filtroContaId || filtroTipo || filtroStatus || filtroBusca || filtroPeriodoModo !== 'mes' ||
+        {(filtroContaId || filtroTipo || filtroStatus || filtroBusca || filtroSemDoc || filtroPeriodoModo !== 'mes' ||
           filtroAno !== new Date().getFullYear() || filtroMesNum !== new Date().getMonth()) && (
           <button onClick={() => {
-            setFiltroContaId(''); setFiltroTipo(''); setFiltroStatus(''); setFiltroBusca('');
+            setFiltroContaId(''); setFiltroTipo(''); setFiltroStatus(''); setFiltroBusca(''); setFiltroSemDoc(false);
             setFiltroPeriodoModo('mes');
             setFiltroAno(new Date().getFullYear());
             setFiltroMesNum(new Date().getMonth());
@@ -1600,6 +1613,7 @@ export default function Financeiro() {
           {subOp === 6 && <CalendarioFinanceiro />}
           {subOp === 7 && <NotasCompras />}
           {subOp === 8 && <IdentificarDoadores />}
+          {subOp === 9 && <BancoComprovantes />}
         </div>
       )}
 

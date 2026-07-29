@@ -970,6 +970,8 @@ export const financeiro = {
     update: (id, data) => put(`/financeiro/transacoes/${id}`, data),
     remove: (id) => del(`/financeiro/transacoes/${id}`),
   },
+  // Banco de comprovantes (anexos das transações + NFs com arquivo)
+  comprovantes: (params) => get('/financeiro/comprovantes' + (params ? '?' + new URLSearchParams(params) : '')),
   contasPagar: {
     list: (params) => get('/financeiro/contas-pagar' + (params ? '?' + new URLSearchParams(params) : '')),
     create: (data) => post('/financeiro/contas-pagar', data),

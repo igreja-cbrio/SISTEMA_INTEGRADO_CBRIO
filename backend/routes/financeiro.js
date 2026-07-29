@@ -143,7 +143,7 @@ router.delete('/categorias/:id', async (req, res) => {
 // ── TRANSAÇÕES ─────────────────────────────────────────────
 router.get('/transacoes', async (req, res) => {
   try {
-    const { conta_id, tipo, status, mes, inicio, fim, busca, limit = 1000 } = req.query;
+    const { conta_id, tipo, status, mes, inicio, fim, busca, sem_documento, limit = 1000 } = req.query;
     // Builder reutilizável — fetchAllRows pagina por baixo dos panos até o teto
     // pedido (o `.limit(>1000)` antigo era cortado em 1000 pelo PostgREST, então
     // a lista truncava em silêncio sobre 151k transações).
@@ -165,9 +165,49 @@ router.get('/transacoes', async (req, res) => {
       return query;
     };
     const teto = Math.min(Number(limit) || 1000, 50000);
-    const data = await fetchAllRows(build, { max: teto });
+    let data = await fetchAllRows(build, { max: teto });
+
+    // Conciliação: só as transações SEM comprovante anexado E SEM nota fiscal
+    // vinculada (o que falta documentar). anexos_url vazio + id fora do conjunto
+    // de transações com NF. Pós-filtro em JS sobre o recorte já paginado.
+    if (sem_documento === 'true') {
+      const ids = data.map(t => t.id);
+      const comNf = new Set();
+      for (let i = 0; i < ids.length; i += 200) {
+        const chunk = ids.slice(i, i + 200);
+        const { data: nfs } = await supabase.from('log_notas_fiscais')
+          .select('transacao_id').in('transacao_id', chunk).not('transacao_id', 'is', null);
+        (nfs || []).forEach(n => comNf.add(n.transacao_id));
+      }
+      data = data.filter(t => {
+        const anexos = Array.isArray(t.anexos_url) ? t.anexos_url : [];
+        return anexos.length === 0 && !comNf.has(t.id);
+      });
+    }
     res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro ao listar transações' }); }
+});
+
+// Banco de comprovantes · agrega anexos das transações + notas fiscais com
+// arquivo (via RPC fn_banco_comprovantes · migration 20260729140000).
+router.get('/comprovantes', async (req, res) => {
+  try {
+    const { inicio, fim, conta_id, q } = req.query;
+    const base = (process.env.SUPABASE_URL || '').replace(/\/$/, '');
+    const { data, error } = await supabase.rpc('fn_banco_comprovantes', {
+      p_inicio: inicio || null,
+      p_fim: fim || null,
+      p_conta: conta_id || null,
+      p_q: q || null,
+      p_base: base,
+    });
+    if (error) return res.status(400).json({ error: error.message });
+    const itens = Array.isArray(data) ? data : [];
+    res.json({ itens, total: itens.length });
+  } catch (e) {
+    console.error('[FIN] banco de comprovantes:', e);
+    res.status(500).json({ error: 'Erro ao listar comprovantes' });
+  }
 });
 
 router.post('/transacoes', async (req, res) => {
