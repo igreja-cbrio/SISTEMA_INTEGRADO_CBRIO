@@ -178,6 +178,8 @@ export default function Patrimonio() {
   const [modalConvocacao, setModalConvocacao] = useState(null);
   const loadDash = useCallback(async () => { try { setDashError(false); setDash(await patrimonio.dashboard()); } catch (e) { console.error(e); setDashError(true); setDash({ totalBens: 0, ativos: 0, manutencao: 0, baixados: 0, extraviados: 0, valorTotal: 0, porCategoria: {}, porLocalizacao: {}, inventariosAbertos: 0 }); } }, []);
   const loadIndicadores = useCallback(async () => { try { setIndicadores(await patrimonio.dashboardIndicadores()); } catch (e) { console.error(e); } }, []);
+  const [depreciacaoIndic, setDepreciacaoIndic] = useState(null);
+  const loadDepreciacao = useCallback(async () => { try { setDepreciacaoIndic(await patrimonio.dashboardDepreciacao()); } catch (e) { console.error(e); } }, []);
   const loadBens = useCallback(async () => {
     try { setLoading(true); const p = {}; if (filtroStatus) p.status = filtroStatus; if (filtroCat) p.categoria_id = filtroCat; if (filtroLoc) p.localizacao_id = filtroLoc; if (busca) p.busca = busca; setBens(await patrimonio.bens.list(p)); }
     catch (e) { console.error(e); } finally { setLoading(false); }
@@ -189,7 +191,7 @@ export default function Patrimonio() {
   const loadRevisaoIndic = useCallback(async () => { try { setRevisaoIndic(await patrimonio.revisao.indicadores()); } catch (e) { console.error(e); } }, []);
   const loadResponsaveis = useCallback(async () => { try { setResponsaveis(await patrimonio.revisao.responsaveis()); } catch (e) { console.error(e); } }, []);
 
-  useEffect(() => { loadDash(); loadIndicadores(); loadBens(); loadCats(); loadLocs(); loadInvs(); loadRevisao(); loadRevisaoIndic(); loadResponsaveis(); }, []);
+  useEffect(() => { loadDash(); loadIndicadores(); loadDepreciacao(); loadBens(); loadCats(); loadLocs(); loadInvs(); loadRevisao(); loadRevisaoIndic(); loadResponsaveis(); }, []);
   useEffect(() => { loadBens(); }, [filtroStatus, filtroCat, filtroLoc, busca]);
 
   async function saveBem(data) {
@@ -209,6 +211,7 @@ export default function Patrimonio() {
   }
   async function addCat() { if (!newCat.trim()) return; try { await patrimonio.categorias.create({ nome: newCat }); setNewCat(''); loadCats(); loadDash(); } catch (e) { setError(e.message); } }
   async function removeCat(id) { if (!confirm('Remover categoria?')) return; try { await patrimonio.categorias.remove(id); loadCats(); } catch (e) { setError(e.message); } }
+  async function updateCat(id, data) { try { await patrimonio.categorias.update(id, data); loadCats(); loadDepreciacao(); } catch (e) { setError(e.message); } }
   async function addLoc(nome, pai_id) { const n = nome ?? newLoc; if (!n.trim()) return; try { await patrimonio.localizacoes.create({ nome: n, pai_id: pai_id || null }); setNewLoc(''); loadLocs(); loadDash(); } catch (e) { setError(e.message); } }
   async function removeLoc(id) { if (!confirm('Remover localização? Bens e sub-localizações apontando pra ela não são movidos automaticamente.')) return; try { await patrimonio.localizacoes.remove(id); loadLocs(); } catch (e) { setError(e.message); } }
   async function updateLoc(id, data) { try { await patrimonio.localizacoes.update(id, data); loadLocs(); } catch (e) { setError(e.message); } }
@@ -241,6 +244,7 @@ export default function Patrimonio() {
         <DashboardTab
           dash={dash}
           indicadores={indicadores}
+          depreciacaoIndic={depreciacaoIndic}
           onNavigate={(targetTab, status) => { setFiltroStatus(status || ''); setTab(targetTab); }}
           onNavigateFiltro={(f) => {
             setFiltroStatus(''); setFiltroCat(f.categoria_id || ''); setFiltroLoc(f.localizacao_id || '');
@@ -258,7 +262,7 @@ export default function Patrimonio() {
           onBaixar={baixarBem} isDiretor={isDiretor}
         />
       )}
-      {tab === 2 && <CatLocTab categorias={categorias} localizacoes={localizacoes} locOptions={locOptions} newCat={newCat} setNewCat={setNewCat} addCat={addCat} removeCat={removeCat} addLoc={addLoc} removeLoc={removeLoc} updateLoc={updateLoc} isDiretor={isDiretor} />}
+      {tab === 2 && <CatLocTab categorias={categorias} localizacoes={localizacoes} locOptions={locOptions} newCat={newCat} setNewCat={setNewCat} addCat={addCat} removeCat={removeCat} updateCat={updateCat} addLoc={addLoc} removeLoc={removeLoc} updateLoc={updateLoc} isDiretor={isDiretor} />}
       {tab === 3 && <InventariosTab inventarios={inventarios} onNew={() => setModalInv({})} onUpdate={updateInvStatus} isDiretor={isDiretor} />}
       {tab === 4 && (
         <RevisaoTab ciclos={revisaoCiclos} indicadores={revisaoIndic}
@@ -322,7 +326,7 @@ function PatStatCard({ label, value, bg, svg, onClick }) {
   );
 }
 
-function DashboardTab({ dash, indicadores, onNavigate, onNavigateFiltro, onAbrirBem }) {
+function DashboardTab({ dash, indicadores, depreciacaoIndic, onNavigate, onNavigateFiltro, onAbrirBem }) {
   if (!dash) return <div style={styles.empty}>Carregando dashboard...</div>;
   // Tab 1 = Bens; filtra por status quando aplicável
   const kpis = [
@@ -353,6 +357,26 @@ function DashboardTab({ dash, indicadores, onNavigate, onNavigateFiltro, onAbrir
           <div style={{ fontSize: 12, fontWeight: 700, color: C.text2, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Saneamento de cadastro</div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
             {saneamento.map((k) => <PatStatCard key={k.label} label={k.label} value={k.value} bg={k.bg} svg={null} onClick={k.filtro ? () => onNavigateFiltro(k.filtro) : undefined} />)}
+          </div>
+        </div>
+      )}
+
+      {/* Depreciação · indicador GERENCIAL interno (pedido do usuário 2026-07-29) —
+          linear, derivado sob demanda a partir da vida útil configurada por
+          categoria. NÃO é cálculo contábil oficial. */}
+      {depreciacaoIndic && depreciacaoIndic.bens_com_depreciacao > 0 && (
+        <div style={{ ...styles.card, marginBottom: 24, padding: 16 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 8 }}>
+            <div style={styles.cardTitle}>Depreciação (indicador gerencial)</div>
+            <div style={{ fontSize: 11, color: C.text3 }}>Cálculo linear interno — não substitui avaliação contábil oficial</div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 16, marginTop: 12 }}>
+            <div><div style={{ fontSize: 11, color: C.text2 }}>Valor de aquisição</div><div style={{ fontSize: 16, fontWeight: 700 }}>{fmtMoney(depreciacaoIndic.valor_aquisicao_total)}</div></div>
+            <div><div style={{ fontSize: 11, color: C.text2 }}>Valor atual estimado</div><div style={{ fontSize: 16, fontWeight: 700, color: C.primary }}>{fmtMoney(depreciacaoIndic.valor_atual_estimado_total)}</div></div>
+            <div><div style={{ fontSize: 11, color: C.text2 }}>Bens com depreciação calculada</div><div style={{ fontSize: 16, fontWeight: 700 }}>{depreciacaoIndic.bens_com_depreciacao}</div></div>
+            {depreciacaoIndic.bens_sem_configuracao > 0 && (
+              <div><div style={{ fontSize: 11, color: C.text2 }}>Sem vida útil configurada</div><div style={{ fontSize: 16, fontWeight: 700, color: C.amber }}>{depreciacaoIndic.bens_sem_configuracao}</div></div>
+            )}
           </div>
         </div>
       )}
@@ -552,10 +576,11 @@ function LocTreeNode({ node, depth, expanded, toggleExpanded, isDiretor, onEdit,
   );
 }
 
-function CatLocTab({ categorias, localizacoes, locOptions, newCat, setNewCat, addCat, removeCat, addLoc, removeLoc, updateLoc, isDiretor }) {
+function CatLocTab({ categorias, localizacoes, locOptions, newCat, setNewCat, addCat, removeCat, updateCat, addLoc, removeLoc, updateLoc, isDiretor }) {
   const [novoNomeLoc, setNovoNomeLoc] = useState('');
   const [novoPaiLoc, setNovoPaiLoc] = useState('');
   const [editLoc, setEditLoc] = useState(null); // { id, nome, pai_id }
+  const [editCat, setEditCat] = useState(null); // { id, nome, icone, vida_util_meses }
   const [expanded, setExpanded] = useState(() => new Set());
   const tree = useMemo(() => buildLocTree(localizacoes), [localizacoes]);
   const toggleExpanded = (id) => setExpanded(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -569,6 +594,11 @@ function CatLocTab({ categorias, localizacoes, locOptions, newCat, setNewCat, ad
     if (!editLoc.nome.trim()) return;
     updateLoc(editLoc.id, { nome: editLoc.nome, pai_id: editLoc.pai_id || null });
     setEditLoc(null);
+  }
+  function salvarEdicaoCat() {
+    if (!editCat.nome.trim()) return;
+    updateCat(editCat.id, { nome: editCat.nome, icone: editCat.icone || null, vida_util_meses: editCat.vida_util_meses ? Number(editCat.vida_util_meses) : null });
+    setEditCat(null);
   }
 
   return (
@@ -585,8 +615,16 @@ function CatLocTab({ categorias, localizacoes, locOptions, newCat, setNewCat, ad
           {categorias.length === 0 && <div style={styles.empty}>Nenhuma categoria</div>}
           {categorias.map(c => (
             <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: `1px solid ${C.border}` }}>
-              <span style={{ fontSize: 13 }}>{c.icone && `${c.icone} `}{c.nome}</span>
-              {isDiretor && <Button variant="ghost" size="xs" onClick={() => removeCat(c.id)}><Trash2 style={{ width: 14, height: 14 }} /></Button>}
+              <span style={{ fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                {c.icone && `${c.icone} `}{c.nome}
+                {c.vida_util_meses ? <span style={{ fontSize: 11, color: C.text3 }}>({c.vida_util_meses}m vida útil)</span> : null}
+              </span>
+              {isDiretor && (
+                <span style={{ display: 'flex', gap: 2 }}>
+                  <Button variant="ghost" size="xs" onClick={() => setEditCat({ id: c.id, nome: c.nome, icone: c.icone || '', vida_util_meses: c.vida_util_meses || '' })}><Pencil style={{ width: 13, height: 13 }} /></Button>
+                  <Button variant="ghost" size="xs" onClick={() => removeCat(c.id)}><Trash2 style={{ width: 14, height: 14 }} /></Button>
+                </span>
+              )}
             </div>
           ))}
         </div>
@@ -618,6 +656,16 @@ function CatLocTab({ categorias, localizacoes, locOptions, newCat, setNewCat, ad
               <option value="">— Nenhuma (raiz) —</option>
               {locOptions.filter(l => l.id !== editLoc.id).map(l => <option key={l.id} value={l.id}>{locIndent(l.depth)}{l.nome}</option>)}
             </Select>
+          </>
+        )}
+      </Modal>
+      <Modal open={!!editCat} onClose={() => setEditCat(null)} title="Editar categoria" footer={<Button onClick={salvarEdicaoCat}>Salvar</Button>}>
+        {editCat && (
+          <>
+            <Input label="Nome" value={editCat.nome} onChange={e => setEditCat(p => ({ ...p, nome: e.target.value }))} />
+            <Input label="Ícone (emoji, opcional)" value={editCat.icone} onChange={e => setEditCat(p => ({ ...p, icone: e.target.value }))} />
+            <Input label="Vida útil (meses) — indicador gerencial de depreciação, opcional" type="number" min="1" value={editCat.vida_util_meses} onChange={e => setEditCat(p => ({ ...p, vida_util_meses: e.target.value }))} />
+            <div style={{ fontSize: 11, color: C.text3 }}>Deixe em branco pra não calcular depreciação nessa categoria. É um cálculo linear interno (não oficial/contábil).</div>
           </>
         )}
       </Modal>
@@ -740,6 +788,14 @@ function BemDetailModal({ open, data, onClose, onEdit, onBaixar, onMov, isDireto
         <div><span style={{ fontSize: 11, color: C.text2 }}>Valor Aquisição:</span><div style={{ fontSize: 14, fontWeight: 600 }}>{fmtMoney(data.valor_aquisicao)}</div></div>
         <div><span style={{ fontSize: 11, color: C.text2 }}>Data Aquisição:</span><div style={{ fontSize: 14 }}>{fmtDate(data.data_aquisicao)}</div></div>
       </div>
+      {data.depreciacao && (
+        <div style={{ padding: '8px 12px', background: 'var(--cbrio-input-bg)', borderRadius: 8, marginBottom: 12, fontSize: 13 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+            <span>Depreciação (indicador gerencial): <strong>{data.depreciacao.percentual_depreciado}%</strong> · valor atual estimado <strong style={{ color: C.primary }}>{fmtMoney(data.depreciacao.valor_atual_estimado)}</strong></span>
+          </div>
+          <div style={{ fontSize: 11, color: C.text3, marginTop: 2 }}>Cálculo linear interno — não é avaliação contábil oficial</div>
+        </div>
+      )}
       {data.descricao && <div style={{ padding: '8px 12px', background: 'var(--cbrio-input-bg)', borderRadius: 8, marginBottom: 12, fontSize: 13, color: C.text2 }}>{data.descricao}</div>}
       {data.observacoes && <div style={{ padding: '8px 12px', background: 'var(--cbrio-input-bg)', borderRadius: 8, marginBottom: 16, fontSize: 13, color: C.text2 }}>{data.observacoes}</div>}
 

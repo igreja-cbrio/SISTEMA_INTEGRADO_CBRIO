@@ -1393,9 +1393,11 @@ export const logistica = {
 export const patrimonio = {
   dashboard: () => get('/patrimonio/dashboard'),
   dashboardIndicadores: () => get('/patrimonio/dashboard/indicadores'),
+  dashboardDepreciacao: () => get('/patrimonio/dashboard/depreciacao'),
   categorias: {
     list: () => get('/patrimonio/categorias'),
     create: (data) => post('/patrimonio/categorias', data),
+    update: (id, data) => put(`/patrimonio/categorias/${id}`, data),
     remove: (id) => del(`/patrimonio/categorias/${id}`),
   },
   localizacoes: {
