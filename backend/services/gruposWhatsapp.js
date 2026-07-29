@@ -32,8 +32,11 @@ const SECRET = process.env.GRUPOS_TOKEN_SECRET || process.env.CRON_SECRET;
 // o sendTemplate cair em dry-run e logar o link-capability em produção.
 const WHATSAPP_LIGADO = () => configurado();
 const TEMPLATE_LANG = process.env.WHATSAPP_TEMPLATE_LANG || 'pt_BR';
-const TPL_NOVO_PEDIDO_LIDER = process.env.WHATSAPP_TEMPLATE_GRUPOS_PEDIDO_LIDER || 'grupos_pedido_novo_lider';
-const TPL_PEDIDO_APROVADO = process.env.WHATSAPP_TEMPLATE_GRUPOS_APROVADO || 'grupos_pedido_aprovado';
+// v2 (29/07 · pedido do Pr. Nélio, aprovado na Meta): o aviso ao líder instrui
+// LIGAR pra pessoa antes de aceitar/recusar; o de aprovado perdeu o "o líder
+// vai falar com você" (o contato já aconteceu). Mesmas 5 variáveis dos v1.
+const TPL_NOVO_PEDIDO_LIDER = process.env.WHATSAPP_TEMPLATE_GRUPOS_PEDIDO_LIDER || 'grupos_pedido_novo_lider_v2';
+const TPL_PEDIDO_APROVADO = process.env.WHATSAPP_TEMPLATE_GRUPOS_APROVADO || 'grupos_pedido_aprovado_v2';
 // grupos_sugestao_grupo (UTILITY · 5 variáveis) — a 1ª versão, submetida como
 // grupos_pedido_recusado, foi reclassificada pela Meta como MARKETING (2º link
 // de navegação + tom promocional); a UTILITY é mais barata e não é pausável.

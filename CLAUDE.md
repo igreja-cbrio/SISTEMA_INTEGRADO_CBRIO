@@ -1630,6 +1630,22 @@ Susto do Marcos (envios proativos a líderes). Auditoria do código vivo + barre
 - ⚠️ Aplicar `20260723180000` antes do merge (aditiva/idempotente · código tolera
   ausência tratando como false).
 
+## Grupos · templates v2 do fluxo de aprovação (2026-07-29)
+
+Pedido do Pr. Nélio: o fluxo correto do líder é LIGAR pra pessoa antes de
+aceitar/recusar. Templates novos aprovados na Meta (UTILITY · pt_BR · mesmas
+5 variáveis dos v1) e defaults trocados em `services/gruposWhatsapp.js`:
+- `grupos_pedido_novo_lider_v2` — instrui ligar antes; explica que recusa não
+  manda aviso automático (a recusa do líder devolve pra triagem, que decide a
+  realocação — comportamento já existente, só ficou dito).
+- `grupos_pedido_aprovado_v2` — sem o "o líder vai falar com você" (o contato
+  já aconteceu antes da aprovação).
+Estratégia (lição): NUNCA editar template aprovado em produção — edição volta
+pra revisão da Meta e o envio para; criar `_v2`, aprovar em paralelo e trocar
+o default/env. Os v1 (`grupos_pedido_novo_lider`/`grupos_pedido_aprovado`)
+podem ser excluídos na Meta após confirmar envio real com os v2. Envs
+`WHATSAPP_TEMPLATE_GRUPOS_PEDIDO_LIDER`/`_APROVADO` seguem como override.
+
 ## Fila WhatsApp · política de reenvio + falha avisa gente (2026-07-27)
 
 O teste de lançamento de grupos (26/07 · 34 inscrições ao vivo) expôs: erro
