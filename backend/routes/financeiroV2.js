@@ -2301,8 +2301,11 @@ router.get('/dashboard/semana-completa', async (req, res) => {
     const range = (rangeRow || [])[0];
     if (!range) return res.json({ erro: 'semana_invalida' });
 
-    // Calcula semana anterior + mesma semana ano anterior pra comparativos
+    // Calcula semana anterior + mesma semana do MÊS anterior + mesma semana ano anterior.
     const anterior = new Date(range.inicio); anterior.setDate(anterior.getDate() - 7);
+    // "Mesma semana do mês anterior" = 4 semanas atrás (−28d) · o início continua
+    // numa quarta, então casa exato com um semana_inicio da view (semana qua→ter).
+    const mesAnt = new Date(range.inicio); mesAnt.setDate(mesAnt.getDate() - 28);
     const yoy = new Date(range.inicio); yoy.setFullYear(yoy.getFullYear() - 1);
 
     // Filtros globais (centro de custo / plano de contas) · quando presentes,
@@ -2341,6 +2344,7 @@ router.get('/dashboard/semana-completa', async (req, res) => {
       cultosSemana,
       resumo,
       resumoAnterior,
+      resumoMesAnterior,
       resumoYoY,
       historico,
       topContribuintes,
@@ -2356,6 +2360,9 @@ router.get('/dashboard/semana-completa', async (req, res) => {
       // Semana anterior
       supabase.from('vw_fin_semana_resumo').select('*')
         .eq('semana_inicio', anterior.toISOString().slice(0, 10)).maybeSingle(),
+      // Mesma semana do MÊS anterior (4 semanas atrás)
+      supabase.from('vw_fin_semana_resumo').select('*')
+        .eq('semana_inicio', mesAnt.toISOString().slice(0, 10)).maybeSingle(),
       // YoY (mesma semana ano anterior)
       supabase.from('vw_fin_semana_resumo').select('*')
         .gte('semana_inicio', new Date(yoy.getTime() - 4 * 86400000).toISOString().slice(0, 10))
@@ -2382,7 +2389,7 @@ router.get('/dashboard/semana-completa', async (req, res) => {
     // Quando há filtro, recomputa receita/buckets/cultos/top/histórico das transações
     let catRows = categorias.data || [];
     let recPorCulto = null, topFiltrado = null, recPorSemana = null;
-    let receitaFiltrada = 0, receitaAntFiltrada = 0, receitaYoyFiltrada = null;
+    let receitaFiltrada = 0, receitaAntFiltrada = 0, receitaMesAntFiltrada = 0, receitaYoyFiltrada = null;
     if (temFiltro) {
       const rowsSemana = await fetchTxFiltradas(range.inicio, range.fim,
         'valor, plano_contas_codigo, plano_contas_nome, plano_contas_natureza, culto_nome, culto_service_type_slug, data_competencia, classe_movimento, membro_nome, membro_cpf');
@@ -2405,6 +2412,10 @@ router.get('/dashboard/semana-completa', async (req, res) => {
       const antFim = new Date(anterior); antFim.setDate(antFim.getDate() + 6);
       const rowsAnt = await fetchTxFiltradas(anterior.toISOString().slice(0, 10), antFim.toISOString().slice(0, 10), 'valor');
       receitaAntFiltrada = rowsAnt.reduce((s, t) => s + Number(t.valor || 0), 0);
+      // receita da mesma semana do mês anterior (4 semanas atrás · janela qua-ter)
+      const mesAntFim = new Date(mesAnt); mesAntFim.setDate(mesAntFim.getDate() + 6);
+      const rowsMesAnt = await fetchTxFiltradas(mesAnt.toISOString().slice(0, 10), mesAntFim.toISOString().slice(0, 10), 'valor');
+      receitaMesAntFiltrada = rowsMesAnt.reduce((s, t) => s + Number(t.valor || 0), 0);
       // receita YoY (semana qua-ter que contém a data de 1 ano atrás)
       const { data: yoyRangeRow } = await supabase.rpc('fin_semana_qua_ter', { p_data: yoy.toISOString().slice(0, 10) });
       const yoyRange = (yoyRangeRow || [])[0];
@@ -2472,6 +2483,7 @@ router.get('/dashboard/semana-completa', async (req, res) => {
 
     const r = resumo.data || { receita_total: 0, total_presencial: 0, total_online: 0, ticket_medio_presencial: 0 };
     const ra = resumoAnterior.data || { receita_total: 0, total_presencial: 0, ticket_medio_presencial: 0 };
+    const rmes = resumoMesAnterior.data || { receita_total: 0 };
     const ry = resumoYoY.data || null;
 
     const delta = (atual, ant) => ant > 0 ? ((atual - ant) / ant) * 100 : null;
@@ -2479,6 +2491,7 @@ router.get('/dashboard/semana-completa', async (req, res) => {
     // Receita/ticket · filtrados vêm das transações; sem filtro, da view.
     const receitaAtual = temFiltro ? receitaFiltrada : Number(r.receita_total);
     const receitaAnt = temFiltro ? receitaAntFiltrada : Number(ra.receita_total);
+    const receitaMesAnt = temFiltro ? receitaMesAntFiltrada : Number(rmes.receita_total);
     const receitaYoyV = temFiltro ? receitaYoyFiltrada : (ry ? Number(ry.receita_total) : null);
     const presAtual = Number(r.total_presencial);
     const presAnt = Number(ra.total_presencial);
@@ -2490,6 +2503,8 @@ router.get('/dashboard/semana-completa', async (req, res) => {
       kpis: {
         receita: receitaAtual,
         receita_delta_wow: delta(receitaAtual, receitaAnt),
+        receita_mes_anterior: receitaMesAnt,
+        receita_delta_mom: delta(receitaAtual, receitaMesAnt),
         receita_yoy: receitaYoyV,
         receita_delta_yoy: receitaYoyV != null ? delta(receitaAtual, receitaYoyV) : null,
         presencial: presAtual,
