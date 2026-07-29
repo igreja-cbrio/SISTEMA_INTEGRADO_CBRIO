@@ -1408,7 +1408,7 @@ router.get('/cultura', async (req, res) => {
 
     const settled = await Promise.allSettled([
       supabase.from('cultos')
-        .select('data, presencial_adulto, presencial_kids, decisoes_presenciais, decisoes_online, online_ds')
+        .select('data, presencial_adulto, presencial_kids, decisoes_presenciais, decisoes_online, decisoes_kids, online_ds')
         .gte('data', inicioStr).lte('data', fimInclusivoStr),
       // Conectar = PESSOAS distintas em grupos ativos (saiu_em IS NULL), NÃO o nº
       // de vínculos: quem está em 2+ grupos conta 1x. Pagina pra escapar do cap de
@@ -1473,7 +1473,12 @@ router.get('/cultura', async (req, res) => {
     };
     const semanasComCulto = new Set(cultos.map((c) => c.data && chaveSemana(c.data)).filter(Boolean)).size;
     const divisorSemanas = semanasComCulto || semanasNoMes;
-    const decisoesTotal   = cultos.reduce((s, c) => s + (c.decisoes_presenciais || 0) + (c.decisoes_online || 0), 0);
+    // Decisões: presencial + online + KIDS (kids passou a entrar na conta ·
+    // pedido do Matheus 2026-07-29). Guardamos o detalhe pra exibir no clique.
+    const decisoesPresencial = cultos.reduce((s, c) => s + (c.decisoes_presenciais || 0), 0);
+    const decisoesOnline     = cultos.reduce((s, c) => s + (c.decisoes_online || 0), 0);
+    const decisoesKids       = cultos.reduce((s, c) => s + (c.decisoes_kids || 0), 0);
+    const decisoesTotal      = decisoesPresencial + decisoesOnline + decisoesKids;
 
     const conectarPessoas = grupoMembrosRes.error ? null : (grupoMembrosRes.count || 0);
 
@@ -1535,6 +1540,14 @@ router.get('/cultura', async (req, res) => {
       servir_comunidade: servirComunidade,
       generosidade,
       decisoes: decisoesMes,
+      decisoes_detalhe: {
+        presencial: decisoesPresencial,
+        online: decisoesOnline,
+        kids: decisoesKids,
+        // soma dos ambientes (pode diferir de `decisoes` se houver total manual em cultura_mensal)
+        soma_ambientes: decisoesTotal,
+        fonte: cm?.decisoes_total != null ? 'manual' : 'auto',
+      },
     });
   } catch (e) {
     console.error('[kpis/cultura] erro:', e);
