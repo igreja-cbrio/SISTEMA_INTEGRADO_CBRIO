@@ -4596,4 +4596,45 @@ escrito; e quando a igreja paga o local — isso decide o teto de parcelas.
   inventário. Revogação é individual e não gira o segredo global.
 - A workflow de produção roda Vitest + contratos de campos/portas/QR **antes**
   do Vercel. Rotas públicas e aliases são garantia coberta por teste; não
-  remover nem renomear para “limpar” legado.
+  remover nem renomear para “limpar” legado. ⚠️ Isso é **gate de deploy**: teste
+  vermelho (inclusive flaky) bloqueia produção, e `workflow_dispatch` roda o
+  mesmo job — não existe bypass. Teste novo aqui precisa ser determinístico (a
+  lição é o `faixaEtaria.test.ts`, que dependia da HORA da execução:
+  `toISOString()` vira UTC e depois das 21h BRT o cálculo caía um ano).
+
+### ✅ Reparos da fundação · reativação de QR, leitura do ledger e busca (2026-07-29)
+
+Auditoria da entrega acima (revisão pedida pelo Marcos). Os pontos críticos
+estavam de fato resolvidos; o que faltava era operacional:
+
+- **⚠️ LEI · ledger append-only NÃO tem FK com `ON DELETE SET NULL`**
+  (migration `20260729100000`): `insc_checkin_eventos.ator_id` apontava pra
+  `profiles` com SET NULL, e SET NULL **é um UPDATE** — o trigger de
+  imutabilidade (`RAISE EXCEPTION 'append-only'`) abortava. Efeito: apagar um
+  profile que já operou a portaria falhava para sempre. Ator em ledger é
+  **SNAPSHOT** (UUID sem FK). Vale pra qualquer trilha append-only nova.
+- **Revogar QR passou a ter volta** (`PATCH /inscricoes/qrs/:id/reativar` ·
+  nível 3 · motivo obrigatório). O comprovante é HMAC determinístico do id da
+  inscrição: **o hash nunca muda**, `fn_insc_qr_registrar` (ON CONFLICT) não
+  limpa `revogado_em` e não existe rotação — sem reativar, um clique errado
+  tirava a pessoa do check-in por QR permanentemente (só entrava por busca).
+  Histórico (quem revogou/reativou e por quê) vai pro `app_audit_log` via
+  trigger `trg_audit_insc_qr_tokens` — a revogação sai do estado, não da
+  trilha. ⚠️ Rotação real de token exigiria nonce no HMAC (não temos): revogar
+  = "desligar o QR desta inscrição", nunca "trocar o QR da pessoa".
+- **Trilha do check-in ficou LEGÍVEL**: `GET /eventos/:id/checkin/historico`
+  (nível 2) + painel "Trilha da portaria" na tela de check-in (sob demanda —
+  a tela roda polling de 15s). O ledger existia sem nenhum leitor: a pergunta
+  "quem liberou a entrada dessa pessoa com pagamento pendente?" só era
+  respondível no SQL Editor. Desfazer agora **grava o motivo digitado** (o
+  `del()` do `src/api.js` aceita corpo; antes o backend lia `req.body.motivo`
+  que nunca chegava e a trilha registrava sempre o texto genérico).
+- **Inventário de QR com busca e paginação SERVER-SIDE** + filtro por evento:
+  a busca filtrava só a página carregada (50), então num evento do tamanho do
+  Celebra a maioria das pessoas era inencontrável. Tabela/coluna ausente
+  responde **aviso**, não 500 (a aba quebrava se a migration não estivesse
+  aplicada — era a única rota nova sem fallback de deploy em duas etapas).
+- **`inscricaoPortas.test.js` fechou nos 2 sentidos**: além de catálogo→App.tsx
+  (protege contra renomear/remover), agora App.tsx→catálogo — rota com cara de
+  porta de inscrição fora de `PORTAS_INSCRICAO` quebra o CI (allowlist
+  explícita de telas internas no próprio teste).
