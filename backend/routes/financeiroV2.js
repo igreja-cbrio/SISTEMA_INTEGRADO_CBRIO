@@ -2585,15 +2585,31 @@ router.get('/dashboard/financeiro-completo', async (req, res) => {
         .gte('mes', inicio12m.slice(0, 7)).order('mes'),
     ]);
 
+    // "Sem extraordinárias": remove a receita extraordinária de TODAS as séries
+    // e RECOMPUTA resultado/YTD delta/elasticidade sobre a receita já filtrada.
+    const semExtra = req.query.sem_extra === '1' || req.query.sem_extra === 'true';
+    // Série receita/despesa/resultado (mensal/semanal): subtrai extra, refaz resultado.
+    const ajSerie = (r) => {
+      const receita = Number(r.receita || 0) - (semExtra ? Number(r.receita_extraordinaria || 0) : 0);
+      const despesa = Number(r.despesa || 0);
+      return { ...r, receita, despesa, resultado: semExtra ? receita - despesa : Number(r.resultado || 0) };
+    };
+
     const ytdMap = new Map((ytd.data || []).map(r => [r.ano, r]));
     const ytdAtual = ytdMap.get(anoAtual) || { receita_ytd: 0, despesa_ytd: 0, resultado_ytd: 0 };
     const ytdAnt = ytdMap.get(anoAnterior) || { receita_ytd: 0, despesa_ytd: 0, resultado_ytd: 0 };
-    const ytdDelta = Number(ytdAnt.receita_ytd) > 0
-      ? ((Number(ytdAtual.receita_ytd) - Number(ytdAnt.receita_ytd)) / Number(ytdAnt.receita_ytd)) * 100
-      : null;
+    const recYtd = (y) => Number(y.receita_ytd || 0) - (semExtra ? Number(y.receita_extraordinaria_ytd || 0) : 0);
+    const recYtdAtual = recYtd(ytdAtual);
+    const recYtdAnt = recYtd(ytdAnt);
+    const resYtdAtual = semExtra ? recYtdAtual - Number(ytdAtual.despesa_ytd || 0) : Number(ytdAtual.resultado_ytd || 0);
+    const resYtdAnt = semExtra ? recYtdAnt - Number(ytdAnt.despesa_ytd || 0) : Number(ytdAnt.resultado_ytd || 0);
+    const ytdDelta = recYtdAnt > 0 ? ((recYtdAtual - recYtdAnt) / recYtdAnt) * 100 : null;
 
-    // Frequência vs Arrecadacao · crescimento % mês a mês
-    const fr = (freqReceita.data || []);
+    // Frequência vs Arrecadacao · crescimento % mês a mês (sobre receita ajustada)
+    const fr = (freqReceita.data || []).map(m => ({
+      ...m,
+      receita: Number(m.receita || 0) - (semExtra ? Number(m.receita_extraordinaria || 0) : 0),
+    }));
     const freqVsReceita = fr.map((m, i) => {
       if (i === 0) return { ...m, delta_freq_pct: null, delta_receita_pct: null, elasticidade: null };
       const ant = fr[i - 1];
@@ -2607,35 +2623,26 @@ router.get('/dashboard/financeiro-completo', async (req, res) => {
       mes_atual: mesAtual,
       ano_atual: anoAtual,
       ano_anterior: anoAnterior,
-      mensal: (mensal.data || []).map(r => ({
-        ...r,
-        receita: Number(r.receita),
-        despesa: Number(r.despesa),
-        resultado: Number(r.resultado),
-      })),
-      semanal: (semanal.data || []).map(r => ({
-        ...r,
-        receita: Number(r.receita),
-        despesa: Number(r.despesa),
-        resultado: Number(r.resultado),
-      })),
+      sem_extra: semExtra,
+      mensal: (mensal.data || []).map(ajSerie),
+      semanal: (semanal.data || []).map(ajSerie),
       decendio: (decendio.data || []).map(r => ({
         ...r,
-        receita: Number(r.receita),
+        receita: Number(r.receita || 0) - (semExtra ? Number(r.receita_extraordinaria || 0) : 0),
         despesa: Number(r.despesa),
       })),
       ytd: {
         ano_atual: {
           ano: anoAtual,
-          receita: Number(ytdAtual.receita_ytd || 0),
+          receita: recYtdAtual,
           despesa: Number(ytdAtual.despesa_ytd || 0),
-          resultado: Number(ytdAtual.resultado_ytd || 0),
+          resultado: resYtdAtual,
         },
         ano_anterior: {
           ano: anoAnterior,
-          receita: Number(ytdAnt.receita_ytd || 0),
+          receita: recYtdAnt,
           despesa: Number(ytdAnt.despesa_ytd || 0),
-          resultado: Number(ytdAnt.resultado_ytd || 0),
+          resultado: resYtdAnt,
         },
         delta_pct: ytdDelta,
       },
@@ -2689,7 +2696,8 @@ router.get('/dashboard/assistente', async (req, res) => {
     const range = (rangeRow || [])[0];
     if (!range) return res.json({ aba, label: meta.label, texto: 'Sem dados para a semana selecionada.', fonte: 'auto' });
 
-    const cacheKey = `${aba}:${range.inicio}`;
+    const semExtra = req.query.sem_extra === '1' || req.query.sem_extra === 'true';
+    const cacheKey = `${aba}:${range.inicio}:${semExtra ? 'se' : 'ce'}`;
     const hit = _assistenteCache.get(cacheKey);
     if (hit && Date.now() - hit.ts < ASSISTENTE_TTL_MS) {
       return res.json({ aba, label: meta.label, texto: hit.texto, fatos: hit.fatos, fonte: hit.fonte, cached: true });
@@ -2702,29 +2710,34 @@ router.get('/dashboard/assistente', async (req, res) => {
       supabase.from('vw_fin_semana_resumo').select('*').eq('semana_inicio', range.inicio).maybeSingle(),
       supabase.from('vw_fin_semana_resumo').select('*').eq('semana_inicio', anteriorIni.toISOString().slice(0, 10)).maybeSingle(),
       supabase.from('vw_fin_ano_acumulado').select('*').in('ano', [ano, ano - 1]),
-      supabase.rpc('fin_saude_financeira', { p_ano: ano }),
+      supabase.rpc('fin_saude_financeira', { p_ano: ano, p_sem_extra: semExtra }),
       supabase.from('vw_fin_transacoes_completa')
         .select('plano_contas_codigo, plano_contas_natureza, valor, data_competencia, classe_movimento')
         .gte('data_competencia', range.inicio).lte('data_competencia', range.fim)
         .eq('tipo', 'receita').neq('status', 'cancelado'),
     ]);
 
+    // "Sem extraordinárias": receita sem a extraordinária + ticket recomputado.
+    const recAj = (v, ex) => Number(v || 0) - (semExtra ? Number(ex || 0) : 0);
     const r = resumoAtual.data || {};
     const ra = resumoAnt.data || {};
-    const receita = Number(r.receita_total || 0);
+    const receita = recAj(r.receita_total, r.receita_extraordinaria);
+    const receitaAnt = recAj(ra.receita_total, ra.receita_extraordinaria);
     const presencial = Number(r.total_presencial || 0);
-    const ticket = Number(r.ticket_medio_presencial || 0);
-    const receitaWow = delta(receita, ra.receita_total);
-    const presWow = delta(presencial, ra.total_presencial);
-    const ticketWow = delta(ticket, ra.ticket_medio_presencial);
+    const presAnt = Number(ra.total_presencial || 0);
+    const ticket = presencial > 0 ? receita / presencial : 0;
+    const ticketAnt = presAnt > 0 ? receitaAnt / presAnt : 0;
+    const receitaWow = delta(receita, receitaAnt);
+    const presWow = delta(presencial, presAnt);
+    const ticketWow = delta(ticket, ticketAnt);
 
     const ytdMap = new Map((ytdRes.data || []).map(x => [x.ano, x]));
     const yA = ytdMap.get(ano) || {};
     const yB = ytdMap.get(ano - 1) || {};
-    const receitaYtd = Number(yA.receita_ytd || 0);
+    const receitaYtd = recAj(yA.receita_ytd, yA.receita_extraordinaria_ytd);
     const despesaYtd = Number(yA.despesa_ytd || 0);
-    const resultadoYtd = Number(yA.resultado_ytd || 0);
-    const receitaYtdYoy = delta(receitaYtd, yB.receita_ytd);
+    const resultadoYtd = semExtra ? receitaYtd - despesaYtd : Number(yA.resultado_ytd || 0);
+    const receitaYtdYoy = delta(receitaYtd, recAj(yB.receita_ytd, yB.receita_extraordinaria_ytd));
 
     const saude = saudeRes.data || {};
     const top20 = Number(saude.concentracao_top20pct_pct || 0);
@@ -2741,6 +2754,7 @@ router.get('/dashboard/assistente', async (req, res) => {
     let dizimoTot = 0, ofertaTot = 0;
     for (const t of catRes.data || []) {
       if (['emprestimo', 'transferencia', 'estorno'].includes(t.classe_movimento)) continue;
+      if (semExtra && t.classe_movimento === 'extraordinaria') continue;
       const v = Number(t.valor || 0);
       const dow = t.data_competencia ? new Date(t.data_competencia + 'T12:00:00Z').getUTCDay() : -1;
       const k = dow === 3 ? 'quarta' : (dow === 0 || dow === 6 || dow === 1) ? 'fds' : 'durante'; // seg = compensação do fim de semana
@@ -2873,7 +2887,9 @@ router.get('/dashboard/analise-profunda', async (req, res) => {
     const range = (rangeRow || [])[0];
     if (!range) return res.status(400).json({ error: 'Semana inválida' });
 
-    const hit = _analiseCache.get(range.inicio);
+    const semExtra = req.query.sem_extra === '1' || req.query.sem_extra === 'true';
+    const cacheKey = `${range.inicio}:${semExtra ? 'se' : 'ce'}`;
+    const hit = _analiseCache.get(cacheKey);
     if (hit && Date.now() - hit.ts < ASSISTENTE_TTL_MS) {
       return res.json({ texto: hit.texto, cached: true });
     }
@@ -2885,9 +2901,9 @@ router.get('/dashboard/analise-profunda', async (req, res) => {
       supabase.from('vw_fin_semana_resumo').select('*').eq('semana_inicio', range.inicio).maybeSingle(),
       supabase.from('vw_fin_semana_resumo').select('*').eq('semana_inicio', anteriorIni.toISOString().slice(0, 10)).maybeSingle(),
       supabase.from('vw_fin_ano_acumulado').select('*').in('ano', [ano, ano - 1]),
-      supabase.rpc('fin_saude_financeira', { p_ano: ano }),
+      supabase.rpc('fin_saude_financeira', { p_ano: ano, p_sem_extra: semExtra }),
       supabase.from('vw_fin_arrecadacao_mensal')
-        .select('ano, mes, receita, despesa, resultado')
+        .select('ano, mes, receita, despesa, resultado, receita_extraordinaria')
         .in('ano', [ano, ano - 1]).order('mes', { ascending: true }),
     ]);
 
@@ -2897,31 +2913,40 @@ router.get('/dashboard/analise-profunda', async (req, res) => {
     const yA = ytdMap.get(ano) || {};
     const yB = ytdMap.get(ano - 1) || {};
     const saude = saudeRes.data || {};
+    // Receita ajustada (sem extraordinária) quando o toggle liga.
+    const rec = (v, ex) => Number(v || 0) - (semExtra ? Number(ex || 0) : 0);
+    const recSemana = rec(r.receita_total, r.receita_extraordinaria);
+    const recSemanaAnt = rec(ra.receita_total, ra.receita_extraordinaria);
+    const recYtdA = rec(yA.receita_ytd, yA.receita_extraordinaria_ytd);
+    const recYtdB = rec(yB.receita_ytd, yB.receita_extraordinaria_ytd);
+    const ticketSemana = Number(r.total_presencial || 0) > 0 ? recSemana / Number(r.total_presencial) : 0;
 
     // Série mensal dos 2 anos com nº de semanas de contribuição (qua→ter)
     const mensal = (mensalRes.data || []).map(m => {
       const [aY, aM] = String(m.mes).split('-').map(Number);
+      const receita = rec(m.receita, m.receita_extraordinaria);
       return {
         mes: m.mes,
-        receita: fmt(m.receita),
+        receita: fmt(receita),
         despesa: fmt(m.despesa),
-        resultado: fmt(m.resultado),
+        resultado: fmt(semExtra ? receita - Number(m.despesa || 0) : m.resultado),
         semanas_de_contribuicao: contarQuartasNoMes(aY, aM),
       };
     });
 
     const dados = {
       semana_analisada: `${range.inicio} a ${range.fim}`,
+      sem_extraordinarias: semExtra,
       semana: {
-        receita: fmt(r.receita_total), presenca: Number(r.total_presencial || 0),
-        ticket_medio: fmt(r.ticket_medio_presencial),
-        variacao_receita_vs_semana_anterior: pct(delta(r.receita_total, ra.receita_total)),
+        receita: fmt(recSemana), presenca: Number(r.total_presencial || 0),
+        ticket_medio: fmt(ticketSemana),
+        variacao_receita_vs_semana_anterior: pct(delta(recSemana, recSemanaAnt)),
         variacao_presenca_vs_semana_anterior: pct(delta(r.total_presencial, ra.total_presencial)),
       },
       acumulado_ano: {
-        [ano]: { receita: fmt(yA.receita_ytd), despesa: fmt(yA.despesa_ytd), resultado: fmt(yA.resultado_ytd) },
-        [ano - 1]: { receita: fmt(yB.receita_ytd), despesa: fmt(yB.despesa_ytd), resultado: fmt(yB.resultado_ytd) },
-        variacao_receita_yoy: pct(delta(yA.receita_ytd, yB.receita_ytd)),
+        [ano]: { receita: fmt(recYtdA), despesa: fmt(yA.despesa_ytd), resultado: fmt(semExtra ? recYtdA - Number(yA.despesa_ytd || 0) : yA.resultado_ytd) },
+        [ano - 1]: { receita: fmt(recYtdB), despesa: fmt(yB.despesa_ytd), resultado: fmt(semExtra ? recYtdB - Number(yB.despesa_ytd || 0) : yB.resultado_ytd) },
+        variacao_receita_yoy: pct(delta(recYtdA, recYtdB)),
       },
       saude: {
         resultado_do_mes: fmt(saude.resultado_mes),
@@ -2974,7 +2999,7 @@ Regras:
     }
     if (!texto) return res.status(502).json({ error: 'A IA não retornou análise' });
 
-    _analiseCache.set(range.inicio, { texto, ts: Date.now() });
+    _analiseCache.set(cacheKey, { texto, ts: Date.now() });
     res.json({ texto, semana: `${range.inicio} a ${range.fim}` });
   } catch (e) {
     console.error('[FIN-V2] analise-profunda:', e);
@@ -3155,6 +3180,7 @@ router.post('/sync-saldo-bancos', async (req, res) => {
 router.get('/freq-arrecadacao-semanal', async (req, res) => {
   try {
     const semanas = Math.min(Number(req.query.semanas || 20), 104);
+    const semExtra = req.query.sem_extra === '1' || req.query.sem_extra === 'true';
     const hoje = new Date();
     const hojeISO = hoje.toISOString().slice(0, 10);
     // Volta N+2 semanas pra ter cushion
@@ -3170,21 +3196,30 @@ router.get('/freq-arrecadacao-semanal', async (req, res) => {
 
     if (error) return res.status(400).json({ error: error.message });
 
-    const limpas = (data || []).slice(-semanas).map(r => ({
-      semana_inicio: r.semana_inicio,
-      semana_fim: r.semana_fim,
-      semana_label: r.semana_label,
-      ano: r.ano,
-      receita: Number(r.receita || 0),
-      despesa: Number(r.despesa || 0),
-      resultado: Number(r.resultado || 0),
-      presencial: Number(r.presencial || 0),
-      online: Number(r.online || 0),
-      total_freq: Number(r.total_freq || 0),
-      decisoes: Number(r.decisoes || 0),
-      qtd_cultos: Number(r.qtd_cultos || 0),
-      ticket_medio_presencial: Number(r.ticket_medio_presencial || 0),
-    }));
+    const limpas = (data || []).slice(-semanas).map(r => {
+      const presencial = Number(r.presencial || 0);
+      // "Sem extraordinárias": remove receita extraordinária e RECOMPUTA resultado
+      // e ticket médio sobre a receita já filtrada (não reusar o pré-calculado).
+      const receita = Number(r.receita || 0) - (semExtra ? Number(r.receita_extraordinaria || 0) : 0);
+      const despesa = Number(r.despesa || 0);
+      return {
+        semana_inicio: r.semana_inicio,
+        semana_fim: r.semana_fim,
+        semana_label: r.semana_label,
+        ano: r.ano,
+        receita,
+        despesa,
+        resultado: semExtra ? receita - despesa : Number(r.resultado || 0),
+        presencial,
+        online: Number(r.online || 0),
+        total_freq: Number(r.total_freq || 0),
+        decisoes: Number(r.decisoes || 0),
+        qtd_cultos: Number(r.qtd_cultos || 0),
+        ticket_medio_presencial: semExtra
+          ? (presencial > 0 ? receita / presencial : 0)
+          : Number(r.ticket_medio_presencial || 0),
+      };
+    });
 
     res.json({ semanas: limpas });
   } catch (e) {
@@ -3214,6 +3249,8 @@ router.get('/arrecadacao-anual', async (req, res) => {
     const ano = Number(req.query.ano) || new Date().getFullYear();
     const centroId = req.query.centro_custo_id || null;
     const planoId = req.query.plano_contas_id || null;
+    // "Sem extraordinárias": arrecadação só com receita ordinária (despesa intacta).
+    const semExtra = req.query.sem_extra === '1' || req.query.sem_extra === 'true';
 
     const inicio = `${ano}-01-01`;
     const fim = `${ano}-12-31`;
@@ -3233,14 +3270,15 @@ router.get('/arrecadacao-anual', async (req, res) => {
       if (planoId) q = q.eq('plano_contas_id', planoId);
       const res2 = await q.limit(50000);
       if (res2.error) return res.status(400).json({ error: res2.error.message });
-      // Agrega em JS por mês
+      // Agrega em JS por mês (receita extraordinária removida quando semExtra)
       const aggMap = {};
       (res2.data || []).forEach(r => {
         const k = (r.data_competencia || '').slice(0, 7);
         if (!aggMap[k]) aggMap[k] = { mes: k, receita: 0, despesa: 0, qtd: 0 };
         const v = Number(r.valor || 0);
-        if (r.tipo === 'receita') aggMap[k].receita += v;
-        else if (r.tipo === 'despesa') aggMap[k].despesa += v;
+        if (r.tipo === 'receita') {
+          if (!(semExtra && r.classe_movimento === 'extraordinaria')) aggMap[k].receita += v;
+        } else if (r.tipo === 'despesa') aggMap[k].despesa += v;
         aggMap[k].qtd += 1;
       });
       data = Object.values(aggMap);
@@ -3248,11 +3286,15 @@ router.get('/arrecadacao-anual', async (req, res) => {
     } else {
       const res2 = await supabase
         .from('vw_fin_arrecadacao_mensal')
-        .select('mes, receita, despesa, resultado, qtd')
+        .select('mes, receita, despesa, resultado, qtd, receita_extraordinaria')
         .eq('ano', ano)
         .order('mes', { ascending: true });
       if (res2.error) return res.status(400).json({ error: res2.error.message });
-      data = res2.data;
+      data = (res2.data || []).map(r => {
+        if (!semExtra) return r;
+        const receita = Number(r.receita || 0) - Number(r.receita_extraordinaria || 0);
+        return { ...r, receita, resultado: receita - Number(r.despesa || 0) };
+      });
     }
 
     const porMes = {};
@@ -3299,9 +3341,10 @@ router.get('/sazonalidade-semanal', async (req, res) => {
       ? String(anosParam).split(',').map(n => Number(n)).filter(n => Number.isInteger(n))
       : [anoBase - 2, anoBase - 1, anoBase];
 
+    const semExtra = req.query.sem_extra === '1' || req.query.sem_extra === 'true';
     const { data, error } = await supabase
       .from('vw_fin_arrecadacao_semanal')
-      .select('ano, semana_inicio, semana_fim, semana_label, receita')
+      .select('ano, semana_inicio, semana_fim, semana_label, receita, receita_extraordinaria')
       .in('ano', anos);
     if (error) return res.status(400).json({ error: error.message });
 
@@ -3330,7 +3373,8 @@ router.get('/sazonalidade-semanal', async (req, res) => {
       const w = isoWeekOf(r.semana_inicio);
       if (w < 1 || w > 52) return;
       const slot = semanas[w - 1];
-      slot[String(r.ano)] = Number(r.receita || 0);
+      const receita = Number(r.receita || 0) - (semExtra ? Number(r.receita_extraordinaria || 0) : 0);
+      slot[String(r.ano)] = receita;
       slot[`${r.ano}_label`] = r.semana_label;
       slot[`${r.ano}_inicio`] = r.semana_inicio;
       slot[`${r.ano}_fim`] = r.semana_fim;
@@ -3469,7 +3513,8 @@ router.get('/filtros-disponiveis', async (req, res) => {
 router.get('/saude-financeira', async (req, res) => {
   try {
     const ano = Number(req.query.ano) || new Date().getFullYear();
-    const { data, error } = await supabase.rpc('fin_saude_financeira', { p_ano: ano });
+    const semExtra = req.query.sem_extra === '1' || req.query.sem_extra === 'true';
+    const { data, error } = await supabase.rpc('fin_saude_financeira', { p_ano: ano, p_sem_extra: semExtra });
     if (error) return res.status(400).json({ error: error.message });
     res.json(data || {});
   } catch (e) {
@@ -3557,6 +3602,7 @@ router.get('/metas-progresso', async (req, res) => {
 
     const rpcArgs = { p_inicio, p_fim };
     if (meta_id) rpcArgs.p_meta_id = meta_id;
+    rpcArgs.p_sem_extra = req.query.sem_extra === '1' || req.query.sem_extra === 'true';
 
     const { data, error } = await supabase.rpc('fin_metas_progresso', rpcArgs);
     if (error) return res.status(400).json({ error: error.message });

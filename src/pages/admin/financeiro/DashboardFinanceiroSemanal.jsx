@@ -415,6 +415,8 @@ function leituraClienteFallback(aba, kpis, buckets) {
 }
 
 function AssistenteFinanceiroCard({ aba, abaLabel, semana, kpis, buckets, onVerDetalhe, onComparar }) {
+  const [filtrosG] = useFiltrosGlobais();
+  const semExtra = !!filtrosG.sem_extra;
   const [texto, setTexto] = useState('');
   const [loading, setLoading] = useState(true);
   // Análise aprofundada (sob demanda · IA maior · explica causas como mês com 5 semanas)
@@ -436,8 +438,8 @@ function AssistenteFinanceiroCard({ aba, abaLabel, semana, kpis, buckets, onVerD
       setAnalisando(false);
     }
   }
-  // Semana mudou → a análise antiga não vale mais
-  useEffect(() => { setAnalise(''); setAnaliseErro(''); }, [semana]);
+  // Semana ou filtro mudou → a análise antiga não vale mais
+  useEffect(() => { setAnalise(''); setAnaliseErro(''); }, [semana, semExtra]);
 
   useEffect(() => {
     let cancelled = false;
@@ -448,7 +450,7 @@ function AssistenteFinanceiroCard({ aba, abaLabel, semana, kpis, buckets, onVerD
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [aba, semana]);
+  }, [aba, semana, semExtra]);
 
   return (
     <Card className="relative overflow-hidden border-primary/30">
@@ -946,6 +948,8 @@ function SazonalidadeSemanalChart() {
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState(null);
   const [semanaSel, setSemanaSel] = useState(null);
+  const [filtrosG] = useFiltrosGlobais();
+  const semExtra = !!filtrosG.sem_extra;
 
   useEffect(() => {
     let cancelled = false;
@@ -965,7 +969,7 @@ function SazonalidadeSemanalChart() {
       .catch(e => { if (!cancelled) setErro(e?.message || 'Erro ao carregar sazonalidade'); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, []);
+  }, [semExtra]);
 
   const anos = dados?.anos || [];
   const semanas = dados?.semanas || [];
@@ -2169,6 +2173,8 @@ function FreqVsArrecadacaoSemanal() {
   const [loading, setLoading] = useState(true);
   const [selectedIdx, setSelectedIdx] = useState(null);
   const [semanasJanela, setSemanasJanela] = useState(20);
+  const [filtrosG] = useFiltrosGlobais();
+  const semExtra = !!filtrosG.sem_extra;
 
   useEffect(() => {
     let cancelled = false;
@@ -2184,7 +2190,7 @@ function FreqVsArrecadacaoSemanal() {
       .catch((e) => console.warn('[FreqArrec] erro:', e?.message))
       .finally(() => !cancelled && setLoading(false));
     return () => { cancelled = true; };
-  }, [semanasJanela]);
+  }, [semanasJanela, semExtra]);
 
   const semanas = dados?.semanas || [];
   const formatado = useMemo(() => semanas.map((s, i) => ({
@@ -2457,6 +2463,8 @@ function MetasFinanceirasComFiltros({ metas: metasIniciais, onMetasChange }) {
   const [showForm, setShowForm] = useState(false);
   const [progresso, setProgresso] = useState({});
   const [loadingProg, setLoadingProg] = useState(false);
+  const [filtrosG] = useFiltrosGlobais();
+  const semExtra = !!filtrosG.sem_extra;
 
   // Filtros globais (afetam todas as metas que tiverem "global")
   const hoje = new Date();
@@ -2502,7 +2510,7 @@ function MetasFinanceirasComFiltros({ metas: metasIniciais, onMetasChange }) {
     return () => { cancelled = true; };
     // perMetaPeriod fora das deps de propósito · só recarrega no filtro global
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtroAno, filtroMes, filtroSemana, metas]);
+  }, [filtroAno, filtroMes, filtroSemana, metas, semExtra]);
 
   // Refetch individual quando uma meta muda seu período
   const handlePeriodChange = async (metaId, period) => {
@@ -3709,6 +3717,8 @@ function SlideSaudeFinanceira() {
   const [loading, setLoading] = useState(true);
   const [showDoadores, setShowDoadores] = useState(false);
   const anos = [2022, 2023, 2024, 2025, 2026, 2027].filter(a => a <= anoAtual + 1);
+  const [filtrosG] = useFiltrosGlobais();
+  const semExtra = !!filtrosG.sem_extra;
 
   useEffect(() => {
     let cancelled = false;
@@ -3718,7 +3728,7 @@ function SlideSaudeFinanceira() {
       .catch(e => console.warn('[Saude]:', e?.message))
       .finally(() => !cancelled && setLoading(false));
     return () => { cancelled = true; };
-  }, [ano]);
+  }, [ano, semExtra]);
 
   if (loading && !dados) {
     return <div className="py-20 flex justify-center"><Loader2 className="h-7 w-7 animate-spin text-primary" /></div>;
