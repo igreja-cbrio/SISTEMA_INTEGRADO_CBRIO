@@ -36,12 +36,16 @@ export default function PreviewChartIA({ tipoGrafico, height = 160, semente = 1 
   const wrapperStyle = { width: '100%', height };
 
   switch (tipoGrafico) {
-    case 'gauge':
+    case 'gauge': {
+      // Valor de exemplo VARIA por indicador (semente) — senão todos os gauges
+      // mostram o mesmo número e parecem "iguais". 45–90 só pra ilustrar.
+      const exemplo = 45 + (Math.abs(Math.round(Math.sin(semente + 1) * 45)) % 46);
       return (
         <div className="flex justify-center">
-          <MetaGauge atual={65} meta={100} size={170} label="Preview" duration={1.2} />
+          <MetaGauge atual={exemplo} meta={100} size={170} label="Preview" duration={1.2} />
         </div>
       );
+    }
 
     case 'linha':
       return (

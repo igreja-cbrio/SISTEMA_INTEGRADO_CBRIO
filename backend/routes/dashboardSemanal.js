@@ -1542,32 +1542,58 @@ router.post('/ia/sugerir-indicador', async (req, res) => {
 
     // Catálogo de dados disponíveis para a IA usar como referência
     const dadosDisponiveis = `
-Tabelas principais do CBRio com dados de cultos:
-- cultos: data, service_type_id, presencial_adulto, presencial_kids,
-  decisoes_presenciais, decisoes_online, decisoes_kids, online_pico,
-  online_ds, online_ddus, voluntários
-- vol_service_types: tipos de culto (Domingo 08:30, 10:00, 11:30, 19:00,
-  Quarta com Deus, AMI, Bridge)
-- mem_membros: cadastro de membros
-- mem_contribuicoes: data, membro_id, valor, tipo (dizimo/oferta)
-- mem_grupo_membros: ligação membro-grupo (desde, saiu_em)
-- mem_voluntarios: voluntários ativos (desde, até)
-- batismo_inscricoes: status, data_batismo
-- int_visitantes: visitantes
-- mem_devocionais: check-ins de devocional
-- cultos_decisoes_pessoas: pessoas que decidiram em cada culto
+ESQUEMA REAL (use SOMENTE estas tabelas/colunas — NÃO invente nomes):
 
-Capacidade do templo: 1050 lugares.
+Cultos e frequência:
+- cultos (1 linha por culto): data, service_type_id, presencial_adulto,
+  presencial_kids, decisoes_presenciais, decisoes_online, decisoes_kids,
+  online_pico, online_ds (assistiram no domingo), online_ddus (durante a semana).
+  Frequência total de um culto = presencial_adulto + presencial_kids.
+- vol_service_types: id, name, recurrence_day (0=Dom..6=Sáb), recurrence_time.
+  Tipos: Domingo 08:30/10:00/11:30/19:00, Quarta com Deus, AMI (sáb), Bridge (sáb).
+- cultos_decisoes_pessoas: pessoa (nome/cpf/telefone), culto_id, tipo_decisao,
+  membro_id, fonte — 1 linha por pessoa que decidiu.
 
-Indicadores já existentes no Dashboard Semanal:
-- frequência, frequencia_kids, aceitacoes, aceitacoes_online,
-  ao_vivo, online_ds, online_ddus, voluntariado
+Pessoas / jornada:
+- mem_membros: id, nome, cpf, status, data_nascimento, frequenta_area (ami/bridge),
+  familia_id, deleted_at. (filtrar deleted_at IS NULL)
+- int_visitantes: visitantes; batismo_inscricoes: status(pendente/confirmado/
+  realizado/cancelado), data_batismo, membro_id, area_kpi (sede/ami/bridge/online).
+- cui_convertidos: convertidos (jornada) · area, primeiro_contato_em.
+- next_matriculas / next_encontros / next_presencas: trilha Next (turmas de 2 encontros).
+
+Conectar / Servir / Investir / Generosidade:
+- mem_grupo_membros: membro_id, grupo_id, funcao, entrou/desde, saiu_em (ativo = saiu_em IS NULL). Pessoas em grupos = DISTINCT membro_id com saiu_em IS NULL.
+- mem_grupos: id, nome, lider_id, dia_semana, temporada.
+- mem_voluntarios: membro_id, ministerio, desde, ate (ativo = ate IS NULL). Servir "ativo" real usa check-ins: vol_check_ins (volunteer_id, data) nos últimos 90 dias.
+- mem_devocionais: membro_id, data_devocional, concluida (check-in de devocional).
+- mem_contribuicoes: membro_id, data, valor, tipo (dizimo/oferta), area.
+  ⚠️ Empréstimo NÃO é receita ordinária (excluir de "receita").
+- fin_transacoes / views vw_fin_semana_resumo, vw_fin_semana_cultos, vw_doacoes_mensal (dízimo/oferta por mês, doadores únicos).
+
+Views úteis já prontas: vw_dashboard_semanal (frequência/decisões por culto),
+vw_batismo_historico_anual (ano, area_kpi, total_batismos), vw_culto_historico_anual.
+
+Regras de negócio (importante):
+- Semana da IGREJA no financeiro = QUARTA→TERÇA (fn fin_semana_qua_ter). Frequência de culto = SEG→DOM. NÃO misturar.
+- Capacidade do templo: 1050 lugares (use pra % de ocupação).
+- Contagem de PESSOAS deve ser DISTINCT (uma pessoa não conta 2x); "ativo" em grupos/voluntários é por saiu_em/ate/janela de 90 dias.
+
+Indicadores já existentes no Dashboard Semanal (evite duplicar):
+frequência, frequencia_kids, aceitacoes, aceitacoes_online, ao_vivo,
+online_ds, online_ddus, voluntariado.
     `.trim();
 
-    const system = `Você é um analista de dados especializado em métricas ministeriais para a igreja CBRio.
-Sua tarefa é, dado um objetivo de medição em linguagem natural, retornar um JSON puro com a estrutura do indicador sugerido.
+    const system = `Você é um analista de dados sênior especializado em métricas ministeriais da igreja CBRio.
+Dado um objetivo de medição em linguagem natural, retorne um JSON puro com a estrutura do indicador.
 
 ${dadosDisponiveis}
+
+Diretrizes:
+- Baseie a fórmula NAS TABELAS/COLUNAS REAIS acima; não invente colunas. Se algo não existir no esquema, diga isso em "alertas".
+- Escolha o "tipo_grafico" que melhor comunica a métrica: evolução no tempo→linha; comparação entre categorias→barra; % de uma meta/ocupação→gauge; composição→pizza; múltiplas dimensões→radar.
+- Faça a "formula" específica e calculável (colunas reais, período, DISTINCT quando for pessoas). "exemplo_consulta" deve ser um SQL plausível sobre o esquema.
+- "nome" curto e ESPECÍFICO (que diferencie de indicadores parecidos).
 
 Responda APENAS com o JSON, sem comentários nem texto extra, no formato:
 {
