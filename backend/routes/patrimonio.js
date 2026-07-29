@@ -387,24 +387,21 @@ router.get('/movimentacoes', async (req, res) => {
   }
 });
 
+// Registro da movimentação + atualização de localização/status do bem numa
+// única transação via RPC (`pat_registrar_movimentacao`) — antes eram 2
+// escritas separadas; se a 2ª falhasse no meio, a aba de Movimentações
+// passava a mentir sobre onde o bem está de verdade (dívida técnica
+// corrigida a pedido do usuário 2026-07-29).
 router.post('/bens/:id/movimentacoes', async (req, res) => {
   try {
     const { tipo, localizacao_origem_id, localizacao_destino_id, motivo } = req.body;
     if (!tipo) return res.status(400).json({ error: 'Tipo é obrigatório' });
-    const { data, error } = await supabase.from('pat_movimentacoes')
-      .insert({ bem_id: req.params.id, tipo, localizacao_origem_id: localizacao_origem_id || null, localizacao_destino_id: localizacao_destino_id || null, responsavel_id: req.user.userId, motivo: motivo || null, created_by: req.user.userId })
-      .select().single();
+    const { data, error } = await supabase.rpc('pat_registrar_movimentacao', {
+      p_bem_id: req.params.id, p_tipo: tipo,
+      p_localizacao_origem_id: localizacao_origem_id || null, p_localizacao_destino_id: localizacao_destino_id || null,
+      p_responsavel_id: req.user.userId, p_motivo: motivo || null, p_revisao_item_id: null, p_created_by: req.user.userId,
+    });
     if (error) return res.status(400).json({ error: error.message });
-    // Atualizar localização do bem se for transferência
-    if (tipo === 'transferencia' && localizacao_destino_id) {
-      await supabase.from('pat_bens').update({ localizacao_id: localizacao_destino_id, localizacao_pendente: false, alerta_divergencia_item_id: null }).eq('id', req.params.id);
-    }
-    if (tipo === 'manutencao') {
-      await supabase.from('pat_bens').update({ status: 'manutencao' }).eq('id', req.params.id);
-    }
-    if (tipo === 'baixa') {
-      await supabase.from('pat_bens').update({ status: 'baixado' }).eq('id', req.params.id);
-    }
     res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro ao registrar movimentação' }); }
 });
@@ -577,24 +574,21 @@ router.put('/revisao/itens/:id', async (req, res) => {
 
     if (divergencia_acao === 'movido' && localizacao_encontrada_id) {
       const { data: bem } = await supabase.from('pat_bens').select('localizacao_id').eq('id', item.bem_id).single();
-      await supabase.from('pat_movimentacoes').insert({
-        bem_id: item.bem_id, tipo: 'transferencia',
-        localizacao_origem_id: bem?.localizacao_id || null, localizacao_destino_id: localizacao_encontrada_id,
-        responsavel_id: req.user.userId, revisao_item_id: item.id,
-        motivo: 'Divergência encontrada na revisão periódica — bem estava em local diferente do esperado e foi realocado de fato.',
-        created_by: req.user.userId,
+      const { error: movErr } = await supabase.rpc('pat_registrar_movimentacao', {
+        p_bem_id: item.bem_id, p_tipo: 'transferencia',
+        p_localizacao_origem_id: bem?.localizacao_id || null, p_localizacao_destino_id: localizacao_encontrada_id,
+        p_responsavel_id: req.user.userId, p_revisao_item_id: item.id,
+        p_motivo: 'Divergência encontrada na revisão periódica — bem estava em local diferente do esperado e foi realocado de fato.',
+        p_created_by: req.user.userId,
       });
-      await supabase.from('pat_bens').update({ localizacao_id: localizacao_encontrada_id, localizacao_pendente: false, alerta_divergencia_item_id: null }).eq('id', item.bem_id);
+      if (movErr) return res.status(400).json({ error: movErr.message });
     } else if (divergencia_acao === 'alerta') {
       await supabase.from('pat_bens').update({ alerta_divergencia_item_id: item.id }).eq('id', item.bem_id);
     }
 
-    const { data: todos } = await supabase.from('pat_revisao_itens')
-      .select('encontrado, status_fisico').eq('convocacao_id', item.convocacao_id);
-    const conferidos = (todos || []).filter((i) => i.encontrado !== null).length;
-    const divergencias = (todos || []).filter((i) => i.encontrado === false || i.status_fisico === 'danificado' || i.status_fisico === 'nao_encontrado').length;
-    await supabase.from('pat_revisao_convocacoes')
-      .update({ total_bens_conferidos: conferidos, total_divergencias: divergencias }).eq('id', item.convocacao_id);
+    // Recálculo atômico via RPC — evita "lost update" de duas conferências
+    // concorrentes na mesma convocação (dívida técnica corrigida 2026-07-29).
+    await supabase.rpc('pat_recalcular_convocacao', { p_convocacao_id: item.convocacao_id });
     res.json(item);
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar item de revisão' }); }
 });
