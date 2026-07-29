@@ -1031,6 +1031,15 @@ export const financeiro = {
 // ============================================================
 // FINANCEIRO V2 · estrutura fiscal (plano de contas, centros de custo, OFX, PIX)
 // ============================================================
+// Filtro global "Sem extraordinárias": persistido pelo Dashboard Semanal em
+// localStorage (chave fin_dashboard_filtros_v1) + event bus. Lido aqui pra que
+// TODA aba de receita respeite o toggle sem cada componente threadar o param.
+const _finSemExtra = () => {
+  try { return !!JSON.parse(localStorage.getItem('fin_dashboard_filtros_v1') || '{}')?.sem_extra; }
+  catch { return false; }
+};
+const _finSemExtraQS = () => (_finSemExtra() ? '?sem_extra=1' : '');
+
 export const financeiroV2 = {
   planoContas: {
     list: (params) => get('/financeiro-v2/plano-contas' + (params ? '?' + new URLSearchParams(params) : '')),
@@ -1202,43 +1211,65 @@ export const financeiroV2 = {
       const s = qs.toString();
       return get('/financeiro-v2/dashboard/semana-completa' + (s ? `?${s}` : ''));
     },
-    financeiroCompleto: () => get('/financeiro-v2/dashboard/financeiro-completo'),
+    financeiroCompleto: () => get(`/financeiro-v2/dashboard/financeiro-completo${_finSemExtraQS()}`),
     saidasDetalhadas: (mes) => get('/financeiro-v2/dashboard/saidas-detalhadas' + (mes ? `?mes=${mes}` : '')),
     melhorSemana: () => get('/financeiro-v2/dashboard/melhor-semana'),
     assistente: (aba, semana) => {
       const qs = new URLSearchParams({ aba: aba || 'resumo' });
       if (semana) qs.set('semana', semana);
+      if (_finSemExtra()) qs.set('sem_extra', '1');
       return get(`/financeiro-v2/dashboard/assistente?${qs}`);
     },
     // Análise aprofundada por IA (sob demanda · modelo maior · pode demorar)
-    analiseProfunda: (semana) => request('/financeiro-v2/dashboard/analise-profunda' + (semana ? `?semana=${semana}` : ''), { timeout: 120_000 }),
+    analiseProfunda: (semana) => {
+      const qs = new URLSearchParams();
+      if (semana) qs.set('semana', semana);
+      if (_finSemExtra()) qs.set('sem_extra', '1');
+      const s = qs.toString();
+      return request('/financeiro-v2/dashboard/analise-profunda' + (s ? `?${s}` : ''), { timeout: 120_000 });
+    },
   },
   metas: {
     list: (params) => get('/financeiro-v2/metas' + (params ? '?' + new URLSearchParams(params) : '')),
     create: (data) => post('/financeiro-v2/metas', data),
     update: (id, data) => put(`/financeiro-v2/metas/${id}`, data),
     remove: (id) => del(`/financeiro-v2/metas/${id}`),
-    progresso: (params) => get('/financeiro-v2/metas-progresso' + (params ? '?' + new URLSearchParams(params) : '')),
+    progresso: (params) => {
+      const p = new URLSearchParams(params || {});
+      if (_finSemExtra()) p.set('sem_extra', '1');
+      const qs = p.toString();
+      return get('/financeiro-v2/metas-progresso' + (qs ? `?${qs}` : ''));
+    },
   },
-  freqArrecadacaoSemanal: (semanas = 20) => get(`/financeiro-v2/freq-arrecadacao-semanal?semanas=${semanas}`),
+  freqArrecadacaoSemanal: (semanas = 20) => get(`/financeiro-v2/freq-arrecadacao-semanal?semanas=${semanas}${_finSemExtra() ? '&sem_extra=1' : ''}`),
   arrecadacaoAnual: (ano, filtros = {}) => {
     const params = new URLSearchParams();
     if (ano) params.set('ano', ano);
     if (filtros.centro_custo_id) params.set('centro_custo_id', filtros.centro_custo_id);
     if (filtros.plano_contas_id) params.set('plano_contas_id', filtros.plano_contas_id);
+    if (filtros.sem_extra || _finSemExtra()) params.set('sem_extra', '1');
     const qs = params.toString();
     return get(`/financeiro-v2/arrecadacao-anual${qs ? `?${qs}` : ''}`);
   },
   sazonalidadeSemanal: (anos) => {
-    const qs = Array.isArray(anos) && anos.length ? `?anos=${anos.join(',')}` : '';
-    return get(`/financeiro-v2/sazonalidade-semanal${qs}`);
+    const p = new URLSearchParams();
+    if (Array.isArray(anos) && anos.length) p.set('anos', anos.join(','));
+    if (_finSemExtra()) p.set('sem_extra', '1');
+    const qs = p.toString();
+    return get(`/financeiro-v2/sazonalidade-semanal${qs ? `?${qs}` : ''}`);
   },
   categoriaTransacoes: ({ categoria, inicio, fim }) =>
     get(`/financeiro-v2/categoria-transacoes?categoria=${encodeURIComponent(categoria)}&inicio=${inicio}&fim=${fim}`),
   despesaTransacoes: (params) =>
     get('/financeiro-v2/despesa-transacoes?' + new URLSearchParams(params).toString()),
   filtrosDisponiveis: () => get('/financeiro-v2/filtros-disponiveis'),
-  saudeFinanceira: (ano) => get(`/financeiro-v2/saude-financeira${ano ? `?ano=${ano}` : ''}`),
+  saudeFinanceira: (ano) => {
+    const p = new URLSearchParams();
+    if (ano) p.set('ano', ano);
+    if (_finSemExtra()) p.set('sem_extra', '1');
+    const qs = p.toString();
+    return get(`/financeiro-v2/saude-financeira${qs ? `?${qs}` : ''}`);
+  },
   doadores: ({ ano, limit, offset } = {}) => {
     const p = new URLSearchParams();
     if (ano) p.set('ano', ano);
