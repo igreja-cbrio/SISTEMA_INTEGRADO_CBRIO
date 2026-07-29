@@ -3134,6 +3134,80 @@ via `window.print` na Brother QL-820NWB default do Windows).
   importadas (56% com responsável · resto via auto-cadastro no 1º check-in).
   Diário completo no legado.
 
+## ⚠️ Next · backfill de 13/05, contagem dupla e identidades (2026-07-29)
+
+Investigação a pedido do Marcos ("Kelly Veiga com 24 inscrições, 23 do Next").
+**Nada disso era import repetido** — é o desenho de duas camadas somadas sem
+dedup. Números medidos em produção antes da correção:
+
+- **O que o backfill `20260513160100` fez**: digitalizou **56 listas de presença**
+  do Next (34 de 2025 · 22 de 2026 · `next_eventos.arquivo_origem` guarda o PDF,
+  `total_lista`/`presentes_*` e a anotação do rodapé) e criou **1 linha em
+  `next_inscricoes` por NOME POR LISTA** — soma dos `total_lista` = 2.443 ≈ as
+  2.421 linhas criadas, **zero duplicata dentro do mesmo evento**. ⚠️ **Lista
+  impressa é ROSTER, não chamada** (76 nomes na folha × 34 presentes, no exemplo
+  do próprio arquivo): o nome fica sendo impresso nas sessões seguintes, então
+  762 pessoas viraram 2.423 linhas (mediana 3, máx 17). No MESMO instante o
+  import agrupou as aparições em **1.188 `next_matriculas`** por
+  `origem_mes_key = <mês>|<membro_id>`.
+- **Kelly**: 18 linhas legadas (18 eventos distintos · **4 com presença**) + 7
+  matrículas (2025-03 a 2025-09, **todas "formado"**). Ela não fez o Next 7×: o
+  nome estava no roster de 7 meses. ⚠️ **O status `formado` das 1.188 foi
+  INFERIDO do roster** — dado de negócio errado, e corrigir depende da régua de
+  quem conduz o Next (não é decisão de código · segue PENDENTE).
+- **A view somava as duas camadas**: 1.839 (`next`) + 2.423 (`next_legado`) =
+  **4.262 de 5.911 linhas = 72% da `vw_inscricoes_unificadas`**. O ramo do `ext`
+  já deduplicava por `legado_ref`; o do Next não tinha nada. E
+  `next_matriculas.origem_inscricao_id` está **NULL nos 1.847 registros** (a
+  ponte foi criada e nunca preenchida) — o vínculo aproveitável é o
+  `origem_mes_key`, preenchido em 1.189.
+- **A presença não subiu pro modelo novo**: 994 linhas legadas com check-in
+  contra **4** matrículas → o `compareceu` da porta `next` era ~sempre falso e
+  quem media presença era só o KPI `frequencia_next`, que lê a tabela legada.
+
+**Correções (migration `20260729190000`):** o ramo 9 da view passa a mostrar só
+o que **não** tem matrícula, no máximo 1 linha por (mês × pessoa) e com a
+aparição COM presença ganhando o `DISTINCT ON` (não perde `compareceu`); a
+edição deixa de ser NULL (vira o mês, na mesma série derivada do ramo 8 — era o
+chip "sem edição" que não abria nada). Backfill sobe a 1ª presença de cada
+(mês × pessoa) pra matrícula (~588). Resultado esperado: Next na view cai de
+4.262 → ~2.124 e matrículas com presença sobem de 4 → ~592.
+
+⚠️ **NÃO apagar nem desligar `next_inscricoes`.** As duas camadas carregam fatos
+**diferentes**: matrícula = inscrição/estado do mês · legado = aparição/presença
+por encontro. As presenças reais moram na legada e o `frequencia_next` lê de lá.
+
+**App parou de escrever só na camada morta** (`services/nextMatricula.js` ·
+`espelharMatriculaDoEncontro`): `POST /app/next/inscrever` e o check-in por
+geolocalização continuam gravando a presença por encontro em `next_inscricoes`
+E agora espelham a **matrícula do mês** (turma do mês → turma aberta → sem
+turma = espera), chave `origem_mes_key` (UNIQUE ⇒ idempotente). É **best-effort**
+de propósito: o write primário já respondeu ao app e não se desfaz porque o
+espelho falhou. A PARTE 3 da migration acrescenta `'app'` ao CHECK de
+`next_matriculas.origem` — sem isso o espelho falharia com 23514 **em silêncio**.
+⚠️ **Resíduo consciente**: o ramo `next` do `fn_app_inscricoes_fanout`
+(rede de segurança pra builds ANTIGOS do app) segue inserindo só na legada — a
+função foi patchada dinamicamente em prod (20260729060000) e um
+`CREATE OR REPLACE` do arquivo do repo REVERTERIA aquele patch. Não vale o risco
+por um caminho legado; a linha aparece como `next_legado` (sem contagem dupla).
+
+**Identidades do backfill** (`backend/scripts/_next_identidades_pendencias.cjs`
+· dry-run por padrão): o import resolveu a pessoa pelo matcher e gerou
+`membro_id` **determinístico (UUID v5 de nome+telefone)**, então telefone
+transcrito errado na lista manuscrita ou telefone de família compartilhado
+produziu (a) **25 membros com vínculo divergente** — 63 linhas do Next apontando
+pra um cadastro de OUTRA pessoa (ex.: "Lucas Abreu de almeida" → membro "Livia
+Quintella"; "Sophia Macedo Joseph" → "LAYANE … BELLO JOSEPH", mesmo telefone =
+mãe/filha) — **21 enfileiradas** em `identidade_pendencias` (`vinculo_divergente`
+· 4 já estavam lá) e visíveis em /entradas → Conflitos de CPF; (b) **25 pares de
+duplicata** que a `duplicidadePolicy` aceita e a aba "Possíveis duplicidades"
+já calcula sozinha (o script só confere); (c) **58 `membro_id` órfãos** — ⚠️
+**`merge_membros` NÃO repointa `next_inscricoes`/`next_matriculas`**, então
+fundir membro deixa a linha do Next apontando pra um id que sumiu (mesma classe
+do incidente Kids de 22/07). Corrigir exige o `mem_merge_log`. **PENDENTE.**
+⚠️ Lei mantida: o script **nunca** funde, religa ou apaga — só enfileira pra
+decisão humana.
+
 ## Devocionais · módulo do Matheus (no ar)
 
 Módulo existe e roda: `backend/routes/devocionalPlanos.js` (CRUD + geração de
