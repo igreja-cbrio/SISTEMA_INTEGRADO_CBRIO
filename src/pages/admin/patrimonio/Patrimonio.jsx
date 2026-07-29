@@ -234,6 +234,9 @@ export default function Patrimonio() {
   async function saveMov(bemId, data) {
     try { await patrimonio.bens.movimentar(bemId, data); setModalMov(null); openDetail(bemId); loadBens(); loadDash(); } catch (e) { setError(e.message); }
   }
+  async function dispensarAlerta(bemId) {
+    try { await patrimonio.bens.dispensarAlerta(bemId); openDetail(bemId); loadBens(); } catch (e) { setError(e.message); }
+  }
   async function addCat() { if (!newCat.trim()) return; try { await patrimonio.categorias.create({ nome: newCat }); setNewCat(''); loadCats(); loadDash(); } catch (e) { setError(e.message); } }
   async function removeCat(id) { if (!confirm('Remover categoria?')) return; try { await patrimonio.categorias.remove(id); loadCats(); } catch (e) { setError(e.message); } }
   async function updateCat(id, data) { try { await patrimonio.categorias.update(id, data); loadCats(); loadDepreciacao(); } catch (e) { setError(e.message); } }
@@ -306,11 +309,11 @@ export default function Patrimonio() {
       )}
 
       <BemFormModal open={!!modalBem} data={modalBem} categorias={categorias} locOptions={locOptions} onClose={() => setModalBem(null)} onSave={saveBem} />
-      <BemDetailModal open={!!modalDetail} data={modalDetail} onClose={() => setModalDetail(null)} onEdit={(b) => { setModalDetail(null); setModalBem(b); }} onBaixar={baixarBem} onMov={(bemId) => setModalMov({ bem_id: bemId })} isDiretor={isDiretor} />
+      <BemDetailModal open={!!modalDetail} data={modalDetail} onClose={() => setModalDetail(null)} onEdit={(b) => { setModalDetail(null); setModalBem(b); }} onBaixar={baixarBem} onMov={(bemId) => setModalMov({ bem_id: bemId })} onDispensarAlerta={dispensarAlerta} isDiretor={isDiretor} />
       <MovFormModal open={!!modalMov} data={modalMov} locOptions={locOptions} onClose={() => setModalMov(null)} onSave={saveMov} />
       <InvFormModal open={!!modalInv} onClose={() => setModalInv(null)} onSave={saveInv} />
       <NovoCicloModal open={modalNovoCiclo} responsaveis={responsaveis} onClose={() => setModalNovoCiclo(false)} onSave={criarCiclo} />
-      <ConvocacaoModal open={!!modalConvocacao} data={modalConvocacao} onClose={() => setModalConvocacao(null)} onIniciar={iniciarConvocacao} onAtualizarItem={atualizarItemRevisao} onConcluir={concluirConvocacao} isDiretor={isCoordenadorRevisao} />
+      <ConvocacaoModal open={!!modalConvocacao} data={modalConvocacao} locOptions={locOptions} onClose={() => setModalConvocacao(null)} onIniciar={iniciarConvocacao} onAtualizarItem={atualizarItemRevisao} onConcluir={concluirConvocacao} isDiretor={isCoordenadorRevisao} />
     </div>
   );
 }
@@ -567,6 +570,7 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
                   <td style={styles.td}>
                     {b.pat_localizacoes?.nome || '—'}
                     {b.localizacao_pendente && <span title="Localização virou um grupamento — precisa de realocação pra uma sala final" style={{ ...styles.badge(C.amber, C.amberBg), marginLeft: 6 }}>⚠ pendente</span>}
+                    {b.alerta_divergencia_item_id && <span title="Encontrado em outro lugar numa revisão periódica — veja o popup do bem" style={{ ...styles.badge(C.amber, C.amberBg), marginLeft: 6 }}>⚠ divergência</span>}
                   </td>
                   <td style={styles.td}>{[b.marca, b.modelo].filter(Boolean).join(' ') || '—'}</td>
                   <td style={styles.td}>{fmtMoney(b.valor_aquisicao)}</td>
@@ -863,10 +867,18 @@ function BemFormModal({ open, data, categorias, locOptions, onClose, onSave }) {
   );
 }
 
-function BemDetailModal({ open, data, onClose, onEdit, onBaixar, onMov, isDiretor }) {
+function BemDetailModal({ open, data, onClose, onEdit, onBaixar, onMov, onDispensarAlerta, isDiretor }) {
   if (!data) return null;
   return (
     <Modal open={open} onClose={onClose} title={data.nome}>
+      {data.alerta_divergencia_item_id && data.alerta && (
+        <div style={{ padding: '10px 12px', borderRadius: 8, background: C.amberBg, border: `1px solid ${C.amber}`, marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <div style={{ fontSize: 13 }}>
+            ⚠ <strong>Encontrado em outro lugar numa revisão</strong> — visto em <strong>{data.alerta.localizacao_encontrada?.nome || '—'}</strong> em {fmtDate(data.alerta.data_revisao?.slice(0, 10))}, mas mantido aqui na localização registrada.
+          </div>
+          {isDiretor && <Button size="xs" variant="secondary" onClick={() => onDispensarAlerta(data.id)}>Dispensar alerta</Button>}
+        </div>
+      )}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 16px', marginBottom: 20 }}>
         <div><span style={{ fontSize: 11, color: C.text2 }}>Código:</span><div style={{ fontSize: 14, fontFamily: 'monospace' }}>{fmtCodigo(data.codigo_barras)}</div></div>
         <div><span style={{ fontSize: 11, color: C.text2 }}>Status:</span><div><Badge status={data.status} map={STATUS_BEM} /></div></div>
@@ -1024,34 +1036,82 @@ function NovoCicloModal({ open, responsaveis, onClose, onSave }) {
   );
 }
 
-function RevisaoItemRow({ item, disabled, onSave }) {
+// Divergência de localização (pedido do usuário 2026-07-29, item 2): quando o
+// revisor marca "encontrado em" um local DIFERENTE do esperado (o da própria
+// convocação), o bem NÃO é movido sozinho — surgem 2 botões pra decisão
+// humana explícita. A escolha só é enviada ao clicar num dos botões; o
+// select de status continua salvando na hora, como já era.
+function RevisaoItemRow({ item, esperadaLocId, locOptions, disabled, onSave }) {
   const conferido = item.encontrado !== null && item.encontrado !== undefined;
   const [statusFisico, setStatusFisico] = useState(item.status_fisico || 'ok');
+  const [localEncontrada, setLocalEncontrada] = useState(item.localizacao_encontrada_id || esperadaLocId || '');
+  useEffect(() => {
+    setStatusFisico(item.status_fisico || 'ok');
+    setLocalEncontrada(item.localizacao_encontrada_id || esperadaLocId || '');
+  }, [item.id, item.status_fisico, item.localizacao_encontrada_id, esperadaLocId]);
+
+  const divergente = conferido && statusFisico !== 'nao_encontrado' && localEncontrada && esperadaLocId && localEncontrada !== esperadaLocId;
+  const decidido = !!item.divergencia_acao;
+
+  function salvarStatus(novoStatus) {
+    setStatusFisico(novoStatus);
+    onSave({ encontrado: novoStatus !== 'nao_encontrado', status_fisico: novoStatus, localizacao_encontrada_id: item.localizacao_encontrada_id || null, divergencia_acao: item.divergencia_acao || null });
+  }
+  function decidirDivergencia(acao) {
+    onSave({ encontrado: statusFisico !== 'nao_encontrado', status_fisico: statusFisico, localizacao_encontrada_id: localEncontrada, divergencia_acao: acao });
+  }
+
   return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: `1px solid ${C.border}`, gap: 8 }}>
-      <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: 13, fontWeight: 600 }}>{item.pat_bens?.nome}</div>
-        <div style={{ fontSize: 11, color: C.text3, fontFamily: 'monospace' }}>{fmtCodigo(item.pat_bens?.codigo_barras)}</div>
+    <div style={{ padding: '8px 0', borderBottom: `1px solid ${C.border}` }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 600 }}>{item.pat_bens?.nome}</div>
+          <div style={{ fontSize: 11, color: C.text3, fontFamily: 'monospace' }}>{fmtCodigo(item.pat_bens?.codigo_barras)}</div>
+        </div>
+        {disabled ? (
+          conferido
+            ? <Badge status={item.status_fisico || (item.encontrado ? 'ok' : 'nao_encontrado')} map={STATUS_FISICO_ITEM} />
+            : <span style={{ fontSize: 12, color: C.text3 }}>Aguardando início</span>
+        ) : (
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
+            <select style={styles.select} value={statusFisico} onChange={e => salvarStatus(e.target.value)}>
+              <option value="ok">Encontrado · OK</option>
+              <option value="danificado">Encontrado · Danificado</option>
+              <option value="nao_encontrado">Não encontrado</option>
+            </select>
+            {conferido && <span style={{ fontSize: 13, color: C.green }}>✓</span>}
+          </div>
+        )}
       </div>
-      {disabled ? (
-        conferido
-          ? <Badge status={item.status_fisico || (item.encontrado ? 'ok' : 'nao_encontrado')} map={STATUS_FISICO_ITEM} />
-          : <span style={{ fontSize: 12, color: C.text3 }}>Aguardando início</span>
-      ) : (
-        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
-          <select style={styles.select} value={statusFisico} onChange={e => { setStatusFisico(e.target.value); onSave({ encontrado: e.target.value !== 'nao_encontrado', status_fisico: e.target.value }); }}>
-            <option value="ok">Encontrado · OK</option>
-            <option value="danificado">Encontrado · Danificado</option>
-            <option value="nao_encontrado">Não encontrado</option>
-          </select>
-          {conferido && <span style={{ fontSize: 13, color: C.green }}>✓</span>}
+      {!disabled && conferido && statusFisico !== 'nao_encontrado' && locOptions?.length > 0 && (
+        <div style={{ marginTop: 6 }}>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 11, color: C.text2 }}>Encontrado em:</span>
+            <select style={{ ...styles.select, fontSize: 12 }} value={localEncontrada} onChange={e => setLocalEncontrada(e.target.value)}>
+              {locOptions.map(l => <option key={l.id} value={l.id}>{locIndent(l.depth)}{l.nome}</option>)}
+            </select>
+          </div>
+          {divergente && !decidido && (
+            <div style={{ marginTop: 6, padding: 8, borderRadius: 8, background: C.amberBg, border: `1px solid ${C.amber}` }}>
+              <div style={{ fontSize: 12, color: C.text, marginBottom: 6 }}>⚠ Encontrado fora da localização esperada. O item não é movido automaticamente — escolha o que fazer:</div>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                <Button size="xs" onClick={() => decidirDivergencia('movido')}>Mover pra cá</Button>
+                <Button size="xs" variant="secondary" onClick={() => decidirDivergencia('alerta')}>Manter alerta (não mover)</Button>
+              </div>
+            </div>
+          )}
+          {divergente && decidido && (
+            <div style={{ marginTop: 4, fontSize: 11, color: item.divergencia_acao === 'movido' ? C.green : C.amber }}>
+              {item.divergencia_acao === 'movido' ? '✓ Movido pra cá' : '⚠ Alerta mantido — segue registrado na localização original'}
+            </div>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-function ConvocacaoModal({ open, data, onClose, onIniciar, onAtualizarItem, onConcluir, isDiretor }) {
+function ConvocacaoModal({ open, data, locOptions, onClose, onIniciar, onAtualizarItem, onConcluir, isDiretor }) {
   if (!data) return null;
   const itens = data.itens || [];
   const todosConferidos = itens.length > 0 && itens.every(i => i.encontrado !== null && i.encontrado !== undefined);
@@ -1063,7 +1123,7 @@ function ConvocacaoModal({ open, data, onClose, onIniciar, onAtualizarItem, onCo
       </div>
       {itens.length === 0 && <div style={styles.empty}>Nenhum bem nesta localização</div>}
       {itens.map(item => (
-        <RevisaoItemRow key={item.id} item={item} disabled={data.status !== 'em_andamento'} onSave={(payload) => onAtualizarItem(item.id, payload)} />
+        <RevisaoItemRow key={item.id} item={item} esperadaLocId={data.localizacao_id} locOptions={locOptions} disabled={data.status !== 'em_andamento'} onSave={(payload) => onAtualizarItem(item.id, payload)} />
       ))}
       {data.status === 'em_andamento' && isDiretor && (
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16, paddingTop: 12, borderTop: `1px solid ${C.border}` }}>
