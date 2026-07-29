@@ -496,6 +496,8 @@ export default function Financeiro() {
   // Filtro contas a pagar
   const [filtroPagarStatus, setFiltroPagarStatus] = useState('');
   const [filtroPagarAno, setFiltroPagarAno] = useState('');
+  const [filtroPagarMes, setFiltroPagarMes] = useState(''); // 1-12 · filtra o vencimento por mês
+  const [filtroPagarOrder, setFiltroPagarOrder] = useState('venc_asc'); // ordenação por vencimento
   const [filtroPagarBusca, setFiltroPagarBusca] = useState('');
   const [cpResumo, setCpResumo] = useState(null);
   const [cpTotal, setCpTotal] = useState(0);
@@ -577,10 +579,12 @@ export default function Financeiro() {
   const loadContasPagar = useCallback(async () => {
     try {
       setLoading(true);
-      const params = { page: cpPage, pageSize: CP_PAGE_SIZE };
+      const params = { page: cpPage, pageSize: CP_PAGE_SIZE, order: filtroPagarOrder };
       if (filtroPagarStatus === 'vencido') params.vencido = 'true';
       else if (filtroPagarStatus) params.status = filtroPagarStatus;
       if (filtroPagarAno) params.ano = filtroPagarAno;
+      // Filtro por mês exige ano no backend → usa o ano escolhido ou o atual.
+      if (filtroPagarMes) { params.mes = filtroPagarMes; if (!params.ano) params.ano = new Date().getFullYear(); }
       if (filtroPagarBusca) params.q = filtroPagarBusca;
       // O resumo (KPIs) segue o recorte ano/busca, mas ignora o filtro de status
       // → os 4 cards sempre mostram total / baixado / aberto / vencido do escopo.
@@ -596,7 +600,7 @@ export default function Financeiro() {
       setCpResumo(resumo || null);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
-  }, [filtroPagarStatus, filtroPagarAno, filtroPagarBusca, cpPage]);
+  }, [filtroPagarStatus, filtroPagarAno, filtroPagarMes, filtroPagarOrder, filtroPagarBusca, cpPage]);
 
   const loadReembolsos = useCallback(async () => {
     try {
@@ -1091,14 +1095,22 @@ export default function Financeiro() {
       <div style={{ ...styles.filterRow, flexWrap: 'wrap', alignItems: 'center' }}>
         <select className="flex h-9 rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={filtroPagarStatus} onChange={e => { setFiltroPagarStatus(e.target.value); setCpPage(1); }}>
           <option value="">Todos os status</option>
-          <option value="pendente">Em aberto</option>
-          <option value="pago">Baixado (pago)</option>
-          <option value="vencido">Vencido</option>
-          <option value="cancelado">Cancelado</option>
+          <option value="pendente">Não baixadas (em aberto)</option>
+          <option value="pago">Baixadas (pago)</option>
+          <option value="vencido">Vencidas (em aberto)</option>
+          <option value="cancelado">Canceladas</option>
         </select>
         <select className="flex h-9 rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={filtroPagarAno} onChange={e => { setFiltroPagarAno(e.target.value); setCpPage(1); }}>
           <option value="">Todos os anos</option>
           {(cpResumo?.anos || []).map((a) => <option key={a} value={a}>{a}</option>)}
+        </select>
+        <select className="flex h-9 rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={filtroPagarMes} onChange={e => { setFiltroPagarMes(e.target.value); setCpPage(1); }} title="Filtra o vencimento pelo mês (usa o ano escolhido, ou o ano atual)">
+          <option value="">Vencimento · todos os meses</option>
+          {['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'].map((nome, i) => <option key={i + 1} value={i + 1}>{nome}</option>)}
+        </select>
+        <select className="flex h-9 rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={filtroPagarOrder} onChange={e => { setFiltroPagarOrder(e.target.value); setCpPage(1); }} title="Ordenar por data de vencimento">
+          <option value="venc_asc">Vencimento ↑ (mais próximo)</option>
+          <option value="venc_desc">Vencimento ↓ (mais distante)</option>
         </select>
         <input
           className="flex h-9 rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"

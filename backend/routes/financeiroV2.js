@@ -3583,16 +3583,18 @@ router.get('/metas-progresso', async (req, res) => {
 // Lista paginada com filtros (evita o cap de 1000 do PostgREST)
 router.get('/contas-pagar', async (req, res) => {
   try {
-    const { status, ano, mes, fornecedor, q, plano_contas_id, centro_custo_id, vinculo_status, vencido } = req.query;
+    const { status, ano, mes, fornecedor, q, plano_contas_id, centro_custo_id, vinculo_status, vencido, order } = req.query;
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
     const pageSize = Math.min(500, Math.max(1, parseInt(req.query.pageSize, 10) || 100));
     const from = (page - 1) * pageSize;
+    // Ordenação por data de vencimento: asc (padrão · mais próximo primeiro) ou desc.
+    const vencAsc = order !== 'venc_desc';
 
     let query = supabase
       .from('fin_contas_pagar')
       .select('*, plano:fin_plano_contas(codigo,nome), centro:fin_centros_custo(codigo,nome)', { count: 'exact' })
       .is('deleted_at', null)
-      .order('data_vencimento', { ascending: true, nullsFirst: false });
+      .order('data_vencimento', { ascending: vencAsc, nullsFirst: false });
 
     if (status) query = query.eq('status', status);
     if (plano_contas_id) query = query.eq('plano_contas_id', plano_contas_id);
