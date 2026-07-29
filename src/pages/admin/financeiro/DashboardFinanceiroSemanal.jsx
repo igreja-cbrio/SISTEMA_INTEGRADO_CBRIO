@@ -603,6 +603,7 @@ function Slide0Resumo({ kpis, cultos, top_contribuintes, historico }) {
           valor={kpis.receita}
           delta={kpis.receita_delta_wow}
           sub="vs semana anterior"
+          mom={kpis.receita_mes_anterior ? `Mês ant. (mesma semana): ${fmtCompact(kpis.receita_mes_anterior)} (${fmtPct(kpis.receita_delta_mom)})` : null}
           yoy={kpis.receita_yoy ? `YoY: ${fmtCompact(kpis.receita_yoy)} (${fmtPct(kpis.receita_delta_yoy)})` : null}
         />
         <KpiBig
@@ -1336,7 +1337,7 @@ function fmtKbrl(v) {
 // ============================================================
 // Sub-componentes
 // ============================================================
-function KpiBig({ custom, icon: Icon, accent, label, valor, format = fmtMoney, delta, sub, yoy }) {
+function KpiBig({ custom, icon: Icon, accent, label, valor, format = fmtMoney, delta, sub, yoy, mom }) {
   let DeltaIcon = Minus;
   let deltaColor = 'text-muted-foreground';
   if (delta !== null && delta !== undefined) {
@@ -1381,9 +1382,10 @@ function KpiBig({ custom, icon: Icon, accent, label, valor, format = fmtMoney, d
             )}
             {sub && <div className="text-xs text-muted-foreground">{sub}</div>}
           </div>
-          {yoy && (
-            <div className="text-[10px] text-muted-foreground mt-1.5 pt-1.5 border-t border-border/50">
-              {yoy}
+          {(mom || yoy) && (
+            <div className="text-[10px] text-muted-foreground mt-1.5 pt-1.5 border-t border-border/50 space-y-0.5">
+              {mom && <div>{mom}</div>}
+              {yoy && <div>{yoy}</div>}
             </div>
           )}
         </CardContent>
@@ -3144,11 +3146,11 @@ function ArrecadacaoAnualChart() {
                   <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
                     <span className="text-xs text-muted-foreground">Mês selecionado</span>
                     <span className="flex items-center gap-2">
-                      {sel.semanas_qua_ter === 5 && (
-                        <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-primary/10 text-primary border border-primary/30">
-                          5 semanas de contribuição
+                      {sel.semanas_qua_ter ? (
+                        <span className={`text-[11px] font-semibold px-2 py-0.5 rounded border ${sel.semanas_qua_ter === 5 ? 'bg-primary/10 text-primary border-primary/30' : 'bg-muted text-muted-foreground border-border'}`}>
+                          {sel.semanas_qua_ter} semanas de contribuição
                         </span>
-                      )}
+                      ) : null}
                       <span className="text-sm font-semibold px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300">
                         {sel.mes_label}/{String(ano).slice(2)}
                       </span>
