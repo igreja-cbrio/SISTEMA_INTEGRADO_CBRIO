@@ -603,7 +603,7 @@ function Slide0Resumo({ kpis, cultos, top_contribuintes, historico }) {
           valor={kpis.receita}
           delta={kpis.receita_delta_wow}
           sub="vs semana anterior"
-          mom={kpis.receita_mes_anterior ? `Mês ant. (mesma semana): ${fmtCompact(kpis.receita_mes_anterior)} (${fmtPct(kpis.receita_delta_mom)})` : null}
+          mom={kpis.receita_mes_anterior ? { delta: kpis.receita_delta_mom, valor: kpis.receita_mes_anterior } : null}
           yoy={kpis.receita_yoy ? `YoY: ${fmtCompact(kpis.receita_yoy)} (${fmtPct(kpis.receita_delta_yoy)})` : null}
         />
         <KpiBig
@@ -1383,9 +1383,22 @@ function KpiBig({ custom, icon: Icon, accent, label, valor, format = fmtMoney, d
             {sub && <div className="text-xs text-muted-foreground">{sub}</div>}
           </div>
           {(mom || yoy) && (
-            <div className="text-[10px] text-muted-foreground mt-1.5 pt-1.5 border-t border-border/50 space-y-0.5">
-              {mom && <div>{mom}</div>}
-              {yoy && <div>{yoy}</div>}
+            <div className="mt-2 pt-2 border-t border-border/50 space-y-1">
+              {mom && (() => {
+                const d = mom.delta;
+                const up = d != null && d >= 0;
+                const MI = (d == null || Math.abs(d) < 1) ? Minus : (up ? ArrowUp : ArrowDown);
+                const cor = (d == null || Math.abs(d) < 1) ? 'text-muted-foreground' : (up ? 'text-emerald-600' : 'text-rose-600');
+                return (
+                  <div className="flex items-center gap-1.5 text-xs">
+                    <MI className={`h-3.5 w-3.5 ${cor}`} />
+                    <span className={`font-semibold ${cor}`}>{fmtPct(d)}</span>
+                    <span className="text-muted-foreground">vs. mesma semana do mês passado</span>
+                    {mom.valor ? <span className="text-muted-foreground/70">· {fmtCompact(mom.valor)}</span> : null}
+                  </div>
+                );
+              })()}
+              {yoy && <div className="text-[10px] text-muted-foreground">{yoy}</div>}
             </div>
           )}
         </CardContent>
