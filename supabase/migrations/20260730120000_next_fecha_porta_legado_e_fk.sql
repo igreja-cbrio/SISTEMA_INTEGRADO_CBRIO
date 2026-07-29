@@ -371,8 +371,17 @@ BEGIN
       -- A pessoa certa JÁ tem matrícula naquele mês: esta é a linha redundante
       -- da fusão. O `merge_membros` deleta; aqui é soft-delete, porque a tabela
       -- tem `deleted_at` e a lei nº 2 da casa vale.
+      -- ⚠️ E o `membro_id` TEM que ser repontado junto: soft-delete é só uma
+      -- coluna, a FK valida a tabela INTEIRA (foi assim que a 1ª tentativa desta
+      -- migration falhou com 23503 — a linha ficava soft-deletada apontando pro
+      -- cadastro morto). `origem_mes_key = NULL` sai do índice único parcial
+      -- (uq_next_matriculas_origem_mes_key WHERE origem_mes_key IS NOT NULL),
+      -- então o repoint passa; a linha morta não precisa da chave de dedup.
       UPDATE public.next_matriculas
-         SET deleted_at = now(), updated_at = now()
+         SET deleted_at = now(),
+             membro_id = v_destino,
+             origem_mes_key = NULL,
+             updated_at = now()
        WHERE id = r.id;
       v_redundantes := v_redundantes + 1;
     END;
@@ -388,6 +397,30 @@ END $$;
 -- ponteiro morto a cada fusão — foi exatamente o que produziu os 58 órfãos.
 -- `ON DELETE SET NULL` é o padrão da casa (as 21 FKs convertidas em 2026-05-21).
 -- Com a FK no lugar, toda fusão futura reponta as duas tabelas sozinha.
+
+-- Rede de segurança ANTES do ALTER: a criação da FK não pode depender de a
+-- lógica de repoint da PARTE 3 ter sido perfeita — e na 1ª tentativa não foi.
+-- Qualquer ponteiro morto que sobrou é SOLTO aqui (a linha continua existindo
+-- com nome/telefone como texto histórico; nada é apagado) e o NOTICE diz
+-- quantos foram, pra ninguém descobrir isso por acidente depois.
+DO $$
+DECLARE v_ins INT := 0; v_mat INT := 0;
+BEGIN
+  UPDATE public.next_inscricoes ni SET membro_id = NULL
+   WHERE ni.membro_id IS NOT NULL
+     AND NOT EXISTS (SELECT 1 FROM public.mem_membros p WHERE p.id = ni.membro_id);
+  GET DIAGNOSTICS v_ins = ROW_COUNT;
+
+  UPDATE public.next_matriculas m SET membro_id = NULL, updated_at = now()
+   WHERE m.membro_id IS NOT NULL
+     AND NOT EXISTS (SELECT 1 FROM public.mem_membros p WHERE p.id = m.membro_id);
+  GET DIAGNOSTICS v_mat = ROW_COUNT;
+
+  IF v_ins + v_mat > 0 THEN
+    RAISE NOTICE 'Rede de segurança: ponteiro morto solto em % linha(s) de next_inscricoes e % de next_matriculas', v_ins, v_mat;
+  END IF;
+END $$;
+
 ALTER TABLE public.next_inscricoes
   DROP CONSTRAINT IF EXISTS next_inscricoes_membro_id_fkey;
 ALTER TABLE public.next_inscricoes

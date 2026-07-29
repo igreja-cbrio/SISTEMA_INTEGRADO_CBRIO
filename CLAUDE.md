@@ -1016,6 +1016,15 @@ regras. **Quebrar qualquer uma delas é regressão crítica.**
     coluna de pessoa — a FK não é enfeite de integridade, é o que faz a fusão de
     duplicatas funcionar. ⚠️ Ao ligar FK em tabela existente, resolver os órfãos
     ANTES (a constraint não é criável com violação).
+    ⚠️⚠️ **`deleted_at` NÃO isenta de FK**: a constraint valida a tabela INTEIRA,
+    inclusive linha soft-deletada. Foi assim que a 1ª tentativa da
+    `20260730120000` morreu com 23503 — o tratamento de conflito soft-deletava a
+    linha redundante e deixava o `membro_id` apontando pro cadastro morto.
+    Corolário: rotina de saneamento que "resolve" ponteiro por soft-delete não
+    resolve nada pra efeito de FK — tem que repontar ou anular a coluna. E
+    **sempre pôr uma rede de segurança (`UPDATE ... SET col = NULL WHERE NOT
+    EXISTS`) imediatamente antes do `ADD CONSTRAINT`**: a criação da FK não pode
+    depender de a lógica de repoint ter sido perfeita.
 
 ## Inventário de helpers SQL (usar SEMPRE em policies novas)
 
