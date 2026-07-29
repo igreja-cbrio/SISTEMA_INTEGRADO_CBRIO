@@ -1004,6 +1004,28 @@ regras. **Quebrar qualquer uma delas é regressão crítica.**
    sem usar SECURITY DEFINER no helper.** Causa stack overflow.
    Padrão: helper SQL `STABLE SECURITY DEFINER SET search_path = public`.
 
+10. **NUNCA criar coluna que aponta pra `mem_membros` (ou `profiles`) sem
+    FOREIGN KEY.** Descoberto em 2026-07-30 investigando 58 ponteiros mortos nas
+    tabelas do Next: **`merge_membros` descobre os filhos a repontar pelo
+    CATÁLOGO** (`pg_constraint` · `confrelid = 'public.mem_membros'`) e faz
+    **HARD delete** do membro fundido. Tabela com `membro_id uuid` *sem* FK é
+    invisível pra ele — a cada fusão ela acumula ponteiro pra cadastro que não
+    existe mais, silenciosamente (`next_inscricoes`/`next_matriculas` ficaram 2
+    meses assim). Padrão: `REFERENCES public.mem_membros(id) ON DELETE SET NULL`
+    (as 21 FKs convertidas em 2026-05-21). Vale pra QUALQUER tabela nova com
+    coluna de pessoa — a FK não é enfeite de integridade, é o que faz a fusão de
+    duplicatas funcionar. ⚠️ Ao ligar FK em tabela existente, resolver os órfãos
+    ANTES (a constraint não é criável com violação).
+    ⚠️⚠️ **`deleted_at` NÃO isenta de FK**: a constraint valida a tabela INTEIRA,
+    inclusive linha soft-deletada. Foi assim que a 1ª tentativa da
+    `20260730120000` morreu com 23503 — o tratamento de conflito soft-deletava a
+    linha redundante e deixava o `membro_id` apontando pro cadastro morto.
+    Corolário: rotina de saneamento que "resolve" ponteiro por soft-delete não
+    resolve nada pra efeito de FK — tem que repontar ou anular a coluna. E
+    **sempre pôr uma rede de segurança (`UPDATE ... SET col = NULL WHERE NOT
+    EXISTS`) imediatamente antes do `ADD CONSTRAINT`**: a criação da FK não pode
+    depender de a lógica de repoint ter sido perfeita.
+
 ## Inventário de helpers SQL (usar SEMPRE em policies novas)
 
 | Função | Retorna | Uso típico |
@@ -3242,6 +3264,59 @@ fundir membro deixa a linha do Next apontando pra um id que sumiu (mesma classe
 do incidente Kids de 22/07). Corrigir exige o `mem_merge_log`. **PENDENTE.**
 ⚠️ Lei mantida: o script **nunca** funde, religa ou apaga — só enfileira pra
 decisão humana.
+
+### Next · as 4 decisões do Marcos sobre o legado (2026-07-29/30)
+
+Mandato dado por ele: *"o importante não é ter os dados certos de 2 anos atrás,
+é a garantia de que daqui pra frente teremos dados sérios, corretos e
+auditáveis; se um cadastro antigo atrapalhar, prefiro remover e me justificar
+com a liderança — mas não quero um frankenstein, porque daqui a 5 anos isso dá
+um problema que não é simples."* As decisões, caso a caso:
+
+1. **Os 865 `formado` do backfill FICAM como formado** (277 deles sem nenhuma
+   presença registrada). Decisão do Marcos: *"antes eles usavam folhas de papel
+   e o controle era limitado"* — o status reflete o julgamento de quem conduzia
+   o Next no papel; reescrever hoje trocaria um dado impreciso por outro. **NÃO
+   reabrir sem ele.** Ressalva registrada: **maio/2026 não tem NENHUMA matrícula
+   real fora do backfill**, então os KPIs NEXT-01/02/03 daquele mês (janela por
+   `created_at`) são 100% roster de 2025. É um mês fechado e não se repete —
+   decidimos NÃO reescrever `created_at` (destruiria o fato auditável "entrou no
+   import de 13/05") nem criar coluna `matriculado_em` só por isso.
+2. **A porta `next_legado` MORREU** (migration `20260730120000`): as 131
+   aparições sem matrícula viraram matrícula (datadas no mês do ENCONTRO, não no
+   dia do import; `formado` só onde há presença) e o ramo saiu da view. A view
+   tem **9 fontes**, não 10. `next_inscricoes` não é porta de inscrição — é
+   **presença por encontro**. Um modelo de inscrição (turma/matrícula), um de
+   presença. Era essa competição entre as duas tabelas que era o frankenstein.
+3. **Os 93 cadastros "vazios" do import NÃO foram apagados.** Marcos perguntou
+   se valia deixá-los como "não sei" pra reconciliar caso a pessoa preencha um
+   formulário no futuro. Vale — e não precisa de estado novo, porque **o matcher
+   canônico filtra `deleted_at` e NUNCA `active`**: o cadastro fantasma com
+   nome+telefone é reencontrado e ENRIQUECIDO no próximo formulário, em vez de
+   nascer duplicado. ⚠️ **Soft-delete quebraria exatamente isso** (o matcher
+   pula deletado → nasce cadastro novo e o rastro fica órfão). Além disso: dos
+   93, a `duplicidadePolicy` aceita **27 pares** — vários são o fantasma
+   duplicando um membro REAL, ou seja, a fila das Entradas está apontando
+   trabalho útil de consolidação, não ruído. A origem já é auditável
+   (`mem_identidade_observacoes`).
+4. **A FK que faltava** (a causa-raiz, virou lei nº 10 das regras de segurança):
+   os 58 órfãos existiam porque `next_inscricoes`/`next_matriculas` tinham
+   `membro_id` **sem FOREIGN KEY**, e `merge_membros` descobre os filhos pelo
+   catálogo. Os 58 foram reconstruídos pelo `mem_merge_log` (seguindo cadeia de
+   fusão; redundante vira soft-delete) e as duas FKs entraram com
+   `ON DELETE SET NULL`. Daqui pra frente toda fusão reponta sozinha.
+
+⚠️ **Ponto cego consciente que sobrou**: o ramo `next` do
+`fn_app_inscricoes_fanout` (rede de segurança pra builds ANTIGOS do app) insere
+só em `next_inscricoes`, e com a porta retirada essa linha não aparece na view.
+Volume real: 1 linha em 2 meses. Fecha quando o fanout puder ser reescrito sem
+reverter o patch dinâmico de `20260729060000`.
+
+⚠️ **Observação de escala pra investigar depois**: `mem_membros` viva está com
+**7.487 linhas, todas `active=true`** — a auditoria de junho documentava 3.665.
+O crescimento vem de imports (Next 682, "Contribuinte NNN" do financeiro, Kids)
+e merece uma varredura própria: hoje "membro" e "nome que passou por uma porta"
+contam igual no mesmo número.
 
 ## Devocionais · módulo do Matheus (no ar)
 

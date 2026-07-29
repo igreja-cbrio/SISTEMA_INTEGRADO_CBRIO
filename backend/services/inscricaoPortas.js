@@ -52,7 +52,11 @@ const PORTAS_INSCRICAO = Object.freeze([
   Object.freeze({
     chave: 'next',
     nome: 'Next',
-    fontes: Object.freeze(['next', 'next_legado']),
+    // `next_legado` (= next_inscricoes) SAIU do catálogo em 2026-07-30: aquela
+    // tabela não é porta de inscrição, é PRESENÇA POR ENCONTRO (é o que o KPI
+    // `frequencia_next` lê). A inscrição do Next vive em next_matriculas.
+    // Ver migration 20260730120000 e a seção do Next no CLAUDE.md.
+    fontes: Object.freeze(['next']),
     rotasPublicas: Object.freeze(['/next', '/next/inscrever']),
     gestao: '/next',
     modulo: 'Next',

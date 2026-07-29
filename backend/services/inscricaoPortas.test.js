@@ -8,10 +8,12 @@ const {
   catalogoPublico,
 } = require('./inscricaoPortas');
 
+// 9 fontes desde 2026-07-30: `next_legado` (next_inscricoes) saiu — não é porta
+// de inscrição, é presença por encontro. Ver migration 20260730120000.
 const FONTES_ESPERADAS = [
   'inscricoes', 'eventos_externos', 'batismo',
   'apresentacao_criancas', 'apresentacao_bebes',
-  'grupos', 'grupos_lider', 'next', 'next_legado', 'voluntariado',
+  'grupos', 'grupos_lider', 'next', 'voluntariado',
 ];
 
 assert.equal(PORTAS_INSCRICAO.length, 7, 'as 7 portas do contrato precisam estar registradas');
@@ -67,4 +69,4 @@ for (const match of app.matchAll(/path="([^"]+)"/g)) {
   );
 }
 
-console.log('inscricaoPortas: 7 portas, 10 fontes, rotas/aliases protegidos e catálogo fechado nos 2 sentidos');
+console.log('inscricaoPortas: 7 portas, 9 fontes, rotas/aliases protegidos e catálogo fechado nos 2 sentidos');
