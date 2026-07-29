@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Switch } from '../ui/switch';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../ui/dialog';
 import { Loader2, Plus, Trash2, Target, Edit2, Sparkles, BarChart2, Activity, Archive, LineChart, AreaChart, PieChart, Radar, ChevronDown, ChevronUp } from 'lucide-react';
+import { toast } from 'sonner';
 import { INDICADORES } from '../../pages/DashboardSemanal';
 import MetaGauge from './MetaGauge';
 import PreviewChartIA from './PreviewChartIA';
@@ -492,8 +493,8 @@ function IndicadorCustomCard({ ind, onArchive, onRefinar }) {
     const txt = instrucao.trim();
     if (!txt || !onRefinar) return;
     setRefinando(true);
-    try { await onRefinar(txt); setInstrucao(''); setEditando(false); }
-    catch (e) { alert(e?.message || 'Erro ao editar com IA'); }
+    try { await onRefinar(txt); setInstrucao(''); setEditando(false); toast.success('Indicador atualizado pela IA.'); }
+    catch (e) { toast.error(e?.message || 'Erro ao editar com IA'); }
     setRefinando(false);
   }
   // Semente única por indicador pra dados placeholder variarem visualmente
