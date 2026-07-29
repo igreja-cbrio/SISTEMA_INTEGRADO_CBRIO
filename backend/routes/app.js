@@ -10,6 +10,9 @@ const { dispararAuto } = require('../services/whatsappAuto');
 const wpp = require('../services/whatsappService');
 const { analisarOracao } = require('../services/oracaoAnalise');
 const { acharOuCriarGuardado } = require('../services/membroMatch');
+// Espelho da matrícula do Next (o app inscreve por ENCONTRO; a gestão vive em
+// TURMA/MATRÍCULA desde o cutover de 17/06) — ver services/nextMatricula.js.
+const { espelharMatriculaDoEncontro } = require('../services/nextMatricula');
 // Reuso: núcleo de aprovação de pedidos de grupo (claim atômico + vínculo +
 // notificação) já validado no módulo web de grupos.
 const { aprovarPedidoCore } = require('./grupos');
@@ -1372,6 +1375,14 @@ router.post('/next/inscrever', authApp, limiterStrict, async (req, res) => {
     }).select('id').single();
     if (error) throw error;
 
+    // Espelha a MATRÍCULA do mês (camada viva do Next pós-cutover de turmas).
+    // Sem isto a inscrição pelo app nascia só em `next_inscricoes` e a pessoa
+    // não aparecia em turma nenhuma. Best-effort: não derruba a resposta.
+    await espelharMatriculaDoEncontro({
+      membro, evento: prox, nome, sobrenome,
+      email: membro.email || req.user.email || null, origem: 'app',
+    });
+
     // Notifica os responsáveis do NEXT (sino + push) — espelha o form público.
     notificar({
       modulo: 'next',
@@ -1415,16 +1426,24 @@ router.post('/next/encontros/:eventoId/checkin', authApp, limiterNormal, async (
     const { data: insc } = await supabase.from('next_inscricoes')
       .select('id, check_in_at').eq('membro_id', membro.id).eq('evento_id', ev.id).maybeSingle();
 
+    const { nome: nomeM, sobrenome: sobrenomeM } = partesNome(membro.nome);
     if (insc) {
       if (insc.check_in_at) return res.json({ ok: true, jaCheckin: true, check_in_at: insc.check_in_at });
       const { data: up, error } = await supabase.from('next_inscricoes')
         .update({ check_in_at: agora, check_in_by: req.user.id, updated_at: agora })
         .eq('id', insc.id).select('check_in_at').single();
       if (error) throw error;
+      // A presença também sobe pra matrícula do mês (é o `compareceu` da view
+      // unificada e o que a gestão do Next enxerga).
+      await espelharMatriculaDoEncontro({
+        membro, evento: ev, nome: nomeM, sobrenome: sobrenomeM,
+        email: membro.email || req.user.email || null,
+        checkInAt: agora, checkInBy: req.user.id, origem: 'app',
+      });
       return res.json({ ok: true, check_in_at: up.check_in_at });
     }
 
-    const { nome, sobrenome } = partesNome(membro.nome);
+    const nome = nomeM; const sobrenome = sobrenomeM;
     const { data: novo, error } = await supabase.from('next_inscricoes').insert({
       evento_id: ev.id, nome, sobrenome,
       cpf: membro.cpf || null, email: membro.email || req.user.email || null,
@@ -1432,6 +1451,12 @@ router.post('/next/encontros/:eventoId/checkin', authApp, limiterNormal, async (
       check_in_at: agora, check_in_by: req.user.id,
     }).select('id, check_in_at').single();
     if (error) throw error;
+
+    await espelharMatriculaDoEncontro({
+      membro, evento: ev, nome, sobrenome,
+      email: membro.email || req.user.email || null,
+      checkInAt: agora, checkInBy: req.user.id, origem: 'app',
+    });
 
     // Inscrição nova surgida no check-in pelo app → notifica o NEXT.
     notificar({
