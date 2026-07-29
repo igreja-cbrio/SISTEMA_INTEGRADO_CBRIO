@@ -1196,6 +1196,7 @@ export const financeiroV2 = {
       if (semana) qs.set('semana', semana);
       if (filtros?.centro_custo_id) qs.set('centro_custo_id', filtros.centro_custo_id);
       if (filtros?.plano_contas_id) qs.set('plano_contas_id', filtros.plano_contas_id);
+      if (filtros?.sem_extra) qs.set('sem_extra', '1');
       const s = qs.toString();
       return get('/financeiro-v2/dashboard/semana-completa' + (s ? `?${s}` : ''));
     },

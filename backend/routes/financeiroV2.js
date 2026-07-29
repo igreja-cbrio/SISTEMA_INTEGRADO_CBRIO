@@ -2315,7 +2315,11 @@ router.get('/dashboard/semana-completa', async (req, res) => {
     // HIERÁRQUICO (escolher um pai inclui os filhos · prefixo).
     const centroId = req.query.centro_custo_id || null;
     const planoId = req.query.plano_contas_id || null;
-    const temFiltro = !!(centroId || planoId);
+    // Botão "sem extraordinárias": arrecadação só com receita ordinária. Força o
+    // recompute das transações (as views pré-agregadas somam ord+extra).
+    const semExtra = req.query.sem_extra === '1' || req.query.sem_extra === 'true';
+    const classesAceitas = semExtra ? ['ordinaria'] : ['ordinaria', 'extraordinaria'];
+    const temFiltro = !!(centroId || planoId) || semExtra;
     let centroCodigo = null, planoCodigo = null;
     if (temFiltro) {
       const [cc, pc] = await Promise.all([
@@ -2330,7 +2334,7 @@ router.get('/dashboard/semana-completa', async (req, res) => {
         .select(cols)
         .gte('data_competencia', ini).lte('data_competencia', fim)
         .eq('tipo', 'receita').neq('status', 'cancelado')
-        .in('classe_movimento', ['ordinaria', 'extraordinaria'])
+        .in('classe_movimento', classesAceitas)
         // Guardrail dupla contagem: balanço é a fonte de verdade; ignora receita
         // vinda do OFX aprovado (que teria lancamento_bruto_id). O balanço nunca
         // tem lancamento_bruto_id, então isso mantém balanço+manual e exclui OFX.
