@@ -21,7 +21,7 @@
 // grupos_renovacao_temporada — link dinâmico não pode ser botão fixo).
 // ============================================================================
 const { enfileirar } = require('./whatsappFila');
-const { gerarTokenComprovante } = require('./inscricaoComprovante');
+const { emitirTokenComprovante } = require('./inscricaoComprovante');
 
 function baseUrl() {
   // Nunca hardcodar domínio (regra do repo) — mesma resolução do Cérebro.
@@ -49,7 +49,7 @@ async function enviarConfirmacaoInscricao({ inscricaoId, nome, telefone, optin, 
   const tel = String(telefone || '').replace(/\D/g, '');
   if (tel.length < 10) return { sent: false, reason: 'invalid_phone' };
   const base = baseUrl();
-  const token = gerarTokenComprovante(inscricaoId);
+  const token = await emitirTokenComprovante(inscricaoId, 'whatsapp');
   if (!base || !token) return { sent: false, reason: 'sem_link_comprovante' };
 
   const primeiroNome = String(nome || '').trim().split(/\s+/)[0] || 'Olá';

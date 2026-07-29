@@ -110,7 +110,7 @@ export default function InscricaoEventoCheckin() {
     }
   }
 
-  async function marcar(payload: { inscricao_id?: string; token?: string; confirmar_pendente?: boolean }) {
+  async function marcar(payload: { inscricao_id?: string; token?: string; confirmar_pendente?: boolean; motivo_override?: string }) {
     const chave = payload.inscricao_id || 'qr';
     setMarcando(chave);
     try {
@@ -138,6 +138,13 @@ export default function InscricaoEventoCheckin() {
         mostrarFeedback({ tipo: 'erro', titulo: 'Não deu pra registrar', detalhe: e?.message || 'Tente de novo.' });
       }
     } finally { setMarcando(null); }
+  }
+
+  function liberarPendente(inscricaoId: string) {
+    const motivo = window.prompt('Motivo para liberar a entrada com pagamento pendente:', 'autorizado pela liderança na portaria');
+    if (!motivo?.trim()) return;
+    setFeedback(null);
+    marcar({ inscricao_id: inscricaoId, confirmar_pendente: true, motivo_override: motivo.trim() });
   }
 
   async function desfazer(i: ItemLista) {
@@ -172,9 +179,11 @@ export default function InscricaoEventoCheckin() {
     }
   }
   async function desligarCamera() {
+    const scanner = scannerRef.current;
     try {
-      if (scannerRef.current?.isScanning) await scannerRef.current.stop();
+      if (scanner?.isScanning) await scanner.stop();
     } catch { /* já parado */ }
+    try { scanner?.clear(); } catch { /* DOM já desmontado */ }
     scannerRef.current = null;
     setLendo(false);
   }
@@ -289,7 +298,7 @@ export default function InscricaoEventoCheckin() {
               </div>
               <div className="ml-auto flex items-center gap-2 shrink-0">
                 {feedback.pendenteId && (
-                  <Button size="sm" onClick={() => { const pid = feedback.pendenteId!; setFeedback(null); marcar({ inscricao_id: pid, confirmar_pendente: true }); }}>
+                  <Button size="sm" onClick={() => liberarPendente(feedback.pendenteId!)}>
                     Liberar entrada mesmo assim
                   </Button>
                 )}

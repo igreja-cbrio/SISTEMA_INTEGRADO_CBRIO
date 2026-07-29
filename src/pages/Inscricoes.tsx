@@ -14,6 +14,7 @@ import InscricoesTodas from './InscricoesTodas';
 import InscricoesPessoas from './InscricoesPessoas';
 import InscricoesDashboard from './InscricoesDashboard';
 import InscricoesPortas from './InscricoesPortas';
+import InscricoesQrInventario from './InscricoesQrInventario';
 import { useAuth } from '../contexts/AuthContext';
 import { Card } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -432,7 +433,7 @@ export default function Inscricoes() {
   const { getAccessLevel } = useAuth();
   // Aba Pessoas concentra PII (rollup por CPF/telefone) — SPEC-01: nível ≥2
   const podePessoas = getAccessLevel(['inscricoes']) >= 2;
-  const [aba, setAba] = useState<'calendario' | 'eventos' | 'todas' | 'pessoas' | 'dashboard'>('calendario');
+  const [aba, setAba] = useState<'calendario' | 'eventos' | 'todas' | 'pessoas' | 'dashboard' | 'qrs'>('calendario');
   const [eventos, setEventos] = useState<any[]>([]);
   const [areas, setAreas] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -509,6 +510,7 @@ export default function Inscricoes() {
     { key: 'eventos', label: 'Eventos', on: true },
     { key: 'todas', label: 'Todas as inscrições', on: true },
     { key: 'pessoas', label: 'Pessoas', on: podePessoas, motivo: podePessoas ? undefined : 'Requer nível 2 no módulo (dados concentrados de pessoas)' },
+    { key: 'qrs', label: 'QRs ativos', on: podePessoas, motivo: podePessoas ? undefined : 'Requer nível 2 no módulo' },
     { key: 'dashboard', label: 'Dashboard', on: true },
   ];
 
@@ -566,6 +568,7 @@ export default function Inscricoes() {
 
       {aba === 'todas' && <InscricoesTodas areas={areas} />}
       {aba === 'pessoas' && podePessoas && <InscricoesPessoas />}
+      {aba === 'qrs' && podePessoas && <InscricoesQrInventario />}
       {aba === 'dashboard' && <InscricoesDashboard areas={areas} />}
 
       {aba === 'eventos' && (

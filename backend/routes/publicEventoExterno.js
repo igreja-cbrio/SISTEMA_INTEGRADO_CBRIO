@@ -24,7 +24,10 @@ const {
   honeypotPreenchido, TEXTOS,
 } = require('../services/inscricaoContrato');
 const { nomesMesmaPessoa } = require('../services/membroMatch');
-const { gerarTokenComprovante, verificarTokenComprovante } = require('../services/inscricaoComprovante');
+const {
+  emitirTokenComprovante,
+  verificarTokenComprovanteAtivo,
+} = require('../services/inscricaoComprovante');
 const { enviarConfirmacaoInscricao } = require('../services/inscricaoWhatsapp');
 // Fachada do núcleo de pagamentos. ⚠️ NUNCA importar `providers/*` aqui — é o
 // que faz trocar de PSP custar 1 arquivo + 1 env (ver services/pagamentos/tipos.js).
@@ -270,6 +273,8 @@ router.get('/pagamento/:token', async (req, res) => {
 
     // Só o necessário pra tela. Nada de PII do pagador, metadata ou payload —
     // a resposta é pública (o token é o único segredo).
+    const comprovanteToken = (cobranca.status === 'pago' && cobranca.origem_tipo === 'inscricao')
+      ? await emitirTokenComprovante(cobranca.origem_id, 'pagamento') : null;
     res.json({
       status: cobranca.status,
       pago: cobranca.status === 'pago',
@@ -288,8 +293,7 @@ router.get('/pagamento/:token', async (req, res) => {
       // Comprovante do check-in (SPEC-06): quem pagou recebe o QR da entrada
       // AQUI — a tela de sucesso do formulário já ficou pra trás quando a
       // pessoa foi pro checkout, e esta é a página que ela reabre.
-      comprovante_token: (cobranca.status === 'pago' && cobranca.origem_tipo === 'inscricao')
-        ? gerarTokenComprovante(cobranca.origem_id) : null,
+      comprovante_token: comprovanteToken,
     });
   } catch (e) {
     console.error('[publicEvento] status do pagamento:', e.message);
@@ -305,7 +309,7 @@ router.get('/pagamento/:token', async (req, res) => {
 // CPF/telefone/e-mail (mesma régua do /pagamento/:token acima).
 router.get('/comprovante/:token', async (req, res) => {
   try {
-    const inscricaoId = verificarTokenComprovante(req.params.token);
+    const inscricaoId = await verificarTokenComprovanteAtivo(req.params.token);
     if (!inscricaoId) return res.status(404).json({ error: 'Comprovante não encontrado' });
 
     const { data: ins } = await supabase.from('inscricoes')
@@ -489,9 +493,10 @@ async function inscreverEspinha(req, res, ev) {
       });
       return res.json({ ...respostaCobranca(cobranca, ev), ja_inscrito: true });
     }
+    const comprovanteToken = await emitirTokenComprovante(existente.id, 'form_reinscricao');
     return res.json({
       ok: true, ja_inscrito: true, numero_sorte: existente.numero_sorte, tem_sorteio: ev.tem_sorteio,
-      comprovante_token: gerarTokenComprovante(existente.id),
+      comprovante_token: comprovanteToken,
     });
   }
 
@@ -537,9 +542,11 @@ async function inscreverEspinha(req, res, ev) {
       const { data: vencedora } = await supabase.from('inscricoes')
         .select('id, numero_sorte').eq('evento_id', ev.id).eq('cpf', val.cpf)
         .is('deleted_at', null).limit(1).maybeSingle();
+      const comprovanteToken = vencedora
+        ? await emitirTokenComprovante(vencedora.id, 'form_corrida_duplicada') : null;
       return res.status(200).json({
         ok: true, ja_inscrito: true, numero_sorte: vencedora?.numero_sorte ?? null, tem_sorteio: ev.tem_sorteio,
-        comprovante_token: vencedora ? gerarTokenComprovante(vencedora.id) : null,
+        comprovante_token: comprovanteToken,
       });
     }
     if (rpc?.motivo === 'sem_vaga') {
@@ -610,11 +617,12 @@ async function inscreverEspinha(req, res, ev) {
     }
   }
 
+  const comprovanteToken = await emitirTokenComprovante(ins.id, 'form_sucesso');
   return res.status(201).json({
     ok: true, numero_sorte: ins.numero_sorte, tem_sorteio: ev.tem_sorteio,
     // QR do comprovante na tela de sucesso (SPEC-06) — só a espinha tem
     // check-in; o ext legado segue sem token.
-    comprovante_token: gerarTokenComprovante(ins.id),
+    comprovante_token: comprovanteToken,
   });
 }
 
