@@ -4575,3 +4575,25 @@ saldo por 30-90 dias); política de reembolso escrita (venda pela internet tem 7
 dias de arrependimento por CDC art. 49 independente da política, e ela precisa
 dizer quem come a taxa do gateway); classificação contábil da receita por
 escrito; e quando a igreja paga o local — isso decide o teto de parcelas.
+
+### ✅ Fundação pós-auditoria: catálogo, QR e check-in auditável (2026-07-28)
+
+- `backend/services/inscricaoPortas.js` é o registro canônico das **7 portas de
+  inscrição e 10 fontes** da view. Porta/alias novo entra ali e precisa deixar
+  `inscricaoPortas.test.js` verde. O registro **descreve**, não troca escritor:
+  satélites continuam gravando onde sempre gravaram até a migração individual
+  da F3.5; `/evento/:slug` continua espinha→fallback ext.
+- `fn_insc_portas_resumo` agrega o inventário no PostgreSQL. O backend mantém
+  fallback paginado enquanto a migration não entrou — deploy em duas etapas
+  não derruba a aba Eventos.
+- `insc_checkin_eventos` é ledger append-only. Marcar, liberar pendência e
+  desfazer usam RPCs atômicas; override exige motivo na tela. `insc_checkins`
+  continua sendo o estado atual, portanto dashboard e operação antigos não
+  mudam.
+- `insc_qr_tokens` guarda **somente SHA-256**, emissão/canal/revogação. Token
+  legado sem registro continua válido; registro explicitamente revogado é
+  recusado no comprovante e no check-in. Nunca guardar/devolver token bruto no
+  inventário. Revogação é individual e não gira o segredo global.
+- A workflow de produção roda Vitest + contratos de campos/portas/QR **antes**
+  do Vercel. Rotas públicas e aliases são garantia coberta por teste; não
+  remover nem renomear para “limpar” legado.

@@ -12,7 +12,8 @@ const multer = require('multer');
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { escapePostgrestValue } = require('../utils/sanitize');
-const { verificarTokenComprovante, extrairToken } = require('../services/inscricaoComprovante');
+const { verificarTokenComprovanteAtivo, extrairToken } = require('../services/inscricaoComprovante');
+const { portasSatelites, fontesUnificadas, catalogoPublico } = require('../services/inscricaoPortas');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 } });
 
@@ -154,7 +155,7 @@ router.put('/series/:id', authorizeModule('inscricoes', 3), async (req, res) => 
 // as inscrições" · vw_inscricoes_unificadas). Filtros: q (nome/CPF/telefone),
 // porta, status canônico, área, período (de/ate), page. A view é REVOGADA de
 // anon/authenticated — só o backend (service_role) lê.
-const PORTAS_UNIFICADAS = ['inscricoes', 'eventos_externos', 'batismo', 'apresentacao_criancas', 'apresentacao_bebes', 'grupos', 'grupos_lider', 'next', 'next_legado', 'voluntariado'];
+const PORTAS_UNIFICADAS = fontesUnificadas();
 const STATUS_CANONICOS = ['recebida', 'em_tratamento', 'confirmada', 'concluida', 'nao_concluida', 'recusada', 'cancelada'];
 router.get('/unificadas', authorizeModule('inscricoes', 1), async (req, res) => {
   try {
@@ -381,14 +382,7 @@ router.get('/unificadas/dashboard', authorizeModule('inscricoes', 1), async (req
 // lógica-satélite no módulo dono (broadcast de temporada, turma do totem, 4º
 // domingo calculado) e um segundo caminho de escrita antes da F3.5 é a classe
 // de bug que o desenho evita. "Operar daqui" chega com a F3.5 (SPEC-10 t2).
-const PORTAS_SISTEMA = [
-  { chave: 'grupos', nome: 'Grupos de conexão', portas: ['grupos'], link: '/inscricao-grupos', gestao: '/grupos', modulo: 'Grupos' },
-  { chave: 'grupos_lider', nome: 'Líderes e anfitriões', portas: ['grupos_lider'], link: '/inscricao-lideres', gestao: '/grupos', modulo: 'Grupos', continua: true },
-  { chave: 'next', nome: 'Next', portas: ['next', 'next_legado'], link: '/next', gestao: '/next', modulo: 'Next' },
-  { chave: 'batismo', nome: 'Batismo', portas: ['batismo'], link: '/inscricao-batismo', gestao: '/integracao', modulo: 'Integração', continua: true },
-  { chave: 'apresentacao', nome: 'Apresentação de crianças', portas: ['apresentacao_criancas', 'apresentacao_bebes'], link: '/apresentacao-criancas', gestao: '/kids', modulo: 'Kids', continua: true },
-  { chave: 'voluntariado', nome: 'Voluntariado', portas: ['voluntariado'], link: '/inscricao-voluntariado', gestao: '/ministerial/voluntariado', modulo: 'Voluntariado', continua: true },
-];
+const PORTAS_SISTEMA = portasSatelites();
 
 // Aberto/fechado é BEST-EFFORT por porta (falha → null = "não sei", nunca 500):
 // grupos = temporada com inscrições abertas · next = turma aberta · demais são
@@ -396,20 +390,78 @@ const PORTAS_SISTEMA = [
 async function statusPortas() {
   const st = { grupos: { aberta: null, detalhe: null }, next: { aberta: null, detalhe: null } };
   try {
-    const { data } = await supabase.from('mem_temporadas')
+    const { data, error } = await supabase.from('mem_temporadas')
       .select('label, inscricoes_abertas').eq('inscricoes_abertas', true).limit(1);
+    if (error) throw error;
     st.grupos = data && data.length
       ? { aberta: true, detalhe: data[0].label || 'temporada aberta' }
       : { aberta: false, detalhe: 'nenhuma temporada com inscrições abertas' };
   } catch (e) { console.error('[inscricoes] portas/status grupos:', e.message); }
   try {
-    const { data } = await supabase.from('next_turmas')
+    const { data, error } = await supabase.from('next_turmas')
       .select('nome').eq('status', 'aberta').is('deleted_at', null).limit(1);
+    if (error) throw error;
     st.next = data && data.length
       ? { aberta: true, detalhe: data[0].nome || 'turma aberta' }
       : { aberta: false, detalhe: 'nenhuma turma aberta' };
   } catch (e) { console.error('[inscricoes] portas/status next:', e.message); }
   return st;
+}
+
+// Agregação preferencial no PostgreSQL: o endpoint deixa de transportar a view
+// inteira para o Node. O fallback preserva a implantação em duas etapas
+// (código antes/depois da migration) e o contrato antigo da resposta.
+async function resumoPortas(fontes) {
+  const corte30d = new Date(Date.now() - 30 * 86400000).toISOString();
+  const { data, error } = await supabase.rpc('fn_insc_portas_resumo', {
+    p_portas: fontes,
+    p_corte_30d: corte30d,
+  });
+  if (!error && Array.isArray(data)) {
+    const mapa = new Map();
+    for (const linha of data) {
+      if (!mapa.has(linha.porta)) {
+        mapa.set(linha.porta, {
+          total: Number(linha.total || 0),
+          ultimos_30d: Number(linha.ultimos_30d || 0),
+          edicoes: [],
+        });
+      }
+      if (linha.edicao_rotulo) {
+        mapa.get(linha.porta).edicoes.push({
+          rotulo: linha.edicao_rotulo,
+          total: Number(linha.edicao_total || 0),
+          ultima_em: linha.ultima_em || null,
+        });
+      }
+    }
+    return mapa;
+  }
+
+  if (error) {
+    console.warn('[inscricoes] fn_insc_portas_resumo indisponível; usando fallback compatível:', error.message);
+  }
+  const linhas = await lerViewUnificada(
+    (q) => q.in('porta', fontes),
+    'porta, edicao_rotulo, status_canonico, criado_em',
+  );
+  const mapa = new Map();
+  for (const linha of linhas) {
+    if (linha.status_canonico === 'cancelada') continue;
+    if (!mapa.has(linha.porta)) mapa.set(linha.porta, { total: 0, ultimos_30d: 0, edicoes: [] });
+    const item = mapa.get(linha.porta);
+    item.total += 1;
+    if (linha.criado_em >= corte30d) item.ultimos_30d += 1;
+    const rotulo = linha.edicao_rotulo || 'sem edição';
+    let edicao = item.edicoes.find((e) => e.rotulo === rotulo);
+    if (!edicao) {
+      edicao = { rotulo, total: 0, ultima_em: null };
+      item.edicoes.push(edicao);
+    }
+    edicao.total += 1;
+    if (!edicao.ultima_em || linha.criado_em > edicao.ultima_em) edicao.ultima_em = linha.criado_em;
+  }
+  return mapa;
 }
 
 // GET /portas — inventário das portas públicas + contagens/edições da view
@@ -418,31 +470,25 @@ async function statusPortas() {
 router.get('/portas', authorizeModule('inscricoes', 1), async (_req, res) => {
   try {
     const todasPortas = PORTAS_SISTEMA.flatMap((p) => p.portas);
-    const [linhas, st] = await Promise.all([
-      lerViewUnificada(
-        (q) => q.in('porta', todasPortas),
-        'porta, edicao_rotulo, status_canonico, criado_em',
-      ),
+    const [resumos, st] = await Promise.all([
+      resumoPortas(todasPortas),
       statusPortas(),
     ]);
 
-    const corte30d = new Date(Date.now() - 30 * 86400000).toISOString();
-    const porPorta = new Map();
-    for (const l of linhas) {
-      if (l.status_canonico === 'cancelada') continue;
-      if (!porPorta.has(l.porta)) porPorta.set(l.porta, []);
-      porPorta.get(l.porta).push(l);
-    }
-
     const portas = PORTAS_SISTEMA.map((p) => {
-      const ls = p.portas.flatMap((v) => porPorta.get(v) || []);
-      const edicoes = new Map();
-      for (const l of ls) {
-        const rot = l.edicao_rotulo || 'sem edição';
-        const e = edicoes.get(rot) || { rotulo: rot, total: 0, ultima_em: null };
-        e.total += 1;
-        if (!e.ultima_em || l.criado_em > e.ultima_em) e.ultima_em = l.criado_em;
-        edicoes.set(rot, e);
+      const combinado = { total: 0, ultimos_30d: 0, edicoes: new Map() };
+      for (const fonte of p.portas) {
+        const resumo = resumos.get(fonte);
+        if (!resumo) continue;
+        combinado.total += resumo.total;
+        combinado.ultimos_30d += resumo.ultimos_30d;
+        for (const item of resumo.edicoes) {
+          const edicao = combinado.edicoes.get(item.rotulo)
+            || { rotulo: item.rotulo, total: 0, ultima_em: null };
+          edicao.total += item.total;
+          if (!edicao.ultima_em || item.ultima_em > edicao.ultima_em) edicao.ultima_em = item.ultima_em;
+          combinado.edicoes.set(item.rotulo, edicao);
+        }
       }
       const status = p.continua
         ? { aberta: true, detalhe: 'porta contínua — o formulário não fecha' }
@@ -451,17 +497,96 @@ router.get('/portas', authorizeModule('inscricoes', 1), async (_req, res) => {
         chave: p.chave, nome: p.nome, modulo: p.modulo,
         link: p.link, gestao: p.gestao, continua: !!p.continua,
         aberta: status.aberta, aberta_detalhe: status.detalhe,
-        total: ls.length,
-        ultimos_30d: ls.filter((l) => l.criado_em >= corte30d).length,
-        edicoes: [...edicoes.values()]
+        total: combinado.total,
+        ultimos_30d: combinado.ultimos_30d,
+        edicoes: [...combinado.edicoes.values()]
           .sort((a, b) => String(b.ultima_em || '').localeCompare(String(a.ultima_em || '')))
           .slice(0, 10),
       };
     });
-    res.json({ portas });
+    // `portas` permanece compatível. `catalogo` é aditivo e inclui também o
+    // motor de eventos, suas fontes e aliases.
+    res.json({ portas, catalogo: catalogoPublico() });
   } catch (e) {
     console.error('[inscricoes] portas:', e.message);
     res.status(500).json({ error: 'Erro ao carregar as portas públicas' });
+  }
+});
+
+// GET /qrs — inventário seguro: identifica pessoa/evento e estado, mas nunca
+// devolve o token bruto (a tabela guarda somente SHA-256). Tokens antigos não
+// registrados seguem válidos e aparecem na diferença `elegiveis - registrados`.
+router.get('/qrs', authorizeModule('inscricoes', 2), async (req, res) => {
+  try {
+    const page = Math.max(0, parseInt(req.query.page) || 0);
+    const limit = Math.min(200, Math.max(20, parseInt(req.query.limit) || 50));
+    const eventoId = /^[0-9a-f-]{36}$/i.test(String(req.query.evento_id || ''))
+      ? String(req.query.evento_id) : null;
+
+    let listaQuery = supabase.from('insc_qr_tokens')
+      .select(`id, primeira_emissao_em, ultima_emissao_em, emissoes, canais,
+        revogado_em, revogacao_motivo,
+        inscricao:inscricoes!inner(id, nome_completo, status, evento_id,
+          evento:insc_eventos!inner(id, nome, slug))`, { count: 'exact' })
+      .order('ultima_emissao_em', { ascending: false })
+      .range(page * limit, page * limit + limit - 1);
+    if (eventoId) listaQuery = listaQuery.eq('inscricao.evento_id', eventoId);
+    if (req.query.estado === 'ativo') listaQuery = listaQuery.is('revogado_em', null);
+    if (req.query.estado === 'revogado') listaQuery = listaQuery.not('revogado_em', 'is', null);
+
+    let elegiveisQuery = supabase.from('inscricoes')
+      .select('*', { count: 'exact', head: true })
+      .is('deleted_at', null).neq('status', 'cancelada');
+    if (eventoId) elegiveisQuery = elegiveisQuery.eq('evento_id', eventoId);
+
+    const [{ data, error, count }, elegiveis] = await Promise.all([listaQuery, elegiveisQuery]);
+    if (error) throw error;
+    if (elegiveis.error) throw elegiveis.error;
+    const itens = (data || []).map((item) => ({
+      id: item.id,
+      primeira_emissao_em: item.primeira_emissao_em,
+      ultima_emissao_em: item.ultima_emissao_em,
+      emissoes: item.emissoes,
+      canais: item.canais,
+      ativo: !item.revogado_em,
+      revogado_em: item.revogado_em,
+      revogacao_motivo: item.revogacao_motivo,
+      inscricao: item.inscricao,
+    }));
+    res.json({
+      items: itens,
+      total_registrados: count ?? 0,
+      total_ativos_pagina: itens.filter((item) => item.ativo).length,
+      total_elegiveis: elegiveis.count ?? 0,
+      page,
+      por_pagina: limit,
+    });
+  } catch (e) {
+    console.error('[inscricoes] inventário QR:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar o inventário de QR' });
+  }
+});
+
+// PATCH /qrs/:id/revogar — revogação individual. Não altera inscrição,
+// check-in nem segredo global; os demais comprovantes continuam funcionando.
+router.patch('/qrs/:id/revogar', authorizeModule('inscricoes', 3), async (req, res) => {
+  try {
+    const motivo = String(req.body?.motivo || '').trim().slice(0, 500);
+    if (motivo.length < 3) return res.status(400).json({ error: 'Informe o motivo da revogação' });
+    const { data, error } = await supabase.from('insc_qr_tokens')
+      .update({
+        revogado_em: new Date().toISOString(),
+        revogado_por: req.user?.id || null,
+        revogacao_motivo: motivo,
+      })
+      .eq('id', req.params.id).is('revogado_em', null)
+      .select('id, revogado_em').maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'QR ativo não encontrado' });
+    res.json({ ok: true, ...data });
+  } catch (e) {
+    console.error('[inscricoes] revogar QR:', e.message);
+    res.status(500).json({ error: 'Erro ao revogar o QR' });
   }
 });
 
@@ -655,6 +780,50 @@ router.post('/eventos/:id/sortear', authorizeModule('inscricoes', 3), async (req
 // (critério de aceite da spec). O dashboard já lê `compareceu` da view
 // unificada; marcar aqui acorda o card de comparecimento sozinho.
 
+function rpcArquiteturalIndisponivel(error) {
+  return !!error && ['PGRST202', '42883'].includes(error.code);
+}
+
+async function marcarCheckinAuditavel({ inscricaoId, por, modo, overridePendente, motivo }) {
+  const { data, error } = await supabase.rpc('fn_insc_checkin_marcar', {
+    p_inscricao_id: inscricaoId,
+    p_por: por,
+    p_modo: modo,
+    p_override_pendente: !!overridePendente,
+    p_override_motivo: motivo || null,
+  });
+  if (!error) return data;
+  if (!rpcArquiteturalIndisponivel(error)) throw error;
+
+  // Compatibilidade durante deploy em duas etapas: comportamento antigo,
+  // protegido pelo UNIQUE, até a migration da trilha estar disponível.
+  const { data: marcado, error: erroLegado } = await supabase.from('insc_checkins')
+    .insert({ inscricao_id: inscricaoId, por, modo })
+    .select('em').single();
+  if (erroLegado) {
+    if (erroLegado.code !== '23505') throw erroLegado;
+    const { data: existente } = await supabase.from('insc_checkins')
+      .select('em').eq('inscricao_id', inscricaoId).maybeSingle();
+    return { ok: true, ja_checkin: true, em: existente?.em || null };
+  }
+  return { ok: true, ja_checkin: false, em: marcado.em };
+}
+
+async function desfazerCheckinAuditavel({ eventoId, inscricaoId, por, motivo }) {
+  const { data, error } = await supabase.rpc('fn_insc_checkin_desfazer', {
+    p_evento_id: eventoId,
+    p_inscricao_id: inscricaoId,
+    p_por: por,
+    p_motivo: motivo || null,
+  });
+  if (!error) return data;
+  if (!rpcArquiteturalIndisponivel(error)) throw error;
+  const { error: erroLegado } = await supabase.from('insc_checkins')
+    .delete().eq('inscricao_id', inscricaoId);
+  if (erroLegado) throw erroLegado;
+  return { ok: true, auditoria_disponivel: false };
+}
+
 // GET /eventos/:id/checkin — estado da tela: evento + contadores + lista.
 // A tela recarrega isso em polling curto (contador ao vivo).
 router.get('/eventos/:id/checkin', authorizeModule('inscricoes', 2), async (req, res) => {
@@ -759,7 +928,7 @@ router.post('/eventos/:id/checkin', authorizeModule('inscricoes', 2), async (req
     let inscricaoId = null;
     let modo = 'busca';
     if (b.token) {
-      inscricaoId = verificarTokenComprovante(extrairToken(b.token));
+      inscricaoId = await verificarTokenComprovanteAtivo(extrairToken(b.token));
       modo = 'qr';
       if (!inscricaoId) {
         return res.status(422).json({ error: 'QR inválido — não é um comprovante de inscrição.', motivo: 'qr_invalido' });
@@ -801,20 +970,19 @@ router.post('/eventos/:id/checkin', authorizeModule('inscricoes', 2), async (req
       });
     }
 
-    const { data: marcado, error: eIns } = await supabase.from('insc_checkins')
-      .insert({ inscricao_id: ins.id, por: req.user?.id || null, modo })
-      .select('em').single();
-    if (eIns) {
-      if (eIns.code === '23505') {
-        // Duplo check-in AVISADO (critério da SPEC-06) — não é erro de tela.
-        const { data: c } = await supabase.from('insc_checkins')
-          .select('em').eq('inscricao_id', ins.id).maybeSingle();
-        return res.json({
-          ok: true, ja_checkin: true, em: c?.em || null,
-          inscricao: { id: ins.id, nome_completo: ins.nome_completo, numero_sorte: ins.numero_sorte },
-        });
-      }
-      throw eIns;
+    const marcado = await marcarCheckinAuditavel({
+      inscricaoId: ins.id,
+      por: req.user?.id || null,
+      modo,
+      overridePendente: ins.status === 'recebida' && !!b.confirmar_pendente,
+      motivo: String(b.motivo_override || '').trim().slice(0, 500)
+        || (ins.status === 'recebida' ? 'liberação de pagamento pendente pela portaria' : null),
+    });
+    if (marcado.ja_checkin) {
+      return res.json({
+        ok: true, ja_checkin: true, em: marcado.em || null,
+        inscricao: { id: ins.id, nome_completo: ins.nome_completo, numero_sorte: ins.numero_sorte },
+      });
     }
     res.status(201).json({
       ok: true, em: marcado.em,
@@ -837,9 +1005,13 @@ router.delete('/eventos/:id/checkin/:inscricaoId', authorizeModule('inscricoes',
       .select('id').eq('id', req.params.inscricaoId)
       .eq('evento_id', req.params.id).maybeSingle();
     if (!ins) return res.status(404).json({ error: 'Inscrição não encontrada' });
-    const { error } = await supabase.from('insc_checkins').delete().eq('inscricao_id', req.params.inscricaoId);
-    if (error) throw error;
-    res.json({ ok: true });
+    const resultado = await desfazerCheckinAuditavel({
+      eventoId: req.params.id,
+      inscricaoId: req.params.inscricaoId,
+      por: req.user?.id || null,
+      motivo: String(req.body?.motivo || '').trim().slice(0, 500) || 'desfeito pela portaria',
+    });
+    res.json({ ok: true, ja_desfeito: !!resultado?.ja_desfeito });
   } catch (e) {
     console.error('[inscricoes] desfazer checkin:', e.message);
     res.status(500).json({ error: 'Erro ao desfazer o check-in' });

@@ -18,6 +18,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Inscrições field contract
+        run: npm run test:inscricao-contrato
+
+      - name: Inscrições doors and route aliases
+        run: npm run test:inscricao-portas
+
+      - name: Inscrições QR signature and inventory hash
+        run: npm run test:inscricao-qr
+
       - name: Install Vercel CLI
         run: npm install -g vercel@latest
 

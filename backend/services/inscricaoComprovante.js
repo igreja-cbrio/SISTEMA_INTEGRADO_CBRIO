@@ -56,4 +56,65 @@ function extrairToken(texto) {
   return (m ? m[1] : s).toLowerCase();
 }
 
-module.exports = { gerarTokenComprovante, verificarTokenComprovante, extrairToken };
+function hashToken(token) {
+  return crypto.createHash('sha256').update(String(token || '')).digest('hex');
+}
+
+// Emissão inventariada. Se a migration ainda não estiver aplicada, devolve o
+// token normalmente: registro de inventário jamais pode derrubar formulário,
+// pagamento ou WhatsApp durante uma implantação em duas etapas.
+async function emitirTokenComprovante(inscricaoId, canal = 'api') {
+  const token = gerarTokenComprovante(inscricaoId);
+  if (!token) return null;
+  try {
+    const { supabase } = require('../utils/supabase');
+    if (!supabase) return token;
+    const { error } = await supabase.rpc('fn_insc_qr_registrar', {
+      p_inscricao_id: inscricaoId,
+      p_token_hash: hashToken(token),
+      p_canal: String(canal || 'api').slice(0, 40),
+    });
+    // PGRST202/42883 = migration ainda não entrou. É fallback esperado.
+    if (error && !['PGRST202', '42883'].includes(error.code)) {
+      console.error('[inscricoes] inventário QR/emissão:', error.message);
+    }
+  } catch (e) {
+    console.error('[inscricoes] inventário QR/emissão:', e.message);
+  }
+  return token;
+}
+
+// Tokens antigos, ainda não inventariados, continuam válidos. Só bloqueamos
+// quando existe registro explícito e revogado — compatibilidade retroativa.
+async function verificarTokenComprovanteAtivo(token) {
+  const inscricaoId = verificarTokenComprovante(token);
+  if (!inscricaoId) return null;
+  try {
+    const { supabase } = require('../utils/supabase');
+    if (!supabase) return inscricaoId;
+    const { data, error } = await supabase.from('insc_qr_tokens')
+      .select('revogado_em')
+      .eq('inscricao_id', inscricaoId)
+      .eq('token_hash', hashToken(String(token || '').trim().toLowerCase()))
+      .maybeSingle();
+    if (error) {
+      if (!['PGRST205', '42P01'].includes(error.code)) {
+        console.error('[inscricoes] inventário QR/validação:', error.message);
+      }
+      return inscricaoId;
+    }
+    return data?.revogado_em ? null : inscricaoId;
+  } catch (e) {
+    console.error('[inscricoes] inventário QR/validação:', e.message);
+    return inscricaoId;
+  }
+}
+
+module.exports = {
+  gerarTokenComprovante,
+  verificarTokenComprovante,
+  verificarTokenComprovanteAtivo,
+  emitirTokenComprovante,
+  extrairToken,
+  hashToken,
+};

@@ -318,6 +318,8 @@ export const inscricoesApi = {
   // Check-in do evento (SPEC-06) — tela fullscreen: QR do comprovante + busca
   // Inventário das portas públicas do sistema (grupos/next/batismo/…) — read-only
   portas: () => get('/inscricoes/portas'),
+  qrs: (qs) => get(`/inscricoes/qrs${qs ? `?${qs}` : ''}`),
+  revogarQr: (id, motivo) => patch(`/inscricoes/qrs/${id}/revogar`, { motivo }),
   checkinEstado: (eventoId) => get(`/inscricoes/eventos/${eventoId}/checkin`),
   checkinBuscar: (eventoId, q) => get(`/inscricoes/eventos/${eventoId}/checkin/buscar?q=${encodeURIComponent(q)}`),
   checkinMarcar: (eventoId, data) => post(`/inscricoes/eventos/${eventoId}/checkin`, data),
