@@ -1585,8 +1585,8 @@ Responda APENAS com o JSON, sem comentários nem texto extra, no formato:
 }`;
 
     const response = await client.messages.create({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 1200,
+      model: 'claude-opus-4-8', // Opus 4.8 · sugestão de indicador (decisão Matheus 2026-07-29)
+      max_tokens: 1500,
       system,
       messages: [{ role: 'user', content: pergunta }],
     });
@@ -1662,7 +1662,7 @@ Tabelas principais do CBRio com dados de cultos:
   cultos_decisoes_pessoas
 Capacidade do templo: 1050 lugares.`.trim();
 
-    const system = `Você é um analista de dados da igreja CBRio. Vou te dar um indicador já existente (em JSON) e uma instrução de ajuste do usuário. Aplique a mudança pedida e retorne o JSON COMPLETO atualizado (mesmo formato), sem texto extra.
+    const system = `Você é um analista de dados da igreja CBRio. Vou te dar um indicador já existente (em JSON) e uma instrução de ajuste do usuário. Aplique a mudança pedida e retorne o JSON COMPLETO atualizado (mesmo formato), sem texto extra. Se o usuário pedir um TIPO DE GRÁFICO específico, atualize o campo "tipo_grafico" de fato (barra de progresso/medidor→"gauge", barras→"barra", linha→"linha", área→"area", pizza→"pizza", radar→"radar").
 
 ${dadosDisponiveis}
 
@@ -1680,7 +1680,8 @@ Formato do JSON (retorne todos os campos, atualizando o que a instrução pedir)
 
     const userMsg = `Indicador atual (JSON):\n${JSON.stringify(atual.sugestao_ia || {}, null, 2)}\n\nInstrução de ajuste do usuário:\n${instrucao}`;
     const response = await client.messages.create({
-      model: 'claude-haiku-4-5-20251001', max_tokens: 1200, system,
+      model: 'claude-opus-4-8', // Opus 4.8 · edição de indicador (decisão Matheus 2026-07-29)
+      max_tokens: 1500, system,
       messages: [{ role: 'user', content: userMsg }],
     });
     const raw = (response.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
