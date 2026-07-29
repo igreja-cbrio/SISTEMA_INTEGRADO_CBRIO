@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { kpis as kpisApi } from '../../api';
+import { kpis as kpisApi, integracao as integracaoApi } from '../../api';
 import useConfirmarSaida from '../../hooks/useConfirmarSaida';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
@@ -385,6 +385,23 @@ export default function Batismos() {
     return agendadas[0] || proximoQuartoDomingo();
   }, [list]);
 
+  // Visão do gráfico: por mês (últimos 12) ou por ano (consolidado · todos os anos)
+  const [grafBat, setGrafBat] = useState<'mes' | 'ano'>('mes');
+  const [histAno, setHistAno] = useState<Array<{ ano: number; area_kpi: string; total_batismos: number }>>([]);
+  useEffect(() => {
+    integracaoApi.historicoBatismos()
+      .then((r: any) => setHistAno(Array.isArray(r) ? r : []))
+      .catch(() => { /* silencioso · o gráfico mensal segue funcionando */ });
+  }, []);
+  // Consolida por ano (soma as áreas: sede/online/bridge/etc).
+  const realizadosPorAno = useMemo(() => {
+    const porAno: Record<number, number> = {};
+    histAno.forEach(r => { porAno[r.ano] = (porAno[r.ano] || 0) + (Number(r.total_batismos) || 0); });
+    return Object.entries(porAno)
+      .map(([ano, batizados]) => ({ mes: String(ano), ym: String(ano), batizados }))
+      .sort((a, b) => Number(a.ym) - Number(b.ym));
+  }, [histAno]);
+
   // Realizados por mês nos últimos 12 meses (para o gráfico)
   const realizadosPorMes = useMemo(() => {
     const buckets: Record<string, number> = {};
@@ -606,37 +623,57 @@ export default function Batismos() {
         </Card>
       )}
 
-      {/* Gráfico de barras · batismos realizados por mês (últimos 12 meses) */}
-      <Card>
-        <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0">
-          <CardTitle className="text-sm font-medium flex items-center gap-2">
-            <BarChart3 className="h-4 w-4 text-muted-foreground" />
-            Batismos realizados por mês
-            <span className="text-xs text-muted-foreground font-normal">(últimos 12 meses)</span>
-          </CardTitle>
-          <span className="text-xs text-muted-foreground">
-            Total: {realizadosPorMes.reduce((s, m) => s + m.batizados, 0)}
-          </span>
-        </CardHeader>
-        <CardContent>
-          <div className="h-[220px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={realizadosPorMes} margin={{ top: 6, right: 8, left: -16, bottom: 0 }}>
-                <ChartGradients colors={[C.primary]} />
-                <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
-                <XAxis dataKey="mes" tick={{ fontSize: 11 }} />
-                <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
-                <Tooltip
-                  cursor={{ fill: 'rgba(0,179,157,0.08)' }}
-                  contentStyle={{ borderRadius: 8, fontSize: 12 }}
-                  formatter={(v: any) => [`${v} batizado(s)`, '']}
-                />
-                <Bar dataKey="batizados" fill={gradFill(C.primary)} radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </CardContent>
-      </Card>
+      {/* Gráfico de barras · batismos realizados · por mês (últimos 12) ou por ano (todos) */}
+      {(() => {
+        const dadosGraf = grafBat === 'ano' ? realizadosPorAno : realizadosPorMes;
+        const totalGraf = dadosGraf.reduce((s, m) => s + m.batizados, 0);
+        return (
+          <Card>
+            <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0 gap-2 flex-wrap">
+              <CardTitle className="text-sm font-medium flex items-center gap-2">
+                <BarChart3 className="h-4 w-4 text-muted-foreground" />
+                Batismos realizados
+                <span className="text-xs text-muted-foreground font-normal">
+                  {grafBat === 'ano' ? '(por ano · consolidado)' : '(por mês · últimos 12 meses)'}
+                </span>
+              </CardTitle>
+              <div className="flex items-center gap-2">
+                <div className="inline-flex rounded-lg border border-border p-0.5 bg-muted/30">
+                  {(['mes', 'ano'] as const).map(v => (
+                    <button key={v} onClick={() => setGrafBat(v)}
+                      className={`px-2.5 py-1 text-xs rounded-md transition-colors ${grafBat === v ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}>
+                      {v === 'mes' ? 'Mês' : 'Ano'}
+                    </button>
+                  ))}
+                </div>
+                <span className="text-xs text-muted-foreground">Total: {totalGraf}</span>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {grafBat === 'ano' && realizadosPorAno.length === 0 ? (
+                <p className="text-xs text-muted-foreground py-8 text-center">Sem histórico anual de batismos.</p>
+              ) : (
+                <div className="h-[220px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={dadosGraf} margin={{ top: 6, right: 8, left: -16, bottom: 0 }}>
+                      <ChartGradients colors={[C.primary]} />
+                      <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
+                      <XAxis dataKey="mes" tick={{ fontSize: 11 }} />
+                      <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                      <Tooltip
+                        cursor={{ fill: 'rgba(0,179,157,0.08)' }}
+                        contentStyle={{ borderRadius: 8, fontSize: 12 }}
+                        formatter={(v: any) => [`${v} batizado(s)`, '']}
+                      />
+                      <Bar dataKey="batizados" fill={gradFill(C.primary)} radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        );
+      })()}
 
       <BatismoHorarios />
 
