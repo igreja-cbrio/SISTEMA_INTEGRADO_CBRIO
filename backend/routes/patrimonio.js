@@ -5,6 +5,30 @@ const { escapePostgrestValue } = require('../utils/sanitize');
 
 router.use(authenticate, authorizeModule('patrimonio'));
 
+// Depreciação · indicador GERENCIAL interno (decisão do usuário 2026-07-29 ·
+// NÃO é cálculo contábil oficial). Método linear simples, sempre derivado na
+// hora — nunca gravado por período. Retorna null quando faltar algum dado
+// necessário (valor de aquisição, data de aquisição ou vida útil da categoria).
+function calcularDepreciacao(bem) {
+  const vidaUtilMeses = bem?.pat_categorias?.vida_util_meses;
+  const valor = bem?.valor_aquisicao != null ? Number(bem.valor_aquisicao) : null;
+  if (!vidaUtilMeses || valor == null || !bem?.data_aquisicao) return null;
+  const aquisicao = new Date(bem.data_aquisicao + 'T00:00:00');
+  if (Number.isNaN(aquisicao.getTime())) return null;
+  const agora = new Date();
+  let mesesDecorridos = (agora.getFullYear() - aquisicao.getFullYear()) * 12 + (agora.getMonth() - aquisicao.getMonth());
+  if (agora.getDate() < aquisicao.getDate()) mesesDecorridos -= 1;
+  mesesDecorridos = Math.max(0, mesesDecorridos);
+  const percentual = Math.min(100, (mesesDecorridos / vidaUtilMeses) * 100);
+  const valorAtual = Math.max(0, valor * (1 - percentual / 100));
+  return {
+    vida_util_meses: vidaUtilMeses,
+    meses_decorridos: mesesDecorridos,
+    percentual_depreciado: Math.round(percentual * 10) / 10,
+    valor_atual_estimado: Math.round(valorAtual * 100) / 100,
+  };
+}
+
 // ── DASHBOARD ──────────────────────────────────────────────
 router.get('/dashboard', async (req, res) => {
   try {
@@ -33,6 +57,49 @@ router.get('/dashboard/indicadores', async (req, res) => {
   }
 });
 
+// Agregado de depreciação (indicador GERENCIAL) pro dashboard — soma valor de
+// aquisição × valor atual estimado dos bens não-baixados com categoria
+// configurada; conta à parte quantos bens ficam de fora por falta de
+// valor/data/vida útil. Paginado (lei do projeto · cap de 1000 do PostgREST).
+router.get('/dashboard/depreciacao', async (req, res) => {
+  try {
+    let all = [];
+    let offset = 0;
+    const pageSize = 1000;
+    while (true) {
+      const { data, error } = await supabase.from('pat_bens')
+        .select('valor_aquisicao, data_aquisicao, status, pat_categorias(vida_util_meses)')
+        .neq('status', 'baixado')
+        .range(offset, offset + pageSize - 1);
+      if (error) throw error;
+      if (!data || data.length === 0) break;
+      all = all.concat(data);
+      if (data.length < pageSize) break;
+      offset += pageSize;
+    }
+    let valorAquisicaoTotal = 0, valorAtualTotal = 0, bensComDepreciacao = 0, bensSemConfiguracao = 0;
+    for (const bem of all) {
+      const dep = calcularDepreciacao(bem);
+      if (dep) {
+        bensComDepreciacao++;
+        valorAquisicaoTotal += Number(bem.valor_aquisicao);
+        valorAtualTotal += dep.valor_atual_estimado;
+      } else if (bem.valor_aquisicao != null) {
+        bensSemConfiguracao++;
+      }
+    }
+    res.json({
+      valor_aquisicao_total: Math.round(valorAquisicaoTotal * 100) / 100,
+      valor_atual_estimado_total: Math.round(valorAtualTotal * 100) / 100,
+      bens_com_depreciacao: bensComDepreciacao,
+      bens_sem_configuracao: bensSemConfiguracao,
+    });
+  } catch (e) {
+    console.error('[PAT] Agregado de depreciação falhou:', e.message);
+    res.status(500).json({ error: 'Erro ao calcular depreciação agregada' });
+  }
+});
+
 // ── CATEGORIAS ─────────────────────────────────────────────
 router.get('/categorias', async (req, res) => {
   try {
@@ -44,13 +111,27 @@ router.get('/categorias', async (req, res) => {
 
 router.post('/categorias', async (req, res) => {
   try {
-    const { nome, icone, pai_id } = req.body;
+    const { nome, icone, pai_id, vida_util_meses } = req.body;
     if (!nome) return res.status(400).json({ error: 'Nome é obrigatório' });
     const { data, error } = await supabase.from('pat_categorias')
-      .insert({ nome, icone: icone || null, pai_id: pai_id || null }).select().single();
+      .insert({ nome, icone: icone || null, pai_id: pai_id || null, vida_util_meses: vida_util_meses || null }).select().single();
     if (error) return res.status(400).json({ error: error.message });
     res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro ao criar categoria' }); }
+});
+
+router.put('/categorias/:id', async (req, res) => {
+  try {
+    const { nome, icone, vida_util_meses } = req.body;
+    const update = {};
+    if (nome !== undefined) update.nome = nome;
+    if (icone !== undefined) update.icone = icone || null;
+    if (vida_util_meses !== undefined) update.vida_util_meses = vida_util_meses || null;
+    const { data, error } = await supabase.from('pat_categorias')
+      .update(update).eq('id', req.params.id).select().single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao atualizar categoria' }); }
 });
 
 router.delete('/categorias/:id', async (req, res) => {
@@ -70,10 +151,31 @@ router.get('/localizacoes', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao listar localizações' }); }
 });
 
+// Impede que pai_id crie um ciclo na árvore (ex: A vira pai de B que já é pai
+// de A) — sobe a cadeia de ancestrais de p_pai_id e recusa se achar o próprio
+// ownId no caminho. ownId é null na criação (não há como um nó novo já ser
+// ancestral de ninguém).
+async function paiCriaCiclo(paiId, ownId) {
+  let atual = paiId;
+  const vistos = new Set();
+  while (atual) {
+    if (atual === ownId) return true;
+    if (vistos.has(atual)) return true; // ciclo já existente na base
+    vistos.add(atual);
+    const { data, error } = await supabase.from('pat_localizacoes').select('pai_id').eq('id', atual).single();
+    if (error || !data) return false;
+    atual = data.pai_id;
+  }
+  return false;
+}
+
 router.post('/localizacoes', async (req, res) => {
   try {
     const { nome, pai_id } = req.body;
     if (!nome) return res.status(400).json({ error: 'Nome é obrigatório' });
+    if (pai_id && await paiCriaCiclo(pai_id, null)) {
+      return res.status(400).json({ error: 'Localização pai inválida (criaria um ciclo)' });
+    }
     const { data, error } = await supabase.from('pat_localizacoes')
       .insert({ nome, pai_id: pai_id || null }).select().single();
     if (error) return res.status(400).json({ error: error.message });
@@ -86,7 +188,12 @@ router.put('/localizacoes/:id', async (req, res) => {
     const { nome, pai_id } = req.body;
     const update = {};
     if (nome !== undefined) update.nome = nome;
-    if (pai_id !== undefined) update.pai_id = pai_id || null;
+    if (pai_id !== undefined) {
+      if (pai_id && await paiCriaCiclo(pai_id, req.params.id)) {
+        return res.status(400).json({ error: 'Localização pai inválida (criaria um ciclo)' });
+      }
+      update.pai_id = pai_id || null;
+    }
     const { data, error } = await supabase.from('pat_localizacoes')
       .update(update).eq('id', req.params.id).select().single();
     if (error) return res.status(400).json({ error: error.message });
@@ -106,7 +213,7 @@ router.delete('/localizacoes/:id', async (req, res) => {
 router.get('/bens', async (req, res) => {
   try {
     const { status, categoria_id, localizacao_id, busca } = req.query;
-    let query = supabase.from('pat_bens').select('*, pat_categorias(nome), pat_localizacoes(nome)').order('nome');
+    let query = supabase.from('pat_bens').select('*, pat_categorias(nome, vida_util_meses), pat_localizacoes(nome)').order('nome');
     if (status) query = query.eq('status', status);
     // Sentinela "__sem__" filtra bens SEM categoria/localização — pra
     // priorizar o saneamento de cadastro (pedido do usuário 2026-07-28).
@@ -122,7 +229,7 @@ router.get('/bens', async (req, res) => {
     }
     const { data, error } = await query;
     if (error) return res.status(400).json({ error: error.message });
-    res.json(data);
+    res.json((data || []).map(b => ({ ...b, depreciacao: calcularDepreciacao(b) })));
   } catch (e) { res.status(500).json({ error: 'Erro ao listar bens' }); }
 });
 
@@ -150,7 +257,7 @@ router.get('/bens/barcode/:codigo', async (req, res) => {
     console.log('[PATRIMONIO] barcode lookup variants:', list);
 
     const { data, error } = await supabase.from('pat_bens')
-      .select('*, pat_categorias(nome), pat_localizacoes(nome)')
+      .select('*, pat_categorias(nome, vida_util_meses), pat_localizacoes(nome)')
       .in('codigo_barras', list);
 
     if (error) {
@@ -167,7 +274,7 @@ router.get('/bens/barcode/:codigo', async (req, res) => {
       .select('*, profiles!responsavel_id(name)')
       .eq('bem_id', bem.id)
       .order('data_movimentacao', { ascending: false });
-    res.json({ ...bem, movimentacoes: movs || [] });
+    res.json({ ...bem, movimentacoes: movs || [], depreciacao: calcularDepreciacao(bem) });
   } catch (e) {
     console.error('[PATRIMONIO] barcode lookup exception:', e.message);
     res.status(500).json({ error: 'Erro ao buscar bem por código' });
@@ -177,11 +284,11 @@ router.get('/bens/barcode/:codigo', async (req, res) => {
 router.get('/bens/:id', async (req, res) => {
   try {
     const { data: bem, error } = await supabase.from('pat_bens')
-      .select('*, pat_categorias(nome), pat_localizacoes(nome)').eq('id', req.params.id).single();
+      .select('*, pat_categorias(nome, vida_util_meses), pat_localizacoes(nome)').eq('id', req.params.id).single();
     if (error) return res.status(404).json({ error: 'Bem não encontrado' });
     const { data: movs } = await supabase.from('pat_movimentacoes')
       .select('*, profiles!responsavel_id(name)').eq('bem_id', req.params.id).order('data_movimentacao', { ascending: false });
-    res.json({ ...bem, movimentacoes: movs || [] });
+    res.json({ ...bem, movimentacoes: movs || [], depreciacao: calcularDepreciacao(bem) });
   } catch (e) { res.status(500).json({ error: 'Erro ao buscar bem' }); }
 });
 
@@ -200,8 +307,13 @@ router.post('/bens', async (req, res) => {
 router.put('/bens/:id', async (req, res) => {
   try {
     const { codigo_barras, nome, descricao, categoria_id, localizacao_id, numero_serie, marca, modelo, valor_aquisicao, data_aquisicao, status, observacoes } = req.body;
+    // Reatribuir a localização (edição manual do cadastro) é decisão humana —
+    // limpa o alerta de "localização pendente de reavaliação" (hierarquia
+    // 2026-07-29). Se localizacao_id não veio no payload, o alerta é preservado.
+    const update = { codigo_barras, nome, descricao: descricao || null, categoria_id: categoria_id || null, localizacao_id: localizacao_id || null, numero_serie: numero_serie || null, marca: marca || null, modelo: modelo || null, valor_aquisicao: valor_aquisicao || null, data_aquisicao: data_aquisicao || null, status, observacoes: observacoes || null };
+    if (localizacao_id !== undefined) update.localizacao_pendente = false;
     const { data, error } = await supabase.from('pat_bens')
-      .update({ codigo_barras, nome, descricao: descricao || null, categoria_id: categoria_id || null, localizacao_id: localizacao_id || null, numero_serie: numero_serie || null, marca: marca || null, modelo: modelo || null, valor_aquisicao: valor_aquisicao || null, data_aquisicao: data_aquisicao || null, status, observacoes: observacoes || null })
+      .update(update)
       .eq('id', req.params.id).select().single();
     if (error) return res.status(400).json({ error: error.message });
     res.json(data);
@@ -232,7 +344,7 @@ router.post('/bens/:id/movimentacoes', async (req, res) => {
     if (error) return res.status(400).json({ error: error.message });
     // Atualizar localização do bem se for transferência
     if (tipo === 'transferencia' && localizacao_destino_id) {
-      await supabase.from('pat_bens').update({ localizacao_id: localizacao_destino_id }).eq('id', req.params.id);
+      await supabase.from('pat_bens').update({ localizacao_id: localizacao_destino_id, localizacao_pendente: false }).eq('id', req.params.id);
     }
     if (tipo === 'manutencao') {
       await supabase.from('pat_bens').update({ status: 'manutencao' }).eq('id', req.params.id);

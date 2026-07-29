@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Tag, ClipboardList, Trash2, Archive, Pencil, MapPin, ScanLine } from 'lucide-react';
 import { useAuth } from '../../../contexts/AuthContext';
 // Coordenador de Operações/Logística = quem tem o cargo lider-logistica (já
@@ -88,6 +88,30 @@ const styles = {
   clickRow: { cursor: 'pointer', transition: 'background 0.1s' },
 };
 
+// Árvore de localizações (pai_id) · pedido do usuário 2026-07-29. Monta a
+// árvore a partir da lista plana e devolve tanto a versão aninhada (pra
+// exibição expansível em CatLocTab) quanto achatada com profundidade (pra
+// indentar as options dos <select> de localização em todo o módulo).
+function buildLocTree(localizacoes) {
+  const byId = new Map(localizacoes.map(l => [l.id, { ...l, children: [] }]));
+  const roots = [];
+  for (const l of byId.values()) {
+    if (l.pai_id && byId.has(l.pai_id)) byId.get(l.pai_id).children.push(l);
+    else roots.push(l);
+  }
+  const sortRec = (arr) => { arr.sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR')); arr.forEach(n => sortRec(n.children)); };
+  sortRec(roots);
+  return roots;
+}
+function flattenLocTree(tree, depth = 0, out = []) {
+  for (const node of tree) {
+    out.push({ ...node, depth });
+    if (node.children?.length) flattenLocTree(node.children, depth + 1, out);
+  }
+  return out;
+}
+const locIndent = (depth) => depth > 0 ? '  '.repeat(depth) + '— ' : '';
+
 const fmtDate = (d) => d ? new Date(d + 'T12:00:00').toLocaleDateString('pt-BR') : '—';
 const fmtMoney = (v) => v != null ? `R$ ${Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '—';
 const fmtCodigo = (c) => {
@@ -154,6 +178,8 @@ export default function Patrimonio() {
   const [modalConvocacao, setModalConvocacao] = useState(null);
   const loadDash = useCallback(async () => { try { setDashError(false); setDash(await patrimonio.dashboard()); } catch (e) { console.error(e); setDashError(true); setDash({ totalBens: 0, ativos: 0, manutencao: 0, baixados: 0, extraviados: 0, valorTotal: 0, porCategoria: {}, porLocalizacao: {}, inventariosAbertos: 0 }); } }, []);
   const loadIndicadores = useCallback(async () => { try { setIndicadores(await patrimonio.dashboardIndicadores()); } catch (e) { console.error(e); } }, []);
+  const [depreciacaoIndic, setDepreciacaoIndic] = useState(null);
+  const loadDepreciacao = useCallback(async () => { try { setDepreciacaoIndic(await patrimonio.dashboardDepreciacao()); } catch (e) { console.error(e); } }, []);
   const loadBens = useCallback(async () => {
     try { setLoading(true); const p = {}; if (filtroStatus) p.status = filtroStatus; if (filtroCat) p.categoria_id = filtroCat; if (filtroLoc) p.localizacao_id = filtroLoc; if (busca) p.busca = busca; setBens(await patrimonio.bens.list(p)); }
     catch (e) { console.error(e); } finally { setLoading(false); }
@@ -165,7 +191,7 @@ export default function Patrimonio() {
   const loadRevisaoIndic = useCallback(async () => { try { setRevisaoIndic(await patrimonio.revisao.indicadores()); } catch (e) { console.error(e); } }, []);
   const loadResponsaveis = useCallback(async () => { try { setResponsaveis(await patrimonio.revisao.responsaveis()); } catch (e) { console.error(e); } }, []);
 
-  useEffect(() => { loadDash(); loadIndicadores(); loadBens(); loadCats(); loadLocs(); loadInvs(); loadRevisao(); loadRevisaoIndic(); loadResponsaveis(); }, []);
+  useEffect(() => { loadDash(); loadIndicadores(); loadDepreciacao(); loadBens(); loadCats(); loadLocs(); loadInvs(); loadRevisao(); loadRevisaoIndic(); loadResponsaveis(); }, []);
   useEffect(() => { loadBens(); }, [filtroStatus, filtroCat, filtroLoc, busca]);
 
   async function saveBem(data) {
@@ -185,8 +211,13 @@ export default function Patrimonio() {
   }
   async function addCat() { if (!newCat.trim()) return; try { await patrimonio.categorias.create({ nome: newCat }); setNewCat(''); loadCats(); loadDash(); } catch (e) { setError(e.message); } }
   async function removeCat(id) { if (!confirm('Remover categoria?')) return; try { await patrimonio.categorias.remove(id); loadCats(); } catch (e) { setError(e.message); } }
-  async function addLoc() { if (!newLoc.trim()) return; try { await patrimonio.localizacoes.create({ nome: newLoc }); setNewLoc(''); loadLocs(); loadDash(); } catch (e) { setError(e.message); } }
-  async function removeLoc(id) { if (!confirm('Remover localização?')) return; try { await patrimonio.localizacoes.remove(id); loadLocs(); } catch (e) { setError(e.message); } }
+  async function updateCat(id, data) { try { await patrimonio.categorias.update(id, data); loadCats(); loadDepreciacao(); } catch (e) { setError(e.message); } }
+  async function addLoc(nome, pai_id) { const n = nome ?? newLoc; if (!n.trim()) return; try { await patrimonio.localizacoes.create({ nome: n, pai_id: pai_id || null }); setNewLoc(''); loadLocs(); loadDash(); } catch (e) { setError(e.message); } }
+  async function removeLoc(id) { if (!confirm('Remover localização? Bens e sub-localizações apontando pra ela não são movidos automaticamente.')) return; try { await patrimonio.localizacoes.remove(id); loadLocs(); } catch (e) { setError(e.message); } }
+  async function updateLoc(id, data) { try { await patrimonio.localizacoes.update(id, data); loadLocs(); } catch (e) { setError(e.message); } }
+  // Lista achatada em ordem de árvore (indentada) — usada em todo select de
+  // localização do módulo (pedido do usuário 2026-07-29: agrupamento em árvore).
+  const locOptions = useMemo(() => flattenLocTree(buildLocTree(localizacoes)), [localizacoes]);
   async function saveInv(data) { try { await patrimonio.inventarios.create(data); setModalInv(null); loadInvs(); loadDash(); } catch (e) { setError(e.message); } }
   async function updateInvStatus(id, status) { try { const upd = { status }; if (status === 'concluido') upd.data_fim = new Date().toISOString().slice(0, 10); await patrimonio.inventarios.atualizar(id, upd); loadInvs(); loadDash(); } catch (e) { setError(e.message); } }
   async function criarCiclo(data) { try { await patrimonio.revisao.criarCiclo(data); setModalNovoCiclo(false); loadRevisao(); } catch (e) { setError(e.message); } }
@@ -213,6 +244,7 @@ export default function Patrimonio() {
         <DashboardTab
           dash={dash}
           indicadores={indicadores}
+          depreciacaoIndic={depreciacaoIndic}
           onNavigate={(targetTab, status) => { setFiltroStatus(status || ''); setTab(targetTab); }}
           onNavigateFiltro={(f) => {
             setFiltroStatus(''); setFiltroCat(f.categoria_id || ''); setFiltroLoc(f.localizacao_id || '');
@@ -225,12 +257,12 @@ export default function Patrimonio() {
         <BensTab bens={bens} loading={loading} busca={busca} setBusca={setBusca}
           filtroStatus={filtroStatus} setFiltroStatus={setFiltroStatus}
           filtroCat={filtroCat} setFiltroCat={setFiltroCat} filtroLoc={filtroLoc} setFiltroLoc={setFiltroLoc}
-          categorias={categorias} localizacoes={localizacoes}
+          categorias={categorias} localizacoes={localizacoes} locOptions={locOptions}
           onNew={() => setModalBem({})} onDetail={openDetail} onDetailPorCodigo={openDetailPorCodigo}
           onBaixar={baixarBem} isDiretor={isDiretor}
         />
       )}
-      {tab === 2 && <CatLocTab categorias={categorias} localizacoes={localizacoes} newCat={newCat} setNewCat={setNewCat} addCat={addCat} removeCat={removeCat} newLoc={newLoc} setNewLoc={setNewLoc} addLoc={addLoc} removeLoc={removeLoc} isDiretor={isDiretor} />}
+      {tab === 2 && <CatLocTab categorias={categorias} localizacoes={localizacoes} locOptions={locOptions} newCat={newCat} setNewCat={setNewCat} addCat={addCat} removeCat={removeCat} updateCat={updateCat} addLoc={addLoc} removeLoc={removeLoc} updateLoc={updateLoc} isDiretor={isDiretor} />}
       {tab === 3 && <InventariosTab inventarios={inventarios} onNew={() => setModalInv({})} onUpdate={updateInvStatus} isDiretor={isDiretor} />}
       {tab === 4 && (
         <RevisaoTab ciclos={revisaoCiclos} indicadores={revisaoIndic}
@@ -239,9 +271,9 @@ export default function Patrimonio() {
         />
       )}
 
-      <BemFormModal open={!!modalBem} data={modalBem} categorias={categorias} localizacoes={localizacoes} onClose={() => setModalBem(null)} onSave={saveBem} />
+      <BemFormModal open={!!modalBem} data={modalBem} categorias={categorias} locOptions={locOptions} onClose={() => setModalBem(null)} onSave={saveBem} />
       <BemDetailModal open={!!modalDetail} data={modalDetail} onClose={() => setModalDetail(null)} onEdit={(b) => { setModalDetail(null); setModalBem(b); }} onBaixar={baixarBem} onMov={(bemId) => setModalMov({ bem_id: bemId })} isDiretor={isDiretor} />
-      <MovFormModal open={!!modalMov} data={modalMov} localizacoes={localizacoes} onClose={() => setModalMov(null)} onSave={saveMov} />
+      <MovFormModal open={!!modalMov} data={modalMov} locOptions={locOptions} onClose={() => setModalMov(null)} onSave={saveMov} />
       <InvFormModal open={!!modalInv} onClose={() => setModalInv(null)} onSave={saveInv} />
       <NovoCicloModal open={modalNovoCiclo} responsaveis={responsaveis} onClose={() => setModalNovoCiclo(false)} onSave={criarCiclo} />
       <ConvocacaoModal open={!!modalConvocacao} data={modalConvocacao} onClose={() => setModalConvocacao(null)} onIniciar={iniciarConvocacao} onAtualizarItem={atualizarItemRevisao} onConcluir={concluirConvocacao} isDiretor={isCoordenadorRevisao} />
@@ -294,7 +326,7 @@ function PatStatCard({ label, value, bg, svg, onClick }) {
   );
 }
 
-function DashboardTab({ dash, indicadores, onNavigate, onNavigateFiltro, onAbrirBem }) {
+function DashboardTab({ dash, indicadores, depreciacaoIndic, onNavigate, onNavigateFiltro, onAbrirBem }) {
   if (!dash) return <div style={styles.empty}>Carregando dashboard...</div>;
   // Tab 1 = Bens; filtra por status quando aplicável
   const kpis = [
@@ -325,6 +357,26 @@ function DashboardTab({ dash, indicadores, onNavigate, onNavigateFiltro, onAbrir
           <div style={{ fontSize: 12, fontWeight: 700, color: C.text2, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Saneamento de cadastro</div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
             {saneamento.map((k) => <PatStatCard key={k.label} label={k.label} value={k.value} bg={k.bg} svg={null} onClick={k.filtro ? () => onNavigateFiltro(k.filtro) : undefined} />)}
+          </div>
+        </div>
+      )}
+
+      {/* Depreciação · indicador GERENCIAL interno (pedido do usuário 2026-07-29) —
+          linear, derivado sob demanda a partir da vida útil configurada por
+          categoria. NÃO é cálculo contábil oficial. */}
+      {depreciacaoIndic && depreciacaoIndic.bens_com_depreciacao > 0 && (
+        <div style={{ ...styles.card, marginBottom: 24, padding: 16 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 8 }}>
+            <div style={styles.cardTitle}>Depreciação (indicador gerencial)</div>
+            <div style={{ fontSize: 11, color: C.text3 }}>Cálculo linear interno — não substitui avaliação contábil oficial</div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 16, marginTop: 12 }}>
+            <div><div style={{ fontSize: 11, color: C.text2 }}>Valor de aquisição</div><div style={{ fontSize: 16, fontWeight: 700 }}>{fmtMoney(depreciacaoIndic.valor_aquisicao_total)}</div></div>
+            <div><div style={{ fontSize: 11, color: C.text2 }}>Valor atual estimado</div><div style={{ fontSize: 16, fontWeight: 700, color: C.primary }}>{fmtMoney(depreciacaoIndic.valor_atual_estimado_total)}</div></div>
+            <div><div style={{ fontSize: 11, color: C.text2 }}>Bens com depreciação calculada</div><div style={{ fontSize: 16, fontWeight: 700 }}>{depreciacaoIndic.bens_com_depreciacao}</div></div>
+            {depreciacaoIndic.bens_sem_configuracao > 0 && (
+              <div><div style={{ fontSize: 11, color: C.text2 }}>Sem vida útil configurada</div><div style={{ fontSize: 16, fontWeight: 700, color: C.amber }}>{depreciacaoIndic.bens_sem_configuracao}</div></div>
+            )}
           </div>
         </div>
       )}
@@ -416,7 +468,7 @@ function DashboardTab({ dash, indicadores, onNavigate, onNavigateFiltro, onAbrir
   );
 }
 
-function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus, filtroCat, setFiltroCat, filtroLoc, setFiltroLoc, categorias, localizacoes, onNew, onDetail, onDetailPorCodigo, onBaixar, isDiretor }) {
+function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus, filtroCat, setFiltroCat, filtroLoc, setFiltroLoc, categorias, locOptions, onNew, onDetail, onDetailPorCodigo, onBaixar, isDiretor }) {
   const { pageItems: bensPag, paginacaoProps: bensPagProps } = usePaginacaoLocal(bens, 25);
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState('');
@@ -447,7 +499,7 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
         <select style={styles.select} value={filtroLoc} onChange={e => setFiltroLoc(e.target.value)}>
           <option value="">Todas localizações</option>
           <option value="__sem__">— Sem localização —</option>
-          {localizacoes.map(l => <option key={l.id} value={l.id}>{l.nome}</option>)}
+          {locOptions.map(l => <option key={l.id} value={l.id}>{locIndent(l.depth)}{l.nome}</option>)}
         </select>
         {isDiretor && <div style={{ marginLeft: 'auto' }}><Button onClick={onNew}>+ Novo Bem</Button></div>}
       </div>
@@ -478,7 +530,10 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
                   <td style={{ ...styles.td, fontFamily: 'monospace', fontSize: 12 }}>{fmtCodigo(b.codigo_barras)}</td>
                   <td style={{ ...styles.td, fontWeight: 600 }}>{b.nome}</td>
                   <td style={styles.td}>{b.pat_categorias?.nome || '—'}</td>
-                  <td style={styles.td}>{b.pat_localizacoes?.nome || '—'}</td>
+                  <td style={styles.td}>
+                    {b.pat_localizacoes?.nome || '—'}
+                    {b.localizacao_pendente && <span title="Localização virou um grupamento — precisa de realocação pra uma sala final" style={{ ...styles.badge(C.amber, C.amberBg), marginLeft: 6 }}>⚠ pendente</span>}
+                  </td>
                   <td style={styles.td}>{[b.marca, b.modelo].filter(Boolean).join(' ') || '—'}</td>
                   <td style={styles.td}>{fmtMoney(b.valor_aquisicao)}</td>
                   <td style={styles.td}><Badge status={b.status} map={STATUS_BEM} /></td>
@@ -494,7 +549,58 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
   );
 }
 
-function CatLocTab({ categorias, localizacoes, newCat, setNewCat, addCat, removeCat, newLoc, setNewLoc, addLoc, removeLoc, isDiretor }) {
+// Nó da árvore de localizações (expandir/colapsar filhas · pedido do usuário
+// 2026-07-29: "clique na localização-pai expande pra mostrar as salas").
+function LocTreeNode({ node, depth, expanded, toggleExpanded, isDiretor, onEdit, removeLoc }) {
+  const temFilhas = node.children.length > 0;
+  const aberto = expanded.has(node.id);
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', paddingLeft: depth * 18, borderBottom: `1px solid ${C.border}` }}>
+        <span style={{ fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 4, cursor: temFilhas ? 'pointer' : 'default' }} onClick={() => temFilhas && toggleExpanded(node.id)}>
+          {temFilhas ? <span style={{ width: 14, display: 'inline-block', fontSize: 11, color: C.text3 }}>{aberto ? '▾' : '▸'}</span> : <MapPin style={{ width: 14, height: 14, color: '#00B39D' }} />}
+          {node.nome}
+          {temFilhas && <span style={{ fontSize: 11, color: C.text3 }}>({node.children.length})</span>}
+        </span>
+        {isDiretor && (
+          <span style={{ display: 'flex', gap: 2 }}>
+            <Button variant="ghost" size="xs" onClick={() => onEdit(node)}><Pencil style={{ width: 13, height: 13 }} /></Button>
+            <Button variant="ghost" size="xs" onClick={() => removeLoc(node.id)}><Trash2 style={{ width: 14, height: 14 }} /></Button>
+          </span>
+        )}
+      </div>
+      {temFilhas && aberto && node.children.map(c => (
+        <LocTreeNode key={c.id} node={c} depth={depth + 1} expanded={expanded} toggleExpanded={toggleExpanded} isDiretor={isDiretor} onEdit={onEdit} removeLoc={removeLoc} />
+      ))}
+    </div>
+  );
+}
+
+function CatLocTab({ categorias, localizacoes, locOptions, newCat, setNewCat, addCat, removeCat, updateCat, addLoc, removeLoc, updateLoc, isDiretor }) {
+  const [novoNomeLoc, setNovoNomeLoc] = useState('');
+  const [novoPaiLoc, setNovoPaiLoc] = useState('');
+  const [editLoc, setEditLoc] = useState(null); // { id, nome, pai_id }
+  const [editCat, setEditCat] = useState(null); // { id, nome, icone, vida_util_meses }
+  const [expanded, setExpanded] = useState(() => new Set());
+  const tree = useMemo(() => buildLocTree(localizacoes), [localizacoes]);
+  const toggleExpanded = (id) => setExpanded(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+
+  function submitNovaLoc() {
+    if (!novoNomeLoc.trim()) return;
+    addLoc(novoNomeLoc, novoPaiLoc || null);
+    setNovoNomeLoc(''); setNovoPaiLoc('');
+  }
+  function salvarEdicaoLoc() {
+    if (!editLoc.nome.trim()) return;
+    updateLoc(editLoc.id, { nome: editLoc.nome, pai_id: editLoc.pai_id || null });
+    setEditLoc(null);
+  }
+  function salvarEdicaoCat() {
+    if (!editCat.nome.trim()) return;
+    updateCat(editCat.id, { nome: editCat.nome, icone: editCat.icone || null, vida_util_meses: editCat.vida_util_meses ? Number(editCat.vida_util_meses) : null });
+    setEditCat(null);
+  }
+
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
       <div style={styles.card}>
@@ -509,8 +615,16 @@ function CatLocTab({ categorias, localizacoes, newCat, setNewCat, addCat, remove
           {categorias.length === 0 && <div style={styles.empty}>Nenhuma categoria</div>}
           {categorias.map(c => (
             <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: `1px solid ${C.border}` }}>
-              <span style={{ fontSize: 13 }}>{c.icone && `${c.icone} `}{c.nome}</span>
-              {isDiretor && <Button variant="ghost" size="xs" onClick={() => removeCat(c.id)}><Trash2 style={{ width: 14, height: 14 }} /></Button>}
+              <span style={{ fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                {c.icone && `${c.icone} `}{c.nome}
+                {c.vida_util_meses ? <span style={{ fontSize: 11, color: C.text3 }}>({c.vida_util_meses}m vida útil)</span> : null}
+              </span>
+              {isDiretor && (
+                <span style={{ display: 'flex', gap: 2 }}>
+                  <Button variant="ghost" size="xs" onClick={() => setEditCat({ id: c.id, nome: c.nome, icone: c.icone || '', vida_util_meses: c.vida_util_meses || '' })}><Pencil style={{ width: 13, height: 13 }} /></Button>
+                  <Button variant="ghost" size="xs" onClick={() => removeCat(c.id)}><Trash2 style={{ width: 14, height: 14 }} /></Button>
+                </span>
+              )}
             </div>
           ))}
         </div>
@@ -519,20 +633,42 @@ function CatLocTab({ categorias, localizacoes, newCat, setNewCat, addCat, remove
         <div style={styles.cardHeader}><div style={styles.cardTitle}>Localizações ({localizacoes.length})</div></div>
         <div style={{ padding: 16 }}>
           {isDiretor && (
-            <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-              <input className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" style={{ flex: 1 }} placeholder="Nova localização..." value={newLoc} onChange={e => setNewLoc(e.target.value)} onKeyDown={e => e.key === 'Enter' && addLoc()} />
-              <Button size="xs" onClick={addLoc}>+</Button>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+              <input className="flex h-9 rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" style={{ flex: '1 1 160px' }} placeholder="Nova localização..." value={novoNomeLoc} onChange={e => setNovoNomeLoc(e.target.value)} onKeyDown={e => e.key === 'Enter' && submitNovaLoc()} />
+              <select style={{ ...styles.select, flex: '1 1 160px' }} value={novoPaiLoc} onChange={e => setNovoPaiLoc(e.target.value)}>
+                <option value="">— Localização pai (opcional) —</option>
+                {locOptions.map(l => <option key={l.id} value={l.id}>{locIndent(l.depth)}{l.nome}</option>)}
+              </select>
+              <Button size="xs" onClick={submitNovaLoc}>+</Button>
             </div>
           )}
           {localizacoes.length === 0 && <div style={styles.empty}>Nenhuma localização</div>}
-          {localizacoes.map(l => (
-            <div key={l.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: `1px solid ${C.border}` }}>
-              <span style={{ fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 4 }}><MapPin style={{ width: 14, height: 14, color: '#00B39D' }} /> {l.nome}</span>
-              {isDiretor && <Button variant="ghost" size="xs" onClick={() => removeLoc(l.id)}><Trash2 style={{ width: 14, height: 14 }} /></Button>}
-            </div>
+          {tree.map(node => (
+            <LocTreeNode key={node.id} node={node} depth={0} expanded={expanded} toggleExpanded={toggleExpanded} isDiretor={isDiretor} onEdit={setEditLoc} removeLoc={removeLoc} />
           ))}
         </div>
       </div>
+      <Modal open={!!editLoc} onClose={() => setEditLoc(null)} title="Editar localização" footer={<Button onClick={salvarEdicaoLoc}>Salvar</Button>}>
+        {editLoc && (
+          <>
+            <Input label="Nome" value={editLoc.nome} onChange={e => setEditLoc(p => ({ ...p, nome: e.target.value }))} />
+            <Select label="Localização pai" value={editLoc.pai_id || ''} onChange={e => setEditLoc(p => ({ ...p, pai_id: e.target.value }))}>
+              <option value="">— Nenhuma (raiz) —</option>
+              {locOptions.filter(l => l.id !== editLoc.id).map(l => <option key={l.id} value={l.id}>{locIndent(l.depth)}{l.nome}</option>)}
+            </Select>
+          </>
+        )}
+      </Modal>
+      <Modal open={!!editCat} onClose={() => setEditCat(null)} title="Editar categoria" footer={<Button onClick={salvarEdicaoCat}>Salvar</Button>}>
+        {editCat && (
+          <>
+            <Input label="Nome" value={editCat.nome} onChange={e => setEditCat(p => ({ ...p, nome: e.target.value }))} />
+            <Input label="Ícone (emoji, opcional)" value={editCat.icone} onChange={e => setEditCat(p => ({ ...p, icone: e.target.value }))} />
+            <Input label="Vida útil (meses) — indicador gerencial de depreciação, opcional" type="number" min="1" value={editCat.vida_util_meses} onChange={e => setEditCat(p => ({ ...p, vida_util_meses: e.target.value }))} />
+            <div style={{ fontSize: 11, color: C.text3 }}>Deixe em branco pra não calcular depreciação nessa categoria. É um cálculo linear interno (não oficial/contábil).</div>
+          </>
+        )}
+      </Modal>
     </div>
   );
 }
@@ -577,7 +713,7 @@ function InventariosTab({ inventarios, onNew, onUpdate, isDiretor }) {
   );
 }
 
-function BemFormModal({ open, data, categorias, localizacoes, onClose, onSave }) {
+function BemFormModal({ open, data, categorias, locOptions, onClose, onSave }) {
   const [f, setF] = useState({});
   const [formError, setFormError] = useState('');
   useEffect(() => { if (data) { setF({ ...data }); setFormError(''); } }, [data]);
@@ -609,7 +745,7 @@ function BemFormModal({ open, data, categorias, localizacoes, onClose, onSave })
         </Select>
         <Select label="Localização" value={f.localizacao_id || ''} onChange={e => upd('localizacao_id', e.target.value)}>
           <option value="">Selecionar</option>
-          {localizacoes.map(l => <option key={l.id} value={l.id}>{l.nome}</option>)}
+          {locOptions.map(l => <option key={l.id} value={l.id}>{locIndent(l.depth)}{l.nome}</option>)}
         </Select>
       </div>
       <div style={styles.formRow}>
@@ -646,12 +782,20 @@ function BemDetailModal({ open, data, onClose, onEdit, onBaixar, onMov, isDireto
         <div><span style={{ fontSize: 11, color: C.text2 }}>Código:</span><div style={{ fontSize: 14, fontFamily: 'monospace' }}>{fmtCodigo(data.codigo_barras)}</div></div>
         <div><span style={{ fontSize: 11, color: C.text2 }}>Status:</span><div><Badge status={data.status} map={STATUS_BEM} /></div></div>
         <div><span style={{ fontSize: 11, color: C.text2 }}>Categoria:</span><div style={{ fontSize: 14 }}>{data.pat_categorias?.nome || '—'}</div></div>
-        <div><span style={{ fontSize: 11, color: C.text2 }}>Localização:</span><div style={{ fontSize: 14 }}>{data.pat_localizacoes?.nome || '—'}</div></div>
+        <div><span style={{ fontSize: 11, color: C.text2 }}>Localização:</span><div style={{ fontSize: 14 }}>{data.pat_localizacoes?.nome || '—'}{data.localizacao_pendente && <div style={{ fontSize: 11, color: C.amber, marginTop: 2 }}>⚠ virou grupamento — realocar pra uma sala final</div>}</div></div>
         <div><span style={{ fontSize: 11, color: C.text2 }}>Marca/Modelo:</span><div style={{ fontSize: 14 }}>{[data.marca, data.modelo].filter(Boolean).join(' ') || '—'}</div></div>
         <div><span style={{ fontSize: 11, color: C.text2 }}>Nº Série:</span><div style={{ fontSize: 14 }}>{data.numero_serie || '—'}</div></div>
         <div><span style={{ fontSize: 11, color: C.text2 }}>Valor Aquisição:</span><div style={{ fontSize: 14, fontWeight: 600 }}>{fmtMoney(data.valor_aquisicao)}</div></div>
         <div><span style={{ fontSize: 11, color: C.text2 }}>Data Aquisição:</span><div style={{ fontSize: 14 }}>{fmtDate(data.data_aquisicao)}</div></div>
       </div>
+      {data.depreciacao && (
+        <div style={{ padding: '8px 12px', background: 'var(--cbrio-input-bg)', borderRadius: 8, marginBottom: 12, fontSize: 13 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+            <span>Depreciação (indicador gerencial): <strong>{data.depreciacao.percentual_depreciado}%</strong> · valor atual estimado <strong style={{ color: C.primary }}>{fmtMoney(data.depreciacao.valor_atual_estimado)}</strong></span>
+          </div>
+          <div style={{ fontSize: 11, color: C.text3, marginTop: 2 }}>Cálculo linear interno — não é avaliação contábil oficial</div>
+        </div>
+      )}
       {data.descricao && <div style={{ padding: '8px 12px', background: 'var(--cbrio-input-bg)', borderRadius: 8, marginBottom: 12, fontSize: 13, color: C.text2 }}>{data.descricao}</div>}
       {data.observacoes && <div style={{ padding: '8px 12px', background: 'var(--cbrio-input-bg)', borderRadius: 8, marginBottom: 16, fontSize: 13, color: C.text2 }}>{data.observacoes}</div>}
 
@@ -681,7 +825,7 @@ function BemDetailModal({ open, data, onClose, onEdit, onBaixar, onMov, isDireto
   );
 }
 
-function MovFormModal({ open, data, localizacoes, onClose, onSave }) {
+function MovFormModal({ open, data, locOptions, onClose, onSave }) {
   const [f, setF] = useState({ tipo: 'transferencia' });
   useEffect(() => { if (open) setF({ tipo: 'transferencia' }); }, [open]);
   const upd = (k, v) => setF(p => ({ ...p, [k]: v }));
@@ -694,13 +838,13 @@ function MovFormModal({ open, data, localizacoes, onClose, onSave }) {
       {(f.tipo === 'transferencia' || f.tipo === 'saida') && (
         <Select label="Localização Origem" value={f.localizacao_origem_id || ''} onChange={e => upd('localizacao_origem_id', e.target.value)}>
           <option value="">Selecionar</option>
-          {localizacoes.map(l => <option key={l.id} value={l.id}>{l.nome}</option>)}
+          {locOptions.map(l => <option key={l.id} value={l.id}>{locIndent(l.depth)}{l.nome}</option>)}
         </Select>
       )}
       {(f.tipo === 'transferencia' || f.tipo === 'entrada') && (
         <Select label="Localização Destino" value={f.localizacao_destino_id || ''} onChange={e => upd('localizacao_destino_id', e.target.value)}>
           <option value="">Selecionar</option>
-          {localizacoes.map(l => <option key={l.id} value={l.id}>{l.nome}</option>)}
+          {locOptions.map(l => <option key={l.id} value={l.id}>{locIndent(l.depth)}{l.nome}</option>)}
         </Select>
       )}
       <div style={styles.formGroup}>
