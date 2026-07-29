@@ -970,6 +970,8 @@ export const financeiro = {
     update: (id, data) => put(`/financeiro/transacoes/${id}`, data),
     remove: (id) => del(`/financeiro/transacoes/${id}`),
   },
+  // Banco de comprovantes (anexos das transações + NFs com arquivo)
+  comprovantes: (params) => get('/financeiro/comprovantes' + (params ? '?' + new URLSearchParams(params) : '')),
   contasPagar: {
     list: (params) => get('/financeiro/contas-pagar' + (params ? '?' + new URLSearchParams(params) : '')),
     create: (data) => post('/financeiro/contas-pagar', data),
@@ -1196,6 +1198,7 @@ export const financeiroV2 = {
       if (semana) qs.set('semana', semana);
       if (filtros?.centro_custo_id) qs.set('centro_custo_id', filtros.centro_custo_id);
       if (filtros?.plano_contas_id) qs.set('plano_contas_id', filtros.plano_contas_id);
+      if (filtros?.sem_extra) qs.set('sem_extra', '1');
       const s = qs.toString();
       return get('/financeiro-v2/dashboard/semana-completa' + (s ? `?${s}` : ''));
     },
@@ -1401,9 +1404,11 @@ export const logistica = {
 export const patrimonio = {
   dashboard: () => get('/patrimonio/dashboard'),
   dashboardIndicadores: () => get('/patrimonio/dashboard/indicadores'),
+  dashboardDepreciacao: () => get('/patrimonio/dashboard/depreciacao'),
   categorias: {
     list: () => get('/patrimonio/categorias'),
     create: (data) => post('/patrimonio/categorias', data),
+    update: (id, data) => put(`/patrimonio/categorias/${id}`, data),
     remove: (id) => del(`/patrimonio/categorias/${id}`),
   },
   localizacoes: {
@@ -1419,7 +1424,11 @@ export const patrimonio = {
     update: (id, data) => put(`/patrimonio/bens/${id}`, data),
     remove: (id) => del(`/patrimonio/bens/${id}`),
     movimentar: (id, data) => post(`/patrimonio/bens/${id}/movimentacoes`, data),
+    dispensarAlerta: (id) => post(`/patrimonio/bens/${id}/dispensar-alerta`, {}),
     porCodigo: (codigo) => get(`/patrimonio/bens/barcode/${encodeURIComponent(codigo)}`),
+  },
+  movimentacoes: {
+    list: (params) => get('/patrimonio/movimentacoes' + (params ? '?' + new URLSearchParams(params) : '')),
   },
   inventarios: {
     list: () => get('/patrimonio/inventarios'),

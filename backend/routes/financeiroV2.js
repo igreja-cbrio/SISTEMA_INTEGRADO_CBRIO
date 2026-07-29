@@ -2315,7 +2315,11 @@ router.get('/dashboard/semana-completa', async (req, res) => {
     // HIERÁRQUICO (escolher um pai inclui os filhos · prefixo).
     const centroId = req.query.centro_custo_id || null;
     const planoId = req.query.plano_contas_id || null;
-    const temFiltro = !!(centroId || planoId);
+    // Botão "sem extraordinárias": arrecadação só com receita ordinária. Força o
+    // recompute das transações (as views pré-agregadas somam ord+extra).
+    const semExtra = req.query.sem_extra === '1' || req.query.sem_extra === 'true';
+    const classesAceitas = semExtra ? ['ordinaria'] : ['ordinaria', 'extraordinaria'];
+    const temFiltro = !!(centroId || planoId) || semExtra;
     let centroCodigo = null, planoCodigo = null;
     if (temFiltro) {
       const [cc, pc] = await Promise.all([
@@ -2330,7 +2334,7 @@ router.get('/dashboard/semana-completa', async (req, res) => {
         .select(cols)
         .gte('data_competencia', ini).lte('data_competencia', fim)
         .eq('tipo', 'receita').neq('status', 'cancelado')
-        .in('classe_movimento', ['ordinaria', 'extraordinaria'])
+        .in('classe_movimento', classesAceitas)
         // Guardrail dupla contagem: balanço é a fonte de verdade; ignora receita
         // vinda do OFX aprovado (que teria lancamento_bruto_id). O balanço nunca
         // tem lancamento_bruto_id, então isso mantém balanço+manual e exclui OFX.
@@ -3579,16 +3583,18 @@ router.get('/metas-progresso', async (req, res) => {
 // Lista paginada com filtros (evita o cap de 1000 do PostgREST)
 router.get('/contas-pagar', async (req, res) => {
   try {
-    const { status, ano, mes, fornecedor, q, plano_contas_id, centro_custo_id, vinculo_status, vencido } = req.query;
+    const { status, ano, mes, fornecedor, q, plano_contas_id, centro_custo_id, vinculo_status, vencido, order } = req.query;
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
     const pageSize = Math.min(500, Math.max(1, parseInt(req.query.pageSize, 10) || 100));
     const from = (page - 1) * pageSize;
+    // Ordenação por data de vencimento: asc (padrão · mais próximo primeiro) ou desc.
+    const vencAsc = order !== 'venc_desc';
 
     let query = supabase
       .from('fin_contas_pagar')
       .select('*, plano:fin_plano_contas(codigo,nome), centro:fin_centros_custo(codigo,nome)', { count: 'exact' })
       .is('deleted_at', null)
-      .order('data_vencimento', { ascending: true, nullsFirst: false });
+      .order('data_vencimento', { ascending: vencAsc, nullsFirst: false });
 
     if (status) query = query.eq('status', status);
     if (plano_contas_id) query = query.eq('plano_contas_id', plano_contas_id);
@@ -3642,9 +3648,10 @@ router.get('/contas-pagar', async (req, res) => {
 // Resumo agregado (KPIs) — via RPC pra não esbarrar no cap de 1000
 router.get('/contas-pagar/resumo', async (req, res) => {
   try {
-    const { status, ano, fornecedor, plano_contas_id, centro_custo_id, q } = req.query;
+    const { status, ano, mes, fornecedor, plano_contas_id, centro_custo_id, q } = req.query;
     const { data, error } = await supabase.rpc('fn_contas_pagar_resumo', {
       p_ano: ano ? parseInt(ano, 10) : null,
+      p_mes: mes ? parseInt(mes, 10) : null,
       p_status: status || null,
       p_fornecedor: fornecedor || null,
       p_plano: plano_contas_id || null,

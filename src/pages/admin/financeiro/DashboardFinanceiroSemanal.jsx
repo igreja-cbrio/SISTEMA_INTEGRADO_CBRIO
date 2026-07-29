@@ -3580,6 +3580,20 @@ function FiltrosFinanceiroBar() {
         {ativos === 0 && <span className="text-muted-foreground">· nenhum</span>}
       </button>
 
+      {/* Botão explícito: ver arrecadação SEM extraordinárias (só ordinária) */}
+      <button
+        onClick={() => setFiltros({ ...filtros, sem_extra: !filtros.sem_extra })}
+        title="Remove as receitas extraordinárias (campanhas, doações pontuais) — mostra só a arrecadação ordinária (dízimos/ofertas)."
+        className={`ml-2 inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs transition ${
+          filtros.sem_extra
+            ? 'border-primary bg-primary text-primary-foreground font-semibold'
+            : 'border-border hover:bg-muted'
+        }`}
+      >
+        <Filter className="h-3.5 w-3.5" />
+        {filtros.sem_extra ? 'Sem extraordinárias ✓' : 'Sem extraordinárias'}
+      </button>
+
       {(ativos > 0 || open) && (
         <motion.div
           initial={{ opacity: 0, y: -4 }}

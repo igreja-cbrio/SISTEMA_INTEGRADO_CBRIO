@@ -2632,8 +2632,12 @@ router.post('/:id/enviar-cotacoes-financeiro', async (req, res) => {
     const link = base ? `${base}${linkFilaFinanceira(sol.id)}` : '';
     const html = montarHtmlCotacoes({ sol, cotacoes, itens, refCot, solicitanteNome, catLabel, link });
 
-    let emailResultado = { ok: false, error: 'sem destinatários' };
-    if (to.length) {
+    // E-mail é OPCIONAL (botão discreto). O caminho principal é PELO SISTEMA:
+    // status aguardando_aprovacao_financeira + notificação (o Alberto aprova na
+    // fila do financeiro). Só manda e-mail quando explicitamente pedido.
+    const querEmail = req.body?.enviar_email === true;
+    let emailResultado = { ok: false, error: 'nao_solicitado' };
+    if (querEmail && to.length) {
       emailResultado = await enviarEmail({
         to,
         subject: `Cotações para aprovação — ${sol.titulo || 'Solicitação'}`,
@@ -2654,21 +2658,25 @@ router.post('/:id/enviar-cotacoes-financeiro', async (req, res) => {
       email: false,
     }).catch(err => console.error('[SOLICITACOES] notify cotacoes:', err.message));
 
+    // Caminho principal (sistema): sem e-mail solicitado → já está com o financeiro.
+    if (!querEmail) {
+      return res.json({ ok: true, email_solicitado: false, solicitacao: solAtualizada });
+    }
     if (!to.length) {
       return res.json({
-        ok: true, email_ok: false, enviados: 0,
+        ok: true, email_solicitado: true, email_ok: false, enviados: 0,
         motivo: 'Nenhum e-mail de financeiro encontrado.',
         solicitacao: solAtualizada,
       });
     }
     if (!emailResultado?.ok) {
       return res.json({
-        ok: true, email_ok: false, enviados: to.length,
+        ok: true, email_solicitado: true, email_ok: false, enviados: to.length,
         motivo: emailResultado?.error || 'Falha no envio do e-mail.',
         solicitacao: solAtualizada,
       });
     }
-    res.json({ ok: true, email_ok: true, enviados: to.length, solicitacao: solAtualizada });
+    res.json({ ok: true, email_solicitado: true, email_ok: true, enviados: to.length, solicitacao: solAtualizada });
   } catch (e) {
     console.error('[SOLICITACOES] enviar-cotacoes-financeiro:', e.message);
     res.status(500).json({ error: e.message || 'Erro ao enviar cotações ao financeiro' });
