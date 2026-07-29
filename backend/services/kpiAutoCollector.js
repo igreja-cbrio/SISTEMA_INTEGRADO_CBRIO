@@ -567,17 +567,26 @@ const COLLECTORS = {
   },
 
   // ── NEXT - automatizacoes pos-NEXT ──
+  // ⚠️ Os 3 coletores do Next janelam por `data_fato` da `vw_next_matriculas_kpi`,
+  // NUNCA por `created_at` (2026-07-29). Motivo: o backfill de 13/05 trouxe 1.109
+  // matrículas de turmas de 2024/2025 com created_at = a data do IMPORT — medir
+  // por ela jogaria dois anos de histórico dentro de maio/2026. A regra da data do
+  // fato vive em `fn_next_data_fato` (migration 20260730140000) e é a MESMA que a
+  // `vw_inscricoes_unificadas` usa: uma definição, dois consumidores. NÃO
+  // reimplementar aqui em JS — era essa duplicação que a gente veio desfazer.
+  // `registrado_em` na view continua sendo o carimbo técnico, pra auditoria.
+  //
   // NEXT-01: % inscritos NÃO batizados pre-NEXT que viraram batizandos
   //          (indicaram batismo no NEXT do mês)
   'next.batismos': async ({ inicio, fim }) => {
     // Matrículas no período que estavam ja_batizado=false (cutover: next_matriculas)
     const { data: inscritos } = await supabase
-      .from('next_matriculas')
+      .from('vw_next_matriculas_kpi')
       .select('id, indicou_batismo')
       .eq('ja_batizado', false)
       .is('deleted_at', null)
-      .gte('created_at', inicio)
-      .lt('created_at', fim);
+      .gte('data_fato', inicio)
+      .lt('data_fato', fim);
     const total = (inscritos || []).length;
     if (!total) return { valor: 0, observacao: 'Nenhum inscrito nao-batizado no período' };
     const indicaram = (inscritos || []).filter(i => i.indicou_batismo).length;
@@ -591,12 +600,12 @@ const COLLECTORS = {
   // NEXT-02: % inscritos NÃO voluntários pre-NEXT que indicaram servir
   'next.voluntarios': async ({ inicio, fim }) => {
     const { data: inscritos } = await supabase
-      .from('next_matriculas')
+      .from('vw_next_matriculas_kpi')
       .select('id, indicou_servir')
       .eq('ja_voluntario', false)
       .is('deleted_at', null)
-      .gte('created_at', inicio)
-      .lt('created_at', fim);
+      .gte('data_fato', inicio)
+      .lt('data_fato', fim);
     const total = (inscritos || []).length;
     if (!total) return { valor: 0, observacao: 'Nenhum inscrito nao-voluntario no período' };
     const indicaram = (inscritos || []).filter(i => i.indicou_servir).length;
@@ -610,11 +619,11 @@ const COLLECTORS = {
   // NEXT-03: % inscritos com indicacao de dizimo pos-NEXT
   'next.dizimo': async ({ inicio, fim }) => {
     const { data: inscritos } = await supabase
-      .from('next_matriculas')
+      .from('vw_next_matriculas_kpi')
       .select('id, indicou_dizimo')
       .is('deleted_at', null)
-      .gte('created_at', inicio)
-      .lt('created_at', fim);
+      .gte('data_fato', inicio)
+      .lt('data_fato', fim);
     const total = (inscritos || []).length;
     if (!total) return { valor: 0, observacao: 'Nenhum inscrito no período' };
     const indicaram = (inscritos || []).filter(i => i.indicou_dizimo).length;

@@ -3356,10 +3356,33 @@ com 40–200/mês. **Zero linha com data no futuro.**
 UNIQUE, então a segunda turma de um mês não pode ter a chave, e a alternativa
 seria adivinhar o mês pelo NOME (texto livre). Preferi não adivinhar.
 
-⚠️ **PENDENTE**: os coletores `next.batismos`/`voluntarios`/`dizimo` ainda janelam
-por `next_matriculas.created_at`, então maio/2026 continua recebendo o backfill
-nesses 3 KPIs. Consertar muda valores de períodos JÁ FECHADOS e pede recoleta —
-passo separado, combinado com o Marcos.
+✅ **FECHADO na `20260730140000`**: os coletores `next.batismos`/`voluntarios`/
+`dizimo` também passaram a janelar pela data do fato — ver a seção abaixo.
+
+### ⚠️ Next · os 3 KPIs e a data do fato como FONTE ÚNICA (2026-07-29)
+
+`fn_next_data_fato(created_at, origem_mes)` (migration `20260730140000`) é a
+**única** definição da regra: mês da turma quando a linha foi registrada DEPOIS
+do mês dela (backfill), senão o `created_at`. Dois consumidores, zero
+duplicação: `vw_inscricoes_unificadas` (ramo do next) e
+`vw_next_matriculas_kpi` (nova · sem PII · expõe `data_fato` pra medir e
+`registrado_em` pra auditar). Os 3 coletores leem a view e filtram por
+`data_fato`. **NUNCA reimplementar essa regra em JS.**
+
+Quanto valia o conserto: medindo por `created_at`, **maio/2026 receberia 1.109
+matrículas** (contra 38 pela data do fato), junho 428 (contra 87) e julho 223
+(contra 127).
+
+⚠️ **MAS o achado que importa mais nesses 3 KPIs não é a data — é a FONTE.** De
+**1.890 matrículas vivas**, `indicou_batismo = true` em **0**,
+`indicou_servir = true` em **0**, `indicou_dizimo = true` em **0** e
+`indicou_grupo = true` em **1**. Quem grava esses campos é o direcionamento
+pós-Next (`services/nextDirecionar.js` · tela `/next/direcionar/:token`), que
+praticamente não é usado. Ou seja: **os 3 KPIs vão reportar 0% em todo mês
+independentemente da janela de data** — é por isso que estão `ativo=false`, e
+reativá-los sem antes usar o direcionamento só produziria três zeros bonitos. O
+gargalo é de PROCESSO, não de código. Não reativar sem falar com quem conduz o
+Next.
 
 ### Next · as 4 decisões do Marcos sobre o legado (2026-07-29/30)
 
@@ -3374,10 +3397,16 @@ um problema que não é simples."* As decisões, caso a caso:
    e o controle era limitado"* — o status reflete o julgamento de quem conduzia
    o Next no papel; reescrever hoje trocaria um dado impreciso por outro. **NÃO
    reabrir sem ele.** Ressalva registrada: **maio/2026 não tem NENHUMA matrícula
-   real fora do backfill**, então os KPIs NEXT-01/02/03 daquele mês (janela por
-   `created_at`) são 100% roster de 2025. É um mês fechado e não se repete —
-   decidimos NÃO reescrever `created_at` (destruiria o fato auditável "entrou no
-   import de 13/05") nem criar coluna `matriculado_em` só por isso.
+   real fora do backfill**. Decidimos NÃO reescrever `created_at` (destruiria o
+   fato auditável "entrou no import de 13/05") nem criar coluna `matriculado_em`
+   só por isso. ⚠️ **CORREÇÃO (2026-07-29, na auditoria):** eu escrevi aqui que
+   "os KPIs NEXT-01/02/03 de maio/2026 são 100% roster de 2025" — **estava
+   errado**. Aqueles 3 indicadores estão `ativo=false` e `coletarTodos` filtra
+   `.eq('ativo', true)`, então nunca foram coletados depois do import; os 6
+   registros guardados são de 2026-04/2026-05 e o de maio diz "Nenhum inscrito no
+   período" (coleta anterior a 13/05). O número falso nunca foi gravado — o risco
+   era **latente**. Corrigido de todo jeito na `20260730140000` (ver a seção dos
+   3 KPIs abaixo).
 2. **A porta `next_legado` MORREU** (migration `20260730120000`): as 131
    aparições sem matrícula viraram matrícula (datadas no mês do ENCONTRO, não no
    dia do import; `formado` só onde há presença) e o ramo saiu da view. A view
