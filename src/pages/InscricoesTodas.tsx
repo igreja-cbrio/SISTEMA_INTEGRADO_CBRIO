@@ -23,10 +23,11 @@ export const PORTA_LABEL: Record<string, string> = {
   grupos: 'Grupos',
   grupos_lider: 'Líderes',
   next: 'Next',
-  // Porta retirada em 2026-07-30 (next_inscricoes virou só presença por
-  // encontro). O rótulo fica como fallback: página aberta antes do deploy, ou
-  // linha do fanout de build antigo do app, ainda podem trazer a chave.
-  next_legado: 'Next (legado)',
+  // `next_legado` SAIU daqui em 2026-07-30 junto com a porta. Este mapa não é só
+  // rótulo: alimenta os SELECTS de filtro de porta (aqui e no Dashboard), então
+  // uma chave que a view não emite mais viraria uma opção de filtro que devolve
+  // zero pra sempre. Pra exibição não fazia falta — os 3 pontos de leitura já
+  // caem em `|| i.porta`.
   voluntariado: 'Voluntariado',
 };
 
