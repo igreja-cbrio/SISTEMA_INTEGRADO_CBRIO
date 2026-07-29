@@ -3648,9 +3648,10 @@ router.get('/contas-pagar', async (req, res) => {
 // Resumo agregado (KPIs) — via RPC pra não esbarrar no cap de 1000
 router.get('/contas-pagar/resumo', async (req, res) => {
   try {
-    const { status, ano, fornecedor, plano_contas_id, centro_custo_id, q } = req.query;
+    const { status, ano, mes, fornecedor, plano_contas_id, centro_custo_id, q } = req.query;
     const { data, error } = await supabase.rpc('fn_contas_pagar_resumo', {
       p_ano: ano ? parseInt(ano, 10) : null,
+      p_mes: mes ? parseInt(mes, 10) : null,
       p_status: status || null,
       p_fornecedor: fornecedor || null,
       p_plano: plano_contas_id || null,

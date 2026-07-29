@@ -586,10 +586,12 @@ export default function Financeiro() {
       // Filtro por mês exige ano no backend → usa o ano escolhido ou o atual.
       if (filtroPagarMes) { params.mes = filtroPagarMes; if (!params.ano) params.ano = new Date().getFullYear(); }
       if (filtroPagarBusca) params.q = filtroPagarBusca;
-      // O resumo (KPIs) segue o recorte ano/busca, mas ignora o filtro de status
-      // → os 4 cards sempre mostram total / baixado / aberto / vencido do escopo.
+      // O resumo (KPIs) segue o recorte ano/MÊS/busca, mas ignora o filtro de
+      // status → os 4 cards mostram total / baixado / aberto / vencido do escopo
+      // (aplicar status zeraria os outros cards, que SÃO a quebra por status).
       const resumoParams = {};
       if (filtroPagarAno) resumoParams.ano = filtroPagarAno;
+      if (filtroPagarMes) { resumoParams.mes = filtroPagarMes; if (!resumoParams.ano) resumoParams.ano = new Date().getFullYear(); }
       if (filtroPagarBusca) resumoParams.q = filtroPagarBusca;
       const [lista, resumo] = await Promise.all([
         financeiroV2.contasPagar.list(params),
