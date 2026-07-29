@@ -213,7 +213,7 @@ router.delete('/localizacoes/:id', async (req, res) => {
 router.get('/bens', async (req, res) => {
   try {
     const { status, categoria_id, localizacao_id, busca } = req.query;
-    let query = supabase.from('pat_bens').select('*, pat_categorias(nome, vida_util_meses), pat_localizacoes(nome)').order('nome');
+    let query = supabase.from('pat_bens').select('*, pat_categorias(nome, vida_util_meses), pat_localizacoes(nome), alerta:pat_revisao_itens!alerta_divergencia_item_id(data_revisao, localizacao_encontrada:pat_localizacoes!localizacao_encontrada_id(nome))').order('nome');
     if (status) query = query.eq('status', status);
     // Sentinela "__sem__" filtra bens SEM categoria/localização — pra
     // priorizar o saneamento de cadastro (pedido do usuário 2026-07-28).
@@ -257,7 +257,7 @@ router.get('/bens/barcode/:codigo', async (req, res) => {
     console.log('[PATRIMONIO] barcode lookup variants:', list);
 
     const { data, error } = await supabase.from('pat_bens')
-      .select('*, pat_categorias(nome, vida_util_meses), pat_localizacoes(nome)')
+      .select('*, pat_categorias(nome, vida_util_meses), pat_localizacoes(nome), alerta:pat_revisao_itens!alerta_divergencia_item_id(data_revisao, localizacao_encontrada:pat_localizacoes!localizacao_encontrada_id(nome))')
       .in('codigo_barras', list);
 
     if (error) {
@@ -284,7 +284,7 @@ router.get('/bens/barcode/:codigo', async (req, res) => {
 router.get('/bens/:id', async (req, res) => {
   try {
     const { data: bem, error } = await supabase.from('pat_bens')
-      .select('*, pat_categorias(nome, vida_util_meses), pat_localizacoes(nome)').eq('id', req.params.id).single();
+      .select('*, pat_categorias(nome, vida_util_meses), pat_localizacoes(nome), alerta:pat_revisao_itens!alerta_divergencia_item_id(data_revisao, localizacao_encontrada:pat_localizacoes!localizacao_encontrada_id(nome))').eq('id', req.params.id).single();
     if (error) return res.status(404).json({ error: 'Bem não encontrado' });
     const { data: movs } = await supabase.from('pat_movimentacoes')
       .select('*, profiles!responsavel_id(name)').eq('bem_id', req.params.id).order('data_movimentacao', { ascending: false });
@@ -311,7 +311,7 @@ router.put('/bens/:id', async (req, res) => {
     // limpa o alerta de "localização pendente de reavaliação" (hierarquia
     // 2026-07-29). Se localizacao_id não veio no payload, o alerta é preservado.
     const update = { codigo_barras, nome, descricao: descricao || null, categoria_id: categoria_id || null, localizacao_id: localizacao_id || null, numero_serie: numero_serie || null, marca: marca || null, modelo: modelo || null, valor_aquisicao: valor_aquisicao || null, data_aquisicao: data_aquisicao || null, status, observacoes: observacoes || null };
-    if (localizacao_id !== undefined) update.localizacao_pendente = false;
+    if (localizacao_id !== undefined) { update.localizacao_pendente = false; update.alerta_divergencia_item_id = null; }
     const { data, error } = await supabase.from('pat_bens')
       .update(update)
       .eq('id', req.params.id).select().single();
@@ -392,7 +392,7 @@ router.post('/bens/:id/movimentacoes', async (req, res) => {
     if (error) return res.status(400).json({ error: error.message });
     // Atualizar localização do bem se for transferência
     if (tipo === 'transferencia' && localizacao_destino_id) {
-      await supabase.from('pat_bens').update({ localizacao_id: localizacao_destino_id, localizacao_pendente: false }).eq('id', req.params.id);
+      await supabase.from('pat_bens').update({ localizacao_id: localizacao_destino_id, localizacao_pendente: false, alerta_divergencia_item_id: null }).eq('id', req.params.id);
     }
     if (tipo === 'manutencao') {
       await supabase.from('pat_bens').update({ status: 'manutencao' }).eq('id', req.params.id);
@@ -549,13 +549,41 @@ router.post('/revisao/convocacoes/:id/iniciar', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao iniciar convocação' }); }
 });
 
+// Divergência de localização (pedido do usuário 2026-07-29, item 2): o item
+// NUNCA move o bem sozinho — só quando divergencia_acao === 'movido' o
+// revisor decidiu explicitamente mover de fato. 'alerta' mantém o bem onde
+// está, só liga um aviso nele. Ausência de divergencia_acao (conferência sem
+// divergência, ou ainda não decidida) não toca em pat_bens.
 router.put('/revisao/itens/:id', async (req, res) => {
   try {
-    const { encontrado, status_fisico, observacao } = req.body;
+    const { encontrado, status_fisico, observacao, localizacao_encontrada_id, divergencia_acao } = req.body;
+    if (divergencia_acao && !['movido', 'alerta'].includes(divergencia_acao)) {
+      return res.status(400).json({ error: 'divergencia_acao inválida' });
+    }
     const { data: item, error } = await supabase.from('pat_revisao_itens')
-      .update({ encontrado: !!encontrado, status_fisico: status_fisico || null, observacao: observacao || null, data_revisao: new Date().toISOString() })
+      .update({
+        encontrado: !!encontrado, status_fisico: status_fisico || null, observacao: observacao || null,
+        data_revisao: new Date().toISOString(),
+        localizacao_encontrada_id: localizacao_encontrada_id || null,
+        divergencia_acao: divergencia_acao || null,
+      })
       .eq('id', req.params.id).select().single();
     if (error) return res.status(400).json({ error: error.message });
+
+    if (divergencia_acao === 'movido' && localizacao_encontrada_id) {
+      const { data: bem } = await supabase.from('pat_bens').select('localizacao_id').eq('id', item.bem_id).single();
+      await supabase.from('pat_movimentacoes').insert({
+        bem_id: item.bem_id, tipo: 'transferencia',
+        localizacao_origem_id: bem?.localizacao_id || null, localizacao_destino_id: localizacao_encontrada_id,
+        responsavel_id: req.user.userId, revisao_item_id: item.id,
+        motivo: 'Divergência encontrada na revisão periódica — bem estava em local diferente do esperado e foi realocado de fato.',
+        created_by: req.user.userId,
+      });
+      await supabase.from('pat_bens').update({ localizacao_id: localizacao_encontrada_id, localizacao_pendente: false, alerta_divergencia_item_id: null }).eq('id', item.bem_id);
+    } else if (divergencia_acao === 'alerta') {
+      await supabase.from('pat_bens').update({ alerta_divergencia_item_id: item.id }).eq('id', item.bem_id);
+    }
+
     const { data: todos } = await supabase.from('pat_revisao_itens')
       .select('encontrado, status_fisico').eq('convocacao_id', item.convocacao_id);
     const conferidos = (todos || []).filter((i) => i.encontrado !== null).length;
@@ -564,6 +592,16 @@ router.put('/revisao/itens/:id', async (req, res) => {
       .update({ total_bens_conferidos: conferidos, total_divergencias: divergencias }).eq('id', item.convocacao_id);
     res.json(item);
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar item de revisão' }); }
+});
+
+// Dispensar o alerta de divergência ligado num bem (mantido no lugar mas
+// sinalizado) — decisão humana explícita, nunca automática.
+router.post('/bens/:id/dispensar-alerta', async (req, res) => {
+  try {
+    const { error } = await supabase.from('pat_bens').update({ alerta_divergencia_item_id: null }).eq('id', req.params.id);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: 'Erro ao dispensar alerta' }); }
 });
 
 router.post('/revisao/convocacoes/:id/concluir', async (req, res) => {
