@@ -3265,6 +3265,61 @@ do incidente Kids de 22/07). Corrigir exige o `mem_merge_log`. **PENDENTE.**
 ⚠️ Lei mantida: o script **nunca** funde, religa ou apaga — só enfileira pra
 decisão humana.
 
+### ⚠️ `criado_em` da view unificada = DATA DO FATO, não data do import (2026-07-29)
+
+Marcos, olhando o gráfico de inscrições por dia: *"temos 2401 inscrições no dia
+13/05/26 e outro volume grande de 470 no dia 30/06 — se temos os números por
+inscrição (Next março, abril, maio…), não conseguimos colocar tudo na data que
+aconteceu o evento e não no dia que importamos?"* Dá — e **a data real já estava
+no banco nas três portas**; a view é que lia a coluna errada. Migration
+`20260730130000`, sem reescrever um dado.
+
+Picos que eram data de import: **13/05/2026 = 2.422** (next 1.109 · voluntariado
+749 · batismo 564) · **30/06 = 472** · 20/07 = 99 · 21/07 = 95.
+
+| porta | fonte da data do fato | precisão | regra |
+|---|---|---|---|
+| voluntariado | `data_inscricao` (749/749 preenchidas) | dia | `coalesce(data_inscricao, created_at)` |
+| batismo | `data_batismo` (564/564) | dia | `least(data_batismo, created_at)` |
+| next | mês da turma (`origem_mes`) | mês | mês só quando registrado DEPOIS do mês da turma |
+
+Três detalhes que a simulação contra produção obrigou a acertar (não simplificar):
+
+- **`least()` no batismo, não `coalesce()`**: batismo AGENDADO tem `data_batismo`
+  no FUTURO (havia registro pra 23/08/2026) — usar a cerimônia ali colocaria
+  inscrição no futuro. `least()` = "a evidência mais antiga de que a linha
+  existe": cerimônia nas 564 do backfill (2024/2025 < 13/05/2026), created_at nas
+  agendadas. E `least()` ignora NULL, então as 2 linhas sem data caem sozinhas.
+- **No next, o mês SÓ vale se a linha foi registrada depois do mês da turma.**
+  Sem essa guarda, matrícula real feita em 20/07 na turma de julho seria empurrada
+  pro dia 1º — eu estragaria a precisão do dado NOVO, que é o que precisa ficar
+  certo. Medido: em 30/06, 399 de 426 são backfill (turmas de 2024) e 27 mantêm o
+  dia (inscrição de junho pra turma de julho, data real). Em 26/07 e 28/07,
+  nenhuma é movida.
+- **Meio-dia em BRT** ao converter DATE→timestamptz. `'2025-03-01'::date::timestamptz`
+  é meia-noite UTC = 21h do dia ANTERIOR no fuso da igreja, e o dia apareceria
+  errado no gráfico.
+
+**Portas NÃO tocadas de propósito** (nunca tiveram import em massa, o `created_at`
+delas já é o momento real): espinha, eventos externos, apresentação ×2, grupos,
+líderes. **O `created_at` de toda tabela fica INTACTO** — continua respondendo
+"esta linha entrou no sistema em 13/05 pelo import X". Daqui pra frente as duas
+datas nascem iguais.
+
+Resultado simulado (3.544 linhas): o maior dia passa a ser **27/07 = 138** (dia
+real), os picos de import desaparecem e o volume se espalha por 2024-02→2026-08
+com 40–200/mês. **Zero linha com data no futuro.**
+
+⚠️ **Resíduo conhecido**: turmas "/02" do mesmo mês (Maio/02, Junho/02, Julho/02
+2026 · ~64 matrículas) ficam na data do import — `next_turmas.origem_mes` é
+UNIQUE, então a segunda turma de um mês não pode ter a chave, e a alternativa
+seria adivinhar o mês pelo NOME (texto livre). Preferi não adivinhar.
+
+⚠️ **PENDENTE**: os coletores `next.batismos`/`voluntarios`/`dizimo` ainda janelam
+por `next_matriculas.created_at`, então maio/2026 continua recebendo o backfill
+nesses 3 KPIs. Consertar muda valores de períodos JÁ FECHADOS e pede recoleta —
+passo separado, combinado com o Marcos.
+
 ### Next · as 4 decisões do Marcos sobre o legado (2026-07-29/30)
 
 Mandato dado por ele: *"o importante não é ter os dados certos de 2 anos atrás,
