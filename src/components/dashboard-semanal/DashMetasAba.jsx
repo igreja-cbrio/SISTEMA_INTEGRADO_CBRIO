@@ -499,6 +499,10 @@ function IndicadorCustomCard({ ind, onArchive, onRefinar }) {
   }
   // Semente única por indicador pra dados placeholder variarem visualmente
   const semente = (ind.id || '').split('').reduce((s, c) => s + c.charCodeAt(0), 0) % 100;
+  // Indicador percentual? (mostra "N%" no preview do medidor em vez de "N/100")
+  const ehPercentual = /%|percentu|taxa/i.test(
+    [sug.eixo_y, sug.nome, ind.nome, sug.formula, sug.descricao].filter(Boolean).join(' '),
+  );
 
   return (
     <Card className="border-[#00B39D]/30 bg-[#00B39D]/[0.02]">
@@ -566,7 +570,7 @@ function IndicadorCustomCard({ ind, onArchive, onRefinar }) {
       <CardContent className="space-y-3">
         {/* Preview do gráfico baseado no tipo sugerido pela IA */}
         <div className="bg-card/60 rounded-lg border border-border/40 p-2">
-          <PreviewChartIA tipoGrafico={sug.tipo_grafico} semente={semente} height={160} />
+          <PreviewChartIA tipoGrafico={sug.tipo_grafico} semente={semente} height={160} percentual={ehPercentual} />
           <p className="text-[9px] text-center text-muted-foreground mt-1">
             Preview · dados de exemplo · implementar fórmula pra ativar com dados reais
           </p>
