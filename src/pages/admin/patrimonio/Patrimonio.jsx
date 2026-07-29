@@ -142,7 +142,7 @@ function Input({ label, ...props }) { return (<div style={styles.formGroup}>{lab
 function Select({ label, children, ...props }) { return (<div style={styles.formGroup}>{label && <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">{label}</label>}<select className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" {...props}>{children}</select></div>); }
 function Badge({ status, map }) { const s = map[status] || { c: C.text3, bg: '#73737318', label: status }; return <span style={styles.badge(s.c, s.bg)}>{s.label}</span>; }
 
-const TABS = ['Dashboard', 'Bens', 'Categorias / Localizações', 'Inventários', 'Revisão'];
+const TABS = ['Dashboard', 'Bens', 'Categorias / Localizações', 'Inventários', 'Revisão', 'Movimentações'];
 
 const fmtDateTime = (d) => d ? new Date(d).toLocaleString('pt-BR') : '—';
 
@@ -191,8 +191,33 @@ export default function Patrimonio() {
   const loadRevisaoIndic = useCallback(async () => { try { setRevisaoIndic(await patrimonio.revisao.indicadores()); } catch (e) { console.error(e); } }, []);
   const loadResponsaveis = useCallback(async () => { try { setResponsaveis(await patrimonio.revisao.responsaveis()); } catch (e) { console.error(e); } }, []);
 
+  // Aba central de Movimentações (pedido do usuário 2026-07-29, item 1) —
+  // paginação server-side (lista pode crescer além do cap de 1000), carregada
+  // só quando a aba é aberta ou os filtros/página mudam.
+  const [movList, setMovList] = useState([]);
+  const [movTotal, setMovTotal] = useState(0);
+  const [movPage, setMovPage] = useState(1);
+  const [movLoading, setMovLoading] = useState(false);
+  const [movFiltroTipo, setMovFiltroTipo] = useState('');
+  const [movFiltroLoc, setMovFiltroLoc] = useState('');
+  const [movBusca, setMovBusca] = useState('');
+  const MOV_PAGE_SIZE = 50;
+  const loadMovimentacoes = useCallback(async () => {
+    try {
+      setMovLoading(true);
+      const p = { page: movPage, pageSize: MOV_PAGE_SIZE };
+      if (movFiltroTipo) p.tipo = movFiltroTipo;
+      if (movFiltroLoc) p.localizacao_id = movFiltroLoc;
+      if (movBusca) p.busca = movBusca;
+      const res = await patrimonio.movimentacoes.list(p);
+      setMovList(res.data || []); setMovTotal(res.total || 0);
+    } catch (e) { console.error(e); } finally { setMovLoading(false); }
+  }, [movPage, movFiltroTipo, movFiltroLoc, movBusca]);
+
   useEffect(() => { loadDash(); loadIndicadores(); loadDepreciacao(); loadBens(); loadCats(); loadLocs(); loadInvs(); loadRevisao(); loadRevisaoIndic(); loadResponsaveis(); }, []);
   useEffect(() => { loadBens(); }, [filtroStatus, filtroCat, filtroLoc, busca]);
+  useEffect(() => { if (tab === 5) loadMovimentacoes(); }, [tab, movPage, movFiltroTipo, movFiltroLoc, movBusca]);
+  useEffect(() => { setMovPage(1); }, [movFiltroTipo, movFiltroLoc, movBusca]);
 
   async function saveBem(data) {
     try { if (data.id) await patrimonio.bens.update(data.id, data); else await patrimonio.bens.create(data); setModalBem(null); loadBens(); loadDash(); } catch (e) { setError(e.message); }
@@ -268,6 +293,15 @@ export default function Patrimonio() {
         <RevisaoTab ciclos={revisaoCiclos} indicadores={revisaoIndic}
           onNovoCiclo={() => setModalNovoCiclo(true)} onAbrirConvocacao={abrirConvocacao}
           isDiretor={isDiretor} isCoordenadorRevisao={isCoordenadorRevisao}
+        />
+      )}
+      {tab === 5 && (
+        <MovimentacoesTab list={movList} total={movTotal} page={movPage} pageSize={MOV_PAGE_SIZE} loading={movLoading}
+          onPageChange={setMovPage} locOptions={locOptions}
+          filtroTipo={movFiltroTipo} setFiltroTipo={setMovFiltroTipo}
+          filtroLoc={movFiltroLoc} setFiltroLoc={setMovFiltroLoc}
+          busca={movBusca} setBusca={setMovBusca}
+          onAbrirBem={openDetail}
         />
       )}
 
@@ -709,6 +743,61 @@ function InventariosTab({ inventarios, onNew, onUpdate, isDiretor }) {
           </table>
         </div>
       </div>
+    </>
+  );
+}
+
+// Histórico central de Movimentações (pedido do usuário 2026-07-29, item 1):
+// todos os itens, local antigo/novo, motivo, com destaque pras que vieram de
+// uma revisão agendada (revisao_item_id preenchido — hoje ainda não é escrito
+// por nenhum fluxo; o destaque já fica pronto pro item 2).
+function MovimentacoesTab({ list, total, page, pageSize, loading, onPageChange, locOptions, filtroTipo, setFiltroTipo, filtroLoc, setFiltroLoc, busca, setBusca, onAbrirBem }) {
+  return (
+    <>
+      <div style={styles.filterRow}>
+        <input className="flex h-9 rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" style={{ flex: '1 1 220px', minWidth: 200, maxWidth: 320 }} placeholder="🔍 Buscar por nome ou código do bem..." value={busca} onChange={e => setBusca(e.target.value)} />
+        <select style={styles.select} value={filtroTipo} onChange={e => setFiltroTipo(e.target.value)}>
+          <option value="">Todos os tipos</option>
+          {Object.entries(TIPO_MOV).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+        </select>
+        <select style={styles.select} value={filtroLoc} onChange={e => setFiltroLoc(e.target.value)}>
+          <option value="">Todas localizações (origem ou destino)</option>
+          {locOptions.map(l => <option key={l.id} value={l.id}>{locIndent(l.depth)}{l.nome}</option>)}
+        </select>
+      </div>
+      <div style={styles.card}>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={styles.table}>
+            <thead><tr>
+              <th style={styles.th}>Data</th><th style={styles.th}>Item</th><th style={styles.th}>Tipo</th>
+              <th style={styles.th}>Local antigo</th><th style={styles.th}>Local novo</th>
+              <th style={styles.th}>Motivo / descrição</th><th style={styles.th}>Responsável</th>
+            </tr></thead>
+            <tbody>
+              {loading && <tr><td colSpan={7}><div className="flex items-center justify-center py-6 gap-2"><div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-primary" /><span className="text-xs text-muted-foreground">Carregando...</span></div></td></tr>}
+              {!loading && list.length === 0 && <tr><td colSpan={7} style={{ ...styles.td, textAlign: 'center', color: C.text3 }}>Nenhuma movimentação encontrada</td></tr>}
+              {!loading && list.map(m => (
+                <tr key={m.id} className="cbrio-row" style={m.revisao_item_id ? { background: C.blueBg, cursor: m.bem?.id ? 'pointer' : 'default' } : { cursor: m.bem?.id ? 'pointer' : 'default' }} onClick={() => m.bem?.id && onAbrirBem(m.bem.id)}>
+                  <td style={styles.td}>{fmtDateTime(m.data_movimentacao)}</td>
+                  <td style={styles.td}>
+                    <div style={{ fontWeight: 600 }}>{m.bem?.nome || '—'}</div>
+                    <div style={{ fontSize: 11, color: C.text3, fontFamily: 'monospace' }}>{fmtCodigo(m.bem?.codigo_barras)}</div>
+                  </td>
+                  <td style={styles.td}>
+                    {TIPO_MOV[m.tipo] || m.tipo}
+                    {m.revisao_item_id && <div><span style={styles.badge(C.blue, C.blueBg)} title="Movimentação registrada a partir de uma divergência encontrada numa revisão periódica">Via revisão</span></div>}
+                  </td>
+                  <td style={styles.td}>{m.origem?.nome || '—'}</td>
+                  <td style={styles.td}>{m.destino?.nome || '—'}</td>
+                  <td style={styles.td}>{m.motivo || '—'}</td>
+                  <td style={styles.td}>{m.responsavel?.name || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <Paginacao page={page} pageSize={pageSize} total={total} onPageChange={onPageChange} itemLabel="movimentações" />
     </>
   );
 }

@@ -1424,6 +1424,9 @@ export const patrimonio = {
     movimentar: (id, data) => post(`/patrimonio/bens/${id}/movimentacoes`, data),
     porCodigo: (codigo) => get(`/patrimonio/bens/barcode/${encodeURIComponent(codigo)}`),
   },
+  movimentacoes: {
+    list: (params) => get('/patrimonio/movimentacoes' + (params ? '?' + new URLSearchParams(params) : '')),
+  },
   inventarios: {
     list: () => get('/patrimonio/inventarios'),
     create: (data) => post('/patrimonio/inventarios', data),
