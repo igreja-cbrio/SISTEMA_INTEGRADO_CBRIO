@@ -334,6 +334,54 @@ router.delete('/bens/:id', async (req, res) => {
 });
 
 // ── MOVIMENTAÇÕES ──────────────────────────────────────────
+// Histórico central de TODAS as movimentações de TODOS os bens (pedido do
+// usuário 2026-07-29, item 1) — local antigo/novo, item, motivo, e destaque
+// de quem veio de uma revisão agendada (revisao_item_id preenchido). Paginado
+// server-side (lei do projeto · cap de 1000 do PostgREST).
+router.get('/movimentacoes', async (req, res) => {
+  try {
+    const { tipo, bem_id, localizacao_id, busca, data_inicio, data_fim, page, pageSize } = req.query;
+    const pg = Math.max(1, parseInt(page, 10) || 1);
+    const ps = Math.min(200, Math.max(1, parseInt(pageSize, 10) || 50));
+
+    let query = supabase.from('pat_movimentacoes')
+      .select(`
+        id, tipo, motivo, data_movimentacao, revisao_item_id,
+        bem:pat_bens!bem_id(id, nome, codigo_barras),
+        origem:pat_localizacoes!localizacao_origem_id(nome),
+        destino:pat_localizacoes!localizacao_destino_id(nome),
+        responsavel:profiles!responsavel_id(name)
+      `, { count: 'exact' })
+      .order('data_movimentacao', { ascending: false });
+
+    if (tipo) query = query.eq('tipo', tipo);
+    if (bem_id) query = query.eq('bem_id', bem_id);
+    if (localizacao_id) query = query.or(`localizacao_origem_id.eq.${localizacao_id},localizacao_destino_id.eq.${localizacao_id}`);
+    if (data_inicio) query = query.gte('data_movimentacao', data_inicio);
+    if (data_fim) query = query.lte('data_movimentacao', data_fim + 'T23:59:59');
+
+    // Busca por nome/código/série do BEM — resolve os ids primeiro (embed não
+    // é filtrável direto via supabase-js sem !inner, e !inner mudaria o shape).
+    if (busca) {
+      const b = escapePostgrestValue(busca.trim());
+      const { data: bensAchados, error: bensErr } = await supabase.from('pat_bens')
+        .select('id').or(`nome.ilike.%${b}%,codigo_barras.ilike.%${b}%,numero_serie.ilike.%${b}%`);
+      if (bensErr) return res.status(400).json({ error: bensErr.message });
+      const ids = (bensAchados || []).map(b => b.id);
+      if (ids.length === 0) return res.json({ data: [], total: 0, page: pg, pageSize: ps });
+      query = query.in('bem_id', ids);
+    }
+
+    const from = (pg - 1) * ps;
+    const { data, error, count } = await query.range(from, from + ps - 1);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ data: data || [], total: count || 0, page: pg, pageSize: ps });
+  } catch (e) {
+    console.error('[PAT] Erro ao listar movimentações:', e.message);
+    res.status(500).json({ error: 'Erro ao listar movimentações' });
+  }
+});
+
 router.post('/bens/:id/movimentacoes', async (req, res) => {
   try {
     const { tipo, localizacao_origem_id, localizacao_destino_id, motivo } = req.body;
