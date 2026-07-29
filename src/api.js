@@ -523,6 +523,8 @@ export const dashboardSemanal = {
   iaSugerirIndicador: (pergunta) => post('/dashboard-semanal/ia/sugerir-indicador', { pergunta }),
   indicadoresCustomList: (status) => get('/dashboard-semanal/indicadores-custom' + (status ? `?status=${status}` : '')),
   indicadorCustomPatch: (id, data) => patch(`/dashboard-semanal/indicadores-custom/${id}`, data),
+  // Edita um indicador já criado usando IA (instrução em linguagem natural)
+  iaRefinarIndicador: (id, instrucao) => post(`/dashboard-semanal/ia/refinar-indicador/${id}`, { instrucao }),
   indicadorCustomRemove: (id) => del(`/dashboard-semanal/indicadores-custom/${id}`),
   // Lista KPIs taticos com status (reuso da view do módulo painel) pra aba
   // "KPIs" do dashboard. Filtros opcionais: área, periodicidade, status, kpi.

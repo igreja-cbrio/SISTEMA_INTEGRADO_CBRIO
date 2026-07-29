@@ -1633,6 +1633,84 @@ Responda APENAS com o JSON, sem comentários nem texto extra, no formato:
   }
 });
 
+// POST /ia/refinar-indicador/:id — edita um indicador já criado usando IA.
+// Pega a sugestão atual + uma instrução do usuário e devolve o JSON atualizado,
+// gravando na MESMA linha (mantém id e status ativo/rascunho).
+router.post('/ia/refinar-indicador/:id', async (req, res) => {
+  try {
+    const instrucao = (req.body?.instrucao || '').trim();
+    if (!instrucao) return res.status(400).json({ error: 'instrucao é obrigatória' });
+    if (!process.env.ANTHROPIC_API_KEY) {
+      return res.status(503).json({ error: 'ANTHROPIC_API_KEY não configurada' });
+    }
+    const { data: atual, error: errGet } = await supabase
+      .from('dashboard_indicadores_custom')
+      .select('*').eq('id', req.params.id).maybeSingle();
+    if (errGet) throw errGet;
+    if (!atual) return res.status(404).json({ error: 'Indicador não encontrado' });
+
+    const client = new Anthropic();
+    const dadosDisponiveis = `
+Tabelas principais do CBRio com dados de cultos:
+- cultos: data, service_type_id, presencial_adulto, presencial_kids,
+  decisoes_presenciais, decisoes_online, decisoes_kids, online_pico,
+  online_ds, online_ddus, voluntários
+- vol_service_types: tipos de culto (Domingo 08:30, 10:00, 11:30, 19:00,
+  Quarta com Deus, AMI, Bridge)
+- mem_membros, mem_contribuicoes (data, membro_id, valor, tipo), mem_grupo_membros,
+  mem_voluntarios, batismo_inscricoes, int_visitantes, mem_devocionais,
+  cultos_decisoes_pessoas
+Capacidade do templo: 1050 lugares.`.trim();
+
+    const system = `Você é um analista de dados da igreja CBRio. Vou te dar um indicador já existente (em JSON) e uma instrução de ajuste do usuário. Aplique a mudança pedida e retorne o JSON COMPLETO atualizado (mesmo formato), sem texto extra.
+
+${dadosDisponiveis}
+
+Formato do JSON (retorne todos os campos, atualizando o que a instrução pedir):
+{
+  "nome": "Nome curto (max 60 chars)",
+  "descricao": "1-2 frases",
+  "formula": "Fórmula em pseudo-SQL ou descrição matemática",
+  "tipo_grafico": "barra | linha | area | pizza | gauge | radar",
+  "eixo_x": "...", "eixo_y": "...",
+  "periodicidade_sugerida": "semanal | mensal | trimestral | anual",
+  "metricas_relacionadas": [...], "tabelas_envolvidas": [...],
+  "exemplo_consulta": "...", "alertas": [...]
+}`;
+
+    const userMsg = `Indicador atual (JSON):\n${JSON.stringify(atual.sugestao_ia || {}, null, 2)}\n\nInstrução de ajuste do usuário:\n${instrucao}`;
+    const response = await client.messages.create({
+      model: 'claude-haiku-4-5-20251001', max_tokens: 1200, system,
+      messages: [{ role: 'user', content: userMsg }],
+    });
+    const raw = (response.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
+    let sugestao;
+    try {
+      const match = raw.match(/\{[\s\S]*\}/);
+      sugestao = JSON.parse(match ? match[0] : raw);
+    } catch {
+      return res.status(500).json({ error: 'IA não retornou JSON válido', raw });
+    }
+
+    const { data: salvo, error: errSave } = await supabase
+      .from('dashboard_indicadores_custom')
+      .update({
+        nome: sugestao.nome || atual.nome,
+        descricao: sugestao.descricao ?? atual.descricao,
+        sugestao_ia: sugestao,
+        // guarda o histórico de instruções na pergunta
+        pergunta_usuario: `${atual.pergunta_usuario || ''}\n[ajuste] ${instrucao}`.trim(),
+      })
+      .eq('id', req.params.id).select().single();
+    if (errSave) throw errSave;
+
+    res.json({ ok: true, sugestao, registro: salvo });
+  } catch (e) {
+    console.error('[DASH-SEM] ia refinar', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao refinar indicador' });
+  }
+});
+
 router.get('/indicadores-custom', async (req, res) => {
   try {
     const { status } = req.query;
