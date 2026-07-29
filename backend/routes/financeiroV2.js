@@ -3519,7 +3519,8 @@ router.get('/doador/transacoes', async (req, res) => {
 router.get('/dizimo-oferta', async (req, res) => {
   try {
     const ano = Number(req.query.ano) || new Date().getFullYear();
-    const { data, error } = await supabase.rpc('fin_dizimo_oferta_mensal', { p_ano: ano });
+    const semExtra = req.query.sem_extra === '1' || req.query.sem_extra === 'true';
+    const { data, error } = await supabase.rpc('fin_dizimo_oferta_mensal', { p_ano: ano, p_sem_extra: semExtra });
     if (error) return res.status(400).json({ error: error.message });
     res.json({ ano, meses: data || [] });
   } catch (e) {

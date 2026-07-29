@@ -3862,6 +3862,8 @@ function SaudeResultadoCard({ label, valor, sub, destaque }) {
 // SlideDizimoOferta · proporção dízimo/oferta mês a mês
 // ============================================================
 function SlideDizimoOferta() {
+  const [filtros] = useFiltrosGlobais();
+  const semExtra = !!filtros.sem_extra;
   const anoAtual = new Date().getFullYear();
   const [ano, setAno] = useState(anoAtual);
   const [dados, setDados] = useState(null);
@@ -3871,12 +3873,12 @@ function SlideDizimoOferta() {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    financeiroV2.dizimoOferta(ano)
+    financeiroV2.dizimoOferta(ano, semExtra)
       .then(r => { if (!cancelled) setDados(r); })
       .catch(e => console.warn('[DizOf]:', e?.message))
       .finally(() => !cancelled && setLoading(false));
     return () => { cancelled = true; };
-  }, [ano]);
+  }, [ano, semExtra]);
 
   const meses = dados?.meses || [];
   const MESES = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];

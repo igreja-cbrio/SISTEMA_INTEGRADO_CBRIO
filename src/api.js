@@ -1254,7 +1254,7 @@ export const financeiroV2 = {
     if (limit) p.set('limit', limit);
     return get(`/financeiro-v2/doador/transacoes?${p.toString()}`);
   },
-  dizimoOferta: (ano) => get(`/financeiro-v2/dizimo-oferta${ano ? `?ano=${ano}` : ''}`),
+  dizimoOferta: (ano, semExtra) => get(`/financeiro-v2/dizimo-oferta?ano=${ano || ''}${semExtra ? '&sem_extra=1' : ''}`),
   syncSaldoBancos: () => post('/financeiro-v2/sync-saldo-bancos', {}),
   backfill: (data) => post('/financeiro-v2/backfill/transacoes', data || {}),
   recorrencias: {
