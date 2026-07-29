@@ -272,6 +272,47 @@ Celebra com só nome+telefone continuam válidas para sempre).
   submit quando há horários; `status='rejeitado'` segue FORA do CHECK
   (referências defensivas no código são vocabulário morto — não legalizar).
 
+## ⚠️ Google Tag Manager · SÓ no domínio público, nunca no ERP (2026-07-29)
+
+Gustavo (tráfego pago, parceiro externo) precisava medir anúncio → o site não
+tinha **nenhum** rastreamento (conferido no HTML e no bundle de prod: zero
+Analytics, zero GTM, zero pixel). Container criado pelo Marcos:
+**`GTM-M59RCB34`**, conta Google **`cblab@cbrio.com.br`** (endereço de função
+do marketing, registrado como conta Google sem Gmail — a igreja é Microsoft
+365). A igreja é dona; Gustavo entra como usuário com permissão *Publicar* no
+container (não Admin).
+
+**A LEI:** o GTM carrega **só** em `cbrio.com.br`/`www.cbrio.com.br`. **Nunca**
+em `cbrio.org`. Motivo: este bundle serve os DOIS domínios (`SITE_PUBLICO_HOSTS`
+em `src/App.tsx:549` → hostname público monta `SitePublicoRoutes`, o resto monta
+o ERP). Um snippet solto no `index.html` carregaria o container em toda tela
+logada — nome, CPF, telefone, contribuição, dado de menor no Kids indo pra
+Google/Meta. Por isso o snippet em `index.html` tem **gate por hostname** antes
+de injetar o `gtm.js`, espelhando a lista do `App.tsx`. **Mudou
+`SITE_PUBLICO_HOSTS`? Muda a lista no `index.html` também.**
+
+- **Sem `<noscript>` no ERP** (de propósito): o iframe do GTM só serve visitante
+  com JS desligado e, sem JS, um SPA nem renderiza — não mediria nada e
+  carregaria em `cbrio.org`, exatamente o vazamento que o gate evita. O site em
+  Astro (HTML estático, renderiza sem JS) leva o noscript normal.
+- **ID hardcoded, não env**: o liga/desliga de qualquer tag vive no painel do
+  GTM (é o propósito da ferramenta) — env só somaria um ponto de falha na
+  Vercel. Não trocar por `VITE_*` sem motivo novo.
+- **SPA**: o GTM não detecta troca de rota sozinho. Contagem de navegação
+  depende do gatilho *History Change* configurado pelo Gustavo no painel.
+- **Site em Astro** (`~/cbrio-site`, repo `igreja-cbrio/site-cbrio`): mesmo
+  container já instalado no `src/layouts/Base.astro` (sem gate — lá o app só é
+  público). No cutover do DNS, o GTM sai daqui junto com o `SitePublicoRoutes`.
+
+**Pendente (decisão do Marcos + Gustavo):** conversão de verdade (inscrição em
+evento) acontece nas **portas públicas do ERP**, em `cbrio.org` — fora do
+domínio público. Medir isso exige GTM nessas rotas específicas, com regra
+explícita de não enviar dado pessoal. Não fazer por conta: cada porta pública é
+um formulário com PII (ver as 2 LEIs de porta/inscrição acima). Também em
+aberto: o domínio já tem **Search Console** verificado por outra conta Google
+("Play Console org" · meta `google-site-verification` no `index.html`) e o canal
+do YouTube usa uma terceira — consolidar identidade antes de ligar Ads↔YouTube.
+
 ## Sweep dos formulários de inscrição · achados e correções (2026-07-28)
 
 Auditoria multi-agente das 7 portas pós-módulo de inscrições (pedido do
