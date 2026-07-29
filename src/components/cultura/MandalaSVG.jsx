@@ -197,10 +197,9 @@ export default function MandalaSVG({ data, loading, onPetalClick, onCenterClick 
                   <NumberTicker value={decisoes} className="text-4xl font-extrabold" />
                 )}
               </div>
-              <div className="text-[10px] text-muted-foreground mt-1">no mês</div>
-              {onCenterClick && (
-                <div className="text-[9px] text-primary/80 mt-0.5 underline underline-offset-2">ver detalhe</div>
-              )}
+              <div className="text-[10px] text-muted-foreground mt-1">
+                no mês{onCenterClick && <span className="text-primary/80"> · ver detalhe</span>}
+              </div>
             </div>
           </foreignObject>
         </motion.g>
