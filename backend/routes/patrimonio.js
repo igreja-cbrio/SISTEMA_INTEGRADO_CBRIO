@@ -70,10 +70,31 @@ router.get('/localizacoes', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao listar localizações' }); }
 });
 
+// Impede que pai_id crie um ciclo na árvore (ex: A vira pai de B que já é pai
+// de A) — sobe a cadeia de ancestrais de p_pai_id e recusa se achar o próprio
+// ownId no caminho. ownId é null na criação (não há como um nó novo já ser
+// ancestral de ninguém).
+async function paiCriaCiclo(paiId, ownId) {
+  let atual = paiId;
+  const vistos = new Set();
+  while (atual) {
+    if (atual === ownId) return true;
+    if (vistos.has(atual)) return true; // ciclo já existente na base
+    vistos.add(atual);
+    const { data, error } = await supabase.from('pat_localizacoes').select('pai_id').eq('id', atual).single();
+    if (error || !data) return false;
+    atual = data.pai_id;
+  }
+  return false;
+}
+
 router.post('/localizacoes', async (req, res) => {
   try {
     const { nome, pai_id } = req.body;
     if (!nome) return res.status(400).json({ error: 'Nome é obrigatório' });
+    if (pai_id && await paiCriaCiclo(pai_id, null)) {
+      return res.status(400).json({ error: 'Localização pai inválida (criaria um ciclo)' });
+    }
     const { data, error } = await supabase.from('pat_localizacoes')
       .insert({ nome, pai_id: pai_id || null }).select().single();
     if (error) return res.status(400).json({ error: error.message });
@@ -86,7 +107,12 @@ router.put('/localizacoes/:id', async (req, res) => {
     const { nome, pai_id } = req.body;
     const update = {};
     if (nome !== undefined) update.nome = nome;
-    if (pai_id !== undefined) update.pai_id = pai_id || null;
+    if (pai_id !== undefined) {
+      if (pai_id && await paiCriaCiclo(pai_id, req.params.id)) {
+        return res.status(400).json({ error: 'Localização pai inválida (criaria um ciclo)' });
+      }
+      update.pai_id = pai_id || null;
+    }
     const { data, error } = await supabase.from('pat_localizacoes')
       .update(update).eq('id', req.params.id).select().single();
     if (error) return res.status(400).json({ error: error.message });
@@ -200,8 +226,13 @@ router.post('/bens', async (req, res) => {
 router.put('/bens/:id', async (req, res) => {
   try {
     const { codigo_barras, nome, descricao, categoria_id, localizacao_id, numero_serie, marca, modelo, valor_aquisicao, data_aquisicao, status, observacoes } = req.body;
+    // Reatribuir a localização (edição manual do cadastro) é decisão humana —
+    // limpa o alerta de "localização pendente de reavaliação" (hierarquia
+    // 2026-07-29). Se localizacao_id não veio no payload, o alerta é preservado.
+    const update = { codigo_barras, nome, descricao: descricao || null, categoria_id: categoria_id || null, localizacao_id: localizacao_id || null, numero_serie: numero_serie || null, marca: marca || null, modelo: modelo || null, valor_aquisicao: valor_aquisicao || null, data_aquisicao: data_aquisicao || null, status, observacoes: observacoes || null };
+    if (localizacao_id !== undefined) update.localizacao_pendente = false;
     const { data, error } = await supabase.from('pat_bens')
-      .update({ codigo_barras, nome, descricao: descricao || null, categoria_id: categoria_id || null, localizacao_id: localizacao_id || null, numero_serie: numero_serie || null, marca: marca || null, modelo: modelo || null, valor_aquisicao: valor_aquisicao || null, data_aquisicao: data_aquisicao || null, status, observacoes: observacoes || null })
+      .update(update)
       .eq('id', req.params.id).select().single();
     if (error) return res.status(400).json({ error: error.message });
     res.json(data);
@@ -232,7 +263,7 @@ router.post('/bens/:id/movimentacoes', async (req, res) => {
     if (error) return res.status(400).json({ error: error.message });
     // Atualizar localização do bem se for transferência
     if (tipo === 'transferencia' && localizacao_destino_id) {
-      await supabase.from('pat_bens').update({ localizacao_id: localizacao_destino_id }).eq('id', req.params.id);
+      await supabase.from('pat_bens').update({ localizacao_id: localizacao_destino_id, localizacao_pendente: false }).eq('id', req.params.id);
     }
     if (tipo === 'manutencao') {
       await supabase.from('pat_bens').update({ status: 'manutencao' }).eq('id', req.params.id);
