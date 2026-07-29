@@ -75,10 +75,19 @@ const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 dias
 // é server-side: geração do token × linha + inscrições abertas + triagem.
 const RENOV_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 dias
 
+// URL local (dev) NUNCA vira link de WhatsApp — quem recebe é sempre externo.
+// Incidente 29/07/2026: redisparo local montou o link com localhost:5173.
+// O waSender ainda bloqueia o envio (2ª camada); aqui a URL já nasce certa.
+const RE_BASE_LOCAL = /localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]|^https?:\/\/(?:10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.)/i;
 function baseUrl() {
-  return (process.env.FRONTEND_URL
+  const candidata = (process.env.FRONTEND_URL
     || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'https://cbrio.org')
   ).replace(/\/+$/, '');
+  if (RE_BASE_LOCAL.test(candidata)) {
+    console.warn('[GruposWPP] FRONTEND_URL local (%s) ignorada em link de WhatsApp — usando https://cbrio.org', candidata);
+    return 'https://cbrio.org';
+  }
+  return candidata;
 }
 
 // ── Token ────────────────────────────────────────────────────────────────

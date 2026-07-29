@@ -51,6 +51,16 @@ function normalizarTelefone(raw, { strict = false } = {}) {
   return strict ? null : d;
 }
 
+// Guarda anti-link-local (incidente 29/07/2026): um redisparo rodado numa
+// máquina de dev montou o link de aprovação com FRONTEND_URL=localhost e a
+// líder recebeu "http://localhost:5173/..." no WhatsApp. NENHUMA mensagem
+// pode sair com URL de ambiente local/privado — o destinatário é sempre
+// externo. Bloqueia aqui porque este é o funil único de envio.
+const RE_URL_LOCAL = /localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]|:\/\/(?:10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.)/i;
+function contemUrlLocal(payload) {
+  try { return RE_URL_LOCAL.test(JSON.stringify(payload)); } catch { return false; }
+}
+
 // POST cru na Graph. Retorna o contrato único.
 async function postMessages(payload, { phoneNumberId, timeoutMs = 15000, rotulo = 'msg' } = {}) {
   const tk = token();
@@ -58,6 +68,10 @@ async function postMessages(payload, { phoneNumberId, timeoutMs = 15000, rotulo 
   if (!tk || !pnid) {
     console.warn('[waSender] credenciais ausentes · pulando envio (%s)', rotulo);
     return { sent: false, reason: 'sem_credencial' };
+  }
+  if (contemUrlLocal(payload)) {
+    console.error('[waSender] %s BLOQUEADO: mensagem contém URL local (FRONTEND_URL de dev?) · to=%s', rotulo, payload.to);
+    return { sent: false, reason: 'link_local', to: payload.to };
   }
   const url = `https://graph.facebook.com/${GRAPH_VERSION}/${pnid}/messages`;
   try {
