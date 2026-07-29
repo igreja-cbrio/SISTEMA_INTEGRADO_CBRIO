@@ -23,6 +23,9 @@ export const PORTA_LABEL: Record<string, string> = {
   grupos: 'Grupos',
   grupos_lider: 'Líderes',
   next: 'Next',
+  // Porta retirada em 2026-07-30 (next_inscricoes virou só presença por
+  // encontro). O rótulo fica como fallback: página aberta antes do deploy, ou
+  // linha do fanout de build antigo do app, ainda podem trazer a chave.
   next_legado: 'Next (legado)',
   voluntariado: 'Voluntariado',
 };
