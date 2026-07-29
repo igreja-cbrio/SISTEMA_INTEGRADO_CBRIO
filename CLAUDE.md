@@ -1630,6 +1630,25 @@ Susto do Marcos (envios proativos a líderes). Auditoria do código vivo + barre
 - ⚠️ Aplicar `20260723180000` antes do merge (aditiva/idempotente · código tolera
   ausência tratando como false).
 
+## ⚠️ WhatsApp · link local NUNCA sai em mensagem (guarda · 2026-07-29)
+
+Incidente: um redisparo manual do aviso de pedido, rodado numa máquina de dev,
+montou o link de aprovação com `FRONTEND_URL=http://localhost:5173` do `.env`
+local — a líder recebeu um link de localhost no WhatsApp. Proteção em 2 camadas
+(não regredir):
+- **`waSender.postMessages`** (funil ÚNICO de envio da Cloud API): payload que
+  contenha URL local/privada (`localhost`, `127.0.0.1`, `0.0.0.0`, `[::1]`,
+  `://10.*`, `://192.168.*`, `://172.16-31.*`) é BLOQUEADO com
+  `reason:'link_local'` — nunca chega na Meta. Cobre qualquer template/texto
+  de qualquer serviço, inclusive scripts manuais.
+- **`gruposWhatsapp.baseUrl()`**: `FRONTEND_URL`/`VERCEL_URL` local é ignorada
+  ao montar link de WhatsApp (warn + fallback `https://cbrio.org`) — a URL já
+  nasce certa mesmo em dev.
+- `whatsappFila.falhaPermanente` trata `link_local` como erro PERMANENTE (sem
+  retry · notifica o módulo — reenviar nunca resolveria).
+Regra pra scripts manuais de reenvio: SEMPRE sobrescrever `FRONTEND_URL` pra
+produção antes de disparar (o `.env` de dev aponta pra localhost).
+
 ## Grupos · templates v2 do fluxo de aprovação (2026-07-29)
 
 Pedido do Pr. Nélio: o fluxo correto do líder é LIGAR pra pessoa antes de
