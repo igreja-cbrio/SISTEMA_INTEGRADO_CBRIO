@@ -18,10 +18,13 @@ const money = (v: number) => Number(v || 0).toLocaleString('pt-BR', { style: 'cu
 const ESTADO_LABEL: Record<string, string> = {
   RASCUNHO: 'Rascunho', AGUARDANDO_VALIDACAO_LIDER: 'Aguardando líder', AGUARDANDO_DIRETOR_AREA: 'Aguardando diretor',
   EM_AJUSTE: 'Em ajuste', REPROVADO_AREA: 'Reprovada (área)', EM_AVALIACAO: 'Em avaliação', CANCELADO: 'Cancelada',
+  EM_DELIBERACAO: 'Em deliberação', APROVADO: 'Aprovada', EM_ADEQUACAO: 'Em adequação (ressalvas)',
+  EM_VERIFICACAO_RESSALVAS: 'Verificando ressalvas', AGUARDANDO_RECURSO: 'Aguardando recurso',
+  EM_REAVALIACAO: 'Em reavaliação (recurso)', REPROVADO: 'Reprovada', CONSOLIDADO: 'Consolidada',
 };
-const estadoCor = (e: string) => e === 'REPROVADO_AREA' || e === 'CANCELADO' ? 'bg-red-500/15 text-red-600'
-  : e === 'EM_AVALIACAO' ? 'bg-emerald-500/15 text-emerald-600'
-  : e === 'EM_AJUSTE' ? 'bg-amber-500/15 text-amber-600' : 'bg-foreground/10 text-foreground';
+const estadoCor = (e: string) => ['REPROVADO_AREA', 'CANCELADO', 'REPROVADO'].includes(e) ? 'bg-red-500/15 text-red-600'
+  : ['EM_AVALIACAO', 'APROVADO', 'CONSOLIDADO'].includes(e) ? 'bg-emerald-500/15 text-emerald-600'
+  : ['EM_AJUSTE', 'EM_ADEQUACAO', 'AGUARDANDO_RECURSO', 'EM_VERIFICACAO_RESSALVAS', 'EM_REAVALIACAO'].includes(e) ? 'bg-amber-500/15 text-amber-600' : 'bg-foreground/10 text-foreground';
 
 const TABS = [
   { id: 'minhas', label: 'Minhas propostas' },
@@ -385,6 +388,11 @@ function PropostaDetalhe({ id, aux, onVoltar, onEditar }: { id: string; aux: Aux
   if (p.estado === 'AGUARDANDO_VALIDACAO_LIDER' && (souLider || admin)) { acoes.push(['validar', 'Validar e enviar', Check, false]); acoes.push(['devolver_lider', 'Devolver', RotateCcw, true]); }
   if (p.estado === 'AGUARDANDO_DIRETOR_AREA' && souDiretor) { acoes.push(['aprovar', 'Aprovar (1º filtro)', Check, false]); acoes.push(['devolver_area', 'Devolver p/ ajuste', RotateCcw, true]); acoes.push(['negar', 'Negar', X, true]); }
   if (p.estado === 'EM_AJUSTE' && (souAutorLider || admin)) { acoes.push(['reenviar', 'Reenviar', Send, false]); }
+  // Fase 3 · ressalvas + recurso
+  if (p.estado === 'EM_ADEQUACAO' && (souAutorLider || admin)) { acoes.push(['enviar_adequacao', 'Enviar adequação', Send, false]); }
+  if (p.estado === 'EM_VERIFICACAO_RESSALVAS' && souDiretor) { acoes.push(['ressalvas_atendidas', 'Ressalvas atendidas', Check, false]); acoes.push(['ressalvas_nao_atendidas', 'Não atendidas', RotateCcw, true]); }
+  if (p.estado === 'AGUARDANDO_RECURSO' && (souAutorLider || admin)) { acoes.push(['interpor_recurso', 'Interpor recurso', Send, false]); }
+  if (p.estado === 'EM_REAVALIACAO' && souDiretor) { acoes.push(['reav_aprovar', 'Aprovar recurso', Check, false]); acoes.push(['reav_ressalvas', 'Aprovar c/ ressalvas', Check, false]); acoes.push(['reav_manter', 'Manter reprovação', X, true]); }
   const podeEditar = ['RASCUNHO', 'EM_AJUSTE'].includes(p.estado) && (souAutorLider || admin);
 
   const linha = (label: string, v: any) => v ? <div className="text-sm"><span className="text-muted-foreground">{label}: </span>{String(v)}</div> : null;
@@ -419,12 +427,14 @@ function PropostaDetalhe({ id, aux, onVoltar, onEditar }: { id: string; aux: Aux
       {acoes.length > 0 && (
         <div className="flex items-center gap-2 flex-wrap">
           {acoes.map(([a, label, Icon, motivo]) => (
-            <Button key={a} size="sm" variant={a === 'negar' || String(a).startsWith('devolver') || a === 'descartar' ? 'outline' : 'default'} disabled={busy} onClick={() => acao(a, motivo)}>
+            <Button key={a} size="sm" variant={a === 'negar' || a === 'reav_manter' || String(a).startsWith('devolver') || a === 'ressalvas_nao_atendidas' || a === 'descartar' ? 'outline' : 'default'} disabled={busy} onClick={() => acao(a, motivo)}>
               <Icon className="h-4 w-4 mr-1" /> {label}
             </Button>
           ))}
         </div>
       )}
+
+      {p.estado === 'CONSOLIDADO' && <PosEventoPanel id={id} />}
 
       {showHist && (
         <Card><CardContent className="pt-4 space-y-2">
@@ -500,6 +510,7 @@ function CicloDatas({ ciclo, isAdmin, onSaved }: any) {
           <Select value={f.estado} onValueChange={v => setF({ ...f, estado: v })} disabled={!isAdmin}><SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent className="z-[1001]">{['configuracao', 'submissao_aberta', 'em_avaliacao', 'em_deliberacao', 'encerrado'].map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent></Select></div>
         {isAdmin && <Button size="sm" onClick={salvar} disabled={saving}>{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Save className="h-4 w-4 mr-1" /> Salvar</>}</Button>}
+        {isAdmin && <Button size="sm" variant="outline" onClick={async () => { if (!window.confirm('Consolidar o ciclo? As propostas APROVADAS viram projetos/eventos e o ciclo é encerrado.')) return; try { const r = await propostas.consolidarCiclo(ciclo.id); toast.success(`${r.consolidadas} proposta(s) consolidada(s)`); onSaved(); } catch (e: any) { toast.error(e?.message || 'Erro'); } }}>Consolidar ciclo</Button>}
       </div>
     </div>
   );
@@ -727,5 +738,31 @@ function MuralTab({ cicloId }: { cicloId: string }) {
       </div>
       <p className="text-[11px] text-muted-foreground">Nota = média ponderada dos critérios (0–5). "Nota (outros)" exige quórum de {d.min_avaliadores} avaliadores. Marcar "Aprovar" só soma no orçamento acima; a decisão oficial é registrada nos botões de Decisão.</p>
     </div>
+  );
+}
+
+// ═══ Fase 3 · Pós-evento ═══════════════════════════════════════════════════
+function PosEventoPanel({ id }: { id: string }) {
+  const [f, setF] = useState<any>({ data_realizacao: '', resultados_obtidos: '', licoes_aprendidas: '', recomendacoes: '', avaliacao_final: '' });
+  const [saving, setSaving] = useState(false);
+  useEffect(() => { propostas.posEvento(id).then((d: any) => { if (d) setF({ data_realizacao: d.data_realizacao || '', resultados_obtidos: d.resultados_obtidos || '', licoes_aprendidas: d.licoes_aprendidas || '', recomendacoes: d.recomendacoes || '', avaliacao_final: d.avaliacao_final || '' }); }).catch(() => {}); }, [id]);
+  const set = (k: string, v: any) => setF((p: any) => ({ ...p, [k]: v }));
+  const salvar = async () => { setSaving(true); try { await propostas.salvarPosEvento(id, f); toast.success('Pós-evento salvo'); } catch (e: any) { toast.error(e?.message || 'Erro'); } finally { setSaving(false); } };
+  return (
+    <Secao titulo="Pós-evento (após a realização)">
+      <div className="flex gap-3 flex-wrap">
+        <Campo label="Data de realização" cls="flex-1 min-w-[150px]"><DatePicker value={f.data_realizacao} onChange={(v: string) => set('data_realizacao', v)} /></Campo>
+        <Campo label="Avaliação final" cls="flex-1 min-w-[180px]">
+          <Select value={f.avaliacao_final || '__none__'} onValueChange={v => set('avaliacao_final', v === '__none__' ? '' : v)}>
+            <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
+            <SelectContent className="z-[1001]"><SelectItem value="__none__">—</SelectItem><SelectItem value="repetir">Repetir</SelectItem><SelectItem value="repetir_com_ajustes">Repetir com ajustes</SelectItem><SelectItem value="nao_repetir">Não repetir</SelectItem></SelectContent>
+          </Select>
+        </Campo>
+      </div>
+      <Campo label="Resultados obtidos"><Textarea rows={2} value={f.resultados_obtidos} onChange={e => set('resultados_obtidos', e.target.value)} /></Campo>
+      <Campo label="Lições aprendidas"><Textarea rows={2} value={f.licoes_aprendidas} onChange={e => set('licoes_aprendidas', e.target.value)} /></Campo>
+      <Campo label="Recomendações"><Textarea rows={2} value={f.recomendacoes} onChange={e => set('recomendacoes', e.target.value)} /></Campo>
+      <Button size="sm" onClick={salvar} disabled={saving}>{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Save className="h-4 w-4 mr-1" /> Salvar pós-evento</>}</Button>
+    </Secao>
   );
 }

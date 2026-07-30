@@ -304,6 +304,12 @@ router.post('/:id/transicao', authorizeModule('propostas', 2), async (req, res) 
       enviar: souAutorOuLider || admin, reenviar: souAutorOuLider || admin, descartar: souAutorOuLider || admin,
       validar: p.lider_usuario_id === me || admin, devolver_lider: p.lider_usuario_id === me || admin,
       aprovar: souDiretor, devolver_area: souDiretor, negar: souDiretor,
+      // Fase 3 · ressalvas (líder/autor envia adequação; diretor da área verifica)
+      enviar_adequacao: souAutorOuLider || admin,
+      ressalvas_atendidas: souDiretor, ressalvas_nao_atendidas: souDiretor,
+      // Fase 3 · recurso (líder/autor interpõe; diretoria/presidente reavalia)
+      interpor_recurso: souAutorOuLider || admin,
+      reav_aprovar: souDiretor, reav_ressalvas: souDiretor, reav_manter: souDiretor,
     };
     if (!autoriza[acao]) return res.status(403).json({ error: 'Sem permissão pra esta ação' });
 
@@ -317,11 +323,15 @@ router.post('/:id/transicao', authorizeModule('propostas', 2), async (req, res) 
     if (error) return res.status(400).json({ error: error.message });
     if (!r?.ok) return res.status(409).json(r);
 
+    // Proposta aprovada → materializa em projects/events (best-effort · idempotente)
+    if (r.para === 'APROVADO') { try { await materializarProposta(p.id); } catch (e) { console.warn('[propostas] materializar:', e.message); } }
+
     // Notifica o próximo responsável + autor (best-effort · RN22)
     const alvo = [];
+    if (p.criado_por_usuario_id) alvo.push(p.criado_por_usuario_id);
     if (r.para === 'AGUARDANDO_VALIDACAO_LIDER' && p.lider_usuario_id) alvo.push(p.lider_usuario_id);
-    if (r.para === 'AGUARDANDO_DIRETOR_AREA') { const d = await diretorDaArea(p.area_id); if (d) alvo.push(d); }
-    if (['EM_AJUSTE', 'REPROVADO_AREA', 'EM_AVALIACAO'].includes(r.para) && p.criado_por_usuario_id) alvo.push(p.criado_por_usuario_id);
+    if (['AGUARDANDO_DIRETOR_AREA', 'EM_VERIFICACAO_RESSALVAS'].includes(r.para)) { const d = await diretorDaArea(p.area_id); if (d) alvo.push(d); }
+    if (['EM_ADEQUACAO', 'AGUARDANDO_RECURSO'].includes(r.para) && p.lider_usuario_id) alvo.push(p.lider_usuario_id);
     if (alvo.length) {
       notificar({ modulo: 'propostas', tipo: 'proposta_transicao', titulo: `Proposta ${p.codigo || ''} · ${r.para}`,
         mensagem: comentario || `A proposta mudou para ${r.para}.`, link: '/propostas',
@@ -460,6 +470,7 @@ router.get('/mural', authorizeModule('propostas', 1), async (req, res) => {
     if (!(await souAvaliador(req))) return res.status(403).json({ error: 'Mural restrito a diretores/presidente' });
     const cicloId = req.query.ciclo_id;
     if (!cicloId) return res.status(400).json({ error: 'ciclo_id obrigatório' });
+    await expirarRecursos(cicloId).catch(() => {}); // RN16 · varredura lazy (sem cron novo)
     const [{ data: ciclo }, { data: props }, { data: crit }, minAv] = await Promise.all([
       supabase.from('prop_ciclo').select('orcamento_disponivel').eq('id', cicloId).maybeSingle(),
       supabase.from('prop_proposta').select('id, codigo, tipo, titulo, area_id, custo_total, custo_liquido, classificacao_custo, complexidade, impacto_esperado, passa_no_ourico, estado, area:areas(nome)').eq('ciclo_id', cicloId).in('estado', ESTADOS_MURAL).is('deleted_at', null),
@@ -537,8 +548,94 @@ router.post('/:id/deliberar', authorizeModule('propostas', 2), async (req, res) 
     if (!r?.ok) return res.status(409).json(r);
 
     await supabase.from('prop_deliberacao').insert({ proposta_id: p.id, tipo: 'deliberacao', resultado, ressalvas: ressalvas || null, motivo: motivo || null, snapshot_id: snap?.id || null, registrado_por_usuario_id: meuId(req) });
+    if (r.para === 'APROVADO') { try { await materializarProposta(p.id); } catch (e) { console.warn('[propostas] materializar:', e.message); } }
     if (p.criado_por_usuario_id) notificar({ modulo: 'propostas', tipo: 'proposta_deliberacao', titulo: `Proposta ${p.codigo || ''} · ${r.para}`, mensagem: coment || `Decisão da reunião: ${resultado}.`, link: '/propostas', targetIds: [p.criado_por_usuario_id], email: false }).catch(() => {});
     res.json(r);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FASE 3 · materialização, recurso (expiração lazy), pós-evento, consolidação
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Materializa a proposta APROVADA em projects/events (idempotente por proposta_id).
+async function materializarProposta(propostaId) {
+  const { data: p } = await supabase.from('prop_proposta').select('*').eq('id', propostaId).maybeSingle();
+  if (!p) return;
+  const [{ data: jaProj }, { data: jaEv }] = await Promise.all([
+    supabase.from('projects').select('id').eq('proposta_id', propostaId).maybeSingle(),
+    supabase.from('events').select('id').eq('proposta_id', propostaId).maybeSingle(),
+  ]);
+  if (jaProj || jaEv) return; // já materializada
+  let areaNome = null;
+  if (p.area_id) { const { data: a } = await supabase.from('areas').select('nome').eq('id', p.area_id).maybeSingle(); areaNome = a?.nome || null; }
+  if (p.tipo === 'evento') {
+    await supabase.from('events').insert({
+      name: p.titulo || 'Proposta ' + (p.codigo || ''), date: p.data_realizacao_prevista || null,
+      status: 'no-prazo', description: p.descricao_motivacao || null, budget_planned: p.custo_total || 0,
+      recurrence: 'unico', proposta_id: p.id, criacao_origem: 'ciclo_propostas', created_by: p.criado_por_usuario_id || null,
+    });
+  } else {
+    await supabase.from('projects').insert({
+      name: p.titulo || 'Proposta ' + (p.codigo || ''), year: p.ano_execucao || null, area: areaNome,
+      status: 'planejamento', description: p.descricao_motivacao || null,
+      date_start: p.data_inicio_prevista || null, date_end: p.data_termino_prevista || null,
+      budget_planned: p.custo_total || 0, budget_revenue: p.arrecadacao_prevista || 0, budget_church_cost: p.custo_liquido || 0,
+      leader_id: p.lider_usuario_id || null, responsible_id: p.lider_usuario_id || null,
+      publico_alvo: p.publico_alvo || null, complexidade: p.complexidade || null, impacto: p.impacto_esperado || null,
+      frequency: p.tipo === 'rotina' ? (p.frequencia || null) : null,
+      proposta_id: p.id, criacao_origem: 'ciclo_propostas', created_by: p.criado_por_usuario_id || null,
+    });
+  }
+}
+
+// RN16 · move AGUARDANDO_RECURSO → REPROVADO quando o prazo vence (varredura lazy).
+async function expirarRecursos(cicloId) {
+  const dias = Number(await paramCiclo(cicloId, 'prazo_recurso_dias', '10')) || 10;
+  const { data: props } = await supabase.from('prop_proposta').select('id').eq('ciclo_id', cicloId).eq('estado', 'AGUARDANDO_RECURSO').is('deleted_at', null);
+  if (!props?.length) return;
+  const ids = props.map(p => p.id);
+  const { data: logs } = await supabase.from('prop_log').select('proposta_id, ocorrido_em').eq('para_estado', 'AGUARDANDO_RECURSO').in('proposta_id', ids).order('ocorrido_em', { ascending: false });
+  const entrada = {};
+  (logs || []).forEach(l => { if (!entrada[l.proposta_id]) entrada[l.proposta_id] = l.ocorrido_em; });
+  const limite = Date.now() - dias * 86400000;
+  for (const id of ids) {
+    const t = entrada[id] ? new Date(entrada[id]).getTime() : null;
+    if (t != null && t < limite) await supabase.rpc('fn_prop_transicionar', { p_id: id, p_acao: 'recurso_expirado', p_comentario: `Prazo de recurso de ${dias} dias vencido`, p_ator: null });
+  }
+}
+
+// Pós-evento (RN · só faz sentido em CONSOLIDADO cuja data já passou)
+router.get('/:id/pos-evento', authorizeModule('propostas', 1), async (req, res) => {
+  const { data, error } = await supabase.from('prop_pos_evento').select('*').eq('proposta_id', req.params.id).maybeSingle();
+  if (error) return res.status(400).json({ error: error.message });
+  res.json(data || null);
+});
+router.post('/:id/pos-evento', authorizeModule('propostas', 2), async (req, res) => {
+  const b = req.body || {};
+  const payload = {
+    proposta_id: req.params.id,
+    data_realizacao: b.data_realizacao || null, resultados_obtidos: b.resultados_obtidos || null,
+    licoes_aprendidas: b.licoes_aprendidas || null, recomendacoes: b.recomendacoes || null,
+    avaliacao_final: ['repetir', 'repetir_com_ajustes', 'nao_repetir'].includes(b.avaliacao_final) ? b.avaliacao_final : null,
+    registrado_por: meuId(req), atualizado_em: new Date().toISOString(),
+  };
+  const { data, error } = await supabase.from('prop_pos_evento').upsert(payload, { onConflict: 'proposta_id' }).select().maybeSingle();
+  if (error) return res.status(400).json({ error: error.message });
+  res.json(data);
+});
+
+// Consolidar ciclo (admin): APROVADO → CONSOLIDADO + encerra o ciclo
+router.post('/config/ciclos/:id/consolidar', authorizeModule('propostas', 5), async (req, res) => {
+  try {
+    const { data: aprovadas } = await supabase.from('prop_proposta').select('id').eq('ciclo_id', req.params.id).eq('estado', 'APROVADO').is('deleted_at', null);
+    let n = 0;
+    for (const p of (aprovadas || [])) {
+      const { data: r } = await supabase.rpc('fn_prop_transicionar', { p_id: p.id, p_acao: 'consolidar', p_ator: meuId(req) });
+      if (r?.ok) { n++; await materializarProposta(p.id).catch(() => {}); }
+    }
+    await supabase.from('prop_ciclo').update({ estado: 'encerrado', updated_at: new Date().toISOString() }).eq('id', req.params.id);
+    res.json({ ok: true, consolidadas: n });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
