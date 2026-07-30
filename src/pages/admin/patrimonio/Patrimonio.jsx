@@ -1,5 +1,10 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Tag, ClipboardList, Trash2, Archive, Pencil, MapPin, ScanLine } from 'lucide-react';
+import {
+  PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
+  ResponsiveContainer, LabelList,
+} from 'recharts';
+import { gradFill } from '../../../components/charts/ChartGradients';
 import { useAuth } from '../../../contexts/AuthContext';
 // Coordenador de Operações/Logística = quem tem o cargo lider-logistica (já
 // tem nível 4 no módulo patrimonio na matriz) — decisão do usuário 2026-07-29:
@@ -368,11 +373,66 @@ function DashboardTab({ dash, indicadores, depreciacaoIndic, onNavigate, onNavig
     { label: 'Sem Categoria', value: `${indicadores.sem_categoria} (${pct(indicadores.sem_categoria)})`, bg: '#f59e0b', filtro: { categoria_id: '__sem__' } },
     { label: 'Sem Valor de Aquisição', value: `${indicadores.sem_valor} (${pct(indicadores.sem_valor)})`, bg: '#f59e0b', filtro: null },
   ] : [];
+
+  // Donut de status — mesmos números dos StatCards, só como gráfico.
+  const statusDonut = [
+    { name: 'Ativo', value: dash.ativos, cor: STATUS_BEM.ativo.c },
+    { name: 'Manutenção', value: dash.manutencao, cor: STATUS_BEM.manutencao.c },
+    { name: 'Baixado', value: dash.baixados, cor: STATUS_BEM.baixado.c },
+    { name: 'Extraviado', value: dash.extraviados, cor: STATUS_BEM.extraviado.c },
+  ].filter(d => d.value > 0);
+
+  // Por Categoria/Localização em barras — "Sem categoria"/"Sem localização"
+  // (dado sujo, 42% da base) fica destacado em âmbar, não escondido.
+  const SEM_LABELS = new Set(['Sem categoria', 'Sem localização']);
+  const barrasCategoria = Object.entries(dash.porCategoria || {})
+    .map(([name, value]) => ({ name, value, sem: SEM_LABELS.has(name) }))
+    .sort((a, b) => b.value - a.value);
+  const barrasLocalizacao = Object.entries(dash.porLocalizacao || {})
+    .map(([name, value]) => ({ name, value, sem: SEM_LABELS.has(name) }))
+    .sort((a, b) => b.value - a.value);
+
+  const depreciacaoPorCategoria = depreciacaoIndic?.por_categoria || [];
+
   return (
     <>
       <div className="cbrio-stagger" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginBottom: 24 }}>
         {kpis.map((k, i) => <PatStatCard key={k.label} label={k.label} value={k.value} bg={k.bg} svg={PAT_STAT_SVGS[i % PAT_STAT_SVGS.length]} onClick={() => onNavigate(1, k.status)} />)}
       </div>
+
+      {statusDonut.length > 0 && (
+        <div style={{ ...styles.card, marginBottom: 24, padding: 16 }}>
+          <div style={styles.cardTitle}>Bens por status</div>
+          <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 24, marginTop: 8 }}>
+            <div style={{ position: 'relative', width: 180, height: 180, flexShrink: 0 }}>
+              <ResponsiveContainer>
+                <PieChart>
+                  <Pie data={statusDonut} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={52} outerRadius={78} paddingAngle={2} startAngle={90} endAngle={-270} isAnimationActive={false} stroke="none">
+                    {statusDonut.map((d, i) => <Cell key={i} fill={d.cor} />)}
+                  </Pie>
+                  <Tooltip
+                    contentStyle={{ borderRadius: 8, fontSize: 12, border: `1px solid ${C.border}`, background: C.card, color: C.text }}
+                    formatter={(v, n) => [v, n]}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+              <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
+                <span style={{ fontSize: 22, fontWeight: 800, color: C.text, lineHeight: 1 }}>{totalBens}</span>
+                <span style={{ fontSize: 10, color: C.text3 }}>bens</span>
+              </div>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flex: 1, minWidth: 160 }}>
+              {statusDonut.map((d) => (
+                <div key={d.name} className="cbrio-row" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }} onClick={() => onNavigate(1, d.name.toLowerCase() === 'manutenção' ? 'manutencao' : d.name.toLowerCase() === 'extraviado' ? 'extraviado' : d.name.toLowerCase() === 'baixado' ? 'baixado' : 'ativo')}>
+                  <span style={{ width: 10, height: 10, borderRadius: 3, background: d.cor, flexShrink: 0 }} />
+                  <span style={{ fontSize: 13, flex: 1 }}>{d.name}</span>
+                  <span style={{ fontSize: 13, fontWeight: 700 }}>{d.value}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Saneamento de cadastro — pedido do usuário 2026-07-28: indicadores
           que viram lista de trabalho (clicável), não só números soltos. */}
@@ -402,6 +462,25 @@ function DashboardTab({ dash, indicadores, depreciacaoIndic, onNavigate, onNavig
               <div><div style={{ fontSize: 11, color: C.text2 }}>Sem vida útil configurada</div><div style={{ fontSize: 16, fontWeight: 700, color: C.amber }}>{depreciacaoIndic.bens_sem_configuracao}</div></div>
             )}
           </div>
+          {depreciacaoPorCategoria.length > 0 && (
+            <div style={{ marginTop: 16 }}>
+              <div style={{ fontSize: 11, color: C.text2, marginBottom: 4 }}>Aquisição × valor atual estimado, por categoria</div>
+              <div style={{ width: '100%', height: Math.max(140, depreciacaoPorCategoria.length * 36 + 20) }}>
+                <ResponsiveContainer>
+                  <BarChart data={depreciacaoPorCategoria} layout="vertical" margin={{ top: 0, right: 40, bottom: 0, left: 8 }}>
+                    <CartesianGrid horizontal={false} stroke={C.border} />
+                    <XAxis type="number" tickFormatter={(v) => fmtMoney(v)} tick={{ fontSize: 10 }} />
+                    <YAxis type="category" dataKey="categoria" width={130} tick={{ fontSize: 11 }} />
+                    <Tooltip formatter={(v, n) => [fmtMoney(v), n === 'valor_aquisicao' ? 'Aquisição' : 'Valor atual']} />
+                    <Bar dataKey="valor_aquisicao" name="Aquisição" fill={gradFill('#94a3b8')} radius={[0, 4, 4, 0]} maxBarSize={14} />
+                    <Bar dataKey="valor_atual" name="Valor atual" fill={gradFill(C.primary)} radius={[0, 4, 4, 0]} maxBarSize={14}>
+                      <LabelList dataKey="valor_atual" position="right" formatter={(v) => fmtMoney(v)} style={{ fontSize: 10, fill: C.text2 }} />
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -409,23 +488,43 @@ function DashboardTab({ dash, indicadores, depreciacaoIndic, onNavigate, onNavig
         <div style={styles.card}>
           <div style={styles.cardHeader}><div style={styles.cardTitle}>Por Categoria</div></div>
           <div style={{ padding: 16 }}>
-            {Object.entries(dash.porCategoria || {}).map(([k, v]) => (
-              <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: `1px solid ${C.border}` }}>
-                <span style={{ fontSize: 13 }}>{k}</span><span style={{ fontSize: 13, fontWeight: 700, color: C.primary }}>{v}</span>
+            {barrasCategoria.length > 0 ? (
+              <div style={{ width: '100%', height: Math.max(140, barrasCategoria.length * 30 + 20) }}>
+                <ResponsiveContainer>
+                  <BarChart data={barrasCategoria} layout="vertical" margin={{ top: 0, right: 40, bottom: 0, left: 8 }}>
+                    <CartesianGrid horizontal={false} stroke={C.border} />
+                    <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11 }} />
+                    <YAxis type="category" dataKey="name" width={130} tick={{ fontSize: 11 }} />
+                    <Tooltip formatter={(v) => [v, 'bens']} />
+                    <Bar dataKey="value" maxBarSize={16} radius={[0, 4, 4, 0]}>
+                      {barrasCategoria.map((d, i) => <Cell key={i} fill={d.sem ? gradFill(C.amber) : gradFill(C.primary)} />)}
+                      <LabelList dataKey="value" position="right" style={{ fontSize: 11, fill: C.text2 }} />
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
               </div>
-            ))}
-            {Object.keys(dash.porCategoria || {}).length === 0 && <div style={styles.empty}>Nenhum dado</div>}
+            ) : <div style={styles.empty}>Nenhum dado</div>}
           </div>
         </div>
         <div style={styles.card}>
           <div style={styles.cardHeader}><div style={styles.cardTitle}>Por Localização</div></div>
           <div style={{ padding: 16 }}>
-            {Object.entries(dash.porLocalizacao || {}).map(([k, v]) => (
-              <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: `1px solid ${C.border}` }}>
-                <span style={{ fontSize: 13 }}>{k}</span><span style={{ fontSize: 13, fontWeight: 700, color: C.primary }}>{v}</span>
+            {barrasLocalizacao.length > 0 ? (
+              <div style={{ width: '100%', height: Math.max(140, barrasLocalizacao.length * 30 + 20) }}>
+                <ResponsiveContainer>
+                  <BarChart data={barrasLocalizacao} layout="vertical" margin={{ top: 0, right: 40, bottom: 0, left: 8 }}>
+                    <CartesianGrid horizontal={false} stroke={C.border} />
+                    <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11 }} />
+                    <YAxis type="category" dataKey="name" width={130} tick={{ fontSize: 11 }} />
+                    <Tooltip formatter={(v) => [v, 'bens']} />
+                    <Bar dataKey="value" maxBarSize={16} radius={[0, 4, 4, 0]}>
+                      {barrasLocalizacao.map((d, i) => <Cell key={i} fill={d.sem ? gradFill(C.amber) : gradFill(C.primary)} />)}
+                      <LabelList dataKey="value" position="right" style={{ fontSize: 11, fill: C.text2 }} />
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
               </div>
-            ))}
-            {Object.keys(dash.porLocalizacao || {}).length === 0 && <div style={styles.empty}>Nenhum dado</div>}
+            ) : <div style={styles.empty}>Nenhum dado</div>}
           </div>
         </div>
       </div>
