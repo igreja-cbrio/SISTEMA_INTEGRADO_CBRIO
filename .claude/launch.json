@@ -1,0 +1,35 @@
+// Servidores de preview do app Claude Code Desktop (painel Navegador ·
+// Cmd+Shift+B no Mac, Ctrl+Shift+B no Windows).
+//
+// Existe porque a detecção automática erra em dois pontos NESTE projeto:
+//   1. o front é Vite na porta 8080 (vite.config.ts), não a 3000 padrão;
+//   2. a API é um SEGUNDO processo, dentro de `backend/`.
+// Sem os dois no ar, o sistema abre e loga (Supabase é direto), mas toda tela
+// que chama `/api/...` — Inscrições, Kids, Mural, Solicitações — vem vazia.
+//
+// ⚠️ O front só encontra a API se o `.env` LOCAL tiver:
+//        VITE_API_URL=http://localhost:3001
+//    Sem essa linha, `resolveApiBaseUrl` (src/lib/api-base.js) cai em `/api`
+//    relativo, que no dev bate no próprio Vite (8080) e falha. O CORS do
+//    backend já libera http://localhost:8080 (backend/server.js).
+//    `.env` é gitignored e pessoal — por isso a variável não vive aqui.
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "front-vite",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 8080
+    },
+    {
+      // `node --watch server.js` (backend/package.json). Porta 3001 é o default
+      // do server.js (`process.env.PORT || 3001`).
+      "name": "api-express",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "cwd": "backend",
+      "port": 3001
+    }
+  ]
+}
