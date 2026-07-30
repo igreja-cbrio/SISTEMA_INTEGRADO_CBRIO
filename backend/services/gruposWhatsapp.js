@@ -431,6 +431,7 @@ async function enviarInscricaoConfirmada({ telefone, nome, grupoNome, pedidoId }
 }
 
 module.exports = {
+  baseUrl,
   assinarToken,
   verificarToken,
   formatarQuando,

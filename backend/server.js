@@ -162,6 +162,8 @@ const publicLimiter = rateLimit({
 // primeiro, o NPS não passa pelo teto de 30 · usa o limiter próprio (generoso) do
 // routes/publicNps.js. Os demais forms públicos seguem no publicLimiter.
 app.use('/api/public/nps', require('./routes/publicNps'));
+// Convite de familiar (página de bounce /f/a/:codigo · só leitura do convite)
+app.use('/api/public/familia', require('./routes/publicFamilia'));
 // Pixel de abertura de e-mail (fora do publicLimiter · proxies carregam por 1 IP)
 app.use('/api/public/vol-email', require('./routes/publicVolEmail'));
 // Inscrição pública de grupos montada ANTES do publicLimiter estrito (30/15min):

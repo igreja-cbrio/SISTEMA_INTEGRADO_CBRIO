@@ -256,6 +256,7 @@ const GrupoAprovarPedido = lazyWithRetry(() => import('./pages/public/GrupoAprov
 const GrupoSugestaoAceite = lazyWithRetry(() => import('./pages/public/GrupoSugestaoAceite'));
 const GrupoFrequenciaMes = lazyWithRetry(() => import('./pages/public/GrupoFrequenciaMes'));
 const GrupoRenovacao = lazyWithRetry(() => import('./pages/public/GrupoRenovacao'));
+const FamiliaConvite = lazyWithRetry(() => import('./pages/public/FamiliaConvite'));
 const InscricaoGruposQRCode = lazyWithRetry(() => import('./pages/admin/InscricaoGruposQRCode'));
 const GruposGeocode = lazyWithRetry(() => import('./pages/admin/GruposGeocode'));
 const TemporadasGrupos = lazyWithRetry(() => import('./pages/admin/TemporadasGrupos'));
@@ -526,6 +527,8 @@ function AppRoutes() {
       {/* Líder registra a frequência do mês do grupo pelo link do WhatsApp · sem login */}
       <Route path="/g/f/:token" element={<Suspense fallback={<Loading />}><GrupoFrequenciaMes /></Suspense>} />
       <Route path="/g/r/:token" element={<Suspense fallback={<Loading />}><GrupoRenovacao /></Suspense>} />
+      {/* Convite de familiar do app · página de bounce (leva a aceitar no app) */}
+      <Route path="/f/a/:codigo" element={<Suspense fallback={<Loading />}><FamiliaConvite /></Suspense>} />
       <Route path="/next" element={<Suspense fallback={<Loading />}><InscricaoNext /></Suspense>} />
       <Route path="/next/inscrever" element={<Suspense fallback={<Loading />}><InscricaoNext /></Suspense>} />
       <Route path="/next/direcionar/:token" element={<Suspense fallback={<Loading />}><NextDirecionar /></Suspense>} />

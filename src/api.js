@@ -2290,6 +2290,15 @@ export const membresia = {
 // Usa fetch direto porque não requer token e deve funcionar em rotas públicas.
 // API pública de grupos — sem auth, read-only. Usada pelo formulário
 // de cadastro público (CadastroMembresia.jsx) e pela inscrição com QR.
+export const familiaPublic = {
+  // Info do convite de familiar (página de bounce /f/a/:codigo · sem login)
+  conviteInfo: async (codigo) => {
+    const r = await fetch(`${API}/public/familia/convite/${encodeURIComponent(codigo)}`);
+    if (!r.ok) return { status: r.status === 404 ? 'inexistente' : 'erro' };
+    return r.json();
+  },
+};
+
 export const gruposPublic = {
   temporadas: async () => {
     const r = await fetch(`${API}/public/grupos/temporadas`);

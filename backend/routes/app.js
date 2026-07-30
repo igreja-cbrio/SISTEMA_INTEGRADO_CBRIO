@@ -10,6 +10,9 @@ const { dispararAuto } = require('../services/whatsappAuto');
 const wpp = require('../services/whatsappService');
 const { analisarOracao } = require('../services/oracaoAnalise');
 const { acharOuCriarGuardado } = require('../services/membroMatch');
+// Convite de familiar pelo app · junta na mesma família + vínculo de parentesco.
+const { vincularParentesco, entrarNaFamilia, VINC_INVERSO } = require('../services/familiaVinculo');
+const { baseUrl } = require('../services/gruposWhatsapp');
 // Espelho da matrícula do Next (o app inscreve por ENCONTRO; a gestão vive em
 // TURMA/MATRÍCULA desde o cutover de 17/06) — ver services/nextMatricula.js.
 const { espelharMatriculaDoEncontro } = require('../services/nextMatricula');
@@ -2796,6 +2799,217 @@ router.delete('/tarefas/:id', authApp, limiterNormal, async (req, res) => {
   } catch (e) {
     console.error('[APP] tarefas delete:', e.message);
     res.status(500).json({ error: 'Erro ao excluir a tarefa' });
+  }
+});
+
+// ── Família · convite de familiar pelo app ──────────────────────────────────
+// Uma pessoa gera um convite (código + link), envia pro familiar; o familiar
+// aceita LOGADO no app → entra na mesma família + ganha o vínculo de parentesco.
+// Reflete direto na Membresia (mesma familia_id / mem_vinculos_familiares).
+
+const PARENTESCO_APP = {
+  // opção na tela → { tipo do CONVIDADO em relação a quem convida, rótulo }
+  filho:   { tipo: 'filho',   rotulo: 'filho(a)' },
+  pai_mae: { tipo: 'pai_mae', rotulo: 'pai/mãe' },
+  conjuge: { tipo: 'conjuge', rotulo: 'cônjuge' },
+  irmao:   { tipo: 'irmao',   rotulo: 'irmão(ã)' },
+  outro:   { tipo: 'outro',   rotulo: 'familiar' },
+};
+const CODIGO_ALFA = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // sem 0/O/1/I ambíguos
+function gerarCodigoFamilia(n = 6) {
+  let s = '';
+  for (let i = 0; i < n; i++) s += CODIGO_ALFA[Math.floor(Math.random() * CODIGO_ALFA.length)];
+  return s;
+}
+const primeiroNome = (n) => String(n || '').trim().split(/\s+/)[0] || 'Alguém';
+
+// Monta a lista de familiares (household) + vínculos de parentesco do membro.
+async function carregarFamiliaDoMembro(membroId) {
+  const { data: m } = await supabase.from('mem_membros')
+    .select('id, nome, familia_id, familia:mem_familias(id, nome)')
+    .eq('id', membroId).maybeSingle();
+  let familiares = [];
+  if (m?.familia_id) {
+    const { data: fs } = await supabase.from('mem_membros')
+      .select('id, nome, foto_url, status')
+      .eq('familia_id', m.familia_id).neq('id', membroId)
+      .eq('active', true).is('deleted_at', null);
+    familiares = fs || [];
+  }
+  const { data: vins } = await supabase.from('mem_vinculos_familiares')
+    .select('tipo, relacionado:mem_membros!mem_vinculos_familiares_relacionado_id_fkey(id, nome)')
+    .eq('pessoa_id', membroId).is('deleted_at', null);
+  const parentescoPor = {};
+  (vins || []).forEach((v) => { if (v.relacionado?.id) parentescoPor[v.relacionado.id] = v.tipo; });
+  return {
+    familia: m?.familia ? { id: m.familia.id, nome: m.familia.nome } : null,
+    familiares: familiares.map((f) => ({ ...f, parentesco: parentescoPor[f.id] || null })),
+  };
+}
+
+// GET /api/app/familia — minha família (household + parentescos)
+router.get('/familia', authApp, limiterNormal, async (req, res) => {
+  try {
+    const membro = await resolveMembroApp(req);
+    if (!membro) return res.status(404).json({ error: 'Cadastro de membro não encontrado' });
+    const dados = await carregarFamiliaDoMembro(membro.id);
+    res.json(dados);
+  } catch (e) {
+    console.error('[APP] familia GET:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar sua família' });
+  }
+});
+
+// POST /api/app/familia/convite — gera um convite { parentesco } → { codigo, link, mensagem }
+router.post('/familia/convite', authApp, limiterStrict, async (req, res) => {
+  try {
+    const membro = await resolveMembroApp(req);
+    if (!membro) return res.status(404).json({ error: 'Cadastro de membro não encontrado' });
+    const key = String(req.body?.parentesco || 'outro');
+    const opt = PARENTESCO_APP[key] || PARENTESCO_APP.outro;
+
+    // reaproveita convite pendente e não-expirado do mesmo parentesco (evita
+    // gerar N códigos por pessoa) — senão cria um novo.
+    let convite = null;
+    const { data: pend } = await supabase.from('mem_familia_convites')
+      .select('id, codigo, expira_em')
+      .eq('criador_membro_id', membro.id).eq('parentesco', opt.tipo).eq('status', 'pendente')
+      .is('deleted_at', null).gt('expira_em', new Date().toISOString())
+      .order('created_at', { ascending: false }).limit(1);
+    if (pend && pend[0]) {
+      convite = pend[0];
+    } else {
+      // código único entre os pendentes vivos (retry curto)
+      let codigo = null;
+      for (let i = 0; i < 20 && !codigo; i++) {
+        const cand = gerarCodigoFamilia();
+        const { data: existe } = await supabase.from('mem_familia_convites')
+          .select('id').eq('codigo', cand).is('deleted_at', null).maybeSingle();
+        if (!existe) codigo = cand;
+      }
+      if (!codigo) return res.status(500).json({ error: 'Não foi possível gerar o código, tente de novo' });
+      const { data: m } = await supabase.from('mem_membros').select('familia_id').eq('id', membro.id).maybeSingle();
+      const expira = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(); // 30 dias
+      const { data: ins, error } = await supabase.from('mem_familia_convites')
+        .insert({ codigo, criador_membro_id: membro.id, familia_id: m?.familia_id || null, parentesco: opt.tipo, expira_em: expira })
+        .select('id, codigo, expira_em').single();
+      if (error) throw error;
+      convite = ins;
+    }
+
+    const link = `${baseUrl()}/f/a/${convite.codigo}`;
+    const mensagem = `Oi! Quero te adicionar como ${opt.rotulo} na minha família no app da CBRio. `
+      + `É só abrir este link e confirmar: ${link}\n\nSe já tiver o app, você também pode entrar em "Minha família" e usar o código ${convite.codigo}.`;
+    res.status(201).json({ codigo: convite.codigo, parentesco: opt.tipo, rotulo: opt.rotulo, link, mensagem, expira_em: convite.expira_em });
+  } catch (e) {
+    console.error('[APP] familia convite:', e.message);
+    res.status(500).json({ error: 'Erro ao gerar o convite' });
+  }
+});
+
+// GET /api/app/familia/convite-info?codigo= — mostra quem convidou (antes de aceitar)
+router.get('/familia/convite-info', authApp, limiterNormal, async (req, res) => {
+  try {
+    const codigo = String(req.query?.codigo || '').trim().toUpperCase();
+    if (!codigo) return res.status(400).json({ error: 'Código não informado' });
+    const { data: conv } = await supabase.from('mem_familia_convites')
+      .select('id, status, expira_em, parentesco, criador_membro_id')
+      .eq('codigo', codigo).is('deleted_at', null).maybeSingle();
+    if (!conv) return res.status(404).json({ error: 'Convite não encontrado' });
+    if (conv.status !== 'pendente') return res.status(410).json({ error: 'Convite já usado ou cancelado', status: conv.status });
+    if (new Date(conv.expira_em) < new Date()) return res.status(410).json({ error: 'Convite expirado', status: 'expirado' });
+    const { data: criador } = await supabase.from('mem_membros').select('nome').eq('id', conv.criador_membro_id).maybeSingle();
+    const opt = PARENTESCO_APP[conv.parentesco] || PARENTESCO_APP.outro;
+    res.json({ criador_nome: primeiroNome(criador?.nome), parentesco: conv.parentesco, rotulo: opt.rotulo });
+  } catch (e) {
+    console.error('[APP] familia convite-info:', e.message);
+    res.status(500).json({ error: 'Erro ao ler o convite' });
+  }
+});
+
+// POST /api/app/familia/aceitar — { codigo } · quem aceita = membro logado
+router.post('/familia/aceitar', authApp, limiterStrict, async (req, res) => {
+  try {
+    const membro = await resolveMembroApp(req);
+    if (!membro) return res.status(404).json({ error: 'Cadastro de membro não encontrado' });
+    const codigo = String(req.body?.codigo || '').trim().toUpperCase();
+    if (!codigo) return res.status(400).json({ error: 'Código não informado' });
+
+    const { data: conv } = await supabase.from('mem_familia_convites')
+      .select('id, status, expira_em, parentesco, criador_membro_id, aceito_por_membro_id')
+      .eq('codigo', codigo).is('deleted_at', null).maybeSingle();
+    if (!conv) return res.status(404).json({ error: 'Convite não encontrado' });
+    if (conv.status !== 'pendente') return res.status(410).json({ error: 'Este convite já foi usado ou cancelado' });
+    if (new Date(conv.expira_em) < new Date()) return res.status(410).json({ error: 'Este convite expirou' });
+    if (conv.criador_membro_id === membro.id) return res.status(400).json({ error: 'Você não pode aceitar o próprio convite' });
+
+    // 1) entra na família de quem convidou (cria a família se ele não tem)
+    const fam = await entrarNaFamilia(supabase, { membroId: membro.id, anfitriaoId: conv.criador_membro_id, userId: req.user?.id || null });
+    if (!fam.ok) return res.status(500).json({ error: 'Não foi possível entrar na família' });
+
+    // 2) vínculo de parentesco (convidado é <tipo> de quem convidou), se houver
+    if (conv.parentesco && VINC_INVERSO[conv.parentesco] && conv.parentesco !== 'outro') {
+      await vincularParentesco(supabase, {
+        pessoaId: membro.id, relacionadoId: conv.criador_membro_id, tipo: conv.parentesco, userId: req.user?.id || null,
+      });
+    }
+
+    // 3) marca o convite como aceito
+    await supabase.from('mem_familia_convites')
+      .update({ status: 'aceito', aceito_por_membro_id: membro.id, aceito_em: new Date().toISOString() })
+      .eq('id', conv.id);
+
+    // 4) avisa quem convidou (in-app best-effort + WhatsApp no-op sem template)
+    try {
+      const { data: prof } = await supabase.from('profiles').select('id').eq('membro_id', conv.criador_membro_id).maybeSingle();
+      if (prof?.id) {
+        await notificar({
+          modulo: 'membresia', tipo: 'familia_convite_aceito',
+          titulo: 'Convite de família aceito',
+          mensagem: `${primeiroNome(membro.nome)} aceitou seu convite e agora faz parte da sua família.`,
+          link: '/perfil', severidade: 'info',
+          chaveDedup: `fam_conv_${conv.id}`, targetIds: [prof.id],
+        });
+      }
+      await wpp.notificarMembro(conv.criador_membro_id, 'familia_convite_aceito', [primeiroNome(membro.nome)]);
+    } catch (e2) { console.warn('[APP] familia aceitar notif:', e2.message); }
+
+    const dados = await carregarFamiliaDoMembro(membro.id);
+    res.json({ ok: true, familia: fam.familia_nome ? { id: fam.familia_id, nome: fam.familia_nome } : dados.familia, ...dados });
+  } catch (e) {
+    console.error('[APP] familia aceitar:', e.message);
+    res.status(500).json({ error: 'Erro ao aceitar o convite' });
+  }
+});
+
+// DELETE /api/app/familia/vinculo/:membroId — sair/remover alguém da minha família
+// (remove o vínculo de parentesco recíproco e tira o outro da household; a pessoa
+// continua no sistema). Só o próprio membro mexe na PRÓPRIA família.
+router.delete('/familia/vinculo/:outroId', authApp, limiterNormal, async (req, res) => {
+  try {
+    const membro = await resolveMembroApp(req);
+    if (!membro) return res.status(404).json({ error: 'Cadastro de membro não encontrado' });
+    const outroId = req.params.outroId;
+    // precisa estar na mesma família
+    const [{ data: a }, { data: b }] = await Promise.all([
+      supabase.from('mem_membros').select('id, familia_id').eq('id', membro.id).maybeSingle(),
+      supabase.from('mem_membros').select('id, familia_id').eq('id', outroId).maybeSingle(),
+    ]);
+    if (!b || !a?.familia_id || a.familia_id !== b.familia_id) {
+      return res.status(400).json({ error: 'Essa pessoa não está na sua família' });
+    }
+    // tira o OUTRO da household (a pessoa continua no sistema)
+    await supabase.from('mem_membros').update({ familia_id: null }).eq('id', outroId);
+    // soft-delete dos vínculos de parentesco entre os dois (nos 2 sentidos)
+    const nowIso = new Date().toISOString();
+    await supabase.from('mem_vinculos_familiares').update({ deleted_at: nowIso })
+      .or(`and(pessoa_id.eq.${membro.id},relacionado_id.eq.${outroId}),and(pessoa_id.eq.${outroId},relacionado_id.eq.${membro.id})`)
+      .is('deleted_at', null);
+    const dados = await carregarFamiliaDoMembro(membro.id);
+    res.json({ ok: true, ...dados });
+  } catch (e) {
+    console.error('[APP] familia remover vinculo:', e.message);
+    res.status(500).json({ error: 'Erro ao remover da família' });
   }
 });
 
