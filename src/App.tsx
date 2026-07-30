@@ -298,6 +298,7 @@ const InscricaoEventoCheckin = lazyWithRetry(() => import('./pages/InscricaoEven
 // virada pro /inscricoes (SPEC-04 · 2026-07-28); arquivos ficam no repo até
 // 1 ciclo sem divergência (rollback = restaurar as 2 rotas).
 const Inscricoes = lazyWithRetry(() => import('./pages/Inscricoes'));
+const Propostas = lazyWithRetry(() => import('./pages/Propostas'));
 const InscricaoEventoDetalhe = lazyWithRetry(() => import('./pages/InscricaoEventoDetalhe'));
 const NextDirecionar = lazyWithRetry(() => import('./pages/public/NextDirecionar'));
 const DecisaoOnline = lazyWithRetry(() => import('./pages/public/DecisaoOnline'));
@@ -655,6 +656,7 @@ function AppRoutes() {
         <Route path="/eventos-externos" element={<Navigate to="/inscricoes" replace />} />
         <Route path="/eventos-externos/:id" element={<Navigate to="/inscricoes" replace />} />
         <Route path="/inscricoes" element={<ModuleGuard moduleSlug="inscricoes" nivelMinimo={1}><Suspense fallback={<Loading />}><Inscricoes /></Suspense></ModuleGuard>} />
+        <Route path="/propostas" element={<ModuleGuard moduleSlug="propostas" nivelMinimo={1}><Suspense fallback={<Loading />}><Propostas /></Suspense></ModuleGuard>} />
         <Route path="/inscricoes/evento/:id" element={<ModuleGuard moduleSlug="inscricoes" nivelMinimo={1}><Suspense fallback={<Loading />}><InscricaoEventoDetalhe /></Suspense></ModuleGuard>} />
         {/* Check-in do evento (SPEC-06) · nível 2 = operar check-in (SPEC-08) */}
         <Route path="/inscricoes/evento/:id/checkin" element={<ModuleGuard moduleSlug="inscricoes" nivelMinimo={2}><Suspense fallback={<Loading />}><InscricaoEventoCheckin /></Suspense></ModuleGuard>} />
