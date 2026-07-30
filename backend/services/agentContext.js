@@ -255,10 +255,19 @@ async function fetchFinanceiroContext() {
 
 // ─── Logística ─────────────────────────────────────────────────────────
 
+// Solicitações de compra migraram de `log_solicitacoes_compra` (tabela
+// morta desde a virada pro módulo /solicitacoes central em 2026-07) pra
+// `solicitacoes` com categoria='compras' — mesma fonte que o próprio módulo
+// de Solicitações usa. Sem isso, o Assistente IA respondia com números de
+// uma tabela parada, potencialmente desatualizados (achado de auditoria
+// 2026-07-29).
+const STATUS_COMPRA_FINALIZADO = ['aprovado', 'rejeitado', 'concluido', 'cancelado'];
+
 async function fetchLogisticaContext() {
   const { count: fornecedores } = await supabase.from('log_fornecedores').select('id', { count: 'exact', head: true }).eq('ativo', true);
   const { count: pedidos } = await supabase.from('log_pedidos').select('id', { count: 'exact', head: true });
-  const { count: solicPend } = await supabase.from('log_solicitacoes_compra').select('id', { count: 'exact', head: true }).eq('status', 'pendente');
+  const { data: compras } = await supabase.from('solicitacoes').select('status').eq('categoria', 'compras').is('deleted_at', null);
+  const solicPend = (compras || []).filter(s => !STATUS_COMPRA_FINALIZADO.includes(s.status)).length;
 
   return {
     resumo: { fornecedores_ativos: fornecedores, pedidos_total: pedidos, solicitacoes_pendentes: solicPend },
@@ -266,19 +275,21 @@ async function fetchLogisticaContext() {
 }
 
 async function fetchSolicitarCompraContext() {
-  const { count: total } = await supabase.from('log_solicitacoes_compra').select('id', { count: 'exact', head: true });
-  const { count: pendentes } = await supabase.from('log_solicitacoes_compra').select('id', { count: 'exact', head: true }).eq('status', 'pendente');
-  const { count: aprovadas } = await supabase.from('log_solicitacoes_compra').select('id', { count: 'exact', head: true }).eq('status', 'aprovada');
-  const { count: rejeitadas } = await supabase.from('log_solicitacoes_compra').select('id', { count: 'exact', head: true }).eq('status', 'rejeitada');
-
-  const { data: recentes } = await supabase.from('log_solicitacoes_compra')
+  const { data: compras } = await supabase.from('solicitacoes')
     .select('id, titulo, status, valor_estimado, created_at')
-    .order('created_at', { ascending: false })
-    .limit(20);
+    .eq('categoria', 'compras')
+    .is('deleted_at', null)
+    .order('created_at', { ascending: false });
+
+  const lista = compras || [];
+  const total = lista.length;
+  const pendentes = lista.filter(s => !STATUS_COMPRA_FINALIZADO.includes(s.status)).length;
+  const aprovadas = lista.filter(s => s.status === 'aprovado' || s.status === 'concluido').length;
+  const rejeitadas = lista.filter(s => s.status === 'rejeitado' || s.status === 'cancelado').length;
 
   return {
     resumo: { total, pendentes, aprovadas, rejeitadas },
-    recentes: recentes || [],
+    recentes: lista.slice(0, 20),
   };
 }
 

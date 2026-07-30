@@ -31,12 +31,6 @@ const TIPO_MOV = {
   manutencao: 'Manutenção', baixa: 'Baixa',
 };
 
-const INV_STATUS = {
-  em_andamento: { c: C.blue, bg: C.blueBg, label: 'Em andamento' },
-  concluido: { c: C.green, bg: C.greenBg, label: 'Concluído' },
-  cancelado: { c: C.red, bg: C.redBg, label: 'Cancelado' },
-};
-
 const CICLO_STATUS = {
   aberto: { c: C.blue, bg: C.blueBg, label: 'Aberto' },
   encerrado: { c: C.text3, bg: '#73737318', label: 'Encerrado' },
@@ -142,7 +136,7 @@ function Input({ label, ...props }) { return (<div style={styles.formGroup}>{lab
 function Select({ label, children, ...props }) { return (<div style={styles.formGroup}>{label && <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">{label}</label>}<select className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" {...props}>{children}</select></div>); }
 function Badge({ status, map }) { const s = map[status] || { c: C.text3, bg: '#73737318', label: status }; return <span style={styles.badge(s.c, s.bg)}>{s.label}</span>; }
 
-const TABS = ['Dashboard', 'Bens', 'Categorias / Localizações', 'Inventários', 'Revisão', 'Movimentações'];
+const TABS = ['Dashboard', 'Bens', 'Categorias / Localizações', 'Revisão', 'Movimentações'];
 
 const fmtDateTime = (d) => d ? new Date(d).toLocaleString('pt-BR') : '—';
 
@@ -154,7 +148,6 @@ export default function Patrimonio() {
   const [bens, setBens] = useState([]);
   const [categorias, setCategorias] = useState([]);
   const [localizacoes, setLocalizacoes] = useState([]);
-  const [inventarios, setInventarios] = useState([]);
   const [loading, setLoading] = useState(false);
   const [filtroStatus, setFiltroStatus] = useState('');
   const [filtroCat, setFiltroCat] = useState('');
@@ -163,7 +156,6 @@ export default function Patrimonio() {
   const [modalBem, setModalBem] = useState(null);
   const [modalDetail, setModalDetail] = useState(null);
   const [modalMov, setModalMov] = useState(null);
-  const [modalInv, setModalInv] = useState(null);
   const [newCat, setNewCat] = useState('');
   const [newLoc, setNewLoc] = useState('');
   const [error, setError] = useState('');
@@ -186,7 +178,6 @@ export default function Patrimonio() {
   }, [filtroStatus, filtroCat, filtroLoc, busca]);
   const loadCats = useCallback(async () => { try { setCategorias(await patrimonio.categorias.list()); } catch (e) { console.error(e); } }, []);
   const loadLocs = useCallback(async () => { try { setLocalizacoes(await patrimonio.localizacoes.list()); } catch (e) { console.error(e); } }, []);
-  const loadInvs = useCallback(async () => { try { setInventarios(await patrimonio.inventarios.list()); } catch (e) { console.error(e); } }, []);
   const loadRevisao = useCallback(async () => { try { setRevisaoCiclos(await patrimonio.revisao.ciclos()); } catch (e) { console.error(e); } }, []);
   const loadRevisaoIndic = useCallback(async () => { try { setRevisaoIndic(await patrimonio.revisao.indicadores()); } catch (e) { console.error(e); } }, []);
   const loadResponsaveis = useCallback(async () => { try { setResponsaveis(await patrimonio.revisao.responsaveis()); } catch (e) { console.error(e); } }, []);
@@ -214,9 +205,9 @@ export default function Patrimonio() {
     } catch (e) { console.error(e); } finally { setMovLoading(false); }
   }, [movPage, movFiltroTipo, movFiltroLoc, movBusca]);
 
-  useEffect(() => { loadDash(); loadIndicadores(); loadDepreciacao(); loadBens(); loadCats(); loadLocs(); loadInvs(); loadRevisao(); loadRevisaoIndic(); loadResponsaveis(); }, []);
+  useEffect(() => { loadDash(); loadIndicadores(); loadDepreciacao(); loadBens(); loadCats(); loadLocs(); loadRevisao(); loadRevisaoIndic(); loadResponsaveis(); }, []);
   useEffect(() => { loadBens(); }, [filtroStatus, filtroCat, filtroLoc, busca]);
-  useEffect(() => { if (tab === 5) loadMovimentacoes(); }, [tab, movPage, movFiltroTipo, movFiltroLoc, movBusca]);
+  useEffect(() => { if (tab === 4) loadMovimentacoes(); }, [tab, movPage, movFiltroTipo, movFiltroLoc, movBusca]);
   useEffect(() => { setMovPage(1); }, [movFiltroTipo, movFiltroLoc, movBusca]);
 
   async function saveBem(data) {
@@ -246,8 +237,6 @@ export default function Patrimonio() {
   // Lista achatada em ordem de árvore (indentada) — usada em todo select de
   // localização do módulo (pedido do usuário 2026-07-29: agrupamento em árvore).
   const locOptions = useMemo(() => flattenLocTree(buildLocTree(localizacoes)), [localizacoes]);
-  async function saveInv(data) { try { await patrimonio.inventarios.create(data); setModalInv(null); loadInvs(); loadDash(); } catch (e) { setError(e.message); } }
-  async function updateInvStatus(id, status) { try { const upd = { status }; if (status === 'concluido') upd.data_fim = new Date().toISOString().slice(0, 10); await patrimonio.inventarios.atualizar(id, upd); loadInvs(); loadDash(); } catch (e) { setError(e.message); } }
   async function criarCiclo(data) { try { await patrimonio.revisao.criarCiclo(data); setModalNovoCiclo(false); loadRevisao(); } catch (e) { setError(e.message); } }
   async function abrirConvocacao(id) { try { setModalConvocacao(await patrimonio.revisao.convocacao(id)); } catch (e) { setError(e.message); } }
   async function iniciarConvocacao(id) { try { await patrimonio.revisao.iniciar(id); await abrirConvocacao(id); loadRevisao(); } catch (e) { setError(e.message); } }
@@ -291,14 +280,13 @@ export default function Patrimonio() {
         />
       )}
       {tab === 2 && <CatLocTab categorias={categorias} localizacoes={localizacoes} locOptions={locOptions} newCat={newCat} setNewCat={setNewCat} addCat={addCat} removeCat={removeCat} updateCat={updateCat} addLoc={addLoc} removeLoc={removeLoc} updateLoc={updateLoc} isDiretor={isDiretor} />}
-      {tab === 3 && <InventariosTab inventarios={inventarios} onNew={() => setModalInv({})} onUpdate={updateInvStatus} isDiretor={isDiretor} />}
-      {tab === 4 && (
+      {tab === 3 && (
         <RevisaoTab ciclos={revisaoCiclos} indicadores={revisaoIndic}
           onNovoCiclo={() => setModalNovoCiclo(true)} onAbrirConvocacao={abrirConvocacao}
           isDiretor={isDiretor} isCoordenadorRevisao={isCoordenadorRevisao}
         />
       )}
-      {tab === 5 && (
+      {tab === 4 && (
         <MovimentacoesTab list={movList} total={movTotal} page={movPage} pageSize={MOV_PAGE_SIZE} loading={movLoading}
           onPageChange={setMovPage} locOptions={locOptions}
           filtroTipo={movFiltroTipo} setFiltroTipo={setMovFiltroTipo}
@@ -311,7 +299,6 @@ export default function Patrimonio() {
       <BemFormModal open={!!modalBem} data={modalBem} categorias={categorias} locOptions={locOptions} responsaveis={responsaveis} onClose={() => setModalBem(null)} onSave={saveBem} />
       <BemDetailModal open={!!modalDetail} data={modalDetail} onClose={() => setModalDetail(null)} onEdit={(b) => { setModalDetail(null); setModalBem(b); }} onBaixar={baixarBem} onMov={(bemId) => setModalMov({ bem_id: bemId })} onDispensarAlerta={dispensarAlerta} isDiretor={isDiretor} />
       <MovFormModal open={!!modalMov} data={modalMov} locOptions={locOptions} onClose={() => setModalMov(null)} onSave={saveMov} />
-      <InvFormModal open={!!modalInv} onClose={() => setModalInv(null)} onSave={saveInv} />
       <NovoCicloModal open={modalNovoCiclo} responsaveis={responsaveis} onClose={() => setModalNovoCiclo(false)} onSave={criarCiclo} />
       <ConvocacaoModal open={!!modalConvocacao} data={modalConvocacao} locOptions={locOptions} onClose={() => setModalConvocacao(null)} onIniciar={iniciarConvocacao} onAtualizarItem={atualizarItemRevisao} onConcluir={concluirConvocacao} isDiretor={isCoordenadorRevisao} />
     </div>
@@ -493,12 +480,6 @@ function DashboardTab({ dash, indicadores, depreciacaoIndic, onNavigate, onNavig
               );
             })}
           </div>
-        </div>
-      )}
-
-      {dash.inventariosAbertos > 0 && (
-        <div style={{ ...styles.card, borderLeft: `4px solid ${C.amber}`, padding: 16, fontSize: 13, color: C.text }}>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><ClipboardList style={{ width: 16, height: 16, color: '#00B39D' }} /> {dash.inventariosAbertos} inventário(s) em andamento</span>
         </div>
       )}
     </>
@@ -708,46 +689,6 @@ function CatLocTab({ categorias, localizacoes, locOptions, newCat, setNewCat, ad
         )}
       </Modal>
     </div>
-  );
-}
-
-function InventariosTab({ inventarios, onNew, onUpdate, isDiretor }) {
-  return (
-    <>
-      {isDiretor && <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}><Button onClick={onNew}>+ Novo Inventário</Button></div>}
-      <div style={styles.card}>
-        <div style={{ overflowX: 'auto' }}>
-          <table style={styles.table}>
-            <thead><tr>
-              <th style={styles.th}>Nome</th><th style={styles.th}>Data Início</th><th style={styles.th}>Data Fim</th>
-              <th style={styles.th}>Responsável</th><th style={styles.th}>Status</th>{isDiretor && <th style={styles.th}>Ações</th>}
-            </tr></thead>
-            <tbody>
-              {inventarios.length === 0 && <tr><td colSpan={6} style={{ ...styles.td, textAlign: 'center', color: C.text3 }}>Nenhum inventário</td></tr>}
-              {inventarios.map(inv => (
-                <tr key={inv.id}>
-                  <td style={{ ...styles.td, fontWeight: 600 }}>{inv.nome}</td>
-                  <td style={styles.td}>{fmtDate(inv.data_inicio)}</td>
-                  <td style={styles.td}>{fmtDate(inv.data_fim)}</td>
-                  <td style={styles.td}>{inv.profiles?.name || '—'}</td>
-                  <td style={styles.td}><Badge status={inv.status} map={INV_STATUS} /></td>
-                  {isDiretor && (
-                    <td style={styles.td}>
-                      {inv.status === 'em_andamento' && (
-                        <div style={{ display: 'flex', gap: 4 }}>
-                          <Button size="xs" onClick={() => onUpdate(inv.id, 'concluido')}>✓ Concluir</Button>
-                          <Button variant="destructive" size="xs" onClick={() => onUpdate(inv.id, 'cancelado')}>✕ Cancelar</Button>
-                        </div>
-                      )}
-                    </td>
-                  )}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </>
   );
 }
 
@@ -1162,23 +1103,6 @@ function ConvocacaoModal({ open, data, locOptions, onClose, onIniciar, onAtualiz
           </Button>
         </div>
       )}
-    </Modal>
-  );
-}
-
-function InvFormModal({ open, onClose, onSave }) {
-  const [f, setF] = useState({});
-  useEffect(() => { if (open) setF({}); }, [open]);
-  const upd = (k, v) => setF(p => ({ ...p, [k]: v }));
-  return (
-    <Modal open={open} onClose={onClose} title="Novo Inventário"
-      footer={<Button onClick={() => onSave(f)}>Criar</Button>}>
-      <Input label="Nome *" value={f.nome || ''} onChange={e => upd('nome', e.target.value)} />
-      <div style={styles.formGroup}><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Data Início *</label><DatePicker value={f.data_inicio || ''} onChange={v => upd('data_inicio', v)} /></div>
-      <div style={styles.formGroup}>
-        <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Observações</label>
-        <textarea className="flex w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" style={{ minHeight: 60, resize: 'vertical' }} value={f.observacoes || ''} onChange={e => upd('observacoes', e.target.value)} />
-      </div>
     </Modal>
   );
 }
