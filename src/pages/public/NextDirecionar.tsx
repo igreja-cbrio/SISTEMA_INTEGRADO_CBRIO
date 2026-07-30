@@ -4,6 +4,7 @@ import { Users, HandHeart, Droplets } from 'lucide-react';
 import { next as nextApi, publicVoluntariado } from '../../api';
 import AnimatedBackground from './AnimatedBackground';
 import { usePublicTheme, PublicThemeToggle } from './publicTheme';
+import { BirthDatePicker } from '@/components/ui/birth-date-picker';
 
 // ============================================================================
 // Totem do NEXT (tablet) · 2026-07-07
@@ -360,7 +361,7 @@ function WalkinForm({ token, onCancel, onDone }: { token: string; onCancel: () =
       <input value={f.email} onChange={e => set('email', e.target.value)} placeholder="E-mail (opcional)" inputMode="email"
         className="w-full rounded-xl border border-border bg-background px-4 py-3 text-base" />
       <label className="block text-xs text-muted-foreground">Nascimento (opcional)
-        <input type="date" value={f.data_nascimento} onChange={e => set('data_nascimento', e.target.value)}
+        <BirthDatePicker value={f.data_nascimento} onChange={v => set('data_nascimento', v)}
           className="mt-1 w-full rounded-xl border border-border bg-background px-4 py-3 text-base text-foreground" />
       </label>
       {erro && <p className="text-sm text-destructive text-center">{erro}</p>}

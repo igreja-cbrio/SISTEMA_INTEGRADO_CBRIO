@@ -9,7 +9,13 @@ function nascidoHaAnos(anos: number, deslocDias = 0): string {
   const d = new Date();
   d.setFullYear(d.getFullYear() - anos);
   d.setDate(d.getDate() + deslocDias);
-  return d.toISOString().slice(0, 10);
+  // Formata no calendário LOCAL. `toISOString()` muda para UTC e, depois das
+  // 21h no Brasil, avança um dia — exatamente quando os testes de limiar
+  // ficavam um ano abaixo e tornavam o CI dependente do horário da execução.
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const dia = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${dia}`;
 }
 
 afterEach(() => { vi.useRealTimers(); });

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from 'recharts';
 import { logistica } from '../../../api';
 import { toast } from 'sonner';
+import { DatePicker } from '@/components/ui/date-picker';
 
 // ── Tema (mesma paleta do módulo Logística · CSS vars do CBRio) ──────────────
 const C = {
@@ -291,7 +292,7 @@ function LancarView({ produtos, onLancado }) {
           <input style={{ ...st.input, width: '100%' }} type="number" step="any" value={linha.quantidade} onChange={e => set('quantidade', e.target.value)} /></div>
         {pedeValidade && (
           <div style={{ marginBottom: 10 }}><label style={st.label}>Validade do lote</label>
-            <input style={{ ...st.input, width: '100%' }} type="date" value={linha.validade} onChange={e => set('validade', e.target.value)} />
+            <DatePicker style={{ ...st.input, width: '100%' }} value={linha.validade} onChange={v => set('validade', v)} />
             <div style={{ fontSize: 11, color: C.text3, marginTop: 4 }}>Validades diferentes? Adicione uma linha por lote.</div>
           </div>
         )}
@@ -303,7 +304,7 @@ function LancarView({ produtos, onLancado }) {
           </div>
         )}
         <div style={{ marginBottom: 10 }}><label style={st.label}>Data</label>
-          <input style={{ ...st.input, width: '100%' }} type="date" value={linha.data_movimentacao} onChange={e => set('data_movimentacao', e.target.value)} /></div>
+          <DatePicker style={{ ...st.input, width: '100%' }} value={linha.data_movimentacao} onChange={v => set('data_movimentacao', v)} /></div>
         <div style={{ marginBottom: 12 }}><label style={st.label}>Motivo / obs (opcional)</label>
           <input style={{ ...st.input, width: '100%' }} value={linha.motivo} onChange={e => set('motivo', e.target.value)} /></div>
         <button style={{ ...st.btn('sec'), width: '100%' }} onClick={adicionar}>+ Adicionar à lista</button>

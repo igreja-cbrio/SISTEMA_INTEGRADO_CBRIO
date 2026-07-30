@@ -3,6 +3,7 @@ import { useAuth } from '../../../contexts/AuthContext';
 import { logistica, ml, arquivei } from '../../../api';
 import { supabase } from '../../../supabaseClient';
 import { Button } from '../../../components/ui/button';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Copy } from 'lucide-react';
 import { toast } from 'sonner';
 import LogisticaEstoque from './LogisticaEstoque';
@@ -427,7 +428,7 @@ export default function Logistica() {
           <Textarea label="Descrição *" value={modalPed.descricao || ''} onChange={e => upPed('descricao', e.target.value)} />
           <div style={styles.formRow}>
             <Input label="Valor Total" type="number" step="0.01" value={modalPed.valor_total || ''} onChange={e => upPed('valor_total', e.target.value)} />
-            <Input label="Data Prevista" type="date" value={modalPed.data_prevista || ''} onChange={e => upPed('data_prevista', e.target.value)} />
+            <div style={styles.formGroup}><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Data Prevista</label><DatePicker value={modalPed.data_prevista || ''} onChange={v => upPed('data_prevista', v)} /></div>
           </div>
           <div style={styles.formRow}>
             <Select label="Fornecedor" value={modalPed.fornecedor_id || ''} onChange={e => upPed('fornecedor_id', e.target.value)}>
@@ -945,7 +946,7 @@ function NfEstoqueModal({ nota, onClose, onDone }) {
                       </select>
                     </td>
                     <td style={styles.td}><input type="number" min="0" step="any" style={{ ...styles.input, width: 70 }} value={l.quantidade} onChange={e => upd(i, 'quantidade', e.target.value)} /></td>
-                    <td style={styles.td}>{p?.controla_validade ? <input type="date" style={styles.input} value={l.validade} onChange={e => upd(i, 'validade', e.target.value)} /> : <span style={{ color: C.text3, fontSize: 12 }}>—</span>}</td>
+                    <td style={styles.td}>{p?.controla_validade ? <DatePicker value={l.validade} onChange={v => upd(i, 'validade', v)} /> : <span style={{ color: C.text3, fontSize: 12 }}>—</span>}</td>
                   </tr>
                 );
               })}
@@ -1012,7 +1013,7 @@ function NotaFiscalModal({ open, data, onClose, onSave, saving, fornecedores, pe
         </div>
         <div style={styles.formRow}>
           <Input label="Valor *" type="number" step="0.01" value={data.valor || ''} onChange={e => upNota('valor', e.target.value)} />
-          <Input label="Data Emissão *" type="date" value={data.data_emissao || ''} onChange={e => upNota('data_emissao', e.target.value)} />
+          <div style={styles.formGroup}><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Data Emissão *</label><DatePicker value={data.data_emissao || ''} onChange={v => upNota('data_emissao', v)} /></div>
         </div>
         <div style={styles.formRow}>
           <Input label="Emitente (quem vendeu)" value={data.emitente_nome || ''} onChange={e => upNota('emitente_nome', e.target.value)} />

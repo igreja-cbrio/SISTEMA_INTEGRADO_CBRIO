@@ -2864,10 +2864,11 @@ router.patch('/checkin/:id/pager-devolvido', authorizeModule('kids', 2), async (
 // já saiu = pager foi pra casa (é o que a equipe precisa rastrear).
 router.get('/pagers/conferencia', authorizeModule('kids', 1), async (req, res) => {
   try {
+    const cultoId = req.query.culto_id ? String(req.query.culto_id) : null;
     const data = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.data || ''))
       ? String(req.query.data)
-      : new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10); // hoje BRT
-    // Check-ins COM pager cujo culto é do dia pedido.
+      : new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10); // hoje BRT (fallback)
+    // Check-ins COM pager.
     const linhas = [];
     for (let offset = 0; ; offset += 1000) {
       const { data: chunk, error } = await supabase.from('kids_checkins')
@@ -2875,7 +2876,7 @@ router.get('/pagers/conferencia', authorizeModule('kids', 1), async (req, res) =
           id, checkin_grupo_id, pager_numero, checkin_at, checkout_at, pager_devolvido_at,
           responsavel_checkin_nome,
           crianca:kids_criancas(nome),
-          sessao:kids_sessoes(culto:cultos(nome, data))
+          sessao:kids_sessoes(culto:cultos(id, nome, data))
         `)
         .not('pager_numero', 'is', null).is('deleted_at', null)
         .range(offset, offset + 999);
@@ -2884,13 +2885,13 @@ router.get('/pagers/conferencia', authorizeModule('kids', 1), async (req, res) =
       linhas.push(...chunk);
       if (chunk.length < 1000) break;
     }
-    // Filtra pelo dia do culto (fallback: dia do check-in em BRT) e agrupa por família×pager.
+    // Filtra por CULTO (preferido) ou, na falta, pelo dia do culto. Agrupa por família×pager.
     const grupos = new Map();
     for (const l of linhas) {
       const dataCulto = l.sessao?.culto?.data
         ? String(l.sessao.culto.data).slice(0, 10)
         : (l.checkin_at ? new Date(new Date(l.checkin_at).getTime() - 3 * 3600 * 1000).toISOString().slice(0, 10) : null);
-      if (dataCulto !== data) continue;
+      if (cultoId ? (l.sessao?.culto?.id !== cultoId) : (dataCulto !== data)) continue;
       const chave = `${l.checkin_grupo_id || l.id}|${l.pager_numero}`;
       const g = grupos.get(chave) || {
         pager_numero: l.pager_numero,
@@ -2912,10 +2913,56 @@ router.get('/pagers/conferencia', authorizeModule('kids', 1), async (req, res) =
     const lista = [...grupos.values()].sort((a, b) => (parseInt(a.pager_numero, 10) || 0) - (parseInt(b.pager_numero, 10) || 0));
     const nao_devolvidos = lista.filter((g) => !g.devolvido_at).length;
     const foram_pra_casa = lista.filter((g) => !g.devolvido_at && g.todos_sairam).length;
-    res.json({ data, lista, resumo: { total: lista.length, nao_devolvidos, foram_pra_casa } });
+    res.json({ data, culto_id: cultoId, lista, resumo: { total: lista.length, nao_devolvidos, foram_pra_casa } });
   } catch (e) {
     console.error('[totemKids] pagers conferencia:', e.message);
     res.status(500).json({ error: 'Erro ao carregar a conferência de pagers' });
+  }
+});
+
+// GET /api/totem-kids/pagers/cultos · lista os cultos com Kids (pra escolher na
+// conferência de pagers), mais recentes primeiro. Marca quais tiveram pager.
+router.get('/pagers/cultos', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit) || 40, 100);
+    // Cultos que têm sessão de Kids (com ou sem pager).
+    const sess = [];
+    for (let offset = 0; ; offset += 1000) {
+      const { data: chunk, error } = await supabase.from('kids_sessoes')
+        .select('culto:cultos(id, nome, data)')
+        .range(offset, offset + 999);
+      if (error) throw error;
+      if (!chunk || chunk.length === 0) break;
+      sess.push(...chunk);
+      if (chunk.length < 1000) break;
+    }
+    // Quais cultos tiveram pager entregue.
+    const comPager = new Set();
+    for (let offset = 0; ; offset += 1000) {
+      const { data: chunk, error } = await supabase.from('kids_checkins')
+        .select('sessao:kids_sessoes(culto_id)')
+        .not('pager_numero', 'is', null).is('deleted_at', null)
+        .range(offset, offset + 999);
+      if (error) throw error;
+      if (!chunk || chunk.length === 0) break;
+      for (const c of chunk) { const cid = c.sessao?.culto_id; if (cid) comPager.add(cid); }
+      if (chunk.length < 1000) break;
+    }
+    const hoje = new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10);
+    const map = new Map();
+    for (const s of sess) {
+      const c = s.culto;
+      if (!c?.id || !c.data) continue;
+      if (String(c.data).slice(0, 10) > hoje) continue; // só até hoje
+      if (!map.has(c.id)) map.set(c.id, { culto_id: c.id, nome: c.nome, data: String(c.data).slice(0, 10), tem_pager: comPager.has(c.id) });
+    }
+    const cultos = [...map.values()]
+      .sort((a, b) => (a.data < b.data ? 1 : a.data > b.data ? -1 : 0))
+      .slice(0, limit);
+    res.json(cultos);
+  } catch (e) {
+    console.error('[totemKids] pagers cultos:', e.message);
+    res.status(500).json({ error: 'Erro ao listar cultos' });
   }
 });
 

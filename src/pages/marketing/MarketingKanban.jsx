@@ -10,6 +10,7 @@ import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
 import { Input } from '../../components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '../../components/ui/label';
 import { Textarea } from '../../components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
@@ -750,10 +751,9 @@ function CardDrawer({ card, onClose, onUpdated, tipos, destinos, membros, isCoor
                 </div>
                 <div className="space-y-2">
                   <Label>Prazo confirmado</Label>
-                  <Input
-                    type="date"
+                  <DatePicker
                     value={edit.prazo_confirmado || ''}
-                    onChange={e => setEdit(s => ({ ...s, prazo_confirmado: e.target.value }))}
+                    onChange={v => setEdit(s => ({ ...s, prazo_confirmado: v }))}
                     disabled={!isCoordenador}
                   />
                 </div>
@@ -1043,7 +1043,7 @@ function NovaTaskForm({ tipos, destinos, membros, onSuccess }) {
         </div>
         <div className="space-y-2">
           <Label>Prazo (opcional)</Label>
-          <Input type="date" value={form.prazo_confirmado} onChange={e => setForm(f => ({ ...f, prazo_confirmado: e.target.value }))} />
+          <DatePicker value={form.prazo_confirmado} onChange={v => setForm(f => ({ ...f, prazo_confirmado: v }))} />
         </div>
       </div>
       <label className="flex items-center gap-2 cursor-pointer text-sm">

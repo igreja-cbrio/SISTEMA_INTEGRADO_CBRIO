@@ -3,6 +3,7 @@ import { useAuth } from '../../../contexts/AuthContext';
 import { cycles as api } from '../../../api';
 import CompletionSection from '../../../components/CompletionSection';
 import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
+import { DatePicker } from '@/components/ui/date-picker';
 
 const C = { dark: 'var(--cbrio-text)', t2: 'var(--cbrio-text2)', t3: 'var(--cbrio-text3)', border: 'var(--cbrio-border)', accent: '#00B39D' };
 
@@ -631,7 +632,7 @@ export default function CycleView({ eventId, eventName }) {
                     <div style={{ display: 'flex', gap: 8 }}>
                       <div style={{ flex: 1 }}>
                         <label style={{ fontSize: 10, fontWeight: 600, color: C.t3 }}>Prazo</label>
-                        <input type="date" value={editData.prazo || ''} onChange={e => setEditData(d => ({ ...d, prazo: e.target.value }))}
+                        <DatePicker value={editData.prazo || ''} onChange={v => setEditData(d => ({ ...d, prazo: v }))}
                           style={{ width: '100%', padding: '5px 8px', borderRadius: 6, border: `1px solid ${C.border}`, fontSize: 12, color: C.dark, background: 'var(--cbrio-input-bg, #fff)', boxSizing: 'border-box' }} />
                       </div>
                       <div style={{ flex: 1 }}>

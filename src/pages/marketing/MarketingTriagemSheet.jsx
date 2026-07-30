@@ -7,6 +7,7 @@ import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '../../components/ui/sheet';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Loader2, Plus, User2, Zap, CalendarClock } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -145,9 +146,8 @@ export default function MarketingTriagemSheet({ campanha, tipos, membros, onClos
                 </div>
                 <div className="space-y-2">
                   <Label className="text-xs">Entrega ao solicitante</Label>
-                  <Input type="date" value={meta.prazo_entrega}
-                    onChange={e => setMeta(m => ({ ...m, prazo_entrega: e.target.value }))}
-                    onBlur={() => salvarPrazo(meta.prazo_entrega ? new Date(meta.prazo_entrega + 'T12:00:00').toISOString() : null)} />
+                  <DatePicker value={meta.prazo_entrega}
+                    onChange={v => { setMeta(m => ({ ...m, prazo_entrega: v })); salvarPrazo(v ? new Date(v + 'T12:00:00').toISOString() : null); }} />
                 </div>
               </div>
               {dataPedida && (
@@ -212,13 +212,13 @@ export default function MarketingTriagemSheet({ campanha, tipos, membros, onClos
                   </Select>
                   <div className="space-y-1">
                     <Label className="text-[10px] text-muted-foreground">Início</Label>
-                    <Input type="date" value={novo.data_inicio}
-                      onChange={e => setNovo(n => ({ ...n, data_inicio: e.target.value }))} className="h-8 text-xs" />
+                    <DatePicker value={novo.data_inicio}
+                      onChange={v => setNovo(n => ({ ...n, data_inicio: v }))} className="h-8 text-xs" />
                   </div>
                   <div className="space-y-1">
                     <Label className="text-[10px] text-muted-foreground">Fim</Label>
-                    <Input type="date" value={novo.data_fim} min={novo.data_inicio || undefined}
-                      onChange={e => setNovo(n => ({ ...n, data_fim: e.target.value }))} className="h-8 text-xs" />
+                    <DatePicker value={novo.data_fim} min={novo.data_inicio || undefined}
+                      onChange={v => setNovo(n => ({ ...n, data_fim: v }))} className="h-8 text-xs" />
                   </div>
                 </div>
                 <label className="flex items-center gap-1.5 text-xs text-muted-foreground">

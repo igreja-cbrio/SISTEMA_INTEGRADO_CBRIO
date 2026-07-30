@@ -189,6 +189,66 @@ Celebra com só nome+telefone continuam válidas para sempre).
   → 410** (leitura fica pra conferência; arquivos EventosExternos*.tsx ficam
   no repo até 1 ciclo sem divergência — rollback = restaurar 2 rotas).
   ext_* NÃO é dropado (SPEC-04 §4).
+- **F3.4 · SPEC-06 — CHECK-IN QR (2026-07-28 · SEM migration):** comprovante
+  com QR na tela de sucesso + tela de check-in do dia (operação do Celebra
+  29/08). **Token ASSINADO em vez de coluna nova** — HMAC-SHA256 do id da
+  inscrição (`services/inscricaoComprovante.js` · segredo = `INSC_QR_SECRET`
+  opcional com fallback no `CRON_SECRET`; sem segredo é fail-closed, NUNCA
+  literal — lição do MEM_QR_SALT); vale retroativo pras ~100 inscrições
+  migradas do Celebra sem backfill. O QR codifica a URL pública `/i/c/<token>`
+  (`InscricaoComprovante.tsx` — a pessoa reabre quando quiser; portaria
+  escaneia o MESMO QR). Token aparece na tela de sucesso do form (fonte
+  espinha), na re-inscrição e — evento pago — na tela `/pagamento/:token` SÓ
+  com `pago` do servidor. Tela `/inscricoes/evento/:id/checkin`
+  (`InscricaoEventoCheckin.tsx` · nível 2 = operar check-in, SPEC-08): leitura
+  de QR CONTÍNUA (html5-qrcode; a do voluntariado para no 1º scan), busca por
+  nome local + **CPF/telefone server-side** (`/checkin/buscar` — CPF não viaja
+  na lista, mesma régua do detalhe), contadores ao vivo (polling 15s),
+  "Inscrever na hora" = form público (mesma validação), tela cheia via
+  Fullscreen API. Backend em routes/inscricoes.js: GET/POST
+  `/eventos/:id/checkin` + DELETE desfazer — **duplo check-in AVISADO** (23505
+  do UNIQUE vira `ja_checkin` com hora, não erro); `cancelada` bloqueia;
+  **`recebida` (pago pendente) só entra com `confirmar_pendente`** = decisão
+  de quem está na porta, auditada pelo `por`; comprovante de OUTRO evento é
+  erro distinto (diz qual). POST exige `checkin_ativo` (botão Ativar na tela ·
+  PUT nível 3). Marcar check-in acorda sozinho o card de comparecimento do
+  dashboard (`compareceu` da view unificada já media).
+- **F3.4 · SPEC-07 — confirmação WhatsApp da espinha (2026-07-28 · SEM
+  migration):** `services/inscricaoWhatsapp.js` → fila `whatsapp_envios`
+  (retry/backoff · falha TERMINAL avisa gente; contexto `inscricoes.confirmacao`
+  roteia o aviso pro módulo). **Regras: opt-in D4 é lei (sem
+  `whatsapp_optin=true` NÃO envia) · kill-switch = env
+  `WHATSAPP_TEMPLATE_INSCRICAO_EVENTO` (vazia = no-op gracioso, padrão
+  notificarMembro) · dispara SÓ em transição real** — evento gratuito: inscrição
+  NOVA na porta pública (nasce confirmada); evento pago: dentro do gate
+  `confirmouAgora` do handler `pagamentos/handlers/inscricao.js`
+  (recebida→confirmada — reentrega de webhook não reenvia). Re-inscrição/merge
+  NÃO reenvia (fila sem dedup por contexto — re-escaneada de QR viraria spam).
+  Mensagem: {{1}} 1º nome · {{2}} evento · {{3}} data/hora · {{4}} **link do
+  comprovante /i/c/<token> como variável de body** (técnica do
+  grupos_renovacao_temporada). **PRA ATIVAR: criar template UTILITY pt_BR
+  `inscricao_evento_confirmacao` na Meta** ("Oi {{1}}! Sua inscrição no {{2}}
+  está confirmada. 📅 {{3}} · Seu comprovante (apresente na entrada): {{4}}") **e
+  setar o NOME na env** — até lá tudo no-op. A notificação interna de nova
+  inscrição (bullet 1 da spec) já existia desde a PR 3; espelhos read-only =
+  F3.5.
+- **Portas públicas do sistema na aba Eventos (2026-07-28 · SEM migration ·
+  pedido do Marcos):** o cérebro de inscrições mostra TODAS as portas públicas,
+  não só a espinha — **1 card por porta** (grupos, líderes, next, batismo,
+  apresentação, voluntariado; decisão do Marcos: detalhe no MODAL, senão a
+  lista explode — mesmo racional do card de série). `GET /inscricoes/portas`
+  (nível 1): catálogo `PORTAS_SISTEMA` no código (link público, módulo dono,
+  rota de gestão) + contagens/edições da view unificada (séries derivadas
+  SPEC-10 t1 = temporada/turma/mês) + aberto/fechado BEST-EFFORT (grupos =
+  `mem_temporadas.inscricoes_abertas` · next = `next_turmas.status='aberta'` ·
+  demais = contínuas; falha → null, nunca 500). Modal
+  (`InscricoesPortas.tsx`): status, link + copiar + QR, inscrições 30d/total,
+  edições recentes, botão "Gerenciar no módulo". **⚠️ INVENTÁRIO 100%
+  somente-leitura — nenhuma escrita por aqui, NEM super-admin** (cada porta tem
+  lógica-satélite no módulo dono: broadcast de temporada, turma do totem, 4º
+  domingo; segundo caminho de escrita antes da F3.5 é a classe de bug que o
+  desenho evita — "operar daqui" chega com a F3.5/SPEC-10 t2, quando o card
+  migra de seção). Marcos validou o formato em 28/07.
 - **Porta 7 · Grupos (2026-07-28 · migration `20260728235000` = M5):** e-mail
   obrigatório (D2) + anti-abreviação + endereço opcional (vai pro cadastro
   pendente, nunca sobrescreve membro) no form recém-lançado (toque mínimo);
@@ -211,6 +271,47 @@ Celebra com só nome+telefone continuam válidas para sempre).
   `proximoQuartoDomingoISO` (formato local, não UTC); horário obrigatório no
   submit quando há horários; `status='rejeitado'` segue FORA do CHECK
   (referências defensivas no código são vocabulário morto — não legalizar).
+
+## ⚠️ Google Tag Manager · SÓ no domínio público, nunca no ERP (2026-07-29)
+
+Gustavo (tráfego pago, parceiro externo) precisava medir anúncio → o site não
+tinha **nenhum** rastreamento (conferido no HTML e no bundle de prod: zero
+Analytics, zero GTM, zero pixel). Container criado pelo Marcos:
+**`GTM-M59RCB34`**, conta Google **`cblab@cbrio.com.br`** (endereço de função
+do marketing, registrado como conta Google sem Gmail — a igreja é Microsoft
+365). A igreja é dona; Gustavo entra como usuário com permissão *Publicar* no
+container (não Admin).
+
+**A LEI:** o GTM carrega **só** em `cbrio.com.br`/`www.cbrio.com.br`. **Nunca**
+em `cbrio.org`. Motivo: este bundle serve os DOIS domínios (`SITE_PUBLICO_HOSTS`
+em `src/App.tsx:549` → hostname público monta `SitePublicoRoutes`, o resto monta
+o ERP). Um snippet solto no `index.html` carregaria o container em toda tela
+logada — nome, CPF, telefone, contribuição, dado de menor no Kids indo pra
+Google/Meta. Por isso o snippet em `index.html` tem **gate por hostname** antes
+de injetar o `gtm.js`, espelhando a lista do `App.tsx`. **Mudou
+`SITE_PUBLICO_HOSTS`? Muda a lista no `index.html` também.**
+
+- **Sem `<noscript>` no ERP** (de propósito): o iframe do GTM só serve visitante
+  com JS desligado e, sem JS, um SPA nem renderiza — não mediria nada e
+  carregaria em `cbrio.org`, exatamente o vazamento que o gate evita. O site em
+  Astro (HTML estático, renderiza sem JS) leva o noscript normal.
+- **ID hardcoded, não env**: o liga/desliga de qualquer tag vive no painel do
+  GTM (é o propósito da ferramenta) — env só somaria um ponto de falha na
+  Vercel. Não trocar por `VITE_*` sem motivo novo.
+- **SPA**: o GTM não detecta troca de rota sozinho. Contagem de navegação
+  depende do gatilho *History Change* configurado pelo Gustavo no painel.
+- **Site em Astro** (`~/cbrio-site`, repo `igreja-cbrio/site-cbrio`): mesmo
+  container já instalado no `src/layouts/Base.astro` (sem gate — lá o app só é
+  público). No cutover do DNS, o GTM sai daqui junto com o `SitePublicoRoutes`.
+
+**Pendente (decisão do Marcos + Gustavo):** conversão de verdade (inscrição em
+evento) acontece nas **portas públicas do ERP**, em `cbrio.org` — fora do
+domínio público. Medir isso exige GTM nessas rotas específicas, com regra
+explícita de não enviar dado pessoal. Não fazer por conta: cada porta pública é
+um formulário com PII (ver as 2 LEIs de porta/inscrição acima). Também em
+aberto: o domínio já tem **Search Console** verificado por outra conta Google
+("Play Console org" · meta `google-site-verification` no `index.html`) e o canal
+do YouTube usa uma terceira — consolidar identidade antes de ligar Ads↔YouTube.
 
 ## Sweep dos formulários de inscrição · achados e correções (2026-07-28)
 
@@ -276,11 +377,33 @@ que segue pendente:
   de MENOR obrigatório** (checkbox no TotemMembro com o texto canônico do
   `GET /textos` da apresentação + `registrarConsentimentos` na satélite,
   porta 'apresentacao').
-- **PENDENTE (P3 restante · sessão de refactor):** cópias locais de validação
-  (batismo/vol/next/grupos) fora da fonte única (`validarCamposPadrao`/
-  `processarIdentidade`); tipo `data` do form-builder sem renderização
-  própria; QR com `?temporada=` antiga vence a temporada aberta; endereço de
-  grupos write-only; e2e do Next morto (#nome/#sobrenome).
+- **P3-refactor FEITO (2026-07-28 · SEM migration · comportamento preservado):**
+  (1) **cpfValido/emailValido viraram imports de `inscricaoContrato`** nas 4
+  portas (batismo/vol/next/grupos) — as cópias locais eram idênticas ao
+  canônico (conferido lado a lado antes de trocar), então a troca é
+  zero-diff; `emailValido` foi EXPORTADO do contrato (regex única, sem
+  normalizar — quem normaliza é validarCamposPadrao) e o próprio
+  validarCamposPadrao passou a usá-lo. ⚠️ Decisão de escopo: NÃO migramos os
+  handlers inteiros pra `validarCamposPadrao` — portas vivas com mensagens/
+  fluxos próprios; o risco do sweep era a CÓPIA divergir, e o import resolve.
+  `publicMembresia.js` entrou no mesmo padrão no follow-up (PR seguinte, 28/07
+  — porta de PESSOA, mesma troca zero-diff; grandfathering de CPF legado
+  intocado nos call sites). Cópia que FICOU: `publicDevocional.js` (módulo do
+  Matheus — não mexer sem alinhar). ⚠️ Segue vivo o follow-up de 18/07:
+  `utils/cpf` é uma 2ª fonte (o membresia.js autenticado usa; o
+  `normalizarCpf` de lá NÃO valida DV) — consolidar exige sessão própria. (2) tipo `data` do form-builder ganhou DatePicker no
+  form público (gravava texto livre em qualquer formato). (3) **QR com
+  `?temporada=` antiga não vence mais a aberta**: InscricaoGrupos valida o
+  param contra `inscricoes_abertas` e IGNORA temporada fechada (QR impresso
+  vive pra sempre — lição da virada); falha na consulta mantém o
+  comportamento antigo. (4) **endereço de grupos deixou de ser write-only**:
+  aprovarPedidoCore + promoverInscricaoLider agora copiam `endereco` do
+  cadastro pendente pro membro SÓ-ONDE-VAZIO (junto de foto/sexo/nascimento);
+  o descarte pra membro EXISTENTE permanece por decisão de 28/07 (endereço de
+  membro muda na Membresia, não por form de grupo). (5) e2e do Next
+  atualizado pro contrato (#nome_completo/CPF válido gerado/BirthDatePicker/
+  sexo/motivo/termos — os seletores #nome/#sobrenome estavam mortos); ⚠️ e2e
+  não foi EXECUTADO nesta entrega (exige app rodando + cria inscrição real).
 
 ## ⚠️ Módulo de Comunicação (WhatsApp central) · handoff pro MATHEUS (2026-07-28)
 
@@ -922,6 +1045,38 @@ regras. **Quebrar qualquer uma delas é regressão crítica.**
    sem usar SECURITY DEFINER no helper.** Causa stack overflow.
    Padrão: helper SQL `STABLE SECURITY DEFINER SET search_path = public`.
 
+10. **NUNCA criar coluna que aponta pra `mem_membros` (ou `profiles`) sem
+    FOREIGN KEY.** Descoberto em 2026-07-30 investigando 58 ponteiros mortos nas
+    tabelas do Next: **`merge_membros` descobre os filhos a repontar pelo
+    CATÁLOGO** (`pg_constraint` · `confrelid = 'public.mem_membros'`) e faz
+    **HARD delete** do membro fundido. Tabela com `membro_id uuid` *sem* FK é
+    invisível pra ele — a cada fusão ela acumula ponteiro pra cadastro que não
+    existe mais, silenciosamente (`next_inscricoes`/`next_matriculas` ficaram 2
+    meses assim). Padrão: `REFERENCES public.mem_membros(id) ON DELETE SET NULL`
+    (as 21 FKs convertidas em 2026-05-21). Vale pra QUALQUER tabela nova com
+    coluna de pessoa — a FK não é enfeite de integridade, é o que faz a fusão de
+    duplicatas funcionar. ⚠️ Ao ligar FK em tabela existente, resolver os órfãos
+    ANTES (a constraint não é criável com violação).
+    ⚠️⚠️ **`deleted_at` NÃO isenta de FK**: a constraint valida a tabela INTEIRA,
+    inclusive linha soft-deletada. Foi assim que a 1ª tentativa da
+    `20260730120000` morreu com 23503 — o tratamento de conflito soft-deletava a
+    linha redundante e deixava o `membro_id` apontando pro cadastro morto.
+    Corolário: rotina de saneamento que "resolve" ponteiro por soft-delete não
+    resolve nada pra efeito de FK — tem que repontar ou anular a coluna. E
+    **sempre pôr uma rede de segurança (`UPDATE ... SET col = NULL WHERE NOT
+    EXISTS`) imediatamente antes do `ADD CONSTRAINT`**: a criação da FK não pode
+    depender de a lógica de repoint ter sido perfeita.
+    ⚠️⚠️⚠️ **`ADD COLUMN IF NOT EXISTS ... REFERENCES` engole a FK quando a coluna
+    já existe** (descoberto em 2026-07-30 · `vol_profiles.membresia_id`, a ponte
+    do valor SERVIR: 123 de 307 vínculos apontavam pra cadastro inexistente). O
+    `IF NOT EXISTS` pula o comando **inteiro**, `REFERENCES` incluído — a
+    migration de maio "declarava" a FK, a coluna existia de abril, e o banco
+    nunca a teve. **É pior que esquecer**: quem lê o repo conclui que a
+    integridade está garantida. Ao acrescentar `REFERENCES` a coluna que pode
+    preexistir, usar `ALTER TABLE ... ADD CONSTRAINT` em bloco próprio (guardado
+    por `pg_constraint`), nunca dentro do `ADD COLUMN`. **Auditar a FK no
+    catálogo, não no arquivo da migration.**
+
 ## Inventário de helpers SQL (usar SEMPRE em policies novas)
 
 | Função | Retorna | Uso típico |
@@ -1547,6 +1702,41 @@ Susto do Marcos (envios proativos a líderes). Auditoria do código vivo + barre
   `/grupos/envios/*` em grupos.js. Só template (fila) — nada de texto livre proativo.
 - ⚠️ Aplicar `20260723180000` antes do merge (aditiva/idempotente · código tolera
   ausência tratando como false).
+
+## ⚠️ WhatsApp · link local NUNCA sai em mensagem (guarda · 2026-07-29)
+
+Incidente: um redisparo manual do aviso de pedido, rodado numa máquina de dev,
+montou o link de aprovação com `FRONTEND_URL=http://localhost:5173` do `.env`
+local — a líder recebeu um link de localhost no WhatsApp. Proteção em 2 camadas
+(não regredir):
+- **`waSender.postMessages`** (funil ÚNICO de envio da Cloud API): payload que
+  contenha URL local/privada (`localhost`, `127.0.0.1`, `0.0.0.0`, `[::1]`,
+  `://10.*`, `://192.168.*`, `://172.16-31.*`) é BLOQUEADO com
+  `reason:'link_local'` — nunca chega na Meta. Cobre qualquer template/texto
+  de qualquer serviço, inclusive scripts manuais.
+- **`gruposWhatsapp.baseUrl()`**: `FRONTEND_URL`/`VERCEL_URL` local é ignorada
+  ao montar link de WhatsApp (warn + fallback `https://cbrio.org`) — a URL já
+  nasce certa mesmo em dev.
+- `whatsappFila.falhaPermanente` trata `link_local` como erro PERMANENTE (sem
+  retry · notifica o módulo — reenviar nunca resolveria).
+Regra pra scripts manuais de reenvio: SEMPRE sobrescrever `FRONTEND_URL` pra
+produção antes de disparar (o `.env` de dev aponta pra localhost).
+
+## Grupos · templates v2 do fluxo de aprovação (2026-07-29)
+
+Pedido do Pr. Nélio: o fluxo correto do líder é LIGAR pra pessoa antes de
+aceitar/recusar. Templates novos aprovados na Meta (UTILITY · pt_BR · mesmas
+5 variáveis dos v1) e defaults trocados em `services/gruposWhatsapp.js`:
+- `grupos_pedido_novo_lider_v2` — instrui ligar antes; explica que recusa não
+  manda aviso automático (a recusa do líder devolve pra triagem, que decide a
+  realocação — comportamento já existente, só ficou dito).
+- `grupos_pedido_aprovado_v2` — sem o "o líder vai falar com você" (o contato
+  já aconteceu antes da aprovação).
+Estratégia (lição): NUNCA editar template aprovado em produção — edição volta
+pra revisão da Meta e o envio para; criar `_v2`, aprovar em paralelo e trocar
+o default/env. Os v1 (`grupos_pedido_novo_lider`/`grupos_pedido_aprovado`)
+podem ser excluídos na Meta após confirmar envio real com os v2. Envs
+`WHATSAPP_TEMPLATE_GRUPOS_PEDIDO_LIDER`/`_APROVADO` seguem como override.
 
 ## Fila WhatsApp · política de reenvio + falha avisa gente (2026-07-27)
 
@@ -3052,6 +3242,325 @@ via `window.print` na Brother QL-820NWB default do Windows).
   importadas (56% com responsável · resto via auto-cadastro no 1º check-in).
   Diário completo no legado.
 
+## ⚠️ Next · backfill de 13/05, contagem dupla e identidades (2026-07-29)
+
+Investigação a pedido do Marcos ("Kelly Veiga com 24 inscrições, 23 do Next").
+**Nada disso era import repetido** — é o desenho de duas camadas somadas sem
+dedup. Números medidos em produção antes da correção:
+
+- **O que o backfill `20260513160100` fez**: digitalizou **56 listas de presença**
+  do Next (34 de 2025 · 22 de 2026 · `next_eventos.arquivo_origem` guarda o PDF,
+  `total_lista`/`presentes_*` e a anotação do rodapé) e criou **1 linha em
+  `next_inscricoes` por NOME POR LISTA** — soma dos `total_lista` = 2.443 ≈ as
+  2.421 linhas criadas, **zero duplicata dentro do mesmo evento**. ⚠️ **Lista
+  impressa é ROSTER, não chamada** (76 nomes na folha × 34 presentes, no exemplo
+  do próprio arquivo): o nome fica sendo impresso nas sessões seguintes, então
+  762 pessoas viraram 2.423 linhas (mediana 3, máx 17). No MESMO instante o
+  import agrupou as aparições em **1.188 `next_matriculas`** por
+  `origem_mes_key = <mês>|<membro_id>`.
+- **Kelly**: 18 linhas legadas (18 eventos distintos · **4 com presença**) + 7
+  matrículas (2025-03 a 2025-09, **todas "formado"**). Ela não fez o Next 7×: o
+  nome estava no roster de 7 meses. ⚠️ **O status `formado` das 1.188 foi
+  INFERIDO do roster** — dado de negócio errado, e corrigir depende da régua de
+  quem conduz o Next (não é decisão de código · segue PENDENTE).
+- **A view somava as duas camadas**: 1.839 (`next`) + 2.423 (`next_legado`) =
+  **4.262 de 5.911 linhas = 72% da `vw_inscricoes_unificadas`**. O ramo do `ext`
+  já deduplicava por `legado_ref`; o do Next não tinha nada. E
+  `next_matriculas.origem_inscricao_id` está **NULL nos 1.847 registros** (a
+  ponte foi criada e nunca preenchida) — o vínculo aproveitável é o
+  `origem_mes_key`, preenchido em 1.189.
+- **A presença não subiu pro modelo novo**: 994 linhas legadas com check-in
+  contra **4** matrículas → o `compareceu` da porta `next` era ~sempre falso e
+  quem media presença era só o KPI `frequencia_next`, que lê a tabela legada.
+
+**Correções (migration `20260729190000`):** o ramo 9 da view passa a mostrar só
+o que **não** tem matrícula, no máximo 1 linha por (mês × pessoa) e com a
+aparição COM presença ganhando o `DISTINCT ON` (não perde `compareceu`); a
+edição deixa de ser NULL (vira o mês, na mesma série derivada do ramo 8 — era o
+chip "sem edição" que não abria nada). Backfill sobe a 1ª presença de cada
+(mês × pessoa) pra matrícula (~588). Resultado esperado: Next na view cai de
+4.262 → ~2.124 e matrículas com presença sobem de 4 → ~592.
+
+⚠️ **NÃO apagar nem desligar `next_inscricoes`.** As duas camadas carregam fatos
+**diferentes**: matrícula = inscrição/estado do mês · legado = aparição/presença
+por encontro. As presenças reais moram na legada e o `frequencia_next` lê de lá.
+
+**App parou de escrever só na camada morta** (`services/nextMatricula.js` ·
+`espelharMatriculaDoEncontro`): `POST /app/next/inscrever` e o check-in por
+geolocalização continuam gravando a presença por encontro em `next_inscricoes`
+E agora espelham a **matrícula do mês** (turma do mês → turma aberta → sem
+turma = espera), chave `origem_mes_key` (UNIQUE ⇒ idempotente). É **best-effort**
+de propósito: o write primário já respondeu ao app e não se desfaz porque o
+espelho falhou. A PARTE 3 da migration acrescenta `'app'` ao CHECK de
+`next_matriculas.origem` — sem isso o espelho falharia com 23514 **em silêncio**.
+⚠️ **Resíduo consciente**: o ramo `next` do `fn_app_inscricoes_fanout`
+(rede de segurança pra builds ANTIGOS do app) segue inserindo só na legada — a
+função foi patchada dinamicamente em prod (20260729060000) e um
+`CREATE OR REPLACE` do arquivo do repo REVERTERIA aquele patch. Não vale o risco
+por um caminho legado; a linha aparece como `next_legado` (sem contagem dupla).
+
+**Identidades do backfill** (`backend/scripts/_next_identidades_pendencias.cjs`
+· dry-run por padrão): o import resolveu a pessoa pelo matcher e gerou
+`membro_id` **determinístico (UUID v5 de nome+telefone)**, então telefone
+transcrito errado na lista manuscrita ou telefone de família compartilhado
+produziu (a) **25 membros com vínculo divergente** — 63 linhas do Next apontando
+pra um cadastro de OUTRA pessoa (ex.: "Lucas Abreu de almeida" → membro "Livia
+Quintella"; "Sophia Macedo Joseph" → "LAYANE … BELLO JOSEPH", mesmo telefone =
+mãe/filha) — **21 enfileiradas** em `identidade_pendencias` (`vinculo_divergente`
+· 4 já estavam lá) e visíveis em /entradas → Conflitos de CPF; (b) **25 pares de
+duplicata** que a `duplicidadePolicy` aceita e a aba "Possíveis duplicidades"
+já calcula sozinha (o script só confere); (c) **58 `membro_id` órfãos** — ⚠️
+**`merge_membros` NÃO repointa `next_inscricoes`/`next_matriculas`**, então
+fundir membro deixa a linha do Next apontando pra um id que sumiu (mesma classe
+do incidente Kids de 22/07). Corrigir exige o `mem_merge_log`. **PENDENTE.**
+⚠️ Lei mantida: o script **nunca** funde, religa ou apaga — só enfileira pra
+decisão humana.
+
+### ⚠️ `criado_em` da view unificada = DATA DO FATO, não data do import (2026-07-29)
+
+Marcos, olhando o gráfico de inscrições por dia: *"temos 2401 inscrições no dia
+13/05/26 e outro volume grande de 470 no dia 30/06 — se temos os números por
+inscrição (Next março, abril, maio…), não conseguimos colocar tudo na data que
+aconteceu o evento e não no dia que importamos?"* Dá — e **a data real já estava
+no banco nas três portas**; a view é que lia a coluna errada. Migration
+`20260730130000`, sem reescrever um dado.
+
+Picos que eram data de import: **13/05/2026 = 2.422** (next 1.109 · voluntariado
+749 · batismo 564) · **30/06 = 472** · 20/07 = 99 · 21/07 = 95.
+
+| porta | fonte da data do fato | precisão | regra |
+|---|---|---|---|
+| voluntariado | `data_inscricao` (749/749 preenchidas) | dia | `coalesce(data_inscricao, created_at)` |
+| batismo | `data_batismo` (564/564) | dia | `least(data_batismo, created_at)` |
+| next | mês da turma (`origem_mes`) | mês | mês só quando registrado DEPOIS do mês da turma |
+
+Três detalhes que a simulação contra produção obrigou a acertar (não simplificar):
+
+- **`least()` no batismo, não `coalesce()`**: batismo AGENDADO tem `data_batismo`
+  no FUTURO (havia registro pra 23/08/2026) — usar a cerimônia ali colocaria
+  inscrição no futuro. `least()` = "a evidência mais antiga de que a linha
+  existe": cerimônia nas 564 do backfill (2024/2025 < 13/05/2026), created_at nas
+  agendadas. E `least()` ignora NULL, então as 2 linhas sem data caem sozinhas.
+- **No next, o mês SÓ vale se a linha foi registrada depois do mês da turma.**
+  Sem essa guarda, matrícula real feita em 20/07 na turma de julho seria empurrada
+  pro dia 1º — eu estragaria a precisão do dado NOVO, que é o que precisa ficar
+  certo. Medido: em 30/06, 399 de 426 são backfill (turmas de 2024) e 27 mantêm o
+  dia (inscrição de junho pra turma de julho, data real). Em 26/07 e 28/07,
+  nenhuma é movida.
+- **Meio-dia em BRT** ao converter DATE→timestamptz. `'2025-03-01'::date::timestamptz`
+  é meia-noite UTC = 21h do dia ANTERIOR no fuso da igreja, e o dia apareceria
+  errado no gráfico.
+
+**Portas NÃO tocadas de propósito** (nunca tiveram import em massa, o `created_at`
+delas já é o momento real): espinha, eventos externos, apresentação ×2, grupos,
+líderes. **O `created_at` de toda tabela fica INTACTO** — continua respondendo
+"esta linha entrou no sistema em 13/05 pelo import X". Daqui pra frente as duas
+datas nascem iguais.
+
+Resultado simulado (3.544 linhas): o maior dia passa a ser **27/07 = 138** (dia
+real), os picos de import desaparecem e o volume se espalha por 2024-02→2026-08
+com 40–200/mês. **Zero linha com data no futuro.**
+
+⚠️ **Resíduo conhecido**: turmas "/02" do mesmo mês (Maio/02, Junho/02, Julho/02
+2026 · ~64 matrículas) ficam na data do import — `next_turmas.origem_mes` é
+UNIQUE, então a segunda turma de um mês não pode ter a chave, e a alternativa
+seria adivinhar o mês pelo NOME (texto livre). Preferi não adivinhar.
+
+⚠️ **PENDENTE**: os coletores `next.batismos`/`voluntarios`/`dizimo` ainda janelam
+por `next_matriculas.created_at`, então maio/2026 continua recebendo o backfill
+nesses 3 KPIs. Consertar muda valores de períodos JÁ FECHADOS e pede recoleta —
+passo separado, combinado com o Marcos.
+
+### ⚠️ Next · o DIA do backfill: sessão real primeiro, semana depois (2026-07-30)
+
+Pedido do Marcos: *"não quero mudar o KPI do next, quero que altere o dia das
+inscrições, já que não temos o dia certo — ao invés de usar sempre o dia 1 e
+colocar todas lá, divide pelas semanas do mês e separa as inscrições, aí vamos
+poder comparar o dado atual com o dado da semana do ano passado."* Migration
+`20260730160000`.
+
+**A premissa "não temos o dia certo" só valia para 31%.** Antes de estimar,
+medi: as 56 listas digitalizadas do Next **têm data de sessão** (56 datas
+distintas, dias 1 a 27 — são encontros semanais). Cruzando `next_inscricoes` ×
+`next_eventos`, **1.109 das 1.604 matrículas de backfill (69%) têm a data REAL
+da 1ª sessão em que a pessoa apareceu naquele mês**. O dia estava no PDF e não
+estava sendo lido.
+
+`fn_next_data_fato(created_at, origem_mes, primeira_sessao, id)` — fonte única,
+3 níveis do mais verdadeiro pro menos:
+
+| nível | regra | linhas | natureza |
+|---|---|---|---|
+| 1 | registrada durante/antes da própria turma → `created_at` | 286 | real, intocado |
+| 2 | backfill com aparição → **dia da 1ª sessão do mês** (`vw_next_primeira_sessao_mes`) | 1.109 | **real** |
+| 3 | backfill sem aparição → dia 1/8/15/22 pelo hash do id | 495 | estimativa declarada |
+
+Efeito medido em produção (simulado antes de aplicar): o **dia 1º sai de 1.614
+para ~280** linhas e a **semana 1 sai de 88% (1.660/1.890) para 43%** — 814 ·
+291 · 445 · 314 · 27 pelas semanas 1–5. Zero linha no futuro.
+
+- **Por que 1/8/15/22 e não uma data de sessão plausível**: o padrão de 7 em 7 a
+  partir do dia 1º é **visivelmente sintético**. Quem vê volume no dia 8 de um
+  mês sem encontro no dia 8 sabe que é aproximação. Escolher "13/04 porque teve
+  sessão nesse dia" seria fingir precisão — o oposto da régua do legado.
+- **`(h % 4 + 4) % 4`, não `abs(h) % 4`**: `hashtext` pode devolver `INT_MIN` e
+  `abs(INT_MIN)` estoura com 22003 — a leitura da linha inteira falharia.
+- **View, não coluna materializada**, pra `vw_next_primeira_sessao_mes`: dado
+  derivado de presença não pode ficar velho. Corrigir uma presença corrige a
+  data sozinha. `GROUP BY (membro_id, mes)` garante 1 linha por chave → o
+  `LEFT JOIN` **não pode multiplicar linha** (conferido: 1.890 antes e depois).
+- **A view unificada foi reconstruída por substituição textual** do arquivo da
+  `20260730130000` (2 trechos do ramo do Next), não transcrita à mão —
+  transcrever 258 linhas de `UNION ALL` é onde nasce erro. 7 statements
+  validados no pglast, `REVOKE anon/authenticated` preservado.
+
+✅ **A comparação YoY que ele quer é confiável**: turmas de **2025 são 100% data
+real** (843 · zero estimadas) e 2026 é 266 real + 96 estimadas (73%). As
+estimativas se concentram em **2024** (399), que ninguém compara. Ou seja:
+2026 × 2025 por semana bate real contra real do lado de 2025.
+
+⚠️ **NÃO mexe em KPI** (decisão dele nesta conversa): NEXT-01/02/03 seguem
+`ativo=false` medindo `indicou_*`, e os coletores seguem janelando por
+`created_at`. `created_at` de `next_matriculas` fica **intacto** — muda a
+LEITURA. A migration `20260730140000` do PR #2164 (que criava
+`vw_next_matriculas_kpi` e mudava os coletores) **nunca foi aplicada** e foi
+**superada** por esta: `fn_next_data_fato` nasce aqui já com a assinatura final
+de 4 argumentos.
+
+### Next · as 4 decisões do Marcos sobre o legado (2026-07-29/30)
+
+Mandato dado por ele: *"o importante não é ter os dados certos de 2 anos atrás,
+é a garantia de que daqui pra frente teremos dados sérios, corretos e
+auditáveis; se um cadastro antigo atrapalhar, prefiro remover e me justificar
+com a liderança — mas não quero um frankenstein, porque daqui a 5 anos isso dá
+um problema que não é simples."* As decisões, caso a caso:
+
+1. **Os 865 `formado` do backfill FICAM como formado** (277 deles sem nenhuma
+   presença registrada). Decisão do Marcos: *"antes eles usavam folhas de papel
+   e o controle era limitado"* — o status reflete o julgamento de quem conduzia
+   o Next no papel; reescrever hoje trocaria um dado impreciso por outro. **NÃO
+   reabrir sem ele.** Ressalva registrada: **maio/2026 não tem NENHUMA matrícula
+   real fora do backfill**, então os KPIs NEXT-01/02/03 daquele mês (janela por
+   `created_at`) são 100% roster de 2025. É um mês fechado e não se repete —
+   decidimos NÃO reescrever `created_at` (destruiria o fato auditável "entrou no
+   import de 13/05") nem criar coluna `matriculado_em` só por isso.
+2. **A porta `next_legado` MORREU** (migration `20260730120000`): as 131
+   aparições sem matrícula viraram matrícula (datadas no mês do ENCONTRO, não no
+   dia do import; `formado` só onde há presença) e o ramo saiu da view. A view
+   tem **9 fontes**, não 10. `next_inscricoes` não é porta de inscrição — é
+   **presença por encontro**. Um modelo de inscrição (turma/matrícula), um de
+   presença. Era essa competição entre as duas tabelas que era o frankenstein.
+3. **Os 93 cadastros "vazios" do import NÃO foram apagados.** Marcos perguntou
+   se valia deixá-los como "não sei" pra reconciliar caso a pessoa preencha um
+   formulário no futuro. Vale — e não precisa de estado novo, porque **o matcher
+   canônico filtra `deleted_at` e NUNCA `active`**: o cadastro fantasma com
+   nome+telefone é reencontrado e ENRIQUECIDO no próximo formulário, em vez de
+   nascer duplicado. ⚠️ **Soft-delete quebraria exatamente isso** (o matcher
+   pula deletado → nasce cadastro novo e o rastro fica órfão). Além disso: dos
+   93, a `duplicidadePolicy` aceita **27 pares** — vários são o fantasma
+   duplicando um membro REAL, ou seja, a fila das Entradas está apontando
+   trabalho útil de consolidação, não ruído. A origem já é auditável
+   (`mem_identidade_observacoes`).
+4. **A FK que faltava** (a causa-raiz, virou lei nº 10 das regras de segurança):
+   os 58 órfãos existiam porque `next_inscricoes`/`next_matriculas` tinham
+   `membro_id` **sem FOREIGN KEY**, e `merge_membros` descobre os filhos pelo
+   catálogo. Os 58 foram reconstruídos pelo `mem_merge_log` (seguindo cadeia de
+   fusão; redundante vira soft-delete) e as duas FKs entraram com
+   `ON DELETE SET NULL`. Daqui pra frente toda fusão reponta sozinha.
+
+⚠️ **Ponto cego consciente que sobrou**: o ramo `next` do
+`fn_app_inscricoes_fanout` (rede de segurança pra builds ANTIGOS do app) insere
+só em `next_inscricoes`, e com a porta retirada essa linha não aparece na view.
+Volume real: 1 linha em 2 meses. Fecha quando o fanout puder ser reescrito sem
+reverter o patch dinâmico de `20260729060000`.
+
+⚠️ **Observação de escala pra investigar depois**: `mem_membros` viva está com
+**7.487 linhas, todas `active=true`** — a auditoria de junho documentava 3.665.
+O crescimento vem de imports (Next 682, "Contribuinte NNN" do financeiro, Kids)
+e merece uma varredura própria: hoje "membro" e "nome que passou por uma porta"
+contam igual no mesmo número.
+
+## Catálogo de portas · escritor tem que ser tabela real (2026-07-30)
+
+Follow-up da auditoria do módulo de inscrições. Três correções em
+`inscricaoPortas.js` — o registro **descreve** as portas, e descrição errada
+manda quem audita procurar no lugar errado:
+
+- **`escritor` (string) virou `escritores` (array)**: a porta de apresentação
+  tem DOIS escritores (`apresentacao_criancas` no formulário público ·
+  `apresentacao_bebes` no totem) e declarava um só — e declarava
+  **`kids_apresentacao_inscricoes`, tabela que nunca existiu**. Ninguém consome
+  o campo em runtime, então a mentira vivia sem quebrar teste nenhum. A de
+  eventos passou a listar `['inscricoes', 'ext_inscricoes']` (o fallback de
+  rollback do Celebra fica explícito na tabela, não numa string sintética).
+- **Teste novo bloqueia a reincidência**: todo nome em `escritores` precisa ter
+  um `CREATE TABLE` em `supabase/migrations`. Checagem **estática** (o CI não
+  tem banco) e mutation-testada — reintroduzir o fantasma falha com
+  `escritor "kids_apresentacao_inscricoes" não é tabela criada por migration
+  nenhuma`.
+- **`escritoresDerivados` no Next**: o direcionamento do fim do encontro
+  (`/next/direcionar/:token`) é o **único** caminho em que uma porta escreve na
+  tabela de OUTRAS (`vol_inscricoes`, `batismo_inscricoes`,
+  `jornada_encaminhamentos`). Quem perguntasse "quem escreve em
+  `vol_inscricoes`?" achava só o formulário de voluntariado e concluía errado.
+- Junto: `publicBatismo` e `publicApresentacao` passaram a importar
+  `emailValido` do contrato (as 2 últimas cópias locais). Regex **idêntica** ao
+  canônico → zero-diff conferido em 20 casos; o `.trim()` do batismo ficou
+  (sem ele, e-mail com espaço nas pontas passaria a ser recusado, mudando
+  comportamento).
+
+⚠️ **O que NÃO foi feito, e por quê** (era premissa minha errada): eu havia
+listado "colocar `/next/direcionar/:token` sob o Contrato de porta". Lendo o
+código, **ele já está**: não coleta dado de pessoa nenhum (lê a matrícula, que
+passou pelo contrato) e resolve identidade pelo matcher canônico
+(`acharOuCriarGuardado`, `origem: 'next_direcionamento'`), que registra a
+observação sozinho. Mesma coisa no walk-in do totem
+(`/checkin/:token/walkin`, `origem: 'next_checkin'`) — normaliza, valida DV
+quando há CPF, e a obrigatoriedade relaxada é decisão registrada do Marcos
+("nunca travar o atendimento na hora"). **Fica UMA pergunta aberta pra ele:** a
+tela de direcionamento cria inscrição REAL no voluntariado sem exibir/registrar
+o consentimento daquela porta em `inscricao_consentimentos`. A pessoa está ali
+tocando o tablet (é self-service, não o líder decidindo), então dá pra registrar
+com honestidade — mas exige mostrar o texto no fim do encontro, com fila. Não
+inventei o registro: gravar consentimento sem ter exibido o texto seria fabricar
+prova legal.
+
+## ⚠️ Pessoa · o import financeiro não cria mais cadastro (2026-07-30)
+
+Decisão do Marcos, na varredura do crescimento de `mem_membros` (7.487 linhas
+vivas contra 3.665 na auditoria de junho): *"essas pessoas não podem virar
+membro, vai confundir a base inteira, deixa só como um nome no lançamento sem
+vínculo com membresia"*. Migration `20260730150000`.
+
+**O que acontecia**: `fin_resolver_ou_criar_contribuinte` resolvia a pessoa por
+**nome exato** e, não achando, CRIAVA um `mem_membros` `contribuinte_avulso`. Em
+29/07 às 16:16 isso gerou **3.441 cadastros** — 46% da base viva — dos quais 1
+tem CPF, 1 telefone, 1 e-mail, e **nenhum** tem contribuição ou transação
+apontando pra ele. Um deles é `RECEBIMENTOS CRECHE E PRE-ESCOLA … LTDA`:
+descrição de extrato bancário virou pessoa. A fila de duplicidades das Entradas
+foi de ~525 para ~9.458 pares, 9.294 deles **sem chave nenhuma** — humanamente
+indecidíveis.
+
+- **A função só resolve por CPF de 11 dígitos; sem CPF devolve `NULL`.** O match
+  por nome exato SAIU — era ele que cruzava identidades, e viola a lei do
+  Contrato de porta ("nome sozinho nunca identifica").
+- **Devolver NULL é seguro** porque `financeiroV2.js:808` (o ÚNICO chamador)
+  grava em `fin_transacoes`, cujo `membro_id` é **nullable** e que já guarda
+  `nome_contraparte`. `mem_contribuicoes` (`membro_id NOT NULL`) **não é escrita
+  por esse caminho** — conferir isso antes de mexer.
+- **Limpeza descobre o rastro pelo CATÁLOGO** (toda tabela com FK pra
+  `mem_membros`), não por lista fixa, **com as tabelas de log/identidade
+  explicitamente FORA** (`mem_identidade_observacoes`, `mem_identidade_pares`,
+  `mem_duplicados_ignorados`, `entradas_*`, `identidade_pendencias`,
+  `mem_merge_log`, `app_audit_log`). Sem essa exclusão a limpeza não apagaria
+  nada: as 3.443 observações de identidade contam como "rastro".
+- ⚠️ **Isto NÃO revoga a decisão nº 3 do Next** (os 93 cadastros vazios do
+  backfill ficam pra reconciliação). São casos diferentes: lá o fantasma tem
+  nome+telefone REAIS de alguém que passou por uma porta e o matcher o
+  reencontra; aqui é descrição de extrato sem contato nenhum, que só polui a
+  fila humana. Régua: **existe chave (CPF/telefone/e-mail) pra reconciliar?**
+  Se não, não é pessoa.
+
 ## Devocionais · módulo do Matheus (no ar)
 
 Módulo existe e roda: `backend/routes/devocionalPlanos.js` (CRUD + geração de
@@ -4493,6 +5002,69 @@ saldo por 30-90 dias); política de reembolso escrita (venda pela internet tem 7
 dias de arrependimento por CDC art. 49 independente da política, e ela precisa
 dizer quem come a taxa do gateway); classificação contábil da receita por
 escrito; e quando a igreja paga o local — isso decide o teto de parcelas.
+
+### ✅ Fundação pós-auditoria: catálogo, QR e check-in auditável (2026-07-28)
+
+- `backend/services/inscricaoPortas.js` é o registro canônico das **7 portas de
+  inscrição e 10 fontes** da view. Porta/alias novo entra ali e precisa deixar
+  `inscricaoPortas.test.js` verde. O registro **descreve**, não troca escritor:
+  satélites continuam gravando onde sempre gravaram até a migração individual
+  da F3.5; `/evento/:slug` continua espinha→fallback ext.
+- `fn_insc_portas_resumo` agrega o inventário no PostgreSQL. O backend mantém
+  fallback paginado enquanto a migration não entrou — deploy em duas etapas
+  não derruba a aba Eventos.
+- `insc_checkin_eventos` é ledger append-only. Marcar, liberar pendência e
+  desfazer usam RPCs atômicas; override exige motivo na tela. `insc_checkins`
+  continua sendo o estado atual, portanto dashboard e operação antigos não
+  mudam.
+- `insc_qr_tokens` guarda **somente SHA-256**, emissão/canal/revogação. Token
+  legado sem registro continua válido; registro explicitamente revogado é
+  recusado no comprovante e no check-in. Nunca guardar/devolver token bruto no
+  inventário. Revogação é individual e não gira o segredo global.
+- A workflow de produção roda Vitest + contratos de campos/portas/QR **antes**
+  do Vercel. Rotas públicas e aliases são garantia coberta por teste; não
+  remover nem renomear para “limpar” legado. ⚠️ Isso é **gate de deploy**: teste
+  vermelho (inclusive flaky) bloqueia produção, e `workflow_dispatch` roda o
+  mesmo job — não existe bypass. Teste novo aqui precisa ser determinístico (a
+  lição é o `faixaEtaria.test.ts`, que dependia da HORA da execução:
+  `toISOString()` vira UTC e depois das 21h BRT o cálculo caía um ano).
+
+### ✅ Reparos da fundação · reativação de QR, leitura do ledger e busca (2026-07-29)
+
+Auditoria da entrega acima (revisão pedida pelo Marcos). Os pontos críticos
+estavam de fato resolvidos; o que faltava era operacional:
+
+- **⚠️ LEI · ledger append-only NÃO tem FK com `ON DELETE SET NULL`**
+  (migration `20260729100000`): `insc_checkin_eventos.ator_id` apontava pra
+  `profiles` com SET NULL, e SET NULL **é um UPDATE** — o trigger de
+  imutabilidade (`RAISE EXCEPTION 'append-only'`) abortava. Efeito: apagar um
+  profile que já operou a portaria falhava para sempre. Ator em ledger é
+  **SNAPSHOT** (UUID sem FK). Vale pra qualquer trilha append-only nova.
+- **Revogar QR passou a ter volta** (`PATCH /inscricoes/qrs/:id/reativar` ·
+  nível 3 · motivo obrigatório). O comprovante é HMAC determinístico do id da
+  inscrição: **o hash nunca muda**, `fn_insc_qr_registrar` (ON CONFLICT) não
+  limpa `revogado_em` e não existe rotação — sem reativar, um clique errado
+  tirava a pessoa do check-in por QR permanentemente (só entrava por busca).
+  Histórico (quem revogou/reativou e por quê) vai pro `app_audit_log` via
+  trigger `trg_audit_insc_qr_tokens` — a revogação sai do estado, não da
+  trilha. ⚠️ Rotação real de token exigiria nonce no HMAC (não temos): revogar
+  = "desligar o QR desta inscrição", nunca "trocar o QR da pessoa".
+- **Trilha do check-in ficou LEGÍVEL**: `GET /eventos/:id/checkin/historico`
+  (nível 2) + painel "Trilha da portaria" na tela de check-in (sob demanda —
+  a tela roda polling de 15s). O ledger existia sem nenhum leitor: a pergunta
+  "quem liberou a entrada dessa pessoa com pagamento pendente?" só era
+  respondível no SQL Editor. Desfazer agora **grava o motivo digitado** (o
+  `del()` do `src/api.js` aceita corpo; antes o backend lia `req.body.motivo`
+  que nunca chegava e a trilha registrava sempre o texto genérico).
+- **Inventário de QR com busca e paginação SERVER-SIDE** + filtro por evento:
+  a busca filtrava só a página carregada (50), então num evento do tamanho do
+  Celebra a maioria das pessoas era inencontrável. Tabela/coluna ausente
+  responde **aviso**, não 500 (a aba quebrava se a migration não estivesse
+  aplicada — era a única rota nova sem fallback de deploy em duas etapas).
+- **`inscricaoPortas.test.js` fechou nos 2 sentidos**: além de catálogo→App.tsx
+  (protege contra renomear/remover), agora App.tsx→catálogo — rota com cara de
+  porta de inscrição fora de `PORTAS_INSCRICAO` quebra o CI (allowlist
+  explícita de telas internas no próprio teste).
 
 ### ✅ Tela de pagamento: Pix e boleto nossos, cartão hospedado (2026-07-30 · PR #2168 · SEM migration)
 

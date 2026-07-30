@@ -8,6 +8,7 @@ import { cuidados as cuidadosApi } from '../api';
 import useConfirmarSaida from '../hooks/useConfirmarSaida';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from './ui/dialog';
@@ -153,7 +154,7 @@ function RegistrarEncontroModal({ open, turma, membros, onClose, onSaved }: {
         <DialogHeader><DialogTitle>Registrar encontro — {turma.nome}</DialogTitle></DialogHeader>
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
-            <div><Label>Data *</Label><Input type="date" value={data} onChange={e => setData(e.target.value)} /></div>
+            <div><Label>Data *</Label><DatePicker value={data} onChange={setData} /></div>
             <div><Label>Tema</Label><Input value={tema} onChange={e => setTema(e.target.value)} /></div>
           </div>
           <div>

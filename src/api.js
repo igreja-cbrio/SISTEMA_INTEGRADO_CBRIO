@@ -152,7 +152,11 @@ const get = (path, opts) => request(path, { ...opts });
 const post = (path, body, opts) => request(path, { method: 'POST', body: JSON.stringify(body), ...opts });
 const put = (path, body) => request(path, { method: 'PUT', body: JSON.stringify(body) });
 const patch = (path, body) => request(path, { method: 'PATCH', body: JSON.stringify(body) });
-const del = (path) => request(path, { method: 'DELETE' });
+// DELETE aceita corpo opcional: rotas que registram MOTIVO da exclusão (ex.:
+// desfazer check-in, que grava no ledger append-only) precisam mandar payload.
+const del = (path, body) => request(path, body === undefined
+  ? { method: 'DELETE' }
+  : { method: 'DELETE', body: JSON.stringify(body) });
 
 export const users = {
   list: () => get('/auth/users'),
@@ -315,6 +319,17 @@ export const inscricoesApi = {
   atualizarInscricao: (eventoId, inscricaoId, data) => patch(`/inscricoes/eventos/${eventoId}/inscricoes/${inscricaoId}`, data),
   excluirInscricao: (eventoId, inscricaoId) => del(`/inscricoes/eventos/${eventoId}/inscricoes/${inscricaoId}`),
   uploadCapa: (file) => { const fd = new FormData(); fd.append('arquivo', file); return requestFile('/inscricoes/upload-capa', fd); },
+  // Check-in do evento (SPEC-06) — tela fullscreen: QR do comprovante + busca
+  // Inventário das portas públicas do sistema (grupos/next/batismo/…) — read-only
+  portas: () => get('/inscricoes/portas'),
+  qrs: (qs) => get(`/inscricoes/qrs${qs ? `?${qs}` : ''}`),
+  revogarQr: (id, motivo) => patch(`/inscricoes/qrs/${id}/revogar`, { motivo }),
+  reativarQr: (id, motivo) => patch(`/inscricoes/qrs/${id}/reativar`, { motivo }),
+  checkinEstado: (eventoId) => get(`/inscricoes/eventos/${eventoId}/checkin`),
+  checkinBuscar: (eventoId, q) => get(`/inscricoes/eventos/${eventoId}/checkin/buscar?q=${encodeURIComponent(q)}`),
+  checkinMarcar: (eventoId, data) => post(`/inscricoes/eventos/${eventoId}/checkin`, data),
+  checkinDesfazer: (eventoId, inscricaoId, motivo) => del(`/inscricoes/eventos/${eventoId}/checkin/${inscricaoId}`, { motivo }),
+  checkinHistorico: (eventoId) => get(`/inscricoes/eventos/${eventoId}/checkin/historico`),
 };
 
 // Eventos Externos · formulário público de confirmação de presença (sem auth)
@@ -333,6 +348,9 @@ export const eventoPublico = {
   // pelo uuid. Montado sob /public/evento de propósito: é lá que o limiter
   // generoso vale (a tela faz polling e sob /api/public puro tomaria 429).
   pagamento: (token) => fetch(`${API}/public/evento/pagamento/${encodeURIComponent(token)}`)
+    .then(async r => { const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j; }),
+  // Comprovante da inscrição (SPEC-06) — a URL do QR (/i/c/<token>) cai aqui
+  comprovante: (token) => fetch(`${API}/public/evento/comprovante/${encodeURIComponent(token)}`)
     .then(async r => { const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j; }),
   // Upload de imagem de um campo do formulário (ex.: logo da empresa) · sem auth.
   uploadImagem: (slug, file) => {
@@ -505,6 +523,8 @@ export const dashboardSemanal = {
   iaSugerirIndicador: (pergunta) => post('/dashboard-semanal/ia/sugerir-indicador', { pergunta }),
   indicadoresCustomList: (status) => get('/dashboard-semanal/indicadores-custom' + (status ? `?status=${status}` : '')),
   indicadorCustomPatch: (id, data) => patch(`/dashboard-semanal/indicadores-custom/${id}`, data),
+  // Edita um indicador já criado usando IA (instrução em linguagem natural)
+  iaRefinarIndicador: (id, instrucao) => post(`/dashboard-semanal/ia/refinar-indicador/${id}`, { instrucao }),
   indicadorCustomRemove: (id) => del(`/dashboard-semanal/indicadores-custom/${id}`),
   // Lista KPIs taticos com status (reuso da view do módulo painel) pra aba
   // "KPIs" do dashboard. Filtros opcionais: área, periodicidade, status, kpi.
@@ -950,6 +970,8 @@ export const financeiro = {
     update: (id, data) => put(`/financeiro/transacoes/${id}`, data),
     remove: (id) => del(`/financeiro/transacoes/${id}`),
   },
+  // Banco de comprovantes (anexos das transações + NFs com arquivo)
+  comprovantes: (params) => get('/financeiro/comprovantes' + (params ? '?' + new URLSearchParams(params) : '')),
   contasPagar: {
     list: (params) => get('/financeiro/contas-pagar' + (params ? '?' + new URLSearchParams(params) : '')),
     create: (data) => post('/financeiro/contas-pagar', data),
@@ -1009,6 +1031,15 @@ export const financeiro = {
 // ============================================================
 // FINANCEIRO V2 · estrutura fiscal (plano de contas, centros de custo, OFX, PIX)
 // ============================================================
+// Filtro global "Sem extraordinárias": persistido pelo Dashboard Semanal em
+// localStorage (chave fin_dashboard_filtros_v1) + event bus. Lido aqui pra que
+// TODA aba de receita respeite o toggle sem cada componente threadar o param.
+const _finSemExtra = () => {
+  try { return !!JSON.parse(localStorage.getItem('fin_dashboard_filtros_v1') || '{}')?.sem_extra; }
+  catch { return false; }
+};
+const _finSemExtraQS = () => (_finSemExtra() ? '?sem_extra=1' : '');
+
 export const financeiroV2 = {
   planoContas: {
     list: (params) => get('/financeiro-v2/plano-contas' + (params ? '?' + new URLSearchParams(params) : '')),
@@ -1176,46 +1207,69 @@ export const financeiroV2 = {
       if (semana) qs.set('semana', semana);
       if (filtros?.centro_custo_id) qs.set('centro_custo_id', filtros.centro_custo_id);
       if (filtros?.plano_contas_id) qs.set('plano_contas_id', filtros.plano_contas_id);
+      if (filtros?.sem_extra) qs.set('sem_extra', '1');
       const s = qs.toString();
       return get('/financeiro-v2/dashboard/semana-completa' + (s ? `?${s}` : ''));
     },
-    financeiroCompleto: () => get('/financeiro-v2/dashboard/financeiro-completo'),
+    financeiroCompleto: () => get(`/financeiro-v2/dashboard/financeiro-completo${_finSemExtraQS()}`),
     saidasDetalhadas: (mes) => get('/financeiro-v2/dashboard/saidas-detalhadas' + (mes ? `?mes=${mes}` : '')),
     melhorSemana: () => get('/financeiro-v2/dashboard/melhor-semana'),
     assistente: (aba, semana) => {
       const qs = new URLSearchParams({ aba: aba || 'resumo' });
       if (semana) qs.set('semana', semana);
+      if (_finSemExtra()) qs.set('sem_extra', '1');
       return get(`/financeiro-v2/dashboard/assistente?${qs}`);
     },
     // Análise aprofundada por IA (sob demanda · modelo maior · pode demorar)
-    analiseProfunda: (semana) => request('/financeiro-v2/dashboard/analise-profunda' + (semana ? `?semana=${semana}` : ''), { timeout: 120_000 }),
+    analiseProfunda: (semana) => {
+      const qs = new URLSearchParams();
+      if (semana) qs.set('semana', semana);
+      if (_finSemExtra()) qs.set('sem_extra', '1');
+      const s = qs.toString();
+      return request('/financeiro-v2/dashboard/analise-profunda' + (s ? `?${s}` : ''), { timeout: 120_000 });
+    },
   },
   metas: {
     list: (params) => get('/financeiro-v2/metas' + (params ? '?' + new URLSearchParams(params) : '')),
     create: (data) => post('/financeiro-v2/metas', data),
     update: (id, data) => put(`/financeiro-v2/metas/${id}`, data),
     remove: (id) => del(`/financeiro-v2/metas/${id}`),
-    progresso: (params) => get('/financeiro-v2/metas-progresso' + (params ? '?' + new URLSearchParams(params) : '')),
+    progresso: (params) => {
+      const p = new URLSearchParams(params || {});
+      if (_finSemExtra()) p.set('sem_extra', '1');
+      const qs = p.toString();
+      return get('/financeiro-v2/metas-progresso' + (qs ? `?${qs}` : ''));
+    },
   },
-  freqArrecadacaoSemanal: (semanas = 20) => get(`/financeiro-v2/freq-arrecadacao-semanal?semanas=${semanas}`),
+  freqArrecadacaoSemanal: (semanas = 20) => get(`/financeiro-v2/freq-arrecadacao-semanal?semanas=${semanas}${_finSemExtra() ? '&sem_extra=1' : ''}`),
   arrecadacaoAnual: (ano, filtros = {}) => {
     const params = new URLSearchParams();
     if (ano) params.set('ano', ano);
     if (filtros.centro_custo_id) params.set('centro_custo_id', filtros.centro_custo_id);
     if (filtros.plano_contas_id) params.set('plano_contas_id', filtros.plano_contas_id);
+    if (filtros.sem_extra || _finSemExtra()) params.set('sem_extra', '1');
     const qs = params.toString();
     return get(`/financeiro-v2/arrecadacao-anual${qs ? `?${qs}` : ''}`);
   },
   sazonalidadeSemanal: (anos) => {
-    const qs = Array.isArray(anos) && anos.length ? `?anos=${anos.join(',')}` : '';
-    return get(`/financeiro-v2/sazonalidade-semanal${qs}`);
+    const p = new URLSearchParams();
+    if (Array.isArray(anos) && anos.length) p.set('anos', anos.join(','));
+    if (_finSemExtra()) p.set('sem_extra', '1');
+    const qs = p.toString();
+    return get(`/financeiro-v2/sazonalidade-semanal${qs ? `?${qs}` : ''}`);
   },
   categoriaTransacoes: ({ categoria, inicio, fim }) =>
     get(`/financeiro-v2/categoria-transacoes?categoria=${encodeURIComponent(categoria)}&inicio=${inicio}&fim=${fim}`),
   despesaTransacoes: (params) =>
     get('/financeiro-v2/despesa-transacoes?' + new URLSearchParams(params).toString()),
   filtrosDisponiveis: () => get('/financeiro-v2/filtros-disponiveis'),
-  saudeFinanceira: (ano) => get(`/financeiro-v2/saude-financeira${ano ? `?ano=${ano}` : ''}`),
+  saudeFinanceira: (ano) => {
+    const p = new URLSearchParams();
+    if (ano) p.set('ano', ano);
+    if (_finSemExtra()) p.set('sem_extra', '1');
+    const qs = p.toString();
+    return get(`/financeiro-v2/saude-financeira${qs ? `?${qs}` : ''}`);
+  },
   doadores: ({ ano, limit, offset } = {}) => {
     const p = new URLSearchParams();
     if (ano) p.set('ano', ano);
@@ -1231,7 +1285,7 @@ export const financeiroV2 = {
     if (limit) p.set('limit', limit);
     return get(`/financeiro-v2/doador/transacoes?${p.toString()}`);
   },
-  dizimoOferta: (ano) => get(`/financeiro-v2/dizimo-oferta${ano ? `?ano=${ano}` : ''}`),
+  dizimoOferta: (ano, semExtra) => get(`/financeiro-v2/dizimo-oferta?ano=${ano || ''}${semExtra ? '&sem_extra=1' : ''}`),
   syncSaldoBancos: () => post('/financeiro-v2/sync-saldo-bancos', {}),
   backfill: (data) => post('/financeiro-v2/backfill/transacoes', data || {}),
   recorrencias: {
@@ -1381,9 +1435,11 @@ export const logistica = {
 export const patrimonio = {
   dashboard: () => get('/patrimonio/dashboard'),
   dashboardIndicadores: () => get('/patrimonio/dashboard/indicadores'),
+  dashboardDepreciacao: () => get('/patrimonio/dashboard/depreciacao'),
   categorias: {
     list: () => get('/patrimonio/categorias'),
     create: (data) => post('/patrimonio/categorias', data),
+    update: (id, data) => put(`/patrimonio/categorias/${id}`, data),
     remove: (id) => del(`/patrimonio/categorias/${id}`),
   },
   localizacoes: {
@@ -1399,7 +1455,11 @@ export const patrimonio = {
     update: (id, data) => put(`/patrimonio/bens/${id}`, data),
     remove: (id) => del(`/patrimonio/bens/${id}`),
     movimentar: (id, data) => post(`/patrimonio/bens/${id}/movimentacoes`, data),
+    dispensarAlerta: (id) => post(`/patrimonio/bens/${id}/dispensar-alerta`, {}),
     porCodigo: (codigo) => get(`/patrimonio/bens/barcode/${encodeURIComponent(codigo)}`),
+  },
+  movimentacoes: {
+    list: (params) => get('/patrimonio/movimentacoes' + (params ? '?' + new URLSearchParams(params) : '')),
   },
   inventarios: {
     list: () => get('/patrimonio/inventarios'),
@@ -1709,8 +1769,10 @@ export const totemKids = {
   ausentes: (min = 3) => get(`/totem-kids/ausentes?min=${min}`),
   // Painel ao vivo dos pagers: { em_uso:[{pager_numero,crianca_nome,sala_nome,responsavel_nome}], pendentes:[...] }
   pagersEmUso: () => get('/totem-kids/pagers-em-uso'),
-  // Conferência/rastreio de devolução dos pagers de um dia (pager→criança→culto→devolvido)
-  pagersConferencia: (data) => get(`/totem-kids/pagers/conferencia${data ? `?data=${encodeURIComponent(data)}` : ''}`),
+  // Conferência/rastreio de devolução dos pagers (por CULTO · pager→criança→devolvido)
+  pagersConferencia: ({ culto_id, data } = {}) => get(`/totem-kids/pagers/conferencia${culto_id ? `?culto_id=${encodeURIComponent(culto_id)}` : (data ? `?data=${encodeURIComponent(data)}` : '')}`),
+  // Cultos com Kids pra escolher na conferência (mais recentes primeiro)
+  pagersCultos: () => get('/totem-kids/pagers/cultos'),
   // Pré-check-in pelo app do membro · o voluntário digita/escaneia o código
   preCheckin: {
     buscarCodigo: (codigo) => get(`/totem-kids/pre-checkin/codigo/${encodeURIComponent(codigo)}`),

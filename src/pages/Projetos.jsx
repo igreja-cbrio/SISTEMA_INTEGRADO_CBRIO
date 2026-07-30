@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { projects, users as usersApi, tasks as tasksApi } from '../api';
+import { DatePicker } from '@/components/ui/date-picker';
 
 // ── Tema (CSS vars para dark/light mode) ──────────────────
 const C = {
@@ -2219,8 +2220,8 @@ function ProjectFormModal({ open, data, categories, onClose, onSave, isDiretor, 
         <Input label="Frequência" value={form.frequency || ''} onChange={e => set('frequency', e.target.value)} />
       </div>
       <div style={styles.formRow}>
-        <Input label="Data Início" type="date" value={normDate(form.date_start) || ''} onChange={e => set('date_start', e.target.value)} />
-        <Input label="Data Fim" type="date" value={normDate(form.date_end) || ''} onChange={e => set('date_end', e.target.value)} />
+        <div style={styles.formGroup}><label style={styles.label}>Data Início</label><DatePicker value={normDate(form.date_start) || ''} onChange={v => set('date_start', v)} /></div>
+        <div style={styles.formGroup}><label style={styles.label}>Data Fim</label><DatePicker value={normDate(form.date_end) || ''} onChange={v => set('date_end', v)} /></div>
       </div>
       <div style={styles.formRow}>
         <Input label="Público-alvo" value={form.public_target || ''} onChange={e => set('public_target', e.target.value)} />
@@ -2315,8 +2316,8 @@ function TaskFormModal({ open, data, milestones, usersList, onClose, onSave, mod
         </Select>
       )}
       <div style={styles.formRow}>
-        <Input label="Data Início" type="date" value={normDate(form.start_date) || ''} onChange={e => set('start_date', e.target.value)} />
-        <Input label="Prazo" type="date" value={normDate(form.deadline) || ''} onChange={e => set('deadline', e.target.value)} />
+        <div style={styles.formGroup}><label style={styles.label}>Data Início</label><DatePicker value={normDate(form.start_date) || ''} onChange={v => set('start_date', v)} /></div>
+        <div style={styles.formGroup}><label style={styles.label}>Prazo</label><DatePicker value={normDate(form.deadline) || ''} onChange={v => set('deadline', v)} /></div>
       </div>
       <div style={styles.formRow}>
         <Select label="Status" value={form.status || ''} onChange={e => set('status', e.target.value)}>
@@ -2405,7 +2406,7 @@ function BudgetItemFormModal({ open, data, onClose, onSave, modalSaving }) {
         <Input label="Valor Planejado" type="number" step="0.01" value={form.planned_amount || ''} onChange={e => set('planned_amount', e.target.value)} />
         <Input label="Valor Real" type="number" step="0.01" value={form.actual_amount || ''} onChange={e => set('actual_amount', e.target.value)} />
       </div>
-      <Input label="Data" type="date" value={normDate(form.date) || ''} onChange={e => set('date', e.target.value)} />
+      <div style={styles.formGroup}><label style={styles.label}>Data</label><DatePicker value={normDate(form.date) || ''} onChange={v => set('date', v)} /></div>
     </Modal>
   );
 }
@@ -2424,8 +2425,8 @@ function MilestoneFormModal({ open, data, onClose, onSave, modalSaving }) {
       footer={<><button style={styles.btn('ghost')} onClick={onClose}>Cancelar</button><button disabled={modalSaving} style={{ ...styles.btn('primary'), opacity: modalSaving ? 0.5 : 1 }} onClick={handleSave}>{modalSaving ? 'Salvando...' : 'Salvar'}</button></>}>
       <Input label="Nome *" value={form.name || ''} onChange={e => set('name', e.target.value)} />
       <div style={styles.formRow}>
-        <Input label="Data Início" type="date" value={normDate(form.date_start) || ''} onChange={e => set('date_start', e.target.value)} />
-        <Input label="Data Fim" type="date" value={normDate(form.date_end) || ''} onChange={e => set('date_end', e.target.value)} />
+        <div style={styles.formGroup}><label style={styles.label}>Data Início</label><DatePicker value={normDate(form.date_start) || ''} onChange={v => set('date_start', v)} /></div>
+        <div style={styles.formGroup}><label style={styles.label}>Data Fim</label><DatePicker value={normDate(form.date_end) || ''} onChange={v => set('date_end', v)} /></div>
       </div>
       <Textarea label="Descrição" value={form.description || ''} onChange={e => set('description', e.target.value)} />
     </Modal>

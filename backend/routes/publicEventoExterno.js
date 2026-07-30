@@ -24,6 +24,11 @@ const {
   honeypotPreenchido, TEXTOS,
 } = require('../services/inscricaoContrato');
 const { nomesMesmaPessoa } = require('../services/membroMatch');
+const {
+  emitirTokenComprovante,
+  verificarTokenComprovanteAtivo,
+} = require('../services/inscricaoComprovante');
+const { enviarConfirmacaoInscricao } = require('../services/inscricaoWhatsapp');
 // Fachada do núcleo de pagamentos. ⚠️ NUNCA importar `providers/*` aqui — é o
 // que faz trocar de PSP custar 1 arquivo + 1 env (ver services/pagamentos/tipos.js).
 const pagamentos = require('../services/pagamentos');
@@ -268,6 +273,8 @@ router.get('/pagamento/:token', async (req, res) => {
 
     // Só o necessário pra tela. Nada de PII do pagador, metadata ou payload —
     // a resposta é pública (o token é o único segredo).
+    const comprovanteToken = (cobranca.status === 'pago' && cobranca.origem_tipo === 'inscricao')
+      ? await emitirTokenComprovante(cobranca.origem_id, 'pagamento') : null;
     res.json({
       status: cobranca.status,
       pago: cobranca.status === 'pago',
@@ -288,10 +295,59 @@ router.get('/pagamento/:token', async (req, res) => {
       pago_em: cobranca.pago_em || null,
       evento_nome: cobranca.metadata?.evento_nome || null,
       evento_slug: cobranca.metadata?.evento_slug || null,
+      // Comprovante do check-in (SPEC-06): quem pagou recebe o QR da entrada
+      // AQUI — a tela de sucesso do formulário já ficou pra trás quando a
+      // pessoa foi pro checkout, e esta é a página que ela reabre.
+      comprovante_token: comprovanteToken,
     });
   } catch (e) {
     console.error('[publicEvento] status do pagamento:', e.message);
     res.status(500).json({ error: 'Erro ao consultar o pagamento.' });
+  }
+});
+
+// GET /comprovante/:token — comprovante público da inscrição (SPEC-06).
+// É a URL que o QR da tela de sucesso codifica (/i/c/<token>): a pessoa reabre
+// o comprovante quando quiser e a portaria escaneia o MESMO QR no check-in.
+// Token ASSINADO (HMAC) — sem assinatura válida não existe consulta. A resposta
+// expõe só o que um comprovante imprime: nome, evento e situação — nada de
+// CPF/telefone/e-mail (mesma régua do /pagamento/:token acima).
+router.get('/comprovante/:token', async (req, res) => {
+  try {
+    const inscricaoId = await verificarTokenComprovanteAtivo(req.params.token);
+    if (!inscricaoId) return res.status(404).json({ error: 'Comprovante não encontrado' });
+
+    const { data: ins } = await supabase.from('inscricoes')
+      .select('id, evento_id, nome_completo, numero_sorte, status, created_at')
+      .eq('id', inscricaoId).is('deleted_at', null).maybeSingle();
+    if (!ins) return res.status(404).json({ error: 'Comprovante não encontrado' });
+
+    const { data: ev } = await supabase.from('insc_eventos')
+      .select('nome, slug, data, hora, local, tem_sorteio')
+      .eq('id', ins.evento_id).is('deleted_at', null).maybeSingle();
+    if (!ev) return res.status(404).json({ error: 'Comprovante não encontrado' });
+
+    // Situação do check-in é best-effort: o comprovante não pode deixar de
+    // abrir na fila da entrada porque a consulta da marca soluçou.
+    let checkinEm = null;
+    try {
+      const { data: c } = await supabase.from('insc_checkins')
+        .select('em').eq('inscricao_id', ins.id).maybeSingle();
+      checkinEm = c?.em || null;
+    } catch (e2) { console.error('[publicEvento] comprovante/checkin:', e2.message); }
+
+    res.json({
+      nome: ins.nome_completo,
+      numero_sorte: ev.tem_sorteio ? ins.numero_sorte : null,
+      tem_sorteio: !!ev.tem_sorteio,
+      status: ins.status,
+      inscrito_em: ins.created_at,
+      checkin_em: checkinEm,
+      evento: { nome: ev.nome, slug: ev.slug, data: ev.data, hora: ev.hora, local: ev.local },
+    });
+  } catch (e) {
+    console.error('[publicEvento] comprovante:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar o comprovante.' });
   }
 });
 
@@ -442,7 +498,11 @@ async function inscreverEspinha(req, res, ev) {
       });
       return res.json({ ...respostaCobranca(cobranca, ev), ja_inscrito: true });
     }
-    return res.json({ ok: true, ja_inscrito: true, numero_sorte: existente.numero_sorte, tem_sorteio: ev.tem_sorteio });
+    const comprovanteToken = await emitirTokenComprovante(existente.id, 'form_reinscricao');
+    return res.json({
+      ok: true, ja_inscrito: true, numero_sorte: existente.numero_sorte, tem_sorteio: ev.tem_sorteio,
+      comprovante_token: comprovanteToken,
+    });
   }
 
   // Criação ATÔMICA: conferir vaga/janela/duplicidade, gerar numero_sorte e
@@ -485,9 +545,14 @@ async function inscreverEspinha(req, res, ev) {
       // tela mostrava "Seu número da sorte" com nada embaixo (vindo de
       // origin/main).
       const { data: vencedora } = await supabase.from('inscricoes')
-        .select('numero_sorte').eq('evento_id', ev.id).eq('cpf', val.cpf)
+        .select('id, numero_sorte').eq('evento_id', ev.id).eq('cpf', val.cpf)
         .is('deleted_at', null).limit(1).maybeSingle();
-      return res.status(200).json({ ok: true, ja_inscrito: true, numero_sorte: vencedora?.numero_sorte ?? null, tem_sorteio: ev.tem_sorteio });
+      const comprovanteToken = vencedora
+        ? await emitirTokenComprovante(vencedora.id, 'form_corrida_duplicada') : null;
+      return res.status(200).json({
+        ok: true, ja_inscrito: true, numero_sorte: vencedora?.numero_sorte ?? null, tem_sorteio: ev.tem_sorteio,
+        comprovante_token: comprovanteToken,
+      });
     }
     if (rpc?.motivo === 'sem_vaga') {
       return res.status(409).json({ error: 'As vagas deste evento acabaram de esgotar.', motivo: 'sem_vaga' });
@@ -528,6 +593,18 @@ async function inscreverEspinha(req, res, ev) {
     link: '/inscricoes',
   }).catch((err) => console.error('[publicEvento espinha] notificar:', err.message));
 
+  // Confirmação por WhatsApp (SPEC-07) — SÓ evento gratuito: nasce
+  // `confirmada` aqui; em evento pago quem confirma é o handler do pagamento
+  // (recebida→confirmada), e a mensagem sai de lá. Fire-and-forget: a fila tem
+  // retry/backoff e falha terminal avisa gente — nunca decide o fluxo.
+  // Re-inscrição/merge não passa por aqui (anti-spam de re-escaneada de QR).
+  if (!ehPago) {
+    enviarConfirmacaoInscricao({
+      inscricaoId: ins.id, nome: val.nomeCompleto, telefone: val.telefone,
+      optin, evento: ev,
+    }).catch((err) => console.error('[publicEvento espinha] confirmação WhatsApp:', err.message));
+  }
+
   if (ehPago) {
     // A vaga já está reservada (`recebida`, sob o advisory lock). Se a cobrança
     // falhar aqui, a inscrição fica pendente e o cron de expiração devolve a
@@ -545,7 +622,13 @@ async function inscreverEspinha(req, res, ev) {
     }
   }
 
-  return res.status(201).json({ ok: true, numero_sorte: ins.numero_sorte, tem_sorteio: ev.tem_sorteio });
+  const comprovanteToken = await emitirTokenComprovante(ins.id, 'form_sucesso');
+  return res.status(201).json({
+    ok: true, numero_sorte: ins.numero_sorte, tem_sorteio: ev.tem_sorteio,
+    // QR do comprovante na tela de sucesso (SPEC-06) — só a espinha tem
+    // check-in; o ext legado segue sem token.
+    comprovante_token: comprovanteToken,
+  });
 }
 
 // ── POST /:slug/inscrever · LEGADO ext (comportamento da porta 1 intacto) ──

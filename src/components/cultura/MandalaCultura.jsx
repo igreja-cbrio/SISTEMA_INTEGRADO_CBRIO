@@ -6,6 +6,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { kpis } from '@/api';
 import MandalaSVG from './MandalaSVG';
 import PetalDetailDialog from './PetalDetailDialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Sparkles } from 'lucide-react';
 
 const MONTH_LABELS = [
@@ -31,6 +32,7 @@ export default function MandalaCultura() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [openPetal, setOpenPetal] = useState(null);
+  const [decisoesOpen, setDecisoesOpen] = useState(false);
 
   const [reloadKey, setReloadKey] = useState(0);
 
@@ -111,6 +113,7 @@ export default function MandalaCultura() {
                 data={data}
                 loading={false}
                 onPetalClick={(k) => setOpenPetal(k)}
+                onCenterClick={() => setDecisoesOpen(true)}
               />
             </motion.div>
           )}
@@ -123,6 +126,58 @@ export default function MandalaCultura() {
         onClose={() => setOpenPetal(null)}
         data={data}
       />
+
+      <DecisoesDetalheDialog
+        open={decisoesOpen}
+        onClose={() => setDecisoesOpen(false)}
+        data={data}
+      />
     </Card>
+  );
+}
+
+// Detalhe do card central "Decisões" — o que está sendo contabilizado:
+// presencial + online + kids (kids passou a entrar · pedido do Matheus).
+function DecisoesDetalheDialog({ open, onClose, data }) {
+  const d = data?.decisoes_detalhe || {};
+  const linhas = [
+    { label: 'Presencial', valor: d.presencial, cor: '#00B39D' },
+    { label: 'Online', valor: d.online, cor: '#3b82f6' },
+    { label: 'Kids', valor: d.kids, cor: '#ec4899' },
+  ];
+  const total = data?.decisoes ?? d.soma_ambientes ?? 0;
+  return (
+    <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Decisões · o que está sendo contado</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-2">
+          <p className="text-xs text-muted-foreground">
+            Total de decisões no período, somando os três ambientes:
+          </p>
+          <div className="space-y-1.5">
+            {linhas.map((l) => (
+              <div key={l.label} className="flex items-center justify-between rounded-lg border border-border px-3 py-2">
+                <span className="flex items-center gap-2 text-sm">
+                  <span className="h-2.5 w-2.5 rounded-full" style={{ background: l.cor }} />
+                  {l.label}
+                </span>
+                <span className="font-bold tabular-nums">{Number(l.valor || 0).toLocaleString('pt-BR')}</span>
+              </div>
+            ))}
+          </div>
+          <div className="flex items-center justify-between border-t border-border pt-2 mt-1">
+            <span className="text-sm font-semibold">Total</span>
+            <span className="text-lg font-extrabold tabular-nums text-primary">{Number(total).toLocaleString('pt-BR')}</span>
+          </div>
+          {d.fonte === 'manual' && (
+            <p className="text-[11px] text-amber-600">
+              O total foi lançado manualmente (cultura mensal), então pode diferir da soma dos ambientes ({Number(d.soma_ambientes || 0).toLocaleString('pt-BR')}).
+            </p>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }

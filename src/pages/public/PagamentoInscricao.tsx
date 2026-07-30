@@ -37,6 +37,7 @@ interface Pagamento {
   pago_em: string | null;
   evento_nome: string | null;
   evento_slug: string | null;
+  comprovante_token: string | null;
 }
 
 const brl = (c: number) => (Number(c || 0) / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -61,6 +62,29 @@ const METODO_LABEL: Record<string, string> = { pix: 'Pix', cartao: 'Cartão', bo
 // Pix primeiro de propósito: cai na hora e é o que a maioria usa. Boleto por
 // último — leva dias úteis pra compensar.
 const ORDEM_METODOS = ['pix', 'cartao', 'boleto'];
+
+// QR do comprovante de inscrição (SPEC-06) — mostrado só com `pago` do
+// servidor. Codifica /i/c/<token>, a página que a portaria escaneia na entrada.
+function ComprovanteCheckin({ token, corTexto }: { token: string; corTexto: string }) {
+  const [qr, setQr] = useState<string | null>(null);
+  const url = `${window.location.origin}/i/c/${token}`;
+  useEffect(() => {
+    QRCode.toDataURL(url, { width: 480, margin: 2, color: { dark: '#000000', light: '#ffffff' } })
+      .then(setQr).catch(() => setQr(null));
+  }, [url]);
+  if (!qr) return null;
+  return (
+    <div style={{ marginTop: 14, textAlign: 'center' }}>
+      <div style={{ fontSize: 13, color: '#00B39D', fontWeight: 700 }}>Seu comprovante de inscrição</div>
+      <div style={{ display: 'inline-block', background: '#fff', padding: 10, borderRadius: 12, marginTop: 8 }}>
+        <img src={qr} alt="QR do comprovante de inscrição" style={{ width: 168, height: 168, display: 'block' }} />
+      </div>
+      <p style={{ fontSize: 12, color: corTexto, marginTop: 8, lineHeight: 1.5 }}>
+        Apresente este QR na entrada do evento — ou abra <a href={url} style={{ color: '#00B39D', fontWeight: 600 }}>o comprovante</a> quando precisar.
+      </p>
+    </div>
+  );
+}
 
 export default function PagamentoInscricao() {
   const { token = '' } = useParams();
@@ -205,6 +229,13 @@ export default function PagamentoInscricao() {
               <p style={{ fontSize: 12.5, color: C.text3, marginTop: 10 }}>
                 Pago em {new Date(pag.pago_em).toLocaleString('pt-BR')}.
               </p>
+            )}
+
+            {/* Comprovante do check-in (SPEC-06): pagou → o QR da entrada
+                aparece AQUI (a tela de sucesso do formulário ficou pra trás
+                quando a pessoa foi pro checkout). Sem `pago`, sem QR. */}
+            {pag.pago && pag.comprovante_token && (
+              <ComprovanteCheckin token={pag.comprovante_token} corTexto={C.text3} />
             )}
 
             {emAberto && (

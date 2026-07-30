@@ -555,25 +555,12 @@ async function gerarNotificacoesLogistica() {
     });
   }
 
-  // 2. Solicitações pendentes há 3+ dias
-  const { data: solic } = await supabase
-    .from('log_solicitacoes_compra')
-    .select('id, descricao, created_at')
-    .eq('status', 'pendente');
-
-  for (const s of solic || []) {
-    const dias = Math.floor((Date.now() - new Date(s.created_at).getTime()) / 86400000);
-    if (dias < 3) continue;
-    count += await notificar({
-      modulo: 'logistica',
-      tipo: 'solic_pendente',
-      titulo: `Solicitação de compra pendente`,
-      mensagem: `"${s.descricao?.slice(0, 50)}" aguarda aprovação há ${dias} dias.`,
-      link: '/admin/logistica',
-      severidade: 'aviso',
-      chaveDedup: `solic_pendente_${s.id}`,
-    });
-  }
+  // (Lembrete de solicitação de compra pendente removido 2026-07-29 — lia
+  // `log_solicitacoes_compra`, tabela morta desde a migração do fluxo de
+  // compras pro módulo /solicitacoes central em 2026-07. O lembrete real de
+  // aprovação parada já é coberto, pra QUALQUER categoria incluindo compras,
+  // por `gerarNotificacoesSolicitacoes` mais abaixo — manter os dois geraria
+  // notificação duplicada/conflitante do mesmo pedido.)
 
   return count;
 }
@@ -599,26 +586,6 @@ async function gerarNotificacoesPatrimonio() {
       link: '/admin/patrimonio',
       severidade: 'urgente',
       chaveDedup: `extraviado_${b.id}`,
-    });
-  }
-
-  // 2. Inventários abertos há muito tempo
-  const { data: invs } = await supabase
-    .from('pat_inventarios')
-    .select('id, descricao, created_at')
-    .eq('status', 'em_andamento');
-
-  for (const inv of invs || []) {
-    const dias = Math.floor((Date.now() - new Date(inv.created_at).getTime()) / 86400000);
-    if (dias < 15) continue;
-    count += await notificar({
-      modulo: 'patrimonio',
-      tipo: 'inventario_aberto',
-      titulo: `Inventário aberto há ${dias} dias`,
-      mensagem: `${inv.descricao || 'Inventário'} está em andamento há ${dias} dias.`,
-      link: '/admin/patrimonio',
-      severidade: 'aviso',
-      chaveDedup: `inv_aberto_${inv.id}`,
     });
   }
 

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
+import { DatePicker } from '@/components/ui/date-picker';
 
 export default function TaskFormModal({ task, onSave, onClose }) {
   const [f, setF] = useState({
@@ -111,7 +112,9 @@ function Field({ label, value, onChange, type = 'text', style = {} }) {
   return (
     <div style={{ marginBottom: 12, ...style }}>
       <label style={labelStyle}>{label}</label>
-      <input type={type} value={value} onChange={e => onChange(e.target.value)} style={inputStyle} />
+      {type === 'date'
+        ? <DatePicker value={value} onChange={v => onChange(v)} />
+        : <input type={type} value={value} onChange={e => onChange(e.target.value)} style={inputStyle} />}
     </div>
   );
 }

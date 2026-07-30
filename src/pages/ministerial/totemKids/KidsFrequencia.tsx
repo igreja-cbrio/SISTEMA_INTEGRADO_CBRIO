@@ -10,6 +10,7 @@ import { totemKids as api } from '../../../api';
 import { Card } from '../../../components/ui/card';
 import { toast } from 'sonner';
 import { BarChart3, Loader2, ChevronDown, ChevronRight, ArrowLeft, Baby, RefreshCw } from 'lucide-react';
+import { DatePicker } from '@/components/ui/date-picker';
 
 // Último domingo (local) em YYYY-MM-DD.
 function ultimoDomingo() {
@@ -125,7 +126,7 @@ export default function KidsFrequencia() {
       <Card className="glass-solid p-4 flex flex-wrap items-end gap-3">
         <div>
           <label className="block text-xs text-muted-foreground mb-1">Data do culto</label>
-          <input type="date" value={data} onChange={(e) => setData(e.target.value)}
+          <DatePicker value={data} onChange={(v) => setData(v)}
             className="bg-[var(--cbrio-input-bg)] border border-border rounded-lg px-3 py-2 text-sm" />
         </div>
         <button onClick={() => buscar()} disabled={loading}

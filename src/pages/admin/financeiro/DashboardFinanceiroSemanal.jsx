@@ -415,6 +415,8 @@ function leituraClienteFallback(aba, kpis, buckets) {
 }
 
 function AssistenteFinanceiroCard({ aba, abaLabel, semana, kpis, buckets, onVerDetalhe, onComparar }) {
+  const [filtrosG] = useFiltrosGlobais();
+  const semExtra = !!filtrosG.sem_extra;
   const [texto, setTexto] = useState('');
   const [loading, setLoading] = useState(true);
   // Análise aprofundada (sob demanda · IA maior · explica causas como mês com 5 semanas)
@@ -436,8 +438,8 @@ function AssistenteFinanceiroCard({ aba, abaLabel, semana, kpis, buckets, onVerD
       setAnalisando(false);
     }
   }
-  // Semana mudou → a análise antiga não vale mais
-  useEffect(() => { setAnalise(''); setAnaliseErro(''); }, [semana]);
+  // Semana ou filtro mudou → a análise antiga não vale mais
+  useEffect(() => { setAnalise(''); setAnaliseErro(''); }, [semana, semExtra]);
 
   useEffect(() => {
     let cancelled = false;
@@ -448,7 +450,7 @@ function AssistenteFinanceiroCard({ aba, abaLabel, semana, kpis, buckets, onVerD
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [aba, semana]);
+  }, [aba, semana, semExtra]);
 
   return (
     <Card className="relative overflow-hidden border-primary/30">
@@ -603,6 +605,7 @@ function Slide0Resumo({ kpis, cultos, top_contribuintes, historico }) {
           valor={kpis.receita}
           delta={kpis.receita_delta_wow}
           sub="vs semana anterior"
+          mom={kpis.receita_mes_anterior ? { delta: kpis.receita_delta_mom, valor: kpis.receita_mes_anterior } : null}
           yoy={kpis.receita_yoy ? `YoY: ${fmtCompact(kpis.receita_yoy)} (${fmtPct(kpis.receita_delta_yoy)})` : null}
         />
         <KpiBig
@@ -945,6 +948,8 @@ function SazonalidadeSemanalChart() {
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState(null);
   const [semanaSel, setSemanaSel] = useState(null);
+  const [filtrosG] = useFiltrosGlobais();
+  const semExtra = !!filtrosG.sem_extra;
 
   useEffect(() => {
     let cancelled = false;
@@ -964,7 +969,7 @@ function SazonalidadeSemanalChart() {
       .catch(e => { if (!cancelled) setErro(e?.message || 'Erro ao carregar sazonalidade'); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, []);
+  }, [semExtra]);
 
   const anos = dados?.anos || [];
   const semanas = dados?.semanas || [];
@@ -1336,7 +1341,7 @@ function fmtKbrl(v) {
 // ============================================================
 // Sub-componentes
 // ============================================================
-function KpiBig({ custom, icon: Icon, accent, label, valor, format = fmtMoney, delta, sub, yoy }) {
+function KpiBig({ custom, icon: Icon, accent, label, valor, format = fmtMoney, delta, sub, yoy, mom }) {
   let DeltaIcon = Minus;
   let deltaColor = 'text-muted-foreground';
   if (delta !== null && delta !== undefined) {
@@ -1381,9 +1386,23 @@ function KpiBig({ custom, icon: Icon, accent, label, valor, format = fmtMoney, d
             )}
             {sub && <div className="text-xs text-muted-foreground">{sub}</div>}
           </div>
-          {yoy && (
-            <div className="text-[10px] text-muted-foreground mt-1.5 pt-1.5 border-t border-border/50">
-              {yoy}
+          {(mom || yoy) && (
+            <div className="mt-2 pt-2 border-t border-border/50 space-y-1">
+              {mom && (() => {
+                const d = mom.delta;
+                const up = d != null && d >= 0;
+                const MI = (d == null || Math.abs(d) < 1) ? Minus : (up ? ArrowUp : ArrowDown);
+                const cor = (d == null || Math.abs(d) < 1) ? 'text-muted-foreground' : (up ? 'text-emerald-600' : 'text-rose-600');
+                return (
+                  <div className="flex items-center gap-1.5 text-xs">
+                    <MI className={`h-3.5 w-3.5 ${cor}`} />
+                    <span className={`font-semibold ${cor}`}>{fmtPct(d)}</span>
+                    <span className="text-muted-foreground">vs. mesma semana do mês passado</span>
+                    {mom.valor ? <span className="text-muted-foreground/70">· {fmtCompact(mom.valor)}</span> : null}
+                  </div>
+                );
+              })()}
+              {yoy && <div className="text-[10px] text-muted-foreground">{yoy}</div>}
             </div>
           )}
         </CardContent>
@@ -2154,6 +2173,8 @@ function FreqVsArrecadacaoSemanal() {
   const [loading, setLoading] = useState(true);
   const [selectedIdx, setSelectedIdx] = useState(null);
   const [semanasJanela, setSemanasJanela] = useState(20);
+  const [filtrosG] = useFiltrosGlobais();
+  const semExtra = !!filtrosG.sem_extra;
 
   useEffect(() => {
     let cancelled = false;
@@ -2169,7 +2190,7 @@ function FreqVsArrecadacaoSemanal() {
       .catch((e) => console.warn('[FreqArrec] erro:', e?.message))
       .finally(() => !cancelled && setLoading(false));
     return () => { cancelled = true; };
-  }, [semanasJanela]);
+  }, [semanasJanela, semExtra]);
 
   const semanas = dados?.semanas || [];
   const formatado = useMemo(() => semanas.map((s, i) => ({
@@ -2442,6 +2463,8 @@ function MetasFinanceirasComFiltros({ metas: metasIniciais, onMetasChange }) {
   const [showForm, setShowForm] = useState(false);
   const [progresso, setProgresso] = useState({});
   const [loadingProg, setLoadingProg] = useState(false);
+  const [filtrosG] = useFiltrosGlobais();
+  const semExtra = !!filtrosG.sem_extra;
 
   // Filtros globais (afetam todas as metas que tiverem "global")
   const hoje = new Date();
@@ -2487,7 +2510,7 @@ function MetasFinanceirasComFiltros({ metas: metasIniciais, onMetasChange }) {
     return () => { cancelled = true; };
     // perMetaPeriod fora das deps de propósito · só recarrega no filtro global
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtroAno, filtroMes, filtroSemana, metas]);
+  }, [filtroAno, filtroMes, filtroSemana, metas, semExtra]);
 
   // Refetch individual quando uma meta muda seu período
   const handlePeriodChange = async (metaId, period) => {
@@ -3144,11 +3167,11 @@ function ArrecadacaoAnualChart() {
                   <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
                     <span className="text-xs text-muted-foreground">Mês selecionado</span>
                     <span className="flex items-center gap-2">
-                      {sel.semanas_qua_ter === 5 && (
-                        <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-primary/10 text-primary border border-primary/30">
-                          5 semanas de contribuição
+                      {sel.semanas_qua_ter ? (
+                        <span className={`text-[11px] font-semibold px-2 py-0.5 rounded border ${sel.semanas_qua_ter === 5 ? 'bg-primary/10 text-primary border-primary/30' : 'bg-muted text-muted-foreground border-border'}`}>
+                          {sel.semanas_qua_ter} semanas de contribuição
                         </span>
-                      )}
+                      ) : null}
                       <span className="text-sm font-semibold px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300">
                         {sel.mes_label}/{String(ano).slice(2)}
                       </span>
@@ -3565,6 +3588,20 @@ function FiltrosFinanceiroBar() {
         {ativos === 0 && <span className="text-muted-foreground">· nenhum</span>}
       </button>
 
+      {/* Botão explícito: ver arrecadação SEM extraordinárias (só ordinária) */}
+      <button
+        onClick={() => setFiltros({ ...filtros, sem_extra: !filtros.sem_extra })}
+        title="Remove as receitas extraordinárias (campanhas, doações pontuais) — mostra só a arrecadação ordinária (dízimos/ofertas)."
+        className={`ml-2 inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs transition ${
+          filtros.sem_extra
+            ? 'border-primary bg-primary text-primary-foreground font-semibold'
+            : 'border-border hover:bg-muted'
+        }`}
+      >
+        <Filter className="h-3.5 w-3.5" />
+        {filtros.sem_extra ? 'Sem extraordinárias ✓' : 'Sem extraordinárias'}
+      </button>
+
       {(ativos > 0 || open) && (
         <motion.div
           initial={{ opacity: 0, y: -4 }}
@@ -3680,6 +3717,8 @@ function SlideSaudeFinanceira() {
   const [loading, setLoading] = useState(true);
   const [showDoadores, setShowDoadores] = useState(false);
   const anos = [2022, 2023, 2024, 2025, 2026, 2027].filter(a => a <= anoAtual + 1);
+  const [filtrosG] = useFiltrosGlobais();
+  const semExtra = !!filtrosG.sem_extra;
 
   useEffect(() => {
     let cancelled = false;
@@ -3689,7 +3728,7 @@ function SlideSaudeFinanceira() {
       .catch(e => console.warn('[Saude]:', e?.message))
       .finally(() => !cancelled && setLoading(false));
     return () => { cancelled = true; };
-  }, [ano]);
+  }, [ano, semExtra]);
 
   if (loading && !dados) {
     return <div className="py-20 flex justify-center"><Loader2 className="h-7 w-7 animate-spin text-primary" /></div>;
@@ -3833,6 +3872,8 @@ function SaudeResultadoCard({ label, valor, sub, destaque }) {
 // SlideDizimoOferta · proporção dízimo/oferta mês a mês
 // ============================================================
 function SlideDizimoOferta() {
+  const [filtros] = useFiltrosGlobais();
+  const semExtra = !!filtros.sem_extra;
   const anoAtual = new Date().getFullYear();
   const [ano, setAno] = useState(anoAtual);
   const [dados, setDados] = useState(null);
@@ -3842,12 +3883,12 @@ function SlideDizimoOferta() {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    financeiroV2.dizimoOferta(ano)
+    financeiroV2.dizimoOferta(ano, semExtra)
       .then(r => { if (!cancelled) setDados(r); })
       .catch(e => console.warn('[DizOf]:', e?.message))
       .finally(() => !cancelled && setLoading(false));
     return () => { cancelled = true; };
-  }, [ano]);
+  }, [ano, semExtra]);
 
   const meses = dados?.meses || [];
   const MESES = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];

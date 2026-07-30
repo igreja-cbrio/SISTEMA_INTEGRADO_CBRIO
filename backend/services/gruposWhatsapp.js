@@ -32,8 +32,11 @@ const SECRET = process.env.GRUPOS_TOKEN_SECRET || process.env.CRON_SECRET;
 // o sendTemplate cair em dry-run e logar o link-capability em produção.
 const WHATSAPP_LIGADO = () => configurado();
 const TEMPLATE_LANG = process.env.WHATSAPP_TEMPLATE_LANG || 'pt_BR';
-const TPL_NOVO_PEDIDO_LIDER = process.env.WHATSAPP_TEMPLATE_GRUPOS_PEDIDO_LIDER || 'grupos_pedido_novo_lider';
-const TPL_PEDIDO_APROVADO = process.env.WHATSAPP_TEMPLATE_GRUPOS_APROVADO || 'grupos_pedido_aprovado';
+// v2 (29/07 · pedido do Pr. Nélio, aprovado na Meta): o aviso ao líder instrui
+// LIGAR pra pessoa antes de aceitar/recusar; o de aprovado perdeu o "o líder
+// vai falar com você" (o contato já aconteceu). Mesmas 5 variáveis dos v1.
+const TPL_NOVO_PEDIDO_LIDER = process.env.WHATSAPP_TEMPLATE_GRUPOS_PEDIDO_LIDER || 'grupos_pedido_novo_lider_v2';
+const TPL_PEDIDO_APROVADO = process.env.WHATSAPP_TEMPLATE_GRUPOS_APROVADO || 'grupos_pedido_aprovado_v2';
 // grupos_sugestao_grupo (UTILITY · 5 variáveis) — a 1ª versão, submetida como
 // grupos_pedido_recusado, foi reclassificada pela Meta como MARKETING (2º link
 // de navegação + tom promocional); a UTILITY é mais barata e não é pausável.
@@ -72,10 +75,19 @@ const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 dias
 // é server-side: geração do token × linha + inscrições abertas + triagem.
 const RENOV_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 dias
 
+// URL local (dev) NUNCA vira link de WhatsApp — quem recebe é sempre externo.
+// Incidente 29/07/2026: redisparo local montou o link com localhost:5173.
+// O waSender ainda bloqueia o envio (2ª camada); aqui a URL já nasce certa.
+const RE_BASE_LOCAL = /localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]|^https?:\/\/(?:10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.)/i;
 function baseUrl() {
-  return (process.env.FRONTEND_URL
+  const candidata = (process.env.FRONTEND_URL
     || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'https://cbrio.org')
   ).replace(/\/+$/, '');
+  if (RE_BASE_LOCAL.test(candidata)) {
+    console.warn('[GruposWPP] FRONTEND_URL local (%s) ignorada em link de WhatsApp — usando https://cbrio.org', candidata);
+    return 'https://cbrio.org';
+  }
+  return candidata;
 }
 
 // ── Token ────────────────────────────────────────────────────────────────

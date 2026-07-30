@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { logistica } from '../../../api';
 import { Button } from '../../../components/ui/button';
 import PaginacaoPadrao from '../../../components/Paginacao';
+import { DatePicker } from '@/components/ui/date-picker';
 
 // ── Tema (vidro · tokens glass do index.css) ────────────────
 const C = {
@@ -453,7 +454,7 @@ function CompraModal({ entry, onClose, onSalvar, onAprovar, onRejeitar, busy, ce
             <a href={c.storage_path} target="_blank" rel="noreferrer" style={{ fontSize: 12.5, color: C.primary, display: 'inline-block', marginBottom: 12 }}>Ver foto da nota ↗</a>
           )}
           <div style={S.formRow}>
-            <Field label="Data da compra"><input type="date" style={S.input} value={c.data_compra || ''} onChange={(e) => set('data_compra', e.target.value)} /></Field>
+            <Field label="Data da compra"><DatePicker style={S.input} value={c.data_compra || ''} onChange={(v) => set('data_compra', v)} /></Field>
             <Field label="Valor (R$)"><input type="number" step="0.01" style={S.input} value={c.valor ?? ''} onChange={(e) => set('valor', e.target.value)} /></Field>
           </div>
           <Field label="Fornecedor"><input style={S.input} value={c.fornecedor || ''} onChange={(e) => set('fornecedor', e.target.value)} /></Field>

@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { santander } from '../../../api';
 import { Button } from '../../../components/ui/button';
+import { DatePicker } from '@/components/ui/date-picker';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
@@ -279,9 +280,9 @@ export default function SantanderTab() {
         <div style={styles.sectionTitle}><span>Extrato</span></div>
         <SyncFilaCard />
         <div style={styles.filtros}>
-          <input type="date" value={extratoInicio} onChange={(e) => setExtratoInicio(e.target.value)} style={styles.input} />
+          <DatePicker value={extratoInicio} onChange={setExtratoInicio} style={styles.input} />
           <span style={{ color: C.text3 }}>até</span>
-          <input type="date" value={extratoFim} onChange={(e) => setExtratoFim(e.target.value)} style={styles.input} />
+          <DatePicker value={extratoFim} onChange={setExtratoFim} style={styles.input} />
           <Button onClick={() => loadExtrato(false)} disabled={loadingExtrato}>
             {loadingExtrato ? 'Carregando...' : 'Buscar'}
           </Button>
@@ -301,9 +302,9 @@ export default function SantanderTab() {
       <div style={styles.section}>
         <div style={styles.sectionTitle}><span>Comprovantes de pagamento</span></div>
         <div style={styles.filtros}>
-          <input type="date" value={compInicio} onChange={(e) => setCompInicio(e.target.value)} style={styles.input} />
+          <DatePicker value={compInicio} onChange={setCompInicio} style={styles.input} />
           <span style={{ color: C.text3 }}>até</span>
-          <input type="date" value={compFim} onChange={(e) => setCompFim(e.target.value)} style={styles.input} />
+          <DatePicker value={compFim} onChange={setCompFim} style={styles.input} />
           <select value={compCategoria} onChange={(e) => setCompCategoria(e.target.value)} style={styles.input}>
             {CATEGORIAS.map((c) => <option key={c} value={c}>{c || 'Todas categorias'}</option>)}
           </select>

@@ -10,6 +10,7 @@ import { Card } from '../components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '../components/ui/dialog';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '../components/ui/sheet';
 import { Input } from '../components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '../components/ui/label';
 import { Textarea } from '../components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
@@ -2636,10 +2637,12 @@ function CotacaoBlock({ item, canCotar, onChanged }) {
     catch (e) { toast.error(e.message || 'Erro ao marcar sugerida'); }
   }
 
-  async function enviarFinanceiro() {
+  async function enviarFinanceiro(comEmail = false) {
     // Fluxo "um botão": sem cotação formal na lista, manda o valor digitado
     // direto (o servidor cria a cotação na hora · fornecedor opcional).
-    const payload = { plano_contas_id: planoId || undefined, centro_custo_id: centroId || undefined };
+    // Principal = PELO SISTEMA (chega na fila do financeiro/Alberto). O e-mail
+    // é opcional (botão discreto) via comEmail.
+    const payload = { plano_contas_id: planoId || undefined, centro_custo_id: centroId || undefined, enviar_email: comEmail };
     if (!cotacoes.length) {
       const v = Number(form.valor);
       if (form.valor === '' || Number.isNaN(v) || v < 0) { toast.error('Informe o valor pra enviar ao financeiro.'); return; }
@@ -2655,8 +2658,13 @@ function CotacaoBlock({ item, canCotar, onChanged }) {
     setEnviando(true);
     try {
       const r = await api.enviarCotacoesFinanceiro(item.id, payload);
-      if (r?.email_ok) toast.success('Enviado ao financeiro (e-mail avisado).');
-      else toast.warning(r?.motivo ? `Enviado ao financeiro no sistema, mas o e-mail não saiu — ${r.motivo}` : 'Enviado ao financeiro no sistema, mas o e-mail não saiu — verifique.');
+      if (!comEmail) {
+        toast.success('Enviado ao financeiro — o Alberto vai aprovar na fila do sistema.');
+      } else if (r?.email_ok) {
+        toast.success('E-mail enviado ao financeiro.');
+      } else {
+        toast.warning(r?.motivo ? `Está no financeiro pelo sistema, mas o e-mail não saiu — ${r.motivo}` : 'Está no financeiro pelo sistema, mas o e-mail não saiu.');
+      }
       if (enviouInline) resetForm();
       onChanged?.();
       await recarregar();
@@ -2783,13 +2791,22 @@ function CotacaoBlock({ item, canCotar, onChanged }) {
         return (
           <div className="space-y-1.5">
             <Button
-              onClick={enviarFinanceiro}
+              onClick={() => enviarFinanceiro(false)}
               disabled={enviando || !podeEnviar}
               className="w-full bg-teal-600 hover:bg-teal-700 text-white"
             >
-              <Mail className="h-4 w-4 mr-2" />
+              <ArrowRight className="h-4 w-4 mr-2" />
               {enviando ? 'Enviando...' : jaEnviado ? 'Reenviar ao financeiro' : 'Enviar ao financeiro'}
             </Button>
+            {/* Discreto: além do sistema, avisar por e-mail também */}
+            <button
+              type="button"
+              onClick={() => enviarFinanceiro(true)}
+              disabled={enviando || !podeEnviar}
+              className="w-full text-[11px] text-muted-foreground hover:text-foreground inline-flex items-center justify-center gap-1 py-1 disabled:opacity-50"
+            >
+              <Mail className="h-3 w-3" /> {jaEnviado ? 'Reenviar avisando por e-mail' : 'Enviar avisando por e-mail também'}
+            </button>
             {jaEnviado && (
               <p className="text-[11px] text-muted-foreground text-center">
                 Enviado em {new Date(item.cotacoes_email_em).toLocaleString('pt-BR')}
@@ -2881,7 +2898,7 @@ function SobrestarBlock({ item, onChanged }) {
       </div>
       <div className="space-y-2">
         <Label className="text-xs">Data de revisão (opcional)</Label>
-        <Input type="date" value={revisao} onChange={e => setRevisao(e.target.value)} />
+        <DatePicker value={revisao} onChange={v => setRevisao(v)} />
       </div>
       <div className="flex gap-2 justify-end">
         <Button size="sm" variant="outline" onClick={() => { setAberto(false); setMotivo(''); setRevisao(''); }}>
@@ -3902,7 +3919,7 @@ function ConverterEmCompraModal({ solicitacao, onClose, onDone }) {
 
           <div className="grid grid-cols-2 gap-2">
             <div><Label className="text-xs">Fornecedor sugerido</Label><Input value={favorecido} onChange={e => setFavorecido(e.target.value)} placeholder="opcional" /></div>
-            <div><Label className="text-xs">Data necessária</Label><Input type="date" value={dataNec} onChange={e => setDataNec(e.target.value)} /></div>
+            <div><Label className="text-xs">Data necessária</Label><DatePicker value={dataNec} onChange={v => setDataNec(v)} /></div>
           </div>
 
           <label className="flex items-start gap-2 text-sm cursor-pointer">
@@ -4134,8 +4151,8 @@ function SolicitacaoHistorico({ item, isAdmin, currentUserId, onChanged }) {
       </div>
       <div className="space-y-2">
         <Label className="text-xs">Data necessária</Label>
-        <Input type="date" value={edit.data_necessaria ? String(edit.data_necessaria).slice(0, 10) : ''}
-          onChange={e => setEdit(s => ({ ...s, data_necessaria: e.target.value }))} />
+        <DatePicker value={edit.data_necessaria ? String(edit.data_necessaria).slice(0, 10) : ''}
+          onChange={v => setEdit(s => ({ ...s, data_necessaria: v }))} />
       </div>
     </>
   );

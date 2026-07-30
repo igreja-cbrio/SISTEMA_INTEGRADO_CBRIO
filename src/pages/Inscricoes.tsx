@@ -13,10 +13,13 @@ import { inscricoesApi as api } from '../api';
 import InscricoesTodas from './InscricoesTodas';
 import InscricoesPessoas from './InscricoesPessoas';
 import InscricoesDashboard from './InscricoesDashboard';
+import InscricoesPortas from './InscricoesPortas';
+import InscricoesQrInventario from './InscricoesQrInventario';
 import { useAuth } from '../contexts/AuthContext';
 import { Card } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { toast } from 'sonner';
 import {
@@ -202,12 +205,12 @@ export function EventoModal({ evento, areas, onClose, onSaved }: {
             {!ed && f.periodicidade !== 'unica' && (
               <div>
                 <label className="text-xs text-muted-foreground">Recorrente até (opcional)</label>
-                <Input type="date" value={f.recorre_ate || ''} onChange={set('recorre_ate')} />
+                <DatePicker value={f.recorre_ate || ''} onChange={set('recorre_ate')} />
               </div>
             )}
             <div>
               <label className="text-xs text-muted-foreground">Data</label>
-              <Input type="date" value={f.data || ''} onChange={set('data')} />
+              <DatePicker value={f.data || ''} onChange={set('data')} />
             </div>
             <div>
               <label className="text-xs text-muted-foreground">Hora</label>
@@ -326,7 +329,7 @@ function NovaEdicaoModal({ evento, onClose, onSaved }: { evento: any; onClose: (
           )}
           <div>
             <label className="text-xs text-muted-foreground">Data da nova edição *</label>
-            <Input type="date" value={data} onChange={e => setData(e.target.value)} />
+            <DatePicker value={data} onChange={setData} />
           </div>
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={onClose}>Cancelar</Button>
@@ -374,7 +377,7 @@ function SerieModal({ grupo, onClose, onEditar, onDuplicar, onPublicar, onCopiar
             <div className="flex items-end gap-1.5 ml-auto">
               <div>
                 <label className="text-[11px] text-muted-foreground block">Recorrente até (vazio = sem data final)</label>
-                <Input type="date" value={recorreAte} onChange={e => setRecorreAte(e.target.value)} className="h-8 text-xs" />
+                <DatePicker value={recorreAte} onChange={setRecorreAte} className="h-8 text-xs" />
               </div>
               {mudou && (
                 <Button size="sm" onClick={salvarRecorrencia} disabled={salvando} className="h-8">
@@ -386,16 +389,16 @@ function SerieModal({ grupo, onClose, onEditar, onDuplicar, onPublicar, onCopiar
 
           <div className="space-y-1.5">
             {edicoes.map(e => (
-              <div key={e.id} className="rounded-lg border border-border px-2.5 py-2 flex items-center gap-2 flex-wrap">
-                <div className="flex-1 min-w-[150px]">
-                  <div className="text-sm font-medium">{e.edicao_rotulo || e.nome}</div>
-                  <div className="text-xs text-muted-foreground flex items-center gap-2">
+              <div key={e.id} className="rounded-lg border border-border px-2.5 py-2 flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium truncate">{e.edicao_rotulo || e.nome}</div>
+                  <div className="text-xs text-muted-foreground flex items-center gap-2 flex-wrap">
                     {e.data && <span>{fmtData(e.data)}{e.hora ? ` · ${e.hora}` : ''}</span>}
                     <span className="inline-flex items-center gap-1"><Users className="h-3 w-3" /> {e.inscritos}{e.vagas ? `/${e.vagas}` : ''}</span>
                     <span className={`rounded px-1.5 py-0.5 ${STATUS_BADGE[e.status] || ''}`}>{e.status}</span>
                   </div>
                 </div>
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-1 shrink-0">
                   {e.status === 'rascunho' && (
                     <Button size="sm" className="h-7 text-xs" onClick={() => onPublicar(e)} title="Coloca o formulário no ar agora">
                       <Megaphone className="h-3 w-3 mr-1" /> Publicar
@@ -430,7 +433,7 @@ export default function Inscricoes() {
   const { getAccessLevel } = useAuth();
   // Aba Pessoas concentra PII (rollup por CPF/telefone) — SPEC-01: nível ≥2
   const podePessoas = getAccessLevel(['inscricoes']) >= 2;
-  const [aba, setAba] = useState<'calendario' | 'eventos' | 'todas' | 'pessoas' | 'dashboard'>('calendario');
+  const [aba, setAba] = useState<'calendario' | 'eventos' | 'todas' | 'pessoas' | 'dashboard' | 'qrs'>('calendario');
   const [eventos, setEventos] = useState<any[]>([]);
   const [areas, setAreas] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -507,6 +510,7 @@ export default function Inscricoes() {
     { key: 'eventos', label: 'Eventos', on: true },
     { key: 'todas', label: 'Todas as inscrições', on: true },
     { key: 'pessoas', label: 'Pessoas', on: podePessoas, motivo: podePessoas ? undefined : 'Requer nível 2 no módulo (dados concentrados de pessoas)' },
+    { key: 'qrs', label: 'QRs ativos', on: podePessoas, motivo: podePessoas ? undefined : 'Requer nível 2 no módulo' },
     { key: 'dashboard', label: 'Dashboard', on: true },
   ];
 
@@ -564,9 +568,11 @@ export default function Inscricoes() {
 
       {aba === 'todas' && <InscricoesTodas areas={areas} />}
       {aba === 'pessoas' && podePessoas && <InscricoesPessoas />}
+      {aba === 'qrs' && podePessoas && <InscricoesQrInventario eventos={eventos} />}
       {aba === 'dashboard' && <InscricoesDashboard areas={areas} />}
 
       {aba === 'eventos' && (
+        <>
         <Card className="glass-solid p-4">
           {loading ? (
             <div className="flex justify-center py-8"><Loader2 className="h-5 w-5 animate-spin text-primary" /></div>
@@ -609,7 +615,7 @@ export default function Inscricoes() {
                       <span className={`rounded px-1.5 py-0.5 ${STATUS_BADGE[e.status] || ''}`}>{e.status}</span>
                     </div>
                   </button>
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex items-center gap-1.5 shrink-0">
                     {e.status === 'rascunho' && (
                       <Button size="sm" onClick={() => publicar(e)} title="Coloca o formulário no ar agora">
                         <Megaphone className="h-3.5 w-3.5 mr-1" /> Publicar
@@ -632,6 +638,11 @@ export default function Inscricoes() {
             </div>
           )}
         </Card>
+        {/* Inventário das OUTRAS portas públicas (grupos/next/batismo/…) —
+            1 card por porta, detalhe no modal; somente leitura (pedido do
+            Marcos 28/07 · gestão segue nos módulos até a F3.5) */}
+        <InscricoesPortas />
+        </>
       )}
 
       {modal?.tipo === 'novo' && <EventoModal areas={areas} onClose={() => setModal(null)} onSaved={() => { setModal(null); carregar(); }} />}

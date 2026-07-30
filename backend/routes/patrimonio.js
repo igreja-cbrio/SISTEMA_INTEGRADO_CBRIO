@@ -5,6 +5,30 @@ const { escapePostgrestValue } = require('../utils/sanitize');
 
 router.use(authenticate, authorizeModule('patrimonio'));
 
+// Depreciação · indicador GERENCIAL interno (decisão do usuário 2026-07-29 ·
+// NÃO é cálculo contábil oficial). Método linear simples, sempre derivado na
+// hora — nunca gravado por período. Retorna null quando faltar algum dado
+// necessário (valor de aquisição, data de aquisição ou vida útil da categoria).
+function calcularDepreciacao(bem) {
+  const vidaUtilMeses = bem?.pat_categorias?.vida_util_meses;
+  const valor = bem?.valor_aquisicao != null ? Number(bem.valor_aquisicao) : null;
+  if (!vidaUtilMeses || valor == null || !bem?.data_aquisicao) return null;
+  const aquisicao = new Date(bem.data_aquisicao + 'T00:00:00');
+  if (Number.isNaN(aquisicao.getTime())) return null;
+  const agora = new Date();
+  let mesesDecorridos = (agora.getFullYear() - aquisicao.getFullYear()) * 12 + (agora.getMonth() - aquisicao.getMonth());
+  if (agora.getDate() < aquisicao.getDate()) mesesDecorridos -= 1;
+  mesesDecorridos = Math.max(0, mesesDecorridos);
+  const percentual = Math.min(100, (mesesDecorridos / vidaUtilMeses) * 100);
+  const valorAtual = Math.max(0, valor * (1 - percentual / 100));
+  return {
+    vida_util_meses: vidaUtilMeses,
+    meses_decorridos: mesesDecorridos,
+    percentual_depreciado: Math.round(percentual * 10) / 10,
+    valor_atual_estimado: Math.round(valorAtual * 100) / 100,
+  };
+}
+
 // ── DASHBOARD ──────────────────────────────────────────────
 router.get('/dashboard', async (req, res) => {
   try {
@@ -33,6 +57,49 @@ router.get('/dashboard/indicadores', async (req, res) => {
   }
 });
 
+// Agregado de depreciação (indicador GERENCIAL) pro dashboard — soma valor de
+// aquisição × valor atual estimado dos bens não-baixados com categoria
+// configurada; conta à parte quantos bens ficam de fora por falta de
+// valor/data/vida útil. Paginado (lei do projeto · cap de 1000 do PostgREST).
+router.get('/dashboard/depreciacao', async (req, res) => {
+  try {
+    let all = [];
+    let offset = 0;
+    const pageSize = 1000;
+    while (true) {
+      const { data, error } = await supabase.from('pat_bens')
+        .select('valor_aquisicao, data_aquisicao, status, pat_categorias(vida_util_meses)')
+        .neq('status', 'baixado')
+        .range(offset, offset + pageSize - 1);
+      if (error) throw error;
+      if (!data || data.length === 0) break;
+      all = all.concat(data);
+      if (data.length < pageSize) break;
+      offset += pageSize;
+    }
+    let valorAquisicaoTotal = 0, valorAtualTotal = 0, bensComDepreciacao = 0, bensSemConfiguracao = 0;
+    for (const bem of all) {
+      const dep = calcularDepreciacao(bem);
+      if (dep) {
+        bensComDepreciacao++;
+        valorAquisicaoTotal += Number(bem.valor_aquisicao);
+        valorAtualTotal += dep.valor_atual_estimado;
+      } else if (bem.valor_aquisicao != null) {
+        bensSemConfiguracao++;
+      }
+    }
+    res.json({
+      valor_aquisicao_total: Math.round(valorAquisicaoTotal * 100) / 100,
+      valor_atual_estimado_total: Math.round(valorAtualTotal * 100) / 100,
+      bens_com_depreciacao: bensComDepreciacao,
+      bens_sem_configuracao: bensSemConfiguracao,
+    });
+  } catch (e) {
+    console.error('[PAT] Agregado de depreciação falhou:', e.message);
+    res.status(500).json({ error: 'Erro ao calcular depreciação agregada' });
+  }
+});
+
 // ── CATEGORIAS ─────────────────────────────────────────────
 router.get('/categorias', async (req, res) => {
   try {
@@ -44,13 +111,27 @@ router.get('/categorias', async (req, res) => {
 
 router.post('/categorias', async (req, res) => {
   try {
-    const { nome, icone, pai_id } = req.body;
+    const { nome, icone, pai_id, vida_util_meses } = req.body;
     if (!nome) return res.status(400).json({ error: 'Nome é obrigatório' });
     const { data, error } = await supabase.from('pat_categorias')
-      .insert({ nome, icone: icone || null, pai_id: pai_id || null }).select().single();
+      .insert({ nome, icone: icone || null, pai_id: pai_id || null, vida_util_meses: vida_util_meses || null }).select().single();
     if (error) return res.status(400).json({ error: error.message });
     res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro ao criar categoria' }); }
+});
+
+router.put('/categorias/:id', async (req, res) => {
+  try {
+    const { nome, icone, vida_util_meses } = req.body;
+    const update = {};
+    if (nome !== undefined) update.nome = nome;
+    if (icone !== undefined) update.icone = icone || null;
+    if (vida_util_meses !== undefined) update.vida_util_meses = vida_util_meses || null;
+    const { data, error } = await supabase.from('pat_categorias')
+      .update(update).eq('id', req.params.id).select().single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao atualizar categoria' }); }
 });
 
 router.delete('/categorias/:id', async (req, res) => {
@@ -70,10 +151,31 @@ router.get('/localizacoes', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao listar localizações' }); }
 });
 
+// Impede que pai_id crie um ciclo na árvore (ex: A vira pai de B que já é pai
+// de A) — sobe a cadeia de ancestrais de p_pai_id e recusa se achar o próprio
+// ownId no caminho. ownId é null na criação (não há como um nó novo já ser
+// ancestral de ninguém).
+async function paiCriaCiclo(paiId, ownId) {
+  let atual = paiId;
+  const vistos = new Set();
+  while (atual) {
+    if (atual === ownId) return true;
+    if (vistos.has(atual)) return true; // ciclo já existente na base
+    vistos.add(atual);
+    const { data, error } = await supabase.from('pat_localizacoes').select('pai_id').eq('id', atual).single();
+    if (error || !data) return false;
+    atual = data.pai_id;
+  }
+  return false;
+}
+
 router.post('/localizacoes', async (req, res) => {
   try {
     const { nome, pai_id } = req.body;
     if (!nome) return res.status(400).json({ error: 'Nome é obrigatório' });
+    if (pai_id && await paiCriaCiclo(pai_id, null)) {
+      return res.status(400).json({ error: 'Localização pai inválida (criaria um ciclo)' });
+    }
     const { data, error } = await supabase.from('pat_localizacoes')
       .insert({ nome, pai_id: pai_id || null }).select().single();
     if (error) return res.status(400).json({ error: error.message });
@@ -86,7 +188,12 @@ router.put('/localizacoes/:id', async (req, res) => {
     const { nome, pai_id } = req.body;
     const update = {};
     if (nome !== undefined) update.nome = nome;
-    if (pai_id !== undefined) update.pai_id = pai_id || null;
+    if (pai_id !== undefined) {
+      if (pai_id && await paiCriaCiclo(pai_id, req.params.id)) {
+        return res.status(400).json({ error: 'Localização pai inválida (criaria um ciclo)' });
+      }
+      update.pai_id = pai_id || null;
+    }
     const { data, error } = await supabase.from('pat_localizacoes')
       .update(update).eq('id', req.params.id).select().single();
     if (error) return res.status(400).json({ error: error.message });
@@ -106,7 +213,7 @@ router.delete('/localizacoes/:id', async (req, res) => {
 router.get('/bens', async (req, res) => {
   try {
     const { status, categoria_id, localizacao_id, busca } = req.query;
-    let query = supabase.from('pat_bens').select('*, pat_categorias(nome), pat_localizacoes(nome)').order('nome');
+    let query = supabase.from('pat_bens').select('*, pat_categorias(nome, vida_util_meses), pat_localizacoes(nome), responsavel:profiles!responsavel_id(name), alerta:pat_revisao_itens!alerta_divergencia_item_id(data_revisao, localizacao_encontrada:pat_localizacoes!localizacao_encontrada_id(nome))').order('nome');
     if (status) query = query.eq('status', status);
     // Sentinela "__sem__" filtra bens SEM categoria/localização — pra
     // priorizar o saneamento de cadastro (pedido do usuário 2026-07-28).
@@ -122,7 +229,7 @@ router.get('/bens', async (req, res) => {
     }
     const { data, error } = await query;
     if (error) return res.status(400).json({ error: error.message });
-    res.json(data);
+    res.json((data || []).map(b => ({ ...b, depreciacao: calcularDepreciacao(b) })));
   } catch (e) { res.status(500).json({ error: 'Erro ao listar bens' }); }
 });
 
@@ -150,7 +257,7 @@ router.get('/bens/barcode/:codigo', async (req, res) => {
     console.log('[PATRIMONIO] barcode lookup variants:', list);
 
     const { data, error } = await supabase.from('pat_bens')
-      .select('*, pat_categorias(nome), pat_localizacoes(nome)')
+      .select('*, pat_categorias(nome, vida_util_meses), pat_localizacoes(nome), responsavel:profiles!responsavel_id(name), alerta:pat_revisao_itens!alerta_divergencia_item_id(data_revisao, localizacao_encontrada:pat_localizacoes!localizacao_encontrada_id(nome))')
       .in('codigo_barras', list);
 
     if (error) {
@@ -167,7 +274,7 @@ router.get('/bens/barcode/:codigo', async (req, res) => {
       .select('*, profiles!responsavel_id(name)')
       .eq('bem_id', bem.id)
       .order('data_movimentacao', { ascending: false });
-    res.json({ ...bem, movimentacoes: movs || [] });
+    res.json({ ...bem, movimentacoes: movs || [], depreciacao: calcularDepreciacao(bem) });
   } catch (e) {
     console.error('[PATRIMONIO] barcode lookup exception:', e.message);
     res.status(500).json({ error: 'Erro ao buscar bem por código' });
@@ -177,20 +284,20 @@ router.get('/bens/barcode/:codigo', async (req, res) => {
 router.get('/bens/:id', async (req, res) => {
   try {
     const { data: bem, error } = await supabase.from('pat_bens')
-      .select('*, pat_categorias(nome), pat_localizacoes(nome)').eq('id', req.params.id).single();
+      .select('*, pat_categorias(nome, vida_util_meses), pat_localizacoes(nome), responsavel:profiles!responsavel_id(name), alerta:pat_revisao_itens!alerta_divergencia_item_id(data_revisao, localizacao_encontrada:pat_localizacoes!localizacao_encontrada_id(nome))').eq('id', req.params.id).single();
     if (error) return res.status(404).json({ error: 'Bem não encontrado' });
     const { data: movs } = await supabase.from('pat_movimentacoes')
       .select('*, profiles!responsavel_id(name)').eq('bem_id', req.params.id).order('data_movimentacao', { ascending: false });
-    res.json({ ...bem, movimentacoes: movs || [] });
+    res.json({ ...bem, movimentacoes: movs || [], depreciacao: calcularDepreciacao(bem) });
   } catch (e) { res.status(500).json({ error: 'Erro ao buscar bem' }); }
 });
 
 router.post('/bens', async (req, res) => {
   try {
-    const { codigo_barras, nome, descricao, categoria_id, localizacao_id, numero_serie, marca, modelo, valor_aquisicao, data_aquisicao, observacoes } = req.body;
+    const { codigo_barras, nome, descricao, categoria_id, localizacao_id, numero_serie, marca, modelo, valor_aquisicao, data_aquisicao, observacoes, numero_nf, tem_garantia, garantia_ate, responsavel_id } = req.body;
     if (!codigo_barras || !nome) return res.status(400).json({ error: 'Código de barras e nome são obrigatórios' });
     const { data, error } = await supabase.from('pat_bens')
-      .insert({ codigo_barras, nome, descricao: descricao || null, categoria_id: categoria_id || null, localizacao_id: localizacao_id || null, numero_serie: numero_serie || null, marca: marca || null, modelo: modelo || null, valor_aquisicao: valor_aquisicao || null, data_aquisicao: data_aquisicao || null, observacoes: observacoes || null, created_by: req.user.userId })
+      .insert({ codigo_barras, nome, descricao: descricao || null, categoria_id: categoria_id || null, localizacao_id: localizacao_id || null, numero_serie: numero_serie || null, marca: marca || null, modelo: modelo || null, valor_aquisicao: valor_aquisicao || null, data_aquisicao: data_aquisicao || null, observacoes: observacoes || null, numero_nf: numero_nf || null, tem_garantia: !!tem_garantia, garantia_ate: garantia_ate || null, responsavel_id: responsavel_id || null, created_by: req.user.userId })
       .select().single();
     if (error) return res.status(400).json({ error: error.message });
     res.json(data);
@@ -199,9 +306,19 @@ router.post('/bens', async (req, res) => {
 
 router.put('/bens/:id', async (req, res) => {
   try {
-    const { codigo_barras, nome, descricao, categoria_id, localizacao_id, numero_serie, marca, modelo, valor_aquisicao, data_aquisicao, status, observacoes } = req.body;
+    const { codigo_barras, nome, descricao, categoria_id, localizacao_id, numero_serie, marca, modelo, valor_aquisicao, data_aquisicao, status, observacoes, numero_nf, tem_garantia, garantia_ate, responsavel_id, data_baixa } = req.body;
+    // Reatribuir a localização (edição manual do cadastro) é decisão humana —
+    // limpa o alerta de "localização pendente de reavaliação" (hierarquia
+    // 2026-07-29). Se localizacao_id não veio no payload, o alerta é preservado.
+    const update = { codigo_barras, nome, descricao: descricao || null, categoria_id: categoria_id || null, localizacao_id: localizacao_id || null, numero_serie: numero_serie || null, marca: marca || null, modelo: modelo || null, valor_aquisicao: valor_aquisicao || null, data_aquisicao: data_aquisicao || null, status, observacoes: observacoes || null, numero_nf: numero_nf || null, tem_garantia: !!tem_garantia, garantia_ate: garantia_ate || null, responsavel_id: responsavel_id || null };
+    if (localizacao_id !== undefined) { update.localizacao_pendente = false; update.alerta_divergencia_item_id = null; }
+    // Data de baixa acompanha o status editado direto no cadastro (item 4 ·
+    // 2026-07-29): entra em "baixado" grava a data (a informada ou hoje);
+    // sai de "baixado" limpa — não fica data de baixa órfã num bem reativado.
+    if (status === 'baixado') update.data_baixa = data_baixa || new Date().toISOString().slice(0, 10);
+    else if (status !== undefined) update.data_baixa = null;
     const { data, error } = await supabase.from('pat_bens')
-      .update({ codigo_barras, nome, descricao: descricao || null, categoria_id: categoria_id || null, localizacao_id: localizacao_id || null, numero_serie: numero_serie || null, marca: marca || null, modelo: modelo || null, valor_aquisicao: valor_aquisicao || null, data_aquisicao: data_aquisicao || null, status, observacoes: observacoes || null })
+      .update(update)
       .eq('id', req.params.id).select().single();
     if (error) return res.status(400).json({ error: error.message });
     res.json(data);
@@ -215,31 +332,76 @@ router.delete('/bens/:id', async (req, res) => {
     const { error: movErr } = await supabase.from('pat_movimentacoes')
       .insert({ bem_id: req.params.id, tipo: 'baixa', responsavel_id: req.user.userId, motivo: req.body?.motivo || null, created_by: req.user.userId });
     if (movErr) return res.status(400).json({ error: movErr.message });
-    const { error } = await supabase.from('pat_bens').update({ status: 'baixado' }).eq('id', req.params.id);
+    const { error } = await supabase.from('pat_bens').update({ status: 'baixado', data_baixa: new Date().toISOString().slice(0, 10) }).eq('id', req.params.id);
     if (error) return res.status(400).json({ error: error.message });
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: 'Erro ao dar baixa no bem' }); }
 });
 
 // ── MOVIMENTAÇÕES ──────────────────────────────────────────
+// Histórico central de TODAS as movimentações de TODOS os bens (pedido do
+// usuário 2026-07-29, item 1) — local antigo/novo, item, motivo, e destaque
+// de quem veio de uma revisão agendada (revisao_item_id preenchido). Paginado
+// server-side (lei do projeto · cap de 1000 do PostgREST).
+router.get('/movimentacoes', async (req, res) => {
+  try {
+    const { tipo, bem_id, localizacao_id, busca, data_inicio, data_fim, page, pageSize } = req.query;
+    const pg = Math.max(1, parseInt(page, 10) || 1);
+    const ps = Math.min(200, Math.max(1, parseInt(pageSize, 10) || 50));
+
+    let query = supabase.from('pat_movimentacoes')
+      .select(`
+        id, tipo, motivo, data_movimentacao, revisao_item_id,
+        bem:pat_bens!bem_id(id, nome, codigo_barras),
+        origem:pat_localizacoes!localizacao_origem_id(nome),
+        destino:pat_localizacoes!localizacao_destino_id(nome),
+        responsavel:profiles!responsavel_id(name)
+      `, { count: 'exact' })
+      .order('data_movimentacao', { ascending: false });
+
+    if (tipo) query = query.eq('tipo', tipo);
+    if (bem_id) query = query.eq('bem_id', bem_id);
+    if (localizacao_id) query = query.or(`localizacao_origem_id.eq.${localizacao_id},localizacao_destino_id.eq.${localizacao_id}`);
+    if (data_inicio) query = query.gte('data_movimentacao', data_inicio);
+    if (data_fim) query = query.lte('data_movimentacao', data_fim + 'T23:59:59');
+
+    // Busca por nome/código/série do BEM — resolve os ids primeiro (embed não
+    // é filtrável direto via supabase-js sem !inner, e !inner mudaria o shape).
+    if (busca) {
+      const b = escapePostgrestValue(busca.trim());
+      const { data: bensAchados, error: bensErr } = await supabase.from('pat_bens')
+        .select('id').or(`nome.ilike.%${b}%,codigo_barras.ilike.%${b}%,numero_serie.ilike.%${b}%`);
+      if (bensErr) return res.status(400).json({ error: bensErr.message });
+      const ids = (bensAchados || []).map(b => b.id);
+      if (ids.length === 0) return res.json({ data: [], total: 0, page: pg, pageSize: ps });
+      query = query.in('bem_id', ids);
+    }
+
+    const from = (pg - 1) * ps;
+    const { data, error, count } = await query.range(from, from + ps - 1);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ data: data || [], total: count || 0, page: pg, pageSize: ps });
+  } catch (e) {
+    console.error('[PAT] Erro ao listar movimentações:', e.message);
+    res.status(500).json({ error: 'Erro ao listar movimentações' });
+  }
+});
+
+// Registro da movimentação + atualização de localização/status do bem numa
+// única transação via RPC (`pat_registrar_movimentacao`) — antes eram 2
+// escritas separadas; se a 2ª falhasse no meio, a aba de Movimentações
+// passava a mentir sobre onde o bem está de verdade (dívida técnica
+// corrigida a pedido do usuário 2026-07-29).
 router.post('/bens/:id/movimentacoes', async (req, res) => {
   try {
     const { tipo, localizacao_origem_id, localizacao_destino_id, motivo } = req.body;
     if (!tipo) return res.status(400).json({ error: 'Tipo é obrigatório' });
-    const { data, error } = await supabase.from('pat_movimentacoes')
-      .insert({ bem_id: req.params.id, tipo, localizacao_origem_id: localizacao_origem_id || null, localizacao_destino_id: localizacao_destino_id || null, responsavel_id: req.user.userId, motivo: motivo || null, created_by: req.user.userId })
-      .select().single();
+    const { data, error } = await supabase.rpc('pat_registrar_movimentacao', {
+      p_bem_id: req.params.id, p_tipo: tipo,
+      p_localizacao_origem_id: localizacao_origem_id || null, p_localizacao_destino_id: localizacao_destino_id || null,
+      p_responsavel_id: req.user.userId, p_motivo: motivo || null, p_revisao_item_id: null, p_created_by: req.user.userId,
+    });
     if (error) return res.status(400).json({ error: error.message });
-    // Atualizar localização do bem se for transferência
-    if (tipo === 'transferencia' && localizacao_destino_id) {
-      await supabase.from('pat_bens').update({ localizacao_id: localizacao_destino_id }).eq('id', req.params.id);
-    }
-    if (tipo === 'manutencao') {
-      await supabase.from('pat_bens').update({ status: 'manutencao' }).eq('id', req.params.id);
-    }
-    if (tipo === 'baixa') {
-      await supabase.from('pat_bens').update({ status: 'baixado' }).eq('id', req.params.id);
-    }
     res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro ao registrar movimentação' }); }
 });
@@ -389,21 +551,56 @@ router.post('/revisao/convocacoes/:id/iniciar', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao iniciar convocação' }); }
 });
 
+// Divergência de localização (pedido do usuário 2026-07-29, item 2): o item
+// NUNCA move o bem sozinho — só quando divergencia_acao === 'movido' o
+// revisor decidiu explicitamente mover de fato. 'alerta' mantém o bem onde
+// está, só liga um aviso nele. Ausência de divergencia_acao (conferência sem
+// divergência, ou ainda não decidida) não toca em pat_bens.
 router.put('/revisao/itens/:id', async (req, res) => {
   try {
-    const { encontrado, status_fisico, observacao } = req.body;
+    const { encontrado, status_fisico, observacao, localizacao_encontrada_id, divergencia_acao } = req.body;
+    if (divergencia_acao && !['movido', 'alerta'].includes(divergencia_acao)) {
+      return res.status(400).json({ error: 'divergencia_acao inválida' });
+    }
     const { data: item, error } = await supabase.from('pat_revisao_itens')
-      .update({ encontrado: !!encontrado, status_fisico: status_fisico || null, observacao: observacao || null, data_revisao: new Date().toISOString() })
+      .update({
+        encontrado: !!encontrado, status_fisico: status_fisico || null, observacao: observacao || null,
+        data_revisao: new Date().toISOString(),
+        localizacao_encontrada_id: localizacao_encontrada_id || null,
+        divergencia_acao: divergencia_acao || null,
+      })
       .eq('id', req.params.id).select().single();
     if (error) return res.status(400).json({ error: error.message });
-    const { data: todos } = await supabase.from('pat_revisao_itens')
-      .select('encontrado, status_fisico').eq('convocacao_id', item.convocacao_id);
-    const conferidos = (todos || []).filter((i) => i.encontrado !== null).length;
-    const divergencias = (todos || []).filter((i) => i.encontrado === false || i.status_fisico === 'danificado' || i.status_fisico === 'nao_encontrado').length;
-    await supabase.from('pat_revisao_convocacoes')
-      .update({ total_bens_conferidos: conferidos, total_divergencias: divergencias }).eq('id', item.convocacao_id);
+
+    if (divergencia_acao === 'movido' && localizacao_encontrada_id) {
+      const { data: bem } = await supabase.from('pat_bens').select('localizacao_id').eq('id', item.bem_id).single();
+      const { error: movErr } = await supabase.rpc('pat_registrar_movimentacao', {
+        p_bem_id: item.bem_id, p_tipo: 'transferencia',
+        p_localizacao_origem_id: bem?.localizacao_id || null, p_localizacao_destino_id: localizacao_encontrada_id,
+        p_responsavel_id: req.user.userId, p_revisao_item_id: item.id,
+        p_motivo: 'Divergência encontrada na revisão periódica — bem estava em local diferente do esperado e foi realocado de fato.',
+        p_created_by: req.user.userId,
+      });
+      if (movErr) return res.status(400).json({ error: movErr.message });
+    } else if (divergencia_acao === 'alerta') {
+      await supabase.from('pat_bens').update({ alerta_divergencia_item_id: item.id }).eq('id', item.bem_id);
+    }
+
+    // Recálculo atômico via RPC — evita "lost update" de duas conferências
+    // concorrentes na mesma convocação (dívida técnica corrigida 2026-07-29).
+    await supabase.rpc('pat_recalcular_convocacao', { p_convocacao_id: item.convocacao_id });
     res.json(item);
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar item de revisão' }); }
+});
+
+// Dispensar o alerta de divergência ligado num bem (mantido no lugar mas
+// sinalizado) — decisão humana explícita, nunca automática.
+router.post('/bens/:id/dispensar-alerta', async (req, res) => {
+  try {
+    const { error } = await supabase.from('pat_bens').update({ alerta_divergencia_item_id: null }).eq('id', req.params.id);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: 'Erro ao dispensar alerta' }); }
 });
 
 router.post('/revisao/convocacoes/:id/concluir', async (req, res) => {

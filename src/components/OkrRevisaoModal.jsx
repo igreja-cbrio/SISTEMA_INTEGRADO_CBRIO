@@ -12,6 +12,7 @@ import { useEffect, useState } from 'react';
 import { ritual as ritualApi, rh as rhApi } from '../api';
 import { AlertCircle, X, Save } from 'lucide-react';
 import { toast } from 'sonner';
+import { DatePicker } from '@/components/ui/date-picker';
 
 const C = {
   card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
@@ -156,7 +157,7 @@ export default function OkrRevisaoModal({ open, kpi, onClose, onSaved, defaultPe
               </select>
             </Field>
             <Field label="Prazo do próximo passo">
-              <input type="date" value={form.prazo_proximo_passo} onChange={e => set('prazo_proximo_passo', e.target.value)} style={inp} />
+              <DatePicker value={form.prazo_proximo_passo} onChange={v => set('prazo_proximo_passo', v)} style={inp} />
             </Field>
             <FieldFull label="Proximo passo">
               <textarea value={form.proximo_passo} onChange={e => set('proximo_passo', e.target.value)}

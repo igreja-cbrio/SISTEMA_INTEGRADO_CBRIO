@@ -187,7 +187,7 @@ async function conciliar({ inicio, fim, dryRun = false, userId = null } = {}) {
   await mapLimit(cpfsUnicos, 8, async (doc) => {
     const cand = paraVincular.find((p) => p.cand.documento === doc)?.cand;
     try {
-      const r = await resolverMembroPorDocumento(doc, cand?.nome_limpo || null);
+      const r = await resolverMembroPorDocumento(doc, cand?.nome_limpo || null, { criarSemNome: false });
       if (r?.membro_id) {
         membroPorDoc.set(doc, r.membro_id);
         if (r.criado_novo) stats.avulsos_criados++;

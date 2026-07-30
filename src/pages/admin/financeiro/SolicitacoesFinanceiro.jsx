@@ -8,6 +8,7 @@ import { Card, CardContent } from '../../../components/ui/card';
 import { Button } from '../../../components/ui/button';
 import { Badge } from '../../../components/ui/badge';
 import { Avatar, AvatarImage, AvatarFallback } from '../../../components/ui/avatar';
+import { DatePicker } from '@/components/ui/date-picker';
 import { financeiro, solicitacoes } from '../../../api';
 
 const fmtMoney = (v) => v == null ? '—' : Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -493,8 +494,8 @@ function DetalheDialog({ solicitacao: s, onClose, onAction }) {
                 placeholder="Por que este pedido vai esperar? Ex: aguardar caixa do próximo mês"
               />
               <label className="text-xs block mb-1 mt-2">Data de revisão (opcional)</label>
-              <input
-                type="date" value={revisao} onChange={e => setRevisao(e.target.value)}
+              <DatePicker
+                value={revisao} onChange={v => setRevisao(v)}
                 className="w-full px-3 py-2 text-sm rounded-md border border-border bg-background"
               />
             </div>

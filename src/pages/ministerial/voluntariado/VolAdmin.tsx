@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Search, UserMinus, History, Loader2, Stethoscope, ChevronDown, ChevronRight } from 'lucide-react';
 import { useAllVolUsers, useAddVolRole, useRemoveVolRole, useSyncHistorical } from './hooks';
 import { toast } from 'sonner';
@@ -158,8 +159,8 @@ export default function VolAdmin() {
         <CardContent className="space-y-3">
           <p className="text-sm text-muted-foreground">Sincronize cultos e escalas de um período específico do Planning Center.</p>
           <div className="flex gap-2 flex-wrap">
-            <Input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="w-auto" />
-            <Input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-auto" />
+            <DatePicker value={startDate} onChange={setStartDate} className="w-auto" />
+            <DatePicker value={endDate} onChange={setEndDate} className="w-auto" />
             <Button onClick={handleHistoricalSync} disabled={syncHistorical.isPending}>
               {syncHistorical.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <History className="h-4 w-4 mr-2" />}
               Sincronizar

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Loader2, AlertCircle } from 'lucide-react';
 import { cadastroPublico } from '@/api';
 import MemberWalletPass from '@/components/membresia/MemberWalletPass';
+import { BirthDatePicker } from '@/components/ui/birth-date-picker';
 
 function maskCpf(v: string) {
   const d = v.replace(/\D+/g, '').slice(0, 11);
@@ -77,15 +78,9 @@ export default function WalletPage() {
             </div>
             <div>
               <label style={{ display: 'block', fontSize: 12, color: '#a3a3a3', marginBottom: 6 }}>Data de nascimento</label>
-              <input
-                type="date"
+              <BirthDatePicker
                 value={dob}
-                onChange={e => setDob(e.target.value)}
-                style={{
-                  width: '100%', padding: '10px 14px', borderRadius: 12,
-                  background: '#1f1f1f', border: '1px solid rgba(255,255,255,0.1)',
-                  color: '#e5e5e5', fontSize: 15, outline: 'none', boxSizing: 'border-box',
-                }}
+                onChange={setDob}
               />
             </div>
             {error && (

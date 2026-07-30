@@ -32,6 +32,7 @@ const BACKOFF_MIN = [30, 120, 360, 720, 1440];
 const CODIGOS_META_PERMANENTES = new Set([100, 131026, 131030, 132000, 132001, 132005, 132007, 132012]);
 function falhaPermanente(r) {
   if (r.reason === 'invalid_phone') return true;
+  if (r.reason === 'link_local') return true; // URL de dev no corpo — reenviar nunca resolve
   if (r.reason === 'api_error') return CODIGOS_META_PERMANENTES.has(Number(r.detail?.error?.code));
   return false;
 }

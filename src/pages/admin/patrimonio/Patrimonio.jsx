@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Tag, ClipboardList, Trash2, Archive, Pencil, MapPin, ScanLine } from 'lucide-react';
 import { useAuth } from '../../../contexts/AuthContext';
 // Coordenador de Operações/Logística = quem tem o cargo lider-logistica (já
@@ -7,6 +7,7 @@ import { useAuth } from '../../../contexts/AuthContext';
 const CARGO_COORDENADOR_REVISAO = 'lider-logistica';
 import { patrimonio, logistica } from '../../../api';
 import { Button } from '../../../components/ui/button';
+import { DatePicker } from '@/components/ui/date-picker';
 import BarcodeScanner from '../../../components/BarcodeScanner';
 import Paginacao, { usePaginacaoLocal } from '../../../components/Paginacao';
 
@@ -28,12 +29,6 @@ const STATUS_BEM = {
 const TIPO_MOV = {
   entrada: 'Entrada', saida: 'Saída', transferencia: 'Transferência',
   manutencao: 'Manutenção', baixa: 'Baixa',
-};
-
-const INV_STATUS = {
-  em_andamento: { c: C.blue, bg: C.blueBg, label: 'Em andamento' },
-  concluido: { c: C.green, bg: C.greenBg, label: 'Concluído' },
-  cancelado: { c: C.red, bg: C.redBg, label: 'Cancelado' },
 };
 
 const CICLO_STATUS = {
@@ -87,6 +82,30 @@ const styles = {
   clickRow: { cursor: 'pointer', transition: 'background 0.1s' },
 };
 
+// Árvore de localizações (pai_id) · pedido do usuário 2026-07-29. Monta a
+// árvore a partir da lista plana e devolve tanto a versão aninhada (pra
+// exibição expansível em CatLocTab) quanto achatada com profundidade (pra
+// indentar as options dos <select> de localização em todo o módulo).
+function buildLocTree(localizacoes) {
+  const byId = new Map(localizacoes.map(l => [l.id, { ...l, children: [] }]));
+  const roots = [];
+  for (const l of byId.values()) {
+    if (l.pai_id && byId.has(l.pai_id)) byId.get(l.pai_id).children.push(l);
+    else roots.push(l);
+  }
+  const sortRec = (arr) => { arr.sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR')); arr.forEach(n => sortRec(n.children)); };
+  sortRec(roots);
+  return roots;
+}
+function flattenLocTree(tree, depth = 0, out = []) {
+  for (const node of tree) {
+    out.push({ ...node, depth });
+    if (node.children?.length) flattenLocTree(node.children, depth + 1, out);
+  }
+  return out;
+}
+const locIndent = (depth) => depth > 0 ? '  '.repeat(depth) + '— ' : '';
+
 const fmtDate = (d) => d ? new Date(d + 'T12:00:00').toLocaleDateString('pt-BR') : '—';
 const fmtMoney = (v) => v != null ? `R$ ${Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '—';
 const fmtCodigo = (c) => {
@@ -117,7 +136,7 @@ function Input({ label, ...props }) { return (<div style={styles.formGroup}>{lab
 function Select({ label, children, ...props }) { return (<div style={styles.formGroup}>{label && <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">{label}</label>}<select className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" {...props}>{children}</select></div>); }
 function Badge({ status, map }) { const s = map[status] || { c: C.text3, bg: '#73737318', label: status }; return <span style={styles.badge(s.c, s.bg)}>{s.label}</span>; }
 
-const TABS = ['Dashboard', 'Bens', 'Categorias / Localizações', 'Inventários', 'Revisão'];
+const TABS = ['Dashboard', 'Bens', 'Categorias / Localizações', 'Revisão', 'Movimentações'];
 
 const fmtDateTime = (d) => d ? new Date(d).toLocaleString('pt-BR') : '—';
 
@@ -129,7 +148,6 @@ export default function Patrimonio() {
   const [bens, setBens] = useState([]);
   const [categorias, setCategorias] = useState([]);
   const [localizacoes, setLocalizacoes] = useState([]);
-  const [inventarios, setInventarios] = useState([]);
   const [loading, setLoading] = useState(false);
   const [filtroStatus, setFiltroStatus] = useState('');
   const [filtroCat, setFiltroCat] = useState('');
@@ -138,7 +156,6 @@ export default function Patrimonio() {
   const [modalBem, setModalBem] = useState(null);
   const [modalDetail, setModalDetail] = useState(null);
   const [modalMov, setModalMov] = useState(null);
-  const [modalInv, setModalInv] = useState(null);
   const [newCat, setNewCat] = useState('');
   const [newLoc, setNewLoc] = useState('');
   const [error, setError] = useState('');
@@ -153,19 +170,45 @@ export default function Patrimonio() {
   const [modalConvocacao, setModalConvocacao] = useState(null);
   const loadDash = useCallback(async () => { try { setDashError(false); setDash(await patrimonio.dashboard()); } catch (e) { console.error(e); setDashError(true); setDash({ totalBens: 0, ativos: 0, manutencao: 0, baixados: 0, extraviados: 0, valorTotal: 0, porCategoria: {}, porLocalizacao: {}, inventariosAbertos: 0 }); } }, []);
   const loadIndicadores = useCallback(async () => { try { setIndicadores(await patrimonio.dashboardIndicadores()); } catch (e) { console.error(e); } }, []);
+  const [depreciacaoIndic, setDepreciacaoIndic] = useState(null);
+  const loadDepreciacao = useCallback(async () => { try { setDepreciacaoIndic(await patrimonio.dashboardDepreciacao()); } catch (e) { console.error(e); } }, []);
   const loadBens = useCallback(async () => {
     try { setLoading(true); const p = {}; if (filtroStatus) p.status = filtroStatus; if (filtroCat) p.categoria_id = filtroCat; if (filtroLoc) p.localizacao_id = filtroLoc; if (busca) p.busca = busca; setBens(await patrimonio.bens.list(p)); }
     catch (e) { console.error(e); } finally { setLoading(false); }
   }, [filtroStatus, filtroCat, filtroLoc, busca]);
   const loadCats = useCallback(async () => { try { setCategorias(await patrimonio.categorias.list()); } catch (e) { console.error(e); } }, []);
   const loadLocs = useCallback(async () => { try { setLocalizacoes(await patrimonio.localizacoes.list()); } catch (e) { console.error(e); } }, []);
-  const loadInvs = useCallback(async () => { try { setInventarios(await patrimonio.inventarios.list()); } catch (e) { console.error(e); } }, []);
   const loadRevisao = useCallback(async () => { try { setRevisaoCiclos(await patrimonio.revisao.ciclos()); } catch (e) { console.error(e); } }, []);
   const loadRevisaoIndic = useCallback(async () => { try { setRevisaoIndic(await patrimonio.revisao.indicadores()); } catch (e) { console.error(e); } }, []);
   const loadResponsaveis = useCallback(async () => { try { setResponsaveis(await patrimonio.revisao.responsaveis()); } catch (e) { console.error(e); } }, []);
 
-  useEffect(() => { loadDash(); loadIndicadores(); loadBens(); loadCats(); loadLocs(); loadInvs(); loadRevisao(); loadRevisaoIndic(); loadResponsaveis(); }, []);
+  // Aba central de Movimentações (pedido do usuário 2026-07-29, item 1) —
+  // paginação server-side (lista pode crescer além do cap de 1000), carregada
+  // só quando a aba é aberta ou os filtros/página mudam.
+  const [movList, setMovList] = useState([]);
+  const [movTotal, setMovTotal] = useState(0);
+  const [movPage, setMovPage] = useState(1);
+  const [movLoading, setMovLoading] = useState(false);
+  const [movFiltroTipo, setMovFiltroTipo] = useState('');
+  const [movFiltroLoc, setMovFiltroLoc] = useState('');
+  const [movBusca, setMovBusca] = useState('');
+  const MOV_PAGE_SIZE = 50;
+  const loadMovimentacoes = useCallback(async () => {
+    try {
+      setMovLoading(true);
+      const p = { page: movPage, pageSize: MOV_PAGE_SIZE };
+      if (movFiltroTipo) p.tipo = movFiltroTipo;
+      if (movFiltroLoc) p.localizacao_id = movFiltroLoc;
+      if (movBusca) p.busca = movBusca;
+      const res = await patrimonio.movimentacoes.list(p);
+      setMovList(res.data || []); setMovTotal(res.total || 0);
+    } catch (e) { console.error(e); } finally { setMovLoading(false); }
+  }, [movPage, movFiltroTipo, movFiltroLoc, movBusca]);
+
+  useEffect(() => { loadDash(); loadIndicadores(); loadDepreciacao(); loadBens(); loadCats(); loadLocs(); loadRevisao(); loadRevisaoIndic(); loadResponsaveis(); }, []);
   useEffect(() => { loadBens(); }, [filtroStatus, filtroCat, filtroLoc, busca]);
+  useEffect(() => { if (tab === 4) loadMovimentacoes(); }, [tab, movPage, movFiltroTipo, movFiltroLoc, movBusca]);
+  useEffect(() => { setMovPage(1); }, [movFiltroTipo, movFiltroLoc, movBusca]);
 
   async function saveBem(data) {
     try { if (data.id) await patrimonio.bens.update(data.id, data); else await patrimonio.bens.create(data); setModalBem(null); loadBens(); loadDash(); } catch (e) { setError(e.message); }
@@ -182,12 +225,18 @@ export default function Patrimonio() {
   async function saveMov(bemId, data) {
     try { await patrimonio.bens.movimentar(bemId, data); setModalMov(null); openDetail(bemId); loadBens(); loadDash(); } catch (e) { setError(e.message); }
   }
+  async function dispensarAlerta(bemId) {
+    try { await patrimonio.bens.dispensarAlerta(bemId); openDetail(bemId); loadBens(); } catch (e) { setError(e.message); }
+  }
   async function addCat() { if (!newCat.trim()) return; try { await patrimonio.categorias.create({ nome: newCat }); setNewCat(''); loadCats(); loadDash(); } catch (e) { setError(e.message); } }
   async function removeCat(id) { if (!confirm('Remover categoria?')) return; try { await patrimonio.categorias.remove(id); loadCats(); } catch (e) { setError(e.message); } }
-  async function addLoc() { if (!newLoc.trim()) return; try { await patrimonio.localizacoes.create({ nome: newLoc }); setNewLoc(''); loadLocs(); loadDash(); } catch (e) { setError(e.message); } }
-  async function removeLoc(id) { if (!confirm('Remover localização?')) return; try { await patrimonio.localizacoes.remove(id); loadLocs(); } catch (e) { setError(e.message); } }
-  async function saveInv(data) { try { await patrimonio.inventarios.create(data); setModalInv(null); loadInvs(); loadDash(); } catch (e) { setError(e.message); } }
-  async function updateInvStatus(id, status) { try { const upd = { status }; if (status === 'concluido') upd.data_fim = new Date().toISOString().slice(0, 10); await patrimonio.inventarios.atualizar(id, upd); loadInvs(); loadDash(); } catch (e) { setError(e.message); } }
+  async function updateCat(id, data) { try { await patrimonio.categorias.update(id, data); loadCats(); loadDepreciacao(); } catch (e) { setError(e.message); } }
+  async function addLoc(nome, pai_id) { const n = nome ?? newLoc; if (!n.trim()) return; try { await patrimonio.localizacoes.create({ nome: n, pai_id: pai_id || null }); setNewLoc(''); loadLocs(); loadDash(); } catch (e) { setError(e.message); } }
+  async function removeLoc(id) { if (!confirm('Remover localização? Bens e sub-localizações apontando pra ela não são movidos automaticamente.')) return; try { await patrimonio.localizacoes.remove(id); loadLocs(); } catch (e) { setError(e.message); } }
+  async function updateLoc(id, data) { try { await patrimonio.localizacoes.update(id, data); loadLocs(); } catch (e) { setError(e.message); } }
+  // Lista achatada em ordem de árvore (indentada) — usada em todo select de
+  // localização do módulo (pedido do usuário 2026-07-29: agrupamento em árvore).
+  const locOptions = useMemo(() => flattenLocTree(buildLocTree(localizacoes)), [localizacoes]);
   async function criarCiclo(data) { try { await patrimonio.revisao.criarCiclo(data); setModalNovoCiclo(false); loadRevisao(); } catch (e) { setError(e.message); } }
   async function abrirConvocacao(id) { try { setModalConvocacao(await patrimonio.revisao.convocacao(id)); } catch (e) { setError(e.message); } }
   async function iniciarConvocacao(id) { try { await patrimonio.revisao.iniciar(id); await abrirConvocacao(id); loadRevisao(); } catch (e) { setError(e.message); } }
@@ -212,6 +261,7 @@ export default function Patrimonio() {
         <DashboardTab
           dash={dash}
           indicadores={indicadores}
+          depreciacaoIndic={depreciacaoIndic}
           onNavigate={(targetTab, status) => { setFiltroStatus(status || ''); setTab(targetTab); }}
           onNavigateFiltro={(f) => {
             setFiltroStatus(''); setFiltroCat(f.categoria_id || ''); setFiltroLoc(f.localizacao_id || '');
@@ -224,26 +274,33 @@ export default function Patrimonio() {
         <BensTab bens={bens} loading={loading} busca={busca} setBusca={setBusca}
           filtroStatus={filtroStatus} setFiltroStatus={setFiltroStatus}
           filtroCat={filtroCat} setFiltroCat={setFiltroCat} filtroLoc={filtroLoc} setFiltroLoc={setFiltroLoc}
-          categorias={categorias} localizacoes={localizacoes}
+          categorias={categorias} localizacoes={localizacoes} locOptions={locOptions}
           onNew={() => setModalBem({})} onDetail={openDetail} onDetailPorCodigo={openDetailPorCodigo}
           onBaixar={baixarBem} isDiretor={isDiretor}
         />
       )}
-      {tab === 2 && <CatLocTab categorias={categorias} localizacoes={localizacoes} newCat={newCat} setNewCat={setNewCat} addCat={addCat} removeCat={removeCat} newLoc={newLoc} setNewLoc={setNewLoc} addLoc={addLoc} removeLoc={removeLoc} isDiretor={isDiretor} />}
-      {tab === 3 && <InventariosTab inventarios={inventarios} onNew={() => setModalInv({})} onUpdate={updateInvStatus} isDiretor={isDiretor} />}
-      {tab === 4 && (
+      {tab === 2 && <CatLocTab categorias={categorias} localizacoes={localizacoes} locOptions={locOptions} newCat={newCat} setNewCat={setNewCat} addCat={addCat} removeCat={removeCat} updateCat={updateCat} addLoc={addLoc} removeLoc={removeLoc} updateLoc={updateLoc} isDiretor={isDiretor} />}
+      {tab === 3 && (
         <RevisaoTab ciclos={revisaoCiclos} indicadores={revisaoIndic}
           onNovoCiclo={() => setModalNovoCiclo(true)} onAbrirConvocacao={abrirConvocacao}
           isDiretor={isDiretor} isCoordenadorRevisao={isCoordenadorRevisao}
         />
       )}
+      {tab === 4 && (
+        <MovimentacoesTab list={movList} total={movTotal} page={movPage} pageSize={MOV_PAGE_SIZE} loading={movLoading}
+          onPageChange={setMovPage} locOptions={locOptions}
+          filtroTipo={movFiltroTipo} setFiltroTipo={setMovFiltroTipo}
+          filtroLoc={movFiltroLoc} setFiltroLoc={setMovFiltroLoc}
+          busca={movBusca} setBusca={setMovBusca}
+          onAbrirBem={openDetail}
+        />
+      )}
 
-      <BemFormModal open={!!modalBem} data={modalBem} categorias={categorias} localizacoes={localizacoes} onClose={() => setModalBem(null)} onSave={saveBem} />
-      <BemDetailModal open={!!modalDetail} data={modalDetail} onClose={() => setModalDetail(null)} onEdit={(b) => { setModalDetail(null); setModalBem(b); }} onBaixar={baixarBem} onMov={(bemId) => setModalMov({ bem_id: bemId })} isDiretor={isDiretor} />
-      <MovFormModal open={!!modalMov} data={modalMov} localizacoes={localizacoes} onClose={() => setModalMov(null)} onSave={saveMov} />
-      <InvFormModal open={!!modalInv} onClose={() => setModalInv(null)} onSave={saveInv} />
+      <BemFormModal open={!!modalBem} data={modalBem} categorias={categorias} locOptions={locOptions} responsaveis={responsaveis} onClose={() => setModalBem(null)} onSave={saveBem} />
+      <BemDetailModal open={!!modalDetail} data={modalDetail} onClose={() => setModalDetail(null)} onEdit={(b) => { setModalDetail(null); setModalBem(b); }} onBaixar={baixarBem} onMov={(bemId) => setModalMov({ bem_id: bemId })} onDispensarAlerta={dispensarAlerta} isDiretor={isDiretor} />
+      <MovFormModal open={!!modalMov} data={modalMov} locOptions={locOptions} onClose={() => setModalMov(null)} onSave={saveMov} />
       <NovoCicloModal open={modalNovoCiclo} responsaveis={responsaveis} onClose={() => setModalNovoCiclo(false)} onSave={criarCiclo} />
-      <ConvocacaoModal open={!!modalConvocacao} data={modalConvocacao} onClose={() => setModalConvocacao(null)} onIniciar={iniciarConvocacao} onAtualizarItem={atualizarItemRevisao} onConcluir={concluirConvocacao} isDiretor={isCoordenadorRevisao} />
+      <ConvocacaoModal open={!!modalConvocacao} data={modalConvocacao} locOptions={locOptions} onClose={() => setModalConvocacao(null)} onIniciar={iniciarConvocacao} onAtualizarItem={atualizarItemRevisao} onConcluir={concluirConvocacao} isDiretor={isCoordenadorRevisao} />
     </div>
   );
 }
@@ -293,7 +350,7 @@ function PatStatCard({ label, value, bg, svg, onClick }) {
   );
 }
 
-function DashboardTab({ dash, indicadores, onNavigate, onNavigateFiltro, onAbrirBem }) {
+function DashboardTab({ dash, indicadores, depreciacaoIndic, onNavigate, onNavigateFiltro, onAbrirBem }) {
   if (!dash) return <div style={styles.empty}>Carregando dashboard...</div>;
   // Tab 1 = Bens; filtra por status quando aplicável
   const kpis = [
@@ -324,6 +381,26 @@ function DashboardTab({ dash, indicadores, onNavigate, onNavigateFiltro, onAbrir
           <div style={{ fontSize: 12, fontWeight: 700, color: C.text2, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Saneamento de cadastro</div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
             {saneamento.map((k) => <PatStatCard key={k.label} label={k.label} value={k.value} bg={k.bg} svg={null} onClick={k.filtro ? () => onNavigateFiltro(k.filtro) : undefined} />)}
+          </div>
+        </div>
+      )}
+
+      {/* Depreciação · indicador GERENCIAL interno (pedido do usuário 2026-07-29) —
+          linear, derivado sob demanda a partir da vida útil configurada por
+          categoria. NÃO é cálculo contábil oficial. */}
+      {depreciacaoIndic && depreciacaoIndic.bens_com_depreciacao > 0 && (
+        <div style={{ ...styles.card, marginBottom: 24, padding: 16 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 8 }}>
+            <div style={styles.cardTitle}>Depreciação (indicador gerencial)</div>
+            <div style={{ fontSize: 11, color: C.text3 }}>Cálculo linear interno — não substitui avaliação contábil oficial</div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 16, marginTop: 12 }}>
+            <div><div style={{ fontSize: 11, color: C.text2 }}>Valor de aquisição</div><div style={{ fontSize: 16, fontWeight: 700 }}>{fmtMoney(depreciacaoIndic.valor_aquisicao_total)}</div></div>
+            <div><div style={{ fontSize: 11, color: C.text2 }}>Valor atual estimado</div><div style={{ fontSize: 16, fontWeight: 700, color: C.primary }}>{fmtMoney(depreciacaoIndic.valor_atual_estimado_total)}</div></div>
+            <div><div style={{ fontSize: 11, color: C.text2 }}>Bens com depreciação calculada</div><div style={{ fontSize: 16, fontWeight: 700 }}>{depreciacaoIndic.bens_com_depreciacao}</div></div>
+            {depreciacaoIndic.bens_sem_configuracao > 0 && (
+              <div><div style={{ fontSize: 11, color: C.text2 }}>Sem vida útil configurada</div><div style={{ fontSize: 16, fontWeight: 700, color: C.amber }}>{depreciacaoIndic.bens_sem_configuracao}</div></div>
+            )}
           </div>
         </div>
       )}
@@ -405,17 +482,11 @@ function DashboardTab({ dash, indicadores, onNavigate, onNavigateFiltro, onAbrir
           </div>
         </div>
       )}
-
-      {dash.inventariosAbertos > 0 && (
-        <div style={{ ...styles.card, borderLeft: `4px solid ${C.amber}`, padding: 16, fontSize: 13, color: C.text }}>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><ClipboardList style={{ width: 16, height: 16, color: '#00B39D' }} /> {dash.inventariosAbertos} inventário(s) em andamento</span>
-        </div>
-      )}
     </>
   );
 }
 
-function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus, filtroCat, setFiltroCat, filtroLoc, setFiltroLoc, categorias, localizacoes, onNew, onDetail, onDetailPorCodigo, onBaixar, isDiretor }) {
+function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus, filtroCat, setFiltroCat, filtroLoc, setFiltroLoc, categorias, locOptions, onNew, onDetail, onDetailPorCodigo, onBaixar, isDiretor }) {
   const { pageItems: bensPag, paginacaoProps: bensPagProps } = usePaginacaoLocal(bens, 25);
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState('');
@@ -446,7 +517,7 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
         <select style={styles.select} value={filtroLoc} onChange={e => setFiltroLoc(e.target.value)}>
           <option value="">Todas localizações</option>
           <option value="__sem__">— Sem localização —</option>
-          {localizacoes.map(l => <option key={l.id} value={l.id}>{l.nome}</option>)}
+          {locOptions.map(l => <option key={l.id} value={l.id}>{locIndent(l.depth)}{l.nome}</option>)}
         </select>
         {isDiretor && <div style={{ marginLeft: 'auto' }}><Button onClick={onNew}>+ Novo Bem</Button></div>}
       </div>
@@ -477,7 +548,11 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
                   <td style={{ ...styles.td, fontFamily: 'monospace', fontSize: 12 }}>{fmtCodigo(b.codigo_barras)}</td>
                   <td style={{ ...styles.td, fontWeight: 600 }}>{b.nome}</td>
                   <td style={styles.td}>{b.pat_categorias?.nome || '—'}</td>
-                  <td style={styles.td}>{b.pat_localizacoes?.nome || '—'}</td>
+                  <td style={styles.td}>
+                    {b.pat_localizacoes?.nome || '—'}
+                    {b.localizacao_pendente && <span title="Localização virou um grupamento — precisa de realocação pra uma sala final" style={{ ...styles.badge(C.amber, C.amberBg), marginLeft: 6 }}>⚠ pendente</span>}
+                    {b.alerta_divergencia_item_id && <span title="Encontrado em outro lugar numa revisão periódica — veja o popup do bem" style={{ ...styles.badge(C.amber, C.amberBg), marginLeft: 6 }}>⚠ divergência</span>}
+                  </td>
                   <td style={styles.td}>{[b.marca, b.modelo].filter(Boolean).join(' ') || '—'}</td>
                   <td style={styles.td}>{fmtMoney(b.valor_aquisicao)}</td>
                   <td style={styles.td}><Badge status={b.status} map={STATUS_BEM} /></td>
@@ -493,7 +568,58 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
   );
 }
 
-function CatLocTab({ categorias, localizacoes, newCat, setNewCat, addCat, removeCat, newLoc, setNewLoc, addLoc, removeLoc, isDiretor }) {
+// Nó da árvore de localizações (expandir/colapsar filhas · pedido do usuário
+// 2026-07-29: "clique na localização-pai expande pra mostrar as salas").
+function LocTreeNode({ node, depth, expanded, toggleExpanded, isDiretor, onEdit, removeLoc }) {
+  const temFilhas = node.children.length > 0;
+  const aberto = expanded.has(node.id);
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', paddingLeft: depth * 18, borderBottom: `1px solid ${C.border}` }}>
+        <span style={{ fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 4, cursor: temFilhas ? 'pointer' : 'default' }} onClick={() => temFilhas && toggleExpanded(node.id)}>
+          {temFilhas ? <span style={{ width: 14, display: 'inline-block', fontSize: 11, color: C.text3 }}>{aberto ? '▾' : '▸'}</span> : <MapPin style={{ width: 14, height: 14, color: '#00B39D' }} />}
+          {node.nome}
+          {temFilhas && <span style={{ fontSize: 11, color: C.text3 }}>({node.children.length})</span>}
+        </span>
+        {isDiretor && (
+          <span style={{ display: 'flex', gap: 2 }}>
+            <Button variant="ghost" size="xs" onClick={() => onEdit(node)}><Pencil style={{ width: 13, height: 13 }} /></Button>
+            <Button variant="ghost" size="xs" onClick={() => removeLoc(node.id)}><Trash2 style={{ width: 14, height: 14 }} /></Button>
+          </span>
+        )}
+      </div>
+      {temFilhas && aberto && node.children.map(c => (
+        <LocTreeNode key={c.id} node={c} depth={depth + 1} expanded={expanded} toggleExpanded={toggleExpanded} isDiretor={isDiretor} onEdit={onEdit} removeLoc={removeLoc} />
+      ))}
+    </div>
+  );
+}
+
+function CatLocTab({ categorias, localizacoes, locOptions, newCat, setNewCat, addCat, removeCat, updateCat, addLoc, removeLoc, updateLoc, isDiretor }) {
+  const [novoNomeLoc, setNovoNomeLoc] = useState('');
+  const [novoPaiLoc, setNovoPaiLoc] = useState('');
+  const [editLoc, setEditLoc] = useState(null); // { id, nome, pai_id }
+  const [editCat, setEditCat] = useState(null); // { id, nome, icone, vida_util_meses }
+  const [expanded, setExpanded] = useState(() => new Set());
+  const tree = useMemo(() => buildLocTree(localizacoes), [localizacoes]);
+  const toggleExpanded = (id) => setExpanded(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+
+  function submitNovaLoc() {
+    if (!novoNomeLoc.trim()) return;
+    addLoc(novoNomeLoc, novoPaiLoc || null);
+    setNovoNomeLoc(''); setNovoPaiLoc('');
+  }
+  function salvarEdicaoLoc() {
+    if (!editLoc.nome.trim()) return;
+    updateLoc(editLoc.id, { nome: editLoc.nome, pai_id: editLoc.pai_id || null });
+    setEditLoc(null);
+  }
+  function salvarEdicaoCat() {
+    if (!editCat.nome.trim()) return;
+    updateCat(editCat.id, { nome: editCat.nome, icone: editCat.icone || null, vida_util_meses: editCat.vida_util_meses ? Number(editCat.vida_util_meses) : null });
+    setEditCat(null);
+  }
+
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
       <div style={styles.card}>
@@ -508,8 +634,16 @@ function CatLocTab({ categorias, localizacoes, newCat, setNewCat, addCat, remove
           {categorias.length === 0 && <div style={styles.empty}>Nenhuma categoria</div>}
           {categorias.map(c => (
             <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: `1px solid ${C.border}` }}>
-              <span style={{ fontSize: 13 }}>{c.icone && `${c.icone} `}{c.nome}</span>
-              {isDiretor && <Button variant="ghost" size="xs" onClick={() => removeCat(c.id)}><Trash2 style={{ width: 14, height: 14 }} /></Button>}
+              <span style={{ fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                {c.icone && `${c.icone} `}{c.nome}
+                {c.vida_util_meses ? <span style={{ fontSize: 11, color: C.text3 }}>({c.vida_util_meses}m vida útil)</span> : null}
+              </span>
+              {isDiretor && (
+                <span style={{ display: 'flex', gap: 2 }}>
+                  <Button variant="ghost" size="xs" onClick={() => setEditCat({ id: c.id, nome: c.nome, icone: c.icone || '', vida_util_meses: c.vida_util_meses || '' })}><Pencil style={{ width: 13, height: 13 }} /></Button>
+                  <Button variant="ghost" size="xs" onClick={() => removeCat(c.id)}><Trash2 style={{ width: 14, height: 14 }} /></Button>
+                </span>
+              )}
             </div>
           ))}
         </div>
@@ -518,69 +652,112 @@ function CatLocTab({ categorias, localizacoes, newCat, setNewCat, addCat, remove
         <div style={styles.cardHeader}><div style={styles.cardTitle}>Localizações ({localizacoes.length})</div></div>
         <div style={{ padding: 16 }}>
           {isDiretor && (
-            <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-              <input className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" style={{ flex: 1 }} placeholder="Nova localização..." value={newLoc} onChange={e => setNewLoc(e.target.value)} onKeyDown={e => e.key === 'Enter' && addLoc()} />
-              <Button size="xs" onClick={addLoc}>+</Button>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+              <input className="flex h-9 rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" style={{ flex: '1 1 160px' }} placeholder="Nova localização..." value={novoNomeLoc} onChange={e => setNovoNomeLoc(e.target.value)} onKeyDown={e => e.key === 'Enter' && submitNovaLoc()} />
+              <select style={{ ...styles.select, flex: '1 1 160px' }} value={novoPaiLoc} onChange={e => setNovoPaiLoc(e.target.value)}>
+                <option value="">— Localização pai (opcional) —</option>
+                {locOptions.map(l => <option key={l.id} value={l.id}>{locIndent(l.depth)}{l.nome}</option>)}
+              </select>
+              <Button size="xs" onClick={submitNovaLoc}>+</Button>
             </div>
           )}
           {localizacoes.length === 0 && <div style={styles.empty}>Nenhuma localização</div>}
-          {localizacoes.map(l => (
-            <div key={l.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: `1px solid ${C.border}` }}>
-              <span style={{ fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 4 }}><MapPin style={{ width: 14, height: 14, color: '#00B39D' }} /> {l.nome}</span>
-              {isDiretor && <Button variant="ghost" size="xs" onClick={() => removeLoc(l.id)}><Trash2 style={{ width: 14, height: 14 }} /></Button>}
-            </div>
+          {tree.map(node => (
+            <LocTreeNode key={node.id} node={node} depth={0} expanded={expanded} toggleExpanded={toggleExpanded} isDiretor={isDiretor} onEdit={setEditLoc} removeLoc={removeLoc} />
           ))}
         </div>
       </div>
+      <Modal open={!!editLoc} onClose={() => setEditLoc(null)} title="Editar localização" footer={<Button onClick={salvarEdicaoLoc}>Salvar</Button>}>
+        {editLoc && (
+          <>
+            <Input label="Nome" value={editLoc.nome} onChange={e => setEditLoc(p => ({ ...p, nome: e.target.value }))} />
+            <Select label="Localização pai" value={editLoc.pai_id || ''} onChange={e => setEditLoc(p => ({ ...p, pai_id: e.target.value }))}>
+              <option value="">— Nenhuma (raiz) —</option>
+              {locOptions.filter(l => l.id !== editLoc.id).map(l => <option key={l.id} value={l.id}>{locIndent(l.depth)}{l.nome}</option>)}
+            </Select>
+          </>
+        )}
+      </Modal>
+      <Modal open={!!editCat} onClose={() => setEditCat(null)} title="Editar categoria" footer={<Button onClick={salvarEdicaoCat}>Salvar</Button>}>
+        {editCat && (
+          <>
+            <Input label="Nome" value={editCat.nome} onChange={e => setEditCat(p => ({ ...p, nome: e.target.value }))} />
+            <Input label="Ícone (emoji, opcional)" value={editCat.icone} onChange={e => setEditCat(p => ({ ...p, icone: e.target.value }))} />
+            <Input label="Vida útil (meses) — indicador gerencial de depreciação, opcional" type="number" min="1" value={editCat.vida_util_meses} onChange={e => setEditCat(p => ({ ...p, vida_util_meses: e.target.value }))} />
+            <div style={{ fontSize: 11, color: C.text3 }}>Deixe em branco pra não calcular depreciação nessa categoria. É um cálculo linear interno (não oficial/contábil).</div>
+          </>
+        )}
+      </Modal>
     </div>
   );
 }
 
-function InventariosTab({ inventarios, onNew, onUpdate, isDiretor }) {
+// Histórico central de Movimentações (pedido do usuário 2026-07-29, item 1):
+// todos os itens, local antigo/novo, motivo, com destaque pras que vieram de
+// uma revisão agendada (revisao_item_id preenchido — hoje ainda não é escrito
+// por nenhum fluxo; o destaque já fica pronto pro item 2).
+function MovimentacoesTab({ list, total, page, pageSize, loading, onPageChange, locOptions, filtroTipo, setFiltroTipo, filtroLoc, setFiltroLoc, busca, setBusca, onAbrirBem }) {
   return (
     <>
-      {isDiretor && <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}><Button onClick={onNew}>+ Novo Inventário</Button></div>}
+      <div style={styles.filterRow}>
+        <input className="flex h-9 rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" style={{ flex: '1 1 220px', minWidth: 200, maxWidth: 320 }} placeholder="🔍 Buscar por nome ou código do bem..." value={busca} onChange={e => setBusca(e.target.value)} />
+        <select style={styles.select} value={filtroTipo} onChange={e => setFiltroTipo(e.target.value)}>
+          <option value="">Todos os tipos</option>
+          {Object.entries(TIPO_MOV).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+        </select>
+        <select style={styles.select} value={filtroLoc} onChange={e => setFiltroLoc(e.target.value)}>
+          <option value="">Todas localizações (origem ou destino)</option>
+          {locOptions.map(l => <option key={l.id} value={l.id}>{locIndent(l.depth)}{l.nome}</option>)}
+        </select>
+      </div>
       <div style={styles.card}>
         <div style={{ overflowX: 'auto' }}>
           <table style={styles.table}>
             <thead><tr>
-              <th style={styles.th}>Nome</th><th style={styles.th}>Data Início</th><th style={styles.th}>Data Fim</th>
-              <th style={styles.th}>Responsável</th><th style={styles.th}>Status</th>{isDiretor && <th style={styles.th}>Ações</th>}
+              <th style={styles.th}>Data</th><th style={styles.th}>Item</th><th style={styles.th}>Tipo</th>
+              <th style={styles.th}>Local antigo</th><th style={styles.th}>Local novo</th>
+              <th style={styles.th}>Motivo / descrição</th><th style={styles.th}>Responsável</th>
             </tr></thead>
             <tbody>
-              {inventarios.length === 0 && <tr><td colSpan={6} style={{ ...styles.td, textAlign: 'center', color: C.text3 }}>Nenhum inventário</td></tr>}
-              {inventarios.map(inv => (
-                <tr key={inv.id}>
-                  <td style={{ ...styles.td, fontWeight: 600 }}>{inv.nome}</td>
-                  <td style={styles.td}>{fmtDate(inv.data_inicio)}</td>
-                  <td style={styles.td}>{fmtDate(inv.data_fim)}</td>
-                  <td style={styles.td}>{inv.profiles?.name || '—'}</td>
-                  <td style={styles.td}><Badge status={inv.status} map={INV_STATUS} /></td>
-                  {isDiretor && (
-                    <td style={styles.td}>
-                      {inv.status === 'em_andamento' && (
-                        <div style={{ display: 'flex', gap: 4 }}>
-                          <Button size="xs" onClick={() => onUpdate(inv.id, 'concluido')}>✓ Concluir</Button>
-                          <Button variant="destructive" size="xs" onClick={() => onUpdate(inv.id, 'cancelado')}>✕ Cancelar</Button>
-                        </div>
-                      )}
-                    </td>
-                  )}
+              {loading && <tr><td colSpan={7}><div className="flex items-center justify-center py-6 gap-2"><div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-primary" /><span className="text-xs text-muted-foreground">Carregando...</span></div></td></tr>}
+              {!loading && list.length === 0 && <tr><td colSpan={7} style={{ ...styles.td, textAlign: 'center', color: C.text3 }}>Nenhuma movimentação encontrada</td></tr>}
+              {!loading && list.map(m => (
+                <tr key={m.id} className="cbrio-row" style={m.revisao_item_id ? { background: C.blueBg, cursor: m.bem?.id ? 'pointer' : 'default' } : { cursor: m.bem?.id ? 'pointer' : 'default' }} onClick={() => m.bem?.id && onAbrirBem(m.bem.id)}>
+                  <td style={styles.td}>{fmtDateTime(m.data_movimentacao)}</td>
+                  <td style={styles.td}>
+                    <div style={{ fontWeight: 600 }}>{m.bem?.nome || '—'}</div>
+                    <div style={{ fontSize: 11, color: C.text3, fontFamily: 'monospace' }}>{fmtCodigo(m.bem?.codigo_barras)}</div>
+                  </td>
+                  <td style={styles.td}>
+                    {TIPO_MOV[m.tipo] || m.tipo}
+                    {m.revisao_item_id && <div><span style={styles.badge(C.blue, C.blueBg)} title="Movimentação registrada a partir de uma divergência encontrada numa revisão periódica">Via revisão</span></div>}
+                  </td>
+                  <td style={styles.td}>{m.origem?.nome || '—'}</td>
+                  <td style={styles.td}>{m.destino?.nome || '—'}</td>
+                  <td style={styles.td}>{m.motivo || '—'}</td>
+                  <td style={styles.td}>{m.responsavel?.name || '—'}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       </div>
+      <Paginacao page={page} pageSize={pageSize} total={total} onPageChange={onPageChange} itemLabel="movimentações" />
     </>
   );
 }
 
-function BemFormModal({ open, data, categorias, localizacoes, onClose, onSave }) {
+function BemFormModal({ open, data, categorias, locOptions, responsaveis, onClose, onSave }) {
   const [f, setF] = useState({});
   const [formError, setFormError] = useState('');
   useEffect(() => { if (data) { setF({ ...data }); setFormError(''); } }, [data]);
   const upd = (k, v) => setF(p => ({ ...p, [k]: v }));
+  // Sugestão automática do responsável (pedido do usuário 2026-07-29, item 4):
+  // ao escolher a localização, se ainda não há responsável definido, sugere
+  // quem é o coordenador daquela localização — só sugestão, sempre editável.
+  function updLocalizacao(v) {
+    setF(p => (p.responsavel_id ? { ...p, localizacao_id: v } : { ...p, localizacao_id: v, responsavel_id: locOptions.find(l => l.id === v)?.coordenador_id || p.responsavel_id }));
+  }
   function handleSave() {
     if (!f.nome || !f.nome.trim()) { setFormError('Nome é obrigatório.'); return; }
     if (!f.codigo_barras || !f.codigo_barras.trim()) { setFormError('Código de barras é obrigatório.'); return; }
@@ -606,9 +783,9 @@ function BemFormModal({ open, data, categorias, localizacoes, onClose, onSave })
           <option value="">Selecionar</option>
           {categorias.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
         </Select>
-        <Select label="Localização" value={f.localizacao_id || ''} onChange={e => upd('localizacao_id', e.target.value)}>
+        <Select label="Localização" value={f.localizacao_id || ''} onChange={e => updLocalizacao(e.target.value)}>
           <option value="">Selecionar</option>
-          {localizacoes.map(l => <option key={l.id} value={l.id}>{l.nome}</option>)}
+          {locOptions.map(l => <option key={l.id} value={l.id}>{locIndent(l.depth)}{l.nome}</option>)}
         </Select>
       </div>
       <div style={styles.formRow}>
@@ -620,11 +797,31 @@ function BemFormModal({ open, data, categorias, localizacoes, onClose, onSave })
         <Input label="Valor Aquisição (R$)" type="number" value={f.valor_aquisicao || ''} onChange={e => upd('valor_aquisicao', e.target.value)} />
       </div>
       <div style={styles.formRow}>
-        <Input label="Data Aquisição" type="date" value={f.data_aquisicao || ''} onChange={e => upd('data_aquisicao', e.target.value)} />
+        <div style={styles.formGroup}><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Data Aquisição</label><DatePicker value={f.data_aquisicao || ''} onChange={v => upd('data_aquisicao', v)} /></div>
+        <Input label="Nº da NF" value={f.numero_nf || ''} onChange={e => upd('numero_nf', e.target.value)} />
+      </div>
+      <div style={styles.formRow}>
+        <Select label="Responsável pelo bem" value={f.responsavel_id || ''} onChange={e => upd('responsavel_id', e.target.value)}>
+          <option value="">Selecionar</option>
+          {(responsaveis || []).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+        </Select>
         {f.id && <Select label="Status" value={f.status || 'ativo'} onChange={e => upd('status', e.target.value)}>
           {Object.entries(STATUS_BEM).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
         </Select>}
       </div>
+      <div style={styles.formRow}>
+        <div style={styles.formGroup}>
+          <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Garantia</label>
+          <select className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={f.tem_garantia ? 'sim' : 'nao'} onChange={e => upd('tem_garantia', e.target.value === 'sim')}>
+            <option value="nao">Sem garantia</option>
+            <option value="sim">Com garantia</option>
+          </select>
+        </div>
+        {f.tem_garantia && <div style={styles.formGroup}><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Garantia até</label><DatePicker value={f.garantia_ate || ''} onChange={v => upd('garantia_ate', v)} /></div>}
+      </div>
+      {f.id && f.status === 'baixado' && (
+        <div style={styles.formGroup}><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Data da baixa</label><DatePicker value={f.data_baixa || ''} onChange={v => upd('data_baixa', v)} /></div>
+      )}
       <div style={styles.formGroup}>
         <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Descrição</label>
         <textarea className="flex w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" style={{ minHeight: 50, resize: 'vertical' }} value={f.descricao || ''} onChange={e => upd('descricao', e.target.value)} />
@@ -637,20 +834,40 @@ function BemFormModal({ open, data, categorias, localizacoes, onClose, onSave })
   );
 }
 
-function BemDetailModal({ open, data, onClose, onEdit, onBaixar, onMov, isDiretor }) {
+function BemDetailModal({ open, data, onClose, onEdit, onBaixar, onMov, onDispensarAlerta, isDiretor }) {
   if (!data) return null;
   return (
     <Modal open={open} onClose={onClose} title={data.nome}>
+      {data.alerta_divergencia_item_id && data.alerta && (
+        <div style={{ padding: '10px 12px', borderRadius: 8, background: C.amberBg, border: `1px solid ${C.amber}`, marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <div style={{ fontSize: 13 }}>
+            ⚠ <strong>Encontrado em outro lugar numa revisão</strong> — visto em <strong>{data.alerta.localizacao_encontrada?.nome || '—'}</strong> em {fmtDate(data.alerta.data_revisao?.slice(0, 10))}, mas mantido aqui na localização registrada.
+          </div>
+          {isDiretor && <Button size="xs" variant="secondary" onClick={() => onDispensarAlerta(data.id)}>Dispensar alerta</Button>}
+        </div>
+      )}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 16px', marginBottom: 20 }}>
         <div><span style={{ fontSize: 11, color: C.text2 }}>Código:</span><div style={{ fontSize: 14, fontFamily: 'monospace' }}>{fmtCodigo(data.codigo_barras)}</div></div>
         <div><span style={{ fontSize: 11, color: C.text2 }}>Status:</span><div><Badge status={data.status} map={STATUS_BEM} /></div></div>
         <div><span style={{ fontSize: 11, color: C.text2 }}>Categoria:</span><div style={{ fontSize: 14 }}>{data.pat_categorias?.nome || '—'}</div></div>
-        <div><span style={{ fontSize: 11, color: C.text2 }}>Localização:</span><div style={{ fontSize: 14 }}>{data.pat_localizacoes?.nome || '—'}</div></div>
+        <div><span style={{ fontSize: 11, color: C.text2 }}>Localização:</span><div style={{ fontSize: 14 }}>{data.pat_localizacoes?.nome || '—'}{data.localizacao_pendente && <div style={{ fontSize: 11, color: C.amber, marginTop: 2 }}>⚠ virou grupamento — realocar pra uma sala final</div>}</div></div>
         <div><span style={{ fontSize: 11, color: C.text2 }}>Marca/Modelo:</span><div style={{ fontSize: 14 }}>{[data.marca, data.modelo].filter(Boolean).join(' ') || '—'}</div></div>
         <div><span style={{ fontSize: 11, color: C.text2 }}>Nº Série:</span><div style={{ fontSize: 14 }}>{data.numero_serie || '—'}</div></div>
         <div><span style={{ fontSize: 11, color: C.text2 }}>Valor Aquisição:</span><div style={{ fontSize: 14, fontWeight: 600 }}>{fmtMoney(data.valor_aquisicao)}</div></div>
         <div><span style={{ fontSize: 11, color: C.text2 }}>Data Aquisição:</span><div style={{ fontSize: 14 }}>{fmtDate(data.data_aquisicao)}</div></div>
+        <div><span style={{ fontSize: 11, color: C.text2 }}>Nº da NF:</span><div style={{ fontSize: 14 }}>{data.numero_nf || '—'}</div></div>
+        <div><span style={{ fontSize: 11, color: C.text2 }}>Garantia:</span><div style={{ fontSize: 14 }}>{data.tem_garantia ? `Sim${data.garantia_ate ? ` (até ${fmtDate(data.garantia_ate)})` : ''}` : 'Não'}</div></div>
+        <div><span style={{ fontSize: 11, color: C.text2 }}>Responsável:</span><div style={{ fontSize: 14 }}>{data.responsavel?.name || '—'}</div></div>
+        {data.status === 'baixado' && <div><span style={{ fontSize: 11, color: C.text2 }}>Data da baixa:</span><div style={{ fontSize: 14 }}>{fmtDate(data.data_baixa)}</div></div>}
       </div>
+      {data.depreciacao && (
+        <div style={{ padding: '8px 12px', background: 'var(--cbrio-input-bg)', borderRadius: 8, marginBottom: 12, fontSize: 13 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+            <span>Depreciação (indicador gerencial): <strong>{data.depreciacao.percentual_depreciado}%</strong> · valor atual estimado <strong style={{ color: C.primary }}>{fmtMoney(data.depreciacao.valor_atual_estimado)}</strong></span>
+          </div>
+          <div style={{ fontSize: 11, color: C.text3, marginTop: 2 }}>Cálculo linear interno — não é avaliação contábil oficial</div>
+        </div>
+      )}
       {data.descricao && <div style={{ padding: '8px 12px', background: 'var(--cbrio-input-bg)', borderRadius: 8, marginBottom: 12, fontSize: 13, color: C.text2 }}>{data.descricao}</div>}
       {data.observacoes && <div style={{ padding: '8px 12px', background: 'var(--cbrio-input-bg)', borderRadius: 8, marginBottom: 16, fontSize: 13, color: C.text2 }}>{data.observacoes}</div>}
 
@@ -680,7 +897,7 @@ function BemDetailModal({ open, data, onClose, onEdit, onBaixar, onMov, isDireto
   );
 }
 
-function MovFormModal({ open, data, localizacoes, onClose, onSave }) {
+function MovFormModal({ open, data, locOptions, onClose, onSave }) {
   const [f, setF] = useState({ tipo: 'transferencia' });
   useEffect(() => { if (open) setF({ tipo: 'transferencia' }); }, [open]);
   const upd = (k, v) => setF(p => ({ ...p, [k]: v }));
@@ -693,13 +910,13 @@ function MovFormModal({ open, data, localizacoes, onClose, onSave }) {
       {(f.tipo === 'transferencia' || f.tipo === 'saida') && (
         <Select label="Localização Origem" value={f.localizacao_origem_id || ''} onChange={e => upd('localizacao_origem_id', e.target.value)}>
           <option value="">Selecionar</option>
-          {localizacoes.map(l => <option key={l.id} value={l.id}>{l.nome}</option>)}
+          {locOptions.map(l => <option key={l.id} value={l.id}>{locIndent(l.depth)}{l.nome}</option>)}
         </Select>
       )}
       {(f.tipo === 'transferencia' || f.tipo === 'entrada') && (
         <Select label="Localização Destino" value={f.localizacao_destino_id || ''} onChange={e => upd('localizacao_destino_id', e.target.value)}>
           <option value="">Selecionar</option>
-          {localizacoes.map(l => <option key={l.id} value={l.id}>{l.nome}</option>)}
+          {locOptions.map(l => <option key={l.id} value={l.id}>{locIndent(l.depth)}{l.nome}</option>)}
         </Select>
       )}
       <div style={styles.formGroup}>
@@ -785,39 +1002,87 @@ function NovoCicloModal({ open, responsaveis, onClose, onSave }) {
         <option value="">Selecionar</option>
         {(responsaveis || []).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
       </Select>
-      <Input label="Data de início *" type="date" value={f.data_inicio || ''} onChange={e => upd('data_inicio', e.target.value)} />
+      <div style={styles.formGroup}><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Data de início *</label><DatePicker value={f.data_inicio || ''} onChange={v => upd('data_inicio', v)} /></div>
     </Modal>
   );
 }
 
-function RevisaoItemRow({ item, disabled, onSave }) {
+// Divergência de localização (pedido do usuário 2026-07-29, item 2): quando o
+// revisor marca "encontrado em" um local DIFERENTE do esperado (o da própria
+// convocação), o bem NÃO é movido sozinho — surgem 2 botões pra decisão
+// humana explícita. A escolha só é enviada ao clicar num dos botões; o
+// select de status continua salvando na hora, como já era.
+function RevisaoItemRow({ item, esperadaLocId, locOptions, disabled, onSave }) {
   const conferido = item.encontrado !== null && item.encontrado !== undefined;
   const [statusFisico, setStatusFisico] = useState(item.status_fisico || 'ok');
+  const [localEncontrada, setLocalEncontrada] = useState(item.localizacao_encontrada_id || esperadaLocId || '');
+  useEffect(() => {
+    setStatusFisico(item.status_fisico || 'ok');
+    setLocalEncontrada(item.localizacao_encontrada_id || esperadaLocId || '');
+  }, [item.id, item.status_fisico, item.localizacao_encontrada_id, esperadaLocId]);
+
+  const divergente = conferido && statusFisico !== 'nao_encontrado' && localEncontrada && esperadaLocId && localEncontrada !== esperadaLocId;
+  const decidido = !!item.divergencia_acao;
+
+  function salvarStatus(novoStatus) {
+    setStatusFisico(novoStatus);
+    onSave({ encontrado: novoStatus !== 'nao_encontrado', status_fisico: novoStatus, localizacao_encontrada_id: item.localizacao_encontrada_id || null, divergencia_acao: item.divergencia_acao || null });
+  }
+  function decidirDivergencia(acao) {
+    onSave({ encontrado: statusFisico !== 'nao_encontrado', status_fisico: statusFisico, localizacao_encontrada_id: localEncontrada, divergencia_acao: acao });
+  }
+
   return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: `1px solid ${C.border}`, gap: 8 }}>
-      <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: 13, fontWeight: 600 }}>{item.pat_bens?.nome}</div>
-        <div style={{ fontSize: 11, color: C.text3, fontFamily: 'monospace' }}>{fmtCodigo(item.pat_bens?.codigo_barras)}</div>
+    <div style={{ padding: '8px 0', borderBottom: `1px solid ${C.border}` }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 600 }}>{item.pat_bens?.nome}</div>
+          <div style={{ fontSize: 11, color: C.text3, fontFamily: 'monospace' }}>{fmtCodigo(item.pat_bens?.codigo_barras)}</div>
+        </div>
+        {disabled ? (
+          conferido
+            ? <Badge status={item.status_fisico || (item.encontrado ? 'ok' : 'nao_encontrado')} map={STATUS_FISICO_ITEM} />
+            : <span style={{ fontSize: 12, color: C.text3 }}>Aguardando início</span>
+        ) : (
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
+            <select style={styles.select} value={statusFisico} onChange={e => salvarStatus(e.target.value)}>
+              <option value="ok">Encontrado · OK</option>
+              <option value="danificado">Encontrado · Danificado</option>
+              <option value="nao_encontrado">Não encontrado</option>
+            </select>
+            {conferido && <span style={{ fontSize: 13, color: C.green }}>✓</span>}
+          </div>
+        )}
       </div>
-      {disabled ? (
-        conferido
-          ? <Badge status={item.status_fisico || (item.encontrado ? 'ok' : 'nao_encontrado')} map={STATUS_FISICO_ITEM} />
-          : <span style={{ fontSize: 12, color: C.text3 }}>Aguardando início</span>
-      ) : (
-        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
-          <select style={styles.select} value={statusFisico} onChange={e => { setStatusFisico(e.target.value); onSave({ encontrado: e.target.value !== 'nao_encontrado', status_fisico: e.target.value }); }}>
-            <option value="ok">Encontrado · OK</option>
-            <option value="danificado">Encontrado · Danificado</option>
-            <option value="nao_encontrado">Não encontrado</option>
-          </select>
-          {conferido && <span style={{ fontSize: 13, color: C.green }}>✓</span>}
+      {!disabled && conferido && statusFisico !== 'nao_encontrado' && locOptions?.length > 0 && (
+        <div style={{ marginTop: 6 }}>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 11, color: C.text2 }}>Encontrado em:</span>
+            <select style={{ ...styles.select, fontSize: 12 }} value={localEncontrada} onChange={e => setLocalEncontrada(e.target.value)}>
+              {locOptions.map(l => <option key={l.id} value={l.id}>{locIndent(l.depth)}{l.nome}</option>)}
+            </select>
+          </div>
+          {divergente && !decidido && (
+            <div style={{ marginTop: 6, padding: 8, borderRadius: 8, background: C.amberBg, border: `1px solid ${C.amber}` }}>
+              <div style={{ fontSize: 12, color: C.text, marginBottom: 6 }}>⚠ Encontrado fora da localização esperada. O item não é movido automaticamente — escolha o que fazer:</div>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                <Button size="xs" onClick={() => decidirDivergencia('movido')}>Mover pra cá</Button>
+                <Button size="xs" variant="secondary" onClick={() => decidirDivergencia('alerta')}>Manter alerta (não mover)</Button>
+              </div>
+            </div>
+          )}
+          {divergente && decidido && (
+            <div style={{ marginTop: 4, fontSize: 11, color: item.divergencia_acao === 'movido' ? C.green : C.amber }}>
+              {item.divergencia_acao === 'movido' ? '✓ Movido pra cá' : '⚠ Alerta mantido — segue registrado na localização original'}
+            </div>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-function ConvocacaoModal({ open, data, onClose, onIniciar, onAtualizarItem, onConcluir, isDiretor }) {
+function ConvocacaoModal({ open, data, locOptions, onClose, onIniciar, onAtualizarItem, onConcluir, isDiretor }) {
   if (!data) return null;
   const itens = data.itens || [];
   const todosConferidos = itens.length > 0 && itens.every(i => i.encontrado !== null && i.encontrado !== undefined);
@@ -829,7 +1094,7 @@ function ConvocacaoModal({ open, data, onClose, onIniciar, onAtualizarItem, onCo
       </div>
       {itens.length === 0 && <div style={styles.empty}>Nenhum bem nesta localização</div>}
       {itens.map(item => (
-        <RevisaoItemRow key={item.id} item={item} disabled={data.status !== 'em_andamento'} onSave={(payload) => onAtualizarItem(item.id, payload)} />
+        <RevisaoItemRow key={item.id} item={item} esperadaLocId={data.localizacao_id} locOptions={locOptions} disabled={data.status !== 'em_andamento'} onSave={(payload) => onAtualizarItem(item.id, payload)} />
       ))}
       {data.status === 'em_andamento' && isDiretor && (
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16, paddingTop: 12, borderTop: `1px solid ${C.border}` }}>
@@ -838,23 +1103,6 @@ function ConvocacaoModal({ open, data, onClose, onIniciar, onAtualizarItem, onCo
           </Button>
         </div>
       )}
-    </Modal>
-  );
-}
-
-function InvFormModal({ open, onClose, onSave }) {
-  const [f, setF] = useState({});
-  useEffect(() => { if (open) setF({}); }, [open]);
-  const upd = (k, v) => setF(p => ({ ...p, [k]: v }));
-  return (
-    <Modal open={open} onClose={onClose} title="Novo Inventário"
-      footer={<Button onClick={() => onSave(f)}>Criar</Button>}>
-      <Input label="Nome *" value={f.nome || ''} onChange={e => upd('nome', e.target.value)} />
-      <Input label="Data Início *" type="date" value={f.data_inicio || ''} onChange={e => upd('data_inicio', e.target.value)} />
-      <div style={styles.formGroup}>
-        <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Observações</label>
-        <textarea className="flex w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" style={{ minHeight: 60, resize: 'vertical' }} value={f.observacoes || ''} onChange={e => upd('observacoes', e.target.value)} />
-      </div>
     </Modal>
   );
 }

@@ -14,10 +14,12 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import confetti from 'canvas-confetti';
+import QRCode from 'qrcode';
 import { eventoPublico } from '../../api';
 import AnimatedBackground from './AnimatedBackground';
 import { usePublicTheme, PublicThemeToggle } from './publicTheme';
 import { BirthDatePicker } from '../../components/ui/birth-date-picker';
+import { DatePicker } from '../../components/ui/date-picker';
 import {
   soDigitos, mascaraTelefone, mascaraCpf, cpfValido, telefoneValido,
   nomeCompletoValido, temAbreviacaoNome, validarNascimento, SEXOS, AVISO_OPTIN,
@@ -240,6 +242,33 @@ function ConsentBox({ checked, onChange, children }: {
   );
 }
 
+// QR do comprovante de inscrição (SPEC-06) — codifica a URL pública
+// /i/c/<token>, que a pessoa reabre quando quiser e a portaria escaneia no
+// check-in do evento. Fundo branco de propósito (QR de leitura é sempre
+// nítido, mesma regra dos QRs de impressão).
+function ComprovanteQr({ token }: { token: string }) {
+  const { C } = usePublicTheme();
+  const [qr, setQr] = useState('');
+  const url = `${window.location.origin}/i/c/${token}`;
+  useEffect(() => {
+    QRCode.toDataURL(url, { width: 480, margin: 2, color: { dark: '#000000', light: '#ffffff' } })
+      .then(setQr).catch(() => {});
+  }, [url]);
+  if (!qr) return null;
+  return (
+    <div style={{ marginTop: 20 }}>
+      <div style={{ fontSize: 13, color: '#00B39D', fontWeight: 700 }}>Seu comprovante de inscrição</div>
+      <div style={{ display: 'inline-block', background: '#fff', padding: 10, borderRadius: 12, marginTop: 8 }}>
+        <img src={qr} alt="QR do comprovante de inscrição" style={{ width: 168, height: 168, display: 'block' }} />
+      </div>
+      <p style={{ fontSize: 12, color: C.text3, marginTop: 8, lineHeight: 1.5 }}>
+        Apresente este QR na entrada do evento. Salve uma captura de tela ou guarde o link:
+      </p>
+      <a href={url} style={{ fontSize: 12, color: '#00B39D', fontWeight: 600, wordBreak: 'break-all' }}>{url}</a>
+    </div>
+  );
+}
+
 const TEXTOS_FALLBACK = {
   termos_lgpd: 'Autorizo a Igreja CBRio a tratar os dados deste formulário para organizar esta atividade e me comunicar sobre ela, conforme a LGPD.',
   imagem: 'Autorizo o uso de fotos do evento em que eu apareça nas mídias da Igreja CBRio.',
@@ -268,7 +297,7 @@ export default function EventoExterno() {
   const [erro, setErro] = useState('');
   const [enviando, setEnviando] = useState(false);
   const [subindoImg, setSubindoImg] = useState(0);
-  const [resultado, setResultado] = useState<{ numero: number | null; jaInscrito?: boolean; temSorteio?: boolean } | null>(null);
+  const [resultado, setResultado] = useState<{ numero: number | null; jaInscrito?: boolean; temSorteio?: boolean; comprovanteToken?: string | null } | null>(null);
   const marcarBusy = (b: boolean) => setSubindoImg(n => Math.max(0, n + (b ? 1 : -1)));
 
   useEffect(() => {
@@ -326,7 +355,7 @@ export default function EventoExterno() {
         navigate(`/pagamento/${r.public_token}`);
         return;
       }
-      setResultado({ numero: r.numero_sorte, jaInscrito: r.ja_inscrito, temSorteio: r.tem_sorteio });
+      setResultado({ numero: r.numero_sorte, jaInscrito: r.ja_inscrito, temSorteio: r.tem_sorteio, comprovanteToken: r.comprovante_token || null });
       if (r.tem_sorteio) setTimeout(confete, 200);
     } catch (e: any) { setErro(e.message || 'Erro ao confirmar presença.'); }
     finally { setEnviando(false); }
@@ -416,6 +445,7 @@ export default function EventoExterno() {
                   Seu número da sorte já foi gerado na sua primeira inscrição — se não anotou, procure a equipe no dia do evento.
                 </p>
               )}
+              {resultado.comprovanteToken && <ComprovanteQr token={resultado.comprovanteToken} />}
             </div>
           ) : (evento.inscricoes_encerradas ?? !evento.form_ativo) ? (
             <p style={{ textAlign: 'center', color: C.text3, fontSize: 14, padding: '20px 0' }}>{evento.aviso || 'As inscrições deste evento estão encerradas.'}</p>
@@ -487,6 +517,14 @@ export default function EventoExterno() {
                   ) : c.tipo === 'imagem' ? (
                     <ImagemField key={c.key} slug={slug} label={c.label} value={dados[c.key] || ''} required={c.obrigatorio}
                       onChange={(url) => setDados(d => ({ ...d, [c.key]: url }))} onBusy={marcarBusy} />
+                  ) : c.tipo === 'data' ? (
+                    // Tipo 'data' do form-builder ganhou renderização própria
+                    // (P3 do sweep 28/07 — caía no input de texto livre e a
+                    // resposta vinha em qualquer formato). Grava ISO YYYY-MM-DD.
+                    <div key={c.key}>
+                      <Rotulo>{c.label}{c.obrigatorio ? ' *' : ''}</Rotulo>
+                      <DatePicker value={dados[c.key] || ''} onChange={(v) => setDados(d => ({ ...d, [c.key]: v }))} placeholder="dia/mês/ano" />
+                    </div>
                   ) : (
                     <Field key={c.key} id={c.key} label={c.label} value={dados[c.key] || ''} onChange={setCampo(c.key)}
                       required={c.obrigatorio} as={c.tipo === 'textarea' ? 'textarea' : 'input'} span={c.tipo === 'textarea'}

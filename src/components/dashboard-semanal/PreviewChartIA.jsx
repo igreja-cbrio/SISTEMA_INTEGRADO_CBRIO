@@ -14,7 +14,7 @@ const MESES = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov'
  * Usa dados placeholder de exemplo · serve como referência visual do que
  * o indicador ficaria quando implementado.
  */
-export default function PreviewChartIA({ tipoGrafico, height = 160, semente = 1 }) {
+export default function PreviewChartIA({ tipoGrafico, height = 160, semente = 1, percentual = false }) {
   const dadosBar = useMemo(() => MESES.slice(0, 6).map((m, i) => ({
     nome: m,
     val: 50 + Math.round(Math.sin(i + semente) * 30 + Math.random() * 20 + 30),
@@ -36,12 +36,16 @@ export default function PreviewChartIA({ tipoGrafico, height = 160, semente = 1 
   const wrapperStyle = { width: '100%', height };
 
   switch (tipoGrafico) {
-    case 'gauge':
+    case 'gauge': {
+      // Valor de exemplo VARIA por indicador (semente) — senão todos os gauges
+      // mostram o mesmo número e parecem "iguais". 45–90 só pra ilustrar.
+      const exemplo = 45 + (Math.abs(Math.round(Math.sin(semente + 1) * 45)) % 46);
       return (
         <div className="flex justify-center">
-          <MetaGauge atual={65} meta={100} size={170} label="Preview" duration={1.2} />
+          <MetaGauge atual={exemplo} meta={100} size={170} label="Preview" duration={1.2} percentual={percentual} />
         </div>
       );
+    }
 
     case 'linha':
       return (

@@ -6,7 +6,7 @@ const { acharOuCriarGuardado } = require('../services/membroMatch');
 const { registrarObservacaoSegura } = require('../services/identidadeProgressiva');
 const {
   temAbreviacaoNome, splitNomeCompleto, validarNascimento, honeypotPreenchido,
-  registrarConsentimentos, TEXTOS,
+  registrarConsentimentos, TEXTOS, cpfValido, emailValido,
 } = require('../services/inscricaoContrato');
 
 // Limiter GENEROSO do router (padrão grupos/NPS/eventos): o form roda em
@@ -53,19 +53,8 @@ function soDigitos(v) {
   return String(v || '').replace(/\D+/g, '');
 }
 
-function cpfValido(v) {
-  const d = soDigitos(v);
-  if (d.length !== 11) return false;
-  if (/^(\d)\1{10}$/.test(d)) return false;
-  const calc = (base, fator) => {
-    let s = 0;
-    for (let i = 0; i < base.length; i += 1) s += parseInt(base[i], 10) * (fator - i);
-    const r = (s * 10) % 11;
-    return r === 10 ? 0 : r;
-  };
-  return calc(d.slice(0, 9), 10) === parseInt(d[9], 10)
-    && calc(d.slice(0, 10), 11) === parseInt(d[10], 10);
-}
+// cpfValido agora vem de services/inscricaoContrato (fonte única — P3 do
+// sweep 28/07: a cópia local era idêntica, mas cópia diverge um dia).
 
 // Calcula o 4o domingo de um mês
 function quartoDomingo(year, month /* 0-11 */) {
@@ -194,7 +183,9 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
     if (telNorm.length < 10 || telNorm.length > 11) {
       return res.status(400).json({ error: 'Informe um telefone valido (com DDD).' });
     }
-    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email).trim())) {
+    // emailValido vem do contrato (fonte única). O .trim() fica: o valor cru
+    // com espaço nas pontas era aceito aqui e é o mesmo que vai pro emailNorm.
+    if (!email || !emailValido(String(email).trim())) {
       return res.status(400).json({ error: 'Informe um email valido.' });
     }
     if (!cpf || !cpfValido(cpf)) {

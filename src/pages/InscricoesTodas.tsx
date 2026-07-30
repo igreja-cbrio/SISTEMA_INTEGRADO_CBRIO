@@ -10,6 +10,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { Card } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { toast } from 'sonner';
 import { Loader2, Search, Download, ExternalLink, ChevronLeft, ChevronRight, FilterX } from 'lucide-react';
 
@@ -22,7 +23,11 @@ export const PORTA_LABEL: Record<string, string> = {
   grupos: 'Grupos',
   grupos_lider: 'Líderes',
   next: 'Next',
-  next_legado: 'Next (legado)',
+  // `next_legado` SAIU daqui em 2026-07-30 junto com a porta. Este mapa não é só
+  // rótulo: alimenta os SELECTS de filtro de porta (aqui e no Dashboard), então
+  // uma chave que a view não emite mais viraria uma opção de filtro que devolve
+  // zero pra sempre. Pra exibição não fazia falta — os 3 pontos de leitura já
+  // caem em `|| i.porta`.
   voluntariado: 'Voluntariado',
 };
 
@@ -144,11 +149,11 @@ export default function InscricoesTodas({ areas }: { areas: any[] }) {
         </div>
         <div>
           <label className="text-[11px] text-muted-foreground block">De</label>
-          <Input type="date" value={filtros.de} onChange={set('de')} className="h-9 w-36" />
+          <DatePicker value={filtros.de} onChange={v => set('de')(v)} className="h-9 w-36" />
         </div>
         <div>
           <label className="text-[11px] text-muted-foreground block">Até</label>
-          <Input type="date" value={filtros.ate} onChange={set('ate')} className="h-9 w-36" />
+          <DatePicker value={filtros.ate} onChange={v => set('ate')(v)} className="h-9 w-36" />
         </div>
         {temFiltro && (
           <Button size="sm" variant="ghost" className="h-9" onClick={() => { setPage(0); setFiltros({ ...FILTROS_VAZIOS }); }}>

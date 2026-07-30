@@ -13,6 +13,7 @@ import EmptyState from '../components/EmptyState';
 import CalendarioCultos from '../components/CalendarioCultos';
 import { formatErro } from '../lib/formatErro';
 import useConfirmarSaida from '../hooks/useConfirmarSaida';
+import { DatePicker } from '@/components/ui/date-picker';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
@@ -327,7 +328,7 @@ export default function DadosBrutos({ embedded = false }) {
             </select>
           </Field>
           <Field label="Desde">
-            <input type="date" value={filtroDesde} onChange={e => setFiltroDesde(e.target.value)} style={inp} />
+            <DatePicker value={filtroDesde} onChange={setFiltroDesde} style={inp} />
           </Field>
         </div>
       </section>
@@ -598,7 +599,7 @@ function ModalRegistrar({ dado, tipos, ministerioId, isAdmin, areasOficiais, are
               </select>
             </Field>
             <Field label="Data *">
-              <input type="date" value={form.data} onChange={e => set('data', e.target.value)} style={inp} disabled={!isNovo} />
+              <DatePicker value={form.data} onChange={v => set('data', v)} style={inp} disabled={!isNovo} />
             </Field>
           </div>
 

@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { useFaceDetection } from '@/pages/ministerial/voluntariado/hooks/useVolFace';
@@ -618,7 +619,7 @@ function AbaPresenca() {
             <option key={c.id} value={c.data}>{new Date(c.data + 'T12:00:00').toLocaleDateString('pt-BR')} · {c.nome}</option>
           ))}
         </select>
-        <Input type="date" value={dia} onChange={(e) => setDia(e.target.value)} className="h-9 w-40" />
+        <DatePicker value={dia} onChange={setDia} className="h-9 w-40" />
         {dia && <Button size="sm" variant="ghost" onClick={() => setDia('')}>Limpar</Button>}
       </div>
       {isLoading ? <p className="text-sm text-muted-foreground">Carregando...</p> : (

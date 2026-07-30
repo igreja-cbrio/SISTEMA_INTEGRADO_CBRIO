@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../../contexts/AuthContext';
 import { financeiro, financeiroV2 } from '../../../api';
 import { Button } from '../../../components/ui/button';
+import { DatePicker } from '@/components/ui/date-picker';
 import { exportPDF } from '../../../lib/export';
 import SantanderTab from './SantanderTab';
 import EstruturaFiscal from './EstruturaFiscal';
@@ -12,6 +13,7 @@ import Conciliacao from './Conciliacao';
 import IdentificarDoadores from './IdentificarDoadores';
 import { CartoesConfig, FaturaModal } from './CartoesFaturas';
 import NotasCompras from './NotasCompras';
+import BancoComprovantes from './BancoComprovantes';
 import DashboardOverview from './DashboardOverview';
 import DreAuto from './DreAuto';
 import Analises from './Analises';
@@ -350,7 +352,7 @@ const TABS = [
   'Análises', 'DRE', 'Generosidade', 'Banco',
   'Operacional', 'Gestão', 'Configuração',
 ];
-const SUBS_OPERACIONAL = ['Contas', 'Recorrentes', 'Reembolsos', 'Importar extratos', 'Fila de classificação', 'Conciliação', 'Calendário', 'Notas de compras', 'Identificar doadores'];
+const SUBS_OPERACIONAL = ['Contas', 'Recorrentes', 'Reembolsos', 'Importar extratos', 'Fila de classificação', 'Conciliação', 'Calendário', 'Notas de compras', 'Identificar doadores', 'Comprovantes'];
 const SUBS_GESTAO = ['Solicitações', 'Alertas', 'Fechamento', 'Auditoria'];
 const SUBS_DRE = ['DRE Auto', 'Por Centro de Custo', 'Comparativo Temporal'];
 
@@ -491,10 +493,13 @@ export default function Financeiro() {
   const [filtroInicio, setFiltroInicio] = useState('');
   const [filtroFim, setFiltroFim] = useState('');
   const [filtroBusca, setFiltroBusca] = useState('');
+  const [filtroSemDoc, setFiltroSemDoc] = useState(false); // só transações sem comprovante e sem NF
 
   // Filtro contas a pagar
   const [filtroPagarStatus, setFiltroPagarStatus] = useState('');
   const [filtroPagarAno, setFiltroPagarAno] = useState('');
+  const [filtroPagarMes, setFiltroPagarMes] = useState(''); // 1-12 · filtra o vencimento por mês
+  const [filtroPagarOrder, setFiltroPagarOrder] = useState('venc_asc'); // ordenação por vencimento
   const [filtroPagarBusca, setFiltroPagarBusca] = useState('');
   const [cpResumo, setCpResumo] = useState(null);
   const [cpTotal, setCpTotal] = useState(0);
@@ -554,6 +559,7 @@ export default function Financeiro() {
       if (filtroTipo) params.tipo = filtroTipo;
       if (filtroStatus) params.status = filtroStatus;
       if (filtroBusca) params.busca = filtroBusca;
+      if (filtroSemDoc) params.sem_documento = 'true';
 
       // Período · monta inicio/fim conforme modo
       if (filtroPeriodoModo === 'mes') {
@@ -571,20 +577,24 @@ export default function Financeiro() {
       setTransacoes(await financeiro.transacoes.list(params));
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
-  }, [filtroContaId, filtroTipo, filtroStatus, filtroBusca, filtroPeriodoModo, filtroAno, filtroMesNum, filtroInicio, filtroFim]);
+  }, [filtroContaId, filtroTipo, filtroStatus, filtroBusca, filtroSemDoc, filtroPeriodoModo, filtroAno, filtroMesNum, filtroInicio, filtroFim]);
 
   const loadContasPagar = useCallback(async () => {
     try {
       setLoading(true);
-      const params = { page: cpPage, pageSize: CP_PAGE_SIZE };
+      const params = { page: cpPage, pageSize: CP_PAGE_SIZE, order: filtroPagarOrder };
       if (filtroPagarStatus === 'vencido') params.vencido = 'true';
       else if (filtroPagarStatus) params.status = filtroPagarStatus;
       if (filtroPagarAno) params.ano = filtroPagarAno;
+      // Filtro por mês exige ano no backend → usa o ano escolhido ou o atual.
+      if (filtroPagarMes) { params.mes = filtroPagarMes; if (!params.ano) params.ano = new Date().getFullYear(); }
       if (filtroPagarBusca) params.q = filtroPagarBusca;
-      // O resumo (KPIs) segue o recorte ano/busca, mas ignora o filtro de status
-      // → os 4 cards sempre mostram total / baixado / aberto / vencido do escopo.
+      // O resumo (KPIs) segue o recorte ano/MÊS/busca, mas ignora o filtro de
+      // status → os 4 cards mostram total / baixado / aberto / vencido do escopo
+      // (aplicar status zeraria os outros cards, que SÃO a quebra por status).
       const resumoParams = {};
       if (filtroPagarAno) resumoParams.ano = filtroPagarAno;
+      if (filtroPagarMes) { resumoParams.mes = filtroPagarMes; if (!resumoParams.ano) resumoParams.ano = new Date().getFullYear(); }
       if (filtroPagarBusca) resumoParams.q = filtroPagarBusca;
       const [lista, resumo] = await Promise.all([
         financeiroV2.contasPagar.list(params),
@@ -595,7 +605,7 @@ export default function Financeiro() {
       setCpResumo(resumo || null);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
-  }, [filtroPagarStatus, filtroPagarAno, filtroPagarBusca, cpPage]);
+  }, [filtroPagarStatus, filtroPagarAno, filtroPagarMes, filtroPagarOrder, filtroPagarBusca, cpPage]);
 
   const loadReembolsos = useCallback(async () => {
     try {
@@ -907,10 +917,10 @@ export default function Financeiro() {
           )}
           {filtroPeriodoModo === 'custom' && (
             <>
-              <input type="date" value={filtroInicio} onChange={e => setFiltroInicio(e.target.value)}
+              <DatePicker value={filtroInicio} onChange={v => setFiltroInicio(v)}
                 className="h-9 px-3 text-sm rounded-md border border-input bg-background" />
               <span className="text-xs text-muted-foreground">até</span>
-              <input type="date" value={filtroFim} onChange={e => setFiltroFim(e.target.value)}
+              <DatePicker value={filtroFim} onChange={v => setFiltroFim(v)}
                 className="h-9 px-3 text-sm rounded-md border border-input bg-background" />
             </>
           )}
@@ -975,11 +985,21 @@ export default function Financeiro() {
           </div>
         </div>
 
+        {/* Conciliação · só transações sem comprovante E sem nota fiscal */}
+        <div className="flex items-center gap-2 mb-3">
+          <button type="button" onClick={() => setFiltroSemDoc(v => !v)}
+            className={`inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border text-sm ${filtroSemDoc ? 'text-white border-transparent' : 'text-muted-foreground border-input bg-background'}`}
+            style={filtroSemDoc ? { background: '#00B39D' } : {}}>
+            {filtroSemDoc ? '✓ ' : ''}Só sem comprovante / nota fiscal
+          </button>
+          {filtroSemDoc && <span className="text-[11px] text-muted-foreground">Mostra, no período, o que ainda falta documentar (conciliação).</span>}
+        </div>
+
         {/* Limpar */}
-        {(filtroContaId || filtroTipo || filtroStatus || filtroBusca || filtroPeriodoModo !== 'mes' ||
+        {(filtroContaId || filtroTipo || filtroStatus || filtroBusca || filtroSemDoc || filtroPeriodoModo !== 'mes' ||
           filtroAno !== new Date().getFullYear() || filtroMesNum !== new Date().getMonth()) && (
           <button onClick={() => {
-            setFiltroContaId(''); setFiltroTipo(''); setFiltroStatus(''); setFiltroBusca('');
+            setFiltroContaId(''); setFiltroTipo(''); setFiltroStatus(''); setFiltroBusca(''); setFiltroSemDoc(false);
             setFiltroPeriodoModo('mes');
             setFiltroAno(new Date().getFullYear());
             setFiltroMesNum(new Date().getMonth());
@@ -1090,14 +1110,22 @@ export default function Financeiro() {
       <div style={{ ...styles.filterRow, flexWrap: 'wrap', alignItems: 'center' }}>
         <select className="flex h-9 rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={filtroPagarStatus} onChange={e => { setFiltroPagarStatus(e.target.value); setCpPage(1); }}>
           <option value="">Todos os status</option>
-          <option value="pendente">Em aberto</option>
-          <option value="pago">Baixado (pago)</option>
-          <option value="vencido">Vencido</option>
-          <option value="cancelado">Cancelado</option>
+          <option value="pendente">Não baixadas (em aberto)</option>
+          <option value="pago">Baixadas (pago)</option>
+          <option value="vencido">Vencidas (em aberto)</option>
+          <option value="cancelado">Canceladas</option>
         </select>
         <select className="flex h-9 rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={filtroPagarAno} onChange={e => { setFiltroPagarAno(e.target.value); setCpPage(1); }}>
           <option value="">Todos os anos</option>
           {(cpResumo?.anos || []).map((a) => <option key={a} value={a}>{a}</option>)}
+        </select>
+        <select className="flex h-9 rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={filtroPagarMes} onChange={e => { setFiltroPagarMes(e.target.value); setCpPage(1); }} title="Filtra o vencimento pelo mês (usa o ano escolhido, ou o ano atual)">
+          <option value="">Vencimento · todos os meses</option>
+          {['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'].map((nome, i) => <option key={i + 1} value={i + 1}>{nome}</option>)}
+        </select>
+        <select className="flex h-9 rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={filtroPagarOrder} onChange={e => { setFiltroPagarOrder(e.target.value); setCpPage(1); }} title="Ordenar por data de vencimento">
+          <option value="venc_asc">Vencimento ↑ (mais próximo)</option>
+          <option value="venc_desc">Vencimento ↓ (mais distante)</option>
         </select>
         <input
           className="flex h-9 rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -1354,8 +1382,14 @@ export default function Financeiro() {
         </div>
         <Input label="Descrição *" value={form.descricao || ''} onChange={e => upd('descricao', e.target.value)} />
         <div style={styles.formRow}>
-          <Input label="Data competência *" type="date" value={form.data_competencia || ''} onChange={e => upd('data_competencia', e.target.value)} />
-          <Input label="Data pagamento" type="date" value={form.data_pagamento || ''} onChange={e => upd('data_pagamento', e.target.value)} />
+          <div style={styles.formGroup}>
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Data competência *</label>
+            <DatePicker value={form.data_competencia || ''} onChange={v => upd('data_competencia', v)} />
+          </div>
+          <div style={styles.formGroup}>
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Data pagamento</label>
+            <DatePicker value={form.data_pagamento || ''} onChange={v => upd('data_pagamento', v)} />
+          </div>
         </div>
         <Select label="Conta *" value={form.conta_id || ''} onChange={e => upd('conta_id', e.target.value)}>
           <option value="">Selecione...</option>
@@ -1490,8 +1524,14 @@ export default function Financeiro() {
           </Select>
         </div>
         <div style={styles.formRow}>
-          <Input label="Data Vencimento" type="date" value={form.data_vencimento || ''} onChange={e => upd('data_vencimento', e.target.value)} />
-          <Input label="Data Pagamento" type="date" value={form.data_pagamento || ''} onChange={e => upd('data_pagamento', e.target.value)} />
+          <div style={styles.formGroup}>
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Data Vencimento</label>
+            <DatePicker value={form.data_vencimento || ''} onChange={v => upd('data_vencimento', v)} />
+          </div>
+          <div style={styles.formGroup}>
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Data Pagamento</label>
+            <DatePicker value={form.data_pagamento || ''} onChange={v => upd('data_pagamento', v)} />
+          </div>
         </div>
         <Select label="Status" value={form.status || 'pendente'} onChange={e => upd('status', e.target.value)}>
           <option value="pendente">Pendente</option>
@@ -1573,6 +1613,7 @@ export default function Financeiro() {
           {subOp === 6 && <CalendarioFinanceiro />}
           {subOp === 7 && <NotasCompras />}
           {subOp === 8 && <IdentificarDoadores />}
+          {subOp === 9 && <BancoComprovantes />}
         </div>
       )}
 

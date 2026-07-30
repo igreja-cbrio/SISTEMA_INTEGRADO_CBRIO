@@ -198,7 +198,7 @@ async function aprenderClassificacao({ documento, nome, plano_contas_id, centro_
  * Identifica/cria membro a partir de CPF/CNPJ encontrado no extrato
  * Retorna { membro_id, criado_novo }
  */
-async function resolverMembroPorDocumento(documento, nome) {
+async function resolverMembroPorDocumento(documento, nome, { criarSemNome = true } = {}) {
   if (!documento) return null;
   const cleanDoc = documento.replace(/\D/g, '');
   if (cleanDoc.length !== 11 && cleanDoc.length !== 14) return null;
@@ -214,9 +214,15 @@ async function resolverMembroPorDocumento(documento, nome) {
     return { membro_id: existente.id, criado_novo: false };
   }
 
+  // Decisão do Matheus (2026-07-30): nos caminhos automáticos do OFX, só cria
+  // contribuinte se vier CPF *E* nome real. Sem nome (ex.: Santander manda só o
+  // CPF), NÃO cria fantasma "Contribuinte NNN" — vincula ao existente ou nada.
+  const nomeReal = String(nome || '').trim();
+  if (!criarSemNome && !nomeReal) return null;
+
   if (cleanDoc.length === 11) {
     const resultado = await acharOuCriarGuardado({
-      cpf: cleanDoc, nome: nome || `Contribuinte ${cleanDoc.substring(0, 6)}...`,
+      cpf: cleanDoc, nome: nomeReal || `Contribuinte ${cleanDoc.substring(0, 6)}...`,
       status: 'contribuinte_avulso', origem: 'financeiro_documento',
     });
     return { membro_id: resultado.membro_id, criado_novo: !!resultado.created };
@@ -348,7 +354,7 @@ async function classificarBatch({ uploadId } = {}) {
     // Resolve membro se houver documento
     let membro_id = null;
     if (lanc.documento_contraparte) {
-      const res = await resolverMembroPorDocumento(lanc.documento_contraparte, lanc.nome_contraparte);
+      const res = await resolverMembroPorDocumento(lanc.documento_contraparte, lanc.nome_contraparte, { criarSemNome: false });
       if (res) membro_id = res.membro_id;
     }
 
