@@ -5210,6 +5210,42 @@ existiu em `pag_cobrancas.metodo`; era só a LEITURA no lugar errado.
   pagou nada, então não tem forma). `metodo` nulo aparece como "Forma não
   informada" em vez de virar Pix.
 
+### ⚠️ A forma confirmada é a que o PSP DEVOLVEU (2026-07-30 · SEM migration)
+
+2º teste do Marcos em sandbox: com a aba **Cartão** selecionada, o campo FORMA
+seguia dizendo `boleto` — e a fatura do Asaas respondia **"Não há formas de
+pagamento disponíveis no momento"**.
+
+**Duas causas, em camadas diferentes:**
+
+1. **Conta** (não é código): a conta sandbox estava sem **nenhuma** forma
+   habilitada — sem chave Pix cadastrada, cartão não liberado. Nada funciona em
+   sandbox até habilitar as formas lá. É o nível abaixo do "só boleto" de mais
+   cedo: não era `billingType: UNDEFINED`, era conta vazia.
+2. **Código**: `providers/asaas.js definirMetodo` devolvia `{ metodo }` = a forma
+   **PEDIDA**, e `cobrancas.definirMetodo` gravava `r.metodo || metodo`. Se o
+   Asaas responde 200 **ignorando** o `billingType` (conta sem aquele meio), a
+   gente gravava `cartao` numa cobrança que segue boleto — a única coluna do
+   núcleo que não passava por `metodoDeBillingType`, violando a lei nº 2.
+   Agora o adapter mapeia `p.billingType` de volta e **LANÇA** quando divergir do
+   pedido; o chamador já transforma isso em 502 com o estado atual no corpo.
+   4 testes novos, um deles mutation-testado (reverter a guarda deixa vermelho).
+
+**A tela não pode mostrar duas verdades** (`PagamentoInscricao.tsx`): a aba vinha
+de `metodoSel` (local, no clique) e o FORMA de `pag.metodo` (servidor). Quando
+divergiam, a pessoa via "Cartão" sobre uma cobrança boleto **e um botão que
+prometia pagar com cartão** — era ele que levava à fatura sem forma nenhuma.
+Agora: o `catch` devolve a aba pra forma que o servidor confirmou; `falhas`
+(ESTADO, não ref — precisa re-renderizar) guarda forma→motivo, a aba recusada
+fica riscada com `title`, e no lugar do QR/linha/botão entra um bloco dizendo que
+aquela forma não está disponível + o caminho de reserva. O erro passou a **nomear
+a forma** (com 3 abas, "não conseguimos preparar esta forma" não diz qual).
+
+Junto: `POST /pagamento/:token/metodo` responde **409** quando
+`cobrancas.definirMetodo` devolve `alterada: false` (cobrança com dinheiro dentro
+ou terminal) — era um **200 silencioso**: a aba mudava, o servidor não, e a tela
+não dizia nada.
+
 ### ✅ Comprovante de Pix/transferência · conferência HUMANA (2026-07-30 · migration `20260730200000`)
 
 Pedido do Marcos: *"preciso que nessa tela apareça o comprovante anexado, para

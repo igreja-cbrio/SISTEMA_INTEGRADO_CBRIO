@@ -307,8 +307,22 @@ async function definirMetodo(cobranca, metodo) {
     p = await req('PUT', `/payments/${id}`, corpo);
   }
 
+  // ⚠️ A forma é a que o Asaas CONFIRMOU, não a que pedimos (lei nº 2: status/
+  // forma canônica é mapeada do que o PSP diz). Se ele responder 200 mantendo o
+  // billingType antigo — conta sem aquele meio habilitado, por exemplo —, gravar
+  // o pedido faria o banco mentir e a tela mostrar "cartão" numa cobrança que
+  // continua boleto. Lançar aqui é o que transforma isso em erro visível pra
+  // pessoa (o chamador devolve 502 com o estado atual no corpo).
+  const confirmado = metodoDeBillingType(p.billingType);
+  if (confirmado !== metodo) {
+    throw new Error(
+      `O Asaas não habilitou ${metodo} nesta cobrança (segue como ${confirmado || p.billingType || 'indefinida'}). `
+      + 'Verifique se a forma está ativa na conta.',
+    );
+  }
+
   const saida = {
-    metodo,
+    metodo: confirmado,
     checkout_url: p.invoiceUrl || atual.invoiceUrl || null,
     pix_payload: null,
     pix_qrcode_base64: null,

@@ -514,6 +514,15 @@ router.post('/pagamento/:token/metodo', async (req, res) => {
 
     try {
       const r = await pagamentos.definirMetodo(cobranca, metodo);
+      // `alterada: false` = a cobrança não aceita mais troca de forma (já tem
+      // dinheiro dentro ou está terminal). Era um 200 SILENCIOSO: a aba mudava,
+      // o servidor não, e a tela ficava mostrando duas verdades sem dizer nada.
+      if (r.alterada === false) {
+        return res.status(409).json({
+          error: 'Esta cobrança não aceita mais troca de forma de pagamento.',
+          pagamento: await respostaPagamento(r.cobranca),
+        });
+      }
       return res.json(await respostaPagamento(r.cobranca));
     } catch (e) {
       console.error('[publicEvento] definir forma de pagamento:', e.message);

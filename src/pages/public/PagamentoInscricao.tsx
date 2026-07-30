@@ -255,6 +255,11 @@ export default function PagamentoInscricao() {
   // Formas já PREPARADAS no provedor nesta sessão — pedir a mesma duas vezes é
   // desperdício (o artefato já está na resposta anterior).
   const preparados = useRef<Set<string>>(new Set());
+  // Formas que o provedor RECUSOU nesta cobrança (forma → motivo). É ESTADO, não
+  // ref: a aba dessas formas deixa de oferecer o caminho de pagamento (QR, linha,
+  // botão) e isso tem que re-renderizar. Prometer o que não existe é o que manda
+  // a pessoa pra uma fatura dizendo "não há formas de pagamento disponíveis".
+  const [falhas, setFalhas] = useState<Record<string, string>>({});
   const [preparando, setPreparando] = useState<string | null>(null);
   const [erroMetodo, setErroMetodo] = useState('');
   // Confete só uma vez, e só quando o SERVIDOR disse pago.
@@ -347,12 +352,22 @@ export default function PagamentoInscricao() {
     try {
       const r = await eventoPublico.pagamentoMetodo(token, m);
       preparados.current.add(m);
+      setFalhas(f => { const { [m]: _fora, ...resto } = f; return resto; });
       setPag(r);
     } catch (e: any) {
-      // Estado atual vem no erro — a tela não regride pra vazio, e o caminho de
-      // reserva (checkout do provedor) continua visível.
-      if (e?.pagamento) setPag(e.pagamento);
-      setErroMetodo(e?.message || 'Não conseguimos preparar esta forma agora.');
+      // ⚠️ A aba é a INTENÇÃO; o que vale é a forma que o provedor confirmou.
+      // Antes a aba ficava em "Cartão" enquanto o campo FORMA seguia "boleto" —
+      // duas verdades na mesma tela, e o botão embaixo ainda prometia pagar com
+      // cartão numa cobrança que não era cartão.
+      const motivo = e?.message || `Não conseguimos preparar ${METODO_LABEL[m] || m} nesta cobrança.`;
+      setFalhas(f => ({ ...f, [m]: motivo }));
+      if (e?.pagamento) {
+        setPag(e.pagamento);
+        // Volta pra forma que existe de fato. Só cai em `m` quando o servidor
+        // não disse qual é (aí a aba fica na tentativa, com o erro do lado).
+        setMetodoSel(e.pagamento.metodo || m);
+      }
+      setErroMetodo(motivo);
     } finally {
       setPreparando(null);
     }
@@ -441,15 +456,20 @@ export default function PagamentoInscricao() {
                 {metodos.length > 1 && (
                   <div style={{ display: 'flex', gap: 6, marginTop: 16 }}>
                     {metodos.map(m => (
-                      <button key={m} onClick={() => escolherMetodo(m)} disabled={!!preparando} style={{
-                        flex: 1, minHeight: 44, padding: '10px 8px', borderRadius: 10,
-                        cursor: preparando ? 'progress' : 'pointer',
-                        border: `1px solid ${metodoSel === m ? '#00B39D' : C.inputBorder}`,
-                        background: metodoSel === m ? 'rgba(0,179,157,0.12)' : 'transparent',
-                        color: metodoSel === m ? '#00B39D' : C.text2,
-                        fontSize: 15, fontWeight: metodoSel === m ? 700 : 500,
-                        opacity: preparando && preparando !== m ? 0.55 : 1,
-                      }}>
+                      <button key={m} onClick={() => escolherMetodo(m)} disabled={!!preparando}
+                        // Forma já recusada fica marcada: sem isso a pessoa tenta
+                        // a mesma aba de novo sem saber que ela não funciona aqui.
+                        title={falhas[m] || undefined}
+                        style={{
+                          flex: 1, minHeight: 44, padding: '10px 8px', borderRadius: 10,
+                          cursor: preparando ? 'progress' : 'pointer',
+                          border: `1px solid ${metodoSel === m ? '#00B39D' : C.inputBorder}`,
+                          background: metodoSel === m ? 'rgba(0,179,157,0.12)' : 'transparent',
+                          color: falhas[m] ? C.textDim : (metodoSel === m ? '#00B39D' : C.text2),
+                          textDecoration: falhas[m] ? 'line-through' : 'none',
+                          fontSize: 15, fontWeight: metodoSel === m ? 700 : 500,
+                          opacity: preparando && preparando !== m ? 0.55 : (falhas[m] ? 0.7 : 1),
+                        }}>
                         {METODO_LABEL[m] || m}
                       </button>
                     ))}
@@ -461,14 +481,46 @@ export default function PagamentoInscricao() {
                     Preparando {METODO_LABEL[preparando] || preparando}…
                   </p>
                 )}
-                {erroMetodo && !preparando && (
+                {/* Erro genérico só quando a forma selecionada NÃO tem bloco
+                    próprio de recusa embaixo — senão a tela diz a mesma coisa 2x. */}
+                {erroMetodo && !preparando && !(metodoSel && falhas[metodoSel]) && (
                   <p style={{ fontSize: 13, color: '#ef4444', marginTop: 12 }}>
                     {erroMetodo} Você pode escolher outra forma acima
                     {pag.checkout_url ? ' ou concluir na página do provedor abaixo' : ''}.
                   </p>
                 )}
 
-                {metodoSel === 'pix' && (
+                {/* Forma RECUSADA pelo provedor: no lugar do caminho que promete
+                    pagar (QR / linha / botão), a tela diz que não dá. Era esse
+                    botão que levava à fatura dizendo "não há formas de pagamento
+                    disponíveis" — a tela prometia o que a cobrança não tinha. */}
+                {metodoSel && falhas[metodoSel] && !preparando && (
+                  <div style={{
+                    marginTop: 14, padding: 14, borderRadius: 12,
+                    border: '1px solid rgba(239,68,68,0.35)', background: 'rgba(239,68,68,0.06)',
+                  }}>
+                    <p style={{ fontSize: 13.5, fontWeight: 700, margin: 0, color: C.text }}>
+                      {METODO_LABEL[metodoSel] || metodoSel} não está disponível para esta cobrança.
+                    </p>
+                    <p style={{ fontSize: 12.5, color: C.text3, margin: '6px 0 0' }}>
+                      {falhas[metodoSel]} Escolha outra forma acima
+                      {pag.metodo ? ` — esta cobrança está como ${METODO_LABEL[pag.metodo] || pag.metodo}.` : '.'}
+                    </p>
+                    {pag.checkout_url && (
+                      <a href={pag.checkout_url} style={{ textDecoration: 'none' }}>
+                        <button className="pgto-acao" style={{
+                          width: '100%', marginTop: 12, padding: '12px 18px', borderRadius: 999,
+                          border: `1px solid ${C.inputBorder}`, background: 'transparent',
+                          color: C.text, fontSize: 14, fontWeight: 600, cursor: 'pointer',
+                        }}>
+                          Abrir a página do provedor
+                        </button>
+                      </a>
+                    )}
+                  </div>
+                )}
+
+                {metodoSel === 'pix' && !falhas.pix && (
                   qr ? (
                     <div style={{ marginTop: 16, textAlign: 'center' }}>
                       <img className="pgto-qr" src={qr} alt="QR Code do Pix" style={{ borderRadius: 10, background: '#fff', padding: 8 }} />
@@ -503,7 +555,7 @@ export default function PagamentoInscricao() {
                   )
                 )}
 
-                {metodoSel === 'cartao' && (
+                {metodoSel === 'cartao' && !falhas.cartao && (
                   <>
                     <p style={{ fontSize: 13, color: C.text2, marginTop: 14 }}>
                       Você digita os dados do cartão no ambiente seguro do Asaas.
@@ -528,7 +580,7 @@ export default function PagamentoInscricao() {
                   </>
                 )}
 
-                {metodoSel === 'boleto' && (
+                {metodoSel === 'boleto' && !falhas.boleto && (
                   <>
                     <p style={{ fontSize: 12.5, color: '#b45309', marginTop: 14 }}>
                       O boleto leva até 3 dias úteis para compensar. Sua vaga fica reservada
