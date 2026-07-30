@@ -1,15 +1,19 @@
-// Página pública de status do pagamento da inscrição · /pagamento/:token
+// Página pública de pagamento da inscrição · /pagamento/:token
 //
-// A pessoa paga na página do provedor (um link serve Pix, cartão parcelado e
-// boleto). Esta tela é o "depois": diz se caiu, reoferece o link enquanto não
-// caiu, e mostra o QR do Pix quando houver.
+// É AQUI que a pessoa escolhe como pagar, e é aqui que ela volta pra conferir.
+//
+// ⚠️ Divisão que não deve ser mexida sem entender o motivo: **Pix e boleto são
+// nativos** (QR e linha digitável não são dados sensíveis) e **cartão sai pro
+// checkout do Asaas**. Número de cartão não entra no nosso domínio, no nosso
+// Express nem nos nossos logs (lei nº 5 do núcleo de pagamentos) — coletar PAN
+// em formulário nosso ampliaria o escopo PCI-DSS da igreja.
 //
 // ⚠️ LEI: nenhuma confirmação — texto, confete, "está tudo certo" — sem
 // `pago === true` LIDO DO SERVIDOR. Quem decide é `pag_cobrancas.status`, nunca
 // o fato de a pessoa ter voltado do checkout (voltar não é pagar).
 //
 // Acessada pelo `public_token`, nunca pelo uuid da cobrança.
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import QRCode from 'qrcode';
 import confetti from 'canvas-confetti';
@@ -23,6 +27,8 @@ interface Pagamento {
   valor_pago_centavos: number;
   metodo: string | null;
   parcelas: number | null;
+  metodos: string[] | null;
+  parcelas_max: number | null;
   checkout_url: string | null;
   pix_payload: string | null;
   boleto_linha_digitavel: string | null;
@@ -51,6 +57,11 @@ const TEXTO: Record<string, { titulo: string; sub: string; cor: string }> = {
 
 const ABERTOS = ['criada', 'aguardando_pagamento', 'pago_parcial'];
 
+const METODO_LABEL: Record<string, string> = { pix: 'Pix', cartao: 'Cartão', boleto: 'Boleto' };
+// Pix primeiro de propósito: cai na hora e é o que a maioria usa. Boleto por
+// último — leva dias úteis pra compensar.
+const ORDEM_METODOS = ['pix', 'cartao', 'boleto'];
+
 export default function PagamentoInscricao() {
   const { token = '' } = useParams();
   const { C } = usePublicTheme();
@@ -58,7 +69,9 @@ export default function PagamentoInscricao() {
   const [erro, setErro] = useState('');
   const [carregando, setCarregando] = useState(true);
   const [qr, setQr] = useState<string | null>(null);
-  const [copiado, setCopiado] = useState(false);
+  // Guarda O QUE foi copiado (Pix ou boleto), pra dar retorno no botão certo.
+  const [copiado, setCopiado] = useState('');
+  const [metodoSel, setMetodoSel] = useState<string | null>(null);
   // Confete só uma vez, e só quando o SERVIDOR disse pago.
   const festejou = useRef(false);
 
@@ -98,15 +111,48 @@ export default function PagamentoInscricao() {
       .then(setQr).catch(() => setQr(null));
   }, [pag?.pix_payload]);
 
-  async function copiarPix() {
-    if (!pag?.pix_payload) return;
-    await navigator.clipboard.writeText(pag.pix_payload);
-    setCopiado(true);
-    setTimeout(() => setCopiado(false), 2500);
+  async function copiar(qual: string, texto: string) {
+    try {
+      await navigator.clipboard.writeText(texto);
+      setCopiado(qual);
+      setTimeout(() => setCopiado(''), 2500);
+    } catch {
+      // Navegador sem permissão de clipboard: o código segue visível na tela
+      // pra copiar à mão. Não vale quebrar a tela por isso.
+    }
   }
 
   const t = pag ? (TEXTO[pag.status] || { titulo: 'Pagamento em análise', sub: 'Estamos conferindo com o provedor.', cor: '#f59e0b' }) : null;
   const emAberto = !!pag && ABERTOS.includes(pag.status);
+
+  /**
+   * O que a tela oferece = formas que o EVENTO aceita ∩ formas que sabemos
+   * apresentar agora. Cobrança antiga sem `metodos` cai nos três (é o
+   * comportamento que existia antes deste seletor).
+   *
+   * ⚠️ Cada forma tem um caminho nativo e um de reserva pelo checkout: se o
+   * provedor não devolveu o artefato (QR do Pix, linha do boleto), a aba não
+   * mente nem aparece vazia — ela manda pro ambiente do Asaas, que sempre sabe
+   * cobrar. Isso mantém a tela honesta se o Pix vier só depois da escolha.
+   */
+  const metodos = useMemo(() => {
+    if (!pag) return [];
+    const base = pag.metodos?.length ? pag.metodos : ORDEM_METODOS;
+    return base
+      .filter(m => {
+        if (m === 'pix') return !!pag.pix_payload || !!pag.checkout_url;
+        if (m === 'cartao') return !!pag.checkout_url;
+        if (m === 'boleto') return !!pag.boleto_url || !!pag.boleto_linha_digitavel || !!pag.checkout_url;
+        return false;
+      })
+      .sort((a, b) => ORDEM_METODOS.indexOf(a) - ORDEM_METODOS.indexOf(b));
+  }, [pag]);
+
+  // Pré-seleciona a primeira forma (Pix, quando há). Só uma vez — se a pessoa
+  // trocou de aba, o polling não deve arrastá-la de volta.
+  useEffect(() => {
+    if (!metodoSel && metodos.length) setMetodoSel(metodos[0]);
+  }, [metodos, metodoSel]);
 
   return (
     <div style={{ minHeight: '100dvh', background: C.pageBg, color: C.text, padding: '32px 16px', display: 'flex' }}>
@@ -169,37 +215,121 @@ export default function PagamentoInscricao() {
                   </p>
                 )}
 
-                {pag.checkout_url && (
-                  <a href={pag.checkout_url} style={{ textDecoration: 'none' }}>
-                    <button style={{
-                      width: '100%', marginTop: 14, padding: '13px 18px', borderRadius: 999,
-                      border: 'none', background: '#00B39D', color: '#fff',
-                      fontSize: 15, fontWeight: 700, cursor: 'pointer',
-                    }}>
-                      Pagar agora
-                    </button>
-                  </a>
-                )}
-
-                {qr && (
-                  <div style={{ marginTop: 18, textAlign: 'center' }}>
-                    <div style={{ fontSize: 12, color: C.text3, marginBottom: 8 }}>Ou pague com Pix escaneando o código</div>
-                    <img src={qr} alt="QR Code do Pix" style={{ width: 200, height: 200, borderRadius: 10, background: '#fff', padding: 8 }} />
-                    <button onClick={copiarPix} style={{
-                      display: 'block', margin: '10px auto 0', padding: '8px 16px', borderRadius: 999,
-                      border: `1px solid ${C.inputBorder}`, background: 'transparent',
-                      color: C.text2, fontSize: 13, cursor: 'pointer',
-                    }}>
-                      {copiado ? 'Código copiado!' : 'Copiar código Pix'}
-                    </button>
+                {metodos.length > 1 && (
+                  <div style={{ display: 'flex', gap: 6, marginTop: 16 }}>
+                    {metodos.map(m => (
+                      <button key={m} onClick={() => setMetodoSel(m)} style={{
+                        flex: 1, padding: '10px 8px', borderRadius: 10, cursor: 'pointer',
+                        border: `1px solid ${metodoSel === m ? '#00B39D' : C.inputBorder}`,
+                        background: metodoSel === m ? 'rgba(0,179,157,0.12)' : 'transparent',
+                        color: metodoSel === m ? '#00B39D' : C.text2,
+                        fontSize: 14, fontWeight: metodoSel === m ? 700 : 500,
+                      }}>
+                        {METODO_LABEL[m] || m}
+                      </button>
+                    ))}
                   </div>
                 )}
 
-                {pag.boleto_url && (
-                  <a href={pag.boleto_url} target="_blank" rel="noreferrer"
-                    style={{ display: 'block', marginTop: 12, fontSize: 13, color: '#00B39D', textAlign: 'center' }}>
-                    Abrir boleto
-                  </a>
+                {metodoSel === 'pix' && (
+                  qr ? (
+                    <div style={{ marginTop: 16, textAlign: 'center' }}>
+                      <img src={qr} alt="QR Code do Pix" style={{ width: 200, height: 200, borderRadius: 10, background: '#fff', padding: 8 }} />
+                      <p style={{ fontSize: 12.5, color: C.text3, margin: '10px 0 0' }}>
+                        Abra o app do seu banco, escolha Pix e leia o código. Cai na hora.
+                      </p>
+                      <button onClick={() => copiar('pix', pag.pix_payload || '')} style={{
+                        display: 'block', margin: '10px auto 0', padding: '10px 18px', borderRadius: 999,
+                        border: `1px solid ${C.inputBorder}`, background: 'transparent',
+                        color: C.text2, fontSize: 13, cursor: 'pointer',
+                      }}>
+                        {copiado === 'pix' ? 'Código copiado!' : 'Copiar código Pix'}
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <p style={{ fontSize: 13, color: C.text2, marginTop: 14 }}>
+                        Você conclui o Pix no ambiente do Asaas, que processa o pagamento da igreja.
+                      </p>
+                      {pag.checkout_url && (
+                        <a href={pag.checkout_url} style={{ textDecoration: 'none' }}>
+                          <button style={{
+                            width: '100%', marginTop: 10, padding: '13px 18px', borderRadius: 999,
+                            border: 'none', background: '#00B39D', color: '#fff',
+                            fontSize: 15, fontWeight: 700, cursor: 'pointer',
+                          }}>
+                            Pagar com Pix
+                          </button>
+                        </a>
+                      )}
+                    </>
+                  )
+                )}
+
+                {metodoSel === 'cartao' && (
+                  <>
+                    <p style={{ fontSize: 13, color: C.text2, marginTop: 14 }}>
+                      Você digita os dados do cartão no ambiente seguro do Asaas.
+                      {pag.parcelas_max && pag.parcelas_max > 1
+                        ? ` Dá para parcelar em até ${pag.parcelas_max}x.`
+                        : ''}
+                    </p>
+                    <p style={{ fontSize: 12, color: C.textDim, marginTop: 6 }}>
+                      A igreja não recebe nem guarda o número do seu cartão.
+                    </p>
+                    {pag.checkout_url && (
+                      <a href={pag.checkout_url} style={{ textDecoration: 'none' }}>
+                        <button style={{
+                          width: '100%', marginTop: 10, padding: '13px 18px', borderRadius: 999,
+                          border: 'none', background: '#00B39D', color: '#fff',
+                          fontSize: 15, fontWeight: 700, cursor: 'pointer',
+                        }}>
+                          Pagar com cartão
+                        </button>
+                      </a>
+                    )}
+                  </>
+                )}
+
+                {metodoSel === 'boleto' && (
+                  <>
+                    <p style={{ fontSize: 12.5, color: '#b45309', marginTop: 14 }}>
+                      O boleto leva até 3 dias úteis para compensar. Sua vaga fica reservada
+                      nesse tempo, mas se o prazo acima vencer antes, ela volta para a fila.
+                    </p>
+                    {pag.boleto_linha_digitavel && (
+                      <>
+                        <div style={{
+                          marginTop: 12, padding: '10px 12px', borderRadius: 10,
+                          border: `1px solid ${C.inputBorder}`, background: C.optionBg,
+                          fontFamily: 'ui-monospace, monospace', fontSize: 13,
+                          wordBreak: 'break-all', color: C.text,
+                        }}>
+                          {pag.boleto_linha_digitavel}
+                        </div>
+                        <button onClick={() => copiar('boleto', pag.boleto_linha_digitavel || '')} style={{
+                          display: 'block', margin: '10px auto 0', padding: '10px 18px', borderRadius: 999,
+                          border: `1px solid ${C.inputBorder}`, background: 'transparent',
+                          color: C.text2, fontSize: 13, cursor: 'pointer',
+                        }}>
+                          {copiado === 'boleto' ? 'Linha copiada!' : 'Copiar linha digitável'}
+                        </button>
+                      </>
+                    )}
+                    {(pag.boleto_url || pag.checkout_url) && (
+                      <a href={pag.boleto_url || pag.checkout_url || '#'} target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}>
+                        <button style={{
+                          width: '100%', marginTop: 10, padding: '13px 18px', borderRadius: 999,
+                          border: pag.boleto_linha_digitavel ? `1px solid ${C.inputBorder}` : 'none',
+                          background: pag.boleto_linha_digitavel ? 'transparent' : '#00B39D',
+                          color: pag.boleto_linha_digitavel ? C.text : '#fff',
+                          fontSize: 15, fontWeight: 700, cursor: 'pointer',
+                        }}>
+                          {pag.boleto_url ? 'Abrir boleto em PDF' : 'Gerar boleto'}
+                        </button>
+                      </a>
+                    )}
+                  </>
                 )}
 
                 <p style={{ fontSize: 12, color: C.textDim, marginTop: 16, textAlign: 'center' }}>

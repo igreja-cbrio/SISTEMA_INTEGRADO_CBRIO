@@ -314,17 +314,15 @@ export default function EventoExterno() {
         consent_imagem: temCampoImagem ? consentImagem : undefined,
         dados, website,
       });
-      // Evento PAGO: a vaga ficou reservada e a pessoa vai pagar na página do
-      // provedor (um link serve Pix, cartão parcelado e boleto). ⚠️ Sem confete
-      // e sem "presença confirmada" aqui — nada de comemoração antes de o
-      // servidor dizer `pago`.
-      if (r.pagamento && r.checkout_url) {
-        window.location.href = r.checkout_url;
-        return;
-      }
+      // Evento PAGO: a vaga ficou reservada e a pessoa escolhe como pagar na
+      // NOSSA tela — Pix e boleto ali mesmo, cartão no checkout do Asaas (é o
+      // único que precisa sair, porque número de cartão não passa pelo nosso
+      // domínio). Antes isto mandava direto pro `checkout_url`; sair do domínio
+      // no meio do fluxo derruba conversão e a pessoa perdia o link ao fechar a
+      // aba — a tela `/pagamento/:token` é endereçável e ela pode voltar.
+      // ⚠️ Sem confete e sem "presença confirmada" aqui — nada de comemoração
+      // antes de o servidor dizer `pago`.
       if (r.pagamento) {
-        // Cobrança criada mas sem link (caso raro): manda pra tela de status,
-        // que consulta o provedor e reoferece o pagamento.
         navigate(`/pagamento/${r.public_token}`);
         return;
       }

@@ -174,6 +174,37 @@ function ymd(d) {
   return `${dt.getFullYear()}-${mm}-${dd}`;
 }
 
+/**
+ * QR do Pix da cobrança. É uma chamada SEPARADA — o `POST /payments` não
+ * devolve o QR junto.
+ *
+ * Serve pra mostrar o Pix DENTRO da nossa página, em vez de mandar a pessoa
+ * embora pro checkout hospedado. Pix não é dado sensível; cartão é, e por isso
+ * continua no Asaas (lei nº 5).
+ *
+ * ⚠️ **Best-effort de propósito.** Com `billingType: 'UNDEFINED'` o pagador
+ * ainda não escolheu método, então o Asaas pode não ter Pix gerado e responder
+ * erro — o que NÃO é motivo pra derrubar uma cobrança que já existe e já
+ * reservou vaga. Sem QR, a página cai no checkout hospedado, exatamente como
+ * antes desta função existir.
+ */
+async function buscarPixQrCode(paymentId) {
+  if (!paymentId) return null;
+  try {
+    const qr = await req('GET', `/payments/${encodeURIComponent(paymentId)}/pixQrCode`);
+    // `success: false` é como o Asaas diz "esta cobrança não tem Pix".
+    if (!qr || qr.success === false) return null;
+    return {
+      payload: qr.payload || null,
+      base64: qr.encodedImage || null,
+    };
+  } catch (e) {
+    // Só loga. Cobrança criada não se desfaz porque o QR não veio.
+    console.warn(`[asaas] QR do Pix indisponível para ${paymentId}: ${e.message}`);
+    return null;
+  }
+}
+
 async function criarCobranca(dados) {
   const clienteId = dados.provider_cliente_id || await acharOuCriarCliente({
     nome: dados.pagador_nome, cpf: dados.pagador_cpf,
@@ -209,14 +240,19 @@ async function criarCobranca(dados) {
 
   const p = await req('POST', '/payments', corpo);
 
+  // Uma chamada extra pra poder desenhar o Pix na nossa página. Best-effort:
+  // ver `buscarPixQrCode`. Parcelado é cartão, então lá o QR simplesmente não
+  // vem — e não faz falta.
+  const pix = await buscarPixQrCode(p.id);
+
   return {
     provider_cobranca_id: p.id,
     provider_cliente_id: clienteId,
     // Nasce aguardando: a cobrança existe e está esperando o pagador.
     status: STATUS.AGUARDANDO,
     checkout_url: p.invoiceUrl || null,
-    pix_payload: null,          // o QR sai do checkout; buscar aqui é chamada extra
-    pix_qrcode_base64: null,
+    pix_payload: pix?.payload || null,
+    pix_qrcode_base64: pix?.base64 || null,
     boleto_linha_digitavel: p.identificationField || null,
     boleto_url: p.bankSlipUrl || null,
     vencimento: p.dueDate || venc,
@@ -446,7 +482,7 @@ module.exports = {
   // exportados pra teste
   _internos: {
     paraReais, paraCentavos, taxaCentavos, last4,
-    statusDePagamento, metodoDeBillingType,
+    statusDePagamento, metodoDeBillingType, buscarPixQrCode,
     STATUS_POR_EVENTO, EVENTOS_COM_DINHEIRO, BASE_PROD, BASE_SANDBOX,
   },
 };

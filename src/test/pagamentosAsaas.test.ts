@@ -310,3 +310,57 @@ describe('asaas · capacidades', () => {
     expect(I.metodoDeBillingType('COISA_NOVA')).toBeNull();
   });
 });
+
+describe('asaas · QR do Pix é best-effort', () => {
+  // A garantia que importa: uma cobrança JÁ EXISTE quando o QR é buscado, e a
+  // vaga já está reservada. Se esta chamada extra estourasse, a pessoa perderia
+  // a inscrição por causa de um enfeite de tela.
+  const comChave = () => {
+    vi.stubEnv('ASAAS_API_KEY', '$aact_hmlg_teste');
+    vi.stubEnv('VERCEL_ENV', 'preview');
+  };
+  const respostaFetch = (body: unknown, ok = true, status = 200) =>
+    vi.fn().mockResolvedValue({
+      ok, status, text: () => Promise.resolve(JSON.stringify(body)),
+    } as any);
+
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it('devolve payload e imagem quando o Asaas tem Pix', async () => {
+    comChave();
+    vi.stubGlobal('fetch', respostaFetch({
+      success: true, payload: '00020126BR.GOV.BCB.PIX', encodedImage: 'iVBORw0KGgo=',
+      expirationDate: '2026-08-01 12:00:00',
+    }));
+    const qr = await I.buscarPixQrCode('pay_123');
+    expect(qr).toEqual({ payload: '00020126BR.GOV.BCB.PIX', base64: 'iVBORw0KGgo=' });
+  });
+
+  it('success:false vira null — é o Asaas dizendo que esta cobrança não tem Pix', async () => {
+    // Cenário real de `billingType: UNDEFINED`, onde o pagador ainda não
+    // escolheu método. A tela cai no checkout hospedado, sem QR quebrado.
+    comChave();
+    vi.stubGlobal('fetch', respostaFetch({ success: false }));
+    expect(await I.buscarPixQrCode('pay_123')).toBeNull();
+  });
+
+  it('erro HTTP NÃO propaga — devolve null em vez de derrubar a cobrança', async () => {
+    comChave();
+    vi.stubGlobal('fetch', respostaFetch({ errors: [{ description: 'Pix indisponível' }] }, false, 400));
+    await expect(I.buscarPixQrCode('pay_123')).resolves.toBeNull();
+  });
+
+  it('falha de rede NÃO propaga', async () => {
+    comChave();
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('ECONNRESET')));
+    await expect(I.buscarPixQrCode('pay_123')).resolves.toBeNull();
+  });
+
+  it('sem id de cobrança não chega a chamar o Asaas', async () => {
+    comChave();
+    const f = respostaFetch({ success: true });
+    vi.stubGlobal('fetch', f);
+    expect(await I.buscarPixQrCode(null)).toBeNull();
+    expect(f).not.toHaveBeenCalled();
+  });
+});

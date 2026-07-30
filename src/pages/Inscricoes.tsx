@@ -252,7 +252,7 @@ export function EventoModal({ evento, areas, onClose, onSaved }: {
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!f.pagamento_ativo} onChange={e => setF((s: any) => ({ ...s, pagamento_ativo: e.target.checked }))} /> Inscrição paga</label>
             {f.pagamento_ativo && (
               <div>
-                <label className="text-xs text-muted-foreground">Valor (R$) · Pix chega na próxima fase</label>
+                <label className="text-xs text-muted-foreground">Valor (R$) · a pessoa paga por Pix, cartão ou boleto</label>
                 <Input value={f.valor_centavos} onChange={set('valor_centavos')} placeholder="150,00" inputMode="decimal" />
               </div>
             )}

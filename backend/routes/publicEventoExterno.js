@@ -275,6 +275,11 @@ router.get('/pagamento/:token', async (req, res) => {
       valor_pago_centavos: cobranca.valor_pago_centavos,
       metodo: cobranca.metodo || null,
       parcelas: cobranca.parcelas_total || null,
+      // Quais formas a tela deve oferecer. Config do evento cruzada com a
+      // capacidade do provider — não é PII. Sem isto a página teria que chutar
+      // os três e poderia oferecer boleto num evento que não aceita boleto.
+      metodos: Array.isArray(cobranca.metodos_ofertados) ? cobranca.metodos_ofertados : [],
+      parcelas_max: cobranca.parcelas_max || null,
       checkout_url: cobranca.checkout_url || null,
       pix_payload: cobranca.pix_payload || null,
       boleto_linha_digitavel: cobranca.boleto_linha_digitavel || null,
