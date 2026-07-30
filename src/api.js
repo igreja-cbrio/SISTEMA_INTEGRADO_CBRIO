@@ -2122,6 +2122,7 @@ export const membresia = {
       return get('/membresia/identidade-pendencias' + (qs ? '?' + qs : ''));
     },
     confirmarCpf: (id) => post(`/membresia/identidade-pendencias/${id}/confirmar-cpf`, {}),
+    ligarInscricao: (id) => post(`/membresia/identidade-pendencias/${id}/ligar-inscricao`, {}),
     setStatus: (id, status) => post(`/membresia/identidade-pendencias/${id}/status`, { status }),
   },
   // Detecção e merge de duplicados
