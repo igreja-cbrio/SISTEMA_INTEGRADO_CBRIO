@@ -229,14 +229,20 @@ async function criarCobranca(dados) {
     externalReference: dados.referencia || dados.id || undefined,
   };
 
-  // Parcelado: `installmentCount` + `totalValue` (o Asaas divide e cria N
-  // cobranças). Só faz sentido no cartão — nos outros o Asaas ignora.
-  const parcelas = Number(dados.parcelas_max) > 1 ? Number(dados.parcelas_max) : null;
-  if (parcelas) {
-    corpo.installmentCount = Math.min(parcelas, capacidades.parcelas_max);
-    corpo.totalValue = paraReais(dados.valor_centavos);
-    delete corpo.value;   // com totalValue, `value` não vai
-  }
+  // ⚠️ A cobrança nasce SIMPLES (valor cheio), NUNCA parcelada.
+  //
+  // Aqui havia um bug de dinheiro: mandávamos `installmentCount = parcelas_max`.
+  // Mas `parcelas_max` é **teto de configuração do evento**, não o número de
+  // parcelas que alguém escolheu — e a doc do Asaas é explícita de que "apenas
+  // cobranças com 2 ou mais parcelas usam os atributos de parcelamento", ou
+  // seja, o campo NÃO é ignorado: ele cria o plano. Efeito em cadeia num evento
+  // com teto 12: a cobrança nascia como 12 × R$ 75, o QR do Pix saía com R$ 75
+  // enquanto a tela mostrava R$ 900, e o pagamento da 1ª parcela caía no
+  // `quita_cobranca` → inscrição CONFIRMADA tendo pago 1/12.
+  //
+  // Quem escolhe parcela é a PESSOA, na tela, e o número dela vai no
+  // `definirMetodo` (só no cartão). `parcelas_max` volta a ser o que o resto do
+  // sistema diz que ele é: um teto.
 
   const p = await req('POST', '/payments', corpo);
 
@@ -287,23 +293,42 @@ const BILLING_POR_METODO = {
   [METODOS.BOLETO]: 'BOLETO',
 };
 
-async function definirMetodo(cobranca, metodo) {
+async function definirMetodo(cobranca, metodo, opcoes = {}) {
   const billing = BILLING_POR_METODO[metodo];
   if (!billing) throw new Error(`Asaas não cobra por "${metodo}"`);
   if (!cobranca.provider_cobranca_id) throw new Error('Cobrança sem id no Asaas');
+
+  // Parcelamento SÓ no cartão, e SÓ com o número que a pessoa escolheu. Pix e
+  // boleto parcelados fariam o QR/linha sair com o valor de UMA parcela
+  // enquanto a tela mostra o total — foi o bug de dinheiro de 30/07.
+  const parcelas = metodo === METODOS.CARTAO && Number(opcoes.parcelas) > 1
+    ? Math.min(Math.floor(Number(opcoes.parcelas)), capacidades.parcelas_max)
+    : null;
 
   const id = encodeURIComponent(cobranca.provider_cobranca_id);
   const atual = await req('GET', `/payments/${id}`);
 
   // O update do Asaas exige os campos obrigatórios junto — reenvia os valores
   // que JÁ estão na cobrança (nunca recalcula preço aqui).
+  const jaTemParcelas = Number(atual?.installmentCount) || null;
+  const precisaTrocarForma = atual?.billingType !== billing;
+  const precisaTrocarParcelas = (parcelas || null) !== jaTemParcelas;
+
   let p = atual;
-  if (atual?.billingType !== billing) {
+  if (precisaTrocarForma || precisaTrocarParcelas) {
     const corpo = { billingType: billing, dueDate: atual.dueDate };
-    // Parcelado vive no `installment`, não no `value` — mexer em value numa
-    // cobrança parcelada reescreveria a parcela.
-    if (atual.installment) corpo.installmentCount = atual.installmentCount || undefined;
-    else corpo.value = atual.value;
+    if (parcelas) {
+      // `totalValue` = o valor CHEIO; o Asaas divide e ajusta a sobra na última
+      // parcela. Nunca mandamos `value` junto (seria o valor da parcela).
+      corpo.installmentCount = parcelas;
+      corpo.totalValue = paraReais(cobranca.valor_centavos);
+    } else {
+      // Voltar pra 1x (ou trocar pra Pix/boleto) precisa DESFAZER o plano:
+      // mandar só `value` sem installmentCount é o que o Asaas entende como
+      // cobrança simples.
+      corpo.value = paraReais(cobranca.valor_centavos);
+      corpo.installmentCount = null;
+    }
     p = await req('PUT', `/payments/${id}`, corpo);
   }
 
@@ -323,6 +348,9 @@ async function definirMetodo(cobranca, metodo) {
 
   const saida = {
     metodo: confirmado,
+    // Quantas parcelas o Asaas de fato registrou (1 = à vista). Mesma régua do
+    // `metodo`: vale o que o PSP confirmou, não o que pedimos.
+    parcelas: Number(p.installmentCount) || 1,
     checkout_url: p.invoiceUrl || atual.invoiceUrl || null,
     pix_payload: null,
     pix_qrcode_base64: null,
@@ -377,7 +405,10 @@ async function consultarStatus(cobranca) {
     repassado_em: p.creditDate || null,
     cartao_brand: p.creditCard?.creditCardBrand || null,
     cartao_last4: last4(p.creditCard),
-    quita_cobranca: pago && !!p.installment,
+    // ⚠️ Só o CARTÃO quita a cobrança na 1ª parcela — é lá que o pagador
+    // autorizou o total. Pix/boleto de uma cobrança parcelada pagam UMA
+    // parcela, e tratar isso como quitação confirmava inscrição com 1/N pago.
+    quita_cobranca: pago && !!p.installment && p.billingType === 'CREDIT_CARD',
     bruto: p,
   };
 }
@@ -558,7 +589,7 @@ function normalizarEvento(payload) {
     // ⚠️ Parcelado vira N cobranças no Asaas, mas o pagador pagou tudo na
     // primeira autorização. Sem isto, a soma das liquidações só fecharia em 12
     // meses e a cobrança ficaria `pago_parcial` — inscrição nunca confirmada.
-    quita_cobranca: !!p.installment
+    quita_cobranca: !!p.installment && p.billingType === 'CREDIT_CARD'
       && (tipo === 'PAYMENT_CONFIRMED' || tipo === 'PAYMENT_RECEIVED'),
   };
 }

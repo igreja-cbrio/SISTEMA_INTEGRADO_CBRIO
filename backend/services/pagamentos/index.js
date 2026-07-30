@@ -53,11 +53,13 @@ async function criarCobranca(dados) {
  * Respeita o kill switch por um motivo: se a venda foi desligada, não é hora de
  * pedir meio de pagamento novo ao PSP. Consultar e pagar o que já existe segue.
  */
-async function definirMetodo(cobrancaOuId, metodo) {
+async function definirMetodo(cobrancaOuId, metodo, opcoes = {}) {
   if (!habilitado()) throw new Error('Pagamentos estão desligados (PAG_ENABLED=0).');
   // A validação da forma acontece lá dentro, contra o provider DESTA cobrança —
   // conferir aqui usaria o provider padrão, que pode não ser o dela.
-  return cobrancas.definirMetodo(cobrancaOuId, metodo);
+  // `opcoes.parcelas` = quantas parcelas a PESSOA escolheu (só faz efeito no
+  // cartão; o adapter ignora nas outras formas).
+  return cobrancas.definirMetodo(cobrancaOuId, metodo, opcoes);
 }
 
 const consultar = cobrancas.porId;
@@ -105,6 +107,12 @@ async function sincronizar(cobrancaOuId) {
     const r = await cobrancas.aplicarStatus(c, remoto.status);
     return { ok: true, cobranca: r.cobranca, aplicado: r.aplicado, motivo: r.motivo };
   }
+  // ⚠️ Carimba "conferi agora" mesmo SEM novidade. Sem isto, `updated_at` ficava
+  // parado e a janela de 2 min do GET público (`publicEventoExterno`) ficava
+  // PERMANENTEMENTE aberta: cada poll de 6s da tela virava uma chamada ao PSP.
+  // Com 100 abas esperando o Pix cair no lançamento, ~1.000 req/min numa única
+  // API key — e no WiFi da igreja (1 IP) o limiter por IP estoura antes disso.
+  await cobrancas.tocarReconciliacao(c.id);
   return { ok: true, cobranca: c, semMudanca: true };
 }
 

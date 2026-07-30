@@ -5329,7 +5329,8 @@ pagamento disponíveis no momento"**.
 1. **Conta** (não é código): a conta sandbox estava sem **nenhuma** forma
    habilitada — sem chave Pix cadastrada, cartão não liberado. Nada funciona em
    sandbox até habilitar as formas lá. É o nível abaixo do "só boleto" de mais
-   cedo: não era `billingType: UNDEFINED`, era conta vazia.
+   cedo: não era `billingType: UNDEFINED`, era conta vazia. **Habilitadas pelo
+   Marcos em 30/07** — o teste das 3 abas passou a ser possível.
 2. **Código**: `providers/asaas.js definirMetodo` devolvia `{ metodo }` = a forma
    **PEDIDA**, e `cobrancas.definirMetodo` gravava `r.metodo || metodo`. Se o
    Asaas responde 200 **ignorando** o `billingType` (conta sem aquele meio), a
@@ -5461,6 +5462,50 @@ passa a mentir.
   de verdade, busca por nome/telefone server-side, placar só na 1ª página).
   Nível 1 — acompanhar é ver, não operar. ⚠️ A TELA do app vive no repo
   **`igreja-cbrio/CBRio-Staff`**, que não está anexado nesta sessão.
+
+### ⚠️ `parcelas_max` é TETO, não plano · e polling que não avança (2026-07-30 · SEM migration)
+
+Dois bugs achados por conselho deliberativo **depois** de o PR #2168 já estar em
+produção (a decisão Asaas × Mercado Pago mandou revisar o que estava no ar). Os
+dois eram silenciosos — nenhum teste, nenhum log, nenhum erro na tela.
+
+**1 · Bug de DINHEIRO: `criarCobranca` mandava `installmentCount: parcelas_max`.**
+`insc_eventos.parcelas_max` é o **teto** que a igreja admite (documentado como tal
+desde a `20260729040000`), e ele ia como o **número de parcelas do plano**. Efeito
+em cascata numa inscrição de R$ 900 com teto 12: o Asaas criava **12 cobranças de
+R$ 75**, o QR de Pix era da **primeira parcela** (a tela mostrando R$ 900), e o
+`quita_cobranca` — que existe pro cartão, onde a pessoa autoriza tudo de uma vez —
+marcava `statusFinal` **PAGO na parcela 1** → **inscrição confirmada tendo pago
+1/12**. No placar, R$ 11.250 de R$ 135.000.
+
+- `criarCobranca` **NUNCA** manda `installmentCount`. A cobrança nasce simples,
+  no valor cheio.
+- **Parcelar é escolha da PESSOA**, no momento em que ela escolhe cartão:
+  `definirMetodo(cobranca, metodo, { parcelas })` manda `installmentCount` +
+  **`totalValue`** (valor CHEIO — `value` seria o valor da parcela, e mandar os
+  dois é como se cobra 12× o total). Pix/boleto passam `installmentCount: null`,
+  que **desfaz** plano anterior em vez de criar um.
+- `quita_cobranca` passou a exigir **`billingType === 'CREDIT_CARD'`** nos dois
+  sites (webhook e consulta). Só no cartão a autorização é única; parcela 1 de Pix
+  não quita nada.
+- O teto é validado **no servidor** (`parcelas_max` do evento, ou o do provider
+  quando NULL) — seletor de parcelas na tela é conveniência, não autoridade.
+- `parcelas_total` é persistido a partir do que o **PSP confirmou**, não do que
+  foi pedido (mesma régua da lei nº 2 e do `definirMetodo`).
+- 4 testes novos, **2 mutation-testados**: reintroduzir o `installmentCount` no
+  `criarCobranca` OU tirar o `CREDIT_CARD` do `quita_cobranca` deixa o gate
+  vermelho.
+
+**2 · `sincronizar` não tocava `updated_at` quando não havia mudança.** A tela de
+pagamento faz polling e o endpoint público consulta o PSP quando a cobrança está
+parada há >2 min (rede de segurança nº 1). Sem carimbar a linha, **a janela ficava
+permanentemente aberta**: cada poll de 6s batia no Asaas. Com 100 abas no
+lançamento, ~1.000 req/min no PSP — e o limiter por IP satura antes disso.
+`sincronizar` agora chama `tocarReconciliacao` também no caminho `semMudanca`
+(é o mesmo mecanismo de round-robin do cron, documentado acima). Junto, a tela
+ganhou **backoff**: 6s nos 10 primeiros ciclos, depois 15s → 30s → teto de 60s,
+com o effect dependendo de **`statusAberto`** e não de `pag` — dependência em
+`pag` (que muda a cada poll) reiniciaria o backoff pra sempre.
 
 **Estado do teste (2026-07-30):** conta Asaas no CNPJ da igreja criada e **"Em
 análise"** (produção não recebe); volume do lançamento **já avisado por escrito**
