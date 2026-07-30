@@ -253,6 +253,84 @@ router.get('/textos', (_req, res) => {
 //
 // ⚠️ Acessado pelo `public_token`, NUNCA pelo uuid da cobrança (uuid vaza em
 // log/referer e é chave interna em outros lugares).
+// Só o necessário pra tela. Nada de PII do pagador, metadata ou payload — a
+// resposta é pública (o token é o único segredo). Extraído porque o GET de
+// status e o POST da escolha de forma devolvem exatamente a mesma coisa: a tela
+// não deve ter dois entendimentos do que é o estado do pagamento.
+async function respostaPagamento(cobranca) {
+  const comprovanteToken = (cobranca.status === 'pago' && cobranca.origem_tipo === 'inscricao')
+    ? await emitirTokenComprovante(cobranca.origem_id, 'pagamento') : null;
+  return {
+    status: cobranca.status,
+    pago: cobranca.status === 'pago',
+    valor_centavos: cobranca.valor_centavos,
+    valor_pago_centavos: cobranca.valor_pago_centavos,
+    metodo: cobranca.metodo || null,
+    parcelas: cobranca.parcelas_total || null,
+    // Quais formas a tela deve oferecer. Config do evento cruzada com a
+    // capacidade do provider — não é PII. Sem isto a página teria que chutar
+    // os três e poderia oferecer boleto num evento que não aceita boleto.
+    metodos: Array.isArray(cobranca.metodos_ofertados) ? cobranca.metodos_ofertados : [],
+    parcelas_max: cobranca.parcelas_max || null,
+    checkout_url: cobranca.checkout_url || null,
+    pix_payload: cobranca.pix_payload || null,
+    boleto_linha_digitavel: cobranca.boleto_linha_digitavel || null,
+    boleto_url: cobranca.boleto_url || null,
+    expira_em: cobranca.expira_em || null,
+    pago_em: cobranca.pago_em || null,
+    evento_nome: cobranca.metadata?.evento_nome || null,
+    evento_slug: cobranca.metadata?.evento_slug || null,
+    // Comprovante do check-in (SPEC-06): quem pagou recebe o QR da entrada
+    // AQUI — a tela de sucesso do formulário já ficou pra trás quando a
+    // pessoa foi pro checkout, e esta é a página que ela reabre.
+    comprovante_token: comprovanteToken,
+  };
+}
+
+/**
+ * POST /pagamento/:token/metodo — a pessoa escolheu como quer pagar.
+ *
+ * ⚠️ Isto NÃO é preferência de interface: é o que faz o meio de pagamento
+ * EXISTIR do lado do provedor. O 1º teste em sandbox (30/07) mostrou que uma
+ * cobrança criada sem forma definida rende uma fatura com o que a CONTA do
+ * provedor tem habilitado — no caso, só boleto — enquanto a nossa tela oferecia
+ * Pix e cartão. Agora a escolha vira um fato lá, e o erro (conta sem chave Pix,
+ * cartão não liberado) aparece aqui, na hora, em vez de virar uma fatura errada.
+ *
+ * Não mexe em valor, status nem vaga. Trocar de forma não é pagar nem cancelar.
+ */
+router.post('/pagamento/:token/metodo', async (req, res) => {
+  try {
+    const cobranca = await pagamentos.consultarPorToken(req.params.token);
+    if (!cobranca) return res.status(404).json({ error: 'Cobrança não encontrada' });
+
+    const metodo = String(req.body?.metodo || '').trim();
+    const ofertados = Array.isArray(cobranca.metodos_ofertados) ? cobranca.metodos_ofertados : [];
+    // Respeita a configuração do EVENTO: forma fora da lista não é oferecida
+    // nem por chamada direta. Lista vazia = cobrança antiga, antes do seletor.
+    if (ofertados.length && !ofertados.includes(metodo)) {
+      return res.status(400).json({ error: 'Esta forma de pagamento não está disponível para este evento.' });
+    }
+    if (cobranca.status === 'pago') return res.json(await respostaPagamento(cobranca));
+
+    try {
+      const r = await pagamentos.definirMetodo(cobranca, metodo);
+      return res.json(await respostaPagamento(r.cobranca));
+    } catch (e) {
+      console.error('[publicEvento] definir forma de pagamento:', e.message);
+      // 502: o problema é do outro lado (conta do provedor sem aquele meio
+      // habilitado, por exemplo). A tela mostra a alternativa que existe.
+      return res.status(502).json({
+        error: 'Não conseguimos preparar esta forma de pagamento agora.',
+        pagamento: await respostaPagamento(cobranca),
+      });
+    }
+  } catch (e) {
+    console.error('[publicEvento] metodo do pagamento:', e.message);
+    res.status(500).json({ error: 'Erro ao escolher a forma de pagamento.' });
+  }
+});
+
 router.get('/pagamento/:token', async (req, res) => {
   try {
     let cobranca = await pagamentos.consultarPorToken(req.params.token);
@@ -271,35 +349,7 @@ router.get('/pagamento/:token', async (req, res) => {
       }
     }
 
-    // Só o necessário pra tela. Nada de PII do pagador, metadata ou payload —
-    // a resposta é pública (o token é o único segredo).
-    const comprovanteToken = (cobranca.status === 'pago' && cobranca.origem_tipo === 'inscricao')
-      ? await emitirTokenComprovante(cobranca.origem_id, 'pagamento') : null;
-    res.json({
-      status: cobranca.status,
-      pago: cobranca.status === 'pago',
-      valor_centavos: cobranca.valor_centavos,
-      valor_pago_centavos: cobranca.valor_pago_centavos,
-      metodo: cobranca.metodo || null,
-      parcelas: cobranca.parcelas_total || null,
-      // Quais formas a tela deve oferecer. Config do evento cruzada com a
-      // capacidade do provider — não é PII. Sem isto a página teria que chutar
-      // os três e poderia oferecer boleto num evento que não aceita boleto.
-      metodos: Array.isArray(cobranca.metodos_ofertados) ? cobranca.metodos_ofertados : [],
-      parcelas_max: cobranca.parcelas_max || null,
-      checkout_url: cobranca.checkout_url || null,
-      pix_payload: cobranca.pix_payload || null,
-      boleto_linha_digitavel: cobranca.boleto_linha_digitavel || null,
-      boleto_url: cobranca.boleto_url || null,
-      expira_em: cobranca.expira_em || null,
-      pago_em: cobranca.pago_em || null,
-      evento_nome: cobranca.metadata?.evento_nome || null,
-      evento_slug: cobranca.metadata?.evento_slug || null,
-      // Comprovante do check-in (SPEC-06): quem pagou recebe o QR da entrada
-      // AQUI — a tela de sucesso do formulário já ficou pra trás quando a
-      // pessoa foi pro checkout, e esta é a página que ela reabre.
-      comprovante_token: comprovanteToken,
-    });
+    res.json(await respostaPagamento(cobranca));
   } catch (e) {
     console.error('[publicEvento] status do pagamento:', e.message);
     res.status(500).json({ error: 'Erro ao consultar o pagamento.' });

@@ -51,6 +51,16 @@ const STATUS_BADGE: Record<string, string> = {
   arquivado: 'bg-foreground/10 text-muted-foreground',
 };
 
+/** Um número do placar. `dica` vira tooltip — o rótulo curto não cabe a régua. */
+function PlacarTile({ label, valor, cor, dica }: { label: string; valor: any; cor?: string; dica?: string }) {
+  return (
+    <Card className="glass-solid p-3" title={dica}>
+      <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div className={`text-xl font-bold mt-0.5 ${cor || ''}`}>{valor}</div>
+    </Card>
+  );
+}
+
 export default function InscricaoEventoDetalhe() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -78,6 +88,9 @@ export default function InscricaoEventoDetalhe() {
   const [anim, setAnim] = useState<{ fase: 'rolando' | 'fim'; premio: string; ganhador?: any } | null>(null);
   const [rolNum, setRolNum] = useState(0);
   const [imprimirOpen, setImprimirOpen] = useState(false);
+  // Placar do evento — vem de COUNTs no banco (não de contar a lista em JS), e
+  // é ele que responde "quanto já entrou de dinheiro".
+  const [resumo, setResumo] = useState<any>(null);
 
   function carregar() {
     if (!id) return;
@@ -85,6 +98,8 @@ export default function InscricaoEventoDetalhe() {
       .then(([evento, inscritos]: any[]) => setEv({ ...evento, inscritos: Array.isArray(inscritos) ? inscritos : [] }))
       .catch(() => toast.error('Erro ao carregar o evento'))
       .finally(() => setLoading(false));
+    // Best-effort e em paralelo: o placar não pode atrasar nem derrubar a tela.
+    api.eventoResumo(id).then((r: any) => setResumo(r?.contadores || null)).catch(() => setResumo(null));
   }
   useEffect(() => { setLoading(true); carregar(); }, [id]);
   useEffect(() => { api.areas().then((a: any) => setAreas(Array.isArray(a) ? a : [])).catch(() => {}); }, []);
@@ -330,6 +345,32 @@ export default function InscricaoEventoDetalhe() {
           </div>
         </div>
       </Card>
+
+      {/* Placar do evento — contadores + arrecadado */}
+      {resumo && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          <PlacarTile label="Inscritos" valor={resumo.ativos} dica="Sem contar as canceladas" />
+          <PlacarTile label="Confirmadas" valor={resumo.confirmadas} cor="text-emerald-600"
+            dica="Pagamento confirmado ou evento gratuito" />
+          {ev.pagamento_ativo && (
+            <PlacarTile label="Aguardando pagamento" valor={resumo.aguardando_pagamento} cor="text-amber-600"
+              dica="Vaga reservada até o prazo — depois volta pra fila" />
+          )}
+          {ev.pagamento_ativo && (
+            <PlacarTile
+              label="Arrecadado"
+              valor={resumo.arrecadado_centavos == null
+                ? '—'
+                : (resumo.arrecadado_centavos / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+              cor="text-primary"
+              dica="Soma das inscrições PAGAS. É acompanhamento do evento — o caixa recebe o repasse do provedor, lançado no Financeiro."
+            />
+          )}
+          {ev.checkin_ativo && (
+            <PlacarTile label="Presentes" valor={resumo.presentes} dica="Check-in feito na entrada" />
+          )}
+        </div>
+      )}
 
       {/* Sorteio */}
       {(ev.tem_sorteio !== false) && (

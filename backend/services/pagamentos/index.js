@@ -45,6 +45,21 @@ async function criarCobranca(dados) {
   return cobrancas.criarCobranca(dados);
 }
 
+/**
+ * Registra a forma de pagamento escolhida pelo pagador e devolve o artefato
+ * real (QR do Pix, linha digitável, checkout). Chamada pela página pública
+ * quando a pessoa clica na aba.
+ *
+ * Respeita o kill switch por um motivo: se a venda foi desligada, não é hora de
+ * pedir meio de pagamento novo ao PSP. Consultar e pagar o que já existe segue.
+ */
+async function definirMetodo(cobrancaOuId, metodo) {
+  if (!habilitado()) throw new Error('Pagamentos estão desligados (PAG_ENABLED=0).');
+  // A validação da forma acontece lá dentro, contra o provider DESTA cobrança —
+  // conferir aqui usaria o provider padrão, que pode não ser o dela.
+  return cobrancas.definirMetodo(cobrancaOuId, metodo);
+}
+
 const consultar = cobrancas.porId;
 const consultarPorToken = cobrancas.porToken;
 const consultarPorReferencia = cobrancas.porReferencia;
@@ -232,6 +247,7 @@ module.exports = {
 
   // ciclo de vida da cobrança
   criarCobranca,
+  definirMetodo,
   consultar,
   consultarPorToken,
   consultarPorReferencia,

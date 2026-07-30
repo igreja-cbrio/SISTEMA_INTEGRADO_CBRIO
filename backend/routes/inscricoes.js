@@ -709,56 +709,228 @@ router.get('/eventos/:id', authorizeModule('inscricoes', 1), async (req, res) =>
   }
 });
 
-// GET /eventos/:id/inscricoes — lista de inscritos.
+// Colunas da lista de inscritos.
 //
 // Devolve `data_nascimento` e `sexo` (base da idade, da faixa etária e das
 // listas impressas por faixa/sexo) e `membro_id` (vínculo com o cadastro).
 // **CPF continua fora** — é o campo de identificação mais sensível e serve pro
 // matcher, não pra tela; quem precisa vê no detalhe da pessoa.
-//
-// Pagamento vem de `vw_insc_pagamento_estado`, que já resolve o estado CANÔNICO
-// no motor `pag_cobrancas` quando há cobrança e cai no espelho de
-// `insc_pagamentos` quando o pagamento foi manual.
-router.get('/eventos/:id/inscricoes', authorizeModule('inscricoes', 1), async (req, res) => {
-  try {
-    // ⚠️ Paginado: o PostgREST capa em 1000 linhas server-side e `.limit(2000)`
-    // NÃO contorna (o cap é do projeto, vale pra qualquer cliente). Um evento
-    // grande vinha truncado em silêncio — a lista parecia completa.
-    const COLS = 'id, nome_completo, telefone, email, data_nascimento, sexo, membro_id, status, numero_sorte, whatsapp_optin, dados, created_at';
-    const inscritos = [];
-    for (let offset = 0; offset < 20000; offset += 1000) {
-      const { data, error } = await supabase.from('inscricoes')
-        .select(COLS)
-        .eq('evento_id', req.params.id).is('deleted_at', null)
-        .order('created_at', { ascending: false })
-        .range(offset, offset + 999);
+const INSCRITOS_COLS = 'id, nome_completo, telefone, email, data_nascimento, sexo, membro_id, status, numero_sorte, whatsapp_optin, dados, created_at';
+
+/**
+ * Leitor ÚNICO da lista de inscritos de um evento — a tela do sistema (lista
+ * completa, impressão por faixa, CSV) e o app do staff (página curta + busca)
+ * chamam ESTA função. Duas telas, uma regra: se o join de pagamento mudar,
+ * muda nas duas de uma vez.
+ *
+ * Pagamento vem de `vw_insc_pagamento_estado`, que já resolve o estado
+ * CANÔNICO no motor `pag_cobrancas` quando há cobrança e cai no espelho de
+ * `insc_pagamentos` quando o pagamento foi manual.
+ *
+ * `limit > 0` liga a paginação server-side (o app pede 40 por vez); sem limit
+ * devolve TODOS os inscritos, paginando internamente pelo cap de 1000 linhas
+ * do PostgREST — `.limit(2000)` NÃO contorna esse cap (é do projeto, vale pra
+ * qualquer cliente), e um evento grande vinha truncado em silêncio.
+ */
+async function lerInscritosDoEvento(eventoId, { busca = '', status = '', limit = 0, offset = 0 } = {}) {
+  const monta = (comContagem) => {
+    let q = supabase.from('inscricoes')
+      .select(INSCRITOS_COLS, comContagem ? { count: 'exact' } : undefined)
+      .eq('evento_id', eventoId).is('deleted_at', null);
+    if (status) q = q.eq('status', status);
+    const termo = String(busca || '').trim().slice(0, 80);
+    if (termo) {
+      const digits = termo.replace(/\D/g, '');
+      // Telefone só entra no OR quando o termo tem dígitos suficientes pra ser
+      // telefone — senão "Ana 2" viraria também filtro por telefone contendo 2.
+      q = digits.length >= 4
+        ? q.or(`nome_completo.ilike.%${escapePostgrestValue(termo)}%,telefone.like.%${digits}%`)
+        : q.ilike('nome_completo', `%${termo}%`);
+    }
+    return q.order('created_at', { ascending: false });
+  };
+
+  let inscritos = [];
+  let total = null;
+  if (limit > 0) {
+    const { data, error, count } = await monta(true).range(offset, offset + limit - 1);
+    if (error) throw error;
+    inscritos = data || [];
+    total = count ?? null;
+  } else {
+    for (let off = 0; off < 20000; off += 1000) {
+      const { data, error } = await monta(false).range(off, off + 999);
       if (error) throw error;
       inscritos.push(...(data || []));
       if (!data || data.length < 1000) break;
     }
+    total = inscritos.length;
+  }
 
-    // Best-effort: a view é recente e a lista não pode deixar de abrir se ela
-    // faltar num ambiente sem a migration aplicada.
-    let porInscricao = new Map();
-    try {
-      const pagamentos = [];
-      for (let offset = 0; offset < 20000; offset += 1000) {
+  // Best-effort: a view é recente e a lista não pode deixar de abrir se ela
+  // faltar num ambiente sem a migration aplicada.
+  let porInscricao = new Map();
+  try {
+    const pagamentos = [];
+    if (limit > 0) {
+      // Página curta: busca só os pagamentos dos ids exibidos (`.in()` em
+      // lotes ≤200 — lista grande estoura a URL do PostgREST).
+      const ids = inscritos.map((i) => i.id);
+      for (let i = 0; i < ids.length; i += 200) {
         const { data, error } = await supabase.from('vw_insc_pagamento_estado')
           .select('inscricao_id, metodo, status_pagamento, valor_centavos, valor_pago_centavos, pago_em, parcelas_total, cartao_brand, cartao_last4')
-          .eq('evento_id', req.params.id)
-          .range(offset, offset + 999);
+          .in('inscricao_id', ids.slice(i, i + 200));
+        if (error) throw error;
+        pagamentos.push(...(data || []));
+      }
+    } else {
+      for (let off = 0; off < 20000; off += 1000) {
+        const { data, error } = await supabase.from('vw_insc_pagamento_estado')
+          .select('inscricao_id, metodo, status_pagamento, valor_centavos, valor_pago_centavos, pago_em, parcelas_total, cartao_brand, cartao_last4')
+          .eq('evento_id', eventoId)
+          .range(off, off + 999);
         if (error) throw error;
         pagamentos.push(...(data || []));
         if (!data || data.length < 1000) break;
       }
-      porInscricao = new Map(pagamentos.map((p) => [p.inscricao_id, p]));
-    } catch (e) {
-      console.error('[inscricoes] estado de pagamento indisponível:', e.message);
     }
+    porInscricao = new Map(pagamentos.map((p) => [p.inscricao_id, p]));
+  } catch (e) {
+    console.error('[inscricoes] estado de pagamento indisponível:', e.message);
+  }
 
-    res.json(inscritos.map((i) => ({ ...i, pagamento: porInscricao.get(i.id) || null })));
+  return {
+    itens: inscritos.map((i) => ({ ...i, pagamento: porInscricao.get(i.id) || null })),
+    total,
+  };
+}
+
+/**
+ * Contadores de um evento por COUNT no banco (`head: true` = não transfere
+ * linha nenhuma). É o que permite o app do staff mostrar o placar sem baixar a
+ * lista inteira — ler todas as linhas pra contar em JS anularia a paginação.
+ */
+async function contadoresEvento(eventoId) {
+  const base = () => supabase.from('inscricoes')
+    .select('id', { count: 'exact', head: true })
+    .eq('evento_id', eventoId).is('deleted_at', null);
+  const conta = async (q) => { const { count, error } = await q; if (error) throw error; return count || 0; };
+
+  const [inscritos, confirmadas, aguardando, canceladas] = await Promise.all([
+    conta(base()),
+    conta(base().eq('status', 'confirmada')),
+    conta(base().eq('status', 'recebida')),
+    conta(base().eq('status', 'cancelada')),
+  ]);
+
+  // insc_checkins não tem evento_id — filtra pelo embed !inner da inscrição.
+  let presentes = 0;
+  try {
+    presentes = await conta(supabase.from('insc_checkins')
+      .select('inscricao_id, inscricao:inscricoes!inner(evento_id)', { count: 'exact', head: true })
+      .eq('inscricao.evento_id', eventoId));
+  } catch (e) {
+    console.error('[inscricoes] contagem de check-in indisponível:', e.message);
+  }
+
+  // Arrecadado = soma dos pagamentos PAGOS (a view resolve o estado canônico).
+  // ⚠️ Isto é acompanhamento operacional, NÃO caixa: o caixa recebe 1 receita
+  // por REPASSE do PSP em `fin_transacoes` (lei nº 6 do núcleo de pagamentos).
+  let arrecadado_centavos = null;
+  try {
+    let soma = 0;
+    for (let off = 0; off < 20000; off += 1000) {
+      const { data, error } = await supabase.from('vw_insc_pagamento_estado')
+        .select('valor_pago_centavos')
+        .eq('evento_id', eventoId).eq('status_pagamento', 'pago')
+        .range(off, off + 999);
+      if (error) throw error;
+      for (const p of (data || [])) soma += Number(p.valor_pago_centavos || 0);
+      if (!data || data.length < 1000) break;
+    }
+    arrecadado_centavos = soma;
+  } catch (e) {
+    console.error('[inscricoes] arrecadação indisponível:', e.message);
+  }
+
+  return { inscritos, ativos: inscritos - canceladas, confirmadas, aguardando_pagamento: aguardando, canceladas, presentes, arrecadado_centavos };
+}
+
+// GET /eventos/:id/inscricoes — lista de inscritos (tela do sistema · completa).
+router.get('/eventos/:id/inscricoes', authorizeModule('inscricoes', 1), async (req, res) => {
+  try {
+    const { itens } = await lerInscritosDoEvento(req.params.id);
+    res.json(itens);
   } catch (e) {
     console.error('[inscricoes] inscricoes do evento:', e.message);
+    res.status(500).json({ error: 'Erro ao listar inscrições' });
+  }
+});
+
+// GET /eventos/:id/resumo — placar do evento (contadores + arrecadado).
+//
+// Separado da lista de propósito: a tela de gerenciamento abre o placar na hora
+// (4 COUNTs, nenhuma linha transferida) enquanto a lista carrega. E é o mesmo
+// endpoint que o app do staff usa pra acompanhar o evento pelo celular.
+router.get('/eventos/:id/resumo', authorizeModule('inscricoes', 1), async (req, res) => {
+  try {
+    const { data: ev, error } = await supabase.from('insc_eventos')
+      .select('id, nome, slug, data, hora, local, status, vagas, valor_centavos, pagamento_ativo, checkin_ativo, tem_sorteio')
+      .eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (error) throw error;
+    if (!ev) return res.status(404).json({ error: 'Evento não encontrado' });
+    res.json({ evento: ev, contadores: await contadoresEvento(req.params.id) });
+  } catch (e) {
+    console.error('[inscricoes] resumo do evento:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar o resumo do evento' });
+  }
+});
+
+// ── App do staff ──────────────────────────────────────────────────────────
+//
+// O app (React Native) consome as MESMAS regras — `lerInscritosDoEvento` e
+// `contadoresEvento` são os leitores compartilhados com a tela do sistema. O
+// que muda é a FORMA: página curta com busca e placar, porque no celular
+// baixar a lista inteira de um retiro é caro e ninguém rola 800 nomes.
+//
+// Nível 1 (leitura): acompanhar inscrição é ver, não operar.
+
+// GET /app/eventos — lista compacta pro app: o que está no ar agora primeiro.
+router.get('/app/eventos', authorizeModule('inscricoes', 1), async (req, res) => {
+  try {
+    let q = supabase.from('insc_eventos')
+      .select('id, nome, slug, area, data, hora, local, status, vagas, pagamento_ativo, valor_centavos, checkin_ativo, edicao_rotulo, inscritos:inscricoes(count)')
+      .is('deleted_at', null);
+    // Rascunho e arquivado ficam fora por padrão: o app é pra acompanhar o que
+    // está acontecendo, não pra ver esboço.
+    if (req.query.todos !== '1') q = q.in('status', ['publicado', 'encerrado']);
+    const { data, error } = await q.order('data', { ascending: false, nullsFirst: false }).limit(100);
+    if (error) throw error;
+    res.json((data || []).map((e) => ({ ...e, inscritos: e.inscritos?.[0]?.count ?? 0 })));
+  } catch (e) {
+    console.error('[inscricoes] app/eventos:', e.message);
+    res.status(500).json({ error: 'Erro ao listar eventos' });
+  }
+});
+
+// GET /app/eventos/:id/inscricoes?busca=&status=&limit=&offset=
+// Placar + página de inscritos. `total` é o total do FILTRO (o que a busca
+// achou), e vem do banco — contar o que veio na página diria 40 sempre.
+router.get('/app/eventos/:id/inscricoes', authorizeModule('inscricoes', 1), async (req, res) => {
+  try {
+    const limit = Math.min(Math.max(Number(req.query.limit) || 40, 1), 100);
+    const offset = Math.max(Number(req.query.offset) || 0, 0);
+    const status = STATUS_CANONICOS.includes(String(req.query.status)) ? String(req.query.status) : '';
+
+    const [lista, contadores] = await Promise.all([
+      lerInscritosDoEvento(req.params.id, { busca: req.query.busca || '', status, limit, offset }),
+      // Placar só na primeira página — rolar a lista não precisa recontar.
+      offset === 0 ? contadoresEvento(req.params.id) : Promise.resolve(null),
+    ]);
+
+    res.json({ itens: lista.itens, total: lista.total, limit, offset, contadores });
+  } catch (e) {
+    console.error('[inscricoes] app/inscricoes:', e.message);
     res.status(500).json({ error: 'Erro ao listar inscrições' });
   }
 });

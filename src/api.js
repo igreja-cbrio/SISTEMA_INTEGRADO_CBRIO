@@ -308,6 +308,9 @@ export const inscricoesApi = {
   listarEventos: () => get('/inscricoes/eventos'),
   evento: (id) => get(`/inscricoes/eventos/${id}`),
   inscricoesDoEvento: (id) => get(`/inscricoes/eventos/${id}/inscricoes`),
+  // Placar do evento (contadores por COUNT + arrecadado das inscrições pagas).
+  // Separado da lista: abre na hora e é o mesmo que o app do staff consome.
+  eventoResumo: (id) => get(`/inscricoes/eventos/${id}/resumo`),
   criarEvento: (data) => post('/inscricoes/eventos', data),
   atualizarEvento: (id, data) => put(`/inscricoes/eventos/${id}`, data),
   excluirEvento: (id) => del(`/inscricoes/eventos/${id}`),
@@ -349,6 +352,16 @@ export const eventoPublico = {
   // generoso vale (a tela faz polling e sob /api/public puro tomaria 429).
   pagamento: (token) => fetch(`${API}/public/evento/pagamento/${encodeURIComponent(token)}`)
     .then(async r => { const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j; }),
+  // A pessoa escolheu como pagar → o provedor PREPARA aquela forma e devolve o
+  // artefato real (QR do Pix, linha do boleto, checkout do cartão). Em erro do
+  // provedor o corpo traz `pagamento` com o estado atual, pra tela não regredir.
+  pagamentoMetodo: (token, metodo) => fetch(`${API}/public/evento/pagamento/${encodeURIComponent(token)}/metodo`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ metodo }),
+  }).then(async r => {
+    const j = await r.json();
+    if (!r.ok) { const e = new Error(j.error || 'Erro'); e.pagamento = j.pagamento || null; throw e; }
+    return j;
+  }),
   // Comprovante da inscrição (SPEC-06) — a URL do QR (/i/c/<token>) cai aqui
   comprovante: (token) => fetch(`${API}/public/evento/comprovante/${encodeURIComponent(token)}`)
     .then(async r => { const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j; }),

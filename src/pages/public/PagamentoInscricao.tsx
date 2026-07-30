@@ -58,6 +58,27 @@ const TEXTO: Record<string, { titulo: string; sub: string; cor: string }> = {
 
 const ABERTOS = ['criada', 'aguardando_pagamento', 'pago_parcial'];
 
+// Mobile-first de verdade: o inline style não faz media query, e esta é a tela
+// que a pessoa abre no celular (com uma mão, na fila, às vezes no 4G). Três
+// coisas mudam no telefone: sobra menos margem morta, o cabeçalho reserva o
+// canto do botão de tema (que é `position: fixed` e caía em cima do título) e
+// todo alvo de toque tem 48px.
+const CSS_MOBILE = `
+  .pgto-page { padding: 32px 16px; }
+  .pgto-card { padding: 28px 22px; }
+  .pgto-qr { width: 200px; height: 200px; }
+  .pgto-acao { min-height: 48px; }
+  @media (max-width: 560px) {
+    .pgto-page { padding: 16px 10px; }
+    .pgto-card { padding: 20px 14px; border-radius: 14px; }
+    /* O toggle de tema é fixed no canto: sem esta reserva ele deita sobre o
+       nome do evento e o título quando o cartão ocupa a largura toda. */
+    .pgto-head { padding-right: 46px; }
+    .pgto-qr { width: min(200px, 62vw); height: auto; aspect-ratio: 1; }
+  }
+`;
+
+
 const METODO_LABEL: Record<string, string> = { pix: 'Pix', cartao: 'Cartão', boleto: 'Boleto' };
 // Pix primeiro de propósito: cai na hora e é o que a maioria usa. Boleto por
 // último — leva dias úteis pra compensar.
@@ -96,6 +117,11 @@ export default function PagamentoInscricao() {
   // Guarda O QUE foi copiado (Pix ou boleto), pra dar retorno no botão certo.
   const [copiado, setCopiado] = useState('');
   const [metodoSel, setMetodoSel] = useState<string | null>(null);
+  // Formas já PREPARADAS no provedor nesta sessão — pedir a mesma duas vezes é
+  // desperdício (o artefato já está na resposta anterior).
+  const preparados = useRef<Set<string>>(new Set());
+  const [preparando, setPreparando] = useState<string | null>(null);
+  const [erroMetodo, setErroMetodo] = useState('');
   // Confete só uma vez, e só quando o SERVIDOR disse pago.
   const festejou = useRef(false);
 
@@ -172,18 +198,47 @@ export default function PagamentoInscricao() {
       .sort((a, b) => ORDEM_METODOS.indexOf(a) - ORDEM_METODOS.indexOf(b));
   }, [pag]);
 
-  // Pré-seleciona a primeira forma (Pix, quando há). Só uma vez — se a pessoa
-  // trocou de aba, o polling não deve arrastá-la de volta.
+  /**
+   * Escolher a forma NÃO é só trocar de aba: o servidor precisa preparar aquele
+   * meio no provedor (é o que faz o QR do Pix e a linha do boleto existirem).
+   * Sem isso a aba mostrava um caminho que a cobrança não tinha — foi o bug do
+   * "só aparece boleto" do 1º teste em sandbox.
+   */
+  const escolherMetodo = useCallback(async (m: string) => {
+    setMetodoSel(m);
+    setErroMetodo('');
+    if (preparados.current.has(m)) return;
+    setPreparando(m);
+    try {
+      const r = await eventoPublico.pagamentoMetodo(token, m);
+      preparados.current.add(m);
+      setPag(r);
+    } catch (e: any) {
+      // Estado atual vem no erro — a tela não regride pra vazio, e o caminho de
+      // reserva (checkout do provedor) continua visível.
+      if (e?.pagamento) setPag(e.pagamento);
+      setErroMetodo(e?.message || 'Não conseguimos preparar esta forma agora.');
+    } finally {
+      setPreparando(null);
+    }
+  }, [token]);
+
+  // Pré-seleciona a primeira forma (Pix, quando há) e já a prepara. Só uma vez —
+  // se a pessoa trocou de aba, o polling não deve arrastá-la de volta.
+  const preSelecionou = useRef(false);
   useEffect(() => {
-    if (!metodoSel && metodos.length) setMetodoSel(metodos[0]);
-  }, [metodos, metodoSel]);
+    if (preSelecionou.current || metodoSel || !metodos.length || !emAberto) return;
+    preSelecionou.current = true;
+    escolherMetodo(metodos[0]);
+  }, [metodos, metodoSel, emAberto, escolherMetodo]);
 
   return (
-    <div style={{ minHeight: '100dvh', background: C.pageBg, color: C.text, padding: '32px 16px', display: 'flex' }}>
+    <div className="pgto-page" style={{ minHeight: '100dvh', background: C.pageBg, color: C.text, display: 'flex' }}>
+      <style>{CSS_MOBILE}</style>
       <PublicThemeToggle />
-      <div style={{
+      <div className="pgto-card" style={{
         maxWidth: 520, width: '100%', margin: 'auto', background: C.card,
-        border: `1px solid ${C.cardBorder}`, borderRadius: 18, padding: '28px 22px',
+        border: `1px solid ${C.cardBorder}`, borderRadius: 18,
         backdropFilter: 'blur(12px)',
       }}>
         {carregando ? (
@@ -198,13 +253,15 @@ export default function PagamentoInscricao() {
           </>
         ) : pag && t ? (
           <>
-            {pag.evento_nome && (
-              <div style={{ fontSize: 12, color: C.text3, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                {pag.evento_nome}
-              </div>
-            )}
-            <h1 style={{ fontSize: 22, fontWeight: 800, margin: '4px 0 0', color: t.cor }}>{t.titulo}</h1>
-            <p style={{ fontSize: 14, color: C.text2, marginTop: 6 }}>{t.sub}</p>
+            <div className="pgto-head">
+              {pag.evento_nome && (
+                <div style={{ fontSize: 12, color: C.text3, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                  {pag.evento_nome}
+                </div>
+              )}
+              <h1 style={{ fontSize: 22, fontWeight: 800, margin: '4px 0 0', color: t.cor }}>{t.titulo}</h1>
+              <p style={{ fontSize: 14, color: C.text2, marginTop: 6 }}>{t.sub}</p>
+            </div>
 
             <div style={{
               marginTop: 16, padding: '12px 14px', borderRadius: 12,
@@ -249,12 +306,14 @@ export default function PagamentoInscricao() {
                 {metodos.length > 1 && (
                   <div style={{ display: 'flex', gap: 6, marginTop: 16 }}>
                     {metodos.map(m => (
-                      <button key={m} onClick={() => setMetodoSel(m)} style={{
-                        flex: 1, padding: '10px 8px', borderRadius: 10, cursor: 'pointer',
+                      <button key={m} onClick={() => escolherMetodo(m)} disabled={!!preparando} style={{
+                        flex: 1, minHeight: 44, padding: '10px 8px', borderRadius: 10,
+                        cursor: preparando ? 'progress' : 'pointer',
                         border: `1px solid ${metodoSel === m ? '#00B39D' : C.inputBorder}`,
                         background: metodoSel === m ? 'rgba(0,179,157,0.12)' : 'transparent',
                         color: metodoSel === m ? '#00B39D' : C.text2,
-                        fontSize: 14, fontWeight: metodoSel === m ? 700 : 500,
+                        fontSize: 15, fontWeight: metodoSel === m ? 700 : 500,
+                        opacity: preparando && preparando !== m ? 0.55 : 1,
                       }}>
                         {METODO_LABEL[m] || m}
                       </button>
@@ -262,17 +321,29 @@ export default function PagamentoInscricao() {
                   </div>
                 )}
 
+                {preparando && (
+                  <p style={{ fontSize: 13, color: C.text3, marginTop: 12, textAlign: 'center' }}>
+                    Preparando {METODO_LABEL[preparando] || preparando}…
+                  </p>
+                )}
+                {erroMetodo && !preparando && (
+                  <p style={{ fontSize: 13, color: '#ef4444', marginTop: 12 }}>
+                    {erroMetodo} Você pode escolher outra forma acima
+                    {pag.checkout_url ? ' ou concluir na página do provedor abaixo' : ''}.
+                  </p>
+                )}
+
                 {metodoSel === 'pix' && (
                   qr ? (
                     <div style={{ marginTop: 16, textAlign: 'center' }}>
-                      <img src={qr} alt="QR Code do Pix" style={{ width: 200, height: 200, borderRadius: 10, background: '#fff', padding: 8 }} />
+                      <img className="pgto-qr" src={qr} alt="QR Code do Pix" style={{ borderRadius: 10, background: '#fff', padding: 8 }} />
                       <p style={{ fontSize: 12.5, color: C.text3, margin: '10px 0 0' }}>
                         Abra o app do seu banco, escolha Pix e leia o código. Cai na hora.
                       </p>
                       <button onClick={() => copiar('pix', pag.pix_payload || '')} style={{
-                        display: 'block', margin: '10px auto 0', padding: '10px 18px', borderRadius: 999,
+                        display: 'block', margin: '10px auto 0', padding: '12px 18px', borderRadius: 999,
                         border: `1px solid ${C.inputBorder}`, background: 'transparent',
-                        color: C.text2, fontSize: 13, cursor: 'pointer',
+                        color: C.text2, fontSize: 14, cursor: 'pointer', minHeight: 48,
                       }}>
                         {copiado === 'pix' ? 'Código copiado!' : 'Copiar código Pix'}
                       </button>
@@ -284,7 +355,7 @@ export default function PagamentoInscricao() {
                       </p>
                       {pag.checkout_url && (
                         <a href={pag.checkout_url} style={{ textDecoration: 'none' }}>
-                          <button style={{
+                          <button className="pgto-acao" style={{
                             width: '100%', marginTop: 10, padding: '13px 18px', borderRadius: 999,
                             border: 'none', background: '#00B39D', color: '#fff',
                             fontSize: 15, fontWeight: 700, cursor: 'pointer',
@@ -310,7 +381,7 @@ export default function PagamentoInscricao() {
                     </p>
                     {pag.checkout_url && (
                       <a href={pag.checkout_url} style={{ textDecoration: 'none' }}>
-                        <button style={{
+                        <button className="pgto-acao" style={{
                           width: '100%', marginTop: 10, padding: '13px 18px', borderRadius: 999,
                           border: 'none', background: '#00B39D', color: '#fff',
                           fontSize: 15, fontWeight: 700, cursor: 'pointer',
@@ -339,9 +410,9 @@ export default function PagamentoInscricao() {
                           {pag.boleto_linha_digitavel}
                         </div>
                         <button onClick={() => copiar('boleto', pag.boleto_linha_digitavel || '')} style={{
-                          display: 'block', margin: '10px auto 0', padding: '10px 18px', borderRadius: 999,
+                          display: 'block', margin: '10px auto 0', padding: '12px 18px', borderRadius: 999,
                           border: `1px solid ${C.inputBorder}`, background: 'transparent',
-                          color: C.text2, fontSize: 13, cursor: 'pointer',
+                          color: C.text2, fontSize: 14, cursor: 'pointer', minHeight: 48,
                         }}>
                           {copiado === 'boleto' ? 'Linha copiada!' : 'Copiar linha digitável'}
                         </button>
@@ -349,7 +420,7 @@ export default function PagamentoInscricao() {
                     )}
                     {(pag.boleto_url || pag.checkout_url) && (
                       <a href={pag.boleto_url || pag.checkout_url || '#'} target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}>
-                        <button style={{
+                        <button className="pgto-acao" style={{
                           width: '100%', marginTop: 10, padding: '13px 18px', borderRadius: 999,
                           border: pag.boleto_linha_digitavel ? `1px solid ${C.inputBorder}` : 'none',
                           background: pag.boleto_linha_digitavel ? 'transparent' : '#00B39D',
@@ -373,7 +444,7 @@ export default function PagamentoInscricao() {
                 inscrever-se de novo — não reaproveitamos cobrança terminal. */}
             {!pag.pago && !emAberto && pag.evento_slug && (
               <Link to={`/evento/${pag.evento_slug}`} style={{ textDecoration: 'none' }}>
-                <button style={{
+                <button className="pgto-acao" style={{
                   width: '100%', marginTop: 16, padding: '12px 18px', borderRadius: 999,
                   border: `1px solid ${C.inputBorder}`, background: 'transparent',
                   color: C.text, fontSize: 14, fontWeight: 600, cursor: 'pointer',
