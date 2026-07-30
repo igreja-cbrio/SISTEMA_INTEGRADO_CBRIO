@@ -8,7 +8,20 @@ import { STATUS, METODOS, STATUS_VALIDOS } from '../../backend/services/pagament
 const A = asaas as any;
 const I = A._internos;
 
-afterEach(() => { vi.unstubAllEnvs(); });
+afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
+
+/**
+ * Rede DESLIGADA nos testes de guarda de ambiente.
+ *
+ * ⚠️ Sem isto, `criarCobranca` passa da guarda e faz uma chamada REAL ao
+ * sandbox do Asaas: o teste vira dependente de rede (flaky no gate de deploy,
+ * que bloqueia produção com teste vermelho) e bate em API de terceiro a cada
+ * deploy. O erro de rede é justamente o que o caso "preview aceita sandbox"
+ * espera — então stubar torna o teste determinístico E fiel ao que ele afirma.
+ */
+function semRede() {
+  vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('rede desligada no teste')));
+}
 
 // Payload no formato que o Asaas entrega. `payment` é o objeto da cobrança.
 function evento(tipo: string, payment: Record<string, unknown> = {}) {
@@ -58,6 +71,7 @@ describe('asaas · guarda de ambiente pela key', () => {
   // devolve uma promise que ninguém confere e o teste passa vazio.
   it('key de SANDBOX em produção lança', async () => {
     // O acidente que importa: o teste "passou" porque não cobrou nada.
+    semRede();
     vi.stubEnv('VERCEL_ENV', '');
     vi.stubEnv('NODE_ENV', 'production');
     vi.stubEnv('ASAAS_API_KEY', '$aact_hmlg_abc123');
@@ -69,6 +83,7 @@ describe('asaas · guarda de ambiente pela key', () => {
     // olhar VERCEL_ENV primeiro, a guarda barraria o sandbox exatamente no
     // ambiente onde ele precisa rodar. O erro esperado aqui é de REDE (a
     // chamada sai), nunca de ambiente.
+    semRede();
     vi.stubEnv('VERCEL_ENV', 'preview');
     vi.stubEnv('NODE_ENV', 'production');
     vi.stubEnv('ASAAS_API_KEY', '$aact_hmlg_abc123');
@@ -76,6 +91,7 @@ describe('asaas · guarda de ambiente pela key', () => {
   });
 
   it('PRODUCTION da Vercel recusa key de sandbox', async () => {
+    semRede();
     vi.stubEnv('VERCEL_ENV', 'production');
     vi.stubEnv('NODE_ENV', 'production');
     vi.stubEnv('ASAAS_API_KEY', '$aact_hmlg_abc123');
@@ -84,6 +100,7 @@ describe('asaas · guarda de ambiente pela key', () => {
 
   it('PREVIEW da Vercel recusa key de PRODUÇÃO', async () => {
     // O inverso, que é o acidente pior: preview cobrando dinheiro real.
+    semRede();
     vi.stubEnv('VERCEL_ENV', 'preview');
     vi.stubEnv('NODE_ENV', 'production');
     vi.stubEnv('ASAAS_API_KEY', '$aact_prod_abc123');

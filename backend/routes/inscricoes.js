@@ -715,7 +715,11 @@ router.get('/eventos/:id', authorizeModule('inscricoes', 1), async (req, res) =>
 // listas impressas por faixa/sexo) e `membro_id` (vínculo com o cadastro).
 // **CPF continua fora** — é o campo de identificação mais sensível e serve pro
 // matcher, não pra tela; quem precisa vê no detalhe da pessoa.
-const INSCRITOS_COLS = 'id, nome_completo, telefone, email, data_nascimento, sexo, membro_id, status, numero_sorte, whatsapp_optin, dados, created_at';
+const INSCRITOS_COLS = 'id, nome_completo, telefone, email, data_nascimento, sexo, membro_id, status, numero_sorte, whatsapp_optin, dados, created_at, '
+  // Bolsa/isenção (migration 20260730170000): quem paga menos ou nada, por quê
+  // e quem concedeu. Sem isto a lista mostraria "aguardando pagamento" pra quem
+  // foi de graça — que não está aguardando nada.
+  + 'valor_cobrado_centavos, bolsa_tipo, bolsa_motivo, bolsa_por_nome, bolsa_em';
 
 /**
  * Leitor ÚNICO da lista de inscritos de um evento — a tela do sistema (lista
@@ -864,6 +868,170 @@ router.get('/eventos/:id/inscricoes', authorizeModule('inscricoes', 1), async (r
   } catch (e) {
     console.error('[inscricoes] inscricoes do evento:', e.message);
     res.status(500).json({ error: 'Erro ao listar inscrições' });
+  }
+});
+
+/**
+ * POST /eventos/:id/inscricoes/:inscricaoId/bolsa — bolsa, desconto ou isenção.
+ *
+ * Pedido do Marcos (30/07): "tem pessoas que, para ajudarmos, cobramos menos ou
+ * até vão de graça". O preço passa a ser da INSCRIÇÃO (migration
+ * `20260730170000`) — o evento mantém o valor de tabela.
+ *
+ * ⚠️ O que este endpoint NÃO faz, por decisão:
+ *
+ *  • **não devolve dinheiro.** Bolsa em quem já pagou é registrada e avisada; a
+ *    devolução é decisão da liderança, com estorno explícito. Automatizar
+ *    saída de dinheiro a partir de um clique de cadastro é o tipo de coisa que
+ *    ninguém quer descobrir depois.
+ *  • **não cancela a inscrição.** A cobrança antiga morre (o valor mudou), mas
+ *    a pessoa mantém a vaga — daí o `preservar_dominio` no cancelamento.
+ *  • **não confirma quem ainda deve.** Isenta vira `confirmada`; desconto
+ *    parcial gera cobrança nova e continua `recebida` até pagar.
+ *
+ * Nível 3: conceder benefício é ato de gestão, não de leitura.
+ */
+router.post('/eventos/:id/inscricoes/:inscricaoId/bolsa', authorizeModule('inscricoes', 3), async (req, res) => {
+  try {
+    const tipo = String(req.body?.tipo || '').trim();
+    const motivo = String(req.body?.motivo || '').trim();
+    if (!['integral', 'parcial'].includes(tipo)) {
+      return res.status(400).json({ error: 'Tipo da bolsa deve ser "integral" (gratuidade) ou "parcial" (desconto).' });
+    }
+    if (motivo.length < 3) {
+      return res.status(400).json({ error: 'Diga o motivo da bolsa — é o que sustenta a decisão depois.' });
+    }
+
+    const { data: ev } = await supabase.from('insc_eventos')
+      .select('id, nome, slug, valor_centavos, pagamento_ativo, pagamento_expira_horas, parcelas_max, juros_repassados, pagamento_metodos')
+      .eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!ev) return res.status(404).json({ error: 'Evento não encontrado' });
+    if (!ev.pagamento_ativo) return res.status(400).json({ error: 'Este evento não é pago — não há o que descontar.' });
+
+    const { data: insc } = await supabase.from('inscricoes')
+      .select('id, nome_completo, telefone, email, cpf, status, membro_id, valor_cobrado_centavos')
+      .eq('id', req.params.inscricaoId).eq('evento_id', req.params.id)
+      .is('deleted_at', null).maybeSingle();
+    if (!insc) return res.status(404).json({ error: 'Inscrição não encontrada' });
+    if (insc.status === 'cancelada') {
+      return res.status(400).json({ error: 'Esta inscrição está cancelada. Reative antes de conceder a bolsa.' });
+    }
+
+    const tabela = Number(ev.valor_centavos || 0);
+    let valorCobrado = 0;
+    if (tipo === 'parcial') {
+      const reais = String(req.body?.valor ?? '').replace(',', '.');
+      valorCobrado = Math.round(Number(reais) * 100);
+      if (!(valorCobrado > 0)) return res.status(400).json({ error: 'Informe quanto esta pessoa vai pagar.' });
+      if (valorCobrado >= tabela) {
+        return res.status(400).json({ error: `Desconto tem que ser menor que o valor de tabela (R$ ${(tabela / 100).toFixed(2)}).` });
+      }
+    }
+
+    const pagamentos = require('../services/pagamentos');
+    const cobrancaAtual = await pagamentos.consultarPorReferencia(`inscricao:${insc.id}`)
+      .catch(() => null);
+
+    // Já pagou: registra a bolsa, mas dinheiro não volta por automação.
+    const jaPagou = !!cobrancaAtual && cobrancaAtual.valor_pago_centavos > 0;
+
+    const patch = {
+      valor_cobrado_centavos: valorCobrado,
+      bolsa_tipo: tipo,
+      bolsa_motivo: motivo,
+      bolsa_por: req.user?.id || null,
+      bolsa_por_nome: req.user?.name || req.user?.email || null,
+      bolsa_em: new Date().toISOString(),
+    };
+    // Isenta e ainda sem pagamento → a vaga está garantida, então confirma.
+    if (tipo === 'integral' && !jaPagou) patch.status = 'confirmada';
+
+    const { data: atualizada, error: eUp } = await supabase.from('inscricoes')
+      .update(patch).eq('id', insc.id).select('*').single();
+    if (eUp) throw eUp;
+
+    const avisos = [];
+    if (jaPagou) {
+      avisos.push('Esta pessoa já pagou. A bolsa ficou registrada, mas a devolução não é automática — decidam e façam o estorno.');
+    } else if (cobrancaAtual && ['criada', 'aguardando_pagamento'].includes(cobrancaAtual.status)) {
+      // Cobrança do valor antigo não serve mais. Cancela PRESERVANDO a
+      // inscrição (senão o handler cancelaria quem acabou de ganhar a vaga).
+      const r = await pagamentos.cancelar(cobrancaAtual.id, {
+        motivo: `Bolsa ${tipo} concedida — cobrança reemitida`, preservar_dominio: true,
+      });
+      if (!r.ok) avisos.push('Não conseguimos cancelar a cobrança anterior no provedor — confira antes de reenviar o link.');
+      // O espelho tem UNIQUE de inscrição ativa: sai de 'aguardando' pra a
+      // cobrança nova poder existir.
+      await supabase.from('insc_pagamentos').update({ status: 'expirado' })
+        .eq('cobranca_id', cobrancaAtual.id);
+    }
+
+    let novaCobranca = null;
+    if (tipo === 'parcial' && !jaPagou) {
+      // Cobrança nova, com referência versionada — `inscricao:<id>` já foi usada
+      // e é UNIQUE (é o que impede pagar duas vezes no fluxo normal).
+      const horas = Number(ev.pagamento_expira_horas) > 0 ? Number(ev.pagamento_expira_horas) : 48;
+      try {
+        const { cobranca } = await pagamentos.criarCobranca({
+          origem_tipo: pagamentos.ORIGENS.INSCRICAO,
+          origem_id: insc.id,
+          referencia: `inscricao:${insc.id}:bolsa:${Date.now()}`,
+          valor_centavos: valorCobrado,
+          descricao: `Inscrição (bolsa) · ${ev.nome}`,
+          metodos_ofertados: Array.isArray(ev.pagamento_metodos) ? ev.pagamento_metodos : [],
+          parcelas_max: ev.parcelas_max || null,
+          juros_repassados: ev.juros_repassados !== false,
+          expira_em: new Date(Date.now() + horas * 3600000).toISOString(),
+          pagador_nome: insc.nome_completo,
+          pagador_cpf: insc.cpf,
+          pagador_email: insc.email,
+          pagador_telefone: insc.telefone,
+          membro_id: insc.membro_id || null,
+          metadata: { evento_id: ev.id, evento_slug: ev.slug, evento_nome: ev.nome, bolsa: tipo },
+        });
+        novaCobranca = {
+          valor_centavos: cobranca.valor_centavos,
+          // Link que a equipe manda pra pessoa. É a MESMA página pública.
+          link: `${(process.env.FRONTEND_URL || 'https://cbrio.org').replace(/\/$/, '')}/pagamento/${cobranca.public_token}`,
+        };
+        await supabase.from('insc_pagamentos').insert({
+          inscricao_id: insc.id, cobranca_id: cobranca.id,
+          metodo: cobranca.metodo || 'pix', provider: 'psp',
+          provider_ref: cobranca.provider_cobranca_id || null,
+          valor_centavos: cobranca.valor_centavos, status: 'aguardando',
+          qr_payload: cobranca.pix_payload || null, expira_em: cobranca.expira_em || null,
+        });
+      } catch (e) {
+        console.error('[inscricoes] cobrança da bolsa:', e.message);
+        avisos.push('A bolsa foi registrada, mas não conseguimos emitir a cobrança nova agora. Tente reemitir em instantes.');
+      }
+    }
+
+    res.json({ ok: true, inscricao: atualizada, cobranca: novaCobranca, avisos });
+  } catch (e) {
+    console.error('[inscricoes] bolsa:', e.message);
+    res.status(500).json({ error: 'Erro ao registrar a bolsa' });
+  }
+});
+
+// DELETE /eventos/:id/inscricoes/:inscricaoId/bolsa — volta ao valor de tabela.
+// NÃO cria cobrança automaticamente: quem tira a bolsa precisa combinar o
+// pagamento com a pessoa, e emitir cobrança sem aviso é cobrar de surpresa.
+router.delete('/eventos/:id/inscricoes/:inscricaoId/bolsa', authorizeModule('inscricoes', 3), async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('inscricoes')
+      .update({
+        valor_cobrado_centavos: null, bolsa_tipo: null, bolsa_motivo: null,
+        bolsa_por: null, bolsa_por_nome: null, bolsa_em: null,
+      })
+      .eq('id', req.params.inscricaoId).eq('evento_id', req.params.id)
+      .is('deleted_at', null).select('*').maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Inscrição não encontrada' });
+    res.json({ ok: true, inscricao: data });
+  } catch (e) {
+    console.error('[inscricoes] remover bolsa:', e.message);
+    res.status(500).json({ error: 'Erro ao remover a bolsa' });
   }
 });
 

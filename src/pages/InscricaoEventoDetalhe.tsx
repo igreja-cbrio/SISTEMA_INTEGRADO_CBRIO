@@ -69,6 +69,8 @@ export default function InscricaoEventoDetalhe() {
     || !!modulePerms?.inscricoes?.pode_exportar;
   // Nível 2 da matriz = operar check-in (SPEC-08) — mesma régua da rota
   const podeCheckin = canAccessModule(['inscricoes'], 'leitura', 2);
+  // Nível 3 = editar/conceder (mesma régua do backend pra bolsa e correções).
+  const podeEditar = canAccessModule(['inscricoes'], 'leitura', 3);
   const [ev, setEv] = useState<any>(null);
   const [areas, setAreas] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -288,6 +290,8 @@ export default function InscricaoEventoDetalhe() {
         campos={ev.campos || []}
         premios={premiosGanhos(inscSel.id)}
         eventoId={ev.id}
+        evento={ev}
+        podeEditar={podeEditar}
         onSaved={(atualizada: any) => { setInscSel(atualizada); carregar(); }}
         onClose={() => setInscSel(null)}
       />
@@ -497,7 +501,21 @@ export default function InscricaoEventoDetalhe() {
                       {i.sexo && (
                         <span className="text-[11px] text-muted-foreground shrink-0">{sexoLabel(i.sexo)}</span>
                       )}
-                      {i.pagamento?.status_pagamento && (
+                      {/* Isenta não fica "aguardando pagamento" — não está
+                          aguardando nada. O selo diz o que aconteceu. */}
+                      {i.bolsa_tipo === 'integral' && (
+                        <span className="inline-flex items-center gap-1 rounded-full text-[11px] font-medium px-2 py-0.5 shrink-0 bg-primary/15 text-primary"
+                          title={i.bolsa_motivo || 'Bolsa integral'}>
+                          isenta
+                        </span>
+                      )}
+                      {i.bolsa_tipo === 'parcial' && (
+                        <span className="inline-flex items-center gap-1 rounded-full text-[11px] font-medium px-2 py-0.5 shrink-0 bg-primary/15 text-primary"
+                          title={i.bolsa_motivo || 'Bolsa parcial'}>
+                          bolsa
+                        </span>
+                      )}
+                      {i.bolsa_tipo !== 'integral' && i.pagamento?.status_pagamento && (
                         <span className={`inline-flex items-center gap-1 rounded-full text-[11px] font-medium px-2 py-0.5 shrink-0 ${PAG_BADGE[i.pagamento.status_pagamento] || 'bg-foreground/10 text-muted-foreground'}`}
                           title={i.pagamento.metodo ? `Forma: ${METODO_LABEL[i.pagamento.metodo] || i.pagamento.metodo}` : undefined}>
                           <CreditCard className="h-3 w-3" />
@@ -690,13 +708,119 @@ function RedeSocialEdit({ value, onChange }: { value: string; onChange: (v: stri
   );
 }
 
-function InscricaoDetalheDialog({ inscricao, campos, premios, eventoId, onSaved, onClose }: {
+/**
+ * Bolsa, desconto e gratuidade de UMA inscrição.
+ *
+ * Modal dentro de modal → z-index 1100 (convenção da casa; o Dialog padrão é
+ * 1000). O que a tela deixa explícito, porque é dinheiro:
+ *  • gratuidade confirma a inscrição na hora (a vaga já é dela);
+ *  • desconto emite cobrança NOVA e devolve o link pra equipe enviar;
+ *  • quem já pagou não recebe devolução automática — a tela diz isso.
+ */
+function BolsaDialog({ inscricao, evento, eventoId, onClose, onSaved }: {
+  inscricao: any; evento?: any; eventoId: string;
+  onClose: () => void; onSaved: (i: any) => void;
+}) {
+  const [tipo, setTipo] = useState<'integral' | 'parcial'>(inscricao.bolsa_tipo || 'integral');
+  const [valor, setValor] = useState(
+    inscricao.bolsa_tipo === 'parcial' && inscricao.valor_cobrado_centavos
+      ? String(inscricao.valor_cobrado_centavos / 100) : '');
+  const [motivo, setMotivo] = useState(inscricao.bolsa_motivo || '');
+  const [salvando, setSalvando] = useState(false);
+  const tabela = evento?.valor_centavos != null ? evento.valor_centavos / 100 : null;
+  const jaPagou = inscricao.pagamento?.status_pagamento === 'pago';
+
+  async function salvar() {
+    if (motivo.trim().length < 3) { toast.error('Diga o motivo da bolsa'); return; }
+    setSalvando(true);
+    try {
+      const r: any = await api.darBolsa(eventoId, inscricao.id, { tipo, valor, motivo: motivo.trim() });
+      (r.avisos || []).forEach((a: string) => toast.warning(a, { duration: 8000 }));
+      if (r.cobranca?.link) {
+        await navigator.clipboard.writeText(r.cobranca.link).catch(() => {});
+        toast.success('Bolsa registrada · link de pagamento copiado pra você enviar');
+      } else {
+        toast.success(tipo === 'integral' ? 'Inscrição isenta e confirmada' : 'Bolsa registrada');
+      }
+      onSaved({ ...inscricao, ...(r.inscricao || {}) });
+    } catch (e: any) { toast.error(e?.message || 'Erro ao registrar a bolsa'); } finally { setSalvando(false); }
+  }
+
+  async function remover() {
+    setSalvando(true);
+    try {
+      const r: any = await api.tirarBolsa(eventoId, inscricao.id);
+      toast.success('Bolsa removida — volta ao valor de tabela');
+      onSaved({ ...inscricao, ...(r.inscricao || {}) });
+    } catch (e: any) { toast.error(e?.message || 'Erro ao remover'); } finally { setSalvando(false); }
+  }
+
+  return (
+    <Dialog open onOpenChange={(v) => { if (!v) onClose(); }}>
+      <DialogContent className="sm:max-w-md z-[1100] flex flex-col max-h-[90vh]">
+        <DialogHeader><DialogTitle>Bolsa / isenção</DialogTitle></DialogHeader>
+        <div className="flex-1 overflow-y-auto min-h-0 space-y-3 text-sm">
+          <p className="text-muted-foreground">
+            {inscricao.nome_completo}
+            {tabela != null && <> · valor de tabela <b>R$ {tabela.toFixed(2).replace('.', ',')}</b></>}
+          </p>
+          {jaPagou && (
+            <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-amber-700 text-xs">
+              Esta pessoa já pagou. A bolsa fica registrada, mas a devolução não é automática —
+              decidam e façam o estorno.
+            </p>
+          )}
+          <div className="flex gap-2">
+            {(['integral', 'parcial'] as const).map(t => (
+              <button key={t} onClick={() => setTipo(t)}
+                className={`flex-1 rounded-md border px-3 py-2 text-sm ${tipo === t ? 'border-primary text-primary bg-primary/10 font-semibold' : 'border-border text-muted-foreground'}`}>
+                {t === 'integral' ? 'Vai de graça' : 'Paga menos'}
+              </button>
+            ))}
+          </div>
+          {tipo === 'parcial' && (
+            <div>
+              <label className="text-xs text-muted-foreground">Quanto esta pessoa vai pagar (R$)</label>
+              <Input value={valor} onChange={e => setValor(e.target.value)} placeholder="100,00" inputMode="decimal" />
+              <p className="text-[11px] text-muted-foreground mt-1">
+                Emite uma cobrança nova com este valor. A anterior é cancelada — a vaga continua dela.
+              </p>
+            </div>
+          )}
+          <div>
+            <label className="text-xs text-muted-foreground">Motivo (fica registrado com seu nome)</label>
+            <textarea value={motivo} onChange={e => setMotivo(e.target.value)} rows={2}
+              placeholder="Ex.: situação financeira conversada com a liderança"
+              className="w-full rounded-md border border-border bg-[var(--cbrio-input-bg)] px-2 py-1.5 text-sm" />
+          </div>
+        </div>
+        <div className="flex justify-between gap-2 pt-2">
+          {inscricao.bolsa_tipo ? (
+            <Button variant="ghost" size="sm" onClick={remover} disabled={salvando} className="text-red-600 hover:text-red-700">
+              Remover bolsa
+            </Button>
+          ) : <span />}
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={onClose} disabled={salvando}>Cancelar</Button>
+            <Button size="sm" onClick={salvar} disabled={salvando} className="bg-primary text-primary-foreground">
+              {salvando ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : null} Salvar
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function InscricaoDetalheDialog({ inscricao, campos, premios, eventoId, evento, podeEditar, onSaved, onClose }: {
   inscricao: any; campos: any[]; premios: any[]; eventoId: string;
+  evento?: any; podeEditar?: boolean;
   onSaved: (atualizada: any) => void; onClose: () => void;
 }) {
   const tel = String(inscricao.telefone || '').replace(/\D/g, '');
   const [editando, setEditando] = useState(false);
   const [salvando, setSalvando] = useState(false);
+  const [bolsaOpen, setBolsaOpen] = useState(false);
   const [form, setForm] = useState<{ nome_completo: string; telefone: string; email: string; dados: Record<string, string> }>({ nome_completo: '', telefone: '', email: '', dados: {} });
   const cancelada = inscricao.status === 'cancelada';
 
@@ -898,6 +1022,51 @@ function InscricaoDetalheDialog({ inscricao, campos, premios, eventoId, onSaved,
                     )}
                   </div>
                 </div>
+              )}
+
+              {/* Bolsa / isenção — só em evento pago. O preço é da INSCRIÇÃO;
+                  o evento guarda o valor de tabela. */}
+              {evento?.pagamento_ativo && (
+                <div className={`rounded-lg border p-2.5 ${inscricao.bolsa_tipo ? 'border-primary/40 bg-primary/5' : 'border-border'}`}>
+                  <div className="text-[11px] uppercase tracking-wide mb-1 flex items-center justify-between gap-2">
+                    <span className={inscricao.bolsa_tipo ? 'text-primary' : 'text-muted-foreground'}>
+                      {inscricao.bolsa_tipo ? (inscricao.bolsa_tipo === 'integral' ? 'Isenta (bolsa integral)' : 'Bolsa parcial') : 'Valor desta inscrição'}
+                    </span>
+                    {podeEditar && (
+                      <button onClick={() => setBolsaOpen(true)} className="text-primary hover:underline text-[11px] font-semibold normal-case">
+                        {inscricao.bolsa_tipo ? 'Alterar' : 'Dar bolsa / isentar'}
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+                    <span className="font-medium">
+                      {inscricao.valor_cobrado_centavos != null
+                        ? (inscricao.valor_cobrado_centavos === 0
+                          ? 'Gratuita'
+                          : `R$ ${(inscricao.valor_cobrado_centavos / 100).toFixed(2).replace('.', ',')}`)
+                        : (evento?.valor_centavos != null
+                          ? `R$ ${(evento.valor_centavos / 100).toFixed(2).replace('.', ',')} (valor de tabela)`
+                          : '—')}
+                    </span>
+                    {inscricao.bolsa_motivo && <span className="text-muted-foreground">· {inscricao.bolsa_motivo}</span>}
+                    {inscricao.bolsa_por_nome && (
+                      <span className="text-muted-foreground text-xs">
+                        concedida por {inscricao.bolsa_por_nome}
+                        {inscricao.bolsa_em ? ` em ${new Date(inscricao.bolsa_em).toLocaleDateString('pt-BR')}` : ''}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {bolsaOpen && (
+                <BolsaDialog
+                  inscricao={inscricao}
+                  evento={evento}
+                  eventoId={eventoId}
+                  onClose={() => setBolsaOpen(false)}
+                  onSaved={(atualizada: any) => { setBolsaOpen(false); onSaved(atualizada); }}
+                />
               )}
 
               {premios.length > 0 && (

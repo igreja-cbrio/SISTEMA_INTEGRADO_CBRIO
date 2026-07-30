@@ -276,7 +276,11 @@ async function aplicarStatus(cobranca, novoStatus, extra = {}) {
   if (!t.ok) return { aplicado: false, motivo: t.motivo, cobranca };
   if (t.noop) return { aplicado: false, noop: true, cobranca };
 
-  const patch = { status: novoStatus, ...extra };
+  // ⚠️ `ctx` é contexto pro handler de domínio, NÃO coluna: se entrar no patch,
+  // o PostgREST recusa o UPDATE inteiro por coluna inexistente (42703) e a
+  // transição não acontece. Tudo o que sobra em `extra` é coluna de verdade.
+  const { ctx, ...colunas } = extra;
+  const patch = { status: novoStatus, ...colunas };
   if (novoStatus === STATUS.PAGO && !cobranca.pago_em && !patch.pago_em) {
     patch.pago_em = new Date().toISOString();
   }
@@ -301,7 +305,7 @@ async function aplicarStatus(cobranca, novoStatus, extra = {}) {
     [STATUS.ESTORNADO_PARCIAL]: 'aoEstornar',
     [STATUS.CHARGEBACK]: 'aoEstornar',
   }[novoStatus];
-  if (gancho) await handlers.disparar(gancho, data, extra.ctx || {});
+  if (gancho) await handlers.disparar(gancho, data, ctx || {});
 
   return { aplicado: true, cobranca: data };
 }

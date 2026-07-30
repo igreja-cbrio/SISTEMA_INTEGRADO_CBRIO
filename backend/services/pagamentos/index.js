@@ -142,7 +142,15 @@ async function marcarPagoManual(cobrancaId, {
   return { ok: true, cobranca: r.cobranca, duplicado: r.duplicado };
 }
 
-async function cancelar(cobrancaId, { motivo } = {}) {
+/**
+ * Cancela uma cobrança em aberto.
+ *
+ * `preservar_dominio` é o que separa "a pessoa não pagou" de "nós reemitimos":
+ * ao conceder bolsa ou corrigir o valor, a cobrança antiga morre mas a
+ * inscrição CONTINUA — sem esse contexto, o handler cancelaria a inscrição de
+ * quem acabou de ganhar a gratuidade.
+ */
+async function cancelar(cobrancaId, { motivo, preservar_dominio = false } = {}) {
   const c = await cobrancas.porId(cobrancaId);
   if (!c) return { ok: false, motivo: 'cobrança não encontrada' };
   if (maquina.temDinheiro(c.status)) {
@@ -159,6 +167,7 @@ async function cancelar(cobrancaId, { motivo } = {}) {
   }
   const r = await cobrancas.aplicarStatus(c, STATUS.CANCELADA, {
     ultimo_erro: motivo ? String(motivo).slice(0, 500) : null,
+    ctx: { preservar_inscricao: !!preservar_dominio, motivo: motivo || null },
   });
   return { ok: r.aplicado, cobranca: r.cobranca, motivo: r.motivo };
 }

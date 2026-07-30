@@ -311,6 +311,10 @@ export const inscricoesApi = {
   // Placar do evento (contadores por COUNT + arrecadado das inscrições pagas).
   // Separado da lista: abre na hora e é o mesmo que o app do staff consome.
   eventoResumo: (id) => get(`/inscricoes/eventos/${id}/resumo`),
+  // Bolsa/isenção por inscrito: `tipo` integral (gratuidade) ou parcial
+  // (desconto, com `valor` em reais) + motivo obrigatório.
+  darBolsa: (eventoId, inscricaoId, data) => post(`/inscricoes/eventos/${eventoId}/inscricoes/${inscricaoId}/bolsa`, data),
+  tirarBolsa: (eventoId, inscricaoId) => del(`/inscricoes/eventos/${eventoId}/inscricoes/${inscricaoId}/bolsa`),
   criarEvento: (data) => post('/inscricoes/eventos', data),
   atualizarEvento: (id, data) => put(`/inscricoes/eventos/${id}`, data),
   excluirEvento: (id) => del(`/inscricoes/eventos/${id}`),

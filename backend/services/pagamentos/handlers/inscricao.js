@@ -128,16 +128,21 @@ async function aoPagarParcial(cobranca) {
 }
 
 /** Prazo venceu sem pagar → libera a vaga. */
-async function aoExpirar(cobranca) {
+async function aoExpirar(cobranca, ctx = {}) {
   await espelhar(cobranca);
+  // ⚠️ `preservar_inscricao` existe pra UM caso: a cobrança foi cancelada por
+  // DECISÃO NOSSA (bolsa/isenção concedida, valor corrigido), não porque a
+  // pessoa deixou de pagar. Sem isso, conceder gratuidade cancelaria a
+  // inscrição de quem acabou de ganhar a vaga — o oposto da intenção.
+  if (ctx.preservar_inscricao) return;
   const { error } = await supabase.from('inscricoes')
     .update({ status: 'cancelada' })
     .eq('id', cobranca.origem_id).eq('status', 'recebida');
   if (error) throw error;
 }
 
-async function aoCancelar(cobranca) {
-  await aoExpirar(cobranca);
+async function aoCancelar(cobranca, ctx = {}) {
+  await aoExpirar(cobranca, ctx);
 }
 
 /**
