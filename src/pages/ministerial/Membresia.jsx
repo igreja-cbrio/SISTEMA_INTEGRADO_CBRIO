@@ -840,6 +840,7 @@ export default function Membresia() {
   const [filterStatus, setFilterStatus] = useState('');
   const [filterPapel, setFilterPapel] = useState('');
   const [filterFaixa, setFilterFaixa] = useState('');
+  const [filterSemCpf, setFilterSemCpf] = useState(false);
   const [selectedMembro, setSelectedMembro] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [editMembro, setEditMembro] = useState(null);
@@ -979,6 +980,7 @@ export default function Membresia() {
       if (filterStatus) params.status = filterStatus;
       if (filterPapel) params.papel = filterPapel;
       if (filterFaixa) params.faixa = filterFaixa;
+      if (filterSemCpf) params.sem_cpf = '1';
       const m = await membresia.membros.list(Object.keys(params).length ? params : null);
       setMembros(m);
     } catch (e) {
@@ -987,7 +989,7 @@ export default function Membresia() {
       setLoading(false);
       setSearching(false);
     }
-  }, [busca, filterStatus, filterPapel, filterFaixa]);
+  }, [busca, filterStatus, filterPapel, filterFaixa, filterSemCpf]);
 
   // Card inteligente · título muda conforme o filtro ativo
   const filtroResumo = useMemo(() => {
@@ -995,9 +997,10 @@ export default function Membresia() {
     if (filterFaixa) partes.push(FAIXA_LABEL[filterFaixa] || filterFaixa);
     if (filterStatus) partes.push(STATUS_MAP[filterStatus]?.label || filterStatus);
     if (filterPapel) partes.push(PAPEL_LABEL[filterPapel] || filterPapel);
+    if (filterSemCpf) partes.push('Sem CPF');
     if (busca) partes.push(`"${busca.trim()}"`);
     return { ativo: partes.length > 0, titulo: partes.join(' · ') };
-  }, [filterFaixa, filterStatus, filterPapel, busca]);
+  }, [filterFaixa, filterStatus, filterPapel, filterSemCpf, busca]);
 
   // Clique nos cards de resumo · aplica o filtro correspondente (limpa os demais)
   // e rola até a lista. cfg=null = "Total de pessoas" (limpa tudo).
@@ -1006,6 +1009,7 @@ export default function Membresia() {
     setFilterFaixa('');
     setFilterStatus(cfg?.status || '');
     setFilterPapel(cfg?.papel || '');
+    setFilterSemCpf(!!cfg?.sem_cpf);
     requestAnimationFrame(() => {
       document.querySelector('[data-membros-lista]')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
@@ -1449,11 +1453,13 @@ export default function Membresia() {
         <TabsContent value="membros">
 
       {/* KPIs · clicáveis (filtram a lista abaixo) */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-7">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-7">
         <StatisticsCard title="Total de pessoas" value={kpis.total} icon={Users} iconColor="#00B39D"
           onClick={() => filtrarPorCard(null)} />
         <StatisticsCard title="Membros ativos" value={kpis.byStatus?.membro_ativo || 0} icon={Users} iconColor="#10b981"
           onClick={() => filtrarPorCard({ status: 'membro_ativo' })} />
+        <StatisticsCard title="CPF pendente" value={kpis.membros_sem_cpf || 0} icon={CreditCard} iconColor="#f59e0b"
+          onClick={() => filtrarPorCard({ status: 'membro_ativo', sem_cpf: true })} />
         <StatisticsCard title="Famílias" value={kpis.familias} icon={Home} iconColor="#f59e0b"
           onClick={() => filtrarPorCard({ papel: 'com_familia' })} />
         <StatisticsCard title="Contribuintes ativos" value={kpis.contribuintes_ativos || 0} icon={HandCoins} iconColor="#22c55e"
@@ -1471,7 +1477,7 @@ export default function Membresia() {
             </div>
           </div>
           <button
-            onClick={() => { setFilterStatus(''); setFilterPapel(''); setFilterFaixa(''); setBusca(''); }}
+            onClick={() => { setFilterStatus(''); setFilterPapel(''); setFilterFaixa(''); setFilterSemCpf(false); setBusca(''); }}
             style={{ fontSize: 13, fontWeight: 600, color: C.primary, background: 'transparent', border: `1px solid ${C.primary}`, borderRadius: 999, padding: '7px 16px', cursor: 'pointer' }}
           >
             Limpar filtros
@@ -1539,6 +1545,21 @@ export default function Membresia() {
             </SelectContent>
           </Select>
         </div>
+        <button
+          type="button"
+          onClick={() => setFilterSemCpf(v => !v)}
+          title="Mostrar só quem está sem CPF cadastrado"
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 8, padding: '0 16px', borderRadius: 8,
+            fontSize: 13, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap',
+            border: `1.5px solid ${filterSemCpf ? C.amber : 'var(--cbrio-border)'}`,
+            background: filterSemCpf ? C.amber : 'transparent',
+            color: filterSemCpf ? '#fff' : C.text2,
+          }}
+        >
+          <CreditCard style={{ width: 15, height: 15 }} />
+          Sem CPF
+        </button>
       </div>
 
       {/* Table */}
@@ -1586,7 +1607,10 @@ export default function Membresia() {
                   )}
                 </td>
                 <td style={{ padding: '14px 18px', borderBottom: `1px solid ${C.border}` }}>
-                  <Badge status={m.status} />
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <Badge status={m.status} />
+                    {!m.cpf && <span title="CPF não cadastrado" style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 9, padding: '2px 6px', borderRadius: 4, background: '#fef3c7', color: '#92400e', fontWeight: 700 }}><AlertCircle style={{ width: 10, height: 10 }} />SEM CPF</span>}
+                  </div>
                 </td>
                 <td style={{ padding: '14px 18px', borderBottom: `1px solid ${C.border}` }}>
                   <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', maxWidth: 200 }}>
@@ -1660,6 +1684,7 @@ export default function Membresia() {
                   <h2 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: 0 }}>{selectedMembro.nome}</h2>
                   <div style={{ display: 'flex', gap: 6, marginTop: 4, flexWrap: 'wrap', alignItems: 'center' }}>
                     <Badge status={selectedMembro.status} />
+                    {!selectedMembro.cpf && <span title="CPF não cadastrado" style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 10, padding: '2px 8px', borderRadius: 5, background: '#fef3c7', color: '#92400e', fontWeight: 700 }}><AlertCircle style={{ width: 11, height: 11 }} />CPF pendente</span>}
                     {(() => {
                       const dn = selectedMembro.data_nascimento;
                       if (!dn) return null;

@@ -420,6 +420,8 @@ router.get('/cpf-lookup/:cpf', authorizeModule('membros-totem', 1), async (req, 
 router.get('/membros', authorizeModule('membros', 1), async (req, res) => {
   try {
     const { status, busca, papel, faixa } = req.query;
+    // "Sem CPF": captação de dado — lista quem está sem CPF (todos são NULL).
+    const semCpf = req.query.sem_cpf === '1' || req.query.sem_cpf === 'true';
 
     // Builders do supabase-js são de uso único — recria por página.
     const montar = () => {
@@ -431,6 +433,7 @@ router.get('/membros', authorizeModule('membros', 1), async (req, res) => {
         .order('nome');
 
       if (status) query = query.eq('status', status);
+      if (semCpf) query = query.is('cpf', null);
       // Filtro por faixa etária (janela de data de nascimento ·
       // criança <13, adolescente 13-17, jovem 18-30, adulto 31+).
       if (faixa) {
@@ -3054,7 +3057,7 @@ router.get('/kpis', async (req, res) => {
     for (let from = 0; ; from += 1000) {
       const { data, error } = await supabase
         .from('mem_membros')
-        .select('id, status')
+        .select('id, status, cpf')
         .is('deleted_at', null)
         .eq('active', true)
         .range(from, from + 999);
@@ -3064,6 +3067,8 @@ router.get('/kpis', async (req, res) => {
     }
 
     const total = membros.length;
+    // Membros (status=membro_ativo) sem CPF cadastrado — meta de captação.
+    const membrosSemCpf = membros.filter(m => m.status === 'membro_ativo' && !m.cpf).length;
     const byStatus = {};
     membros.forEach(m => {
       byStatus[m.status] = (byStatus[m.status] || 0) + 1;
@@ -3097,6 +3102,7 @@ router.get('/kpis', async (req, res) => {
       byStatus,
       familias: familias || 0,
       contribuintes_ativos: contribuintesAtivos,
+      membros_sem_cpf: membrosSemCpf,
     });
   } catch (e) {
     console.error('[membresia/kpis]', e.message);
