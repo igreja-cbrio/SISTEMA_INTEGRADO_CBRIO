@@ -14,6 +14,8 @@ const { supabase } = require('../utils/supabase');
 const { escapePostgrestValue } = require('../utils/sanitize');
 const { verificarTokenComprovanteAtivo, extrairToken } = require('../services/inscricaoComprovante');
 const { portasSatelites, fontesUnificadas, catalogoPublico } = require('../services/inscricaoPortas');
+// Push pro app de membros quando um evento é publicado (broadcast).
+const { notificarApp } = require('../services/appPush');
 // CPF com DV pelo canônico do Contrato de Inscrição — NÃO recriar cópia local
 // (era assim que as réguas divergiam entre as portas).
 const { cpfValido } = require('../services/inscricaoContrato');
@@ -1884,6 +1886,25 @@ router.post('/eventos', authorizeModule('inscricoes', 3), async (req, res) => {
 });
 
 // PUT /eventos/:id — atualiza (whitelist; slug/série não mudam aqui)
+// Broadcast pro app de membros quando um evento entra em 'publicado': push +
+// histórico in-app (app_notificacoes). Audiência = todos os tokens do app.
+// Best-effort · lotes p/ não estourar payload. O tap abre /evento/<slug>.
+async function notificarNovoEventoApp(evento) {
+  if (!evento?.slug) return;
+  const { data: toks } = await supabase.from('app_push_tokens').select('user_id');
+  const userIds = [...new Set((toks || []).map((t) => t.user_id).filter(Boolean))];
+  if (!userIds.length) return;
+  const payload = {
+    tipo: 'inscricao_evento',
+    titulo: 'Inscrições abertas',
+    body: `${evento.nome} — inscreva-se pelo app`,
+    data: { tipo: 'inscricao_evento', slug: evento.slug, evento_id: evento.id },
+  };
+  for (let i = 0; i < userIds.length; i += 500) {
+    await notificarApp(userIds.slice(i, i + 500), payload);
+  }
+}
+
 router.put('/eventos/:id', authorizeModule('inscricoes', 3), async (req, res) => {
   try {
     const b = req.body || {};
@@ -1910,10 +1931,22 @@ router.put('/eventos/:id', authorizeModule('inscricoes', 3), async (req, res) =>
       }
       patch.status = b.status;
     }
+    // Detecta a transição p/ 'publicado' (só notifica o app quando ENTRA em
+    // publicado — republicar reabre; salvar já-publicado não redispara).
+    let statusAntes = null;
+    if (patch.status === 'publicado') {
+      const { data: atual } = await supabase.from('insc_eventos')
+        .select('status').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+      statusAntes = atual?.status || null;
+    }
     const { data, error } = await supabase.from('insc_eventos')
-      .update(patch).eq('id', req.params.id).is('deleted_at', null).select('id').single();
+      .update(patch).eq('id', req.params.id).is('deleted_at', null)
+      .select('id, nome, slug, status').single();
     if (error) throw error;
-    res.json(data);
+    if (data?.status === 'publicado' && statusAntes && statusAntes !== 'publicado') {
+      notificarNovoEventoApp(data).catch((e) => console.warn('[inscricoes] push evento publicado:', e.message));
+    }
+    res.json({ id: data.id });
   } catch (e) {
     console.error('[inscricoes] atualizar evento:', e.message);
     res.status(500).json({ error: 'Erro ao atualizar evento' });
