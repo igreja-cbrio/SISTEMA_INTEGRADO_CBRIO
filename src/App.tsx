@@ -265,6 +265,7 @@ const Motion = lazyWithRetry(() => import('./pages/public/Motion'));
 // Pública, standalone, fora de qualquer menu. Conteúdo entra depois.
 const NovoSite = lazyWithRetry(() => import('./pages/public/NovoSite'));
 const QuemSomos = lazyWithRetry(() => import('./pages/public/QuemSomos'));
+const Suporte = lazyWithRetry(() => import('./pages/public/Suporte'));
 // /atlas · atlas operacional do sistema (manual + auditoria) · standalone, autenticado, fora do menu.
 const Atlas = lazyWithRetry(() => import('./pages/atlas/Atlas'));
 const Voluntariado = lazyWithRetry(() => import('./pages/ministerial/voluntariado'));
@@ -535,6 +536,8 @@ function AppRoutes() {
       {/* Prévia interna do novo site (redesign cbrio.com.br) · não-listada */}
       <Route path="/novosite" element={<Suspense fallback={<Loading />}><NovoSite /></Suspense>} />
       <Route path="/novosite/quem-somos" element={<Suspense fallback={<Loading />}><QuemSomos /></Suspense>} />
+      {/* Página pública de suporte dos apps (Apple Guideline 1.5 · Support URL) */}
+      <Route path="/suporte" element={<Suspense fallback={<Loading />}><Suporte /></Suspense>} />
       <Route path="/nps/publica/:token" element={<Suspense fallback={<Loading />}><NpsPublica /></Suspense>} />
       {/* Retirada do Kids · QR aberto pelo link do WhatsApp · público, sem PII */}
       <Route path="/kids/retirada/:codigo" element={<Suspense fallback={<Loading />}><KidsRetirada /></Suspense>} />
@@ -743,6 +746,7 @@ function SitePublicoRoutes() {
       {/* caminhos antigos da prévia continuam funcionando */}
       <Route path="/novosite" element={<Navigate to="/" replace />} />
       <Route path="/novosite/quem-somos" element={<Navigate to="/quem-somos" replace />} />
+      <Route path="/suporte" element={<Suspense fallback={<Loading />}><Suporte /></Suspense>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
