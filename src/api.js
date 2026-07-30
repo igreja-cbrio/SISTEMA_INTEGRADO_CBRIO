@@ -256,6 +256,12 @@ export const propostas = {
   remover: (id) => del(`/propostas/${id}`),
   uploadAnexo: (id, file) => { const fd = new FormData(); fd.append('file', file); return requestFile(`/propostas/${id}/anexos`, fd); },
   removerAnexo: (anexoId) => del(`/propostas/anexos/${anexoId}`),
+  // Fase 2 · avaliação + mural
+  avaliarFila: (cicloId) => get('/propostas/avaliar' + (cicloId ? `?ciclo_id=${cicloId}` : '')),
+  avaliacao: (id) => get(`/propostas/${id}/avaliacao`),
+  salvarAvaliacao: (id, data) => post(`/propostas/${id}/avaliacao`, data),
+  mural: (cicloId) => get(`/propostas/mural?ciclo_id=${cicloId}`),
+  deliberar: (id, data) => post(`/propostas/${id}/deliberar`, data),
 };
 
 export const projects = {

@@ -1,7 +1,7 @@
 // Módulo Propostas · ciclo anual de projetos/eventos/rotinas.
 // Fase 1A: Configuração. Fase 1B: formulário, filas (líder/diretor), histórico
 // e máquina de estados até EM_AVALIACAO.
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, Fragment } from 'react';
 import { propostas } from '../api';
 import { useAuth } from '../contexts/AuthContext';
 import { Card, CardContent } from '@/components/ui/card';
@@ -27,8 +27,10 @@ const TABS = [
   { id: 'minhas', label: 'Minhas propostas' },
   { id: 'lider', label: 'Fila do líder' },
   { id: 'diretor', label: 'Fila do diretor' },
-  { id: 'config', label: 'Configuração' },
-];
+  { id: 'avaliar', label: 'Avaliar', diretor: true },
+  { id: 'mural', label: 'Mural da reunião', diretor: true },
+  { id: 'config', label: 'Configuração', admin: true },
+] as any[];
 
 export default function Propostas() {
   const { getAccessLevel } = useAuth() as any;
@@ -49,6 +51,7 @@ export default function Propostas() {
 
   if (!aux) return <div className="p-6 flex items-center gap-2 text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Carregando…</div>;
 
+  const souAvaliador = isAdmin || (aux.diretor_de?.length || 0) > 0;
   const irLista = () => setView({ modo: 'lista' });
 
   return (
@@ -67,7 +70,7 @@ export default function Propostas() {
       {view.modo === 'lista' && (
         <>
           <div className="flex items-center gap-2 flex-wrap border-b border-border">
-            {TABS.filter(t => t.id !== 'config' || isAdmin).map(t => (
+            {TABS.filter(t => (!t.admin || isAdmin) && (!t.diretor || souAvaliador)).map(t => (
               <button key={t.id} onClick={() => setTab(t.id)}
                 className={`px-3 py-2 text-sm font-medium border-b-2 -mb-px transition ${tab === t.id ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}>
                 {t.label}
@@ -81,6 +84,8 @@ export default function Propostas() {
             </div>
           </div>
           {tab === 'config' ? <ConfigTab isAdmin={isAdmin} /> :
+            tab === 'avaliar' ? <AvaliarTab cicloId={cicloId} /> :
+            tab === 'mural' ? <MuralTab cicloId={cicloId} /> :
             <ListaPropostas fila={tab} cicloId={cicloId} onAbrir={(id) => setView({ modo: 'detalhe', id })} />}
         </>
       )}
@@ -549,6 +554,178 @@ function AreasPanel({ isAdmin }: any) {
           <div className="min-w-[200px] flex-1"><Select value={diretorId || '__none__'} onValueChange={v => isAdmin && salvar(area.id, v === '__none__' ? null : v, ativa || true)} disabled={!isAdmin}><SelectTrigger className="h-8"><SelectValue placeholder="Diretor da área" /></SelectTrigger><SelectContent className="z-[1001]"><SelectItem value="__none__">— sem diretor —</SelectItem>{aux.diretores.map((d: any) => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}</SelectContent></Select></div>
           {isAdmin && <label className="flex items-center gap-1.5 text-xs shrink-0"><input type="checkbox" checked={ativa} onChange={e => salvar(area.id, diretorId || null, e.target.checked)} /> participa</label>}
         </div>); })}</div>
+    </div>
+  );
+}
+
+// ═══ Fase 2 · Avaliar ═════════════════════════════════════════════════════
+function AvaliarTab({ cicloId }: { cicloId: string }) {
+  const [data, setData] = useState<any>(null);
+  const [sel, setSel] = useState<string | null>(null);
+  const carregar = useCallback(() => { propostas.avaliarFila(cicloId).then(setData).catch((e: any) => toast.error(e?.message || 'Erro')); }, [cicloId]);
+  useEffect(() => { carregar(); }, [carregar]);
+  if (sel) return <AvaliacaoForm id={sel} onVoltar={() => { setSel(null); carregar(); }} />;
+  if (!data) return <div className="py-8 text-center text-muted-foreground text-sm"><Loader2 className="h-4 w-4 animate-spin inline mr-2" />Carregando…</div>;
+  return (
+    <div className="space-y-2 pt-3">
+      <p className="text-xs text-muted-foreground">{data.pendentes} proposta(s) faltando você avaliar.</p>
+      {data.propostas.length === 0 && <p className="py-6 text-center text-sm text-muted-foreground">Nenhuma proposta em avaliação neste ciclo.</p>}
+      {data.propostas.map((p: any) => (
+        <button key={p.id} onClick={() => setSel(p.id)} className="w-full text-left rounded-lg border border-border px-3 py-2.5 hover:border-primary/50 transition flex items-center gap-3">
+          <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
+          <div className="flex-1 min-w-0"><div className="text-sm font-medium truncate">{p.codigo ? `${p.codigo} · ` : ''}{p.titulo}</div><div className="text-xs text-muted-foreground capitalize">{p.tipo} · {p.area?.nome || 'sem área'} · líquido {money(p.custo_liquido)}</div></div>
+          <span className={`shrink-0 rounded px-2 py-0.5 text-[11px] font-semibold ${p.avaliei ? 'bg-emerald-500/15 text-emerald-600' : 'bg-amber-500/15 text-amber-600'}`}>{p.avaliei ? 'avaliada' : 'pendente'}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function AvaliacaoForm({ id, onVoltar }: { id: string; onVoltar: () => void }) {
+  const [p, setP] = useState<any>(null);
+  const [criterios, setCriterios] = useState<any[]>([]);
+  const [notas, setNotas] = useState<Record<string, number>>({});
+  const [coment, setComent] = useState('');
+  const [enviada, setEnviada] = useState(false);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    propostas.get(id).then(setP).catch(() => {});
+    propostas.avaliacao(id).then((a: any) => { setCriterios(a.criterios || []); setNotas(a.notas || {}); setComent(a.avaliacao?.comentario || ''); setEnviada(!!a.avaliacao?.enviada_em); }).catch(() => {});
+  }, [id]);
+  const salvar = async (enviar: boolean) => {
+    if (enviar && !coment.trim()) { toast.error('Comentário obrigatório para enviar'); return; }
+    setBusy(true);
+    try { const r = await propostas.salvarAvaliacao(id, { comentario: coment, notas, enviar }); if (r?.error) throw new Error(r.error); toast.success(enviar ? 'Avaliação enviada' : 'Rascunho salvo'); onVoltar(); }
+    catch (e: any) { toast.error(e?.message || 'Erro'); } finally { setBusy(false); }
+  };
+  if (!p) return <div className="py-8 text-center text-muted-foreground text-sm"><Loader2 className="h-4 w-4 animate-spin inline mr-2" />Carregando…</div>;
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2"><Button variant="ghost" size="sm" onClick={onVoltar}><ArrowLeft className="h-4 w-4 mr-1" /> Voltar</Button></div>
+      <Card><CardContent className="pt-5 space-y-1">
+        <div className="text-lg font-bold">{p.codigo ? `${p.codigo} · ` : ''}{p.titulo}</div>
+        <div className="text-xs text-muted-foreground capitalize">{p.tipo} · {p.area?.nome || 'sem área'} · líquido {money(p.custo_liquido)}</div>
+        {p.objetivo_geral && <div className="text-sm pt-1"><span className="text-muted-foreground">Objetivo: </span>{p.objetivo_geral}</div>}
+        {p.descricao_motivacao && <div className="text-sm"><span className="text-muted-foreground">Descrição: </span>{p.descricao_motivacao}</div>}
+      </CardContent></Card>
+
+      {enviada ? (
+        <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm text-emerald-700">Você já enviou esta avaliação — não pode ser editada (RN08).</div>
+      ) : (
+        <Card><CardContent className="pt-5 space-y-4">
+          <div className="text-sm font-semibold">Sua pontuação (0–5 por critério)</div>
+          {criterios.length === 0 && <p className="text-sm text-muted-foreground">Este ciclo não tem critérios cadastrados — cadastre em Configuração.</p>}
+          {criterios.map(c => (
+            <div key={c.id} className="space-y-1">
+              <div className="text-sm font-medium">{c.nome} <span className="text-xs text-muted-foreground">· peso {c.peso}</span></div>
+              {c.descricao && <div className="text-xs text-muted-foreground">{c.descricao}</div>}
+              <div className="flex gap-1.5">
+                {[0, 1, 2, 3, 4, 5].map(n => (
+                  <button key={n} onClick={() => setNotas({ ...notas, [c.id]: n })} className={`h-8 w-8 rounded-md border text-sm font-semibold transition ${notas[c.id] === n ? 'border-primary bg-primary text-primary-foreground' : 'border-border hover:border-primary/50'}`}>{n}</button>
+                ))}
+              </div>
+            </div>
+          ))}
+          <div><label className="text-xs text-muted-foreground">Comentário (obrigatório para enviar)</label><Textarea rows={3} value={coment} onChange={e => setComent(e.target.value)} /></div>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => salvar(false)} disabled={busy}><Save className="h-4 w-4 mr-1" /> Salvar rascunho</Button>
+            <Button size="sm" onClick={() => salvar(true)} disabled={busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Send className="h-4 w-4 mr-1" /> Enviar avaliação</>}</Button>
+          </div>
+        </CardContent></Card>
+      )}
+    </div>
+  );
+}
+
+// ═══ Fase 2 · Mural da reunião ════════════════════════════════════════════
+function MuralTab({ cicloId }: { cicloId: string }) {
+  const [d, setD] = useState<any>(null);
+  const [marcadas, setMarcadas] = useState<Set<string>>(new Set());
+  const [expand, setExpand] = useState<string | null>(null);
+  const [busy, setBusy] = useState('');
+  const carregar = useCallback(() => { propostas.mural(cicloId).then(setD).catch((e: any) => toast.error(e?.message || 'Erro')); }, [cicloId]);
+  useEffect(() => { carregar(); }, [carregar]);
+  if (!d) return <div className="py-8 text-center text-muted-foreground text-sm"><Loader2 className="h-4 w-4 animate-spin inline mr-2" />Carregando…</div>;
+
+  const soma = d.propostas.filter((p: any) => marcadas.has(p.id)).reduce((s: number, p: any) => s + Number(p.custo_liquido || 0), 0);
+  const saldo = Number(d.orcamento_disponivel || 0) - soma;
+  const toggle = (id: string) => setMarcadas(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const nota = (v: any) => v == null ? '—' : Number(v).toFixed(2);
+  const decidir = async (id: string, resultado: string) => {
+    let ressalvas: string | undefined, motivo: string | undefined;
+    if (resultado === 'aprovado_com_ressalvas') { ressalvas = window.prompt('Ressalvas (obrigatório):') || ''; if (!ressalvas.trim()) return; }
+    if (resultado === 'devolvido' || resultado === 'reprovado') { motivo = window.prompt('Motivo (obrigatório):') || ''; if (!motivo.trim()) return; }
+    setBusy(id);
+    try { const r = await propostas.deliberar(id, { resultado, ressalvas, motivo }); if (r?.ok === false) toast.error(r.motivo || 'Não permitido'); else { toast.success('Decisão registrada'); carregar(); } }
+    catch (e: any) { toast.error(e?.message || 'Erro'); } finally { setBusy(''); }
+  };
+  const exportCsv = () => {
+    const head = ['Pos', 'Codigo', 'Titulo', 'Area', 'Tipo', 'CustoLiquido', 'Classificacao', 'NotaOutros', 'NotaDiretorArea', 'Avaliadores', 'Complexidade', 'Impacto', 'Ourico', 'Estado'];
+    const rows = d.propostas.map((p: any) => [p.posicao ?? '', p.codigo ?? '', (p.titulo || '').replace(/;/g, ','), p.area || '', p.tipo, p.custo_liquido, p.classificacao_custo || '', p.nota_outros ?? '', p.nota_area ?? '', p.n_avaliadores, p.complexidade || '', p.impacto || '', p.passa_no_ourico ? 'sim' : 'nao', p.estado]);
+    const csv = [head, ...rows].map(r => r.join(';')).join('\n');
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `mural-propostas-${cicloId}.csv`; a.click();
+  };
+  const deliberavel = (e: string) => e === 'EM_AVALIACAO' || e === 'EM_DELIBERACAO';
+
+  return (
+    <div className="space-y-3 pt-3">
+      {/* faixa fixa de orçamento */}
+      <div className={`sticky top-2 z-10 rounded-lg border p-3 flex items-center gap-4 flex-wrap ${saldo < 0 ? 'border-red-500 bg-red-500/10' : 'border-primary/40 bg-primary/5'}`}>
+        <div><div className="text-[11px] text-muted-foreground uppercase">Orçamento</div><div className="font-bold">{money(d.orcamento_disponivel)}</div></div>
+        <div><div className="text-[11px] text-muted-foreground uppercase">Marcadas ({marcadas.size})</div><div className="font-bold">{money(soma)}</div></div>
+        <div><div className="text-[11px] text-muted-foreground uppercase">Saldo</div><div className={`font-bold ${saldo < 0 ? 'text-red-600' : ''}`}>{money(saldo)}</div></div>
+        {saldo < 0 && <div className="text-sm font-semibold text-red-600">⚠ Excedeu o orçamento</div>}
+        <Button variant="outline" size="sm" className="ml-auto" onClick={exportCsv}><FileText className="h-4 w-4 mr-1" /> Exportar CSV</Button>
+      </div>
+
+      {d.propostas.length === 0 && <p className="py-6 text-center text-sm text-muted-foreground">Nenhuma proposta em avaliação/deliberação neste ciclo.</p>}
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead><tr className="text-left text-xs text-muted-foreground border-b border-border">
+            <th className="p-2">#</th><th className="p-2">Proposta</th><th className="p-2">Área</th><th className="p-2 text-right">Líquido</th><th className="p-2">Classe</th>
+            <th className="p-2 text-right" title="Média dos diretores de outras áreas">Nota (outros)</th><th className="p-2 text-right" title="Nota do diretor da área proponente">Nota (área)</th><th className="p-2 text-center">Aval.</th>
+            <th className="p-2 text-center">Aprovar</th><th className="p-2">Decisão</th>
+          </tr></thead>
+          <tbody>
+            {d.propostas.map((p: any) => (
+              <Fragment key={p.id}>
+                <tr className="border-b border-border/50 align-top">
+                  <td className="p-2 font-semibold">{p.posicao ?? '—'}</td>
+                  <td className="p-2"><button onClick={() => setExpand(expand === p.id ? null : p.id)} className="text-left hover:text-primary"><div className="font-medium">{p.codigo}</div><div className="text-xs text-muted-foreground truncate max-w-[220px]">{p.titulo}</div></button>
+                    <span className={`inline-block mt-0.5 rounded px-1.5 py-0.5 text-[10px] font-semibold ${estadoCor(p.estado)}`}>{ESTADO_LABEL[p.estado] || p.estado}</span></td>
+                  <td className="p-2 text-xs">{p.area || '—'}</td>
+                  <td className="p-2 text-right tabular-nums">{money(p.custo_liquido)}</td>
+                  <td className="p-2 text-xs">{p.classificacao_custo === 'nao_classificado' ? '—' : p.classificacao_custo}</td>
+                  <td className="p-2 text-right tabular-nums">{p.quorum ? nota(p.nota_outros) : <span className="text-amber-600 text-xs">insuf.</span>}</td>
+                  <td className="p-2 text-right tabular-nums">{nota(p.nota_area)}</td>
+                  <td className="p-2 text-center">{p.n_avaliadores}</td>
+                  <td className="p-2 text-center"><input type="checkbox" checked={marcadas.has(p.id)} onChange={() => toggle(p.id)} /></td>
+                  <td className="p-2">
+                    {deliberavel(p.estado) ? (
+                      <div className="flex gap-1 flex-wrap">
+                        <button disabled={busy === p.id} onClick={() => decidir(p.id, 'aprovado')} className="text-[11px] px-1.5 py-0.5 rounded bg-emerald-600 text-white">Aprovar</button>
+                        <button disabled={busy === p.id} onClick={() => decidir(p.id, 'aprovado_com_ressalvas')} className="text-[11px] px-1.5 py-0.5 rounded border border-emerald-600 text-emerald-700">Ressalvas</button>
+                        <button disabled={busy === p.id} onClick={() => decidir(p.id, 'devolvido')} className="text-[11px] px-1.5 py-0.5 rounded border border-amber-500 text-amber-600">Devolver</button>
+                        <button disabled={busy === p.id} onClick={() => decidir(p.id, 'reprovado')} className="text-[11px] px-1.5 py-0.5 rounded border border-red-500 text-red-600">Reprovar</button>
+                      </div>
+                    ) : <span className="text-xs text-muted-foreground">decidida</span>}
+                  </td>
+                </tr>
+                {expand === p.id && (
+                  <tr className="border-b border-border/50 bg-muted/30"><td colSpan={10} className="p-3">
+                    <div className="text-xs font-semibold mb-1">Comentários dos avaliadores</div>
+                    {p.comentarios.length === 0 && <div className="text-xs text-muted-foreground">Nenhuma avaliação enviada ainda.</div>}
+                    {p.comentarios.map((c: any, i: number) => <div key={i} className="text-xs mb-1"><b>{c.diretor}</b> · nota {nota(c.nota)}{c.comentario ? ` — ${c.comentario}` : ''}</div>)}
+                  </td></tr>
+                )}
+              </Fragment>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-[11px] text-muted-foreground">Nota = média ponderada dos critérios (0–5). "Nota (outros)" exige quórum de {d.min_avaliadores} avaliadores. Marcar "Aprovar" só soma no orçamento acima; a decisão oficial é registrada nos botões de Decisão.</p>
     </div>
   );
 }
