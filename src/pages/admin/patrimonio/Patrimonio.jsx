@@ -267,6 +267,7 @@ export default function Patrimonio() {
           dash={dash}
           indicadores={indicadores}
           depreciacaoIndic={depreciacaoIndic}
+          localizacoes={localizacoes}
           onNavigate={(targetTab, status) => { setFiltroStatus(status || ''); setTab(targetTab); }}
           onNavigateFiltro={(f) => {
             setFiltroStatus(''); setFiltroCat(f.categoria_id || ''); setFiltroLoc(f.localizacao_id || '');
@@ -355,7 +356,7 @@ function PatStatCard({ label, value, bg, svg, onClick }) {
   );
 }
 
-function DashboardTab({ dash, indicadores, depreciacaoIndic, onNavigate, onNavigateFiltro, onAbrirBem }) {
+function DashboardTab({ dash, indicadores, depreciacaoIndic, localizacoes, onNavigate, onNavigateFiltro, onAbrirBem }) {
   if (!dash) return <div style={styles.empty}>Carregando dashboard...</div>;
   // Tab 1 = Bens; filtra por status quando aplicável
   const kpis = [
@@ -388,7 +389,32 @@ function DashboardTab({ dash, indicadores, depreciacaoIndic, onNavigate, onNavig
   const barrasCategoria = Object.entries(dash.porCategoria || {})
     .map(([name, value]) => ({ name, value, sem: SEM_LABELS.has(name) }))
     .sort((a, b) => b.value - a.value);
-  const barrasLocalizacao = Object.entries(dash.porLocalizacao || {})
+  // Agrupa pelo mesmo pai_id que o usuário já organizou em Categorias/
+  // Localizações (ex.: "CBKids" pai de "Sala 9/10/11") — em vez de 1 barra por
+  // sala final, soma tudo no nome do ancestral raiz. Localização sem
+  // correspondência na árvore (ou "Sem localização") mantém o próprio nome.
+  const raizPorNomeLocalizacao = useMemo(() => {
+    const lista = localizacoes || [];
+    const byId = new Map(lista.map(l => [l.id, l]));
+    const raizes = new Map();
+    for (const l of lista) {
+      let cur = l;
+      const visitados = new Set([cur.id]);
+      while (cur.pai_id && byId.has(cur.pai_id) && !visitados.has(cur.pai_id)) {
+        cur = byId.get(cur.pai_id);
+        visitados.add(cur.id);
+      }
+      raizes.set(l.nome, cur.nome);
+    }
+    return raizes;
+  }, [localizacoes]);
+  const barrasLocalizacao = Object.entries(
+    Object.entries(dash.porLocalizacao || {}).reduce((acc, [name, value]) => {
+      const raiz = raizPorNomeLocalizacao.get(name) || name;
+      acc[raiz] = (acc[raiz] || 0) + value;
+      return acc;
+    }, {})
+  )
     .map(([name, value]) => ({ name, value, sem: SEM_LABELS.has(name) }))
     .sort((a, b) => b.value - a.value);
 
@@ -530,22 +556,7 @@ function DashboardTab({ dash, indicadores, depreciacaoIndic, onNavigate, onNavig
       </div>
 
       {indicadores && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 24 }}>
-          <div style={styles.card}>
-            <div style={styles.cardHeader}><div style={styles.cardTitle}>Alto valor sem movimentação (365d+)</div></div>
-            <div style={{ padding: 16 }}>
-              {(indicadores.alto_valor_sem_movimentacao || []).map((b) => (
-                <div key={b.id} className="cbrio-row" style={{ cursor: 'pointer', display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: `1px solid ${C.border}` }} onClick={() => onAbrirBem(b.id)}>
-                  <div>
-                    <div style={{ fontSize: 13, fontWeight: 600 }}>{b.nome}</div>
-                    <div style={{ fontSize: 11, color: C.text3 }}>{b.localizacao_nome || 'Sem localização'} · {b.dias_sem_mover != null ? `${b.dias_sem_mover}d sem mover` : 'Nunca movimentado'}</div>
-                  </div>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: C.amber }}>{fmtMoney(b.valor_aquisicao)}</div>
-                </div>
-              ))}
-              {(!indicadores.alto_valor_sem_movimentacao || indicadores.alto_valor_sem_movimentacao.length === 0) && <div style={styles.empty}>Nenhum bem de alto valor parado</div>}
-            </div>
-          </div>
+        <div style={{ marginBottom: 24 }}>
           <div style={styles.card}>
             <div style={styles.cardHeader}><div style={styles.cardTitle}>Manutenção atrasada (30d+)</div></div>
             <div style={{ padding: 16 }}>
