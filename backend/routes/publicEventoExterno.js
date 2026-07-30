@@ -54,6 +54,20 @@ const uploadImg = multer({
   fileFilter: (_req, file, cb) => cb(null, MIME_IMG.includes(file.mimetype)),
 });
 
+// Comprovante de Pix/transferência (bucket PRIVADO). PDF entra além de imagem:
+// o app do banco costuma exportar comprovante como PDF, e recusá-lo empurraria
+// a pessoa pra tirar print do PDF — pior de ler pra quem confere.
+const MIME_COMPROVANTE = [...MIME_IMG, 'application/pdf'];
+const uploadComprovante = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => cb(null, MIME_COMPROVANTE.includes(file.mimetype)),
+});
+const EXT_COMPROVANTE = {
+  'application/pdf': 'pdf', 'image/png': 'png', 'image/jpeg': 'jpg',
+  'image/jpg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif',
+};
+
 // ── Fonte 1 · ESPINHA ──────────────────────────────────────────────────────
 // Rascunho/arquivado NÃO existem pro público (404); publicado/encerrado
 // aparecem (encerrado mostra "inscrições encerradas" em vez de sumir o link).
@@ -259,9 +273,32 @@ router.get('/textos', (_req, res) => {
 // resposta é pública (o token é o único segredo). Extraído porque o GET de
 // status e o POST da escolha de forma devolvem exatamente a mesma coisa: a tela
 // não deve ter dois entendimentos do que é o estado do pagamento.
+// Formas em que o dinheiro pode chegar SEM o PSP perceber (Pix pago na chave da
+// igreja, TED). Cartão e boleto não entram: ali o PSP é o único caminho e ele
+// confirma sozinho — pedir comprovante criaria trabalho humano inútil.
+const METODOS_COM_COMPROVANTE = ['pix', 'transferencia'];
+
+// Comprovantes que a PESSOA anexou nesta inscrição. Best-effort: se a tabela
+// ainda não existe (deploy em duas etapas), a tela de pagamento continua
+// funcionando sem o bloco de anexo em vez de dar 500.
+async function comprovantesDaInscricao(inscricaoId) {
+  if (!inscricaoId) return [];
+  try {
+    const { data, error } = await supabase.from('insc_comprovantes')
+      .select('id, status, metodo_declarado, arquivo_nome, created_at, motivo_recusa, revisado_em')
+      .eq('inscricao_id', inscricaoId).is('deleted_at', null)
+      .order('created_at', { ascending: false });
+    if (error) return [];
+    return data || [];
+  } catch { return []; }
+}
+
 async function respostaPagamento(cobranca) {
-  const comprovanteToken = (cobranca.status === 'pago' && cobranca.origem_tipo === 'inscricao')
-    ? await emitirTokenComprovante(cobranca.origem_id, 'pagamento') : null;
+  const daInscricao = cobranca.origem_tipo === 'inscricao' ? cobranca.origem_id : null;
+  const comprovanteToken = (cobranca.status === 'pago' && daInscricao)
+    ? await emitirTokenComprovante(daInscricao, 'pagamento') : null;
+  const comprovantes = daInscricao ? await comprovantesDaInscricao(daInscricao) : [];
+  const ofertados = Array.isArray(cobranca.metodos_ofertados) ? cobranca.metodos_ofertados : [];
   return {
     status: cobranca.status,
     pago: cobranca.status === 'pago',
@@ -272,7 +309,7 @@ async function respostaPagamento(cobranca) {
     // Quais formas a tela deve oferecer. Config do evento cruzada com a
     // capacidade do provider — não é PII. Sem isto a página teria que chutar
     // os três e poderia oferecer boleto num evento que não aceita boleto.
-    metodos: Array.isArray(cobranca.metodos_ofertados) ? cobranca.metodos_ofertados : [],
+    metodos: ofertados,
     parcelas_max: cobranca.parcelas_max || null,
     checkout_url: cobranca.checkout_url || null,
     pix_payload: cobranca.pix_payload || null,
@@ -286,8 +323,104 @@ async function respostaPagamento(cobranca) {
     // AQUI — a tela de sucesso do formulário já ficou pra trás quando a
     // pessoa foi pro checkout, e esta é a página que ela reabre.
     comprovante_token: comprovanteToken,
+
+    // ── Comprovante de Pix/transferência (fila humana) ──
+    // Só faz sentido oferecer enquanto NÃO está pago e em forma que pode ter
+    // sido paga fora do PSP. Já pago = não há o que conferir.
+    // ⚠️ `comprovantes` NÃO carrega `storage_path`: o bucket é privado e o path
+    // não é segredo — quem vê o arquivo é a equipe, por signed URL.
+    aceita_comprovante: cobranca.status !== 'pago' && (
+      cobranca.metodo
+        ? METODOS_COM_COMPROVANTE.includes(cobranca.metodo)
+        : (ofertados.length === 0 || ofertados.some(m => METODOS_COM_COMPROVANTE.includes(m)))
+    ),
+    comprovantes: comprovantes.map(c => ({
+      id: c.id, status: c.status, metodo_declarado: c.metodo_declarado,
+      arquivo_nome: c.arquivo_nome || null, enviado_em: c.created_at,
+      motivo_recusa: c.motivo_recusa || null,
+    })),
   };
 }
+
+/**
+ * POST /pagamento/:token/comprovante — a pessoa anexa o comprovante do Pix/TED.
+ *
+ * ⚠️ NÃO marca pagamento, em nenhuma circunstância. Cria uma linha
+ * `em_analise` e avisa a equipe. Quem baixa o pagamento é uma pessoa, na tela
+ * do evento, com autoria registrada. Aceitar imagem como prova automática é
+ * como se aprova comprovante falso — e o dinheiro não aparece na conciliação.
+ */
+router.post('/pagamento/:token/comprovante', uploadComprovante.single('arquivo'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'Envie uma imagem (JPG/PNG/WEBP) ou PDF de até 10 MB.' });
+    }
+    const cobranca = await pagamentos.consultarPorToken(req.params.token);
+    if (!cobranca) return res.status(404).json({ error: 'Cobrança não encontrada' });
+    if (cobranca.origem_tipo !== 'inscricao' || !cobranca.origem_id) {
+      return res.status(400).json({ error: 'Este pagamento não aceita comprovante.' });
+    }
+    // Já pago não tem o que conferir — e aceitar aqui geraria fila humana pra
+    // decidir sobre dinheiro que já entrou.
+    if (cobranca.status === 'pago') {
+      return res.status(409).json({ error: 'Este pagamento já está confirmado.', pagamento: await respostaPagamento(cobranca) });
+    }
+
+    const inscricaoId = cobranca.origem_id;
+    const metodo = METODOS_COM_COMPROVANTE.includes(String(req.body?.metodo_declarado || '').trim())
+      ? String(req.body.metodo_declarado).trim()
+      : (METODOS_COM_COMPROVANTE.includes(cobranca.metodo) ? cobranca.metodo : 'pix');
+
+    // Teto por inscrição: reenviar depois de recusa é o fluxo NORMAL, mas sem
+    // limite o endpoint público vira depósito de arquivo.
+    const jaEnviados = await comprovantesDaInscricao(inscricaoId);
+    if (jaEnviados.length >= 8) {
+      return res.status(429).json({ error: 'Muitos comprovantes enviados. Fale com a equipe pelo WhatsApp.' });
+    }
+
+    const ext = EXT_COMPROVANTE[req.file.mimetype] || 'bin';
+    const path = `${inscricaoId}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+    const up = await supabase.storage.from('inscricao-comprovantes')
+      .upload(path, req.file.buffer, { contentType: req.file.mimetype, upsert: false });
+    if (up.error) throw new Error(up.error.message);
+
+    const { data: linha, error } = await supabase.from('insc_comprovantes').insert({
+      inscricao_id: inscricaoId,
+      cobranca_id: cobranca.id,
+      metodo_declarado: metodo,
+      storage_path: path,
+      arquivo_nome: (req.file.originalname || '').slice(0, 200) || null,
+      arquivo_tipo: req.file.mimetype,
+      arquivo_bytes: req.file.size,
+      observacao: req.body?.observacao ? String(req.body.observacao).slice(0, 500) : null,
+    }).select('id').single();
+    if (error) {
+      // Arquivo órfão no bucket privado é lixo barato; linha sem arquivo seria
+      // uma fila apontando pra nada.
+      await supabase.storage.from('inscricao-comprovantes').remove([path]).catch(() => {});
+      throw new Error(error.message);
+    }
+
+    const { data: insc } = await supabase.from('inscricoes')
+      .select('nome_completo').eq('id', inscricaoId).maybeSingle();
+
+    notificar({
+      modulo: 'inscricoes',
+      tipo: 'comprovante_pagamento',
+      titulo: 'Comprovante de pagamento pra conferir',
+      // Diz explicitamente que NÃO foi baixado: quem lê a notificação não pode
+      // concluir que a pessoa já está paga na lista.
+      mensagem: `${insc?.nome_completo || 'Um inscrito'} anexou comprovante de ${metodo === 'pix' ? 'Pix' : 'transferência'}${cobranca.metadata?.evento_nome ? ` · ${cobranca.metadata.evento_nome}` : ''}. O pagamento NÃO foi baixado — confira e confirme na tela do evento.`,
+      link: cobranca.metadata?.evento_id ? `/inscricoes/evento/${cobranca.metadata.evento_id}` : '/inscricoes',
+      chaveDedup: `insc_comprovante_${linha.id}`,
+    }).catch((err) => console.error('[publicEvento] notificar comprovante:', err.message));
+
+    res.json({ ok: true, pagamento: await respostaPagamento(cobranca) });
+  } catch (e) {
+    console.error('[publicEvento] comprovante:', e.message);
+    res.status(500).json({ error: 'Não conseguimos anexar o comprovante agora. Tente novamente.' });
+  }
+});
 
 /**
  * POST /pagamento/:token/metodo — a pessoa escolheu como quer pagar.

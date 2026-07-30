@@ -803,10 +803,68 @@ async function lerInscritosDoEvento(eventoId, { busca = '', status = '', limit =
     console.error('[inscricoes] estado de pagamento indisponível:', e.message);
   }
 
+  // Comprovantes anexados pela pessoa (Pix/transferência). Só a CONTAGEM e o
+  // estado mais recente vão pra lista — o arquivo em si sai por signed URL no
+  // endpoint próprio. Best-effort pelo mesmo motivo do bloco acima.
+  const porComprovante = await comprovantesResumoPorInscricao(
+    eventoId, limit > 0 ? inscritos.map((i) => i.id) : null,
+  );
+
   return {
-    itens: inscritos.map((i) => ({ ...i, pagamento: porInscricao.get(i.id) || null })),
+    itens: inscritos.map((i) => ({
+      ...i,
+      pagamento: porInscricao.get(i.id) || null,
+      comprovantes: porComprovante.get(i.id) || null,
+    })),
     total,
   };
+}
+
+/**
+ * Resumo dos comprovantes por inscrição: `{ total, em_analise, ultimo_status }`.
+ *
+ * `ids = null` → todos do evento (filtro pelo embed `!inner`, uma consulta por
+ * página de 1000, em vez de N lotes de `.in()`). `ids` preenchido → só os
+ * exibidos (`.in()` em lotes ≤200, senão a URL do PostgREST estoura).
+ */
+async function comprovantesResumoPorInscricao(eventoId, ids) {
+  const mapa = new Map();
+  try {
+    const linhas = [];
+    if (Array.isArray(ids)) {
+      for (let i = 0; i < ids.length; i += 200) {
+        const { data, error } = await supabase.from('insc_comprovantes')
+          .select('inscricao_id, status, created_at')
+          .in('inscricao_id', ids.slice(i, i + 200)).is('deleted_at', null);
+        if (error) throw error;
+        linhas.push(...(data || []));
+      }
+    } else {
+      for (let off = 0; off < 20000; off += 1000) {
+        const { data, error } = await supabase.from('insc_comprovantes')
+          .select('inscricao_id, status, created_at, inscricoes!inner(evento_id)')
+          .eq('inscricoes.evento_id', eventoId).is('deleted_at', null)
+          .range(off, off + 999);
+        if (error) throw error;
+        linhas.push(...(data || []));
+        if (!data || data.length < 1000) break;
+      }
+    }
+    for (const l of linhas) {
+      const atual = mapa.get(l.inscricao_id)
+        || { total: 0, em_analise: 0, ultimo_status: null, ultimo_em: null };
+      atual.total += 1;
+      if (l.status === 'em_analise') atual.em_analise += 1;
+      if (!atual.ultimo_em || l.created_at > atual.ultimo_em) {
+        atual.ultimo_em = l.created_at;
+        atual.ultimo_status = l.status;
+      }
+      mapa.set(l.inscricao_id, atual);
+    }
+  } catch (e) {
+    console.error('[inscricoes] comprovantes indisponíveis:', e.message);
+  }
+  return mapa;
 }
 
 /**
@@ -881,10 +939,24 @@ async function contadoresEvento(eventoId) {
     console.error('[inscricoes] contagem de isentas indisponível:', e.message);
   }
 
+  // Comprovantes esperando conferência humana. É fila de TRABALHO: sem número
+  // visível, comprovante anexado no sábado só é visto quando alguém abre a
+  // ficha da pessoa por acaso.
+  let comprovantes_em_analise = 0;
+  try {
+    comprovantes_em_analise = await conta(supabase.from('insc_comprovantes')
+      .select('id, inscricoes!inner(evento_id)', { count: 'exact', head: true })
+      .eq('inscricoes.evento_id', eventoId).is('deleted_at', null)
+      .eq('status', 'em_analise'));
+  } catch (e) {
+    // Tabela nova (migration 20260730200000): ausência não quebra o placar.
+    console.error('[inscricoes] contagem de comprovantes indisponível:', e.message);
+  }
+
   return {
     inscritos, ativos: inscritos - canceladas, confirmadas,
     aguardando_pagamento: aguardando, canceladas, presentes,
-    arrecadado_centavos, por_metodo, isentas,
+    arrecadado_centavos, por_metodo, isentas, comprovantes_em_analise,
   };
 }
 
@@ -1062,6 +1134,140 @@ router.delete('/eventos/:id/inscricoes/:inscricaoId/bolsa', authorizeModule('ins
     res.status(500).json({ error: 'Erro ao remover a bolsa' });
   }
 });
+
+// ── Comprovantes de Pix/transferência (conferência HUMANA) ─────────────────
+//
+// ⚠️ LEI: imagem NUNCA marca pagamento. O que a pessoa anexa na página pública
+// entra como `em_analise`; baixar o pagamento é ato de uma pessoa da equipe,
+// registrado com autoria (`marcarPagoManual` exige `confirmado_por`). Ler print
+// de celular e concluir "pagou" é como se aprova comprovante falso — e o
+// dinheiro não aparece na conciliação do extrato depois.
+
+// Signed URL curta: o bucket é privado e o link não deve sobreviver ao print da
+// tela de quem conferiu.
+const COMPROVANTE_URL_SEGUNDOS = 900;
+
+async function carregarComprovantes(eventoId, inscricaoId) {
+  const { data, error } = await supabase.from('insc_comprovantes')
+    .select('*, inscricoes!inner(id, evento_id, nome_completo)')
+    .eq('inscricao_id', inscricaoId).eq('inscricoes.evento_id', eventoId)
+    .is('deleted_at', null).order('created_at', { ascending: false });
+  if (error) throw error;
+  const linhas = data || [];
+  // Assina em LOTE (1 chamada pra N arquivos · padrão do anexarFotosEmLote do
+  // Kids). Falha ao assinar degrada pra linha sem `url` — a conferência do
+  // histórico não pode derrubar a tela.
+  let urls = new Map();
+  if (linhas.length) {
+    try {
+      const { data: assinadas } = await supabase.storage.from('inscricao-comprovantes')
+        .createSignedUrls(linhas.map((l) => l.storage_path), COMPROVANTE_URL_SEGUNDOS);
+      urls = new Map((assinadas || []).map((a) => [a.path, a.signedUrl]));
+    } catch (e) {
+      console.error('[inscricoes] assinar comprovantes:', e.message);
+    }
+  }
+  return linhas.map((l) => {
+    // `storage_path` NÃO vai pra resposta: não é segredo e não serve pra nada no
+    // cliente (o bucket é privado) — só ampliaria a superfície.
+    const { storage_path, inscricoes, ...resto } = l;
+    return { ...resto, url: urls.get(storage_path) || null };
+  });
+}
+
+// GET /eventos/:id/inscricoes/:inscricaoId/comprovantes
+// Nível 1: VER o comprovante é parte de acompanhar o evento; confirmar é nível 3.
+router.get('/eventos/:id/inscricoes/:inscricaoId/comprovantes', authorizeModule('inscricoes', 1), async (req, res) => {
+  try {
+    res.json({ itens: await carregarComprovantes(req.params.id, req.params.inscricaoId) });
+  } catch (e) {
+    console.error('[inscricoes] comprovantes:', e.message);
+    // Tabela ausente (deploy em duas etapas) responde AVISO, não 500 — a ficha
+    // do inscrito continua abrindo.
+    if (/insc_comprovantes|does not exist|schema cache/i.test(e.message || '')) {
+      return res.json({ itens: [], aviso: 'Comprovantes indisponíveis: migration 20260730200000 pendente.' });
+    }
+    res.status(500).json({ error: 'Erro ao carregar os comprovantes' });
+  }
+});
+
+/**
+ * POST /eventos/:id/inscricoes/:inscricaoId/comprovantes/:comprovanteId/aceitar
+ *
+ * Aceitar = "conferi e o dinheiro entrou". Baixa o pagamento manualmente (fora
+ * do PSP, porque foi Pix na chave da igreja / TED) com autoria registrada.
+ */
+router.post('/eventos/:id/inscricoes/:inscricaoId/comprovantes/:comprovanteId/aceitar',
+  authorizeModule('inscricoes', 3), async (req, res) => {
+    try {
+      const { data: comp, error } = await supabase.from('insc_comprovantes')
+        .select('*, inscricoes!inner(id, evento_id)')
+        .eq('id', req.params.comprovanteId).eq('inscricao_id', req.params.inscricaoId)
+        .eq('inscricoes.evento_id', req.params.id).is('deleted_at', null).maybeSingle();
+      if (error) throw error;
+      if (!comp) return res.status(404).json({ error: 'Comprovante não encontrado' });
+
+      const pagamentos = require('../services/pagamentos');
+      const autor = req.user?.name || req.user?.email || req.user?.id || 'equipe';
+      let resultado = { semCobranca: true };
+
+      if (comp.cobranca_id) {
+        const r = await pagamentos.marcarPagoManual(comp.cobranca_id, {
+          confirmado_por: autor,
+          // Valor: o que falta na cobrança (o default do núcleo). Quem confere
+          // pode informar outro quando a pessoa pagou parcial.
+          valor_centavos: Number(req.body?.valor_centavos) > 0 ? Number(req.body.valor_centavos) : undefined,
+          metodo: comp.metodo_declarado,
+          observacao: `Comprovante ${comp.id} conferido por ${autor}`,
+        });
+        // `semMudanca` = já estava pago (webhook chegou no meio da conferência).
+        // Não é erro: o comprovante segue pra 'aceito' e ninguém paga duas vezes.
+        if (!r.ok) return res.status(409).json({ error: r.motivo || 'Não foi possível baixar o pagamento' });
+        resultado = { pago: true, ja_estava_pago: !!r.semMudanca };
+      }
+
+      const { data: atualizado, error: e2 } = await supabase.from('insc_comprovantes')
+        .update({
+          status: 'aceito', motivo_recusa: null,
+          revisado_por: req.user?.id || null, revisado_por_nome: autor,
+          revisado_em: new Date().toISOString(),
+        })
+        .eq('id', comp.id).select('id, status, revisado_em, revisado_por_nome').single();
+      if (e2) throw e2;
+
+      res.json({ ok: true, comprovante: atualizado, ...resultado });
+    } catch (e) {
+      console.error('[inscricoes] aceitar comprovante:', e.message);
+      res.status(500).json({ error: 'Erro ao aceitar o comprovante' });
+    }
+  });
+
+// POST .../comprovantes/:comprovanteId/recusar — motivo OBRIGATÓRIO (o CHECK do
+// banco também exige): a pessoa precisa saber o que corrigir pra reenviar, e
+// recusa sem motivo é decisão que ninguém explica depois.
+router.post('/eventos/:id/inscricoes/:inscricaoId/comprovantes/:comprovanteId/recusar',
+  authorizeModule('inscricoes', 3), async (req, res) => {
+    try {
+      const motivo = String(req.body?.motivo || '').trim();
+      if (motivo.length < 3) return res.status(400).json({ error: 'Diga o motivo da recusa (a pessoa vai ler pra corrigir).' });
+
+      const autor = req.user?.name || req.user?.email || req.user?.id || 'equipe';
+      const { data, error } = await supabase.from('insc_comprovantes')
+        .update({
+          status: 'recusado', motivo_recusa: motivo.slice(0, 500),
+          revisado_por: req.user?.id || null, revisado_por_nome: autor,
+          revisado_em: new Date().toISOString(),
+        })
+        .eq('id', req.params.comprovanteId).eq('inscricao_id', req.params.inscricaoId)
+        .is('deleted_at', null).select('id, status, motivo_recusa, revisado_em, revisado_por_nome').maybeSingle();
+      if (error) throw error;
+      if (!data) return res.status(404).json({ error: 'Comprovante não encontrado' });
+      res.json({ ok: true, comprovante: data });
+    } catch (e) {
+      console.error('[inscricoes] recusar comprovante:', e.message);
+      res.status(500).json({ error: 'Erro ao recusar o comprovante' });
+    }
+  });
 
 // GET /eventos/:id/resumo — placar do evento (contadores + arrecadado).
 //

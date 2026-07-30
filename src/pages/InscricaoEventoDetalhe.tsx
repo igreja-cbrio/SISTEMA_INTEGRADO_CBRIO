@@ -16,7 +16,7 @@ import {
   ArrowLeft, CalendarDays, Clock, MapPin, Users, Gift, Link2, MessageCircle,
   QrCode, Pencil, Trash2, Loader2, Search, ExternalLink, Ticket, Megaphone,
   ChevronDown, ChevronUp, ChevronsDownUp, ChevronsUpDown, Download, Repeat,
-  Printer, CreditCard, ScanLine,
+  Printer, CreditCard, ScanLine, Paperclip,
 } from 'lucide-react';
 import QrLinkDialog from '../components/QrLinkDialog';
 import { EventoModal } from './Inscricoes';
@@ -94,14 +94,22 @@ export default function InscricaoEventoDetalhe() {
   // é ele que responde "quanto já entrou de dinheiro".
   const [resumo, setResumo] = useState<any>(null);
 
-  function carregar() {
-    if (!id) return;
-    Promise.all([api.evento(id), api.inscricoesDoEvento(id)])
-      .then(([evento, inscritos]: any[]) => setEv({ ...evento, inscritos: Array.isArray(inscritos) ? inscritos : [] }))
-      .catch(() => toast.error('Erro ao carregar o evento'))
+  // Devolve a lista recarregada: quem confirma um pagamento dentro da ficha
+  // precisa que a MESMA ficha reflita o novo estado (senão a badge continuaria
+  // "aguardando" logo depois de confirmar, e isso se lê como bug).
+  function carregar(): Promise<any[] | null> {
+    if (!id) return Promise.resolve(null);
+    const p = Promise.all([api.evento(id), api.inscricoesDoEvento(id)])
+      .then(([evento, inscritos]: any[]) => {
+        const lista = Array.isArray(inscritos) ? inscritos : [];
+        setEv({ ...evento, inscritos: lista });
+        return lista;
+      })
+      .catch(() => { toast.error('Erro ao carregar o evento'); return null; })
       .finally(() => setLoading(false));
     // Best-effort e em paralelo: o placar não pode atrasar nem derrubar a tela.
     api.eventoResumo(id).then((r: any) => setResumo(r?.contadores || null)).catch(() => setResumo(null));
+    return p;
   }
   useEffect(() => { setLoading(true); carregar(); }, [id]);
   useEffect(() => { api.areas().then((a: any) => setAreas(Array.isArray(a) ? a : [])).catch(() => {}); }, []);
@@ -293,6 +301,13 @@ export default function InscricaoEventoDetalhe() {
         evento={ev}
         podeEditar={podeEditar}
         onSaved={(atualizada: any) => { setInscSel(atualizada); carregar(); }}
+        // Confirmou pagamento pelo comprovante: recarrega e re-seleciona a MESMA
+        // pessoa, pra badge de pagamento da ficha aberta refletir na hora.
+        onPago={async () => {
+          const lista = await carregar();
+          const fresca = lista?.find((i: any) => i.id === inscSel.id);
+          if (fresca) setInscSel(fresca);
+        }}
         onClose={() => setInscSel(null)}
       />
     )}
@@ -372,6 +387,12 @@ export default function InscricaoEventoDetalhe() {
           )}
           {ev.checkin_ativo && (
             <PlacarTile label="Presentes" valor={resumo.presentes} dica="Check-in feito na entrada" />
+          )}
+          {/* Fila de TRABALHO: sem número visível, comprovante anexado no sábado
+              só apareceria quando alguém abrisse a ficha da pessoa por acaso. */}
+          {ev.pagamento_ativo && resumo.comprovantes_em_analise > 0 && (
+            <PlacarTile label="Comprovantes pra conferir" valor={resumo.comprovantes_em_analise} cor="text-amber-600"
+              dica="Pix/transferência anexado pela pessoa · confira e confirme na ficha dela" />
           )}
         </div>
       )}
@@ -537,6 +558,14 @@ export default function InscricaoEventoDetalhe() {
                           <CreditCard className="h-3 w-3" />
                           {PAG_LABEL[i.pagamento.status_pagamento] || i.pagamento.status_pagamento}
                           {i.pagamento.metodo ? ` · ${METODO_LABEL[i.pagamento.metodo] || i.pagamento.metodo}` : ''}
+                        </span>
+                      )}
+                      {/* Comprovante anexado esperando conferência — o clipe é o
+                          que faz alguém abrir a ficha e conferir. */}
+                      {i.comprovantes?.em_analise > 0 && (
+                        <span className="inline-flex items-center gap-1 rounded-full text-[11px] font-medium px-2 py-0.5 shrink-0 bg-amber-500/15 text-amber-600"
+                          title="Comprovante de Pix/transferência aguardando conferência">
+                          <Paperclip className="h-3 w-3" /> comprovante
                         </span>
                       )}
                       {recolhido && respostas.length > 0 && (
@@ -828,10 +857,142 @@ function BolsaDialog({ inscricao, evento, eventoId, onClose, onSaved }: {
   );
 }
 
-function InscricaoDetalheDialog({ inscricao, campos, premios, eventoId, evento, podeEditar, onSaved, onClose }: {
+const COMPROVANTE_LABEL: Record<string, string> = {
+  em_analise: 'Em análise', aceito: 'Aceito', recusado: 'Recusado',
+};
+const COMPROVANTE_BADGE: Record<string, string> = {
+  em_analise: 'bg-amber-500/15 text-amber-600',
+  aceito: 'bg-emerald-500/15 text-emerald-600',
+  recusado: 'bg-rose-500/15 text-rose-600',
+};
+
+/**
+ * Comprovante de Pix/transferência que a PESSOA anexou na página de pagamento.
+ *
+ * ⚠️ Aceitar aqui é o que BAIXA o pagamento (manual, com autoria) — a imagem
+ * nunca fez isso sozinha. Por isso o botão diz "Confirmar pagamento", não
+ * "aceitar arquivo": quem clica está afirmando que conferiu que o dinheiro
+ * entrou na conta, e é o nome dele que fica no registro.
+ */
+function ComprovantesBloco({ eventoId, inscricao, podeEditar, onPago }: {
+  eventoId: string; inscricao: any; podeEditar?: boolean; onPago: () => void;
+}) {
+  const [itens, setItens] = useState<any[] | null>(null);
+  const [aviso, setAviso] = useState<string | null>(null);
+  const [agindo, setAgindo] = useState<string | null>(null);
+
+  async function carregar() {
+    try {
+      const r = await api.comprovantes(eventoId, inscricao.id);
+      setItens(r?.itens || []);
+      setAviso(r?.aviso || null);
+    } catch {
+      setItens([]);
+    }
+  }
+  useEffect(() => { carregar(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [inscricao.id]);
+
+  async function aceitar(c: any) {
+    if (!window.confirm('Confirmar que o dinheiro entrou na conta? Isso marca o pagamento como PAGO no seu nome.')) return;
+    setAgindo(c.id);
+    try {
+      const r = await api.aceitarComprovante(eventoId, inscricao.id, c.id);
+      toast.success(r?.ja_estava_pago ? 'Comprovante aceito (pagamento já constava pago)' : 'Pagamento confirmado');
+      await carregar();
+      onPago();
+    } catch (e: any) {
+      toast.error(e?.message || 'Erro ao confirmar');
+    } finally { setAgindo(null); }
+  }
+
+  async function recusar(c: any) {
+    // A pessoa LÊ este motivo na página de pagamento pra corrigir e reenviar —
+    // por isso é obrigatório, aqui e no banco.
+    const motivo = window.prompt('Por que está recusando? (a pessoa vai ler pra reenviar)');
+    if (!motivo || motivo.trim().length < 3) return;
+    setAgindo(c.id);
+    try {
+      await api.recusarComprovante(eventoId, inscricao.id, c.id, motivo.trim());
+      toast.success('Comprovante recusado');
+      await carregar();
+    } catch (e: any) {
+      toast.error(e?.message || 'Erro ao recusar');
+    } finally { setAgindo(null); }
+  }
+
+  if (itens === null) {
+    return (
+      <div className="rounded-lg border border-border p-2.5 text-xs text-muted-foreground flex items-center gap-2">
+        <Loader2 className="h-3 w-3 animate-spin" /> Carregando comprovantes…
+      </div>
+    );
+  }
+  if (aviso) return <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-2.5 text-xs text-amber-700">{aviso}</div>;
+  if (!itens.length) return null;
+
+  const pendentes = itens.filter((c) => c.status === 'em_analise').length;
+
+  return (
+    <div className={`rounded-lg border p-2.5 ${pendentes ? 'border-amber-500/40 bg-amber-500/5' : 'border-border'}`}>
+      <div className="text-[11px] uppercase tracking-wide mb-1.5 flex items-center gap-1 text-muted-foreground">
+        <Paperclip className="h-3 w-3" /> Comprovante anexado
+        {pendentes > 0 && <span className="text-amber-600 font-semibold normal-case">· {pendentes} pra conferir</span>}
+      </div>
+      <div className="space-y-2">
+        {itens.map((c) => (
+          <div key={c.id} className="rounded-md border border-border bg-card/50 p-2">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+              <span className={`rounded-full font-medium px-2 py-0.5 ${COMPROVANTE_BADGE[c.status] || 'bg-foreground/10'}`}>
+                {COMPROVANTE_LABEL[c.status] || c.status}
+              </span>
+              <span>{c.metodo_declarado === 'transferencia' ? 'Transferência' : 'Pix'}</span>
+              <span className="text-muted-foreground">
+                enviado em {new Date(c.created_at).toLocaleString('pt-BR')}
+              </span>
+              {/* Signed URL de 15 min (bucket privado). Abre em aba nova: PDF e
+                  imagem grande não caberiam legíveis dentro do modal. */}
+              {c.url && (
+                <a href={c.url} target="_blank" rel="noreferrer"
+                  className="text-primary hover:underline inline-flex items-center gap-1 font-medium">
+                  <ExternalLink className="h-3 w-3" /> Ver arquivo
+                </a>
+              )}
+            </div>
+            {c.observacao && <div className="text-xs text-muted-foreground mt-1">"{c.observacao}"</div>}
+            {c.status === 'recusado' && c.motivo_recusa && (
+              <div className="text-xs text-rose-600 mt-1">Recusado: {c.motivo_recusa}</div>
+            )}
+            {c.revisado_em && (
+              <div className="text-[11px] text-muted-foreground mt-1">
+                conferido por {c.revisado_por_nome || 'equipe'} em {new Date(c.revisado_em).toLocaleString('pt-BR')}
+              </div>
+            )}
+            {podeEditar && c.status === 'em_analise' && (
+              <div className="flex flex-wrap gap-2 mt-2">
+                <Button size="sm" className="h-7 text-xs" disabled={agindo === c.id} onClick={() => aceitar(c)}>
+                  {agindo === c.id ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Confirmar pagamento'}
+                </Button>
+                <Button size="sm" variant="outline" className="h-7 text-xs" disabled={agindo === c.id} onClick={() => recusar(c)}>
+                  Recusar
+                </Button>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      {podeEditar && pendentes > 0 && (
+        <div className="text-[11px] text-muted-foreground mt-2">
+          Confira o valor e a data no extrato antes de confirmar — o comprovante sozinho não baixa o pagamento.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function InscricaoDetalheDialog({ inscricao, campos, premios, eventoId, evento, podeEditar, onSaved, onPago, onClose }: {
   inscricao: any; campos: any[]; premios: any[]; eventoId: string;
   evento?: any; podeEditar?: boolean;
-  onSaved: (atualizada: any) => void; onClose: () => void;
+  onSaved: (atualizada: any) => void; onPago?: () => void; onClose: () => void;
 }) {
   const tel = String(inscricao.telefone || '').replace(/\D/g, '');
   const [editando, setEditando] = useState(false);
@@ -1038,6 +1199,17 @@ function InscricaoDetalheDialog({ inscricao, campos, premios, eventoId, evento, 
                     )}
                   </div>
                 </div>
+              )}
+
+              {/* Comprovante de Pix/transferência anexado pela pessoa. Só em
+                  evento pago — em evento gratuito não há o que comprovar. */}
+              {evento?.pagamento_ativo && (
+                <ComprovantesBloco
+                  eventoId={eventoId}
+                  inscricao={inscricao}
+                  podeEditar={podeEditar}
+                  onPago={() => onPago?.()}
+                />
               )}
 
               {/* Bolsa / isenção — só em evento pago. O preço é da INSCRIÇÃO;

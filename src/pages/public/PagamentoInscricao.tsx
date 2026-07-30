@@ -13,7 +13,7 @@
 // o fato de a pessoa ter voltado do checkout (voltar não é pagar).
 //
 // Acessada pelo `public_token`, nunca pelo uuid da cobrança.
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import QRCode from 'qrcode';
 import confetti from 'canvas-confetti';
@@ -38,6 +38,20 @@ interface Pagamento {
   evento_nome: string | null;
   evento_slug: string | null;
   comprovante_token: string | null;
+  // Anexo de comprovante (Pix/TED pago fora do provedor). `aceita_comprovante`
+  // vem do servidor: só é oferecido enquanto não está pago e em forma que pode
+  // ter sido paga por fora.
+  aceita_comprovante?: boolean;
+  comprovantes?: ComprovanteEnviado[] | null;
+}
+
+interface ComprovanteEnviado {
+  id: string;
+  status: 'em_analise' | 'aceito' | 'recusado' | string;
+  metodo_declarado: string;
+  arquivo_nome: string | null;
+  enviado_em: string;
+  motivo_recusa: string | null;
 }
 
 const brl = (c: number) => (Number(c || 0) / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -103,6 +117,127 @@ function ComprovanteCheckin({ token, corTexto }: { token: string; corTexto: stri
       <p style={{ fontSize: 12, color: corTexto, marginTop: 8, lineHeight: 1.5 }}>
         Apresente este QR na entrada do evento — ou abra <a href={url} style={{ color: '#00B39D', fontWeight: 600 }}>o comprovante</a> quando precisar.
       </p>
+    </div>
+  );
+}
+
+/**
+ * Anexar comprovante de Pix/transferência.
+ *
+ * ⚠️ Enquadramento é deliberado: NÃO é uma forma de pagar. É pra quem pagou e a
+ * página não reconheceu (Pix direto na chave da igreja, TED, ou uma entrega de
+ * webhook que se perdeu). Convidar todo mundo a "pagar e mandar print" criaria
+ * fila humana pra pagamento que o provedor confirmaria sozinho em segundos.
+ *
+ * E a tela NUNCA diz "pagamento confirmado" aqui: diz "em análise". Só o
+ * servidor, com `pago === true`, autoriza aquela frase.
+ */
+function AnexarComprovante({ token, pag, C, onEnviado }: {
+  token: string; pag: Pagamento; C: any; onEnviado: (p: Pagamento) => void;
+}) {
+  const [aberto, setAberto] = useState(false);
+  const [arquivo, setArquivo] = useState<File | null>(null);
+  const [observacao, setObservacao] = useState('');
+  const [enviando, setEnviando] = useState(false);
+  const [erro, setErro] = useState('');
+
+  const enviados = pag.comprovantes || [];
+  const emAnalise = enviados.find((c) => c.status === 'em_analise');
+  const recusado = !emAnalise && enviados.find((c) => c.status === 'recusado');
+
+  async function enviar() {
+    if (!arquivo) { setErro('Escolha o arquivo do comprovante.'); return; }
+    setEnviando(true); setErro('');
+    try {
+      const r = await eventoPublico.enviarComprovante(token, arquivo, {
+        metodo_declarado: pag.metodo === 'transferencia' ? 'transferencia' : 'pix',
+        observacao,
+      });
+      setArquivo(null); setObservacao(''); setAberto(false);
+      if (r?.pagamento) onEnviado(r.pagamento);
+    } catch (e: any) {
+      setErro(e?.message || 'Não conseguimos enviar agora. Tente novamente.');
+    } finally {
+      setEnviando(false);
+    }
+  }
+
+  const caixa: CSSProperties = {
+    marginTop: 16, padding: 14, borderRadius: 12,
+    border: `1px solid ${C.inputBorder}`, background: 'rgba(245,158,11,0.06)',
+  };
+
+  if (emAnalise) {
+    return (
+      <div style={caixa}>
+        <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 4 }}>Comprovante em análise</div>
+        <p style={{ fontSize: 13, color: C.textDim, margin: 0 }}>
+          Recebemos seu comprovante em {new Date(emAnalise.enviado_em).toLocaleString('pt-BR')}.
+          A equipe vai conferir e confirmar sua inscrição — <b>não precisa pagar de novo</b>.
+          Sua vaga segue reservada enquanto isso.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div style={caixa}>
+      {recusado && (
+        <p style={{ fontSize: 13, color: '#ef4444', margin: '0 0 8px' }}>
+          Seu comprovante anterior não pôde ser aceito: {recusado.motivo_recusa}
+        </p>
+      )}
+      {!aberto ? (
+        <button className="pgto-acao" onClick={() => setAberto(true)} style={{
+          width: '100%', padding: '12px 18px', borderRadius: 999,
+          border: `1px solid ${C.inputBorder}`, background: 'transparent',
+          color: C.text, fontSize: 14, fontWeight: 600, cursor: 'pointer',
+        }}>
+          {recusado ? 'Enviar outro comprovante' : 'Já paguei e a página não atualizou — enviar comprovante'}
+        </button>
+      ) : (
+        <>
+          <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 6 }}>Enviar comprovante</div>
+          <p style={{ fontSize: 12, color: C.textDim, marginTop: 0, marginBottom: 10 }}>
+            Imagem (JPG/PNG) ou PDF, até 10 MB. Uma pessoa da equipe confere e confirma —
+            o envio por si não confirma o pagamento.
+          </p>
+          <input
+            type="file"
+            accept="image/png,image/jpeg,image/webp,application/pdf"
+            onChange={(e) => { setArquivo(e.target.files?.[0] || null); setErro(''); }}
+            style={{ width: '100%', fontSize: 14, marginBottom: 10, color: C.text }}
+          />
+          <input
+            value={observacao}
+            onChange={(e) => setObservacao(e.target.value)}
+            placeholder="Observação (opcional) — ex.: paguei pela conta do meu pai"
+            maxLength={300}
+            style={{
+              width: '100%', boxSizing: 'border-box', padding: '10px 12px', borderRadius: 10,
+              border: `1px solid ${C.inputBorder}`, background: 'transparent', color: C.text,
+              // 16px evita o zoom automático do iOS ao focar o campo.
+              fontSize: 16, marginBottom: 10,
+            }}
+          />
+          {erro && <p style={{ fontSize: 13, color: '#ef4444', margin: '0 0 10px' }}>{erro}</p>}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="pgto-acao" disabled={enviando} onClick={enviar} style={{
+              flex: 1, padding: '12px 18px', borderRadius: 999, border: 'none',
+              background: '#00B39D', color: '#fff', fontSize: 15, fontWeight: 700,
+              cursor: enviando ? 'default' : 'pointer', opacity: enviando ? 0.7 : 1,
+            }}>
+              {enviando ? 'Enviando…' : 'Enviar comprovante'}
+            </button>
+            <button className="pgto-acao" onClick={() => { setAberto(false); setErro(''); }} style={{
+              padding: '12px 18px', borderRadius: 999, border: `1px solid ${C.inputBorder}`,
+              background: 'transparent', color: C.text, fontSize: 14, cursor: 'pointer',
+            }}>
+              Cancelar
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -437,6 +572,13 @@ export default function PagamentoInscricao() {
                 <p style={{ fontSize: 12, color: C.textDim, marginTop: 16, textAlign: 'center' }}>
                   Esta página se atualiza sozinha quando o pagamento cair. Pode deixá-la aberta.
                 </p>
+
+                {/* Rede de segurança nº 2: pagou fora do provedor (Pix na chave
+                    da igreja, TED) ou a entrega do webhook se perdeu. Vira fila
+                    humana — nunca marca pago sozinho. */}
+                {pag.aceita_comprovante && token && (
+                  <AnexarComprovante token={token} pag={pag} C={C} onEnviado={setPag} />
+                )}
               </>
             )}
 
