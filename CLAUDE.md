@@ -5507,6 +5507,49 @@ ganhou **backoff**: 6s nos 10 primeiros ciclos, depois 15s → 30s → teto de 6
 com o effect dependendo de **`statusAberto`** e não de `pag` — dependência em
 `pag` (que muda a cada poll) reiniciaria o backoff pra sempre.
 
+### ✅ 3 formas validadas em sandbox · e a tela não troca a forma sozinha (2026-07-30 · SEM migration)
+
+Com as formas habilitadas na conta sandbox (Marcos, 30/07), o teste passou nas
+**três**: Pix devolve QR, boleto devolve linha digitável e cartão abre a fatura do
+Asaas com o formulário de crédito/débito.
+
+⚠️ **Não era regressão** o print de "cliquei em cartão e a fatura não oferece
+cartão": era uma **aba antiga da fatura**, aberta quando a cobrança ainda estava em
+boleto/UNDEFINED. `invoiceUrl` é a mesma URL a cada troca de método, então uma aba
+esquecida mostra o estado velho. Ao aplicar `CREDIT_CARD`, a fatura mostra cartão.
+Régua de diagnóstico: o campo **FORMA** da nossa tela é o que o servidor gravou —
+se ele diz `cartao`, o Asaas confirmou o `billingType` (senão a guarda de 30/07
+teria lançado). Conferir a fatura sempre reabrindo pelo botão, nunca por aba velha.
+
+**Bug corrigido na mesma leva — a pré-seleção reescrevia a forma da cobrança.** O
+`useEffect` de pré-seleção olhava só `metodoSel` (estado local, nulo em TODO
+carregamento) e sempre pré-selecionava `metodos[0]` = Pix, chamando `escolherMetodo`
+→ `POST /metodo` → forma reescrita no provedor. Efeito real: quem escolhia **cartão
+em 6×**, saía pra pagar e voltava pra conferir tinha a cobrança **convertida em
+Pix**, e o `installmentCount: null` que Pix/boleto mandam **desfazia o
+parcelamento**. Na tela aparecia como aba "Pix" com QR sobre um campo FORMA dizendo
+"cartao" — a mesma "duas verdades" que o fix do `catch` havia resolvido só no
+caminho de erro. Agora: **a forma muda SÓ quando a pessoa troca**; o carregamento
+pré-seleciona `pag.metodo` quando ele está entre os métodos oferecidos, semeando
+`preparados` com a MESMA chave do `escolherMetodo` (`cartao:<n>`) pra não disparar
+POST redundante, e alinha `parcelasSel` com `pag.parcelas` (senão o seletor exibiria
+"1×" numa cobrança em 6×). Cai em `metodos[0]` só quando a cobrança ainda não tem
+forma.
+
+⚠️ **Armadilha de CSS que vai reaparecer**: `textAlign: 'center'` no container **não
+centraliza `<img>`** neste projeto — o `@tailwind base` aplica o preflight, que faz
+`img { display: block }`, e sem `margin auto` a imagem encosta à esquerda enquanto o
+texto ao redor fica centralizado (foi o QR do Pix). `.pgto-qr` ganhou
+`display: block; margin-inline: auto`.
+
+**Apple Pay / Google Pay NÃO existem na fatura do Asaas** (verificado no produto em
+30/07): as formas da fatura são Boleto · Pix · Cartão de Crédito · Cartão de Débito,
+e cartão é formulário de PAN/titular/validade/CVV. O que o Asaas divulga como
+Apple/Google/Samsung Pay é o **app maquininha por aproximação (NFC / Tap on
+Phone)** — presencial. Carteira digital no checkout web exigiria outro gateway; não
+é ajuste de tela. (No Safari o autofill do cartão da Apple Wallet preenche o campo
+com Face ID — ajuda a digitar, mas não é Apple Pay.)
+
 **Estado do teste (2026-07-30):** conta Asaas no CNPJ da igreja criada e **"Em
 análise"** (produção não recebe); volume do lançamento **já avisado por escrito**
 ao Asaas. Teste vai em **preview + sandbox**, com as envs no escopo **Preview

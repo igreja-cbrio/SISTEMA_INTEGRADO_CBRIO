@@ -80,7 +80,11 @@ const ABERTOS = ['criada', 'aguardando_pagamento', 'pago_parcial'];
 const CSS_MOBILE = `
   .pgto-page { padding: 32px 16px; }
   .pgto-card { padding: 28px 22px; }
-  .pgto-qr { width: 200px; height: 200px; }
+  /* ⚠️ display+margin, não só o textAlign do pai: o preflight do Tailwind
+     (@tailwind base) faz \`img { display: block }\`, então a imagem deixa de ser
+     inline e o \`text-align: center\` do container NÃO a centraliza — ela encosta
+     na esquerda enquanto o texto ao redor fica centralizado. */
+  .pgto-qr { width: 200px; height: 200px; display: block; margin-inline: auto; }
   .pgto-acao { min-height: 48px; }
   @media (max-width: 560px) {
     .pgto-page { padding: 16px 10px; }
@@ -413,14 +417,36 @@ export default function PagamentoInscricao() {
     }
   }, [token]);
 
-  // Pré-seleciona a primeira forma (Pix, quando há) e já a prepara. Só uma vez —
-  // se a pessoa trocou de aba, o polling não deve arrastá-la de volta.
+  // Pré-seleciona a forma que o servidor JÁ confirmou; só cai na primeira da lista
+  // (Pix) quando a cobrança ainda não tem forma. Uma vez só — se a pessoa trocou de
+  // aba, o polling não deve arrastá-la de volta.
   const preSelecionou = useRef(false);
   useEffect(() => {
     if (preSelecionou.current || metodoSel || !metodos.length || !emAberto) return;
     preSelecionou.current = true;
+
+    /**
+     * ⚠️ A forma da cobrança muda SÓ quando a pessoa troca — nunca no
+     * carregamento. Antes daqui, todo load pré-selecionava `metodos[0]` (Pix) e
+     * chamava `escolherMetodo`, que faz `POST /metodo` e REESCREVE a forma no
+     * provedor: quem escolhia cartão em 6x, saía pra pagar e voltava pra conferir
+     * tinha a cobrança convertida em Pix — e o `installmentCount: null` que
+     * Pix/boleto mandam desfazia o parcelamento. Na tela isso aparecia como aba
+     * "Pix" com QR sobre um campo FORMA dizendo "cartao": duas verdades juntas.
+     */
+    const jaEscolhida = pag?.metodo && metodos.includes(pag.metodo) ? pag.metodo : null;
+    if (jaEscolhida) {
+      const parcelas = jaEscolhida === 'cartao' ? (pag?.parcelas || 1) : 1;
+      // Sem isto o seletor exibiria "1x" numa cobrança que está em 6x.
+      if (jaEscolhida === 'cartao') setParcelasSel(parcelas);
+      // Já está preparada no provedor (o artefato veio no payload), então semear o
+      // cache com a MESMA chave do `escolherMetodo` evita um POST redundante.
+      preparados.current.add(jaEscolhida === 'cartao' ? `${jaEscolhida}:${parcelas}` : jaEscolhida);
+      setMetodoSel(jaEscolhida);
+      return;
+    }
     escolherMetodo(metodos[0], 1);
-  }, [metodos, metodoSel, emAberto, escolherMetodo]);
+  }, [metodos, metodoSel, emAberto, escolherMetodo, pag]);
 
   return (
     <div className="pgto-page" style={{ minHeight: '100dvh', background: C.pageBg, color: C.text, display: 'flex' }}>
