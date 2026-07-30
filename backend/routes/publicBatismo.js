@@ -6,7 +6,7 @@ const { acharOuCriarGuardado } = require('../services/membroMatch');
 const { registrarObservacaoSegura } = require('../services/identidadeProgressiva');
 const {
   temAbreviacaoNome, splitNomeCompleto, validarNascimento, honeypotPreenchido,
-  registrarConsentimentos, TEXTOS, cpfValido,
+  registrarConsentimentos, TEXTOS, cpfValido, emailValido,
 } = require('../services/inscricaoContrato');
 
 // Limiter GENEROSO do router (padrão grupos/NPS/eventos): o form roda em
@@ -183,7 +183,9 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
     if (telNorm.length < 10 || telNorm.length > 11) {
       return res.status(400).json({ error: 'Informe um telefone valido (com DDD).' });
     }
-    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email).trim())) {
+    // emailValido vem do contrato (fonte única). O .trim() fica: o valor cru
+    // com espaço nas pontas era aceito aqui e é o mesmo que vai pro emailNorm.
+    if (!email || !emailValido(String(email).trim())) {
       return res.status(400).json({ error: 'Informe um email valido.' });
     }
     if (!cpf || !cpfValido(cpf)) {
