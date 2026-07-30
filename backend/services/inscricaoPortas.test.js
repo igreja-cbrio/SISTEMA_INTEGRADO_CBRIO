@@ -26,7 +26,29 @@ assert.equal(portasSatelites().length, 6, 'eventos nativos ficam nos cards de ev
 for (const porta of PORTAS_INSCRICAO) {
   assert.ok(porta.rotasPublicas.length, `${porta.chave}: rota pública obrigatória`);
   assert.ok(porta.fontes.length, `${porta.chave}: fonte da view obrigatória`);
+  assert.ok(porta.escritores.length, `${porta.chave}: escritor obrigatório`);
   assert.equal(porta.contrato, 'inscricaoContrato', `${porta.chave}: contrato canônico obrigatório`);
+}
+
+// ── Todo escritor declarado tem que ser tabela REAL ────────────────────────
+// Até 2026-07-30 a porta de apresentação declarava `kids_apresentacao_inscricoes`,
+// tabela que nunca existiu (os escritores reais são apresentacao_criancas e
+// apresentacao_bebes). Ninguém consome esse campo em runtime, então a mentira
+// vivia sem quebrar nada — e mandava quem lesse o catálogo procurar tabela
+// inexistente. A checagem é estática (o CI não tem banco): a tabela precisa ter
+// um CREATE TABLE em supabase/migrations.
+const dirMigrations = path.join(__dirname, '..', '..', 'supabase', 'migrations');
+const sqlTudo = fs.readdirSync(dirMigrations)
+  .filter((f) => f.endsWith('.sql'))
+  .map((f) => fs.readFileSync(path.join(dirMigrations, f), 'utf8'))
+  .join('\n');
+for (const porta of PORTAS_INSCRICAO) {
+  for (const tabela of [...porta.escritores, ...(porta.escritoresDerivados || [])]) {
+    const criada = new RegExp(
+      `CREATE\\s+TABLE\\s+(IF\\s+NOT\\s+EXISTS\\s+)?(public\\.)?${tabela}\\b`, 'i',
+    ).test(sqlTudo);
+    assert.ok(criada, `${porta.chave}: escritor "${tabela}" não é tabela criada por migration nenhuma`);
+  }
 }
 
 // Teste de caracterização: protege as URLs/aliases públicos usados por links e
@@ -37,8 +59,17 @@ for (const rota of PORTAS_INSCRICAO.flatMap((p) => p.rotasPublicas)) {
 }
 
 const catalogo = catalogoPublico();
-assert.equal(catalogo.find((p) => p.chave === 'eventos').escritor, 'espinha_com_fallback_ext',
+assert.ok(catalogo.find((p) => p.chave === 'eventos').escritores.includes('ext_inscricoes'),
   'fallback do Eventos Externos é garantia de rollback e não pode sumir');
+
+// O direcionamento do fim do Next cria inscrição em OUTRAS portas
+// (nextDirecionar.direcionarMatricula). Sem declarar, quem audita "quem escreve
+// em vol_inscricoes?" acha só o formulário de voluntariado e conclui errado.
+assert.deepEqual(
+  [...catalogo.find((p) => p.chave === 'next').escritores_derivados].sort(),
+  ['batismo_inscricoes', 'jornada_encaminhamentos', 'vol_inscricoes'],
+  'escritores derivados do Next precisam ficar declarados no catálogo',
+);
 
 // ── Sentido INVERSO: App.tsx → catálogo ────────────────────────────────────
 // A asserção de cima protege contra REMOVER/RENOMEAR porta existente. Esta

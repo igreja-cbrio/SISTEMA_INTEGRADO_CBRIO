@@ -3424,6 +3424,51 @@ O crescimento vem de imports (Next 682, "Contribuinte NNN" do financeiro, Kids)
 e merece uma varredura própria: hoje "membro" e "nome que passou por uma porta"
 contam igual no mesmo número.
 
+## Catálogo de portas · escritor tem que ser tabela real (2026-07-30)
+
+Follow-up da auditoria do módulo de inscrições. Três correções em
+`inscricaoPortas.js` — o registro **descreve** as portas, e descrição errada
+manda quem audita procurar no lugar errado:
+
+- **`escritor` (string) virou `escritores` (array)**: a porta de apresentação
+  tem DOIS escritores (`apresentacao_criancas` no formulário público ·
+  `apresentacao_bebes` no totem) e declarava um só — e declarava
+  **`kids_apresentacao_inscricoes`, tabela que nunca existiu**. Ninguém consome
+  o campo em runtime, então a mentira vivia sem quebrar teste nenhum. A de
+  eventos passou a listar `['inscricoes', 'ext_inscricoes']` (o fallback de
+  rollback do Celebra fica explícito na tabela, não numa string sintética).
+- **Teste novo bloqueia a reincidência**: todo nome em `escritores` precisa ter
+  um `CREATE TABLE` em `supabase/migrations`. Checagem **estática** (o CI não
+  tem banco) e mutation-testada — reintroduzir o fantasma falha com
+  `escritor "kids_apresentacao_inscricoes" não é tabela criada por migration
+  nenhuma`.
+- **`escritoresDerivados` no Next**: o direcionamento do fim do encontro
+  (`/next/direcionar/:token`) é o **único** caminho em que uma porta escreve na
+  tabela de OUTRAS (`vol_inscricoes`, `batismo_inscricoes`,
+  `jornada_encaminhamentos`). Quem perguntasse "quem escreve em
+  `vol_inscricoes`?" achava só o formulário de voluntariado e concluía errado.
+- Junto: `publicBatismo` e `publicApresentacao` passaram a importar
+  `emailValido` do contrato (as 2 últimas cópias locais). Regex **idêntica** ao
+  canônico → zero-diff conferido em 20 casos; o `.trim()` do batismo ficou
+  (sem ele, e-mail com espaço nas pontas passaria a ser recusado, mudando
+  comportamento).
+
+⚠️ **O que NÃO foi feito, e por quê** (era premissa minha errada): eu havia
+listado "colocar `/next/direcionar/:token` sob o Contrato de porta". Lendo o
+código, **ele já está**: não coleta dado de pessoa nenhum (lê a matrícula, que
+passou pelo contrato) e resolve identidade pelo matcher canônico
+(`acharOuCriarGuardado`, `origem: 'next_direcionamento'`), que registra a
+observação sozinho. Mesma coisa no walk-in do totem
+(`/checkin/:token/walkin`, `origem: 'next_checkin'`) — normaliza, valida DV
+quando há CPF, e a obrigatoriedade relaxada é decisão registrada do Marcos
+("nunca travar o atendimento na hora"). **Fica UMA pergunta aberta pra ele:** a
+tela de direcionamento cria inscrição REAL no voluntariado sem exibir/registrar
+o consentimento daquela porta em `inscricao_consentimentos`. A pessoa está ali
+tocando o tablet (é self-service, não o líder decidindo), então dá pra registrar
+com honestidade — mas exige mostrar o texto no fim do encontro, com fila. Não
+inventei o registro: gravar consentimento sem ter exibido o texto seria fabricar
+prova legal.
+
 ## ⚠️ Pessoa · o import financeiro não cria mais cadastro (2026-07-30)
 
 Decisão do Marcos, na varredura do crescimento de `mem_membros` (7.487 linhas

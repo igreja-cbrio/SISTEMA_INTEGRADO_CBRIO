@@ -15,6 +15,7 @@ const { notificar } = require('../services/notificar');
 const {
   honeypotPreenchido, temAbreviacaoNome, validarNascimento, SEXOS, TEXTOS,
   processarIdentidade, registrarConsentimentos, normalizarCpf, normalizarEmail,
+  emailValido,
 } = require('../services/inscricaoContrato');
 
 // Limiter GENEROSO do router (padrão grupos/NPS/eventos): Wi-Fi único da
@@ -137,7 +138,7 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
     if (!cpfDig) return res.status(400).json({ error: 'Informe um CPF válido do responsável.' });
 
     const emailNorm = normalizarEmail(email);
-    if (!emailNorm || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailNorm)) {
+    if (!emailNorm || !emailValido(emailNorm)) {
       return res.status(400).json({ error: 'Informe um e-mail válido.' });
     }
 

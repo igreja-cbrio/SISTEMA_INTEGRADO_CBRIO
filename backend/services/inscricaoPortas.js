@@ -20,7 +20,9 @@ const PORTAS_INSCRICAO = Object.freeze([
     rotasPublicas: Object.freeze(['/evento/:slug']),
     gestao: '/inscricoes',
     modulo: 'Inscrições',
-    escritor: 'espinha_com_fallback_ext',
+    // Espinha + FALLBACK no ext: ext_inscricoes segue escrevível e é a
+    // garantia de rollback da virada do Celebra (não remover).
+    escritores: Object.freeze(['inscricoes', 'ext_inscricoes']),
     contrato: 'inscricaoContrato',
     inventario: 'eventos_nativos',
     status: 'por_evento',
@@ -32,7 +34,7 @@ const PORTAS_INSCRICAO = Object.freeze([
     rotasPublicas: Object.freeze(['/inscricao-grupos']),
     gestao: '/grupos',
     modulo: 'Grupos',
-    escritor: 'mem_grupo_pedidos',
+    escritores: Object.freeze(['mem_grupo_pedidos']),
     contrato: 'inscricaoContrato',
     inventario: 'satelite',
     status: 'temporada',
@@ -44,7 +46,7 @@ const PORTAS_INSCRICAO = Object.freeze([
     rotasPublicas: Object.freeze(['/inscricao-lideres']),
     gestao: '/grupos',
     modulo: 'Grupos',
-    escritor: 'mem_lider_inscricoes',
+    escritores: Object.freeze(['mem_lider_inscricoes']),
     contrato: 'inscricaoContrato',
     inventario: 'satelite',
     status: 'continua',
@@ -60,7 +62,18 @@ const PORTAS_INSCRICAO = Object.freeze([
     rotasPublicas: Object.freeze(['/next', '/next/inscrever']),
     gestao: '/next',
     modulo: 'Next',
-    escritor: 'next_matriculas',
+    escritores: Object.freeze(['next_matriculas']),
+    // ⚠️ O Next é a ÚNICA porta que escreve em tabela de OUTRAS portas: no
+    // direcionamento do fim do encontro (`/next/direcionar/:token`, self-service
+    // no tablet) a pessoa indica "quero servir / grupo / batismo" e o
+    // `nextDirecionar.direcionarMatricula` cria a inscrição real no destino.
+    // É ato DERIVADO (a pessoa já passou pelo contrato ao se matricular; os
+    // dados vêm da matrícula, nada é digitado de novo) — por isso não revalida
+    // campo. Fica declarado aqui porque quem audita "quem escreve em
+    // vol_inscricoes?" precisa achar este caminho.
+    escritoresDerivados: Object.freeze([
+      'vol_inscricoes', 'batismo_inscricoes', 'jornada_encaminhamentos',
+    ]),
     contrato: 'inscricaoContrato',
     inventario: 'satelite',
     status: 'turma',
@@ -72,7 +85,7 @@ const PORTAS_INSCRICAO = Object.freeze([
     rotasPublicas: Object.freeze(['/inscricao-batismo']),
     gestao: '/integracao',
     modulo: 'Integração',
-    escritor: 'batismo_inscricoes',
+    escritores: Object.freeze(['batismo_inscricoes']),
     contrato: 'inscricaoContrato',
     inventario: 'satelite',
     status: 'continua',
@@ -84,7 +97,10 @@ const PORTAS_INSCRICAO = Object.freeze([
     rotasPublicas: Object.freeze(['/apresentacao-criancas']),
     gestao: '/kids',
     modulo: 'Kids',
-    escritor: 'kids_apresentacao_inscricoes',
+    // DOIS escritores: o formulário público grava em apresentacao_criancas e o
+    // totem de bebês em apresentacao_bebes. Até 2026-07-30 este campo dizia
+    // `kids_apresentacao_inscricoes` — tabela que NUNCA existiu.
+    escritores: Object.freeze(['apresentacao_criancas', 'apresentacao_bebes']),
     contrato: 'inscricaoContrato',
     inventario: 'satelite',
     status: 'continua',
@@ -96,7 +112,7 @@ const PORTAS_INSCRICAO = Object.freeze([
     rotasPublicas: Object.freeze(['/inscricao-voluntariado']),
     gestao: '/ministerial/voluntariado',
     modulo: 'Voluntariado',
-    escritor: 'vol_inscricoes',
+    escritores: Object.freeze(['vol_inscricoes']),
     contrato: 'inscricaoContrato',
     inventario: 'satelite',
     status: 'continua',
@@ -131,7 +147,8 @@ function catalogoPublico() {
     rotas_publicas: [...porta.rotasPublicas],
     gestao: porta.gestao,
     modulo: porta.modulo,
-    escritor: porta.escritor,
+    escritores: [...porta.escritores],
+    escritores_derivados: [...(porta.escritoresDerivados || [])],
     contrato: porta.contrato,
     inventario: porta.inventario,
     status: porta.status,
