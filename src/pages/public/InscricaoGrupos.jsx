@@ -15,6 +15,12 @@
 // cadastro parecido NESTE grupo, devolve 409 possivel_duplicado → mostramos
 // "é você?" (confirmar, não bloquear).
 //
+// CASAIS (Marcos · 30/07): em grupo com categoria='Casais' aparece o bloco
+// "Inscrever meu cônjuge junto" — os dois entram numa tela só, num POST só.
+// Cada cônjuge continua sendo UM cadastro próprio (contrato de porta): o
+// backend cria dois pedidos vinculados, manda UM aviso pro líder com os dois
+// nomes e a aprovação decide o casal de uma vez.
+//
 // Totem: auto-reset por ociosidade (~90s) devolve ao início entre pessoas.
 // ============================================================================
 
@@ -24,12 +30,16 @@ import AnimatedBackground from './AnimatedBackground';
 import { usePublicTheme, PublicThemeToggle, PublicPaletteCtx, usePublicPalette } from './publicTheme';
 import GrupoSelector from '../../components/grupos/GrupoSelector';
 import { BirthDatePicker } from '../../components/ui/birth-date-picker';
-import { CheckCircle2, ArrowLeft, Users, Camera, X, HelpCircle, User, CalendarClock } from 'lucide-react';
+import { CheckCircle2, ArrowLeft, Users, Camera, X, HelpCircle, User, CalendarClock, Heart } from 'lucide-react';
 // Contrato de Inscrição (F3.1 · porta 7 · docs/modulo-inscricoes/): validadores
 // da fonte única — só os que não colidem com os helpers locais deste form.
-import { nomeCompletoValido, temAbreviacaoNome } from '../../lib/inscricao';
+import { nomeCompletoValido, temAbreviacaoNome, validarNascimento } from '../../lib/inscricao';
 
 const TEXTO_CONSENTIMENTO = `Ao enviar este formulário, você autoriza a CBRio a utilizar seus dados pessoais para fins de comunicação com a igreja e participação em grupo de conexão, conforme a LGPD.`;
+// LGPD: o titular não consente sozinho pelo outro — ele DECLARA que o cônjuge
+// está ciente e concorda. Este texto é o snapshot gravado no consentimento do
+// cônjuge (inscricao_consentimentos · porta grupos).
+const TEXTO_CONSENTIMENTO_CONJUGE = `Declaro que meu cônjuge está ciente desta inscrição, concorda com ela e autoriza a CBRio a utilizar os dados pessoais informados aqui para comunicação com a igreja e participação no grupo de conexão, conforme a LGPD.`;
 
 const IDLE_MS = 90_000; // totem: volta ao início após ~90s sem interação
 
@@ -38,7 +48,18 @@ const FORM_VAZIO = {
   data_nascimento: '', genero: '', observacao: '', website: '', foto_url: '',
 };
 
+// Cônjuge (só em grupo de casais) — mesmos campos obrigatórios do titular.
+const CONJUGE_VAZIO = {
+  nome: '', cpf: '', email: '', telefone: '',
+  data_nascimento: '', genero: '',
+  aceita_termos: false,   // declaração de ciência/concordância do cônjuge
+  whatsapp_optin: false,  // D4: opt-in é ato afirmativo de cada pessoa
+};
+
 function soDigitos(v) { return (v || '').toString().replace(/\D+/g, ''); }
+// Mesma regex do backend (services/inscricaoContrato.emailValido) — usada pelo
+// titular E pelo cônjuge (uma só, não uma por campo).
+function emailValido(v) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || '').trim()); }
 
 // Dia + horário do grupo pra confirmação no formulário (pedido da Nana · 23/07:
 // mostrar líder/dia/horário abaixo do nome pra ter certeza do grupo certo).
@@ -145,6 +166,9 @@ export default function InscricaoGrupos() {
 
   const [grupoEscolhido, setGrupoEscolhido] = useState(null);
   const [form, setForm] = useState(FORM_VAZIO);
+  const [comConjuge, setComConjuge] = useState(false);
+  const [conjuge, setConjuge] = useState(CONJUGE_VAZIO);
+  const [casalResp, setCasalResp] = useState(null); // { nome, ok, error, mensagem } devolvido pelo backend
   const [aceitaTermos, setAceitaTermos] = useState(false);
   const [optinWhats, setOptinWhats] = useState(false);
   const [step, setStep] = useState(0); // 0=escolher grupo, 1=dados, 2=success
@@ -216,6 +240,7 @@ export default function InscricaoGrupos() {
 
   const resetForm = useCallback(() => {
     setForm(FORM_VAZIO);
+    setComConjuge(false); setConjuge(CONJUGE_VAZIO); setCasalResp(null);
     setAceitaTermos(false);
     setOptinWhats(false);
     setError(''); setDup(null); setResultado(null); setFotoErro('');
@@ -253,12 +278,38 @@ export default function InscricaoGrupos() {
     setErrosCampos(p => (p[k] ? { ...p, [k]: '' } : p)); // corrigiu o campo? some o vermelho
   };
 
+  // ── Cônjuge (grupo de casais) ──
+  // Gatilho: categoria do grupo escolhido. Trocar pra um grupo que não é de
+  // casais desliga o bloco (e limpa o que foi digitado nele — senão iria num
+  // payload que o backend ignoraria em silêncio).
+  const ehGrupoCasais = (grupoEscolhido?.categoria || '').toLowerCase() === 'casais';
+  useEffect(() => {
+    if (ehGrupoCasais) return;
+    setComConjuge(false);
+    setConjuge(CONJUGE_VAZIO);
+    setErrosCampos(p => {
+      const chaves = Object.keys(p).filter(k => k.startsWith('conjuge.'));
+      if (!chaves.length) return p;
+      const novo = { ...p };
+      chaves.forEach(k => { delete novo[k]; });
+      return novo;
+    });
+  }, [ehGrupoCasais]);
+  const setConj = (k, masked) => (e) => {
+    const valor = masked ? masked(e.target.value) : e.target.value;
+    setConjuge(c => ({ ...c, [k]: valor }));
+    setErrosCampos(p => (p[`conjuge.${k}`] ? { ...p, [`conjuge.${k}`]: '' } : p));
+  };
+  const enviarConjuge = ehGrupoCasais && comConjuge;
+
   // "Tem certeza?" ao voltar/fechar/recarregar a página COM dados digitados
   // (regra de ouro do repo: sem digitar nada, não pergunta). Depois do envio
   // (step 2) pode sair livre. O navegador mostra o confirm nativo.
   const temDadosDigitados = !!(
     form.nome || soDigitos(form.telefone) || soDigitos(form.cpf)
     || form.email || form.data_nascimento || form.genero || form.observacao || form.foto_url
+    || conjuge.nome || soDigitos(conjuge.telefone) || soDigitos(conjuge.cpf)
+    || conjuge.email || conjuge.data_nascimento || conjuge.genero
   );
   useEffect(() => {
     if (!temDadosDigitados || step === 2) return;
@@ -291,8 +342,28 @@ export default function InscricaoGrupos() {
     const cpfDig = soDigitos(form.cpf);
     if (cpfDig.length !== 11) erros.cpf = 'Informe o CPF completo.';
     else if (!cpfValido(form.cpf)) erros.cpf = 'Este CPF não é válido — confira os números.';
-    if (!form.email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) erros.email = 'Informe um e-mail válido.';
+    if (!emailValido(form.email)) erros.email = 'Informe um e-mail válido.';
     if (!aceitaTermos) erros.aceita_termos = 'É necessário aceitar os termos para enviar.';
+
+    // Cônjuge (grupo de casais): MESMA régua do titular. As chaves são
+    // 'conjuge.<campo>' — exatamente o que o backend devolve em `campo`.
+    if (enviarConjuge) {
+      if (!nomeCompletoValido(conjuge.nome)) {
+        erros['conjuge.nome'] = temAbreviacaoNome(conjuge.nome)
+          ? 'Escreva o nome completo, sem abreviações.'
+          : 'Digite o nome completo do seu cônjuge.';
+      }
+      const telC = soDigitos(conjuge.telefone);
+      if (telC.length < 10 || telC.length > 11) erros['conjuge.telefone'] = 'Digite um celular válido com DDD.';
+      if (!validarNascimento(conjuge.data_nascimento)) erros['conjuge.data_nascimento'] = 'Informe uma data de nascimento válida.';
+      if (conjuge.genero !== 'masculino' && conjuge.genero !== 'feminino') erros['conjuge.genero'] = 'Marque masculino ou feminino.';
+      const cpfC = soDigitos(conjuge.cpf);
+      if (cpfC.length !== 11) erros['conjuge.cpf'] = 'Informe o CPF completo.';
+      else if (!cpfValido(conjuge.cpf)) erros['conjuge.cpf'] = 'Este CPF não é válido — confira os números.';
+      else if (cpfC === soDigitos(form.cpf)) erros['conjuge.cpf'] = 'O CPF do cônjuge é o mesmo que você informou — confira os números.';
+      if (!emailValido(conjuge.email)) erros['conjuge.email'] = 'Informe um e-mail válido.';
+      if (!conjuge.aceita_termos) erros['conjuge.aceita_termos'] = 'Confirme que seu cônjuge está ciente e concorda.';
+    }
     return erros;
   };
 
@@ -367,7 +438,11 @@ export default function InscricaoGrupos() {
     if (Object.keys(erros).length > 0) {
       setErrosCampos(erros);
       setError('');
-      const primeiro = ['nome', 'telefone', 'data_nascimento', 'genero', 'cpf', 'email', 'aceita_termos'].find(k => erros[k]);
+      const primeiro = [
+        'nome', 'telefone', 'data_nascimento', 'genero', 'cpf', 'email', 'aceita_termos',
+        'conjuge.nome', 'conjuge.telefone', 'conjuge.data_nascimento', 'conjuge.genero',
+        'conjuge.cpf', 'conjuge.email', 'conjuge.aceita_termos',
+      ].find(k => erros[k]);
       if (primeiro) scrollAteCampo(primeiro);
       return;
     }
@@ -391,10 +466,26 @@ export default function InscricaoGrupos() {
         whatsapp_optin: optinWhats,
         consentimento_texto: TEXTO_CONSENTIMENTO,
         website: form.website,
+        // Casal: 1 POST só, com o cônjuge dentro (o backend cria os dois
+        // pedidos e vincula). Fora de grupo de casais o campo nem vai.
+        ...(enviarConjuge ? {
+          conjuge: {
+            nome: conjuge.nome.trim(),
+            cpf: soDigitos(conjuge.cpf),
+            email: conjuge.email.trim(),
+            telefone: conjuge.telefone,
+            data_nascimento: conjuge.data_nascimento || null,
+            genero: conjuge.genero || null,
+            aceita_termos: true, // declaração validada acima
+            whatsapp_optin: conjuge.whatsapp_optin,
+            consentimento_texto: TEXTO_CONSENTIMENTO_CONJUGE,
+          },
+        } : {}),
         ...extra,
       });
       setDup(null);
       setResultado(r && (r.ja_membro || r.ja_pedido) ? { mensagem: r.mensagem, renovado: r.renovado === true } : null);
+      setCasalResp(r && r.conjuge ? { ...r.conjuge, nome: r.conjuge.nome || conjuge.nome.trim() } : null);
       setStep(2);
     } catch (e) {
       if (e.status === 409 && e.codigo === 'possivel_duplicado') {
@@ -462,6 +553,12 @@ export default function InscricaoGrupos() {
               <p style={{ color: C.text3, fontSize: 14, lineHeight: 1.6 }}>
                 {resultado ? (
                   resultado.mensagem
+                ) : casalResp?.ok ? (
+                  <>
+                    O pedido de <strong style={{ color: C.text }}>vocês dois</strong> para entrar no grupo{' '}
+                    <strong style={{ color: C.text }}>{grupoEscolhido?.nome}</strong> foi enviado. O líder recebeu
+                    um aviso com os dois nomes, vai analisar e a confirmação chega no WhatsApp em breve.
+                  </>
                 ) : (
                   <>
                     Seu pedido para entrar no grupo <strong style={{ color: C.text }}>{grupoEscolhido?.nome}</strong> foi
@@ -469,6 +566,47 @@ export default function InscricaoGrupos() {
                   </>
                 )}
               </p>
+              {/* Honestidade: a sua entrou, a do cônjuge não — com o motivo,
+                  sem parecer que tudo falhou. */}
+              {casalResp && casalResp.ok === false && (
+                <div style={{
+                  marginTop: 16, textAlign: 'left',
+                  padding: '12px 14px', borderRadius: 10,
+                  background: 'rgba(245, 158, 11, 0.12)', border: '1px solid rgba(245, 158, 11, 0.55)',
+                  fontSize: 12.5, color: C.isDark ? '#fbbf24' : '#92400e', lineHeight: 1.55,
+                }}>
+                  <p style={{ margin: 0, fontWeight: 700 }}>
+                    A inscrição de {casalResp.nome || 'seu cônjuge'} não foi registrada.
+                  </p>
+                  <p style={{ margin: '6px 0 0' }}>
+                    {casalResp.error || 'Não conseguimos registrar agora.'} A sua está valendo — fale com a
+                    equipe de Grupos ou envie a dele(a) de novo por este mesmo formulário.
+                  </p>
+                </div>
+              )}
+              {/* Cônjuge OK mas com nuance (renovação/pedido já existente) ou
+                  titular que renovou — em todos esses casos o texto principal
+                  acima não fala dele(a), então o status vem aqui. */}
+              {casalResp?.ok && (casalResp.ja_membro || casalResp.ja_pedido || resultado) && (
+                <div style={{
+                  marginTop: 16, textAlign: 'left',
+                  padding: '12px 14px', borderRadius: 10,
+                  background: 'rgba(0,179,157,0.10)', border: '1px solid rgba(0,179,157,0.45)',
+                  fontSize: 12.5, color: C.isDark ? '#5eead4' : '#0f766e', lineHeight: 1.55,
+                }}>
+                  <p style={{ margin: 0 }}>
+                    <strong>{casalResp.nome || 'Seu cônjuge'}:</strong> {casalResp.mensagem
+                      || (casalResp.ja_membro
+                        ? 'já participa deste grupo — inscrição renovada.'
+                        : casalResp.ja_pedido
+                          ? 'já tinha um pedido registrado neste grupo.'
+                          /* Titular renovou e o cônjuge foi inscrito AGORA: sem este
+                             ramo o fallback dizia "já tinha um pedido" pra quem
+                             acabou de entrar na fila do líder. */
+                          : 'pedido enviado ao líder do grupo.')}
+                  </p>
+                </div>
+              )}
               <button onClick={resetForm} style={{
                 marginTop: 20, padding: '10px 24px', borderRadius: 10, background: '#00B39D', color: '#fff',
                 border: 'none', fontWeight: 700, cursor: 'pointer',
@@ -620,6 +758,119 @@ export default function InscricaoGrupos() {
                 </div>
               ) : null}
 
+              {/* ── Cônjuge (só em grupo de casais) ── */}
+              {ehGrupoCasais && !(bloqueio?.mensagem || bloqueioLocal) && (
+                <div style={{
+                  border: `1.5px solid ${comConjuge ? 'rgba(0,179,157,0.55)' : C.cardBorder}`,
+                  background: comConjuge ? 'rgba(0,179,157,0.07)' : (C.isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)'),
+                  borderRadius: 12, padding: 14, marginBottom: 12,
+                }}>
+                  <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={comConjuge}
+                      onChange={(e) => setComConjuge(e.target.checked)}
+                      style={{ marginTop: 2, width: 18, height: 18, accentColor: '#00B39D', flexShrink: 0 }}
+                    />
+                    <span style={{ fontSize: 13, color: C.text, lineHeight: 1.5 }}>
+                      <Heart size={14} style={{ display: 'inline', marginRight: 6, verticalAlign: -2, color: '#00B39D' }} />
+                      <strong>Inscrever meu cônjuge junto</strong>
+                      <span style={{ display: 'block', fontSize: 12, color: C.text3, marginTop: 3 }}>
+                        Este é um grupo de casais — você pode inscrever os dois de uma vez. O líder recebe um
+                        aviso só, com os dois nomes, e aprova o casal junto.
+                      </span>
+                    </span>
+                  </label>
+
+                  {comConjuge && (
+                    <div style={{ marginTop: 14 }}>
+                      <p style={{ fontSize: 12, fontWeight: 700, color: C.text2 || C.text, margin: '0 0 8px' }}>
+                        Dados do seu cônjuge
+                      </p>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(220px, 100%), 1fr))', gap: 12 }}>
+                        <Field campo="conjuge.nome" error={errosCampos['conjuge.nome']} label="Nome completo *" value={conjuge.nome} onChange={setConj('nome')} />
+                        <Field campo="conjuge.telefone" error={errosCampos['conjuge.telefone']} label="Celular / WhatsApp *" value={conjuge.telefone} onChange={setConj('telefone', mascaraTelefone)} maxLength={16} inputMode="tel" />
+                        <div data-campo="conjuge.data_nascimento">
+                          <label style={{ fontSize: 12, color: C.text3, display: 'block', marginBottom: 4 }}>Data de nascimento *</label>
+                          <BirthDatePicker
+                            value={conjuge.data_nascimento}
+                            onChange={(v) => {
+                              setConjuge(c => ({ ...c, data_nascimento: v }));
+                              setErrosCampos(p => (p['conjuge.data_nascimento'] ? { ...p, 'conjuge.data_nascimento': '' } : p));
+                            }}
+                            placeholder="dia/mês/ano"
+                            aria-invalid={!!errosCampos['conjuge.data_nascimento']}
+                          />
+                          {errosCampos['conjuge.data_nascimento'] && <p style={{ fontSize: 11.5, color: '#ef4444', margin: '4px 0 0' }}>{errosCampos['conjuge.data_nascimento']}</p>}
+                        </div>
+                        <div data-campo="conjuge.genero">
+                          <label style={{ fontSize: 12, color: C.text3, display: 'block', marginBottom: 4 }}>Sexo *</label>
+                          <div style={{ display: 'flex', gap: 8 }}>
+                            {[['masculino', 'Masculino'], ['feminino', 'Feminino']].map(([valor, rotulo]) => (
+                              <button
+                                key={valor}
+                                type="button"
+                                onClick={() => {
+                                  setConjuge(c => ({ ...c, genero: valor }));
+                                  setErrosCampos(p => (p['conjuge.genero'] ? { ...p, 'conjuge.genero': '' } : p));
+                                }}
+                                style={{
+                                  flex: 1, minHeight: 44, padding: '9px 10px', borderRadius: 8, fontSize: 13, cursor: 'pointer',
+                                  fontWeight: conjuge.genero === valor ? 700 : 500,
+                                  border: `1px solid ${conjuge.genero === valor ? '#00B39D' : (errosCampos['conjuge.genero'] ? '#ef4444' : C.inputBorder)}`,
+                                  background: conjuge.genero === valor ? 'rgba(0,179,157,0.12)' : (C.isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)'),
+                                  color: conjuge.genero === valor ? '#00B39D' : C.text,
+                                }}
+                              >
+                                {rotulo}
+                              </button>
+                            ))}
+                          </div>
+                          {errosCampos['conjuge.genero'] && <p style={{ fontSize: 11.5, color: '#ef4444', margin: '4px 0 0' }}>{errosCampos['conjuge.genero']}</p>}
+                        </div>
+                        <Field campo="conjuge.cpf" error={errosCampos['conjuge.cpf']} label="CPF *" value={conjuge.cpf} onChange={setConj('cpf', mascaraCpf)} maxLength={14} inputMode="numeric" />
+                        <Field campo="conjuge.email" error={errosCampos['conjuge.email']} label="E-mail *" type="email" value={conjuge.email} onChange={setConj('email')} />
+                      </div>
+
+                      {/* LGPD: você não consente pelo outro — declara que ele/ela está ciente */}
+                      <div data-campo="conjuge.aceita_termos" style={{
+                        marginTop: 12, borderRadius: 10, padding: 12,
+                        background: C.isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
+                        border: `1px solid ${errosCampos['conjuge.aceita_termos'] ? '#ef4444' : C.cardBorder}`,
+                      }}>
+                        <p style={{ fontSize: 11, color: C.text3, lineHeight: 1.5, margin: '0 0 8px' }}>{TEXTO_CONSENTIMENTO_CONJUGE}</p>
+                        <label style={{ fontSize: 12, color: C.text, display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
+                          <input
+                            type="checkbox"
+                            checked={conjuge.aceita_termos}
+                            onChange={(e) => {
+                              const v = e.target.checked;
+                              setConjuge(c => ({ ...c, aceita_termos: v }));
+                              setErrosCampos(p => (p['conjuge.aceita_termos'] ? { ...p, 'conjuge.aceita_termos': '' } : p));
+                            }}
+                            style={{ marginTop: 2, accentColor: '#00B39D', flexShrink: 0 }}
+                          />
+                          Confirmo que meu cônjuge está ciente e concorda com esta inscrição *
+                        </label>
+                        {errosCampos['conjuge.aceita_termos'] && <p style={{ fontSize: 11.5, color: '#ef4444', margin: '6px 0 0' }}>{errosCampos['conjuge.aceita_termos']}</p>}
+                      </div>
+
+                      <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer', marginTop: 10 }}>
+                        <input
+                          type="checkbox"
+                          checked={conjuge.whatsapp_optin}
+                          onChange={(e) => setConjuge(c => ({ ...c, whatsapp_optin: e.target.checked }))}
+                          style={{ marginTop: 2, width: 16, height: 16, accentColor: '#00B39D', flexShrink: 0 }}
+                        />
+                        <span style={{ fontSize: 12, color: C.text3, lineHeight: 1.5 }}>
+                          Ele(a) também quer receber os avisos do grupo no WhatsApp, no número informado acima.
+                        </span>
+                      </label>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Foto opcional — reforço de identidade / anti-duplicata */}
               <FotoOpcional
                 C={C}
@@ -691,7 +942,7 @@ export default function InscricaoGrupos() {
                   color: '#fff', fontWeight: 700, border: 'none',
                   cursor: loading ? 'not-allowed' : 'pointer', fontSize: 14,
                 }}>
-                  {loading ? 'Enviando...' : 'Enviar pedido'}
+                  {loading ? 'Enviando...' : (enviarConjuge ? 'Enviar pedido do casal' : 'Enviar pedido')}
                 </button>
               )}
             </div>
