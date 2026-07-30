@@ -1066,6 +1066,16 @@ regras. **Quebrar qualquer uma delas é regressão crítica.**
     **sempre pôr uma rede de segurança (`UPDATE ... SET col = NULL WHERE NOT
     EXISTS`) imediatamente antes do `ADD CONSTRAINT`**: a criação da FK não pode
     depender de a lógica de repoint ter sido perfeita.
+    ⚠️⚠️⚠️ **`ADD COLUMN IF NOT EXISTS ... REFERENCES` engole a FK quando a coluna
+    já existe** (descoberto em 2026-07-30 · `vol_profiles.membresia_id`, a ponte
+    do valor SERVIR: 123 de 307 vínculos apontavam pra cadastro inexistente). O
+    `IF NOT EXISTS` pula o comando **inteiro**, `REFERENCES` incluído — a
+    migration de maio "declarava" a FK, a coluna existia de abril, e o banco
+    nunca a teve. **É pior que esquecer**: quem lê o repo conclui que a
+    integridade está garantida. Ao acrescentar `REFERENCES` a coluna que pode
+    preexistir, usar `ALTER TABLE ... ADD CONSTRAINT` em bloco próprio (guardado
+    por `pg_constraint`), nunca dentro do `ADD COLUMN`. **Auditar a FK no
+    catálogo, não no arquivo da migration.**
 
 ## Inventário de helpers SQL (usar SEMPRE em policies novas)
 
@@ -3413,6 +3423,42 @@ reverter o patch dinâmico de `20260729060000`.
 O crescimento vem de imports (Next 682, "Contribuinte NNN" do financeiro, Kids)
 e merece uma varredura própria: hoje "membro" e "nome que passou por uma porta"
 contam igual no mesmo número.
+
+## ⚠️ Pessoa · o import financeiro não cria mais cadastro (2026-07-30)
+
+Decisão do Marcos, na varredura do crescimento de `mem_membros` (7.487 linhas
+vivas contra 3.665 na auditoria de junho): *"essas pessoas não podem virar
+membro, vai confundir a base inteira, deixa só como um nome no lançamento sem
+vínculo com membresia"*. Migration `20260730150000`.
+
+**O que acontecia**: `fin_resolver_ou_criar_contribuinte` resolvia a pessoa por
+**nome exato** e, não achando, CRIAVA um `mem_membros` `contribuinte_avulso`. Em
+29/07 às 16:16 isso gerou **3.441 cadastros** — 46% da base viva — dos quais 1
+tem CPF, 1 telefone, 1 e-mail, e **nenhum** tem contribuição ou transação
+apontando pra ele. Um deles é `RECEBIMENTOS CRECHE E PRE-ESCOLA … LTDA`:
+descrição de extrato bancário virou pessoa. A fila de duplicidades das Entradas
+foi de ~525 para ~9.458 pares, 9.294 deles **sem chave nenhuma** — humanamente
+indecidíveis.
+
+- **A função só resolve por CPF de 11 dígitos; sem CPF devolve `NULL`.** O match
+  por nome exato SAIU — era ele que cruzava identidades, e viola a lei do
+  Contrato de porta ("nome sozinho nunca identifica").
+- **Devolver NULL é seguro** porque `financeiroV2.js:808` (o ÚNICO chamador)
+  grava em `fin_transacoes`, cujo `membro_id` é **nullable** e que já guarda
+  `nome_contraparte`. `mem_contribuicoes` (`membro_id NOT NULL`) **não é escrita
+  por esse caminho** — conferir isso antes de mexer.
+- **Limpeza descobre o rastro pelo CATÁLOGO** (toda tabela com FK pra
+  `mem_membros`), não por lista fixa, **com as tabelas de log/identidade
+  explicitamente FORA** (`mem_identidade_observacoes`, `mem_identidade_pares`,
+  `mem_duplicados_ignorados`, `entradas_*`, `identidade_pendencias`,
+  `mem_merge_log`, `app_audit_log`). Sem essa exclusão a limpeza não apagaria
+  nada: as 3.443 observações de identidade contam como "rastro".
+- ⚠️ **Isto NÃO revoga a decisão nº 3 do Next** (os 93 cadastros vazios do
+  backfill ficam pra reconciliação). São casos diferentes: lá o fantasma tem
+  nome+telefone REAIS de alguém que passou por uma porta e o matcher o
+  reencontra; aqui é descrição de extrato sem contato nenhum, que só polui a
+  fila humana. Régua: **existe chave (CPF/telefone/e-mail) pra reconciliar?**
+  Se não, não é pessoa.
 
 ## Devocionais · módulo do Matheus (no ar)
 
