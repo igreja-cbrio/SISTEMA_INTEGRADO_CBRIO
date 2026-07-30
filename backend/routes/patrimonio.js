@@ -68,7 +68,7 @@ router.get('/dashboard/depreciacao', async (req, res) => {
     const pageSize = 1000;
     while (true) {
       const { data, error } = await supabase.from('pat_bens')
-        .select('valor_aquisicao, data_aquisicao, status, pat_categorias(vida_util_meses)')
+        .select('valor_aquisicao, data_aquisicao, status, categoria_id, pat_categorias(nome, vida_util_meses)')
         .neq('status', 'baixado')
         .range(offset, offset + pageSize - 1);
       if (error) throw error;
@@ -78,12 +78,21 @@ router.get('/dashboard/depreciacao', async (req, res) => {
       offset += pageSize;
     }
     let valorAquisicaoTotal = 0, valorAtualTotal = 0, bensComDepreciacao = 0, bensSemConfiguracao = 0;
+    // Agregado por categoria (pra gráfico aquisição × atual) — chave por
+    // categoria_id (null vira "Sem categoria"), sem precisar de migration.
+    const porCategoria = new Map();
     for (const bem of all) {
       const dep = calcularDepreciacao(bem);
       if (dep) {
         bensComDepreciacao++;
         valorAquisicaoTotal += Number(bem.valor_aquisicao);
         valorAtualTotal += dep.valor_atual_estimado;
+        const chave = bem.categoria_id || '__sem__';
+        const nome = bem.pat_categorias?.nome || 'Sem categoria';
+        const atual = porCategoria.get(chave) || { categoria: nome, valor_aquisicao: 0, valor_atual: 0 };
+        atual.valor_aquisicao += Number(bem.valor_aquisicao);
+        atual.valor_atual += dep.valor_atual_estimado;
+        porCategoria.set(chave, atual);
       } else if (bem.valor_aquisicao != null) {
         bensSemConfiguracao++;
       }
@@ -93,6 +102,13 @@ router.get('/dashboard/depreciacao', async (req, res) => {
       valor_atual_estimado_total: Math.round(valorAtualTotal * 100) / 100,
       bens_com_depreciacao: bensComDepreciacao,
       bens_sem_configuracao: bensSemConfiguracao,
+      por_categoria: Array.from(porCategoria.values())
+        .map(c => ({
+          categoria: c.categoria,
+          valor_aquisicao: Math.round(c.valor_aquisicao * 100) / 100,
+          valor_atual: Math.round(c.valor_atual * 100) / 100,
+        }))
+        .sort((a, b) => b.valor_aquisicao - a.valor_aquisicao),
     });
   } catch (e) {
     console.error('[PAT] Agregado de depreciação falhou:', e.message);
