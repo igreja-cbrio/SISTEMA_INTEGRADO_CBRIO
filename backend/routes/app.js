@@ -3013,4 +3013,38 @@ router.delete('/familia/vinculo/:outroId', authApp, limiterNormal, async (req, r
   }
 });
 
+// ── Inscrições · eventos publicados abertos (espinha /inscricoes) ────────────
+// Lista os eventos que a equipe publicou no módulo /inscricoes pra aparecer na
+// aba Inscrições do app. O membro toca → abre o formulário público
+// /evento/<slug> (mesmo fluxo do site · trata gratuito e pago→checkout Asaas).
+router.get('/eventos', authApp, limiterNormal, async (req, res) => {
+  try {
+    const nowIso = new Date().toISOString();
+    const { data, error } = await supabase.from('insc_eventos')
+      .select('id, nome, slug, descricao, area, tipo, data, hora, local, capa_url, vagas, valor_centavos, pagamento_ativo, inscricoes_abrem_em, inscricoes_encerram_em, tem_sorteio, created_at')
+      .eq('status', 'publicado').is('deleted_at', null)
+      .order('data', { ascending: true, nullsFirst: false })
+      .limit(100);
+    if (error) throw error;
+    const eventos = (data || [])
+      .filter((e) => {
+        if (e.inscricoes_abrem_em && e.inscricoes_abrem_em > nowIso) return false;
+        if (e.inscricoes_encerram_em && e.inscricoes_encerram_em < nowIso) return false;
+        return true;
+      })
+      .map((e) => ({
+        id: e.id, nome: e.nome, slug: e.slug, descricao: e.descricao,
+        area: e.area, tipo: e.tipo, data: e.data, hora: e.hora, local: e.local,
+        capa_url: e.capa_url, vagas: e.vagas, tem_sorteio: e.tem_sorteio,
+        pago: !!e.pagamento_ativo,
+        valor_centavos: e.pagamento_ativo ? (e.valor_centavos || null) : null,
+        url: `https://www.cbrio.org/evento/${e.slug}`,
+      }));
+    res.json({ eventos });
+  } catch (e) {
+    console.error('[APP] eventos abertos:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar eventos' });
+  }
+});
+
 module.exports = router;
