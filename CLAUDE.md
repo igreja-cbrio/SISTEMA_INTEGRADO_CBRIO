@@ -5109,6 +5109,92 @@ integrado com zero exposição.
 - Saiu o rótulo "Valor (R$) · Pix chega na próxima fase" (`Inscricoes.tsx`) — a
   fase chegou e o texto mentia pra quem cria evento.
 
+### ✅ A forma de pagamento é ESCOLHIDA, não adivinhada (2026-07-30 · achado do 1º teste)
+
+Marcos testou em sandbox e reportou: *"só está aparecendo a opção de pagar com
+boleto, mesmo eu selecionando cartão; quando selecionei pix também"*. A fatura do
+Asaas veio **só com boleto**.
+
+⚠️ **Isto RESPONDE (e corrige) a pergunta que ficou aberta acima:**
+`billingType: 'UNDEFINED'` **não** garante uma fatura com as três formas — o
+Asaas monta a página com o que a **CONTA** tem habilitado, e conta sem chave Pix
+cadastrada rende boleto puro. Nossa tela então oferecia abas de Pix e cartão que
+não existiam do outro lado. Palpite sobre capacidade de conta alheia é sempre
+assim: silencioso e errado.
+
+- `providers/asaas.js` → **`definirMetodo`**: `PUT /payments/:id` com
+  `billingType` PIX/CREDIT_CARD/BOLETO e busca do artefato real (QR via
+  `/pixQrCode`, linha digitável via `/identificationField`, `invoiceUrl`). Aqui o
+  QR **não** é best-effort — a pessoa PEDIU Pix; erro do provedor (conta sem
+  chave Pix, cartão não liberado) precisa aparecer na hora da escolha.
+- `cobrancas.definirMetodo` persiste forma + artefatos e **não toca em valor,
+  status nem vaga** — trocar de forma não é pagar nem cancelar. Recusa cobrança
+  que já recebeu dinheiro: ali o método é fato consumado, e reescrevê-lo apagaria
+  como o dinheiro entrou. Artefato só é sobrescrito quando vem algo novo (trocar
+  pra cartão não apaga o QR que a pessoa talvez volte a usar).
+- **`POST /api/public/evento/pagamento/:token/metodo`** valida contra
+  `metodos_ofertados` do EVENTO (forma fora da lista não é oferecida nem por
+  chamada direta) e, em erro do provedor, responde **502 com o estado atual** no
+  corpo — a tela não regride pra vazio e mantém o caminho de reserva.
+- A tela prepara a forma ao clicar na aba (carregando/erro visíveis) e ficou
+  **mobile-first**: media query real (`CSS_MOBILE`), cabeçalho reservando o canto
+  do `PublicThemeToggle` (que é `position: fixed` e deitava sobre o título no
+  celular), QR proporcional e alvos de toque de 48px.
+- ⚠️ **Correção de registro em `aplicarStatus`**: `extra.ctx` ia pro UPDATE como
+  se fosse coluna. Ninguém passava `ctx` ainda, então o furo estava latente — o
+  PostgREST recusaria o UPDATE inteiro (42703) e a transição não aconteceria.
+  Agora `ctx` é separado das colunas.
+- ⚠️ **`cancelar` ganhou `preservar_dominio`** (e o handler respeita): cancelar a
+  cobrança por decisão NOSSA (bolsa concedida, valor corrigido) não pode cancelar
+  a inscrição de quem acabou de ganhar a vaga.
+- ⚠️ **Flake removido do gate de deploy**: 4 testes de guarda de ambiente faziam
+  chamada de **rede real** ao sandbox do Asaas (um falhou por tempo aqui). Rede
+  stubada — determinístico e sem bater em API de terceiro a cada deploy. Teste
+  vermelho bloqueia produção; teste que depende de rede não pode entrar aqui.
+
+### ✅ Bolsa, desconto e gratuidade POR INSCRITO (2026-07-30 · migration `20260730170000`)
+
+Pergunta do Marcos: *"tem pessoas que, para ajudarmos, cobramos menos, ou até vão
+de graça — como amarrar isso da melhor forma?"*
+
+**Decisão: preço é atributo da INSCRIÇÃO, não do evento.**
+`insc_eventos.valor_centavos` segue sendo o valor de tabela (o que o formulário
+público cobra de todo mundo); quem paga diferente carrega
+`inscricoes.valor_cobrado_centavos` (NULL = tabela · 0 = isenta) + `bolsa_tipo`
+(integral|parcial), `bolsa_motivo` e autoria. As alternativas descartadas e por
+quê: **evento paralelo mais barato** duplica vaga/lista/sorteio e tira a pessoa do
+retiro de verdade; **"lançar como pago" na mão** faz o arrecadado mentir — e o
+arrecadado é justamente o número que ele pediu; **desconto no evento** não é do
+evento, é de quem recebeu a ajuda.
+
+`POST|DELETE /inscricoes/eventos/:id/inscricoes/:insId/bolsa` (nível 3 · ato de
+gestão). O que ele **NÃO** faz, por decisão: **não devolve dinheiro** (bolsa em
+quem já pagou é registrada e avisada; estorno é decisão humana explícita), **não
+cancela a inscrição**, **não confirma quem ainda deve**. Gratuidade → inscrição
+`confirmada` na hora (a vaga já é dela). Desconto → cancela a cobrança antiga
+(com `preservar_dominio`) e emite uma NOVA com referência versionada
+(`inscricao:<id>:bolsa:<ts>` — `inscricao:<id>` é UNIQUE e é o que impede pagar
+duas vezes), devolvendo o link pra equipe enviar; o espelho antigo vai pra
+`expirado` por causa da UNIQUE de inscrição ativa em `insc_pagamentos`.
+Motivo é obrigatório no CHECK do banco — conceder benefício sem dizer por quê é
+registro que ninguém defende seis meses depois. Na lista, isenta ganha selo
+**"isenta"** em vez de "aguardando pagamento" (não está aguardando nada).
+
+### ✅ Placar do evento + API do app do staff (2026-07-30 · SEM migration)
+
+- **`GET /inscricoes/eventos/:id/resumo`** → contadores por **COUNT no banco**
+  (`head: true`, nenhuma linha transferida) + **arrecadado** das inscrições
+  pagas. Aparece no topo do `/inscricoes/evento/:id`. ⚠️ É acompanhamento do
+  evento, **não caixa** (lei nº 6): o caixa recebe 1 receita por REPASSE do PSP.
+- **`lerInscritosDoEvento`/`contadoresEvento`** são os leitores ÚNICOS — a tela
+  do sistema e o app do staff chamam os mesmos. Se o join de pagamento mudar,
+  muda nos dois de uma vez.
+- **App do staff**: `GET /inscricoes/app/eventos` (compacto, só publicado/
+  encerrado por padrão) e `GET /inscricoes/app/eventos/:id/inscricoes` (paginado
+  de verdade, busca por nome/telefone server-side, placar só na 1ª página).
+  Nível 1 — acompanhar é ver, não operar. ⚠️ A TELA do app vive no repo
+  **`igreja-cbrio/CBRio-Staff`**, que não está anexado nesta sessão.
+
 **Estado do teste (2026-07-30):** conta Asaas no CNPJ da igreja criada e **"Em
 análise"** (produção não recebe); volume do lançamento **já avisado por escrito**
 ao Asaas. Teste vai em **preview + sandbox**, com as envs no escopo **Preview
