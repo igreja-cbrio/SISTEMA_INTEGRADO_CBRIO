@@ -420,6 +420,17 @@ function DashboardTab({ dash, indicadores, depreciacaoIndic, localizacoes, onNav
 
   const depreciacaoPorCategoria = depreciacaoIndic?.por_categoria || [];
 
+  // Tooltip do recharts, explícito nas 3 propriedades (content/item/label) —
+  // o CSS global (.recharts-default-tooltip) só cobre fundo/borda/label; o
+  // texto do ITEM (valor) cai no preto padrão do recharts e fica ilegível no
+  // tema escuro se não for setado aqui também.
+  const tooltipProps = {
+    contentStyle: { borderRadius: 8, fontSize: 12, border: `1px solid ${C.border}`, background: C.card },
+    itemStyle: { color: C.text },
+    labelStyle: { color: C.text2 },
+    wrapperStyle: { zIndex: 20 },
+  };
+
   return (
     <>
       <div className="cbrio-stagger" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginBottom: 24 }}>
@@ -436,13 +447,10 @@ function DashboardTab({ dash, indicadores, depreciacaoIndic, localizacoes, onNav
                   <Pie data={statusDonut} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={52} outerRadius={78} paddingAngle={2} startAngle={90} endAngle={-270} isAnimationActive={false} stroke="none">
                     {statusDonut.map((d, i) => <Cell key={i} fill={d.cor} />)}
                   </Pie>
-                  <Tooltip
-                    contentStyle={{ borderRadius: 8, fontSize: 12, border: `1px solid ${C.border}`, background: C.card, color: C.text }}
-                    formatter={(v, n) => [v, n]}
-                  />
+                  <Tooltip {...tooltipProps} formatter={(v, n) => [v, n]} />
                 </PieChart>
               </ResponsiveContainer>
-              <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
+              <div style={{ position: 'absolute', inset: 0, zIndex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
                 <span style={{ fontSize: 22, fontWeight: 800, color: C.text, lineHeight: 1 }}>{totalBens}</span>
                 <span style={{ fontSize: 10, color: C.text3 }}>bens</span>
               </div>
@@ -497,7 +505,7 @@ function DashboardTab({ dash, indicadores, depreciacaoIndic, localizacoes, onNav
                     <CartesianGrid horizontal={false} stroke={C.border} />
                     <XAxis type="number" tickFormatter={(v) => fmtMoney(v)} tick={{ fontSize: 10 }} />
                     <YAxis type="category" dataKey="categoria" width={130} tick={{ fontSize: 11 }} />
-                    <Tooltip formatter={(v, n) => [fmtMoney(v), n === 'valor_aquisicao' ? 'Aquisição' : 'Valor atual']} />
+                    <Tooltip {...tooltipProps} formatter={(v, n) => [fmtMoney(v), n === 'valor_aquisicao' ? 'Aquisição' : 'Valor atual']} />
                     <Bar dataKey="valor_aquisicao" name="Aquisição" fill={gradFill('#94a3b8')} radius={[0, 4, 4, 0]} maxBarSize={14} />
                     <Bar dataKey="valor_atual" name="Valor atual" fill={gradFill(C.primary)} radius={[0, 4, 4, 0]} maxBarSize={14}>
                       <LabelList dataKey="valor_atual" position="right" formatter={(v) => fmtMoney(v)} style={{ fontSize: 10, fill: C.text2 }} />
@@ -521,7 +529,7 @@ function DashboardTab({ dash, indicadores, depreciacaoIndic, localizacoes, onNav
                     <CartesianGrid horizontal={false} stroke={C.border} />
                     <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11 }} />
                     <YAxis type="category" dataKey="name" width={130} tick={{ fontSize: 11 }} />
-                    <Tooltip formatter={(v) => [v, 'bens']} />
+                    <Tooltip {...tooltipProps} formatter={(v) => [v, 'bens']} />
                     <Bar dataKey="value" maxBarSize={16} radius={[0, 4, 4, 0]}>
                       {barrasCategoria.map((d, i) => <Cell key={i} fill={d.sem ? gradFill(C.amber) : gradFill(C.primary)} />)}
                       <LabelList dataKey="value" position="right" style={{ fontSize: 11, fill: C.text2 }} />
@@ -542,7 +550,7 @@ function DashboardTab({ dash, indicadores, depreciacaoIndic, localizacoes, onNav
                     <CartesianGrid horizontal={false} stroke={C.border} />
                     <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11 }} />
                     <YAxis type="category" dataKey="name" width={130} tick={{ fontSize: 11 }} />
-                    <Tooltip formatter={(v) => [v, 'bens']} />
+                    <Tooltip {...tooltipProps} formatter={(v) => [v, 'bens']} />
                     <Bar dataKey="value" maxBarSize={16} radius={[0, 4, 4, 0]}>
                       {barrasLocalizacao.map((d, i) => <Cell key={i} fill={d.sem ? gradFill(C.amber) : gradFill(C.primary)} />)}
                       <LabelList dataKey="value" position="right" style={{ fontSize: 11, fill: C.text2 }} />
