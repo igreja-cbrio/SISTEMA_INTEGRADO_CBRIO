@@ -4493,3 +4493,58 @@ saldo por 30-90 dias); política de reembolso escrita (venda pela internet tem 7
 dias de arrependimento por CDC art. 49 independente da política, e ela precisa
 dizer quem come a taxa do gateway); classificação contábil da receita por
 escrito; e quando a igreja paga o local — isso decide o teto de parcelas.
+
+### ✅ Tela de pagamento: Pix e boleto nossos, cartão hospedado (2026-07-30 · PR #2168 · SEM migration)
+
+Pedido do Marcos ("preciso de um modal na hora do pagamento, cartão, pix,
+boleto"). Antes, `EventoExterno.tsx` mandava a pessoa **direto pro
+`checkout_url`** (`window.location.href`) ao enviar o formulário: saía do domínio
+no meio do fluxo e, ao fechar a aba, ela perdia o link. Agora vai pra
+`/pagamento/:token`, que é endereçável e à qual ela pode voltar.
+
+**⚠️ LEI (nº 5 do núcleo, aplicada à UI · não regredir): cartão continua no
+checkout do Asaas.** Número de cartão não entra no nosso domínio, no nosso
+Express nem nos nossos logs. Coletar PAN em formulário nosso ampliaria o escopo
+PCI-DSS da igreja — muda a responsabilidade legal num vazamento, não é questão
+de gosto. **Pix e boleto NÃO são dados sensíveis** (QR e linha digitável), por
+isso são nativos. Foi assim que se conseguiu quase toda a sensação de fluxo
+integrado com zero exposição.
+
+- `PagamentoInscricao.tsx`: abas **Pix** (QR + copiar) · **Boleto** (linha
+  digitável + PDF) · **Cartão** (abre o Asaas). Oferece só a interseção de
+  `pagamento_metodos` do evento com a capacidade do provider — o `GET
+  /public/evento/pagamento/:token` passou a devolver `metodos` e `parcelas_max`
+  (config, não PII). Cobrança antiga sem `metodos` cai nos três.
+- **Cada aba tem caminho nativo E de reserva.** Se o provedor não devolveu o
+  artefato (QR, linha do boleto), a aba manda pro checkout em vez de aparecer
+  vazia ou mentir.
+- `providers/asaas.js` ganhou **`buscarPixQrCode`** (`GET
+  /payments/:id/pixQrCode` · chamada separada do `POST /payments`).
+  **Best-effort por decisão:** quando ela roda, a cobrança **já existe e já
+  reservou vaga** — deixar o erro propagar faria a pessoa perder a inscrição por
+  causa de um enfeite de tela. 5 testes cobrem isso (sucesso, `success:false`,
+  erro HTTP, falha de rede, id ausente).
+- ⚠️ **EM ABERTO (resolver no 1º teste em sandbox):** não está confirmado se o
+  Asaas devolve QR de Pix e `bankSlipUrl` numa cobrança `billingType:
+  'UNDEFINED'` (o pagador ainda não escolheu método). Se NÃO devolver, o plano é
+  a pessoa escolher o método ANTES da cobrança existir, criando com `billingType`
+  específico — mais invasivo (exige passar o método pela fachada até o adapter).
+  Não decidir isso por suposição.
+- `backend/.env.example` **não tinha nenhuma** entrada `PAG_*`/`ASAAS_*` (só o
+  CLAUDE.md). Agora tem as quatro, com o aviso de que o prefixo da chave precisa
+  casar com o ambiente — e que o adapter **lança na primeira chamada, não no
+  boot**, então chave errada só aparece ao criar a primeira cobrança.
+- Saiu o rótulo "Valor (R$) · Pix chega na próxima fase" (`Inscricoes.tsx`) — a
+  fase chegou e o texto mentia pra quem cria evento.
+
+**Estado do teste (2026-07-30):** conta Asaas no CNPJ da igreja criada e **"Em
+análise"** (produção não recebe); volume do lançamento **já avisado por escrito**
+ao Asaas. Teste vai em **preview + sandbox**, com as envs no escopo **Preview
+só** — produção fica no provider `manual` e recusa evento pago com aviso, o que
+é a rede de segurança. ⚠️ O webhook do sandbox precisa do **Protection Bypass
+for Automation** na query string: o projeto `crmcbrio` tem `ssoProtection` em
+`all_except_custom_domains`, então sem o bypass a entrega toma 401 da Vercel
+antes de chegar na rota. Roteiro completo de teste ficou na conversa.
+⚠️ Conferir na aba Cron Jobs se `pagamentos-webhook/cron/tick` registrou (45
+crons vs teto documentado de 40) — sem ele, vaga reservada e não paga nunca
+expira.
