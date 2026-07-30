@@ -27,6 +27,7 @@ const ROUTE_MODULE_MAP = {
   'projects':     ['projetos'],
   'expansion':    ['expansao'],
   'solicitacoes': ['solicitacoes'],
+  'propostas':    ['propostas'],
   // ministeriais
   'integracao':   ['integracao'],
   'relatorios':   ['relatorios'],

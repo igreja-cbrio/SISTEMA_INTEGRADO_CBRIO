@@ -230,6 +230,24 @@ export const events = {
   applySimpleTemplates: (eventId) => post(`/events/${eventId}/apply-simple-templates`, {}),
 };
 
+// Módulo Propostas · ciclo anual (Fase 1A: configuração)
+export const propostas = {
+  config: {
+    ciclos: () => get('/propostas/config/ciclos'),
+    criarCiclo: (data) => post('/propostas/config/ciclos', data),
+    atualizarCiclo: (id, data) => put(`/propostas/config/ciclos/${id}`, data),
+    parametros: (cicloId) => get(`/propostas/config/ciclos/${cicloId}/parametros`),
+    salvarParametros: (cicloId, data) => put(`/propostas/config/ciclos/${cicloId}/parametros`, data),
+    areas: () => get('/propostas/config/areas'),
+    salvarArea: (areaId, data) => put(`/propostas/config/areas/${areaId}`, data),
+    aux: () => get('/propostas/config/aux'),
+    criterios: (cicloId) => get(`/propostas/config/ciclos/${cicloId}/criterios`),
+    criarCriterio: (cicloId, data) => post(`/propostas/config/ciclos/${cicloId}/criterios`, data),
+    atualizarCriterio: (id, data) => put(`/propostas/config/criterios/${id}`, data),
+    removerCriterio: (id) => del(`/propostas/config/criterios/${id}`),
+  },
+};
+
 export const projects = {
   categories: () => get('/projects/categories'),
   dashboard: () => get('/projects/dashboard'),
