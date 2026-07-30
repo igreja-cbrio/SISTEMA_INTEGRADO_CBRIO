@@ -56,14 +56,12 @@ router.get('/dashboard', async (req, res) => {
       return res.json({ ...dashboardCache.data, _cached: true });
     }
 
-    const [fornecedores, solicitacoes, pedidos] = await Promise.all([
+    const [fornecedores, pedidos] = await Promise.all([
       supabase.from('log_fornecedores').select('id, ativo'),
-      supabase.from('log_solicitacoes_compra').select('id, status, valor_estimado'),
       supabase.from('log_pedidos').select('id, status, valor_total'),
     ]);
 
     const forn = fornecedores.data || [];
-    const solic = solicitacoes.data || [];
     const ped = pedidos.data || [];
 
     // ── Buscar dados do Mercado Livre (contagem de envios em trânsito + total de compras no mês) ──
@@ -131,8 +129,6 @@ router.get('/dashboard', async (req, res) => {
 
     const result = {
       fornecedoresAtivos: forn.filter(f => f.ativo).length,
-      solicitacoesPendentes: solic.filter(s => s.status === 'pendente').length,
-      solicitacoesAprovadas: solic.filter(s => s.status === 'aprovado').length,
       pedidosAguardando: ped.filter(p => p.status === 'aguardando').length,
       pedidosEmTransito: ped.filter(p => p.status === 'em_transito').length + mlEmTransito,
       // Parcela do "Em Trânsito" que vem do Mercado Livre (aba Compras ML, não Pedidos) ·
