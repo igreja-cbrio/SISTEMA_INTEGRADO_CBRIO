@@ -3361,6 +3361,62 @@ por `next_matriculas.created_at`, então maio/2026 continua recebendo o backfill
 nesses 3 KPIs. Consertar muda valores de períodos JÁ FECHADOS e pede recoleta —
 passo separado, combinado com o Marcos.
 
+### ⚠️ Next · o DIA do backfill: sessão real primeiro, semana depois (2026-07-30)
+
+Pedido do Marcos: *"não quero mudar o KPI do next, quero que altere o dia das
+inscrições, já que não temos o dia certo — ao invés de usar sempre o dia 1 e
+colocar todas lá, divide pelas semanas do mês e separa as inscrições, aí vamos
+poder comparar o dado atual com o dado da semana do ano passado."* Migration
+`20260730160000`.
+
+**A premissa "não temos o dia certo" só valia para 31%.** Antes de estimar,
+medi: as 56 listas digitalizadas do Next **têm data de sessão** (56 datas
+distintas, dias 1 a 27 — são encontros semanais). Cruzando `next_inscricoes` ×
+`next_eventos`, **1.109 das 1.604 matrículas de backfill (69%) têm a data REAL
+da 1ª sessão em que a pessoa apareceu naquele mês**. O dia estava no PDF e não
+estava sendo lido.
+
+`fn_next_data_fato(created_at, origem_mes, primeira_sessao, id)` — fonte única,
+3 níveis do mais verdadeiro pro menos:
+
+| nível | regra | linhas | natureza |
+|---|---|---|---|
+| 1 | registrada durante/antes da própria turma → `created_at` | 286 | real, intocado |
+| 2 | backfill com aparição → **dia da 1ª sessão do mês** (`vw_next_primeira_sessao_mes`) | 1.109 | **real** |
+| 3 | backfill sem aparição → dia 1/8/15/22 pelo hash do id | 495 | estimativa declarada |
+
+Efeito medido em produção (simulado antes de aplicar): o **dia 1º sai de 1.614
+para ~280** linhas e a **semana 1 sai de 88% (1.660/1.890) para 43%** — 814 ·
+291 · 445 · 314 · 27 pelas semanas 1–5. Zero linha no futuro.
+
+- **Por que 1/8/15/22 e não uma data de sessão plausível**: o padrão de 7 em 7 a
+  partir do dia 1º é **visivelmente sintético**. Quem vê volume no dia 8 de um
+  mês sem encontro no dia 8 sabe que é aproximação. Escolher "13/04 porque teve
+  sessão nesse dia" seria fingir precisão — o oposto da régua do legado.
+- **`(h % 4 + 4) % 4`, não `abs(h) % 4`**: `hashtext` pode devolver `INT_MIN` e
+  `abs(INT_MIN)` estoura com 22003 — a leitura da linha inteira falharia.
+- **View, não coluna materializada**, pra `vw_next_primeira_sessao_mes`: dado
+  derivado de presença não pode ficar velho. Corrigir uma presença corrige a
+  data sozinha. `GROUP BY (membro_id, mes)` garante 1 linha por chave → o
+  `LEFT JOIN` **não pode multiplicar linha** (conferido: 1.890 antes e depois).
+- **A view unificada foi reconstruída por substituição textual** do arquivo da
+  `20260730130000` (2 trechos do ramo do Next), não transcrita à mão —
+  transcrever 258 linhas de `UNION ALL` é onde nasce erro. 7 statements
+  validados no pglast, `REVOKE anon/authenticated` preservado.
+
+✅ **A comparação YoY que ele quer é confiável**: turmas de **2025 são 100% data
+real** (843 · zero estimadas) e 2026 é 266 real + 96 estimadas (73%). As
+estimativas se concentram em **2024** (399), que ninguém compara. Ou seja:
+2026 × 2025 por semana bate real contra real do lado de 2025.
+
+⚠️ **NÃO mexe em KPI** (decisão dele nesta conversa): NEXT-01/02/03 seguem
+`ativo=false` medindo `indicou_*`, e os coletores seguem janelando por
+`created_at`. `created_at` de `next_matriculas` fica **intacto** — muda a
+LEITURA. A migration `20260730140000` do PR #2164 (que criava
+`vw_next_matriculas_kpi` e mudava os coletores) **nunca foi aplicada** e foi
+**superada** por esta: `fn_next_data_fato` nasce aqui já com a assinatura final
+de 4 argumentos.
+
 ### Next · as 4 decisões do Marcos sobre o legado (2026-07-29/30)
 
 Mandato dado por ele: *"o importante não é ter os dados certos de 2 anos atrás,
