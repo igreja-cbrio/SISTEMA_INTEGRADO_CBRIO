@@ -101,11 +101,16 @@ async function vincularIdentidadeOfx(transactions, { criarAvulso = true } = {}) 
 
     if (jaExiste) { mapaDoc.set(doc, jaExiste); stats.vinculados_existente++; return; }
 
-    // CPF novo: cria pessoa só em PIX de crédito (doação) + se habilitado.
-    if (criarAvulso && info.temCredito) {
+    // CPF novo: cria pessoa só em PIX de crédito (doação) + se habilitado + COM NOME REAL.
+    // Decisão do Matheus (2026-07-30): só cadastra contribuinte se o OFX trouxer CPF
+    // *E* nome — banco que manda só o CPF (ex.: Santander) NÃO gera mais o fantasma
+    // "Contribuinte NNN". A observação de identidade acima já guardou o CPF pra
+    // vincular/cadastrar depois (fila do Entradas); a contribuição fica sem vínculo.
+    const nomeReal = String(info.nome || '').trim();
+    if (criarAvulso && info.temCredito && nomeReal) {
       try {
         const r = await acharOuCriarGuardado({
-          cpf, nome: info.nome || `Contribuinte ${cpf.slice(0, 6)}...`,
+          cpf, nome: nomeReal,
           status: 'contribuinte_avulso', origem: 'financeiro_ofx',
         });
         if (r?.membro_id) {
@@ -116,7 +121,9 @@ async function vincularIdentidadeOfx(transactions, { criarAvulso = true } = {}) 
         console.warn('[ofxIdentidade] criar avulso falhou · cpf=%s · %s', cpf.slice(0, 3) + '***', e.message);
       }
     } else {
+      // Sem nome real (ou sem crédito): não cria pessoa. Só contabiliza.
       stats.ignorados++;
+      if (criarAvulso && info.temCredito && !nomeReal) stats.sem_nome = (stats.sem_nome || 0) + 1;
     }
   });
 
