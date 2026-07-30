@@ -948,6 +948,33 @@ Implementado **por tokens** (não reescreve páginas). NÃO regredir:
   cultos** (Dashboard Semanal de presença · `dashboardSemanal.js` · `isoWeekRange`) usa
   função JS PRÓPRIA **seg→dom** e NÃO chama a RPC. Mexer numa NÃO deve mexer na outra.
 
+### Rodar local · preview no app Claude Code Desktop (2026-07-30)
+
+Dois arquivos existem SÓ pra isso e não têm efeito em produção:
+
+- **`.claude/launch.json`** — os 2 servidores do painel Navegador
+  (Cmd+Shift+B no Mac · Ctrl+Shift+B no Windows): `front-vite` na **8080**
+  (o `vite.config.ts` usa 8080, não a 3000 que o app assume) e `api-express`
+  com `cwd: backend` na **3001**. Sem os dois no ar o sistema loga (Supabase é
+  direto) mas toda tela que chama `/api/...` vem vazia.
+  ⚠️ O front só acha a API com **`VITE_API_URL=http://localhost:3001`** no
+  `.env` local — sem isso `resolveApiBaseUrl` (`src/lib/api-base.js`) cai em
+  `/api` relativo, que bate no próprio Vite. O CORS já libera
+  `http://localhost:8080` (`server.js`). `.env` é gitignored e pessoal, então a
+  variável NÃO vive no repo.
+- **`.worktreeinclude`** — o app desktop abre cada sessão numa **worktree**, que
+  é checkout limpo e só traz o que está no Git; sem este arquivo a worktree
+  nasce sem `.env` e o front sobe com "VITE_SUPABASE_URL: AUSENTE". Sintaxe de
+  `.gitignore`; copia só o que casa E é gitignored. **Não** listar
+  `node_modules` (milhares de arquivos por worktree — resolver com
+  `npm install`, inclusive dentro de `backend/`).
+
+⚠️ **`host: "::"` do `vite.config.ts` não sobe em container sem IPv6**
+(`EAFNOSUPPORT`). No Mac/Windows funciona; em sessão cloud, subir com
+`npx vite --host 127.0.0.1 --port 8080` em vez de mexer na config.
+⚠️ Rodar local com o `.env` de produção significa **dados de produção**: editar
+arquivo é seguro, clicar em botão que salva escreve na base viva.
+
 ### Backend
 
 - Cada arquivo em `backend/routes/` aplica `router.use(authenticate)`
