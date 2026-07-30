@@ -17,7 +17,7 @@ const { supabase } = require('../../utils/supabase');
 const providers = require('./providers');
 const handlers = require('./handlers');
 const { STATUS, TIPO_PAGAMENTO, STATUS_ABERTOS } = require('./tipos');
-const { aplicarTransicao, statusPorValor, podeExpirar } = require('./maquinaEstados');
+const { aplicarTransicao, statusPorValor, podeExpirar, estaTerminal } = require('./maquinaEstados');
 
 const SELECT_COBRANCA = `
   id, public_token, origem_tipo, origem_id, referencia, idempotency_key,
@@ -192,6 +192,68 @@ async function pedirAoProvider(adapter, linha) {
   return data;
 }
 
+/**
+ * Registra a forma de pagamento ESCOLHIDA pelo pagador e guarda o artefato que
+ * o PSP devolveu (QR do Pix, linha digitável, checkout).
+ *
+ * ⚠️ Não é enfeite de tela: até a escolha existir, o PSP pode não ter gerado o
+ * meio de pagamento nenhum (ver `definirMetodo` no adapter do Asaas). Só o
+ * `metodo` e os artefatos mudam — **valor, status e vaga não se mexem aqui**;
+ * trocar de forma de pagamento não é pagar nem cancelar.
+ *
+ * Cobrança que já recebeu dinheiro (ou terminal) não troca de forma: o método
+ * ali é fato consumado, e reescrevê-lo apagaria como o dinheiro entrou.
+ */
+async function definirMetodo(cobrancaOuId, metodo) {
+  const c = typeof cobrancaOuId === 'string' ? await porId(cobrancaOuId) : cobrancaOuId;
+  if (!c) throw new Error('Cobrança não encontrada');
+  if (c.valor_pago_centavos > 0 || estaTerminal(c.status)) {
+    return { cobranca: c, alterada: false, motivo: 'cobranca_nao_editavel' };
+  }
+
+  const adapter = providers.obter(c.provider);
+  if (!adapter.capacidades.metodos.includes(metodo)) {
+    throw new Error(`Forma de pagamento "${metodo}" não é oferecida por ${adapter.nome}.`);
+  }
+  if (typeof adapter.definirMetodo !== 'function') {
+    // Provider que não sabe fixar a forma (o `manual`, por exemplo) só registra
+    // a intenção — o artefato dele é humano, não é uma URL.
+    const { data, error } = await supabase.from('pag_cobrancas')
+      .update({ metodo }).eq('id', c.id).select(SELECT_COBRANCA).single();
+    if (error) throw error;
+    return { cobranca: data, alterada: true };
+  }
+
+  let r;
+  try {
+    r = await adapter.definirMetodo(c, metodo);
+  } catch (e) {
+    // Guarda o motivo e propaga: aqui a pessoa PEDIU esta forma, então engolir
+    // o erro em silêncio a deixaria olhando uma aba vazia sem explicação.
+    await supabase.from('pag_cobrancas')
+      .update({ ultimo_erro: String(e.message).slice(0, 500) })
+      .eq('id', c.id);
+    throw e;
+  }
+
+  const patch = {
+    metodo: r.metodo || metodo,
+    ultimo_erro: null,
+  };
+  // Só sobrescreve artefato quando veio algo — trocar pra cartão não pode
+  // apagar o QR do Pix que a pessoa talvez volte a usar.
+  if (r.checkout_url) patch.checkout_url = r.checkout_url;
+  if (r.pix_payload) patch.pix_payload = r.pix_payload;
+  if (r.pix_qrcode_base64) patch.pix_qrcode_base64 = r.pix_qrcode_base64;
+  if (r.boleto_linha_digitavel) patch.boleto_linha_digitavel = r.boleto_linha_digitavel;
+  if (r.boleto_url) patch.boleto_url = r.boleto_url;
+
+  const { data, error } = await supabase.from('pag_cobrancas')
+    .update(patch).eq('id', c.id).select(SELECT_COBRANCA).single();
+  if (error) throw error;
+  return { cobranca: data, alterada: true };
+}
+
 /** Soma da razão auxiliar. `tarifa` fora: é custo nosso, não pagamento. */
 async function somaPago(cobrancaId) {
   const { data, error } = await supabase.from('pag_pagamentos')
@@ -214,7 +276,11 @@ async function aplicarStatus(cobranca, novoStatus, extra = {}) {
   if (!t.ok) return { aplicado: false, motivo: t.motivo, cobranca };
   if (t.noop) return { aplicado: false, noop: true, cobranca };
 
-  const patch = { status: novoStatus, ...extra };
+  // ⚠️ `ctx` é contexto pro handler de domínio, NÃO coluna: se entrar no patch,
+  // o PostgREST recusa o UPDATE inteiro por coluna inexistente (42703) e a
+  // transição não acontece. Tudo o que sobra em `extra` é coluna de verdade.
+  const { ctx, ...colunas } = extra;
+  const patch = { status: novoStatus, ...colunas };
   if (novoStatus === STATUS.PAGO && !cobranca.pago_em && !patch.pago_em) {
     patch.pago_em = new Date().toISOString();
   }
@@ -239,7 +305,7 @@ async function aplicarStatus(cobranca, novoStatus, extra = {}) {
     [STATUS.ESTORNADO_PARCIAL]: 'aoEstornar',
     [STATUS.CHARGEBACK]: 'aoEstornar',
   }[novoStatus];
-  if (gancho) await handlers.disparar(gancho, data, extra.ctx || {});
+  if (gancho) await handlers.disparar(gancho, data, ctx || {});
 
   return { aplicado: true, cobranca: data };
 }
@@ -386,6 +452,7 @@ module.exports = {
   SELECT_COBRANCA,
   porId, porToken, porReferencia, porProviderId,
   criarCobranca,
+  definirMetodo,
   aplicarStatus,
   registrarPagamento,
   somaPago,

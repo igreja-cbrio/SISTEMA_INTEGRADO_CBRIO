@@ -54,6 +54,20 @@ const uploadImg = multer({
   fileFilter: (_req, file, cb) => cb(null, MIME_IMG.includes(file.mimetype)),
 });
 
+// Comprovante de Pix/transferência (bucket PRIVADO). PDF entra além de imagem:
+// o app do banco costuma exportar comprovante como PDF, e recusá-lo empurraria
+// a pessoa pra tirar print do PDF — pior de ler pra quem confere.
+const MIME_COMPROVANTE = [...MIME_IMG, 'application/pdf'];
+const uploadComprovante = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => cb(null, MIME_COMPROVANTE.includes(file.mimetype)),
+});
+const EXT_COMPROVANTE = {
+  'application/pdf': 'pdf', 'image/png': 'png', 'image/jpeg': 'jpg',
+  'image/jpg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif',
+};
+
 // ── Fonte 1 · ESPINHA ──────────────────────────────────────────────────────
 // Rascunho/arquivado NÃO existem pro público (404); publicado/encerrado
 // aparecem (encerrado mostra "inscrições encerradas" em vez de sumir o link).
@@ -174,16 +188,80 @@ function avisoPagamento(ev) {
 const refCobranca = (inscricaoId) => `inscricao:${inscricaoId}`;
 
 /**
+ * Benefício (gratuidade/desconto) pré-autorizado pra este CPF neste evento.
+ *
+ * Só devolve o que ainda NÃO foi usado: a autorização vale uma vez, senão o
+ * mesmo CPF renderia gratuidade em cada re-inscrição.
+ *
+ * Best-effort de propósito — a tabela é nova (migration 20260730210000) e a
+ * porta pública não pode parar de inscrever por causa dela. Sem benefício a
+ * pessoa paga o valor de tabela: é o comportamento que já existia.
+ */
+async function beneficioPorCpf(eventoId, cpf) {
+  if (!cpf) return null;
+  try {
+    const { data, error } = await supabase.from('insc_beneficios')
+      .select('id, tipo, valor_centavos, motivo, nome_referencia')
+      .eq('evento_id', eventoId).eq('cpf', cpf)
+      .is('deleted_at', null).is('usado_em', null)
+      .maybeSingle();
+    if (error) throw error;
+    return data || null;
+  } catch (e) {
+    console.error('[publicEvento] benefício por CPF indisponível:', e.message);
+    return null;
+  }
+}
+
+/**
+ * Grava o benefício NA INSCRIÇÃO (as mesmas colunas do botão "Dar bolsa") e
+ * marca a autorização como usada.
+ *
+ * Awaited, não fire-and-forget: sem estas colunas a pessoa isenta apareceria
+ * como "aguardando pagamento" na lista, e o desconto ficaria invisível pra quem
+ * confere o arrecadado. Falha aqui é logada e NÃO desfaz a inscrição — a vaga
+ * já é dela, e o conserto é o botão "Dar bolsa" na ficha.
+ */
+async function aplicarBeneficio(beneficio, inscricaoId) {
+  if (!beneficio) return;
+  const integral = beneficio.tipo === 'integral';
+  try {
+    const { error } = await supabase.from('inscricoes').update({
+      valor_cobrado_centavos: integral ? 0 : Number(beneficio.valor_centavos),
+      bolsa_tipo: beneficio.tipo,
+      bolsa_motivo: beneficio.motivo,
+      bolsa_por_nome: beneficio.nome_referencia
+        ? `benefício pré-cadastrado (${beneficio.nome_referencia})`
+        : 'benefício pré-cadastrado por CPF',
+      bolsa_em: new Date().toISOString(),
+    }).eq('id', inscricaoId);
+    if (error) throw error;
+  } catch (e) {
+    console.error('[publicEvento] aplicar benefício na inscrição:', e.message);
+    return;
+  }
+  // `usado_em` só depois de a inscrição carregar o benefício: marcar antes e
+  // falhar no update acima queimaria a autorização sem entregar o desconto.
+  const { error: eUso } = await supabase.from('insc_beneficios')
+    .update({ usado_em: new Date().toISOString(), inscricao_id: inscricaoId })
+    .eq('id', beneficio.id);
+  if (eUso) console.error('[publicEvento] marcar benefício usado:', eUso.message);
+}
+
+/**
  * Cria (ou recupera) a cobrança da inscrição e espelha em `insc_pagamentos`,
  * que é a linha que a UI de inscrições lê. O estado canônico vive no motor.
  */
-async function cobrarInscricao({ ev, inscricaoId, val, membroId }) {
+async function cobrarInscricao({ ev, inscricaoId, val, membroId, valorCentavos }) {
   const horas = Number(ev.pagamento_expira_horas) > 0 ? Number(ev.pagamento_expira_horas) : 48;
   const { cobranca } = await pagamentos.criarCobranca({
     origem_tipo: pagamentos.ORIGENS.INSCRICAO,
     origem_id: inscricaoId,
     referencia: refCobranca(inscricaoId),
-    valor_centavos: Number(ev.valor_centavos),
+    // Benefício por CPF (desconto autorizado antes da inscrição) cobra MENOS
+    // que o valor de tabela do evento. Sem esse override a pessoa com desconto
+    // receberia a cobrança cheia e o desconto seria só enfeite na tela.
+    valor_centavos: Number(valorCentavos) > 0 ? Number(valorCentavos) : Number(ev.valor_centavos),
     descricao: `Inscrição · ${ev.nome}`,
     metodos_ofertados: metodosDoEvento(ev),
     // NULL = vale o teto configurado na conta do PSP. Quem define o teto por
@@ -204,7 +282,9 @@ async function cobrarInscricao({ ev, inscricaoId, val, membroId }) {
   const { error } = await supabase.from('insc_pagamentos').insert({
     inscricao_id: inscricaoId,
     cobranca_id: cobranca.id,
-    metodo: cobranca.metodo || 'pix',   // a pessoa escolhe no checkout
+    // NULL = ainda não escolheu. Chutar 'pix' aqui era o que fazia a lista
+    // mostrar Pix pra todo mundo (a pessoa escolhe depois, na tela de pagamento).
+    metodo: cobranca.metodo || null,
     provider: 'psp',
     provider_ref: cobranca.provider_cobranca_id || null,
     valor_centavos: cobranca.valor_centavos,
@@ -253,6 +333,212 @@ router.get('/textos', (_req, res) => {
 //
 // ⚠️ Acessado pelo `public_token`, NUNCA pelo uuid da cobrança (uuid vaza em
 // log/referer e é chave interna em outros lugares).
+// Só o necessário pra tela. Nada de PII do pagador, metadata ou payload — a
+// resposta é pública (o token é o único segredo). Extraído porque o GET de
+// status e o POST da escolha de forma devolvem exatamente a mesma coisa: a tela
+// não deve ter dois entendimentos do que é o estado do pagamento.
+// Formas em que o dinheiro pode chegar SEM o PSP perceber (Pix pago na chave da
+// igreja, TED). Cartão e boleto não entram: ali o PSP é o único caminho e ele
+// confirma sozinho — pedir comprovante criaria trabalho humano inútil.
+const METODOS_COM_COMPROVANTE = ['pix', 'transferencia'];
+
+// Comprovantes que a PESSOA anexou nesta inscrição. Best-effort: se a tabela
+// ainda não existe (deploy em duas etapas), a tela de pagamento continua
+// funcionando sem o bloco de anexo em vez de dar 500.
+async function comprovantesDaInscricao(inscricaoId) {
+  if (!inscricaoId) return [];
+  try {
+    const { data, error } = await supabase.from('insc_comprovantes')
+      .select('id, status, metodo_declarado, arquivo_nome, created_at, motivo_recusa, revisado_em')
+      .eq('inscricao_id', inscricaoId).is('deleted_at', null)
+      .order('created_at', { ascending: false });
+    if (error) return [];
+    return data || [];
+  } catch { return []; }
+}
+
+async function respostaPagamento(cobranca) {
+  const daInscricao = cobranca.origem_tipo === 'inscricao' ? cobranca.origem_id : null;
+  const comprovanteToken = (cobranca.status === 'pago' && daInscricao)
+    ? await emitirTokenComprovante(daInscricao, 'pagamento') : null;
+  const comprovantes = daInscricao ? await comprovantesDaInscricao(daInscricao) : [];
+  const ofertados = Array.isArray(cobranca.metodos_ofertados) ? cobranca.metodos_ofertados : [];
+  return {
+    status: cobranca.status,
+    pago: cobranca.status === 'pago',
+    valor_centavos: cobranca.valor_centavos,
+    valor_pago_centavos: cobranca.valor_pago_centavos,
+    metodo: cobranca.metodo || null,
+    parcelas: cobranca.parcelas_total || null,
+    // Quais formas a tela deve oferecer. Config do evento cruzada com a
+    // capacidade do provider — não é PII. Sem isto a página teria que chutar
+    // os três e poderia oferecer boleto num evento que não aceita boleto.
+    metodos: ofertados,
+    parcelas_max: cobranca.parcelas_max || null,
+    checkout_url: cobranca.checkout_url || null,
+    pix_payload: cobranca.pix_payload || null,
+    boleto_linha_digitavel: cobranca.boleto_linha_digitavel || null,
+    boleto_url: cobranca.boleto_url || null,
+    expira_em: cobranca.expira_em || null,
+    pago_em: cobranca.pago_em || null,
+    evento_nome: cobranca.metadata?.evento_nome || null,
+    evento_slug: cobranca.metadata?.evento_slug || null,
+    // Comprovante do check-in (SPEC-06): quem pagou recebe o QR da entrada
+    // AQUI — a tela de sucesso do formulário já ficou pra trás quando a
+    // pessoa foi pro checkout, e esta é a página que ela reabre.
+    comprovante_token: comprovanteToken,
+
+    // ── Comprovante de Pix/transferência (fila humana) ──
+    // Só faz sentido oferecer enquanto NÃO está pago e em forma que pode ter
+    // sido paga fora do PSP. Já pago = não há o que conferir.
+    // ⚠️ `comprovantes` NÃO carrega `storage_path`: o bucket é privado e o path
+    // não é segredo — quem vê o arquivo é a equipe, por signed URL.
+    aceita_comprovante: cobranca.status !== 'pago' && (
+      cobranca.metodo
+        ? METODOS_COM_COMPROVANTE.includes(cobranca.metodo)
+        : (ofertados.length === 0 || ofertados.some(m => METODOS_COM_COMPROVANTE.includes(m)))
+    ),
+    comprovantes: comprovantes.map(c => ({
+      id: c.id, status: c.status, metodo_declarado: c.metodo_declarado,
+      arquivo_nome: c.arquivo_nome || null, enviado_em: c.created_at,
+      motivo_recusa: c.motivo_recusa || null,
+    })),
+  };
+}
+
+/**
+ * POST /pagamento/:token/comprovante — a pessoa anexa o comprovante do Pix/TED.
+ *
+ * ⚠️ NÃO marca pagamento, em nenhuma circunstância. Cria uma linha
+ * `em_analise` e avisa a equipe. Quem baixa o pagamento é uma pessoa, na tela
+ * do evento, com autoria registrada. Aceitar imagem como prova automática é
+ * como se aprova comprovante falso — e o dinheiro não aparece na conciliação.
+ */
+router.post('/pagamento/:token/comprovante', uploadComprovante.single('arquivo'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'Envie uma imagem (JPG/PNG/WEBP) ou PDF de até 10 MB.' });
+    }
+    const cobranca = await pagamentos.consultarPorToken(req.params.token);
+    if (!cobranca) return res.status(404).json({ error: 'Cobrança não encontrada' });
+    if (cobranca.origem_tipo !== 'inscricao' || !cobranca.origem_id) {
+      return res.status(400).json({ error: 'Este pagamento não aceita comprovante.' });
+    }
+    // Já pago não tem o que conferir — e aceitar aqui geraria fila humana pra
+    // decidir sobre dinheiro que já entrou.
+    if (cobranca.status === 'pago') {
+      return res.status(409).json({ error: 'Este pagamento já está confirmado.', pagamento: await respostaPagamento(cobranca) });
+    }
+
+    const inscricaoId = cobranca.origem_id;
+    const metodo = METODOS_COM_COMPROVANTE.includes(String(req.body?.metodo_declarado || '').trim())
+      ? String(req.body.metodo_declarado).trim()
+      : (METODOS_COM_COMPROVANTE.includes(cobranca.metodo) ? cobranca.metodo : 'pix');
+
+    // Teto por inscrição: reenviar depois de recusa é o fluxo NORMAL, mas sem
+    // limite o endpoint público vira depósito de arquivo.
+    const jaEnviados = await comprovantesDaInscricao(inscricaoId);
+    if (jaEnviados.length >= 8) {
+      return res.status(429).json({ error: 'Muitos comprovantes enviados. Fale com a equipe pelo WhatsApp.' });
+    }
+
+    const ext = EXT_COMPROVANTE[req.file.mimetype] || 'bin';
+    const path = `${inscricaoId}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+    const up = await supabase.storage.from('inscricao-comprovantes')
+      .upload(path, req.file.buffer, { contentType: req.file.mimetype, upsert: false });
+    if (up.error) throw new Error(up.error.message);
+
+    const { data: linha, error } = await supabase.from('insc_comprovantes').insert({
+      inscricao_id: inscricaoId,
+      cobranca_id: cobranca.id,
+      metodo_declarado: metodo,
+      storage_path: path,
+      arquivo_nome: (req.file.originalname || '').slice(0, 200) || null,
+      arquivo_tipo: req.file.mimetype,
+      arquivo_bytes: req.file.size,
+      observacao: req.body?.observacao ? String(req.body.observacao).slice(0, 500) : null,
+    }).select('id').single();
+    if (error) {
+      // Arquivo órfão no bucket privado é lixo barato; linha sem arquivo seria
+      // uma fila apontando pra nada.
+      await supabase.storage.from('inscricao-comprovantes').remove([path]).catch(() => {});
+      throw new Error(error.message);
+    }
+
+    const { data: insc } = await supabase.from('inscricoes')
+      .select('nome_completo').eq('id', inscricaoId).maybeSingle();
+
+    notificar({
+      modulo: 'inscricoes',
+      tipo: 'comprovante_pagamento',
+      titulo: 'Comprovante de pagamento pra conferir',
+      // Diz explicitamente que NÃO foi baixado: quem lê a notificação não pode
+      // concluir que a pessoa já está paga na lista.
+      mensagem: `${insc?.nome_completo || 'Um inscrito'} anexou comprovante de ${metodo === 'pix' ? 'Pix' : 'transferência'}${cobranca.metadata?.evento_nome ? ` · ${cobranca.metadata.evento_nome}` : ''}. O pagamento NÃO foi baixado — confira e confirme na tela do evento.`,
+      link: cobranca.metadata?.evento_id ? `/inscricoes/evento/${cobranca.metadata.evento_id}` : '/inscricoes',
+      chaveDedup: `insc_comprovante_${linha.id}`,
+    }).catch((err) => console.error('[publicEvento] notificar comprovante:', err.message));
+
+    res.json({ ok: true, pagamento: await respostaPagamento(cobranca) });
+  } catch (e) {
+    console.error('[publicEvento] comprovante:', e.message);
+    res.status(500).json({ error: 'Não conseguimos anexar o comprovante agora. Tente novamente.' });
+  }
+});
+
+/**
+ * POST /pagamento/:token/metodo — a pessoa escolheu como quer pagar.
+ *
+ * ⚠️ Isto NÃO é preferência de interface: é o que faz o meio de pagamento
+ * EXISTIR do lado do provedor. O 1º teste em sandbox (30/07) mostrou que uma
+ * cobrança criada sem forma definida rende uma fatura com o que a CONTA do
+ * provedor tem habilitado — no caso, só boleto — enquanto a nossa tela oferecia
+ * Pix e cartão. Agora a escolha vira um fato lá, e o erro (conta sem chave Pix,
+ * cartão não liberado) aparece aqui, na hora, em vez de virar uma fatura errada.
+ *
+ * Não mexe em valor, status nem vaga. Trocar de forma não é pagar nem cancelar.
+ */
+router.post('/pagamento/:token/metodo', async (req, res) => {
+  try {
+    const cobranca = await pagamentos.consultarPorToken(req.params.token);
+    if (!cobranca) return res.status(404).json({ error: 'Cobrança não encontrada' });
+
+    const metodo = String(req.body?.metodo || '').trim();
+    const ofertados = Array.isArray(cobranca.metodos_ofertados) ? cobranca.metodos_ofertados : [];
+    // Respeita a configuração do EVENTO: forma fora da lista não é oferecida
+    // nem por chamada direta. Lista vazia = cobrança antiga, antes do seletor.
+    if (ofertados.length && !ofertados.includes(metodo)) {
+      return res.status(400).json({ error: 'Esta forma de pagamento não está disponível para este evento.' });
+    }
+    if (cobranca.status === 'pago') return res.json(await respostaPagamento(cobranca));
+
+    try {
+      const r = await pagamentos.definirMetodo(cobranca, metodo);
+      // `alterada: false` = a cobrança não aceita mais troca de forma (já tem
+      // dinheiro dentro ou está terminal). Era um 200 SILENCIOSO: a aba mudava,
+      // o servidor não, e a tela ficava mostrando duas verdades sem dizer nada.
+      if (r.alterada === false) {
+        return res.status(409).json({
+          error: 'Esta cobrança não aceita mais troca de forma de pagamento.',
+          pagamento: await respostaPagamento(r.cobranca),
+        });
+      }
+      return res.json(await respostaPagamento(r.cobranca));
+    } catch (e) {
+      console.error('[publicEvento] definir forma de pagamento:', e.message);
+      // 502: o problema é do outro lado (conta do provedor sem aquele meio
+      // habilitado, por exemplo). A tela mostra a alternativa que existe.
+      return res.status(502).json({
+        error: 'Não conseguimos preparar esta forma de pagamento agora.',
+        pagamento: await respostaPagamento(cobranca),
+      });
+    }
+  } catch (e) {
+    console.error('[publicEvento] metodo do pagamento:', e.message);
+    res.status(500).json({ error: 'Erro ao escolher a forma de pagamento.' });
+  }
+});
+
 router.get('/pagamento/:token', async (req, res) => {
   try {
     let cobranca = await pagamentos.consultarPorToken(req.params.token);
@@ -271,30 +557,7 @@ router.get('/pagamento/:token', async (req, res) => {
       }
     }
 
-    // Só o necessário pra tela. Nada de PII do pagador, metadata ou payload —
-    // a resposta é pública (o token é o único segredo).
-    const comprovanteToken = (cobranca.status === 'pago' && cobranca.origem_tipo === 'inscricao')
-      ? await emitirTokenComprovante(cobranca.origem_id, 'pagamento') : null;
-    res.json({
-      status: cobranca.status,
-      pago: cobranca.status === 'pago',
-      valor_centavos: cobranca.valor_centavos,
-      valor_pago_centavos: cobranca.valor_pago_centavos,
-      metodo: cobranca.metodo || null,
-      parcelas: cobranca.parcelas_total || null,
-      checkout_url: cobranca.checkout_url || null,
-      pix_payload: cobranca.pix_payload || null,
-      boleto_linha_digitavel: cobranca.boleto_linha_digitavel || null,
-      boleto_url: cobranca.boleto_url || null,
-      expira_em: cobranca.expira_em || null,
-      pago_em: cobranca.pago_em || null,
-      evento_nome: cobranca.metadata?.evento_nome || null,
-      evento_slug: cobranca.metadata?.evento_slug || null,
-      // Comprovante do check-in (SPEC-06): quem pagou recebe o QR da entrada
-      // AQUI — a tela de sucesso do formulário já ficou pra trás quando a
-      // pessoa foi pro checkout, e esta é a página que ela reabre.
-      comprovante_token: comprovanteToken,
-    });
+    res.json(await respostaPagamento(cobranca));
   } catch (e) {
     console.error('[publicEvento] status do pagamento:', e.message);
     res.status(500).json({ error: 'Erro ao consultar o pagamento.' });
@@ -423,6 +686,19 @@ async function inscreverEspinha(req, res, ev) {
   const ex = validarExtras(ev.campos, body.dados);
   if (ex.erro) return res.status(400).json({ error: ex.erro });
   const optin = Boolean(body.whatsapp_optin);
+
+  // Benefício PRÉ-AUTORIZADO pra este CPF (gratuidade ou desconto que o líder
+  // cadastrou antes). Consultado ANTES da RPC porque decide o `p_status`:
+  // gratuidade nasce `confirmada` (não há pagamento a esperar) e desconto nasce
+  // `recebida` com a cobrança reduzida. Best-effort: tabela ausente (deploy em
+  // duas etapas) não derruba a porta — sem benefício a pessoa paga o valor de
+  // tabela, que é exatamente o comportamento de antes.
+  const beneficio = ehPago ? await beneficioPorCpf(ev.id, val.cpf) : null;
+  const isento = beneficio?.tipo === 'integral';
+  const valorComBeneficio = beneficio && !isento ? Number(beneficio.valor_centavos) : null;
+  // Isento não gera cobrança — cobrar R$ 0 no PSP não existe.
+  const vaiCobrar = ehPago && !isento;
+
   const ip = req.ip || null;
   const ua = req.headers['user-agent'] || null;
 
@@ -485,6 +761,20 @@ async function inscreverEspinha(req, res, ev) {
       .catch((err) => console.error('[publicEvento espinha] consentimentos:', err.message));
 
     if (ehPago) {
+      // ⚠️ Benefício NÃO é aplicado na re-inscrição: a cobrança dela já existe
+      // com o valor cheio (a `referencia` é idempotente), e baixar o valor da
+      // inscrição sem reemitir a cobrança deixaria as duas discordando. Quem
+      // reemite corretamente é o botão "Dar bolsa" na ficha — então avisa gente
+      // em vez de aplicar pela metade ou perder a autorização em silêncio.
+      if (beneficio) {
+        notificar({
+          modulo: 'inscricoes', tipo: 'beneficio_pendente',
+          titulo: 'Benefício não aplicado automaticamente',
+          mensagem: `${val.nomeCompleto} tem ${beneficio.tipo === 'integral' ? 'gratuidade' : 'desconto'} autorizado em "${ev.nome}", mas já estava inscrita com a cobrança cheia. Aplique pelo botão "Dar bolsa" na ficha dela (ele reemite a cobrança).`,
+          link: `/inscricoes/evento/${ev.id}`,
+          chaveDedup: `insc_beneficio_pendente_${beneficio.id}`,
+        }).catch((err) => console.error('[publicEvento espinha] notificar benefício:', err.message));
+      }
       // Quem já pagou vê o comprovante; quem não pagou recebe o MESMO link
       // (a `referencia` idempotente devolve a cobrança existente em vez de
       // criar uma segunda — é assim que ninguém paga duas vezes).
@@ -518,7 +808,10 @@ async function inscreverEspinha(req, res, ev) {
     // ⚠️ Evento pago nasce `recebida` = "vaga reservada, pagamento pendente".
     // A vaga fica presa sob o advisory lock até pagar ou o cron expirar; quem
     // promove pra `confirmada` é o handler do pagamento, nunca esta rota.
-    p_status: ehPago ? 'recebida' : 'confirmada',
+    // EXCEÇÃO: gratuidade pré-autorizada por CPF nasce `confirmada` — não há
+    // pagamento a esperar, e deixá-la `recebida` faria o cron de expiração
+    // tirar a vaga de quem a igreja decidiu isentar.
+    p_status: vaiCobrar ? 'recebida' : 'confirmada',
     p_origem: 'formulario_publico',
     p_com_sorteio: !!ev.tem_sorteio,
     p_whatsapp_optin: optin,
@@ -563,6 +856,10 @@ async function inscreverEspinha(req, res, ev) {
   }
   const ins = { id: rpc.id, numero_sorte: rpc.numero_sorte };
 
+  // Benefício autorizado pra este CPF: grava o preço DESTA inscrição e queima a
+  // autorização. Antes da cobrança, porque é ele que define o valor cobrado.
+  await aplicarBeneficio(beneficio, ins.id);
+
   // Funil de identidade (matcher read-only + observação) + consentimentos.
   processarIdentidade({
     nomeCompleto: val.nomeCompleto, cpf: val.cpf, email: val.email, telefone: val.telefone,
@@ -593,20 +890,24 @@ async function inscreverEspinha(req, res, ev) {
   // (recebida→confirmada), e a mensagem sai de lá. Fire-and-forget: a fila tem
   // retry/backoff e falha terminal avisa gente — nunca decide o fluxo.
   // Re-inscrição/merge não passa por aqui (anti-spam de re-escaneada de QR).
-  if (!ehPago) {
+  // Isento entra aqui também: nasceu `confirmada` e não tem pagamento a
+  // esperar, então a confirmação é agora — igual a evento gratuito.
+  if (!vaiCobrar) {
     enviarConfirmacaoInscricao({
       inscricaoId: ins.id, nome: val.nomeCompleto, telefone: val.telefone,
       optin, evento: ev,
     }).catch((err) => console.error('[publicEvento espinha] confirmação WhatsApp:', err.message));
   }
 
-  if (ehPago) {
+  if (vaiCobrar) {
     // A vaga já está reservada (`recebida`, sob o advisory lock). Se a cobrança
     // falhar aqui, a inscrição fica pendente e o cron de expiração devolve a
     // vaga — melhor que o inverso (cobrar sem vaga garantida).
     try {
-      const cobranca = await cobrarInscricao({ ev, inscricaoId: ins.id, val, membroId: null });
-      return res.status(201).json(respostaCobranca(cobranca, ev));
+      const cobranca = await cobrarInscricao({
+        ev, inscricaoId: ins.id, val, membroId: null, valorCentavos: valorComBeneficio,
+      });
+      return res.status(201).json({ ...respostaCobranca(cobranca, ev), beneficio: beneficio ? 'parcial' : null });
     } catch (e) {
       console.error('[publicEvento espinha] criar cobrança:', e.message);
       return res.status(502).json({
@@ -623,6 +924,9 @@ async function inscreverEspinha(req, res, ev) {
     // QR do comprovante na tela de sucesso (SPEC-06) — só a espinha tem
     // check-in; o ext legado segue sem token.
     comprovante_token: comprovanteToken,
+    // Evento pago + isenção autorizada: a tela precisa DIZER que a inscrição
+    // está confirmada sem pagamento, senão a pessoa fica esperando um link.
+    beneficio: isento ? 'integral' : null,
   });
 }
 

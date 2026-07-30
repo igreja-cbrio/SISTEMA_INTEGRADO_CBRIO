@@ -297,7 +297,7 @@ export default function EventoExterno() {
   const [erro, setErro] = useState('');
   const [enviando, setEnviando] = useState(false);
   const [subindoImg, setSubindoImg] = useState(0);
-  const [resultado, setResultado] = useState<{ numero: number | null; jaInscrito?: boolean; temSorteio?: boolean; comprovanteToken?: string | null } | null>(null);
+  const [resultado, setResultado] = useState<{ numero: number | null; jaInscrito?: boolean; temSorteio?: boolean; comprovanteToken?: string | null; isento?: boolean } | null>(null);
   const marcarBusy = (b: boolean) => setSubindoImg(n => Math.max(0, n + (b ? 1 : -1)));
 
   useEffect(() => {
@@ -343,21 +343,26 @@ export default function EventoExterno() {
         consent_imagem: temCampoImagem ? consentImagem : undefined,
         dados, website,
       });
-      // Evento PAGO: a vaga ficou reservada e a pessoa vai pagar na página do
-      // provedor (um link serve Pix, cartão parcelado e boleto). ⚠️ Sem confete
-      // e sem "presença confirmada" aqui — nada de comemoração antes de o
-      // servidor dizer `pago`.
-      if (r.pagamento && r.checkout_url) {
-        window.location.href = r.checkout_url;
-        return;
-      }
+      // Evento PAGO: a vaga ficou reservada e a pessoa escolhe como pagar na
+      // NOSSA tela — Pix e boleto ali mesmo, cartão no checkout do Asaas (é o
+      // único que precisa sair, porque número de cartão não passa pelo nosso
+      // domínio). Antes isto mandava direto pro `checkout_url`; sair do domínio
+      // no meio do fluxo derruba conversão e a pessoa perdia o link ao fechar a
+      // aba — a tela `/pagamento/:token` é endereçável e ela pode voltar.
+      // ⚠️ Sem confete e sem "presença confirmada" aqui — nada de comemoração
+      // antes de o servidor dizer `pago`.
       if (r.pagamento) {
-        // Cobrança criada mas sem link (caso raro): manda pra tela de status,
-        // que consulta o provedor e reoferece o pagamento.
         navigate(`/pagamento/${r.public_token}`);
         return;
       }
-      setResultado({ numero: r.numero_sorte, jaInscrito: r.ja_inscrito, temSorteio: r.tem_sorteio, comprovanteToken: r.comprovante_token || null });
+      setResultado({
+        numero: r.numero_sorte, jaInscrito: r.ja_inscrito, temSorteio: r.tem_sorteio,
+        comprovanteToken: r.comprovante_token || null,
+        // Evento PAGO em que este CPF tinha gratuidade autorizada: caiu aqui (e
+        // não na tela de pagamento) porque não há nada a pagar. Sem dizer isso,
+        // a pessoa ficaria esperando um link que não vem.
+        isento: r.beneficio === 'integral',
+      });
       if (r.tem_sorteio) setTimeout(confete, 200);
     } catch (e: any) { setErro(e.message || 'Erro ao confirmar presença.'); }
     finally { setEnviando(false); }
@@ -422,6 +427,11 @@ export default function EventoExterno() {
               {resultado.jaInscrito && (
                 <p style={{ fontSize: 13, color: '#00B39D', fontWeight: 600, marginTop: 8 }}>
                   Você já estava confirmado(a) — atualizamos seus dados.
+                </p>
+              )}
+              {resultado.isento && (
+                <p style={{ fontSize: 13, color: '#00B39D', fontWeight: 600, marginTop: 8 }}>
+                  Sua inscrição foi liberada pela liderança — você não precisa pagar nada.
                 </p>
               )}
               {/* Texto de agradecimento: custom do evento (se houver) ou o padrão */}

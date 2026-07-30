@@ -14,6 +14,9 @@ const { supabase } = require('../utils/supabase');
 const { escapePostgrestValue } = require('../utils/sanitize');
 const { verificarTokenComprovanteAtivo, extrairToken } = require('../services/inscricaoComprovante');
 const { portasSatelites, fontesUnificadas, catalogoPublico } = require('../services/inscricaoPortas');
+// CPF com DV pelo canônico do Contrato de Inscrição — NÃO recriar cópia local
+// (era assim que as réguas divergiam entre as portas).
+const { cpfValido } = require('../services/inscricaoContrato');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 } });
 
@@ -709,56 +712,737 @@ router.get('/eventos/:id', authorizeModule('inscricoes', 1), async (req, res) =>
   }
 });
 
-// GET /eventos/:id/inscricoes — lista de inscritos.
+// Colunas da lista de inscritos.
 //
 // Devolve `data_nascimento` e `sexo` (base da idade, da faixa etária e das
 // listas impressas por faixa/sexo) e `membro_id` (vínculo com o cadastro).
 // **CPF continua fora** — é o campo de identificação mais sensível e serve pro
 // matcher, não pra tela; quem precisa vê no detalhe da pessoa.
-//
-// Pagamento vem de `vw_insc_pagamento_estado`, que já resolve o estado CANÔNICO
-// no motor `pag_cobrancas` quando há cobrança e cai no espelho de
-// `insc_pagamentos` quando o pagamento foi manual.
-router.get('/eventos/:id/inscricoes', authorizeModule('inscricoes', 1), async (req, res) => {
-  try {
-    // ⚠️ Paginado: o PostgREST capa em 1000 linhas server-side e `.limit(2000)`
-    // NÃO contorna (o cap é do projeto, vale pra qualquer cliente). Um evento
-    // grande vinha truncado em silêncio — a lista parecia completa.
-    const COLS = 'id, nome_completo, telefone, email, data_nascimento, sexo, membro_id, status, numero_sorte, whatsapp_optin, dados, created_at';
-    const inscritos = [];
-    for (let offset = 0; offset < 20000; offset += 1000) {
-      const { data, error } = await supabase.from('inscricoes')
-        .select(COLS)
-        .eq('evento_id', req.params.id).is('deleted_at', null)
-        .order('created_at', { ascending: false })
-        .range(offset, offset + 999);
+const INSCRITOS_COLS = 'id, nome_completo, telefone, email, data_nascimento, sexo, membro_id, status, numero_sorte, whatsapp_optin, dados, created_at, '
+  // Bolsa/isenção (migration 20260730170000): quem paga menos ou nada, por quê
+  // e quem concedeu. Sem isto a lista mostraria "aguardando pagamento" pra quem
+  // foi de graça — que não está aguardando nada.
+  + 'valor_cobrado_centavos, bolsa_tipo, bolsa_motivo, bolsa_por_nome, bolsa_em';
+
+/**
+ * Leitor ÚNICO da lista de inscritos de um evento — a tela do sistema (lista
+ * completa, impressão por faixa, CSV) e o app do staff (página curta + busca)
+ * chamam ESTA função. Duas telas, uma regra: se o join de pagamento mudar,
+ * muda nas duas de uma vez.
+ *
+ * Pagamento vem de `vw_insc_pagamento_estado`, que já resolve o estado
+ * CANÔNICO no motor `pag_cobrancas` quando há cobrança e cai no espelho de
+ * `insc_pagamentos` quando o pagamento foi manual.
+ *
+ * `limit > 0` liga a paginação server-side (o app pede 40 por vez); sem limit
+ * devolve TODOS os inscritos, paginando internamente pelo cap de 1000 linhas
+ * do PostgREST — `.limit(2000)` NÃO contorna esse cap (é do projeto, vale pra
+ * qualquer cliente), e um evento grande vinha truncado em silêncio.
+ */
+async function lerInscritosDoEvento(eventoId, { busca = '', status = '', limit = 0, offset = 0 } = {}) {
+  const monta = (comContagem) => {
+    let q = supabase.from('inscricoes')
+      .select(INSCRITOS_COLS, comContagem ? { count: 'exact' } : undefined)
+      .eq('evento_id', eventoId).is('deleted_at', null);
+    if (status) q = q.eq('status', status);
+    const termo = String(busca || '').trim().slice(0, 80);
+    if (termo) {
+      const digits = termo.replace(/\D/g, '');
+      // Telefone só entra no OR quando o termo tem dígitos suficientes pra ser
+      // telefone — senão "Ana 2" viraria também filtro por telefone contendo 2.
+      q = digits.length >= 4
+        ? q.or(`nome_completo.ilike.%${escapePostgrestValue(termo)}%,telefone.like.%${digits}%`)
+        : q.ilike('nome_completo', `%${termo}%`);
+    }
+    return q.order('created_at', { ascending: false });
+  };
+
+  let inscritos = [];
+  let total = null;
+  if (limit > 0) {
+    const { data, error, count } = await monta(true).range(offset, offset + limit - 1);
+    if (error) throw error;
+    inscritos = data || [];
+    total = count ?? null;
+  } else {
+    for (let off = 0; off < 20000; off += 1000) {
+      const { data, error } = await monta(false).range(off, off + 999);
       if (error) throw error;
       inscritos.push(...(data || []));
       if (!data || data.length < 1000) break;
     }
+    total = inscritos.length;
+  }
 
-    // Best-effort: a view é recente e a lista não pode deixar de abrir se ela
-    // faltar num ambiente sem a migration aplicada.
-    let porInscricao = new Map();
-    try {
-      const pagamentos = [];
-      for (let offset = 0; offset < 20000; offset += 1000) {
+  // Best-effort: a view é recente e a lista não pode deixar de abrir se ela
+  // faltar num ambiente sem a migration aplicada.
+  let porInscricao = new Map();
+  try {
+    const pagamentos = [];
+    if (limit > 0) {
+      // Página curta: busca só os pagamentos dos ids exibidos (`.in()` em
+      // lotes ≤200 — lista grande estoura a URL do PostgREST).
+      const ids = inscritos.map((i) => i.id);
+      for (let i = 0; i < ids.length; i += 200) {
         const { data, error } = await supabase.from('vw_insc_pagamento_estado')
           .select('inscricao_id, metodo, status_pagamento, valor_centavos, valor_pago_centavos, pago_em, parcelas_total, cartao_brand, cartao_last4')
-          .eq('evento_id', req.params.id)
-          .range(offset, offset + 999);
+          .in('inscricao_id', ids.slice(i, i + 200));
+        if (error) throw error;
+        pagamentos.push(...(data || []));
+      }
+    } else {
+      for (let off = 0; off < 20000; off += 1000) {
+        const { data, error } = await supabase.from('vw_insc_pagamento_estado')
+          .select('inscricao_id, metodo, status_pagamento, valor_centavos, valor_pago_centavos, pago_em, parcelas_total, cartao_brand, cartao_last4')
+          .eq('evento_id', eventoId)
+          .range(off, off + 999);
         if (error) throw error;
         pagamentos.push(...(data || []));
         if (!data || data.length < 1000) break;
       }
-      porInscricao = new Map(pagamentos.map((p) => [p.inscricao_id, p]));
-    } catch (e) {
-      console.error('[inscricoes] estado de pagamento indisponível:', e.message);
     }
+    porInscricao = new Map(pagamentos.map((p) => [p.inscricao_id, p]));
+  } catch (e) {
+    console.error('[inscricoes] estado de pagamento indisponível:', e.message);
+  }
 
-    res.json(inscritos.map((i) => ({ ...i, pagamento: porInscricao.get(i.id) || null })));
+  // Comprovantes anexados pela pessoa (Pix/transferência). Só a CONTAGEM e o
+  // estado mais recente vão pra lista — o arquivo em si sai por signed URL no
+  // endpoint próprio. Best-effort pelo mesmo motivo do bloco acima.
+  const porComprovante = await comprovantesResumoPorInscricao(
+    eventoId, limit > 0 ? inscritos.map((i) => i.id) : null,
+  );
+
+  return {
+    itens: inscritos.map((i) => ({
+      ...i,
+      pagamento: porInscricao.get(i.id) || null,
+      comprovantes: porComprovante.get(i.id) || null,
+    })),
+    total,
+  };
+}
+
+/**
+ * Resumo dos comprovantes por inscrição: `{ total, em_analise, ultimo_status }`.
+ *
+ * `ids = null` → todos do evento (filtro pelo embed `!inner`, uma consulta por
+ * página de 1000, em vez de N lotes de `.in()`). `ids` preenchido → só os
+ * exibidos (`.in()` em lotes ≤200, senão a URL do PostgREST estoura).
+ */
+async function comprovantesResumoPorInscricao(eventoId, ids) {
+  const mapa = new Map();
+  try {
+    const linhas = [];
+    if (Array.isArray(ids)) {
+      for (let i = 0; i < ids.length; i += 200) {
+        const { data, error } = await supabase.from('insc_comprovantes')
+          .select('inscricao_id, status, created_at')
+          .in('inscricao_id', ids.slice(i, i + 200)).is('deleted_at', null);
+        if (error) throw error;
+        linhas.push(...(data || []));
+      }
+    } else {
+      for (let off = 0; off < 20000; off += 1000) {
+        const { data, error } = await supabase.from('insc_comprovantes')
+          .select('inscricao_id, status, created_at, inscricoes!inner(evento_id)')
+          .eq('inscricoes.evento_id', eventoId).is('deleted_at', null)
+          .range(off, off + 999);
+        if (error) throw error;
+        linhas.push(...(data || []));
+        if (!data || data.length < 1000) break;
+      }
+    }
+    for (const l of linhas) {
+      const atual = mapa.get(l.inscricao_id)
+        || { total: 0, em_analise: 0, ultimo_status: null, ultimo_em: null };
+      atual.total += 1;
+      if (l.status === 'em_analise') atual.em_analise += 1;
+      if (!atual.ultimo_em || l.created_at > atual.ultimo_em) {
+        atual.ultimo_em = l.created_at;
+        atual.ultimo_status = l.status;
+      }
+      mapa.set(l.inscricao_id, atual);
+    }
+  } catch (e) {
+    console.error('[inscricoes] comprovantes indisponíveis:', e.message);
+  }
+  return mapa;
+}
+
+/**
+ * Contadores de um evento por COUNT no banco (`head: true` = não transfere
+ * linha nenhuma). É o que permite o app do staff mostrar o placar sem baixar a
+ * lista inteira — ler todas as linhas pra contar em JS anularia a paginação.
+ */
+async function contadoresEvento(eventoId) {
+  const base = () => supabase.from('inscricoes')
+    .select('id', { count: 'exact', head: true })
+    .eq('evento_id', eventoId).is('deleted_at', null);
+  const conta = async (q) => { const { count, error } = await q; if (error) throw error; return count || 0; };
+
+  const [inscritos, confirmadas, aguardando, canceladas] = await Promise.all([
+    conta(base()),
+    conta(base().eq('status', 'confirmada')),
+    conta(base().eq('status', 'recebida')),
+    conta(base().eq('status', 'cancelada')),
+  ]);
+
+  // insc_checkins não tem evento_id — filtra pelo embed !inner da inscrição.
+  let presentes = 0;
+  try {
+    presentes = await conta(supabase.from('insc_checkins')
+      .select('inscricao_id, inscricao:inscricoes!inner(evento_id)', { count: 'exact', head: true })
+      .eq('inscricao.evento_id', eventoId));
+  } catch (e) {
+    console.error('[inscricoes] contagem de check-in indisponível:', e.message);
+  }
+
+  // Arrecadado = soma dos pagamentos PAGOS (a view resolve o estado canônico).
+  // ⚠️ Isto é acompanhamento operacional, NÃO caixa: o caixa recebe 1 receita
+  // por REPASSE do PSP em `fin_transacoes` (lei nº 6 do núcleo de pagamentos).
+  //
+  // O MESMO laço conta **por forma de pagamento** — é a resposta agregada pra
+  // "dá pra saber como cada pessoa pagou?". Custo zero: as linhas já vêm.
+  let arrecadado_centavos = null;
+  let por_metodo = null;
+  try {
+    let soma = 0;
+    const formas = {};
+    for (let off = 0; off < 20000; off += 1000) {
+      const { data, error } = await supabase.from('vw_insc_pagamento_estado')
+        .select('valor_pago_centavos, metodo')
+        .eq('evento_id', eventoId).eq('status_pagamento', 'pago')
+        .range(off, off + 999);
+      if (error) throw error;
+      for (const p of (data || [])) {
+        soma += Number(p.valor_pago_centavos || 0);
+        // `metodo` nulo = pagou mas o provedor não disse como (não inventar).
+        const k = p.metodo || 'nao_informado';
+        formas[k] = (formas[k] || 0) + 1;
+      }
+      if (!data || data.length < 1000) break;
+    }
+    arrecadado_centavos = soma;
+    por_metodo = formas;
+  } catch (e) {
+    console.error('[inscricoes] arrecadação indisponível:', e.message);
+  }
+
+  // Isentas (bolsa integral) NÃO têm forma de pagamento — não pagaram. Contam
+  // separado pra soma "por forma + isentas" fechar com os confirmados.
+  let isentas = 0;
+  try {
+    isentas = await conta(supabase.from('inscricoes')
+      .select('id', { count: 'exact', head: true })
+      .eq('evento_id', eventoId).is('deleted_at', null)
+      .eq('bolsa_tipo', 'integral'));
+  } catch (e) {
+    // Coluna nova (migration 20260730170000): ambiente sem ela não quebra a tela.
+    console.error('[inscricoes] contagem de isentas indisponível:', e.message);
+  }
+
+  // Comprovantes esperando conferência humana. É fila de TRABALHO: sem número
+  // visível, comprovante anexado no sábado só é visto quando alguém abre a
+  // ficha da pessoa por acaso.
+  let comprovantes_em_analise = 0;
+  try {
+    comprovantes_em_analise = await conta(supabase.from('insc_comprovantes')
+      .select('id, inscricoes!inner(evento_id)', { count: 'exact', head: true })
+      .eq('inscricoes.evento_id', eventoId).is('deleted_at', null)
+      .eq('status', 'em_analise'));
+  } catch (e) {
+    // Tabela nova (migration 20260730200000): ausência não quebra o placar.
+    console.error('[inscricoes] contagem de comprovantes indisponível:', e.message);
+  }
+
+  return {
+    inscritos, ativos: inscritos - canceladas, confirmadas,
+    aguardando_pagamento: aguardando, canceladas, presentes,
+    arrecadado_centavos, por_metodo, isentas, comprovantes_em_analise,
+  };
+}
+
+// GET /eventos/:id/inscricoes — lista de inscritos (tela do sistema · completa).
+router.get('/eventos/:id/inscricoes', authorizeModule('inscricoes', 1), async (req, res) => {
+  try {
+    const { itens } = await lerInscritosDoEvento(req.params.id);
+    res.json(itens);
   } catch (e) {
     console.error('[inscricoes] inscricoes do evento:', e.message);
+    res.status(500).json({ error: 'Erro ao listar inscrições' });
+  }
+});
+
+/**
+ * POST /eventos/:id/inscricoes/:inscricaoId/bolsa — bolsa, desconto ou isenção.
+ *
+ * Pedido do Marcos (30/07): "tem pessoas que, para ajudarmos, cobramos menos ou
+ * até vão de graça". O preço passa a ser da INSCRIÇÃO (migration
+ * `20260730170000`) — o evento mantém o valor de tabela.
+ *
+ * ⚠️ O que este endpoint NÃO faz, por decisão:
+ *
+ *  • **não devolve dinheiro.** Bolsa em quem já pagou é registrada e avisada; a
+ *    devolução é decisão da liderança, com estorno explícito. Automatizar
+ *    saída de dinheiro a partir de um clique de cadastro é o tipo de coisa que
+ *    ninguém quer descobrir depois.
+ *  • **não cancela a inscrição.** A cobrança antiga morre (o valor mudou), mas
+ *    a pessoa mantém a vaga — daí o `preservar_dominio` no cancelamento.
+ *  • **não confirma quem ainda deve.** Isenta vira `confirmada`; desconto
+ *    parcial gera cobrança nova e continua `recebida` até pagar.
+ *
+ * Nível 3: conceder benefício é ato de gestão, não de leitura.
+ */
+router.post('/eventos/:id/inscricoes/:inscricaoId/bolsa', authorizeModule('inscricoes', 3), async (req, res) => {
+  try {
+    const tipo = String(req.body?.tipo || '').trim();
+    const motivo = String(req.body?.motivo || '').trim();
+    if (!['integral', 'parcial'].includes(tipo)) {
+      return res.status(400).json({ error: 'Tipo da bolsa deve ser "integral" (gratuidade) ou "parcial" (desconto).' });
+    }
+    if (motivo.length < 3) {
+      return res.status(400).json({ error: 'Diga o motivo da bolsa — é o que sustenta a decisão depois.' });
+    }
+
+    const { data: ev } = await supabase.from('insc_eventos')
+      .select('id, nome, slug, valor_centavos, pagamento_ativo, pagamento_expira_horas, parcelas_max, juros_repassados, pagamento_metodos')
+      .eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!ev) return res.status(404).json({ error: 'Evento não encontrado' });
+    if (!ev.pagamento_ativo) return res.status(400).json({ error: 'Este evento não é pago — não há o que descontar.' });
+
+    const { data: insc } = await supabase.from('inscricoes')
+      .select('id, nome_completo, telefone, email, cpf, status, membro_id, valor_cobrado_centavos')
+      .eq('id', req.params.inscricaoId).eq('evento_id', req.params.id)
+      .is('deleted_at', null).maybeSingle();
+    if (!insc) return res.status(404).json({ error: 'Inscrição não encontrada' });
+    if (insc.status === 'cancelada') {
+      return res.status(400).json({ error: 'Esta inscrição está cancelada. Reative antes de conceder a bolsa.' });
+    }
+
+    const tabela = Number(ev.valor_centavos || 0);
+    let valorCobrado = 0;
+    if (tipo === 'parcial') {
+      const reais = String(req.body?.valor ?? '').replace(',', '.');
+      valorCobrado = Math.round(Number(reais) * 100);
+      if (!(valorCobrado > 0)) return res.status(400).json({ error: 'Informe quanto esta pessoa vai pagar.' });
+      if (valorCobrado >= tabela) {
+        return res.status(400).json({ error: `Desconto tem que ser menor que o valor de tabela (R$ ${(tabela / 100).toFixed(2)}).` });
+      }
+    }
+
+    const pagamentos = require('../services/pagamentos');
+    const cobrancaAtual = await pagamentos.consultarPorReferencia(`inscricao:${insc.id}`)
+      .catch(() => null);
+
+    // Já pagou: registra a bolsa, mas dinheiro não volta por automação.
+    const jaPagou = !!cobrancaAtual && cobrancaAtual.valor_pago_centavos > 0;
+
+    const patch = {
+      valor_cobrado_centavos: valorCobrado,
+      bolsa_tipo: tipo,
+      bolsa_motivo: motivo,
+      bolsa_por: req.user?.id || null,
+      bolsa_por_nome: req.user?.name || req.user?.email || null,
+      bolsa_em: new Date().toISOString(),
+    };
+    // Isenta e ainda sem pagamento → a vaga está garantida, então confirma.
+    if (tipo === 'integral' && !jaPagou) patch.status = 'confirmada';
+
+    const { data: atualizada, error: eUp } = await supabase.from('inscricoes')
+      .update(patch).eq('id', insc.id).select('*').single();
+    if (eUp) throw eUp;
+
+    const avisos = [];
+    if (jaPagou) {
+      avisos.push('Esta pessoa já pagou. A bolsa ficou registrada, mas a devolução não é automática — decidam e façam o estorno.');
+    } else if (cobrancaAtual && ['criada', 'aguardando_pagamento'].includes(cobrancaAtual.status)) {
+      // Cobrança do valor antigo não serve mais. Cancela PRESERVANDO a
+      // inscrição (senão o handler cancelaria quem acabou de ganhar a vaga).
+      const r = await pagamentos.cancelar(cobrancaAtual.id, {
+        motivo: `Bolsa ${tipo} concedida — cobrança reemitida`, preservar_dominio: true,
+      });
+      if (!r.ok) avisos.push('Não conseguimos cancelar a cobrança anterior no provedor — confira antes de reenviar o link.');
+      // O espelho tem UNIQUE de inscrição ativa: sai de 'aguardando' pra a
+      // cobrança nova poder existir.
+      await supabase.from('insc_pagamentos').update({ status: 'expirado' })
+        .eq('cobranca_id', cobrancaAtual.id);
+    }
+
+    let novaCobranca = null;
+    if (tipo === 'parcial' && !jaPagou) {
+      // Cobrança nova, com referência versionada — `inscricao:<id>` já foi usada
+      // e é UNIQUE (é o que impede pagar duas vezes no fluxo normal).
+      const horas = Number(ev.pagamento_expira_horas) > 0 ? Number(ev.pagamento_expira_horas) : 48;
+      try {
+        const { cobranca } = await pagamentos.criarCobranca({
+          origem_tipo: pagamentos.ORIGENS.INSCRICAO,
+          origem_id: insc.id,
+          referencia: `inscricao:${insc.id}:bolsa:${Date.now()}`,
+          valor_centavos: valorCobrado,
+          descricao: `Inscrição (bolsa) · ${ev.nome}`,
+          metodos_ofertados: Array.isArray(ev.pagamento_metodos) ? ev.pagamento_metodos : [],
+          parcelas_max: ev.parcelas_max || null,
+          juros_repassados: ev.juros_repassados !== false,
+          expira_em: new Date(Date.now() + horas * 3600000).toISOString(),
+          pagador_nome: insc.nome_completo,
+          pagador_cpf: insc.cpf,
+          pagador_email: insc.email,
+          pagador_telefone: insc.telefone,
+          membro_id: insc.membro_id || null,
+          metadata: { evento_id: ev.id, evento_slug: ev.slug, evento_nome: ev.nome, bolsa: tipo },
+        });
+        novaCobranca = {
+          valor_centavos: cobranca.valor_centavos,
+          // Link que a equipe manda pra pessoa. É a MESMA página pública.
+          link: `${(process.env.FRONTEND_URL || 'https://cbrio.org').replace(/\/$/, '')}/pagamento/${cobranca.public_token}`,
+        };
+        await supabase.from('insc_pagamentos').insert({
+          inscricao_id: insc.id, cobranca_id: cobranca.id,
+          metodo: cobranca.metodo || null, provider: 'psp',
+          provider_ref: cobranca.provider_cobranca_id || null,
+          valor_centavos: cobranca.valor_centavos, status: 'aguardando',
+          qr_payload: cobranca.pix_payload || null, expira_em: cobranca.expira_em || null,
+        });
+      } catch (e) {
+        console.error('[inscricoes] cobrança da bolsa:', e.message);
+        avisos.push('A bolsa foi registrada, mas não conseguimos emitir a cobrança nova agora. Tente reemitir em instantes.');
+      }
+    }
+
+    res.json({ ok: true, inscricao: atualizada, cobranca: novaCobranca, avisos });
+  } catch (e) {
+    console.error('[inscricoes] bolsa:', e.message);
+    res.status(500).json({ error: 'Erro ao registrar a bolsa' });
+  }
+});
+
+// DELETE /eventos/:id/inscricoes/:inscricaoId/bolsa — volta ao valor de tabela.
+// NÃO cria cobrança automaticamente: quem tira a bolsa precisa combinar o
+// pagamento com a pessoa, e emitir cobrança sem aviso é cobrar de surpresa.
+router.delete('/eventos/:id/inscricoes/:inscricaoId/bolsa', authorizeModule('inscricoes', 3), async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('inscricoes')
+      .update({
+        valor_cobrado_centavos: null, bolsa_tipo: null, bolsa_motivo: null,
+        bolsa_por: null, bolsa_por_nome: null, bolsa_em: null,
+      })
+      .eq('id', req.params.inscricaoId).eq('evento_id', req.params.id)
+      .is('deleted_at', null).select('*').maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Inscrição não encontrada' });
+    res.json({ ok: true, inscricao: data });
+  } catch (e) {
+    console.error('[inscricoes] remover bolsa:', e.message);
+    res.status(500).json({ error: 'Erro ao remover a bolsa' });
+  }
+});
+
+// ── Benefícios pré-autorizados por CPF ─────────────────────────────────────
+//
+// O líder cadastra o CPF ANTES da pessoa se inscrever; a porta pública aplica
+// sozinha (publicEventoExterno · `beneficioPorCpf`/`aplicarBeneficio`). Grava as
+// MESMAS colunas do botão "Dar bolsa" — preço continua sendo atributo da
+// INSCRIÇÃO, não uma segunda régua de preço do evento.
+//
+// Leitura exige nível 2 porque a linha carrega CPF (mesma régua da aba Pessoas).
+
+// GET /eventos/:id/beneficios
+router.get('/eventos/:id/beneficios', authorizeModule('inscricoes', 2), async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('insc_beneficios')
+      .select('*').eq('evento_id', req.params.id).is('deleted_at', null)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    res.json({ itens: data || [] });
+  } catch (e) {
+    console.error('[inscricoes] beneficios:', e.message);
+    if (/insc_beneficios|does not exist|schema cache/i.test(e.message || '')) {
+      return res.json({ itens: [], aviso: 'Benefícios indisponíveis: migration 20260730210000 pendente.' });
+    }
+    res.status(500).json({ error: 'Erro ao carregar os benefícios' });
+  }
+});
+
+// POST /eventos/:id/beneficios — autoriza gratuidade ou desconto pra um CPF.
+router.post('/eventos/:id/beneficios', authorizeModule('inscricoes', 3), async (req, res) => {
+  try {
+    const cpf = String(req.body?.cpf || '').replace(/\D/g, '');
+    // DV validado pelo canônico do Contrato de Inscrição: CPF sem DV válido não
+    // passa na porta pública, então cadastrar aqui seria autorizar um benefício
+    // que NUNCA casaria com ninguém.
+    if (!cpfValido(cpf)) return res.status(400).json({ error: 'CPF inválido' });
+
+    const tipo = req.body?.tipo === 'integral' ? 'integral' : 'parcial';
+    const motivo = String(req.body?.motivo || '').trim();
+    if (motivo.length < 3) return res.status(400).json({ error: 'Diga o motivo do benefício (fica registrado).' });
+
+    // `valor` chega em REAIS da tela e é o que a pessoa VAI PAGAR (não o
+    // desconto) — mesma semântica de `valor_cobrado_centavos`.
+    let valor_centavos = null;
+    if (tipo === 'parcial') {
+      const reais = Number(String(req.body?.valor ?? '').toString().replace(',', '.'));
+      valor_centavos = Math.round(reais * 100);
+      if (!(valor_centavos > 0)) {
+        return res.status(400).json({ error: 'Informe quanto essa pessoa vai pagar (maior que zero).' });
+      }
+      // Cobrar mais que a tabela não é desconto — provavelmente é o valor total
+      // digitado no campo errado.
+      const { data: ev } = await supabase.from('insc_eventos')
+        .select('valor_centavos').eq('id', req.params.id).maybeSingle();
+      if (ev?.valor_centavos && valor_centavos >= Number(ev.valor_centavos)) {
+        return res.status(400).json({
+          error: `O valor com desconto precisa ser menor que o do evento (R$ ${(Number(ev.valor_centavos) / 100).toFixed(2).replace('.', ',')}).`,
+        });
+      }
+    }
+
+    const { data, error } = await supabase.from('insc_beneficios').insert({
+      evento_id: req.params.id,
+      cpf,
+      nome_referencia: req.body?.nome_referencia ? String(req.body.nome_referencia).trim().slice(0, 120) : null,
+      tipo,
+      valor_centavos,
+      motivo: motivo.slice(0, 500),
+      criado_por: req.user?.id || null,
+      criado_por_nome: req.user?.name || req.user?.email || null,
+    }).select('*').single();
+    if (error) {
+      // UNIQUE parcial (evento, cpf) — já existe autorização viva pra este CPF.
+      if (error.code === '23505') {
+        return res.status(409).json({ error: 'Este CPF já tem um benefício cadastrado neste evento.' });
+      }
+      throw error;
+    }
+    res.status(201).json({ ok: true, beneficio: data });
+  } catch (e) {
+    console.error('[inscricoes] criar beneficio:', e.message);
+    res.status(500).json({ error: 'Erro ao cadastrar o benefício' });
+  }
+});
+
+// DELETE /eventos/:id/beneficios/:beneficioId — soft-delete da AUTORIZAÇÃO.
+// ⚠️ NÃO desfaz benefício já usado: a inscrição dela já carrega o preço e mexer
+// nisso é o botão "Dar bolsa"/"Alterar" na ficha, que reemite a cobrança.
+router.delete('/eventos/:id/beneficios/:beneficioId', authorizeModule('inscricoes', 3), async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('insc_beneficios')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('id', req.params.beneficioId).eq('evento_id', req.params.id)
+      .is('deleted_at', null).select('id, usado_em').maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Benefício não encontrado' });
+    res.json({
+      ok: true,
+      ja_usado: !!data.usado_em,
+      aviso: data.usado_em
+        ? 'A autorização saiu da lista, mas a inscrição que já usou continua com o valor concedido — altere na ficha da pessoa se precisar.'
+        : null,
+    });
+  } catch (e) {
+    console.error('[inscricoes] remover beneficio:', e.message);
+    res.status(500).json({ error: 'Erro ao remover o benefício' });
+  }
+});
+
+// ── Comprovantes de Pix/transferência (conferência HUMANA) ─────────────────
+//
+// ⚠️ LEI: imagem NUNCA marca pagamento. O que a pessoa anexa na página pública
+// entra como `em_analise`; baixar o pagamento é ato de uma pessoa da equipe,
+// registrado com autoria (`marcarPagoManual` exige `confirmado_por`). Ler print
+// de celular e concluir "pagou" é como se aprova comprovante falso — e o
+// dinheiro não aparece na conciliação do extrato depois.
+
+// Signed URL curta: o bucket é privado e o link não deve sobreviver ao print da
+// tela de quem conferiu.
+const COMPROVANTE_URL_SEGUNDOS = 900;
+
+async function carregarComprovantes(eventoId, inscricaoId) {
+  const { data, error } = await supabase.from('insc_comprovantes')
+    .select('*, inscricoes!inner(id, evento_id, nome_completo)')
+    .eq('inscricao_id', inscricaoId).eq('inscricoes.evento_id', eventoId)
+    .is('deleted_at', null).order('created_at', { ascending: false });
+  if (error) throw error;
+  const linhas = data || [];
+  // Assina em LOTE (1 chamada pra N arquivos · padrão do anexarFotosEmLote do
+  // Kids). Falha ao assinar degrada pra linha sem `url` — a conferência do
+  // histórico não pode derrubar a tela.
+  let urls = new Map();
+  if (linhas.length) {
+    try {
+      const { data: assinadas } = await supabase.storage.from('inscricao-comprovantes')
+        .createSignedUrls(linhas.map((l) => l.storage_path), COMPROVANTE_URL_SEGUNDOS);
+      urls = new Map((assinadas || []).map((a) => [a.path, a.signedUrl]));
+    } catch (e) {
+      console.error('[inscricoes] assinar comprovantes:', e.message);
+    }
+  }
+  return linhas.map((l) => {
+    // `storage_path` NÃO vai pra resposta: não é segredo e não serve pra nada no
+    // cliente (o bucket é privado) — só ampliaria a superfície.
+    const { storage_path, inscricoes, ...resto } = l;
+    return { ...resto, url: urls.get(storage_path) || null };
+  });
+}
+
+// GET /eventos/:id/inscricoes/:inscricaoId/comprovantes
+// Nível 1: VER o comprovante é parte de acompanhar o evento; confirmar é nível 3.
+router.get('/eventos/:id/inscricoes/:inscricaoId/comprovantes', authorizeModule('inscricoes', 1), async (req, res) => {
+  try {
+    res.json({ itens: await carregarComprovantes(req.params.id, req.params.inscricaoId) });
+  } catch (e) {
+    console.error('[inscricoes] comprovantes:', e.message);
+    // Tabela ausente (deploy em duas etapas) responde AVISO, não 500 — a ficha
+    // do inscrito continua abrindo.
+    if (/insc_comprovantes|does not exist|schema cache/i.test(e.message || '')) {
+      return res.json({ itens: [], aviso: 'Comprovantes indisponíveis: migration 20260730200000 pendente.' });
+    }
+    res.status(500).json({ error: 'Erro ao carregar os comprovantes' });
+  }
+});
+
+/**
+ * POST /eventos/:id/inscricoes/:inscricaoId/comprovantes/:comprovanteId/aceitar
+ *
+ * Aceitar = "conferi e o dinheiro entrou". Baixa o pagamento manualmente (fora
+ * do PSP, porque foi Pix na chave da igreja / TED) com autoria registrada.
+ */
+router.post('/eventos/:id/inscricoes/:inscricaoId/comprovantes/:comprovanteId/aceitar',
+  authorizeModule('inscricoes', 3), async (req, res) => {
+    try {
+      const { data: comp, error } = await supabase.from('insc_comprovantes')
+        .select('*, inscricoes!inner(id, evento_id)')
+        .eq('id', req.params.comprovanteId).eq('inscricao_id', req.params.inscricaoId)
+        .eq('inscricoes.evento_id', req.params.id).is('deleted_at', null).maybeSingle();
+      if (error) throw error;
+      if (!comp) return res.status(404).json({ error: 'Comprovante não encontrado' });
+
+      const pagamentos = require('../services/pagamentos');
+      const autor = req.user?.name || req.user?.email || req.user?.id || 'equipe';
+      let resultado = { semCobranca: true };
+
+      if (comp.cobranca_id) {
+        const r = await pagamentos.marcarPagoManual(comp.cobranca_id, {
+          confirmado_por: autor,
+          // Valor: o que falta na cobrança (o default do núcleo). Quem confere
+          // pode informar outro quando a pessoa pagou parcial.
+          valor_centavos: Number(req.body?.valor_centavos) > 0 ? Number(req.body.valor_centavos) : undefined,
+          metodo: comp.metodo_declarado,
+          observacao: `Comprovante ${comp.id} conferido por ${autor}`,
+        });
+        // `semMudanca` = já estava pago (webhook chegou no meio da conferência).
+        // Não é erro: o comprovante segue pra 'aceito' e ninguém paga duas vezes.
+        if (!r.ok) return res.status(409).json({ error: r.motivo || 'Não foi possível baixar o pagamento' });
+        resultado = { pago: true, ja_estava_pago: !!r.semMudanca };
+      }
+
+      const { data: atualizado, error: e2 } = await supabase.from('insc_comprovantes')
+        .update({
+          status: 'aceito', motivo_recusa: null,
+          revisado_por: req.user?.id || null, revisado_por_nome: autor,
+          revisado_em: new Date().toISOString(),
+        })
+        .eq('id', comp.id).select('id, status, revisado_em, revisado_por_nome').single();
+      if (e2) throw e2;
+
+      res.json({ ok: true, comprovante: atualizado, ...resultado });
+    } catch (e) {
+      console.error('[inscricoes] aceitar comprovante:', e.message);
+      res.status(500).json({ error: 'Erro ao aceitar o comprovante' });
+    }
+  });
+
+// POST .../comprovantes/:comprovanteId/recusar — motivo OBRIGATÓRIO (o CHECK do
+// banco também exige): a pessoa precisa saber o que corrigir pra reenviar, e
+// recusa sem motivo é decisão que ninguém explica depois.
+router.post('/eventos/:id/inscricoes/:inscricaoId/comprovantes/:comprovanteId/recusar',
+  authorizeModule('inscricoes', 3), async (req, res) => {
+    try {
+      const motivo = String(req.body?.motivo || '').trim();
+      if (motivo.length < 3) return res.status(400).json({ error: 'Diga o motivo da recusa (a pessoa vai ler pra corrigir).' });
+
+      const autor = req.user?.name || req.user?.email || req.user?.id || 'equipe';
+      const { data, error } = await supabase.from('insc_comprovantes')
+        .update({
+          status: 'recusado', motivo_recusa: motivo.slice(0, 500),
+          revisado_por: req.user?.id || null, revisado_por_nome: autor,
+          revisado_em: new Date().toISOString(),
+        })
+        .eq('id', req.params.comprovanteId).eq('inscricao_id', req.params.inscricaoId)
+        .is('deleted_at', null).select('id, status, motivo_recusa, revisado_em, revisado_por_nome').maybeSingle();
+      if (error) throw error;
+      if (!data) return res.status(404).json({ error: 'Comprovante não encontrado' });
+      res.json({ ok: true, comprovante: data });
+    } catch (e) {
+      console.error('[inscricoes] recusar comprovante:', e.message);
+      res.status(500).json({ error: 'Erro ao recusar o comprovante' });
+    }
+  });
+
+// GET /eventos/:id/resumo — placar do evento (contadores + arrecadado).
+//
+// Separado da lista de propósito: a tela de gerenciamento abre o placar na hora
+// (4 COUNTs, nenhuma linha transferida) enquanto a lista carrega. E é o mesmo
+// endpoint que o app do staff usa pra acompanhar o evento pelo celular.
+router.get('/eventos/:id/resumo', authorizeModule('inscricoes', 1), async (req, res) => {
+  try {
+    const { data: ev, error } = await supabase.from('insc_eventos')
+      .select('id, nome, slug, data, hora, local, status, vagas, valor_centavos, pagamento_ativo, checkin_ativo, tem_sorteio')
+      .eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (error) throw error;
+    if (!ev) return res.status(404).json({ error: 'Evento não encontrado' });
+    res.json({ evento: ev, contadores: await contadoresEvento(req.params.id) });
+  } catch (e) {
+    console.error('[inscricoes] resumo do evento:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar o resumo do evento' });
+  }
+});
+
+// ── App do staff ──────────────────────────────────────────────────────────
+//
+// O app (React Native) consome as MESMAS regras — `lerInscritosDoEvento` e
+// `contadoresEvento` são os leitores compartilhados com a tela do sistema. O
+// que muda é a FORMA: página curta com busca e placar, porque no celular
+// baixar a lista inteira de um retiro é caro e ninguém rola 800 nomes.
+//
+// Nível 1 (leitura): acompanhar inscrição é ver, não operar.
+
+// GET /app/eventos — lista compacta pro app: o que está no ar agora primeiro.
+router.get('/app/eventos', authorizeModule('inscricoes', 1), async (req, res) => {
+  try {
+    let q = supabase.from('insc_eventos')
+      .select('id, nome, slug, area, data, hora, local, status, vagas, pagamento_ativo, valor_centavos, checkin_ativo, edicao_rotulo, inscritos:inscricoes(count)')
+      .is('deleted_at', null);
+    // Rascunho e arquivado ficam fora por padrão: o app é pra acompanhar o que
+    // está acontecendo, não pra ver esboço.
+    if (req.query.todos !== '1') q = q.in('status', ['publicado', 'encerrado']);
+    const { data, error } = await q.order('data', { ascending: false, nullsFirst: false }).limit(100);
+    if (error) throw error;
+    res.json((data || []).map((e) => ({ ...e, inscritos: e.inscritos?.[0]?.count ?? 0 })));
+  } catch (e) {
+    console.error('[inscricoes] app/eventos:', e.message);
+    res.status(500).json({ error: 'Erro ao listar eventos' });
+  }
+});
+
+// GET /app/eventos/:id/inscricoes?busca=&status=&limit=&offset=
+// Placar + página de inscritos. `total` é o total do FILTRO (o que a busca
+// achou), e vem do banco — contar o que veio na página diria 40 sempre.
+router.get('/app/eventos/:id/inscricoes', authorizeModule('inscricoes', 1), async (req, res) => {
+  try {
+    const limit = Math.min(Math.max(Number(req.query.limit) || 40, 1), 100);
+    const offset = Math.max(Number(req.query.offset) || 0, 0);
+    const status = STATUS_CANONICOS.includes(String(req.query.status)) ? String(req.query.status) : '';
+
+    const [lista, contadores] = await Promise.all([
+      lerInscritosDoEvento(req.params.id, { busca: req.query.busca || '', status, limit, offset }),
+      // Placar só na primeira página — rolar a lista não precisa recontar.
+      offset === 0 ? contadoresEvento(req.params.id) : Promise.resolve(null),
+    ]);
+
+    res.json({ itens: lista.itens, total: lista.total, limit, offset, contadores });
+  } catch (e) {
+    console.error('[inscricoes] app/inscricoes:', e.message);
     res.status(500).json({ error: 'Erro ao listar inscrições' });
   }
 });

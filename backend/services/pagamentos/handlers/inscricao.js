@@ -47,6 +47,9 @@ async function espelhar(cobranca, extra = {}) {
     ...extra,
   };
   if (cobranca.pago_em) patch.pago_em = cobranca.pago_em;
+  // Propaga a FORMA escolhida. Sem isto o espelho guardava pra sempre o valor
+  // do momento da criação — quando a pessoa ainda não havia escolhido.
+  if (cobranca.metodo) patch.metodo = cobranca.metodo;
   const { error } = await supabase.from('insc_pagamentos')
     .update(patch).eq('cobranca_id', cobranca.id);
   if (error) console.error('[pagamentos/inscricao] espelho insc_pagamentos:', error.message);
@@ -128,16 +131,21 @@ async function aoPagarParcial(cobranca) {
 }
 
 /** Prazo venceu sem pagar → libera a vaga. */
-async function aoExpirar(cobranca) {
+async function aoExpirar(cobranca, ctx = {}) {
   await espelhar(cobranca);
+  // ⚠️ `preservar_inscricao` existe pra UM caso: a cobrança foi cancelada por
+  // DECISÃO NOSSA (bolsa/isenção concedida, valor corrigido), não porque a
+  // pessoa deixou de pagar. Sem isso, conceder gratuidade cancelaria a
+  // inscrição de quem acabou de ganhar a vaga — o oposto da intenção.
+  if (ctx.preservar_inscricao) return;
   const { error } = await supabase.from('inscricoes')
     .update({ status: 'cancelada' })
     .eq('id', cobranca.origem_id).eq('status', 'recebida');
   if (error) throw error;
 }
 
-async function aoCancelar(cobranca) {
-  await aoExpirar(cobranca);
+async function aoCancelar(cobranca, ctx = {}) {
+  await aoExpirar(cobranca, ctx);
 }
 
 /**

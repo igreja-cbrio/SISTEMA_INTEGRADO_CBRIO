@@ -108,8 +108,22 @@ const EVENTO_VAZIO = {
   msg_sucesso_titulo: '', msg_sucesso_texto: '', msg_whatsapp: '',
   tem_sorteio: false, checkin_ativo: false,
   pagamento_ativo: false, valor_centavos: '',
+  // Formas que ESTE evento aceita. Não é enfeite: a escolha da pessoa é o que
+  // faz o provedor preparar o meio de pagamento (QR do Pix, boleto), e o que
+  // não estiver aqui não é oferecido nem por chamada direta.
+  pagamento_metodos: ['pix', 'cartao'], parcelas_max: '',
+  pagamento_expira_horas: '',
   status: 'rascunho',
 };
+
+// Só as três que o provedor sabe cobrar hoje. Dinheiro e transferência são
+// LANÇAMENTO MANUAL de quem recebeu — não são opção pra pessoa na tela, senão
+// ela escolheria "dinheiro" e ficaria esperando uma cobrança que não existe.
+const METODOS_EVENTO: { valor: string; label: string; dica: string }[] = [
+  { valor: 'pix', label: 'Pix', dica: 'cai na hora' },
+  { valor: 'cartao', label: 'Cartão', dica: 'permite parcelar' },
+  { valor: 'boleto', label: 'Boleto', dica: 'até 3 dias úteis' },
+];
 
 function isoParaInputLocal(iso?: string | null): string {
   if (!iso) return '';
@@ -126,6 +140,10 @@ export function EventoModal({ evento, areas, onClose, onSaved }: {
     ...EVENTO_VAZIO, ...evento,
     vagas: evento.vagas ?? '',
     valor_centavos: evento.valor_centavos != null ? String(evento.valor_centavos / 100) : '',
+    pagamento_metodos: Array.isArray(evento.pagamento_metodos) && evento.pagamento_metodos.length
+      ? evento.pagamento_metodos : ['pix', 'cartao'],
+    parcelas_max: evento.parcelas_max ?? '',
+    pagamento_expira_horas: evento.pagamento_expira_horas ?? '',
     inscricoes_encerram_em: isoParaInputLocal(evento.inscricoes_encerram_em),
   } : { ...EVENTO_VAZIO });
   const [campos, setCampos] = useState<any[]>(evento?.campos || []);
@@ -145,6 +163,17 @@ export function EventoModal({ evento, areas, onClose, onSaved }: {
     if (f.nome.trim().length < 2) { toast.error('Informe o nome do evento'); return; }
     if (!f.area) { toast.error('Selecione a área (obrigatória)'); return; }
     for (const c of campos) { if (!c.label?.trim()) { toast.error('Todo campo extra precisa de uma pergunta'); return; } }
+    if (f.pagamento_ativo) {
+      // Evento pago sem valor ou sem forma não abre no formulário público (o
+      // backend recusa com aviso). Melhor avisar aqui do que descobrir depois
+      // que o link já foi divulgado.
+      if (f.valor_centavos === '' || !(Number(String(f.valor_centavos).replace(',', '.')) > 0)) {
+        toast.error('Informe o valor da inscrição paga'); return;
+      }
+      if (!f.pagamento_metodos?.length) {
+        toast.error('Marque ao menos uma forma de pagamento'); return;
+      }
+    }
     setSalvando(true);
     try {
       const payload: any = {
@@ -159,6 +188,9 @@ export function EventoModal({ evento, areas, onClose, onSaved }: {
         tem_sorteio: !!f.tem_sorteio, checkin_ativo: !!f.checkin_ativo,
         pagamento_ativo: !!f.pagamento_ativo,
         valor_centavos: f.pagamento_ativo && f.valor_centavos !== '' ? Math.round(Number(String(f.valor_centavos).replace(',', '.')) * 100) : null,
+        pagamento_metodos: f.pagamento_ativo ? f.pagamento_metodos : [],
+        parcelas_max: f.pagamento_ativo && f.parcelas_max !== '' ? Number(f.parcelas_max) : null,
+        pagamento_expira_horas: f.pagamento_ativo && f.pagamento_expira_horas !== '' ? Number(f.pagamento_expira_horas) : null,
       };
       if (ed) { payload.status = f.status; await api.atualizarEvento(evento.id, payload); }
       else {
@@ -255,11 +287,48 @@ export function EventoModal({ evento, areas, onClose, onSaved }: {
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!f.pagamento_ativo} onChange={e => setF((s: any) => ({ ...s, pagamento_ativo: e.target.checked }))} /> Inscrição paga</label>
             {f.pagamento_ativo && (
               <div>
-                <label className="text-xs text-muted-foreground">Valor (R$) · Pix chega na próxima fase</label>
+                <label className="text-xs text-muted-foreground">Valor (R$)</label>
                 <Input value={f.valor_centavos} onChange={set('valor_centavos')} placeholder="150,00" inputMode="decimal" />
               </div>
             )}
           </div>
+          {f.pagamento_ativo && (
+            <div className="rounded-lg border border-border p-3 space-y-3">
+              <div>
+                <div className="text-xs text-muted-foreground mb-1.5">Formas de pagamento que este evento aceita</div>
+                <div className="flex flex-wrap gap-3">
+                  {METODOS_EVENTO.map(m => (
+                    <label key={m.valor} className="flex items-center gap-2 text-sm">
+                      <input type="checkbox" checked={f.pagamento_metodos?.includes(m.valor)}
+                        onChange={e => setF((s: any) => ({
+                          ...s,
+                          pagamento_metodos: e.target.checked
+                            ? [...(s.pagamento_metodos || []), m.valor]
+                            : (s.pagamento_metodos || []).filter((x: string) => x !== m.valor),
+                        }))} />
+                      {m.label} <span className="text-[11px] text-muted-foreground">({m.dica})</span>
+                    </label>
+                  ))}
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-1.5">
+                  Dinheiro e transferência não entram aqui: quem recebe lança e confirma pelo painel do evento.
+                </p>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-muted-foreground">Parcelas no cartão (vazio = sem parcelar)</label>
+                  <Input value={f.parcelas_max} onChange={set('parcelas_max')} placeholder="12" inputMode="numeric"
+                    disabled={!f.pagamento_metodos?.includes('cartao')} />
+                  <p className="text-[11px] text-muted-foreground mt-1">Os juros são pagos por quem se inscreve.</p>
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground">Reserva a vaga por (horas)</label>
+                  <Input value={f.pagamento_expira_horas} onChange={set('pagamento_expira_horas')} placeholder="48" inputMode="numeric" />
+                  <p className="text-[11px] text-muted-foreground mt-1">Sem pagamento no prazo, a vaga volta pra fila.</p>
+                </div>
+              </div>
+            </div>
+          )}
           {f.tem_sorteio && (
             <div>
               <label className="text-xs text-muted-foreground">Prêmios (um por linha)</label>
@@ -389,7 +458,12 @@ function SerieModal({ grupo, onClose, onEditar, onDuplicar, onPublicar, onCopiar
 
           <div className="space-y-1.5">
             {edicoes.map(e => (
-              <div key={e.id} className="rounded-lg border border-border px-2.5 py-2 flex items-center justify-between gap-2 flex-wrap">
+              // Mesma régua do card avulso: a linha da edição abre o evento.
+              <div key={e.id} role="button" tabIndex={0}
+                onClick={() => navigate(`/inscricoes/evento/${e.id}`)}
+                onKeyDown={ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); navigate(`/inscricoes/evento/${e.id}`); } }}
+                title="Abrir esta edição (inscritos, pagamento e sorteio)"
+                className="rounded-lg border border-border px-2.5 py-2 flex items-center justify-between gap-2 flex-wrap cursor-pointer hover:border-primary/40 hover:bg-primary/5 transition-colors">
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-medium truncate">{e.edicao_rotulo || e.nome}</div>
                   <div className="text-xs text-muted-foreground flex items-center gap-2 flex-wrap">
@@ -398,7 +472,7 @@ function SerieModal({ grupo, onClose, onEditar, onDuplicar, onPublicar, onCopiar
                     <span className={`rounded px-1.5 py-0.5 ${STATUS_BADGE[e.status] || ''}`}>{e.status}</span>
                   </div>
                 </div>
-                <div className="flex items-center gap-1 shrink-0">
+                <div className="flex items-center gap-1 shrink-0" onClick={ev => ev.stopPropagation()}>
                   {e.status === 'rascunho' && (
                     <Button size="sm" className="h-7 text-xs" onClick={() => onPublicar(e)} title="Coloca o formulário no ar agora">
                       <Megaphone className="h-3 w-3 mr-1" /> Publicar
@@ -604,18 +678,26 @@ export default function Inscricoes() {
                 );
               })}
               {avulsos.map(e => (
-                <div key={e.id} className="rounded-lg border border-border p-3 flex items-center gap-3 flex-wrap">
-                  <button className="flex-1 min-w-[220px] text-left" onClick={() => navigate(`/inscricoes/evento/${e.id}`)}
-                    title="Abrir o evento (inscritos e sorteio)">
-                    <div className="font-medium text-sm hover:text-primary transition-colors">{e.nome}</div>
+                // O CARD INTEIRO abre o evento (só o texto abria antes, e sem
+                // afordância nenhuma — o clique na linha não fazia nada e isso
+                // se lê como "o card não é clicável"). Os botões de ação param
+                // a propagação: publicar/copiar/editar não devem navegar.
+                <div key={e.id} role="button" tabIndex={0}
+                  onClick={() => navigate(`/inscricoes/evento/${e.id}`)}
+                  onKeyDown={ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); navigate(`/inscricoes/evento/${e.id}`); } }}
+                  title="Abrir o evento (inscritos, pagamento e sorteio)"
+                  className="rounded-lg border border-border p-3 flex items-center gap-3 flex-wrap cursor-pointer hover:border-primary/40 hover:bg-primary/5 transition-colors">
+                  <div className="flex-1 min-w-[220px] text-left">
+                    <div className="font-medium text-sm">{e.nome}</div>
                     <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5 flex-wrap">
                       <span className="rounded bg-foreground/8 px-1.5 py-0.5">{e.area}</span>
                       {e.data && <span>{fmtData(e.data)}</span>}
                       <span className="inline-flex items-center gap-1"><Users className="h-3 w-3" /> {e.inscritos}{e.vagas ? `/${e.vagas}` : ''}</span>
                       <span className={`rounded px-1.5 py-0.5 ${STATUS_BADGE[e.status] || ''}`}>{e.status}</span>
                     </div>
-                  </button>
-                  <div className="flex items-center gap-1.5 shrink-0">
+                  </div>
+                  <span className="text-xs text-primary font-medium shrink-0">Abrir →</span>
+                  <div className="flex items-center gap-1.5 shrink-0" onClick={ev => ev.stopPropagation()}>
                     {e.status === 'rascunho' && (
                       <Button size="sm" onClick={() => publicar(e)} title="Coloca o formulário no ar agora">
                         <Megaphone className="h-3.5 w-3.5 mr-1" /> Publicar

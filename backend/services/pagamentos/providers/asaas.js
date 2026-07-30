@@ -174,6 +174,37 @@ function ymd(d) {
   return `${dt.getFullYear()}-${mm}-${dd}`;
 }
 
+/**
+ * QR do Pix da cobrança. É uma chamada SEPARADA — o `POST /payments` não
+ * devolve o QR junto.
+ *
+ * Serve pra mostrar o Pix DENTRO da nossa página, em vez de mandar a pessoa
+ * embora pro checkout hospedado. Pix não é dado sensível; cartão é, e por isso
+ * continua no Asaas (lei nº 5).
+ *
+ * ⚠️ **Best-effort de propósito.** Com `billingType: 'UNDEFINED'` o pagador
+ * ainda não escolheu método, então o Asaas pode não ter Pix gerado e responder
+ * erro — o que NÃO é motivo pra derrubar uma cobrança que já existe e já
+ * reservou vaga. Sem QR, a página cai no checkout hospedado, exatamente como
+ * antes desta função existir.
+ */
+async function buscarPixQrCode(paymentId) {
+  if (!paymentId) return null;
+  try {
+    const qr = await req('GET', `/payments/${encodeURIComponent(paymentId)}/pixQrCode`);
+    // `success: false` é como o Asaas diz "esta cobrança não tem Pix".
+    if (!qr || qr.success === false) return null;
+    return {
+      payload: qr.payload || null,
+      base64: qr.encodedImage || null,
+    };
+  } catch (e) {
+    // Só loga. Cobrança criada não se desfaz porque o QR não veio.
+    console.warn(`[asaas] QR do Pix indisponível para ${paymentId}: ${e.message}`);
+    return null;
+  }
+}
+
 async function criarCobranca(dados) {
   const clienteId = dados.provider_cliente_id || await acharOuCriarCliente({
     nome: dados.pagador_nome, cpf: dados.pagador_cpf,
@@ -209,20 +240,118 @@ async function criarCobranca(dados) {
 
   const p = await req('POST', '/payments', corpo);
 
+  // Uma chamada extra pra poder desenhar o Pix na nossa página. Best-effort:
+  // ver `buscarPixQrCode`. Parcelado é cartão, então lá o QR simplesmente não
+  // vem — e não faz falta.
+  const pix = await buscarPixQrCode(p.id);
+
   return {
     provider_cobranca_id: p.id,
     provider_cliente_id: clienteId,
     // Nasce aguardando: a cobrança existe e está esperando o pagador.
     status: STATUS.AGUARDANDO,
     checkout_url: p.invoiceUrl || null,
-    pix_payload: null,          // o QR sai do checkout; buscar aqui é chamada extra
-    pix_qrcode_base64: null,
+    pix_payload: pix?.payload || null,
+    pix_qrcode_base64: pix?.base64 || null,
     boleto_linha_digitavel: p.identificationField || null,
     boleto_url: p.bankSlipUrl || null,
     vencimento: p.dueDate || venc,
     metodo: null,               // só se sabe quando a pessoa escolhe
     bruto: p,
   };
+}
+
+// ── Escolher a forma de pagamento ─────────────────────────────────────────
+
+/**
+ * Define no Asaas QUAL é a forma de pagamento desta cobrança e devolve o
+ * artefato correspondente (QR do Pix, linha digitável do boleto, checkout do
+ * cartão).
+ *
+ * ⚠️ **Por que isto existe** (aprendido no 1º teste em sandbox, 30/07):
+ * `billingType: 'UNDEFINED'` NÃO garante que a fatura hospedada ofereça as
+ * três formas — o Asaas monta a página com o que a CONTA tem habilitado, e uma
+ * conta sem chave Pix cadastrada rende uma fatura **só de boleto**. Nossa tela
+ * então oferecia abas de Pix e cartão que não existiam do outro lado.
+ *
+ * Dizer o método explicitamente troca o palpite por um fato: se a conta não
+ * pode cobrar por aquele meio, o Asaas responde erro AQUI, na hora da escolha,
+ * e a tela conta a verdade em vez de levar a pessoa a uma fatura errada.
+ *
+ * Não mexe em valor nem em vencimento — só na forma. E é idempotente: pedir
+ * Pix duas vezes devolve o mesmo QR.
+ */
+const BILLING_POR_METODO = {
+  [METODOS.PIX]: 'PIX',
+  [METODOS.CARTAO]: 'CREDIT_CARD',
+  [METODOS.BOLETO]: 'BOLETO',
+};
+
+async function definirMetodo(cobranca, metodo) {
+  const billing = BILLING_POR_METODO[metodo];
+  if (!billing) throw new Error(`Asaas não cobra por "${metodo}"`);
+  if (!cobranca.provider_cobranca_id) throw new Error('Cobrança sem id no Asaas');
+
+  const id = encodeURIComponent(cobranca.provider_cobranca_id);
+  const atual = await req('GET', `/payments/${id}`);
+
+  // O update do Asaas exige os campos obrigatórios junto — reenvia os valores
+  // que JÁ estão na cobrança (nunca recalcula preço aqui).
+  let p = atual;
+  if (atual?.billingType !== billing) {
+    const corpo = { billingType: billing, dueDate: atual.dueDate };
+    // Parcelado vive no `installment`, não no `value` — mexer em value numa
+    // cobrança parcelada reescreveria a parcela.
+    if (atual.installment) corpo.installmentCount = atual.installmentCount || undefined;
+    else corpo.value = atual.value;
+    p = await req('PUT', `/payments/${id}`, corpo);
+  }
+
+  // ⚠️ A forma é a que o Asaas CONFIRMOU, não a que pedimos (lei nº 2: status/
+  // forma canônica é mapeada do que o PSP diz). Se ele responder 200 mantendo o
+  // billingType antigo — conta sem aquele meio habilitado, por exemplo —, gravar
+  // o pedido faria o banco mentir e a tela mostrar "cartão" numa cobrança que
+  // continua boleto. Lançar aqui é o que transforma isso em erro visível pra
+  // pessoa (o chamador devolve 502 com o estado atual no corpo).
+  const confirmado = metodoDeBillingType(p.billingType);
+  if (confirmado !== metodo) {
+    throw new Error(
+      `O Asaas não habilitou ${metodo} nesta cobrança (segue como ${confirmado || p.billingType || 'indefinida'}). `
+      + 'Verifique se a forma está ativa na conta.',
+    );
+  }
+
+  const saida = {
+    metodo: confirmado,
+    checkout_url: p.invoiceUrl || atual.invoiceUrl || null,
+    pix_payload: null,
+    pix_qrcode_base64: null,
+    boleto_linha_digitavel: p.identificationField || null,
+    boleto_url: p.bankSlipUrl || null,
+  };
+
+  if (metodo === METODOS.PIX) {
+    // Aqui NÃO é best-effort: a pessoa pediu Pix. Sem QR, quem chama decide
+    // (a tela cai no checkout e diz isso), mas o erro precisa aparecer.
+    const qr = await req('GET', `/payments/${id}/pixQrCode`);
+    if (qr && qr.success !== false) {
+      saida.pix_payload = qr.payload || null;
+      saida.pix_qrcode_base64 = qr.encodedImage || null;
+    }
+  }
+
+  if (metodo === METODOS.BOLETO && !saida.boleto_linha_digitavel) {
+    // A linha digitável às vezes só existe numa chamada própria.
+    try {
+      const linha = await req('GET', `/payments/${id}/identificationField`);
+      saida.boleto_linha_digitavel = linha?.identificationField || null;
+      saida.boleto_url = saida.boleto_url || linha?.bankSlipUrl || null;
+    } catch (e) {
+      console.warn(`[asaas] linha digitável indisponível para ${cobranca.provider_cobranca_id}: ${e.message}`);
+    }
+  }
+
+  return saida;
 }
 
 // ── Consultar (o cron de reconciliação é a VERDADE) ───────────────────────
@@ -438,6 +567,7 @@ module.exports = {
   nome,
   capacidades,
   criarCobranca,
+  definirMetodo,
   consultarStatus,
   cancelarCobranca,
   estornar,
@@ -446,7 +576,7 @@ module.exports = {
   // exportados pra teste
   _internos: {
     paraReais, paraCentavos, taxaCentavos, last4,
-    statusDePagamento, metodoDeBillingType,
+    statusDePagamento, metodoDeBillingType, buscarPixQrCode, BILLING_POR_METODO,
     STATUS_POR_EVENTO, EVENTOS_COM_DINHEIRO, BASE_PROD, BASE_SANDBOX,
   },
 };

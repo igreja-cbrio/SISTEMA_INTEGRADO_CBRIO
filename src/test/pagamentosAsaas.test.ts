@@ -8,7 +8,20 @@ import { STATUS, METODOS, STATUS_VALIDOS } from '../../backend/services/pagament
 const A = asaas as any;
 const I = A._internos;
 
-afterEach(() => { vi.unstubAllEnvs(); });
+afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
+
+/**
+ * Rede DESLIGADA nos testes de guarda de ambiente.
+ *
+ * ⚠️ Sem isto, `criarCobranca` passa da guarda e faz uma chamada REAL ao
+ * sandbox do Asaas: o teste vira dependente de rede (flaky no gate de deploy,
+ * que bloqueia produção com teste vermelho) e bate em API de terceiro a cada
+ * deploy. O erro de rede é justamente o que o caso "preview aceita sandbox"
+ * espera — então stubar torna o teste determinístico E fiel ao que ele afirma.
+ */
+function semRede() {
+  vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('rede desligada no teste')));
+}
 
 // Payload no formato que o Asaas entrega. `payment` é o objeto da cobrança.
 function evento(tipo: string, payment: Record<string, unknown> = {}) {
@@ -58,6 +71,7 @@ describe('asaas · guarda de ambiente pela key', () => {
   // devolve uma promise que ninguém confere e o teste passa vazio.
   it('key de SANDBOX em produção lança', async () => {
     // O acidente que importa: o teste "passou" porque não cobrou nada.
+    semRede();
     vi.stubEnv('VERCEL_ENV', '');
     vi.stubEnv('NODE_ENV', 'production');
     vi.stubEnv('ASAAS_API_KEY', '$aact_hmlg_abc123');
@@ -69,6 +83,7 @@ describe('asaas · guarda de ambiente pela key', () => {
     // olhar VERCEL_ENV primeiro, a guarda barraria o sandbox exatamente no
     // ambiente onde ele precisa rodar. O erro esperado aqui é de REDE (a
     // chamada sai), nunca de ambiente.
+    semRede();
     vi.stubEnv('VERCEL_ENV', 'preview');
     vi.stubEnv('NODE_ENV', 'production');
     vi.stubEnv('ASAAS_API_KEY', '$aact_hmlg_abc123');
@@ -76,6 +91,7 @@ describe('asaas · guarda de ambiente pela key', () => {
   });
 
   it('PRODUCTION da Vercel recusa key de sandbox', async () => {
+    semRede();
     vi.stubEnv('VERCEL_ENV', 'production');
     vi.stubEnv('NODE_ENV', 'production');
     vi.stubEnv('ASAAS_API_KEY', '$aact_hmlg_abc123');
@@ -84,6 +100,7 @@ describe('asaas · guarda de ambiente pela key', () => {
 
   it('PREVIEW da Vercel recusa key de PRODUÇÃO', async () => {
     // O inverso, que é o acidente pior: preview cobrando dinheiro real.
+    semRede();
     vi.stubEnv('VERCEL_ENV', 'preview');
     vi.stubEnv('NODE_ENV', 'production');
     vi.stubEnv('ASAAS_API_KEY', '$aact_prod_abc123');
@@ -308,5 +325,127 @@ describe('asaas · capacidades', () => {
     // UNDEFINED = a pessoa ainda não escolheu; não é método.
     expect(I.metodoDeBillingType('UNDEFINED')).toBeNull();
     expect(I.metodoDeBillingType('COISA_NOVA')).toBeNull();
+  });
+});
+
+describe('asaas · QR do Pix é best-effort', () => {
+  // A garantia que importa: uma cobrança JÁ EXISTE quando o QR é buscado, e a
+  // vaga já está reservada. Se esta chamada extra estourasse, a pessoa perderia
+  // a inscrição por causa de um enfeite de tela.
+  const comChave = () => {
+    vi.stubEnv('ASAAS_API_KEY', '$aact_hmlg_teste');
+    vi.stubEnv('VERCEL_ENV', 'preview');
+  };
+  const respostaFetch = (body: unknown, ok = true, status = 200) =>
+    vi.fn().mockResolvedValue({
+      ok, status, text: () => Promise.resolve(JSON.stringify(body)),
+    } as any);
+
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it('devolve payload e imagem quando o Asaas tem Pix', async () => {
+    comChave();
+    vi.stubGlobal('fetch', respostaFetch({
+      success: true, payload: '00020126BR.GOV.BCB.PIX', encodedImage: 'iVBORw0KGgo=',
+      expirationDate: '2026-08-01 12:00:00',
+    }));
+    const qr = await I.buscarPixQrCode('pay_123');
+    expect(qr).toEqual({ payload: '00020126BR.GOV.BCB.PIX', base64: 'iVBORw0KGgo=' });
+  });
+
+  it('success:false vira null — é o Asaas dizendo que esta cobrança não tem Pix', async () => {
+    // Cenário real de `billingType: UNDEFINED`, onde o pagador ainda não
+    // escolheu método. A tela cai no checkout hospedado, sem QR quebrado.
+    comChave();
+    vi.stubGlobal('fetch', respostaFetch({ success: false }));
+    expect(await I.buscarPixQrCode('pay_123')).toBeNull();
+  });
+
+  it('erro HTTP NÃO propaga — devolve null em vez de derrubar a cobrança', async () => {
+    comChave();
+    vi.stubGlobal('fetch', respostaFetch({ errors: [{ description: 'Pix indisponível' }] }, false, 400));
+    await expect(I.buscarPixQrCode('pay_123')).resolves.toBeNull();
+  });
+
+  it('falha de rede NÃO propaga', async () => {
+    comChave();
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('ECONNRESET')));
+    await expect(I.buscarPixQrCode('pay_123')).resolves.toBeNull();
+  });
+
+  it('sem id de cobrança não chega a chamar o Asaas', async () => {
+    comChave();
+    const f = respostaFetch({ success: true });
+    vi.stubGlobal('fetch', f);
+    expect(await I.buscarPixQrCode(null)).toBeNull();
+    expect(f).not.toHaveBeenCalled();
+  });
+});
+
+describe('asaas · definirMetodo confirma a forma que VOLTOU', () => {
+  // Regressão do teste em sandbox (30/07): a tela mostrava a aba "Cartão"
+  // selecionada e o campo FORMA dizendo "boleto" ao mesmo tempo. A forma
+  // canônica tem que sair do `billingType` que o Asaas devolveu — nunca do que
+  // pedimos (lei nº 2 do núcleo). Gravar o pedido faz o banco mentir.
+  const comChave = () => {
+    vi.stubEnv('ASAAS_API_KEY', '$aact_hmlg_teste');
+    vi.stubEnv('VERCEL_ENV', 'preview');
+  };
+  // Cada resposta na ordem em que o adapter chama: GET payment → PUT payment → …
+  const emSequencia = (respostas: unknown[]) => {
+    const f = vi.fn();
+    for (const body of respostas) {
+      f.mockResolvedValueOnce({
+        ok: true, status: 200, text: () => Promise.resolve(JSON.stringify(body)),
+      } as any);
+    }
+    return f;
+  };
+  const cobranca = { provider_cobranca_id: 'pay_123' };
+
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it('aceita quando o Asaas confirma o billingType pedido', async () => {
+    comChave();
+    vi.stubGlobal('fetch', emSequencia([
+      { id: 'pay_123', billingType: 'UNDEFINED', dueDate: '2026-08-01', value: 900 },
+      { id: 'pay_123', billingType: 'CREDIT_CARD', invoiceUrl: 'https://asaas/i/x' },
+    ]));
+    const r = await A.definirMetodo(cobranca, METODOS.CARTAO);
+    expect(r.metodo).toBe(METODOS.CARTAO);
+    expect(r.checkout_url).toBe('https://asaas/i/x');
+  });
+
+  it('LANÇA quando o PUT volta 200 mantendo a forma antiga', async () => {
+    // É o caso da conta sem cartão habilitado: o Asaas não recusa, só ignora.
+    // Sem esta guarda gravávamos `cartao` numa cobrança que segue boleto.
+    comChave();
+    vi.stubGlobal('fetch', emSequencia([
+      { id: 'pay_123', billingType: 'BOLETO', dueDate: '2026-08-01', value: 900 },
+      { id: 'pay_123', billingType: 'BOLETO', invoiceUrl: 'https://asaas/i/x' },
+    ]));
+    await expect(A.definirMetodo(cobranca, METODOS.CARTAO))
+      .rejects.toThrow(/não habilitou cartao/i);
+  });
+
+  it('já está na forma pedida: não faz PUT, só confirma', async () => {
+    comChave();
+    const f = emSequencia([
+      { id: 'pay_123', billingType: 'BOLETO', dueDate: '2026-08-01', value: 900, identificationField: '34191...' },
+    ]);
+    vi.stubGlobal('fetch', f);
+    const r = await A.definirMetodo(cobranca, METODOS.BOLETO);
+    expect(r.metodo).toBe(METODOS.BOLETO);
+    expect(r.boleto_linha_digitavel).toBe('34191...');
+    // 1 chamada = só o GET. Um PUT à toa reescreveria dueDate/value sem motivo.
+    expect(f).toHaveBeenCalledTimes(1);
+  });
+
+  it('forma que o Asaas não cobra nem chega a falar com a API', async () => {
+    comChave();
+    const f = emSequencia([{}]);
+    vi.stubGlobal('fetch', f);
+    await expect(A.definirMetodo(cobranca, METODOS.DINHEIRO)).rejects.toThrow(/não cobra/i);
+    expect(f).not.toHaveBeenCalled();
   });
 });

@@ -308,6 +308,28 @@ export const inscricoesApi = {
   listarEventos: () => get('/inscricoes/eventos'),
   evento: (id) => get(`/inscricoes/eventos/${id}`),
   inscricoesDoEvento: (id) => get(`/inscricoes/eventos/${id}/inscricoes`),
+  // Placar do evento (contadores por COUNT + arrecadado das inscrições pagas).
+  // Separado da lista: abre na hora e é o mesmo que o app do staff consome.
+  eventoResumo: (id) => get(`/inscricoes/eventos/${id}/resumo`),
+  // Bolsa/isenção por inscrito: `tipo` integral (gratuidade) ou parcial
+  // (desconto, com `valor` em reais) + motivo obrigatório.
+  darBolsa: (eventoId, inscricaoId, data) => post(`/inscricoes/eventos/${eventoId}/inscricoes/${inscricaoId}/bolsa`, data),
+  tirarBolsa: (eventoId, inscricaoId) => del(`/inscricoes/eventos/${eventoId}/inscricoes/${inscricaoId}/bolsa`),
+  // Gratuidade/desconto AUTORIZADO por CPF antes da inscrição — a porta pública
+  // aplica sozinha quando a pessoa digita aquele CPF. `valor` (em reais) é
+  // quanto ela VAI PAGAR, não o desconto.
+  beneficios: (eventoId) => get(`/inscricoes/eventos/${eventoId}/beneficios`),
+  criarBeneficio: (eventoId, data) => post(`/inscricoes/eventos/${eventoId}/beneficios`, data),
+  removerBeneficio: (eventoId, beneficioId) => del(`/inscricoes/eventos/${eventoId}/beneficios/${beneficioId}`),
+  // Comprovantes de Pix/transferência anexados pela pessoa. `url` é signed (15
+  // min) — bucket privado. Aceitar baixa o pagamento MANUALMENTE com autoria;
+  // recusar exige motivo (a pessoa lê pra corrigir e reenviar).
+  comprovantes: (eventoId, inscricaoId) =>
+    get(`/inscricoes/eventos/${eventoId}/inscricoes/${inscricaoId}/comprovantes`),
+  aceitarComprovante: (eventoId, inscricaoId, comprovanteId, data) =>
+    post(`/inscricoes/eventos/${eventoId}/inscricoes/${inscricaoId}/comprovantes/${comprovanteId}/aceitar`, data || {}),
+  recusarComprovante: (eventoId, inscricaoId, comprovanteId, motivo) =>
+    post(`/inscricoes/eventos/${eventoId}/inscricoes/${inscricaoId}/comprovantes/${comprovanteId}/recusar`, { motivo }),
   criarEvento: (data) => post('/inscricoes/eventos', data),
   atualizarEvento: (id, data) => put(`/inscricoes/eventos/${id}`, data),
   excluirEvento: (id) => del(`/inscricoes/eventos/${id}`),
@@ -349,6 +371,31 @@ export const eventoPublico = {
   // generoso vale (a tela faz polling e sob /api/public puro tomaria 429).
   pagamento: (token) => fetch(`${API}/public/evento/pagamento/${encodeURIComponent(token)}`)
     .then(async r => { const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j; }),
+  // A pessoa escolheu como pagar → o provedor PREPARA aquela forma e devolve o
+  // artefato real (QR do Pix, linha do boleto, checkout do cartão). Em erro do
+  // provedor o corpo traz `pagamento` com o estado atual, pra tela não regredir.
+  pagamentoMetodo: (token, metodo) => fetch(`${API}/public/evento/pagamento/${encodeURIComponent(token)}/metodo`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ metodo }),
+  }).then(async r => {
+    const j = await r.json();
+    if (!r.ok) { const e = new Error(j.error || 'Erro'); e.pagamento = j.pagamento || null; throw e; }
+    return j;
+  }),
+  // A pessoa anexa o comprovante do Pix/TED que pagou fora do provedor.
+  // ⚠️ NÃO confirma pagamento: entra numa fila que uma pessoa da equipe confere.
+  enviarComprovante: (token, file, { metodo_declarado, observacao } = {}) => {
+    const fd = new FormData();
+    fd.append('arquivo', file);
+    if (metodo_declarado) fd.append('metodo_declarado', metodo_declarado);
+    if (observacao) fd.append('observacao', observacao);
+    return fetch(`${API}/public/evento/pagamento/${encodeURIComponent(token)}/comprovante`, {
+      method: 'POST', body: fd,
+    }).then(async r => {
+      const j = await r.json();
+      if (!r.ok) { const e = new Error(j.error || 'Erro'); e.pagamento = j.pagamento || null; throw e; }
+      return j;
+    });
+  },
   // Comprovante da inscrição (SPEC-06) — a URL do QR (/i/c/<token>) cai aqui
   comprovante: (token) => fetch(`${API}/public/evento/comprovante/${encodeURIComponent(token)}`)
     .then(async r => { const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j; }),

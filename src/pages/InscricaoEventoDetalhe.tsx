@@ -16,11 +16,13 @@ import {
   ArrowLeft, CalendarDays, Clock, MapPin, Users, Gift, Link2, MessageCircle,
   QrCode, Pencil, Trash2, Loader2, Search, ExternalLink, Ticket, Megaphone,
   ChevronDown, ChevronUp, ChevronsDownUp, ChevronsUpDown, Download, Repeat,
-  Printer, CreditCard, ScanLine,
+  Printer, CreditCard, ScanLine, Paperclip,
 } from 'lucide-react';
 import QrLinkDialog from '../components/QrLinkDialog';
 import { EventoModal } from './Inscricoes';
 import { idadeEmAnos, faixaLabel, sexoLabel } from '../lib/faixaEtaria';
+// Máscara/validação de CPF do canônico do Contrato de Inscrição — não recriar.
+import { mascaraCpf, cpfValido, soDigitos } from '../lib/inscricao';
 import { imprimirListaInscritos, type Agrupamento } from '../lib/imprimirListaInscritos';
 
 const METODO_LABEL: Record<string, string> = {
@@ -51,6 +53,16 @@ const STATUS_BADGE: Record<string, string> = {
   arquivado: 'bg-foreground/10 text-muted-foreground',
 };
 
+/** Um número do placar. `dica` vira tooltip — o rótulo curto não cabe a régua. */
+function PlacarTile({ label, valor, cor, dica }: { label: string; valor: any; cor?: string; dica?: string }) {
+  return (
+    <Card className="glass-solid p-3" title={dica}>
+      <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div className={`text-xl font-bold mt-0.5 ${cor || ''}`}>{valor}</div>
+    </Card>
+  );
+}
+
 export default function InscricaoEventoDetalhe() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -59,6 +71,11 @@ export default function InscricaoEventoDetalhe() {
     || !!modulePerms?.inscricoes?.pode_exportar;
   // Nível 2 da matriz = operar check-in (SPEC-08) — mesma régua da rota
   const podeCheckin = canAccessModule(['inscricoes'], 'leitura', 2);
+  // Nível 3 = editar/conceder (mesma régua do backend pra bolsa e correções).
+  const podeEditar = canAccessModule(['inscricoes'], 'leitura', 3);
+  // Benefício por CPF carrega CPF na tela → nível 2 pra VER (mesma régua da aba
+  // Pessoas da view unificada); conceder/remover exige 3 (`podeEditar`).
+  const podeVerBeneficios = canAccessModule(['inscricoes'], 'leitura', 2);
   const [ev, setEv] = useState<any>(null);
   const [areas, setAreas] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -78,13 +95,26 @@ export default function InscricaoEventoDetalhe() {
   const [anim, setAnim] = useState<{ fase: 'rolando' | 'fim'; premio: string; ganhador?: any } | null>(null);
   const [rolNum, setRolNum] = useState(0);
   const [imprimirOpen, setImprimirOpen] = useState(false);
+  // Placar do evento — vem de COUNTs no banco (não de contar a lista em JS), e
+  // é ele que responde "quanto já entrou de dinheiro".
+  const [resumo, setResumo] = useState<any>(null);
 
-  function carregar() {
-    if (!id) return;
-    Promise.all([api.evento(id), api.inscricoesDoEvento(id)])
-      .then(([evento, inscritos]: any[]) => setEv({ ...evento, inscritos: Array.isArray(inscritos) ? inscritos : [] }))
-      .catch(() => toast.error('Erro ao carregar o evento'))
+  // Devolve a lista recarregada: quem confirma um pagamento dentro da ficha
+  // precisa que a MESMA ficha reflita o novo estado (senão a badge continuaria
+  // "aguardando" logo depois de confirmar, e isso se lê como bug).
+  function carregar(): Promise<any[] | null> {
+    if (!id) return Promise.resolve(null);
+    const p = Promise.all([api.evento(id), api.inscricoesDoEvento(id)])
+      .then(([evento, inscritos]: any[]) => {
+        const lista = Array.isArray(inscritos) ? inscritos : [];
+        setEv({ ...evento, inscritos: lista });
+        return lista;
+      })
+      .catch(() => { toast.error('Erro ao carregar o evento'); return null; })
       .finally(() => setLoading(false));
+    // Best-effort e em paralelo: o placar não pode atrasar nem derrubar a tela.
+    api.eventoResumo(id).then((r: any) => setResumo(r?.contadores || null)).catch(() => setResumo(null));
+    return p;
   }
   useEffect(() => { setLoading(true); carregar(); }, [id]);
   useEffect(() => { api.areas().then((a: any) => setAreas(Array.isArray(a) ? a : [])).catch(() => {}); }, []);
@@ -273,7 +303,16 @@ export default function InscricaoEventoDetalhe() {
         campos={ev.campos || []}
         premios={premiosGanhos(inscSel.id)}
         eventoId={ev.id}
+        evento={ev}
+        podeEditar={podeEditar}
         onSaved={(atualizada: any) => { setInscSel(atualizada); carregar(); }}
+        // Confirmou pagamento pelo comprovante: recarrega e re-seleciona a MESMA
+        // pessoa, pra badge de pagamento da ficha aberta refletir na hora.
+        onPago={async () => {
+          const lista = await carregar();
+          const fresca = lista?.find((i: any) => i.id === inscSel.id);
+          if (fresca) setInscSel(fresca);
+        }}
         onClose={() => setInscSel(null)}
       />
     )}
@@ -331,6 +370,54 @@ export default function InscricaoEventoDetalhe() {
         </div>
       </Card>
 
+      {/* Placar do evento — contadores + arrecadado */}
+      {resumo && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          <PlacarTile label="Inscritos" valor={resumo.ativos} dica="Sem contar as canceladas" />
+          <PlacarTile label="Confirmadas" valor={resumo.confirmadas} cor="text-emerald-600"
+            dica="Pagamento confirmado ou evento gratuito" />
+          {ev.pagamento_ativo && (
+            <PlacarTile label="Aguardando pagamento" valor={resumo.aguardando_pagamento} cor="text-amber-600"
+              dica="Vaga reservada até o prazo — depois volta pra fila" />
+          )}
+          {ev.pagamento_ativo && (
+            <PlacarTile
+              label="Arrecadado"
+              valor={resumo.arrecadado_centavos == null
+                ? '—'
+                : (resumo.arrecadado_centavos / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+              cor="text-primary"
+              dica="Soma das inscrições PAGAS. É acompanhamento do evento — o caixa recebe o repasse do provedor, lançado no Financeiro."
+            />
+          )}
+          {ev.checkin_ativo && (
+            <PlacarTile label="Presentes" valor={resumo.presentes} dica="Check-in feito na entrada" />
+          )}
+          {/* Fila de TRABALHO: sem número visível, comprovante anexado no sábado
+              só apareceria quando alguém abrisse a ficha da pessoa por acaso. */}
+          {ev.pagamento_ativo && resumo.comprovantes_em_analise > 0 && (
+            <PlacarTile label="Comprovantes pra conferir" valor={resumo.comprovantes_em_analise} cor="text-amber-600"
+              dica="Pix/transferência anexado pela pessoa · confira e confirme na ficha dela" />
+          )}
+        </div>
+      )}
+
+      {/* Por forma de pagamento — a versão agregada de "como cada um pagou".
+          Só conta quem PAGOU; isenta aparece separada porque não pagou nada. */}
+      {resumo && ev.pagamento_ativo && (Object.keys(resumo.por_metodo || {}).length > 0 || resumo.isentas > 0) && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground px-1">
+          <span className="font-medium text-foreground">Como pagaram:</span>
+          {Object.entries(resumo.por_metodo || {})
+            .sort((a: any, b: any) => b[1] - a[1])
+            .map(([m, n]: any) => (
+              <span key={m}>
+                {m === 'nao_informado' ? 'Forma não informada' : (METODO_LABEL[m] || m)} <b className="text-foreground">{n}</b>
+              </span>
+            ))}
+          {resumo.isentas > 0 && <span>Isentas <b className="text-primary">{resumo.isentas}</b></span>}
+        </div>
+      )}
+
       {/* Sorteio */}
       {(ev.tem_sorteio !== false) && (
         <Card className="glass-solid p-4">
@@ -369,6 +456,13 @@ export default function InscricaoEventoDetalhe() {
             </p>
           )}
         </Card>
+      )}
+
+      {/* Gratuidade/desconto autorizado por CPF — configuração de ANTES das
+          inscrições. Fica em card próprio (não escondido num modal) porque é
+          tarefa de preparação do evento, feita uma vez, antes de abrir. */}
+      {ev.pagamento_ativo && podeVerBeneficios && (
+        <BeneficiosCard eventoId={ev.id} evento={ev} podeEditar={podeEditar} />
       )}
 
       {/* Inscritos */}
@@ -456,12 +550,34 @@ export default function InscricaoEventoDetalhe() {
                       {i.sexo && (
                         <span className="text-[11px] text-muted-foreground shrink-0">{sexoLabel(i.sexo)}</span>
                       )}
-                      {i.pagamento?.status_pagamento && (
+                      {/* Isenta não fica "aguardando pagamento" — não está
+                          aguardando nada. O selo diz o que aconteceu. */}
+                      {i.bolsa_tipo === 'integral' && (
+                        <span className="inline-flex items-center gap-1 rounded-full text-[11px] font-medium px-2 py-0.5 shrink-0 bg-primary/15 text-primary"
+                          title={i.bolsa_motivo || 'Bolsa integral'}>
+                          isenta
+                        </span>
+                      )}
+                      {i.bolsa_tipo === 'parcial' && (
+                        <span className="inline-flex items-center gap-1 rounded-full text-[11px] font-medium px-2 py-0.5 shrink-0 bg-primary/15 text-primary"
+                          title={i.bolsa_motivo || 'Bolsa parcial'}>
+                          bolsa
+                        </span>
+                      )}
+                      {i.bolsa_tipo !== 'integral' && i.pagamento?.status_pagamento && (
                         <span className={`inline-flex items-center gap-1 rounded-full text-[11px] font-medium px-2 py-0.5 shrink-0 ${PAG_BADGE[i.pagamento.status_pagamento] || 'bg-foreground/10 text-muted-foreground'}`}
                           title={i.pagamento.metodo ? `Forma: ${METODO_LABEL[i.pagamento.metodo] || i.pagamento.metodo}` : undefined}>
                           <CreditCard className="h-3 w-3" />
                           {PAG_LABEL[i.pagamento.status_pagamento] || i.pagamento.status_pagamento}
                           {i.pagamento.metodo ? ` · ${METODO_LABEL[i.pagamento.metodo] || i.pagamento.metodo}` : ''}
+                        </span>
+                      )}
+                      {/* Comprovante anexado esperando conferência — o clipe é o
+                          que faz alguém abrir a ficha e conferir. */}
+                      {i.comprovantes?.em_analise > 0 && (
+                        <span className="inline-flex items-center gap-1 rounded-full text-[11px] font-medium px-2 py-0.5 shrink-0 bg-amber-500/15 text-amber-600"
+                          title="Comprovante de Pix/transferência aguardando conferência">
+                          <Paperclip className="h-3 w-3" /> comprovante
                         </span>
                       )}
                       {recolhido && respostas.length > 0 && (
@@ -649,13 +765,435 @@ function RedeSocialEdit({ value, onChange }: { value: string; onChange: (v: stri
   );
 }
 
-function InscricaoDetalheDialog({ inscricao, campos, premios, eventoId, onSaved, onClose }: {
+/**
+ * Bolsa, desconto e gratuidade de UMA inscrição.
+ *
+ * Modal dentro de modal → z-index 1100 (convenção da casa; o Dialog padrão é
+ * 1000). O que a tela deixa explícito, porque é dinheiro:
+ *  • gratuidade confirma a inscrição na hora (a vaga já é dela);
+ *  • desconto emite cobrança NOVA e devolve o link pra equipe enviar;
+ *  • quem já pagou não recebe devolução automática — a tela diz isso.
+ */
+function BolsaDialog({ inscricao, evento, eventoId, onClose, onSaved }: {
+  inscricao: any; evento?: any; eventoId: string;
+  onClose: () => void; onSaved: (i: any) => void;
+}) {
+  const [tipo, setTipo] = useState<'integral' | 'parcial'>(inscricao.bolsa_tipo || 'integral');
+  const [valor, setValor] = useState(
+    inscricao.bolsa_tipo === 'parcial' && inscricao.valor_cobrado_centavos
+      ? String(inscricao.valor_cobrado_centavos / 100) : '');
+  const [motivo, setMotivo] = useState(inscricao.bolsa_motivo || '');
+  const [salvando, setSalvando] = useState(false);
+  const tabela = evento?.valor_centavos != null ? evento.valor_centavos / 100 : null;
+  const jaPagou = inscricao.pagamento?.status_pagamento === 'pago';
+
+  async function salvar() {
+    if (motivo.trim().length < 3) { toast.error('Diga o motivo da bolsa'); return; }
+    setSalvando(true);
+    try {
+      const r: any = await api.darBolsa(eventoId, inscricao.id, { tipo, valor, motivo: motivo.trim() });
+      (r.avisos || []).forEach((a: string) => toast.warning(a, { duration: 8000 }));
+      if (r.cobranca?.link) {
+        await navigator.clipboard.writeText(r.cobranca.link).catch(() => {});
+        toast.success('Bolsa registrada · link de pagamento copiado pra você enviar');
+      } else {
+        toast.success(tipo === 'integral' ? 'Inscrição isenta e confirmada' : 'Bolsa registrada');
+      }
+      onSaved({ ...inscricao, ...(r.inscricao || {}) });
+    } catch (e: any) { toast.error(e?.message || 'Erro ao registrar a bolsa'); } finally { setSalvando(false); }
+  }
+
+  async function remover() {
+    setSalvando(true);
+    try {
+      const r: any = await api.tirarBolsa(eventoId, inscricao.id);
+      toast.success('Bolsa removida — volta ao valor de tabela');
+      onSaved({ ...inscricao, ...(r.inscricao || {}) });
+    } catch (e: any) { toast.error(e?.message || 'Erro ao remover'); } finally { setSalvando(false); }
+  }
+
+  return (
+    <Dialog open onOpenChange={(v) => { if (!v) onClose(); }}>
+      <DialogContent className="sm:max-w-md z-[1100] flex flex-col max-h-[90vh]">
+        <DialogHeader><DialogTitle>Bolsa / isenção</DialogTitle></DialogHeader>
+        <div className="flex-1 overflow-y-auto min-h-0 space-y-3 text-sm">
+          <p className="text-muted-foreground">
+            {inscricao.nome_completo}
+            {tabela != null && <> · valor de tabela <b>R$ {tabela.toFixed(2).replace('.', ',')}</b></>}
+          </p>
+          {jaPagou && (
+            <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-amber-700 text-xs">
+              Esta pessoa já pagou. A bolsa fica registrada, mas a devolução não é automática —
+              decidam e façam o estorno.
+            </p>
+          )}
+          <div className="flex gap-2">
+            {(['integral', 'parcial'] as const).map(t => (
+              <button key={t} onClick={() => setTipo(t)}
+                className={`flex-1 rounded-md border px-3 py-2 text-sm ${tipo === t ? 'border-primary text-primary bg-primary/10 font-semibold' : 'border-border text-muted-foreground'}`}>
+                {t === 'integral' ? 'Vai de graça' : 'Paga menos'}
+              </button>
+            ))}
+          </div>
+          {tipo === 'parcial' && (
+            <div>
+              <label className="text-xs text-muted-foreground">Quanto esta pessoa vai pagar (R$)</label>
+              <Input value={valor} onChange={e => setValor(e.target.value)} placeholder="100,00" inputMode="decimal" />
+              <p className="text-[11px] text-muted-foreground mt-1">
+                Emite uma cobrança nova com este valor. A anterior é cancelada — a vaga continua dela.
+              </p>
+            </div>
+          )}
+          <div>
+            <label className="text-xs text-muted-foreground">Motivo (fica registrado com seu nome)</label>
+            <textarea value={motivo} onChange={e => setMotivo(e.target.value)} rows={2}
+              placeholder="Ex.: situação financeira conversada com a liderança"
+              className="w-full rounded-md border border-border bg-[var(--cbrio-input-bg)] px-2 py-1.5 text-sm" />
+          </div>
+        </div>
+        <div className="flex justify-between gap-2 pt-2">
+          {inscricao.bolsa_tipo ? (
+            <Button variant="ghost" size="sm" onClick={remover} disabled={salvando} className="text-red-600 hover:text-red-700">
+              Remover bolsa
+            </Button>
+          ) : <span />}
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={onClose} disabled={salvando}>Cancelar</Button>
+            <Button size="sm" onClick={salvar} disabled={salvando} className="bg-primary text-primary-foreground">
+              {salvando ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : null} Salvar
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * Gratuidade e desconto autorizados por CPF, ANTES da inscrição.
+ *
+ * A pessoa digita o CPF no formulário público e o benefício se aplica sozinho:
+ * gratuidade entra já confirmada (sem cobrança), desconto gera cobrança com o
+ * valor reduzido.
+ *
+ * ⚠️ O valor pedido é **quanto a pessoa vai pagar**, não o desconto — mesma
+ * semântica de `valor_cobrado_centavos` no banco. Inverter isso numa ponta e não
+ * na outra é como se cobra R$ 700 de quem devia pagar R$ 200.
+ */
+function BeneficiosCard({ eventoId, evento, podeEditar }: {
+  eventoId: string; evento: any; podeEditar?: boolean;
+}) {
+  const [itens, setItens] = useState<any[] | null>(null);
+  const [aviso, setAviso] = useState<string | null>(null);
+  const [abrindo, setAbrindo] = useState(false);
+  const [salvando, setSalvando] = useState(false);
+  const [form, setForm] = useState({ cpf: '', nome_referencia: '', tipo: 'integral', valor: '', motivo: '' });
+
+  async function carregar() {
+    try {
+      const r = await api.beneficios(eventoId);
+      setItens(r?.itens || []);
+      setAviso(r?.aviso || null);
+    } catch {
+      setItens([]);
+    }
+  }
+  useEffect(() => { carregar(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [eventoId]);
+
+  async function salvar() {
+    const cpf = soDigitos(form.cpf);
+    if (!cpfValido(cpf)) { toast.error('CPF inválido'); return; }
+    if (form.motivo.trim().length < 3) { toast.error('Diga o motivo (fica registrado)'); return; }
+    if (form.tipo === 'parcial' && !(Number(form.valor.replace(',', '.')) > 0)) {
+      toast.error('Informe quanto essa pessoa vai pagar'); return;
+    }
+    setSalvando(true);
+    try {
+      await api.criarBeneficio(eventoId, {
+        cpf, nome_referencia: form.nome_referencia, tipo: form.tipo,
+        valor: form.tipo === 'parcial' ? form.valor.replace(',', '.') : undefined,
+        motivo: form.motivo,
+      });
+      toast.success('Benefício cadastrado — vale quando essa pessoa se inscrever');
+      setForm({ cpf: '', nome_referencia: '', tipo: 'integral', valor: '', motivo: '' });
+      setAbrindo(false);
+      carregar();
+    } catch (e: any) {
+      toast.error(e?.message || 'Erro ao cadastrar');
+    } finally { setSalvando(false); }
+  }
+
+  async function remover(b: any) {
+    if (!window.confirm(b.usado_em
+      ? 'Este benefício já foi usado. Remover tira da lista, mas a inscrição continua com o valor concedido. Remover?'
+      : 'Remover este benefício?')) return;
+    try {
+      const r = await api.removerBeneficio(eventoId, b.id);
+      toast.success(r?.aviso || 'Benefício removido');
+      carregar();
+    } catch (e: any) {
+      toast.error(e?.message || 'Erro ao remover');
+    }
+  }
+
+  const valorTabela = evento?.valor_centavos
+    ? `R$ ${(Number(evento.valor_centavos) / 100).toFixed(2).replace('.', ',')}` : null;
+
+  return (
+    <Card className="glass-solid p-4">
+      <div className="flex items-center justify-between gap-3 flex-wrap mb-1">
+        <div className="text-sm font-semibold flex items-center gap-1.5">
+          <Gift className="h-4 w-4 text-primary" /> Gratuidade e desconto por CPF
+          {itens?.length ? <span className="text-xs text-muted-foreground font-normal">({itens.length})</span> : null}
+        </div>
+        {podeEditar && !abrindo && (
+          <Button size="sm" variant="outline" className="h-8" onClick={() => setAbrindo(true)}>
+            Adicionar CPF
+          </Button>
+        )}
+      </div>
+      <p className="text-xs text-muted-foreground mb-3">
+        Cadastre o CPF de quem vai pagar menos (ou nada). Quando a pessoa se inscrever com esse CPF,
+        o sistema aplica sozinho{valorTabela ? ` — o valor de tabela do evento é ${valorTabela}` : ''}.
+        Quem <b>já se inscreveu</b> recebe pelo botão "Dar bolsa" na ficha dela.
+      </p>
+
+      {aviso && <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-2.5 text-xs text-amber-700 mb-3">{aviso}</div>}
+
+      {abrindo && (
+        <div className="rounded-lg border border-primary/40 bg-primary/5 p-3 mb-3 space-y-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div>
+              <label className="text-[11px] text-muted-foreground uppercase tracking-wide">CPF *</label>
+              <Input value={form.cpf} onChange={e => setForm(f => ({ ...f, cpf: mascaraCpf(e.target.value) }))}
+                placeholder="000.000.000-00" inputMode="numeric" className="h-9" />
+            </div>
+            <div>
+              <label className="text-[11px] text-muted-foreground uppercase tracking-wide">Nome (pra vocês reconhecerem)</label>
+              <Input value={form.nome_referencia} onChange={e => setForm(f => ({ ...f, nome_referencia: e.target.value }))}
+                placeholder="opcional" className="h-9" />
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-3 items-end">
+            <div>
+              <label className="text-[11px] text-muted-foreground uppercase tracking-wide block mb-1">Benefício</label>
+              <div className="flex gap-1.5">
+                {[['integral', 'Gratuidade'], ['parcial', 'Desconto']].map(([v, l]) => (
+                  <button key={v} onClick={() => setForm(f => ({ ...f, tipo: v }))}
+                    className={`h-9 px-3 rounded-md text-xs font-medium border transition-colors ${
+                      form.tipo === v ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground'}`}>
+                    {l}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {form.tipo === 'parcial' && (
+              <div className="min-w-[180px]">
+                <label className="text-[11px] text-muted-foreground uppercase tracking-wide">Quanto vai pagar (R$) *</label>
+                <Input value={form.valor} onChange={e => setForm(f => ({ ...f, valor: e.target.value }))}
+                  placeholder="ex.: 200,00" inputMode="decimal" className="h-9" />
+              </div>
+            )}
+          </div>
+          <div>
+            <label className="text-[11px] text-muted-foreground uppercase tracking-wide">Motivo * (fica registrado)</label>
+            <Input value={form.motivo} onChange={e => setForm(f => ({ ...f, motivo: e.target.value }))}
+              placeholder="ex.: bolsa aprovada pela liderança do AMI" className="h-9" />
+          </div>
+          <div className="flex gap-2 pt-1">
+            <Button size="sm" onClick={salvar} disabled={salvando}>
+              {salvando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Cadastrar benefício'}
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => setAbrindo(false)}>Cancelar</Button>
+          </div>
+        </div>
+      )}
+
+      {itens === null ? (
+        <div className="flex justify-center py-4"><Loader2 className="h-4 w-4 animate-spin text-primary" /></div>
+      ) : itens.length === 0 ? (
+        <p className="text-xs text-muted-foreground py-2">Nenhum CPF com benefício cadastrado.</p>
+      ) : (
+        <div className="space-y-1.5">
+          {itens.map(b => (
+            <div key={b.id} className="rounded-lg border border-border px-2.5 py-2 flex items-center gap-2 flex-wrap text-sm">
+              <div className="flex-1 min-w-[200px]">
+                <div className="font-medium flex items-center gap-2 flex-wrap">
+                  {b.nome_referencia || 'Sem nome'}
+                  <span className="text-xs text-muted-foreground font-normal">{mascaraCpf(b.cpf)}</span>
+                  <span className={`rounded-full text-[11px] font-medium px-2 py-0.5 ${
+                    b.tipo === 'integral' ? 'bg-emerald-500/15 text-emerald-600' : 'bg-primary/15 text-primary'}`}>
+                    {b.tipo === 'integral'
+                      ? 'gratuidade'
+                      : `paga R$ ${(Number(b.valor_centavos || 0) / 100).toFixed(2).replace('.', ',')}`}
+                  </span>
+                  {/* "Usado" é o que diz se a autorização ainda vale — sem isso a
+                      equipe não sabe se a pessoa já entrou com o benefício. */}
+                  {b.usado_em && (
+                    <span className="rounded-full text-[11px] font-medium px-2 py-0.5 bg-foreground/10 text-muted-foreground">
+                      usado em {new Date(b.usado_em).toLocaleDateString('pt-BR')}
+                    </span>
+                  )}
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  {b.motivo}
+                  {b.criado_por_nome ? ` · por ${b.criado_por_nome}` : ''}
+                </div>
+              </div>
+              {podeEditar && (
+                <button onClick={() => remover(b)} className="text-red-500 p-1.5 shrink-0" title="Remover benefício">
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+const COMPROVANTE_LABEL: Record<string, string> = {
+  em_analise: 'Em análise', aceito: 'Aceito', recusado: 'Recusado',
+};
+const COMPROVANTE_BADGE: Record<string, string> = {
+  em_analise: 'bg-amber-500/15 text-amber-600',
+  aceito: 'bg-emerald-500/15 text-emerald-600',
+  recusado: 'bg-rose-500/15 text-rose-600',
+};
+
+/**
+ * Comprovante de Pix/transferência que a PESSOA anexou na página de pagamento.
+ *
+ * ⚠️ Aceitar aqui é o que BAIXA o pagamento (manual, com autoria) — a imagem
+ * nunca fez isso sozinha. Por isso o botão diz "Confirmar pagamento", não
+ * "aceitar arquivo": quem clica está afirmando que conferiu que o dinheiro
+ * entrou na conta, e é o nome dele que fica no registro.
+ */
+function ComprovantesBloco({ eventoId, inscricao, podeEditar, onPago }: {
+  eventoId: string; inscricao: any; podeEditar?: boolean; onPago: () => void;
+}) {
+  const [itens, setItens] = useState<any[] | null>(null);
+  const [aviso, setAviso] = useState<string | null>(null);
+  const [agindo, setAgindo] = useState<string | null>(null);
+
+  async function carregar() {
+    try {
+      const r = await api.comprovantes(eventoId, inscricao.id);
+      setItens(r?.itens || []);
+      setAviso(r?.aviso || null);
+    } catch {
+      setItens([]);
+    }
+  }
+  useEffect(() => { carregar(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [inscricao.id]);
+
+  async function aceitar(c: any) {
+    if (!window.confirm('Confirmar que o dinheiro entrou na conta? Isso marca o pagamento como PAGO no seu nome.')) return;
+    setAgindo(c.id);
+    try {
+      const r = await api.aceitarComprovante(eventoId, inscricao.id, c.id);
+      toast.success(r?.ja_estava_pago ? 'Comprovante aceito (pagamento já constava pago)' : 'Pagamento confirmado');
+      await carregar();
+      onPago();
+    } catch (e: any) {
+      toast.error(e?.message || 'Erro ao confirmar');
+    } finally { setAgindo(null); }
+  }
+
+  async function recusar(c: any) {
+    // A pessoa LÊ este motivo na página de pagamento pra corrigir e reenviar —
+    // por isso é obrigatório, aqui e no banco.
+    const motivo = window.prompt('Por que está recusando? (a pessoa vai ler pra reenviar)');
+    if (!motivo || motivo.trim().length < 3) return;
+    setAgindo(c.id);
+    try {
+      await api.recusarComprovante(eventoId, inscricao.id, c.id, motivo.trim());
+      toast.success('Comprovante recusado');
+      await carregar();
+    } catch (e: any) {
+      toast.error(e?.message || 'Erro ao recusar');
+    } finally { setAgindo(null); }
+  }
+
+  if (itens === null) {
+    return (
+      <div className="rounded-lg border border-border p-2.5 text-xs text-muted-foreground flex items-center gap-2">
+        <Loader2 className="h-3 w-3 animate-spin" /> Carregando comprovantes…
+      </div>
+    );
+  }
+  if (aviso) return <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-2.5 text-xs text-amber-700">{aviso}</div>;
+  if (!itens.length) return null;
+
+  const pendentes = itens.filter((c) => c.status === 'em_analise').length;
+
+  return (
+    <div className={`rounded-lg border p-2.5 ${pendentes ? 'border-amber-500/40 bg-amber-500/5' : 'border-border'}`}>
+      <div className="text-[11px] uppercase tracking-wide mb-1.5 flex items-center gap-1 text-muted-foreground">
+        <Paperclip className="h-3 w-3" /> Comprovante anexado
+        {pendentes > 0 && <span className="text-amber-600 font-semibold normal-case">· {pendentes} pra conferir</span>}
+      </div>
+      <div className="space-y-2">
+        {itens.map((c) => (
+          <div key={c.id} className="rounded-md border border-border bg-card/50 p-2">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+              <span className={`rounded-full font-medium px-2 py-0.5 ${COMPROVANTE_BADGE[c.status] || 'bg-foreground/10'}`}>
+                {COMPROVANTE_LABEL[c.status] || c.status}
+              </span>
+              <span>{c.metodo_declarado === 'transferencia' ? 'Transferência' : 'Pix'}</span>
+              <span className="text-muted-foreground">
+                enviado em {new Date(c.created_at).toLocaleString('pt-BR')}
+              </span>
+              {/* Signed URL de 15 min (bucket privado). Abre em aba nova: PDF e
+                  imagem grande não caberiam legíveis dentro do modal. */}
+              {c.url && (
+                <a href={c.url} target="_blank" rel="noreferrer"
+                  className="text-primary hover:underline inline-flex items-center gap-1 font-medium">
+                  <ExternalLink className="h-3 w-3" /> Ver arquivo
+                </a>
+              )}
+            </div>
+            {c.observacao && <div className="text-xs text-muted-foreground mt-1">"{c.observacao}"</div>}
+            {c.status === 'recusado' && c.motivo_recusa && (
+              <div className="text-xs text-rose-600 mt-1">Recusado: {c.motivo_recusa}</div>
+            )}
+            {c.revisado_em && (
+              <div className="text-[11px] text-muted-foreground mt-1">
+                conferido por {c.revisado_por_nome || 'equipe'} em {new Date(c.revisado_em).toLocaleString('pt-BR')}
+              </div>
+            )}
+            {podeEditar && c.status === 'em_analise' && (
+              <div className="flex flex-wrap gap-2 mt-2">
+                <Button size="sm" className="h-7 text-xs" disabled={agindo === c.id} onClick={() => aceitar(c)}>
+                  {agindo === c.id ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Confirmar pagamento'}
+                </Button>
+                <Button size="sm" variant="outline" className="h-7 text-xs" disabled={agindo === c.id} onClick={() => recusar(c)}>
+                  Recusar
+                </Button>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      {podeEditar && pendentes > 0 && (
+        <div className="text-[11px] text-muted-foreground mt-2">
+          Confira o valor e a data no extrato antes de confirmar — o comprovante sozinho não baixa o pagamento.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function InscricaoDetalheDialog({ inscricao, campos, premios, eventoId, evento, podeEditar, onSaved, onPago, onClose }: {
   inscricao: any; campos: any[]; premios: any[]; eventoId: string;
-  onSaved: (atualizada: any) => void; onClose: () => void;
+  evento?: any; podeEditar?: boolean;
+  onSaved: (atualizada: any) => void; onPago?: () => void; onClose: () => void;
 }) {
   const tel = String(inscricao.telefone || '').replace(/\D/g, '');
   const [editando, setEditando] = useState(false);
   const [salvando, setSalvando] = useState(false);
+  const [bolsaOpen, setBolsaOpen] = useState(false);
   const [form, setForm] = useState<{ nome_completo: string; telefone: string; email: string; dados: Record<string, string> }>({ nome_completo: '', telefone: '', email: '', dados: {} });
   const cancelada = inscricao.status === 'cancelada';
 
@@ -857,6 +1395,62 @@ function InscricaoDetalheDialog({ inscricao, campos, premios, eventoId, onSaved,
                     )}
                   </div>
                 </div>
+              )}
+
+              {/* Comprovante de Pix/transferência anexado pela pessoa. Só em
+                  evento pago — em evento gratuito não há o que comprovar. */}
+              {evento?.pagamento_ativo && (
+                <ComprovantesBloco
+                  eventoId={eventoId}
+                  inscricao={inscricao}
+                  podeEditar={podeEditar}
+                  onPago={() => onPago?.()}
+                />
+              )}
+
+              {/* Bolsa / isenção — só em evento pago. O preço é da INSCRIÇÃO;
+                  o evento guarda o valor de tabela. */}
+              {evento?.pagamento_ativo && (
+                <div className={`rounded-lg border p-2.5 ${inscricao.bolsa_tipo ? 'border-primary/40 bg-primary/5' : 'border-border'}`}>
+                  <div className="text-[11px] uppercase tracking-wide mb-1 flex items-center justify-between gap-2">
+                    <span className={inscricao.bolsa_tipo ? 'text-primary' : 'text-muted-foreground'}>
+                      {inscricao.bolsa_tipo ? (inscricao.bolsa_tipo === 'integral' ? 'Isenta (bolsa integral)' : 'Bolsa parcial') : 'Valor desta inscrição'}
+                    </span>
+                    {podeEditar && (
+                      <button onClick={() => setBolsaOpen(true)} className="text-primary hover:underline text-[11px] font-semibold normal-case">
+                        {inscricao.bolsa_tipo ? 'Alterar' : 'Dar bolsa / isentar'}
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+                    <span className="font-medium">
+                      {inscricao.valor_cobrado_centavos != null
+                        ? (inscricao.valor_cobrado_centavos === 0
+                          ? 'Gratuita'
+                          : `R$ ${(inscricao.valor_cobrado_centavos / 100).toFixed(2).replace('.', ',')}`)
+                        : (evento?.valor_centavos != null
+                          ? `R$ ${(evento.valor_centavos / 100).toFixed(2).replace('.', ',')} (valor de tabela)`
+                          : '—')}
+                    </span>
+                    {inscricao.bolsa_motivo && <span className="text-muted-foreground">· {inscricao.bolsa_motivo}</span>}
+                    {inscricao.bolsa_por_nome && (
+                      <span className="text-muted-foreground text-xs">
+                        concedida por {inscricao.bolsa_por_nome}
+                        {inscricao.bolsa_em ? ` em ${new Date(inscricao.bolsa_em).toLocaleDateString('pt-BR')}` : ''}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {bolsaOpen && (
+                <BolsaDialog
+                  inscricao={inscricao}
+                  evento={evento}
+                  eventoId={eventoId}
+                  onClose={() => setBolsaOpen(false)}
+                  onSaved={(atualizada: any) => { setBolsaOpen(false); onSaved(atualizada); }}
+                />
               )}
 
               {premios.length > 0 && (
