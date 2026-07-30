@@ -458,7 +458,12 @@ function SerieModal({ grupo, onClose, onEditar, onDuplicar, onPublicar, onCopiar
 
           <div className="space-y-1.5">
             {edicoes.map(e => (
-              <div key={e.id} className="rounded-lg border border-border px-2.5 py-2 flex items-center justify-between gap-2 flex-wrap">
+              // Mesma régua do card avulso: a linha da edição abre o evento.
+              <div key={e.id} role="button" tabIndex={0}
+                onClick={() => navigate(`/inscricoes/evento/${e.id}`)}
+                onKeyDown={ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); navigate(`/inscricoes/evento/${e.id}`); } }}
+                title="Abrir esta edição (inscritos, pagamento e sorteio)"
+                className="rounded-lg border border-border px-2.5 py-2 flex items-center justify-between gap-2 flex-wrap cursor-pointer hover:border-primary/40 hover:bg-primary/5 transition-colors">
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-medium truncate">{e.edicao_rotulo || e.nome}</div>
                   <div className="text-xs text-muted-foreground flex items-center gap-2 flex-wrap">
@@ -467,7 +472,7 @@ function SerieModal({ grupo, onClose, onEditar, onDuplicar, onPublicar, onCopiar
                     <span className={`rounded px-1.5 py-0.5 ${STATUS_BADGE[e.status] || ''}`}>{e.status}</span>
                   </div>
                 </div>
-                <div className="flex items-center gap-1 shrink-0">
+                <div className="flex items-center gap-1 shrink-0" onClick={ev => ev.stopPropagation()}>
                   {e.status === 'rascunho' && (
                     <Button size="sm" className="h-7 text-xs" onClick={() => onPublicar(e)} title="Coloca o formulário no ar agora">
                       <Megaphone className="h-3 w-3 mr-1" /> Publicar
@@ -673,18 +678,26 @@ export default function Inscricoes() {
                 );
               })}
               {avulsos.map(e => (
-                <div key={e.id} className="rounded-lg border border-border p-3 flex items-center gap-3 flex-wrap">
-                  <button className="flex-1 min-w-[220px] text-left" onClick={() => navigate(`/inscricoes/evento/${e.id}`)}
-                    title="Abrir o evento (inscritos e sorteio)">
-                    <div className="font-medium text-sm hover:text-primary transition-colors">{e.nome}</div>
+                // O CARD INTEIRO abre o evento (só o texto abria antes, e sem
+                // afordância nenhuma — o clique na linha não fazia nada e isso
+                // se lê como "o card não é clicável"). Os botões de ação param
+                // a propagação: publicar/copiar/editar não devem navegar.
+                <div key={e.id} role="button" tabIndex={0}
+                  onClick={() => navigate(`/inscricoes/evento/${e.id}`)}
+                  onKeyDown={ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); navigate(`/inscricoes/evento/${e.id}`); } }}
+                  title="Abrir o evento (inscritos, pagamento e sorteio)"
+                  className="rounded-lg border border-border p-3 flex items-center gap-3 flex-wrap cursor-pointer hover:border-primary/40 hover:bg-primary/5 transition-colors">
+                  <div className="flex-1 min-w-[220px] text-left">
+                    <div className="font-medium text-sm">{e.nome}</div>
                     <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5 flex-wrap">
                       <span className="rounded bg-foreground/8 px-1.5 py-0.5">{e.area}</span>
                       {e.data && <span>{fmtData(e.data)}</span>}
                       <span className="inline-flex items-center gap-1"><Users className="h-3 w-3" /> {e.inscritos}{e.vagas ? `/${e.vagas}` : ''}</span>
                       <span className={`rounded px-1.5 py-0.5 ${STATUS_BADGE[e.status] || ''}`}>{e.status}</span>
                     </div>
-                  </button>
-                  <div className="flex items-center gap-1.5 shrink-0">
+                  </div>
+                  <span className="text-xs text-primary font-medium shrink-0">Abrir →</span>
+                  <div className="flex items-center gap-1.5 shrink-0" onClick={ev => ev.stopPropagation()}>
                     {e.status === 'rascunho' && (
                       <Button size="sm" onClick={() => publicar(e)} title="Coloca o formulário no ar agora">
                         <Megaphone className="h-3.5 w-3.5 mr-1" /> Publicar

@@ -297,7 +297,7 @@ export default function EventoExterno() {
   const [erro, setErro] = useState('');
   const [enviando, setEnviando] = useState(false);
   const [subindoImg, setSubindoImg] = useState(0);
-  const [resultado, setResultado] = useState<{ numero: number | null; jaInscrito?: boolean; temSorteio?: boolean; comprovanteToken?: string | null } | null>(null);
+  const [resultado, setResultado] = useState<{ numero: number | null; jaInscrito?: boolean; temSorteio?: boolean; comprovanteToken?: string | null; isento?: boolean } | null>(null);
   const marcarBusy = (b: boolean) => setSubindoImg(n => Math.max(0, n + (b ? 1 : -1)));
 
   useEffect(() => {
@@ -355,7 +355,14 @@ export default function EventoExterno() {
         navigate(`/pagamento/${r.public_token}`);
         return;
       }
-      setResultado({ numero: r.numero_sorte, jaInscrito: r.ja_inscrito, temSorteio: r.tem_sorteio, comprovanteToken: r.comprovante_token || null });
+      setResultado({
+        numero: r.numero_sorte, jaInscrito: r.ja_inscrito, temSorteio: r.tem_sorteio,
+        comprovanteToken: r.comprovante_token || null,
+        // Evento PAGO em que este CPF tinha gratuidade autorizada: caiu aqui (e
+        // não na tela de pagamento) porque não há nada a pagar. Sem dizer isso,
+        // a pessoa ficaria esperando um link que não vem.
+        isento: r.beneficio === 'integral',
+      });
       if (r.tem_sorteio) setTimeout(confete, 200);
     } catch (e: any) { setErro(e.message || 'Erro ao confirmar presença.'); }
     finally { setEnviando(false); }
@@ -420,6 +427,11 @@ export default function EventoExterno() {
               {resultado.jaInscrito && (
                 <p style={{ fontSize: 13, color: '#00B39D', fontWeight: 600, marginTop: 8 }}>
                   Você já estava confirmado(a) — atualizamos seus dados.
+                </p>
+              )}
+              {resultado.isento && (
+                <p style={{ fontSize: 13, color: '#00B39D', fontWeight: 600, marginTop: 8 }}>
+                  Sua inscrição foi liberada pela liderança — você não precisa pagar nada.
                 </p>
               )}
               {/* Texto de agradecimento: custom do evento (se houver) ou o padrão */}

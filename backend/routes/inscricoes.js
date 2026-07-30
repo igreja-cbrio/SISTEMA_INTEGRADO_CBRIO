@@ -14,6 +14,9 @@ const { supabase } = require('../utils/supabase');
 const { escapePostgrestValue } = require('../utils/sanitize');
 const { verificarTokenComprovanteAtivo, extrairToken } = require('../services/inscricaoComprovante');
 const { portasSatelites, fontesUnificadas, catalogoPublico } = require('../services/inscricaoPortas');
+// CPF com DV pelo canônico do Contrato de Inscrição — NÃO recriar cópia local
+// (era assim que as réguas divergiam entre as portas).
+const { cpfValido } = require('../services/inscricaoContrato');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 } });
 
@@ -1132,6 +1135,113 @@ router.delete('/eventos/:id/inscricoes/:inscricaoId/bolsa', authorizeModule('ins
   } catch (e) {
     console.error('[inscricoes] remover bolsa:', e.message);
     res.status(500).json({ error: 'Erro ao remover a bolsa' });
+  }
+});
+
+// ── Benefícios pré-autorizados por CPF ─────────────────────────────────────
+//
+// O líder cadastra o CPF ANTES da pessoa se inscrever; a porta pública aplica
+// sozinha (publicEventoExterno · `beneficioPorCpf`/`aplicarBeneficio`). Grava as
+// MESMAS colunas do botão "Dar bolsa" — preço continua sendo atributo da
+// INSCRIÇÃO, não uma segunda régua de preço do evento.
+//
+// Leitura exige nível 2 porque a linha carrega CPF (mesma régua da aba Pessoas).
+
+// GET /eventos/:id/beneficios
+router.get('/eventos/:id/beneficios', authorizeModule('inscricoes', 2), async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('insc_beneficios')
+      .select('*').eq('evento_id', req.params.id).is('deleted_at', null)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    res.json({ itens: data || [] });
+  } catch (e) {
+    console.error('[inscricoes] beneficios:', e.message);
+    if (/insc_beneficios|does not exist|schema cache/i.test(e.message || '')) {
+      return res.json({ itens: [], aviso: 'Benefícios indisponíveis: migration 20260730210000 pendente.' });
+    }
+    res.status(500).json({ error: 'Erro ao carregar os benefícios' });
+  }
+});
+
+// POST /eventos/:id/beneficios — autoriza gratuidade ou desconto pra um CPF.
+router.post('/eventos/:id/beneficios', authorizeModule('inscricoes', 3), async (req, res) => {
+  try {
+    const cpf = String(req.body?.cpf || '').replace(/\D/g, '');
+    // DV validado pelo canônico do Contrato de Inscrição: CPF sem DV válido não
+    // passa na porta pública, então cadastrar aqui seria autorizar um benefício
+    // que NUNCA casaria com ninguém.
+    if (!cpfValido(cpf)) return res.status(400).json({ error: 'CPF inválido' });
+
+    const tipo = req.body?.tipo === 'integral' ? 'integral' : 'parcial';
+    const motivo = String(req.body?.motivo || '').trim();
+    if (motivo.length < 3) return res.status(400).json({ error: 'Diga o motivo do benefício (fica registrado).' });
+
+    // `valor` chega em REAIS da tela e é o que a pessoa VAI PAGAR (não o
+    // desconto) — mesma semântica de `valor_cobrado_centavos`.
+    let valor_centavos = null;
+    if (tipo === 'parcial') {
+      const reais = Number(String(req.body?.valor ?? '').toString().replace(',', '.'));
+      valor_centavos = Math.round(reais * 100);
+      if (!(valor_centavos > 0)) {
+        return res.status(400).json({ error: 'Informe quanto essa pessoa vai pagar (maior que zero).' });
+      }
+      // Cobrar mais que a tabela não é desconto — provavelmente é o valor total
+      // digitado no campo errado.
+      const { data: ev } = await supabase.from('insc_eventos')
+        .select('valor_centavos').eq('id', req.params.id).maybeSingle();
+      if (ev?.valor_centavos && valor_centavos >= Number(ev.valor_centavos)) {
+        return res.status(400).json({
+          error: `O valor com desconto precisa ser menor que o do evento (R$ ${(Number(ev.valor_centavos) / 100).toFixed(2).replace('.', ',')}).`,
+        });
+      }
+    }
+
+    const { data, error } = await supabase.from('insc_beneficios').insert({
+      evento_id: req.params.id,
+      cpf,
+      nome_referencia: req.body?.nome_referencia ? String(req.body.nome_referencia).trim().slice(0, 120) : null,
+      tipo,
+      valor_centavos,
+      motivo: motivo.slice(0, 500),
+      criado_por: req.user?.id || null,
+      criado_por_nome: req.user?.name || req.user?.email || null,
+    }).select('*').single();
+    if (error) {
+      // UNIQUE parcial (evento, cpf) — já existe autorização viva pra este CPF.
+      if (error.code === '23505') {
+        return res.status(409).json({ error: 'Este CPF já tem um benefício cadastrado neste evento.' });
+      }
+      throw error;
+    }
+    res.status(201).json({ ok: true, beneficio: data });
+  } catch (e) {
+    console.error('[inscricoes] criar beneficio:', e.message);
+    res.status(500).json({ error: 'Erro ao cadastrar o benefício' });
+  }
+});
+
+// DELETE /eventos/:id/beneficios/:beneficioId — soft-delete da AUTORIZAÇÃO.
+// ⚠️ NÃO desfaz benefício já usado: a inscrição dela já carrega o preço e mexer
+// nisso é o botão "Dar bolsa"/"Alterar" na ficha, que reemite a cobrança.
+router.delete('/eventos/:id/beneficios/:beneficioId', authorizeModule('inscricoes', 3), async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('insc_beneficios')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('id', req.params.beneficioId).eq('evento_id', req.params.id)
+      .is('deleted_at', null).select('id, usado_em').maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Benefício não encontrado' });
+    res.json({
+      ok: true,
+      ja_usado: !!data.usado_em,
+      aviso: data.usado_em
+        ? 'A autorização saiu da lista, mas a inscrição que já usou continua com o valor concedido — altere na ficha da pessoa se precisar.'
+        : null,
+    });
+  } catch (e) {
+    console.error('[inscricoes] remover beneficio:', e.message);
+    res.status(500).json({ error: 'Erro ao remover o benefício' });
   }
 });
 

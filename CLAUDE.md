@@ -5210,6 +5210,85 @@ existiu em `pag_cobrancas.metodo`; era só a LEITURA no lugar errado.
   pagou nada, então não tem forma). `metodo` nulo aparece como "Forma não
   informada" em vez de virar Pix.
 
+### ✅ Comprovante de Pix/transferência · conferência HUMANA (2026-07-30 · migration `20260730200000`)
+
+Pedido do Marcos: *"preciso que nessa tela apareça o comprovante anexado, para
+quando o pagamento for por pix ou transferencia."*
+
+⚠️ **LEI desta feature: imagem NUNCA marca pagamento.** O anexo entra como
+`em_analise`; quem baixa o pagamento é uma pessoa, via `marcarPagoManual` (que
+exige `confirmado_por`). Aceitar print como prova automática é como se aprova
+comprovante falso — e o dinheiro não aparece na conciliação do extrato depois.
+
+- **Tabela, não coluna** (`insc_comprovantes`): recusar + reenviar é o caso
+  NORMAL, não a exceção; uma coluna sobrescreveria a evidência da tentativa
+  anterior, que é justamente o que responde "por que aceitamos este pagamento?".
+  Arquivo em bucket **privado** `inscricao-comprovantes` (só o path no banco;
+  equipe vê por signed URL de 15 min, assinada em lote). `revisado_por` é
+  **SNAPSHOT sem FK** — a prova de quem liberou o dinheiro não pode sumir com o
+  profile. Motivo de recusa obrigatório no CHECK (a pessoa lê pra corrigir).
+- **Porta pública** `POST /pagamento/:token/comprovante` (imagem ou **PDF** ≤10MB
+  — o app do banco exporta PDF, e recusá-lo empurraria a pessoa a printar o PDF,
+  pior de ler; teto de 8 por inscrição). Já pago → 409 (não há o que conferir).
+  Falha no insert **remove o arquivo órfão**. Notificação diz explicitamente que
+  **NÃO foi baixado**. `respostaPagamento` ganhou `aceita_comprovante` (só
+  não-pago e em forma que pode ter sido paga fora do PSP — cartão/boleto o
+  provedor confirma sozinho) e `comprovantes` **sem `storage_path`**.
+- **Tela do inscrito**: bloco "Comprovante anexado" + "Confirmar pagamento" /
+  "Recusar". O botão diz confirmar **PAGAMENTO** porque é isso que o clique
+  afirma. Badge de clipe na lista + tile "Comprovantes pra conferir" no placar —
+  sem número visível, anexo de sábado só apareceria por acaso.
+- **Página pública**: enquadrada como *"já paguei e a página não atualizou"*,
+  **nunca** como forma de pagar (convidar todos a "pagar e mandar print" criaria
+  fila humana pra pagamento que o PSP confirma em segundos). Depois de enviar diz
+  "em análise" + "não precisa pagar de novo".
+- `carregar()` da tela do evento passou a **devolver a lista** pra ficha aberta
+  refletir o pagamento na hora (senão a badge seguiria "aguardando" logo após
+  confirmar, e isso se lê como bug).
+
+### ✅ Gratuidade/desconto PRÉ-AUTORIZADO por CPF (2026-07-30 · migration `20260730210000`)
+
+Pedido do Marcos: *"eu colocaria o CPF da pessoa que iria receber esse benefício,
+e aí na inscrição dela, quando ela colocasse o CPF, o sistema já iria identificar
+que aquele CPF tem direito ao desconto (que será definido pelo líder) ou
+gratuidade."*
+
+`insc_beneficios` é o **lado de entrada da bolsa** (20260730170000), não uma
+segunda régua de preço: ao ser usado, grava as MESMAS colunas em `inscricoes`
+(`valor_cobrado_centavos` + `bolsa_tipo` + `bolsa_motivo`). Preço continua sendo
+atributo da INSCRIÇÃO — duas fontes de preço concorrendo é como o arrecadado
+passa a mentir.
+
+- `valor_centavos` é **quanto a pessoa PAGA**, não o desconto (mesma semântica de
+  `valor_cobrado_centavos`) — inverter numa ponta e não na outra é como se cobra
+  R$ 700 de quem devia pagar R$ 200. O POST recusa valor ≥ o de tabela (é o valor
+  total digitado no campo errado) e exige **CPF com DV** pelo canônico do
+  contrato: CPF inválido aqui seria autorização que nunca casa, já que a porta
+  pública exige DV.
+- **UNIQUE parcial (evento, cpf)** + `usado_em`: a autorização vale UMA vez,
+  senão o mesmo CPF renderia gratuidade em cada re-inscrição. `usado_em` só é
+  marcado DEPOIS de a inscrição carregar o benefício — o inverso queimaria a
+  autorização sem entregar o desconto.
+- **Na porta pública**: consultado ANTES da RPC porque decide o `p_status` —
+  gratuidade nasce **`confirmada`** (não há pagamento a esperar, e deixá-la
+  `recebida` faria o cron de expiração tirar a vaga de quem a igreja isentou) e
+  dispara a confirmação de WhatsApp na hora; desconto nasce `recebida` com a
+  cobrança **reduzida** (`cobrarInscricao` ganhou override de valor). A tela de
+  sucesso diz "liberada pela liderança — você não precisa pagar nada", senão a
+  pessoa ficaria esperando um link que não vem.
+- ⚠️ **Re-inscrição NÃO aplica benefício**: a cobrança dela já existe com o valor
+  cheio (`referencia` idempotente) e baixar o valor da inscrição sem reemitir a
+  cobrança deixaria as duas discordando. Quem reemite certo é o botão "Dar bolsa"
+  na ficha — então o sistema **notifica** a equipe em vez de aplicar pela metade
+  ou perder a autorização em silêncio.
+- Card "Gratuidade e desconto por CPF" na tela do evento (ver = nível **2**, a
+  linha carrega CPF; conceder/remover = 3). Remover autorização **já usada** não
+  desfaz o preço da inscrição — o aviso diz isso e aponta a ficha.
+- Junto: **card do evento clicável** na aba Eventos (só o texto abria, sem
+  afordância; agora a linha inteira abre `/inscricoes/evento/:id` com "Abrir →",
+  e os botões de ação param a propagação). Vale pro card avulso e pra linha de
+  edição dentro do modal da série.
+
 ### 🎨 Personalização da fatura do Asaas (pesquisado em 30/07 · não é código)
 
 - **Dá pra marcar, não pra redesenhar**: a API `salvar-personalizacao-da-fatura`

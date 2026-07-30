@@ -188,16 +188,80 @@ function avisoPagamento(ev) {
 const refCobranca = (inscricaoId) => `inscricao:${inscricaoId}`;
 
 /**
+ * Benefício (gratuidade/desconto) pré-autorizado pra este CPF neste evento.
+ *
+ * Só devolve o que ainda NÃO foi usado: a autorização vale uma vez, senão o
+ * mesmo CPF renderia gratuidade em cada re-inscrição.
+ *
+ * Best-effort de propósito — a tabela é nova (migration 20260730210000) e a
+ * porta pública não pode parar de inscrever por causa dela. Sem benefício a
+ * pessoa paga o valor de tabela: é o comportamento que já existia.
+ */
+async function beneficioPorCpf(eventoId, cpf) {
+  if (!cpf) return null;
+  try {
+    const { data, error } = await supabase.from('insc_beneficios')
+      .select('id, tipo, valor_centavos, motivo, nome_referencia')
+      .eq('evento_id', eventoId).eq('cpf', cpf)
+      .is('deleted_at', null).is('usado_em', null)
+      .maybeSingle();
+    if (error) throw error;
+    return data || null;
+  } catch (e) {
+    console.error('[publicEvento] benefício por CPF indisponível:', e.message);
+    return null;
+  }
+}
+
+/**
+ * Grava o benefício NA INSCRIÇÃO (as mesmas colunas do botão "Dar bolsa") e
+ * marca a autorização como usada.
+ *
+ * Awaited, não fire-and-forget: sem estas colunas a pessoa isenta apareceria
+ * como "aguardando pagamento" na lista, e o desconto ficaria invisível pra quem
+ * confere o arrecadado. Falha aqui é logada e NÃO desfaz a inscrição — a vaga
+ * já é dela, e o conserto é o botão "Dar bolsa" na ficha.
+ */
+async function aplicarBeneficio(beneficio, inscricaoId) {
+  if (!beneficio) return;
+  const integral = beneficio.tipo === 'integral';
+  try {
+    const { error } = await supabase.from('inscricoes').update({
+      valor_cobrado_centavos: integral ? 0 : Number(beneficio.valor_centavos),
+      bolsa_tipo: beneficio.tipo,
+      bolsa_motivo: beneficio.motivo,
+      bolsa_por_nome: beneficio.nome_referencia
+        ? `benefício pré-cadastrado (${beneficio.nome_referencia})`
+        : 'benefício pré-cadastrado por CPF',
+      bolsa_em: new Date().toISOString(),
+    }).eq('id', inscricaoId);
+    if (error) throw error;
+  } catch (e) {
+    console.error('[publicEvento] aplicar benefício na inscrição:', e.message);
+    return;
+  }
+  // `usado_em` só depois de a inscrição carregar o benefício: marcar antes e
+  // falhar no update acima queimaria a autorização sem entregar o desconto.
+  const { error: eUso } = await supabase.from('insc_beneficios')
+    .update({ usado_em: new Date().toISOString(), inscricao_id: inscricaoId })
+    .eq('id', beneficio.id);
+  if (eUso) console.error('[publicEvento] marcar benefício usado:', eUso.message);
+}
+
+/**
  * Cria (ou recupera) a cobrança da inscrição e espelha em `insc_pagamentos`,
  * que é a linha que a UI de inscrições lê. O estado canônico vive no motor.
  */
-async function cobrarInscricao({ ev, inscricaoId, val, membroId }) {
+async function cobrarInscricao({ ev, inscricaoId, val, membroId, valorCentavos }) {
   const horas = Number(ev.pagamento_expira_horas) > 0 ? Number(ev.pagamento_expira_horas) : 48;
   const { cobranca } = await pagamentos.criarCobranca({
     origem_tipo: pagamentos.ORIGENS.INSCRICAO,
     origem_id: inscricaoId,
     referencia: refCobranca(inscricaoId),
-    valor_centavos: Number(ev.valor_centavos),
+    // Benefício por CPF (desconto autorizado antes da inscrição) cobra MENOS
+    // que o valor de tabela do evento. Sem esse override a pessoa com desconto
+    // receberia a cobrança cheia e o desconto seria só enfeite na tela.
+    valor_centavos: Number(valorCentavos) > 0 ? Number(valorCentavos) : Number(ev.valor_centavos),
     descricao: `Inscrição · ${ev.nome}`,
     metodos_ofertados: metodosDoEvento(ev),
     // NULL = vale o teto configurado na conta do PSP. Quem define o teto por
@@ -613,6 +677,19 @@ async function inscreverEspinha(req, res, ev) {
   const ex = validarExtras(ev.campos, body.dados);
   if (ex.erro) return res.status(400).json({ error: ex.erro });
   const optin = Boolean(body.whatsapp_optin);
+
+  // Benefício PRÉ-AUTORIZADO pra este CPF (gratuidade ou desconto que o líder
+  // cadastrou antes). Consultado ANTES da RPC porque decide o `p_status`:
+  // gratuidade nasce `confirmada` (não há pagamento a esperar) e desconto nasce
+  // `recebida` com a cobrança reduzida. Best-effort: tabela ausente (deploy em
+  // duas etapas) não derruba a porta — sem benefício a pessoa paga o valor de
+  // tabela, que é exatamente o comportamento de antes.
+  const beneficio = ehPago ? await beneficioPorCpf(ev.id, val.cpf) : null;
+  const isento = beneficio?.tipo === 'integral';
+  const valorComBeneficio = beneficio && !isento ? Number(beneficio.valor_centavos) : null;
+  // Isento não gera cobrança — cobrar R$ 0 no PSP não existe.
+  const vaiCobrar = ehPago && !isento;
+
   const ip = req.ip || null;
   const ua = req.headers['user-agent'] || null;
 
@@ -675,6 +752,20 @@ async function inscreverEspinha(req, res, ev) {
       .catch((err) => console.error('[publicEvento espinha] consentimentos:', err.message));
 
     if (ehPago) {
+      // ⚠️ Benefício NÃO é aplicado na re-inscrição: a cobrança dela já existe
+      // com o valor cheio (a `referencia` é idempotente), e baixar o valor da
+      // inscrição sem reemitir a cobrança deixaria as duas discordando. Quem
+      // reemite corretamente é o botão "Dar bolsa" na ficha — então avisa gente
+      // em vez de aplicar pela metade ou perder a autorização em silêncio.
+      if (beneficio) {
+        notificar({
+          modulo: 'inscricoes', tipo: 'beneficio_pendente',
+          titulo: 'Benefício não aplicado automaticamente',
+          mensagem: `${val.nomeCompleto} tem ${beneficio.tipo === 'integral' ? 'gratuidade' : 'desconto'} autorizado em "${ev.nome}", mas já estava inscrita com a cobrança cheia. Aplique pelo botão "Dar bolsa" na ficha dela (ele reemite a cobrança).`,
+          link: `/inscricoes/evento/${ev.id}`,
+          chaveDedup: `insc_beneficio_pendente_${beneficio.id}`,
+        }).catch((err) => console.error('[publicEvento espinha] notificar benefício:', err.message));
+      }
       // Quem já pagou vê o comprovante; quem não pagou recebe o MESMO link
       // (a `referencia` idempotente devolve a cobrança existente em vez de
       // criar uma segunda — é assim que ninguém paga duas vezes).
@@ -708,7 +799,10 @@ async function inscreverEspinha(req, res, ev) {
     // ⚠️ Evento pago nasce `recebida` = "vaga reservada, pagamento pendente".
     // A vaga fica presa sob o advisory lock até pagar ou o cron expirar; quem
     // promove pra `confirmada` é o handler do pagamento, nunca esta rota.
-    p_status: ehPago ? 'recebida' : 'confirmada',
+    // EXCEÇÃO: gratuidade pré-autorizada por CPF nasce `confirmada` — não há
+    // pagamento a esperar, e deixá-la `recebida` faria o cron de expiração
+    // tirar a vaga de quem a igreja decidiu isentar.
+    p_status: vaiCobrar ? 'recebida' : 'confirmada',
     p_origem: 'formulario_publico',
     p_com_sorteio: !!ev.tem_sorteio,
     p_whatsapp_optin: optin,
@@ -753,6 +847,10 @@ async function inscreverEspinha(req, res, ev) {
   }
   const ins = { id: rpc.id, numero_sorte: rpc.numero_sorte };
 
+  // Benefício autorizado pra este CPF: grava o preço DESTA inscrição e queima a
+  // autorização. Antes da cobrança, porque é ele que define o valor cobrado.
+  await aplicarBeneficio(beneficio, ins.id);
+
   // Funil de identidade (matcher read-only + observação) + consentimentos.
   processarIdentidade({
     nomeCompleto: val.nomeCompleto, cpf: val.cpf, email: val.email, telefone: val.telefone,
@@ -783,20 +881,24 @@ async function inscreverEspinha(req, res, ev) {
   // (recebida→confirmada), e a mensagem sai de lá. Fire-and-forget: a fila tem
   // retry/backoff e falha terminal avisa gente — nunca decide o fluxo.
   // Re-inscrição/merge não passa por aqui (anti-spam de re-escaneada de QR).
-  if (!ehPago) {
+  // Isento entra aqui também: nasceu `confirmada` e não tem pagamento a
+  // esperar, então a confirmação é agora — igual a evento gratuito.
+  if (!vaiCobrar) {
     enviarConfirmacaoInscricao({
       inscricaoId: ins.id, nome: val.nomeCompleto, telefone: val.telefone,
       optin, evento: ev,
     }).catch((err) => console.error('[publicEvento espinha] confirmação WhatsApp:', err.message));
   }
 
-  if (ehPago) {
+  if (vaiCobrar) {
     // A vaga já está reservada (`recebida`, sob o advisory lock). Se a cobrança
     // falhar aqui, a inscrição fica pendente e o cron de expiração devolve a
     // vaga — melhor que o inverso (cobrar sem vaga garantida).
     try {
-      const cobranca = await cobrarInscricao({ ev, inscricaoId: ins.id, val, membroId: null });
-      return res.status(201).json(respostaCobranca(cobranca, ev));
+      const cobranca = await cobrarInscricao({
+        ev, inscricaoId: ins.id, val, membroId: null, valorCentavos: valorComBeneficio,
+      });
+      return res.status(201).json({ ...respostaCobranca(cobranca, ev), beneficio: beneficio ? 'parcial' : null });
     } catch (e) {
       console.error('[publicEvento espinha] criar cobrança:', e.message);
       return res.status(502).json({
@@ -813,6 +915,9 @@ async function inscreverEspinha(req, res, ev) {
     // QR do comprovante na tela de sucesso (SPEC-06) — só a espinha tem
     // check-in; o ext legado segue sem token.
     comprovante_token: comprovanteToken,
+    // Evento pago + isenção autorizada: a tela precisa DIZER que a inscrição
+    // está confirmada sem pagamento, senão a pessoa fica esperando um link.
+    beneficio: isento ? 'integral' : null,
   });
 }
 

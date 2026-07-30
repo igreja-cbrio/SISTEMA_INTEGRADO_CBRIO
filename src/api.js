@@ -315,6 +315,12 @@ export const inscricoesApi = {
   // (desconto, com `valor` em reais) + motivo obrigatório.
   darBolsa: (eventoId, inscricaoId, data) => post(`/inscricoes/eventos/${eventoId}/inscricoes/${inscricaoId}/bolsa`, data),
   tirarBolsa: (eventoId, inscricaoId) => del(`/inscricoes/eventos/${eventoId}/inscricoes/${inscricaoId}/bolsa`),
+  // Gratuidade/desconto AUTORIZADO por CPF antes da inscrição — a porta pública
+  // aplica sozinha quando a pessoa digita aquele CPF. `valor` (em reais) é
+  // quanto ela VAI PAGAR, não o desconto.
+  beneficios: (eventoId) => get(`/inscricoes/eventos/${eventoId}/beneficios`),
+  criarBeneficio: (eventoId, data) => post(`/inscricoes/eventos/${eventoId}/beneficios`, data),
+  removerBeneficio: (eventoId, beneficioId) => del(`/inscricoes/eventos/${eventoId}/beneficios/${beneficioId}`),
   // Comprovantes de Pix/transferência anexados pela pessoa. `url` é signed (15
   // min) — bucket privado. Aceitar baixa o pagamento MANUALMENTE com autoria;
   // recusar exige motivo (a pessoa lê pra corrigir e reenviar).
