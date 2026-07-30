@@ -159,7 +159,12 @@ async function notificarLiderNovoPedido({ grupo, pedidoId, pessoa }) {
       return { sent: false, reason: 'sem_secret' };
     }
 
-    const contato = [pessoa.telefone, pessoa.email].filter(Boolean).join(' · ') || 'sem contato';
+    // `pessoa.contato` (opcional) sobrescreve o {{4}}: é o que a inscrição de
+    // CASAL usa pra mandar os DOIS contatos num aviso só. Sem ele, o padrão de
+    // sempre (telefone · e-mail da pessoa).
+    const contato = String(pessoa.contato || '').trim()
+      || [pessoa.telefone, pessoa.email].filter(Boolean).join(' · ')
+      || 'sem contato';
     // trim + fallback DEPOIS do split: nome importado com espaço à esquerda
     // viraria param '' e a Meta rejeita o template inteiro
     const r = await enfileirar({

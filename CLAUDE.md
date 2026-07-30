@@ -272,6 +272,67 @@ Celebra com só nome+telefone continuam válidas para sempre).
   submit quando há horários; `status='rejeitado'` segue FORA do CHECK
   (referências defensivas no código são vocabulário morto — não legalizar).
 
+## Grupos · inscrição de CASAL numa tela só (2026-07-30 · migration 20260730140000)
+
+Decisão do Marcos: em grupo com `mem_grupos.categoria = 'Casais'` (8 hoje,
+inclusive o "CURSO ALIANÇA — CURSO DE CURA PARA CASAIS") o formulário público
+`/inscricao-grupos` inscreve **os dois cônjuges de uma vez**, com **1 aviso de
+WhatsApp pro líder** (os dois nomes) e **a aprovação pelo link decidindo o
+casal junto** (idem recusa). A opção aparece **só** nessa categoria.
+
+**Contrato de porta preservado:** cada cônjuge é UM cadastro próprio
+(`mem_membros` ou `mem_cadastros_pendentes`) e UM pedido próprio em
+`mem_grupo_pedidos` — nunca "dois nomes num campo de texto".
+
+- **Migration `20260730140000_grupos_inscricao_casal.sql`** (aditiva ·
+  idempotente): `mem_grupo_pedidos.casal_pedido_id uuid` auto-referência
+  (`ON DELETE SET NULL`) + índice parcial + COMMENT. Os DOIS pedidos apontam um
+  pro outro (vínculo **cruzado**) → qualquer um dos dois links de aprovação acha
+  o par. Nenhuma tabela nova, nenhuma policy tocada.
+- **Backend `publicGrupos.js` — extraído, NÃO duplicado:** o trecho
+  "pessoa → pedido" do `POST /inscrever` virou a função pura
+  **`processarPessoaPedido({ grupo, pessoa, contexto, principalId,
+  principalMembroId })`**, que nunca escreve em `res` (devolve
+  `{ok:true,pedido_id,…}` · `{ok:true,ja_membro|ja_pedido,…}` ·
+  `{ok:false,status,codigo,campo,error}`). Titular e cônjuge usam a MESMA
+  função. Ficam INLINE no handler as travas do GRUPO (fechado,
+  `aceitando_inscricoes`, temporada, gênero × categoria) — são checadas uma
+  vez, não por pessoa.
+- **Regras do fluxo:** cônjuge validado com a MESMA régua
+  (`services/inscricaoContrato.validarCamposPadrao`), erro volta com
+  `campo:'conjuge.<campo>'`; **CPF igual ao do titular é 400** (é a mesma
+  pessoa, não um casal — e é isso que torna seguro excluir o par do dedup);
+  cônjuge em grupo não-casais é **ignorado em silêncio**; **se o cônjuge falha,
+  o titular VALE** (201 com `conjuge:{ok:false,error}` — nunca desfaz o titular,
+  nunca 500 com ele gravado).
+- **Dedup:** `checarDuplicataInscricao` ganhou `ignorarMembroIds/
+  ignorarPedidoIds` — marido e mulher compartilham telefone e e-mail (2 chaves
+  fracas = dispara), então sem excluir o par o 2º cônjuge seria engolido como
+  "já recebemos um pedido parecido".
+- **Notificações:** UM `notificarLiderNovoPedido` com os dois nomes em `{{3}}` e
+  os dois contatos em `{{4}}` (template `grupos_pedido_novo_lider_v2` já tinha
+  as 5 variáveis · o service ganhou `pessoa.contato` opcional pra sobrescrever
+  o {{4}}); `enviarInscricaoConfirmada` roda **por pessoa** (dois telefones,
+  cada um gated pelo SEU opt-in · D4); notificação in-app diz "(casal)".
+- **Aprovação (`/g/a/<token>`):** `GET /pedido/por-token` devolve `casal` (o
+  pedido do cônjuge, só se no MESMO grupo) e a página mostra "X e Y querem
+  entrar"; `POST /aprovar` aprova os dois pelo mesmo `aprovarPedidoCore`
+  (idempotente: par já aprovado não quebra; par já rejeitado/devolvido/
+  encaminhado NÃO é reaberto — aprova só este e informa) e a **recusa devolve
+  os dois pra triagem**. Nenhuma validação de token afrouxada (segue amarrado
+  ao líder atual + ao pedido).
+- **Front `InscricaoGrupos.jsx`:** bloco "Inscrever meu cônjuge junto" no step
+  1 quando `categoria === 'casais'` (reusa `Field`/`BirthDatePicker`/máscaras
+  já existentes + `lib/inscricao`), erros nas chaves `conjuge.*`,
+  **consentimento explícito** de que o cônjuge está ciente e concorda (LGPD ·
+  vai como `consentimento_texto` dele) + opt-in próprio de WhatsApp, 1 POST só,
+  tela de sucesso citando os dois e destaque honesto quando só a do cônjuge
+  falhou.
+- **Follow-ups conhecidos:** (1) a aprovação **logada** em `/grupos`
+  (`aprovarPedidoCore` direto) decide **um pedido por vez** — o par junto só
+  vale no link do WhatsApp; (2) a caixa de entrada não mostra selo de "casal"
+  ainda.
+
 ## ⚠️ Google Tag Manager · SÓ no domínio público, nunca no ERP (2026-07-29)
 
 Gustavo (tráfego pago, parceiro externo) precisava medir anúncio → o site não

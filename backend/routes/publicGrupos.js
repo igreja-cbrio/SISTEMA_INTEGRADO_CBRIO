@@ -17,7 +17,10 @@ const { processarFila, enfileirarLote } = require('../services/whatsappFila');
 const { enviosAutomaticosAtivos } = require('../services/gruposEnviosConfig');
 const { registrarEventoPedido } = require('../services/grupoPedidoEventos');
 const { registrarObservacaoSegura } = require('../services/identidadeProgressiva');
-const { temAbreviacaoNome, registrarConsentimentos, cpfValido, emailValido } = require('../services/inscricaoContrato');
+const {
+  temAbreviacaoNome, registrarConsentimentos, cpfValido, emailValido,
+  validarCamposPadrao, // régua única dos campos padrão (usada no bloco do cônjuge)
+} = require('../services/inscricaoContrato');
 const { requireCron } = require('../utils/cronAuth');
 
 // ── Rate limit dedicado do totem de inscrição de grupos ──
@@ -259,6 +262,16 @@ router.get('/lideres/:liderId/grupos', async (req, res) => {
 const { notificar } = require('../services/notificar');
 
 function soDigitos(v) { return (v || '').toString().replace(/\D+/g, ''); }
+
+// Telefone só pra EXIBIÇÃO em mensagem (aviso do líder). O que grava no banco
+// é sempre digits-only (contrato de porta) — isto é apenas leitura humana.
+// Tamanho inesperado volta como veio: melhor mostrar cru que esconder.
+function telefoneExibicao(v) {
+  const d = soDigitos(v);
+  if (d.length === 11) return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+  if (d.length === 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+  return d || '';
+}
 // emailValido/cpfValido agora vêm de services/inscricaoContrato (fonte única —
 // P3 do sweep 28/07: as cópias locais eram idênticas, mas cópia diverge um dia).
 
@@ -312,11 +325,22 @@ function matchInfo(inc, cand) {
 // checarDuplicataInscricao · procura, DENTRO do grupo alvo, alguém que já bata
 // com a pessoa (roster ativo OU pedido pendente). Retorna o tipo do achado
 // ('membro_ativo' | 'pedido_pendente') pra alimentar o "é você?"; null se nada.
-async function checarDuplicataInscricao(grupoId, inc) {
+//
+// opts.ignorarMembroIds / opts.ignorarPedidoIds excluem o CÔNJUGE já
+// processado na MESMA submissão (inscrição de casal): marido e mulher
+// compartilham telefone e e-mail, e 2 chaves fracas iguais fazem o matchInfo
+// disparar — sem a exclusão, o 2º cônjuge seria confundido com o 1º e sua
+// inscrição seria engolida como "já recebemos um pedido parecido". Só é seguro
+// porque o handler barra CPF igual entre os dois (CPF igual = mesma pessoa, e
+// aí o dedup DEVE disparar normalmente).
+async function checarDuplicataInscricao(grupoId, inc, opts = {}) {
+  const ignorarMembroIds = new Set((opts.ignorarMembroIds || []).filter(Boolean));
+  const ignorarPedidoIds = new Set((opts.ignorarPedidoIds || []).filter(Boolean));
   // 1) roster ativo do grupo (com dados do membro pra comparar por chave)
   const links = await fetchAllRange('mem_grupo_membros', 'membro_id',
     [['eq', 'grupo_id', grupoId], ['is', 'saiu_em', null], ['is', 'deleted_at', null]]);
-  const ids = [...new Set(links.map(l => l.membro_id).filter(Boolean))];
+  const ids = [...new Set(links.map(l => l.membro_id).filter(Boolean))]
+    .filter(id => !ignorarMembroIds.has(id));
   for (let i = 0; i < ids.length; i += 200) {
     const { data: membros } = await supabase.from('mem_membros')
       .select('id, nome, cpf, telefone, email').in('id', ids.slice(i, i + 200));
@@ -329,6 +353,7 @@ async function checarDuplicataInscricao(grupoId, inc) {
     'id, nome, email, telefone, membro_id, cadastro_pendente_id',
     [['eq', 'grupo_id', grupoId], ['eq', 'status', 'pendente'], ['is', 'deleted_at', null]]);
   for (const p of peds) {
+    if (ignorarPedidoIds.has(p.id)) continue;
     let cand = { nome: p.nome, email: p.email, telefone: p.telefone, cpf: null };
     if (p.membro_id) {
       const { data } = await supabase.from('mem_membros')
@@ -387,6 +412,295 @@ router.post('/upload-foto', uploadFotoMw, async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────
+// processarPessoaPedido · a PORTA de identidade da inscrição em grupo.
+//
+// Extraída do handler POST /inscrever pra que o TITULAR e o CÔNJUGE (grupo de
+// categoria 'Casais', inscrição em par) atravessem EXATAMENTE o mesmo funil —
+// um caminho, dois chamadores. Duplicar isto seria duplicar a porta de
+// identidade (Contrato de porta), o que é inaceitável.
+//
+// Ordem preservada do handler original: matcher canônico → enriquecimento
+// só-onde-vazio → opt-in no membro → dedup direto (vínculo/pedido) + fuzzy →
+// cadastro pendente → observação segura → INSERT do pedido → evento →
+// consentimentos.
+//
+// NÃO contém as travas do GRUPO (fechado, aceitando_inscricoes, temporada,
+// gênero × categoria): são do grupo, checadas UMA vez no handler.
+//
+// NUNCA escreve em `res` — devolve sempre um objeto:
+//   { ok:true,  pedido_id, membro_id, cadastro_pendente_id }              criou
+//   { ok:true,  ja_membro:true, renovado:true, mensagem, vinculo_id }     dedup amigável
+//   { ok:true,  ja_pedido:true, mensagem, pedido_id }                     dedup amigável
+//   { ok:false, status, codigo?, campo?, onde?, error }                   erro
+//
+// `principalId`/`principalMembroId` = pedido e membro do cônjuge JÁ processado
+// nesta submissão (só no 2º da dupla): o pedido novo nasce já apontando pro
+// par (casal_pedido_id) e o par é excluído do dedup fuzzy (telefone/e-mail
+// compartilhados dariam falso positivo).
+async function processarPessoaPedido({ grupo, pessoa = {}, contexto = {}, principalId = null, principalMembroId = null }) {
+  const grupoId = grupo.id;
+  const nomeLimpo = String(pessoa.nome || '').trim();
+  const cpfLimpo = pessoa.cpf ? soDigitos(pessoa.cpf) : null;
+  const emailLimpo = pessoa.email ? String(pessoa.email).trim().toLowerCase() : null;
+  const telDigitos = soDigitos(pessoa.telefone);
+  const generoLimpo = ['masculino', 'feminino'].includes(String(pessoa.genero || '').toLowerCase())
+    ? String(pessoa.genero).toLowerCase() : null;
+  const dataNascimento = pessoa.data_nascimento || null;
+  const fotoUrl = fotoUrlValida(pessoa.foto_url) ? String(pessoa.foto_url).slice(0, 1000) : null;
+  // Endereço fixo-opcional (ajuste 28/07 do contrato) — vai pro cadastro da
+  // pessoa (não pro pedido); membro existente não tem o perfil sobrescrito.
+  const enderecoLimpo = pessoa.endereco ? String(pessoa.endereco).trim().slice(0, 300) : null;
+  const confirmarNovo = pessoa.confirmar_novo === true;
+  const souEu = pessoa.sou_eu === true;
+  const optin = pessoa.whatsapp_optin === true;
+  const consentimentoTexto = pessoa.consentimento_texto
+    ? String(pessoa.consentimento_texto).slice(0, 2000) : null;
+  const { ip: ipInsc = null, userAgent: uaInsc = null, origem = 'formulario_publico' } = contexto;
+
+  // Roteia pro membro já existente. Quando a pessoa afirmou "não sou eu"
+  // (confirmar_novo), liga SÓ por CPF (sinal individual) — e-mail/telefone/
+  // nome são deniáveis e a família os compartilha.
+  const achado = await acharMembroGuardado(
+    { cpf: cpfLimpo, email: emailLimpo, telefone: pessoa.telefone, nome: nomeLimpo, dataNascimento },
+    { soChaveForte: confirmarNovo },
+  );
+  const membroId = achado?.membro_id || null;
+
+  // Já é membro: aproveita foto, sexo e data de nascimento declarados quando
+  // o cadastro ainda não os tem (enriquecimento só-onde-vazio — nunca
+  // sobrescreve o que existe). Roda ANTES do dedup de propósito: a RENOVAÇÃO
+  // (caso dominante da virada de temporada) respondia cedo e jogava fora o
+  // que a pessoa acabou de declarar (achado do sweep 28/07).
+  if (membroId && (fotoUrl || generoLimpo || dataNascimento)) {
+    const { data: mem } = await supabase.from('mem_membros').select('foto_url, genero, data_nascimento').eq('id', membroId).maybeSingle();
+    if (mem) {
+      const upd = {};
+      if (fotoUrl && !mem.foto_url) upd.foto_url = fotoUrl;
+      if (generoLimpo && !mem.genero) upd.genero = generoLimpo;
+      if (dataNascimento && !mem.data_nascimento) upd.data_nascimento = dataNascimento;
+      if (Object.keys(upd).length) await supabase.from('mem_membros').update(upd).eq('id', membroId);
+    }
+  }
+
+  // Opt-in de WhatsApp: se consentiu e já casou com um membro, grava direto
+  // (só liga). Também antes do dedup — renovação marcando o checkbox contava
+  // zero antes. Sem membro, vai no cadastro pendente e é propagado na
+  // aprovação (aprovarPedidoCore).
+  if (optin && membroId) {
+    try {
+      await supabase.from('mem_membros')
+        .update({ whatsapp_optin: true, whatsapp_optin_em: new Date().toISOString() })
+        .eq('id', membroId).is('deleted_at', null);
+    } catch (e) {
+      console.warn('[public grupos inscrever] optin membro:', e.message);
+    }
+  }
+
+  // Resposta amigável de "já existe" — usada no sou_eu e quando o CPF já tem
+  // participação/pedido, pra o modal "é você?" sempre ter uma saída (sem loop).
+  // Reinscrição de quem JÁ está no grupo = RENOVAÇÃO (Marcos: na virada de
+  // temporada todo mundo pode se reinscrever no próprio grupo — não é trava,
+  // é confirmação de permanência). A renovação também REGISTRA o aceite dos
+  // termos na satélite (a pessoa acabou de aceitar de novo; refId = vínculo
+  // ativo ou pedido pendente que motivou a resposta).
+  const jaExiste = (tipo, refRenovacao = null) => {
+    if (refRenovacao) {
+      registrarConsentimentos({
+        porta: 'grupos', refId: refRenovacao, membroId,
+        ip: ipInsc, userAgent: uaInsc,
+        itens: [
+          { tipo: 'termos_lgpd', aceito: true, texto: consentimentoTexto || undefined },
+          { tipo: 'whatsapp', aceito: optin },
+        ],
+      }).catch((err) => console.error('[public grupos inscrever] consentimentos renovação:', err.message));
+    }
+    return tipo === 'membro_ativo'
+      ? { ok: true, ja_membro: true, renovado: true, membro_id: membroId, vinculo_id: refRenovacao, mensagem: 'Renovamos a sua inscrição no grupo para esta temporada. Nos vemos no encontro!' }
+      // refRenovacao aqui É um pedido (o pendente que motivou a resposta) —
+      // serve de âncora do vínculo de casal.
+      : { ok: true, ja_pedido: true, membro_id: membroId, pedido_id: refRenovacao, mensagem: 'Seu pedido já está registrado — o líder vai te chamar em breve.' };
+  };
+
+  // Anti-duplicata. Duas fontes complementares:
+  //  (a) DIRETA por membro resolvido — casa exatamente com o índice único
+  //      (grupo,membro) do pedido e com o roster, cobrindo os matches que o
+  //      acharMembroGuardado faz por chave que o scan fuzzy não pontua (e-mail
+  //      sozinho, nascimento+nome). É o que evita o 409 no INSERT (loop do modal).
+  //  (b) FUZZY (nome/telefone/e-mail ≥2, ou CPF) contra roster+pedidos do grupo
+  //      — pega reenvio de NÃO-membro / match fraco. Pulada no confirmar_novo.
+  let dup = null;
+  let refRenovacao = null;
+  if (membroId) {
+    const { data: ativo } = await supabase.from('mem_grupo_membros')
+      .select('id').eq('grupo_id', grupoId).eq('membro_id', membroId).is('saiu_em', null).is('deleted_at', null).limit(1);
+    if (ativo && ativo.length) { dup = { tipo: 'membro_ativo' }; refRenovacao = ativo[0].id; }
+    else {
+      const { data: ped } = await supabase.from('mem_grupo_pedidos')
+        .select('id').eq('grupo_id', grupoId).eq('membro_id', membroId).eq('status', 'pendente').is('deleted_at', null).limit(1);
+      if (ped && ped.length) { dup = { tipo: 'pedido_pendente' }; refRenovacao = ped[0].id; }
+    }
+  }
+  if (!dup && !confirmarNovo) {
+    dup = await checarDuplicataInscricao(grupoId, { nome: nomeLimpo, cpf: cpfLimpo, telefone: pessoa.telefone, email: emailLimpo }, {
+      ignorarPedidoIds: [principalId],
+      ignorarMembroIds: [principalMembroId],
+    });
+  }
+
+  if (dup) {
+    // Match FORTE (membro resolvido pelo matcher) já ATIVO neste grupo =
+    // reinscrição no próprio grupo → renovação direta, sem modal.
+    if (dup.tipo === 'membro_ativo' && membroId) return jaExiste('membro_ativo', refRenovacao);
+    // "Sim, sou eu" OU um CPF que já tem participação/pedido → não duplica.
+    // (Sob confirmar_novo só se chega aqui pelo check direto por CPF: mesmo
+    // "não sou eu" não cria 2 pedidos do MESMO CPF no mesmo grupo.)
+    // ⚠️ refRenovacao SÓ (paridade exata com o comportamento anterior ao
+    // refactor): `dup.pedido_id` aqui pode ser o pedido de OUTRA pessoa — o
+    // dedup fuzzy casa 2 chaves fracas, e telefone/e-mail são compartilhados
+    // em família. Usá-lo como `refId` penduraria o consentimento LGPD desta
+    // pessoa no pedido de um terceiro. refRenovacao só é preenchido no ramo
+    // de match FORTE (membro resolvido), que é o único vínculo confiável.
+    if (souEu || confirmarNovo) return jaExiste(dup.tipo, refRenovacao);
+    return {
+      ok: false,
+      status: 409,
+      codigo: 'possivel_duplicado',
+      onde: dup.tipo,
+      error: dup.tipo === 'membro_ativo'
+        ? 'Parece que você já participa deste grupo.'
+        : 'Já recebemos um pedido parecido para este grupo.',
+    };
+  }
+
+  let cadastroPendenteId = null;
+  if (!membroId) {
+    // Cria cadastro pendente
+    const { data: cad, error: eCad } = await supabase.from('mem_cadastros_pendentes').insert({
+      nome: nomeLimpo,
+      cpf: cpfLimpo,
+      email: emailLimpo,
+      telefone: telDigitos || null, // digits-only (contrato · 28/07)
+      data_nascimento: dataNascimento,
+      genero: generoLimpo,
+      foto_url: fotoUrl,
+      endereco: enderecoLimpo,
+      origem: 'qr_code',
+      aceita_termos: pessoa.aceita_termos !== false,
+      aceita_contato: true,
+      whatsapp_optin: optin,
+      whatsapp_optin_em: optin ? new Date().toISOString() : null,
+      consentimento_texto: consentimentoTexto,
+      status: 'pendente',
+      ip_origem: ipInsc,
+      user_agent: uaInsc,
+      // "não sou eu" persiste: a aprovação só pode religar este cadastro por
+      // CPF (soChaveForte) — nunca por e-mail/telefone de família.
+      nao_vincular_fraco: confirmarNovo,
+    }).select('id').single();
+    if (eCad) {
+      console.error('[public grupos inscrever] cadastro pendente:', eCad.message);
+      return { ok: false, status: 500, error: 'Erro ao registrar cadastro.' };
+    }
+    cadastroPendenteId = cad.id;
+  }
+
+  await registrarObservacaoSegura({
+    membroId, origem: 'grupos_formulario', origemId: cadastroPendenteId,
+    nome: nomeLimpo, cpf: cpfLimpo, email: emailLimpo,
+    telefone: pessoa.telefone, dataNascimento,
+  });
+
+  // Cria pedido pendente. Quando a pessoa afirmou "não sou eu" no dedup, o
+  // pedido chega marcado pra triagem humana (a caixa de entrada mostra o
+  // aviso — são os casos em que a duplicata é difícil de resolver sozinho).
+  const obsPartes = [];
+  if (confirmarNovo) obsPartes.push('[Verificar identidade] A pessoa confirmou que NÃO é o cadastro parecido já existente.');
+  if (pessoa.observacao) obsPartes.push(String(pessoa.observacao).trim().slice(0, 400));
+  const pedidoBase = {
+    grupo_id: grupoId,
+    nome: nomeLimpo,
+    email: emailLimpo,
+    telefone: telDigitos || null, // digits-only (contrato · 28/07; legado é backfillado na migration)
+    origem,
+    observacao: obsPartes.length ? obsPartes.join(' · ').slice(0, 500) : null,
+    status: 'pendente',
+  };
+  if (membroId) pedidoBase.membro_id = membroId;
+  else pedidoBase.cadastro_pendente_id = cadastroPendenteId;
+  // Vínculo de casal já no INSERT (o lado do titular é fechado depois, pelo
+  // handler): se o UPDATE de volta falhar, o par ainda é alcançável por aqui.
+  if (principalId) pedidoBase.casal_pedido_id = principalId;
+
+  const { data: pedido, error: ePed } = await supabase.from('mem_grupo_pedidos').insert(pedidoBase).select('id').single();
+  if (ePed) {
+    // 23505 = corrida: um pedido do mesmo membro neste grupo surgiu entre o
+    // check direto e o INSERT. Já existe → responde amigável (não reabre o
+    // "é você?", que ficaria em loop se devolvêssemos 409 aqui).
+    if (ePed.code === '23505') return jaExiste('pedido_pendente');
+    console.error('[public grupos inscrever] pedido:', ePed.message);
+    return { ok: false, status: 500, error: 'Erro ao registrar pedido.' };
+  }
+
+  // Linha do tempo do pedido (histórico da caixa de entrada)
+  registrarEventoPedido(pedido.id, 'criado', { grupo: grupo.nome, origem });
+
+  // Atos de consentimento na satélite (Contrato de Inscrição · porta grupos).
+  // O snapshot é o texto que a pessoa VIU (também fica no cadastro pendente).
+  registrarConsentimentos({
+    porta: 'grupos', refId: pedido.id, membroId,
+    ip: ipInsc, userAgent: uaInsc,
+    itens: [
+      { tipo: 'termos_lgpd', aceito: true, texto: consentimentoTexto || undefined },
+      { tipo: 'whatsapp', aceito: optin },
+    ],
+  }).catch((err) => console.error('[public grupos inscrever] consentimentos:', err.message));
+
+  return {
+    ok: true,
+    criado: true, // pedido NOVO nesta submissão (as respostas de dedup não têm)
+    pedido_id: pedido.id,
+    membro_id: membroId,
+    cadastro_pendente_id: cadastroPendenteId,
+    nome: nomeLimpo,
+    telefone: telDigitos || null,
+    email: emailLimpo,
+    whatsapp_optin: optin,
+  };
+}
+
+// Valida o bloco do CÔNJUGE com a MESMA régua do titular (fonte única do
+// Contrato de Inscrição). Devolve { erros } com as chaves já no formato que o
+// front usa pra pintar o campo certo: 'conjuge.<campo>'.
+const CAMPO_CONJUGE = {
+  nome_completo: 'conjuge.nome',
+  telefone: 'conjuge.telefone',
+  cpf: 'conjuge.cpf',
+  email: 'conjuge.email',
+  data_nascimento: 'conjuge.data_nascimento',
+  sexo: 'conjuge.genero',
+};
+function primeiroErroConjuge(conjuge, cpfTitular) {
+  const { erros } = validarCamposPadrao(conjuge || {}, {
+    exigirCpf: true, exigirEmail: true, exigirNascimento: true, exigirSexo: true,
+  });
+  for (const [chave, campo] of Object.entries(CAMPO_CONJUGE)) {
+    if (erros[chave]) return { campo, error: erros[chave] };
+  }
+  // Mesmo CPF = a MESMA pessoa preenchida duas vezes (e não um casal). Barrar
+  // aqui é o que permite excluir o par do dedup fuzzy com segurança.
+  const cpfConjuge = soDigitos(conjuge?.cpf);
+  if (cpfTitular && cpfConjuge && cpfTitular === cpfConjuge) {
+    return { campo: 'conjuge.cpf', error: 'O CPF do cônjuge é o mesmo que você informou — confira os números.' };
+  }
+  // LGPD: o titular não consente sozinho pelo outro — precisa declarar que o
+  // cônjuge está ciente e concorda.
+  if (conjuge?.aceita_termos !== true) {
+    return { campo: 'conjuge.aceita_termos', error: 'Confirme que seu cônjuge está ciente e concorda com a inscrição.' };
+  }
+  return null;
+}
+
 // POST /api/public/grupos/inscrever
 // Formulário público dedicado (acessado pelo QR code de inscrição).
 // Roteia a pessoa pro membro existente (matcher forte) ou cria
@@ -412,6 +726,10 @@ router.post('/inscrever', async (req, res) => {
       website,        // honeypot
       sou_eu,         // confirmação "é você?" → liga ao existente (não duplica)
       confirmar_novo, // confirmação "não sou eu" → cria mesmo assim
+      // Inscrição de CASAL (só em grupo categoria='Casais' · Marcos 30/07):
+      // { nome, cpf, telefone, email, data_nascimento, genero, aceita_termos,
+      //   consentimento_texto, whatsapp_optin }. Em grupo não-casais é ignorado.
+      conjuge,
     } = req.body || {};
 
     if (website && String(website).trim() !== '') return res.status(201).json({ ok: true });
@@ -508,236 +826,196 @@ router.post('/inscrever', async (req, res) => {
       });
     }
 
-    const incoming = { nome: nome.trim(), cpf: cpfLimpo, telefone, email: emailLimpo };
-
-    // Roteia pro membro já existente. Quando a pessoa afirmou "não sou eu"
-    // (confirmar_novo), liga SÓ por CPF (sinal individual) — e-mail/telefone/
-    // nome são deniáveis e a família os compartilha.
-    const achado = await acharMembroGuardado(
-      { cpf: cpfLimpo, email: emailLimpo, telefone, nome: nome.trim(), dataNascimento: data_nascimento || null },
-      { soChaveForte: !!confirmar_novo },
-    );
-    let membroId = achado?.membro_id || null;
-
-    // Já é membro: aproveita foto, sexo e data de nascimento declarados quando
-    // o cadastro ainda não os tem (enriquecimento só-onde-vazio — nunca
-    // sobrescreve o que existe). Roda ANTES do dedup de propósito: a RENOVAÇÃO
-    // (caso dominante da virada de temporada) respondia cedo e jogava fora o
-    // que a pessoa acabou de declarar (achado do sweep 28/07).
-    if (membroId && (fotoUrl || generoLimpo || data_nascimento)) {
-      const { data: mem } = await supabase.from('mem_membros').select('foto_url, genero, data_nascimento').eq('id', membroId).maybeSingle();
-      if (mem) {
-        const upd = {};
-        if (fotoUrl && !mem.foto_url) upd.foto_url = fotoUrl;
-        if (generoLimpo && !mem.genero) upd.genero = generoLimpo;
-        if (data_nascimento && !mem.data_nascimento) upd.data_nascimento = data_nascimento;
-        if (Object.keys(upd).length) await supabase.from('mem_membros').update(upd).eq('id', membroId);
-      }
+    // ── Cônjuge · inscrição em PAR (grupo de casais · Marcos 30/07) ────────
+    // A opção só existe em categoria='Casais'. Em grupo NÃO-casais o campo é
+    // ignorado em silêncio (não é erro — payload/QR antigo não pode quebrar).
+    // A régua do cônjuge é a MESMA do titular (contrato de inscrição), e o erro
+    // volta com campo='conjuge.<campo>' pro form pintar o campo certo.
+    const querCasal = Boolean(conjuge && typeof conjuge === 'object' && catLower === 'casais');
+    const conjugeNome = querCasal ? String(conjuge.nome || '').trim() : null;
+    if (querCasal) {
+      const erroConj = primeiroErroConjuge(conjuge, cpfLimpo);
+      if (erroConj) return res.status(400).json({ error: erroConj.error, campo: erroConj.campo });
     }
 
-    // Opt-in de WhatsApp: se consentiu e já casou com um membro, grava direto
-    // (só liga). Também antes do dedup — renovação marcando o checkbox contava
-    // zero antes. Sem membro, vai no cadastro pendente e é propagado na
-    // aprovação (aprovarPedidoCore).
-    if (whatsapp_optin && membroId) {
-      try {
-        await supabase.from('mem_membros')
-          .update({ whatsapp_optin: true, whatsapp_optin_em: new Date().toISOString() })
-          .eq('id', membroId).is('deleted_at', null);
-      } catch (e) {
-        console.warn('[public grupos inscrever] optin membro:', e.message);
-      }
-    }
+    const contexto = { ip: ipInsc, userAgent: uaInsc, origem: 'formulario_publico' };
 
-    // Resposta amigável de "já existe" — usada no sou_eu e quando o CPF já tem
-    // participação/pedido, pra o modal "é você?" sempre ter uma saída (sem loop).
-    // Reinscrição de quem JÁ está no grupo = RENOVAÇÃO (Marcos: na virada de
-    // temporada todo mundo pode se reinscrever no próprio grupo — não é trava,
-    // é confirmação de permanência). A renovação também REGISTRA o aceite dos
-    // termos na satélite (a pessoa acabou de aceitar de novo; refId = vínculo
-    // ativo ou pedido pendente que motivou a resposta).
-    const jaExiste = (tipo, refRenovacao = null) => {
-      if (refRenovacao) {
-        registrarConsentimentos({
-          porta: 'grupos', refId: refRenovacao, membroId,
-          ip: ipInsc, userAgent: uaInsc,
-          itens: [
-            { tipo: 'termos_lgpd', aceito: true, texto: consentimento_texto ? String(consentimento_texto).slice(0, 2000) : undefined },
-            { tipo: 'whatsapp', aceito: !!whatsapp_optin },
-          ],
-        }).catch((err) => console.error('[public grupos inscrever] consentimentos renovação:', err.message));
-      }
-      return tipo === 'membro_ativo'
-        ? res.json({ ok: true, ja_membro: true, renovado: true, mensagem: 'Renovamos a sua inscrição no grupo para esta temporada. Nos vemos no encontro!' })
-        : res.json({ ok: true, ja_pedido: true, mensagem: 'Seu pedido já está registrado — o líder vai te chamar em breve.' });
-    };
-
-    // Anti-duplicata. Duas fontes complementares:
-    //  (a) DIRETA por membro resolvido — casa exatamente com o índice único
-    //      (grupo,membro) do pedido e com o roster, cobrindo os matches que o
-    //      acharMembroGuardado faz por chave que o scan fuzzy não pontua (e-mail
-    //      sozinho, nascimento+nome). É o que evita o 409 no INSERT (loop do modal).
-    //  (b) FUZZY (nome/telefone/e-mail ≥2, ou CPF) contra roster+pedidos do grupo
-    //      — pega reenvio de NÃO-membro / match fraco. Pulada no confirmar_novo.
-    let dup = null;
-    let refRenovacao = null;
-    if (membroId) {
-      const { data: ativo } = await supabase.from('mem_grupo_membros')
-        .select('id').eq('grupo_id', grupo_id).eq('membro_id', membroId).is('saiu_em', null).is('deleted_at', null).limit(1);
-      if (ativo && ativo.length) { dup = { tipo: 'membro_ativo' }; refRenovacao = ativo[0].id; }
-      else {
-        const { data: ped } = await supabase.from('mem_grupo_pedidos')
-          .select('id').eq('grupo_id', grupo_id).eq('membro_id', membroId).eq('status', 'pendente').is('deleted_at', null).limit(1);
-        if (ped && ped.length) { dup = { tipo: 'pedido_pendente' }; refRenovacao = ped[0].id; }
-      }
-    }
-    if (!dup && !confirmar_novo) {
-      dup = await checarDuplicataInscricao(grupo_id, incoming);
-    }
-
-    if (dup) {
-      // Match FORTE (membro resolvido pelo matcher) já ATIVO neste grupo =
-      // reinscrição no próprio grupo → renovação direta, sem modal.
-      if (dup.tipo === 'membro_ativo' && membroId) return jaExiste('membro_ativo', refRenovacao);
-      // "Sim, sou eu" OU um CPF que já tem participação/pedido → não duplica.
-      // (Sob confirmar_novo só se chega aqui pelo check direto por CPF: mesmo
-      // "não sou eu" não cria 2 pedidos do MESMO CPF no mesmo grupo.)
-      if (sou_eu === true || confirmar_novo === true) return jaExiste(dup.tipo, refRenovacao);
-      return res.status(409).json({
-        codigo: 'possivel_duplicado',
-        onde: dup.tipo,
-        error: dup.tipo === 'membro_ativo'
-          ? 'Parece que você já participa deste grupo.'
-          : 'Já recebemos um pedido parecido para este grupo.',
-      });
-    }
-
-    let cadastroPendenteId = null;
-    if (!membroId) {
-      // Cria cadastro pendente
-      const { data: cad, error: eCad } = await supabase.from('mem_cadastros_pendentes').insert({
-        nome: nome.trim(),
-        cpf: cpfLimpo,
-        email: emailLimpo,
-        telefone: telInscDigitos || null, // digits-only (contrato · 28/07)
-        data_nascimento: data_nascimento || null,
-        genero: generoLimpo,
-        foto_url: fotoUrl,
-        endereco: enderecoLimpo,
-        origem: 'qr_code',
-        aceita_termos: !!aceita_termos,
-        aceita_contato: true,
-        whatsapp_optin: !!whatsapp_optin,
-        whatsapp_optin_em: whatsapp_optin ? new Date().toISOString() : null,
-        consentimento_texto: consentimento_texto ? String(consentimento_texto).slice(0, 2000) : null,
-        status: 'pendente',
-        ip_origem: ipInsc,
-        user_agent: uaInsc,
-        // "não sou eu" persiste: a aprovação só pode religar este cadastro por
-        // CPF (soChaveForte) — nunca por e-mail/telefone de família.
-        nao_vincular_fraco: confirmar_novo === true,
-      }).select('id').single();
-      if (eCad) {
-        console.error('[public grupos inscrever] cadastro pendente:', eCad.message);
-        return res.status(500).json({ error: 'Erro ao registrar cadastro.' });
-      }
-      cadastroPendenteId = cad.id;
-    }
-
-    await registrarObservacaoSegura({
-      membroId, origem: 'grupos_formulario', origemId: cadastroPendenteId,
-      nome: nome.trim(), cpf: cpfLimpo, email: emailLimpo,
-      telefone, dataNascimento: data_nascimento || null,
+    // ── TITULAR ── mesmo funil do cônjuge (processarPessoaPedido = a porta).
+    const rt = await processarPessoaPedido({
+      grupo,
+      pessoa: {
+        nome, cpf: cpfLimpo, email: emailLimpo, telefone, endereco: enderecoLimpo,
+        data_nascimento, genero: generoLimpo, observacao, foto_url: fotoUrl,
+        whatsapp_optin, aceita_termos, consentimento_texto, sou_eu, confirmar_novo,
+      },
+      contexto,
     });
-
-    // Cria pedido pendente. Quando a pessoa afirmou "não sou eu" no dedup, o
-    // pedido chega marcado pra triagem humana (a caixa de entrada mostra o
-    // aviso — são os casos em que a duplicata é difícil de resolver sozinho).
-    const obsPartes = [];
-    if (confirmar_novo === true) obsPartes.push('[Verificar identidade] A pessoa confirmou que NÃO é o cadastro parecido já existente.');
-    if (observacao) obsPartes.push(String(observacao).trim().slice(0, 400));
-    const pedidoBase = {
-      grupo_id,
-      nome: nome.trim(),
-      email: emailLimpo,
-      telefone: telInscDigitos || null, // digits-only (contrato · 28/07; legado é backfillado na migration)
-      origem: 'formulario_publico',
-      observacao: obsPartes.length ? obsPartes.join(' · ').slice(0, 500) : null,
-      status: 'pendente',
-    };
-    if (membroId) pedidoBase.membro_id = membroId;
-    else pedidoBase.cadastro_pendente_id = cadastroPendenteId;
-
-    const { data: pedido, error: ePed } = await supabase.from('mem_grupo_pedidos').insert(pedidoBase).select('id').single();
-    if (ePed) {
-      // 23505 = corrida: um pedido do mesmo membro neste grupo surgiu entre o
-      // check direto e o INSERT. Já existe → responde amigável (não reabre o
-      // "é você?", que ficaria em loop se devolvêssemos 409 aqui).
-      if (ePed.code === '23505') return jaExiste('pedido_pendente');
-      console.error('[public grupos inscrever] pedido:', ePed.message);
-      return res.status(500).json({ error: 'Erro ao registrar pedido.' });
+    if (!rt.ok) {
+      // Titular falhou → nada do casal acontece (o 409 "é você?" volta igual a
+      // antes; o form reenvia com sou_eu/confirmar_novo e o cônjuge vem junto).
+      const corpoErro = { error: rt.error };
+      if (rt.codigo) corpoErro.codigo = rt.codigo;
+      if (rt.onde) corpoErro.onde = rt.onde;
+      if (rt.campo) corpoErro.campo = rt.campo;
+      return res.status(rt.status || 500).json(corpoErro);
     }
 
-    // Linha do tempo do pedido (histórico da caixa de entrada)
-    registrarEventoPedido(pedido.id, 'criado', { grupo: grupo.nome, origem: 'formulario_publico' });
-
-    // Atos de consentimento na satélite (Contrato de Inscrição · porta grupos).
-    // O snapshot é o texto que a pessoa VIU (também fica no cadastro pendente).
-    registrarConsentimentos({
-      porta: 'grupos', refId: pedido.id, membroId,
-      ip: ipInsc, userAgent: uaInsc,
-      itens: [
-        { tipo: 'termos_lgpd', aceito: true, texto: consentimento_texto ? String(consentimento_texto).slice(0, 2000) : undefined },
-        { tipo: 'whatsapp', aceito: !!whatsapp_optin },
-      ],
-    }).catch((err) => console.error('[public grupos inscrever] consentimentos:', err.message));
-
-    // Notifica líder do grupo (se tiver login) + admins via fallback
-    (async () => {
+    // ── CÔNJUGE ── se falhar, o TITULAR VALE. Nunca desfazemos a inscrição de
+    // quem já entrou, nem respondemos 500 com o titular gravado: o front mostra
+    // o destaque honesto ("a sua foi registrada, a do seu cônjuge não, porque…").
+    let rc = null;
+    if (querCasal) {
       try {
-        let liderAuthUserId = null;
-        if (grupo.lider_id) {
-          const { data: liderProf } = await supabase.from('vol_profiles')
-            .select('auth_user_id').eq('membresia_id', grupo.lider_id).maybeSingle();
-          liderAuthUserId = liderProf?.auth_user_id || null;
-        }
-        await notificar({
-          modulo: 'grupos',
-          tipo: 'pedido_grupo',
-          titulo: `Novo pedido para ${grupo.nome}`,
-          mensagem: `${nome.trim()} pediu para entrar no grupo via QR code.`,
-          link: '/grupos',
-          severidade: 'aviso',
-          chaveDedup: `pedido_grupo_${pedido.id}`,
-          extraTargetIds: liderAuthUserId ? [liderAuthUserId] : [],
-        });
-
-        // F3 · WhatsApp pro líder com o link de aprovar sem login.
-        // Gated por WHATSAPP_ENABLED no whatsappService (sem env → dry-run).
-        await notificarLiderNovoPedido({
+        rc = await processarPessoaPedido({
           grupo,
-          pedidoId: pedido.id,
-          pessoa: { nome: nome.trim(), telefone: telefone || null, email: emailLimpo },
+          pessoa: {
+            nome: conjuge.nome,
+            cpf: conjuge.cpf,
+            email: conjuge.email,
+            telefone: conjuge.telefone,
+            endereco: conjuge.endereco || null,
+            data_nascimento: conjuge.data_nascimento,
+            genero: conjuge.genero ?? conjuge.sexo,
+            observacao: null,
+            foto_url: null,
+            // Opt-in é ato afirmativo de cada titular do dado (D4): o cônjuge
+            // tem o SEU checkbox no formulário — o do titular não vale por ele.
+            whatsapp_optin: conjuge.whatsapp_optin === true,
+            aceita_termos: true, // validado acima (declaração de ciência do cônjuge)
+            consentimento_texto: conjuge.consentimento_texto || consentimento_texto,
+          },
+          contexto,
+          principalId: rt.pedido_id || null,
+          principalMembroId: rt.membro_id || null,
         });
+      } catch (e) {
+        console.error('[public grupos inscrever conjuge]', e.message);
+        rc = { ok: false, error: 'Não conseguimos registrar a inscrição do seu cônjuge agora. Fale com a equipe de Grupos.' };
+      }
+      // Fecha o vínculo CRUZADO (o pedido do cônjuge já nasceu apontando pro do
+      // titular). Best-effort: se falhar, só loga — a aprovação continua achando
+      // o par pelo outro lado do vínculo.
+      if (rc && rc.ok && rc.pedido_id && rt.pedido_id) {
+        const { error: eLink } = await supabase.from('mem_grupo_pedidos')
+          .update({ casal_pedido_id: rc.pedido_id }).eq('id', rt.pedido_id);
+        if (eLink) console.error('[public grupos inscrever] vínculo de casal:', eLink.message);
+      }
+    }
 
-        // Mensagem 1 pra PESSOA: «recebemos sua inscrição» (utility
-        // cbrio_inscricao_confirmada). Via fila: registra e reenvia sozinho
-        // se o envio bater no teto diário da Meta. GATED pelo opt-in (D4):
-        // quem não marcou o checkbox não recebe — é exatamente o que o aviso
-        // do formulário promete ("se você não marcar, não conseguiremos te
-        // enviar confirmações…").
-        if (whatsapp_optin) {
-          await enviarInscricaoConfirmada({
-            telefone,
-            nome: nome.trim(),
-            grupoNome: grupo.nome,
-            pedidoId: pedido.id,
+    // ── Notificações ──
+    // Só quem ganhou pedido NOVO nesta submissão entra (renovação/pedido já
+    // existente não redispara nada — comportamento de sempre).
+    const criados = [];
+    if (rt.criado) criados.push({ nome: rt.nome, telefone: rt.telefone, email: rt.email, optin: rt.whatsapp_optin, pedidoId: rt.pedido_id });
+    if (rc && rc.ok && rc.criado) criados.push({ nome: rc.nome, telefone: rc.telefone, email: rc.email, optin: rc.whatsapp_optin, pedidoId: rc.pedido_id });
+
+    if (criados.length) {
+      (async () => {
+        try {
+          const nomes = criados.map(p => p.nome).join(' e ');
+          const ehCasal = criados.length > 1;
+          let liderAuthUserId = null;
+          if (grupo.lider_id) {
+            const { data: liderProf } = await supabase.from('vol_profiles')
+              .select('auth_user_id').eq('membresia_id', grupo.lider_id).maybeSingle();
+            liderAuthUserId = liderProf?.auth_user_id || null;
+          }
+          await notificar({
+            modulo: 'grupos',
+            tipo: 'pedido_grupo',
+            titulo: `Novo pedido para ${grupo.nome}`,
+            mensagem: ehCasal
+              ? `${nomes} (casal) pediram para entrar no grupo via QR code.`
+              : `${nomes} pediu para entrar no grupo via QR code.`,
+            link: '/grupos',
+            severidade: 'aviso',
+            chaveDedup: `pedido_grupo_${criados[0].pedidoId}`,
+            extraTargetIds: liderAuthUserId ? [liderAuthUserId] : [],
           });
-        }
-      } catch (err) { console.error('[public grupos inscrever notify]', err.message); }
-    })();
 
-    res.status(201).json({ ok: true, pedido_id: pedido.id });
+          // F3 · WhatsApp pro líder com o link de aprovar sem login.
+          // UM aviso só, mesmo no casal: os dois nomes em {{3}}, os dois
+          // contatos em {{4}}, e o link do pedido do 1º — aprovar por ele
+          // aprova o casal (vínculo casal_pedido_id). Gated por
+          // WHATSAPP_ENABLED no whatsappService (sem env → dry-run).
+          // O telefone vai FORMATADO no aviso: o fluxo novo do líder (Pr. Nélio ·
+          // 29/07) manda LIGAR pra pessoa antes de aceitar, então o número é o
+          // dado que ele usa na mão — "(21) 99999-8888" lê e disca melhor que
+          // "21999998888". O que gravamos no banco segue digits-only.
+          const contatoDe = (p) => [telefoneExibicao(p.telefone), p.email].filter(Boolean).join(' · ') || 'sem contato';
+          await notificarLiderNovoPedido({
+            grupo,
+            pedidoId: criados[0].pedidoId,
+            pessoa: {
+              nome: nomes,
+              telefone: criados[0].telefone || null,
+              email: criados[0].email || null,
+              contato: ehCasal
+                ? criados.map(p => `${(p.nome || '').split(/\s+/)[0]}: ${contatoDe(p)}`).join(' · ')
+                : contatoDe(criados[0]),
+            },
+          });
+
+          // Mensagem 1 pra PESSOA: «recebemos sua inscrição» (utility
+          // cbrio_inscricao_confirmada). Via fila: registra e reenvia sozinho
+          // se o envio bater no teto diário da Meta. GATED pelo opt-in (D4):
+          // quem não marcou o checkbox não recebe — é exatamente o que o aviso
+          // do formulário promete ("se você não marcar, não conseguiremos te
+          // enviar confirmações…"). No casal roda POR PESSOA (dois telefones,
+          // cada um recebe a sua).
+          for (const p of criados) {
+            if (!p.optin) continue;
+            await enviarInscricaoConfirmada({
+              telefone: p.telefone,
+              nome: p.nome,
+              grupoNome: grupo.nome,
+              pedidoId: p.pedidoId,
+            });
+          }
+        } catch (err) { console.error('[public grupos inscrever notify]', err.message); }
+      })();
+    }
+
+    // ── Resposta ──
+    const corpo = { ok: true };
+    if (rt.criado) corpo.pedido_id = rt.pedido_id; // igual a antes: só quando criou
+    if (rt.ja_membro) { corpo.ja_membro = true; corpo.renovado = rt.renovado === true; corpo.mensagem = rt.mensagem; }
+    if (rt.ja_pedido) { corpo.ja_pedido = true; corpo.mensagem = rt.mensagem; }
+    if (querCasal) {
+      corpo.casal = true;
+      corpo.conjuge = (rc && rc.ok)
+        ? {
+            ok: true,
+            nome: conjugeNome,
+            ja_membro: rc.ja_membro === true,
+            ja_pedido: rc.ja_pedido === true,
+            mensagem: rc.mensagem || null,
+            pedido_id: rc.criado ? rc.pedido_id : null,
+            criado: rc.criado === true,
+          }
+        // `possivel_duplicado` do cônjuge NÃO é erro pra quem preencheu: o modal
+        // "é você?" existe só pro titular, então ficaria um beco sem saída. O
+        // fato é que já existe pedido/participação parecida no grupo — dizemos
+        // isso em texto amigável e o líder resolve na aprovação (ele já vai
+        // ligar pro casal de todo jeito).
+        : (rc && rc.codigo === 'possivel_duplicado')
+          ? {
+              ok: true,
+              nome: conjugeNome,
+              ja_membro: false,
+              ja_pedido: true,
+              criado: false,
+              mensagem: 'Já havia um pedido parecido para este grupo no nome do seu cônjuge — o líder vai conferir na aprovação.',
+              pedido_id: null,
+            }
+          : {
+              ok: false,
+              nome: conjugeNome,
+              error: (rc && rc.error) || 'Não conseguimos registrar a inscrição do seu cônjuge.',
+              codigo: (rc && rc.codigo) || null,
+            };
+    }
+    res.status(rt.criado ? 201 : 200).json(corpo);
   } catch (e) {
     console.error('[public grupos inscrever]', e.message);
     res.status(500).json({ error: 'Erro ao processar inscrição.' });
@@ -958,6 +1236,34 @@ router.post('/inscrever-lider', async (req, res) => {
 // caminho de 1 segmento.
 // ─────────────────────────────────────────────────────────────
 
+// Par do CASAL (mem_grupo_pedidos.casal_pedido_id · migration 20260730140000).
+// O vínculo é cruzado, então qualquer um dos dois links do WhatsApp acha o par.
+// Só devolve se o par está no MESMO grupo: o vínculo é escrito por nós, mas o
+// link do líder nunca deve alcançar pedido de outro grupo (defesa em profundidade).
+// ⚠️ A coluna é lida numa query PRÓPRIA (e não no select do pedido) de
+// propósito: enquanto a migration 20260730140000 não estiver aplicada, pedir
+// `casal_pedido_id` no select principal faz o PostgREST recusar a query INTEIRA
+// e a aprovação pelo link do WhatsApp para pra TODOS os líderes (lição do
+// parcelas_max). Isolada aqui, a ausência da coluna degrada pra "sem par" e o
+// fluxo individual — que é 99% do tráfego — segue intacto em qualquer ordem de
+// deploy. Custo: 1 query a mais por abertura de link (request humano, irrisório).
+async function carregarParCasal(pedido) {
+  if (!pedido || !pedido.id) return null;
+  const { data: vinc, error } = await supabase.from('mem_grupo_pedidos')
+    .select('casal_pedido_id').eq('id', pedido.id).maybeSingle();
+  if (error || !vinc || !vinc.casal_pedido_id) return null;
+  const { data: par } = await supabase.from('mem_grupo_pedidos')
+    .select('id, nome, telefone, email, status, grupo_id, casal_pedido_id')
+    .eq('id', vinc.casal_pedido_id).is('deleted_at', null).maybeSingle();
+  if (!par || par.grupo_id !== pedido.grupo_id) return null;
+  // Vínculo tem que ser MÚTUO (ou ainda não fechado): se A aponta pra B mas B
+  // aponta pra C, o token de A não decide B. O vínculo cruzado é gravado em 2
+  // UPDATEs best-effort, então "ainda NULL" é estado legítimo de meio-caminho —
+  // apontar pra OUTRO pedido, não.
+  if (par.casal_pedido_id && par.casal_pedido_id !== pedido.id) return null;
+  return par;
+}
+
 // GET /api/public/grupos/pedido/por-token?token=...
 // Dados que o líder vê na página de aprovação (o token É a credencial).
 router.get('/pedido/por-token', async (req, res) => {
@@ -986,12 +1292,19 @@ router.get('/pedido/por-token', async (req, res) => {
       membrosAtivos = count || 0;
     }
 
+    // Inscrição em par (grupo de casais): a página mostra os DOIS nomes e
+    // deixa claro que a decisão vale pro casal.
+    const par = await carregarParCasal(pedido);
+
     res.json({
       pedido: {
         id: pedido.id, nome: pedido.nome, telefone: pedido.telefone, email: pedido.email,
         observacao: pedido.observacao, status: pedido.status, created_at: pedido.created_at,
         motivo_rejeicao: pedido.motivo_rejeicao,
       },
+      casal: par ? {
+        nome: par.nome, telefone: par.telefone, email: par.email, status: par.status,
+      } : null,
       grupo: {
         nome: grupo.nome, codigo: grupo.codigo, bairro: grupo.bairro,
         quando: formatarQuando(grupo), onde: formatarOnde(grupo),
@@ -1044,13 +1357,38 @@ router.post('/aprovar', async (req, res) => {
     }
     const decididoPorNome = `${liderNome} (link WhatsApp)`;
 
+    // Inscrição em par (grupo de casais · Marcos 30/07): a decisão do líder
+    // vale pro CASAL — aprovar aprova os dois, recusar devolve os dois.
+    const par = await carregarParCasal(pedido);
+
     if (acao === 'aprovar') {
       // Mesmo núcleo da aprovação autenticada (promoção de cadastro pendente,
       // matcher anti-duplicata, vínculo idempotente, notificações e WhatsApp).
       const { aprovarPedidoCore } = require('./grupos');
       const r = await aprovarPedidoCore(pedido.id, { userId: null, name: decididoPorNome });
       if (!r.ok) return res.status(r.code).json({ error: r.error });
-      return res.json({ ok: true, acao: 'aprovado' });
+
+      // O par entra pelo MESMO núcleo. Idempotente: par já aprovado não
+      // quebra (só informa). Par já rejeitado/devolvido/encaminhado NÃO é
+      // reaberto por aqui — a triagem assumiu aquele caso; aprova só este e
+      // devolve o status real pra página ser honesta com o líder.
+      let casal = null;
+      if (par) {
+        if (par.status === 'pendente') {
+          try {
+            const rp = await aprovarPedidoCore(par.id, { userId: null, name: decididoPorNome });
+            casal = rp.ok
+              ? { nome: par.nome, ok: true, status: 'aprovado' }
+              : { nome: par.nome, ok: false, status: par.status, error: rp.error };
+          } catch (e) {
+            console.error('[public grupos aprovar casal]', e.message);
+            casal = { nome: par.nome, ok: false, status: par.status, error: 'Não foi possível aprovar o cônjuge agora — faça pelo sistema em /grupos.' };
+          }
+        } else {
+          casal = { nome: par.nome, ok: par.status === 'aprovado', status: par.status };
+        }
+      }
+      return res.json({ ok: true, acao: 'aprovado', casal });
     }
 
     // Recusa do LÍDER não é terminal (Marcos · 14/07): o pedido volta pra
@@ -1072,14 +1410,39 @@ router.post('/aprovar', async (req, res) => {
 
     registrarEventoPedido(pedido.id, 'recusado_lider', { motivo_interno: motivoInterno }, decididoPorNome);
 
+    // Casal: a recusa devolve os DOIS pra triagem (a equipe cuida do casal
+    // junto — separar o casal na triagem seria o oposto do pedido). Guarda de
+    // corrida igual à do titular: só devolve o par se AINDA está pendente.
+    let casal = null;
+    if (par) {
+      if (par.status === 'pendente') {
+        const { data: parClaimed } = await supabase.from('mem_grupo_pedidos').update({
+          status: 'devolvido',
+          motivo_rejeicao: motivoInterno,
+          decidido_por: null,
+          decidido_por_nome: decididoPorNome,
+          decidido_em: new Date().toISOString(),
+        }).eq('id', par.id).eq('status', 'pendente').select('id');
+        if (parClaimed && parClaimed.length) {
+          registrarEventoPedido(par.id, 'recusado_lider', { motivo_interno: motivoInterno, casal: true }, decididoPorNome);
+          casal = { nome: par.nome, ok: true, status: 'devolvido' };
+        } else {
+          casal = { nome: par.nome, ok: false, status: 'decidido' };
+        }
+      } else {
+        casal = { nome: par.nome, ok: false, status: par.status };
+      }
+    }
+
     // Avisa a TRIAGEM (módulo grupos) — mesma notificação da recusa autenticada.
     (async () => {
       try {
+        const nomesTriagem = casal && casal.ok ? `${pedido.nome} e ${casal.nome} (casal)` : pedido.nome;
         await notificar({
           modulo: 'grupos',
           tipo: 'pedido_devolvido',
-          titulo: `Pedido devolvido pra triagem: ${pedido.nome}`,
-          mensagem: `O líder de ${grupo?.nome || 'um grupo'} recusou o pedido${motivoInterno ? ` (motivo interno: ${motivoInterno.slice(0, 200)})` : ''}. Sugira outro grupo pra pessoa ou rejeite de vez.`,
+          titulo: `Pedido devolvido pra triagem: ${nomesTriagem}`,
+          mensagem: `O líder de ${grupo?.nome || 'um grupo'} recusou o pedido${casal && casal.ok ? ' do casal' : ''}${motivoInterno ? ` (motivo interno: ${motivoInterno.slice(0, 200)})` : ''}. Sugira outro grupo pra ${casal && casal.ok ? 'eles' : 'pessoa'} ou rejeite de vez.`,
           link: '/grupos?tab=entrada',
           severidade: 'aviso',
           chaveDedup: `pedido_devolvido_${pedido.id}`,
@@ -1087,7 +1450,7 @@ router.post('/aprovar', async (req, res) => {
       } catch (err) { console.error('[public grupos recusar notify]', err.message); }
     })();
 
-    res.json({ ok: true, acao: 'rejeitado' });
+    res.json({ ok: true, acao: 'rejeitado', casal });
   } catch (e) {
     console.error('[public grupos aprovar]', e.message);
     res.status(500).json({ error: 'Erro ao processar decisão.' });
