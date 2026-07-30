@@ -262,6 +262,10 @@ export const propostas = {
   salvarAvaliacao: (id, data) => post(`/propostas/${id}/avaliacao`, data),
   mural: (cicloId) => get(`/propostas/mural?ciclo_id=${cicloId}`),
   deliberar: (id, data) => post(`/propostas/${id}/deliberar`, data),
+  // Fase 3
+  posEvento: (id) => get(`/propostas/${id}/pos-evento`),
+  salvarPosEvento: (id, data) => post(`/propostas/${id}/pos-evento`, data),
+  consolidarCiclo: (cicloId) => post(`/propostas/config/ciclos/${cicloId}/consolidar`, {}),
 };
 
 export const projects = {
