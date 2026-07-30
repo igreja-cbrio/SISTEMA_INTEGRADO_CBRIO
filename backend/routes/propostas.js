@@ -379,4 +379,167 @@ router.delete('/:id', authorizeModule('propostas', 2), async (req, res) => {
   res.json({ ok: true });
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// FASE 2 · Avaliação (0-5) + Mural da reunião + deliberação
+// ═══════════════════════════════════════════════════════════════════════════
+const ESTADOS_MURAL = ['EM_AVALIACAO', 'EM_DELIBERACAO', 'APROVADO', 'EM_ADEQUACAO', 'EM_VERIFICACAO_RESSALVAS', 'AGUARDANDO_RECURSO', 'EM_REAVALIACAO', 'CONSOLIDADO'];
+
+async function avaliadoresSet() {
+  const { data } = await supabase.from('prop_area_diretor').select('diretor_usuario_id').eq('ativa', true).not('diretor_usuario_id', 'is', null);
+  return new Set((data || []).map(d => d.diretor_usuario_id));
+}
+async function souAvaliador(req) {
+  if (nivelProp(req) >= 5) return true;
+  return (await avaliadoresSet()).has(meuId(req));
+}
+async function paramCiclo(cicloId, chave, def) {
+  const { data } = await supabase.from('prop_parametro').select('valor').eq('ciclo_id', cicloId).eq('chave', chave).maybeSingle();
+  const v = data?.valor; return v == null || v === '' ? def : v;
+}
+
+// Fila de avaliação do diretor
+router.get('/avaliar', authorizeModule('propostas', 1), async (req, res) => {
+  try {
+    if (!(await souAvaliador(req))) return res.status(403).json({ error: 'Só diretores avaliam' });
+    const me = meuId(req);
+    let q = supabase.from('prop_proposta').select('id, codigo, tipo, titulo, area_id, custo_liquido, estado, area:areas(nome)').eq('estado', 'EM_AVALIACAO').is('deleted_at', null);
+    if (req.query.ciclo_id) q = q.eq('ciclo_id', req.query.ciclo_id);
+    const { data: props, error } = await q.order('codigo');
+    if (error) return res.status(400).json({ error: error.message });
+    const ids = (props || []).map(p => p.id);
+    let feitas = new Set();
+    if (ids.length) {
+      const { data: avs } = await supabase.from('prop_avaliacao').select('proposta_id').eq('diretor_usuario_id', me).not('enviada_em', 'is', null).in('proposta_id', ids);
+      feitas = new Set((avs || []).map(a => a.proposta_id));
+    }
+    res.json({ propostas: (props || []).map(p => ({ ...p, avaliei: feitas.has(p.id) })), pendentes: (props || []).filter(p => !feitas.has(p.id)).length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Minha avaliação de uma proposta (+ critérios do ciclo)
+router.get('/:id/avaliacao', authorizeModule('propostas', 1), async (req, res) => {
+  const me = meuId(req);
+  const { data: p } = await supabase.from('prop_proposta').select('id, ciclo_id').eq('id', req.params.id).maybeSingle();
+  if (!p) return res.status(404).json({ error: 'Proposta não encontrada' });
+  const [crit, av] = await Promise.all([
+    supabase.from('prop_criterio').select('id, nome, descricao, peso, ordem').eq('ciclo_id', p.ciclo_id).eq('ativo', true).order('ordem'),
+    supabase.from('prop_avaliacao').select('id, comentario, enviada_em').eq('proposta_id', p.id).eq('diretor_usuario_id', me).maybeSingle(),
+  ]);
+  let notas = {};
+  if (av.data?.id) { const { data: ns } = await supabase.from('prop_avaliacao_nota').select('criterio_id, nota').eq('avaliacao_id', av.data.id); notas = Object.fromEntries((ns || []).map(n => [n.criterio_id, n.nota])); }
+  res.json({ criterios: crit.data || [], avaliacao: av.data || null, notas });
+});
+
+// Enviar/salvar minha avaliação
+router.post('/:id/avaliacao', authorizeModule('propostas', 2), async (req, res) => {
+  try {
+    if (!(await souAvaliador(req))) return res.status(403).json({ error: 'Só diretores avaliam' });
+    const me = meuId(req);
+    const { comentario, notas, enviar } = req.body || {};
+    const { data: p } = await supabase.from('prop_proposta').select('id, ciclo_id, estado').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!p) return res.status(404).json({ error: 'Proposta não encontrada' });
+    if (p.estado !== 'EM_AVALIACAO') return res.status(409).json({ error: 'Proposta não está em avaliação' });
+    const { data: existente } = await supabase.from('prop_avaliacao').select('id, enviada_em').eq('proposta_id', p.id).eq('diretor_usuario_id', me).maybeSingle();
+    if (existente?.enviada_em) return res.status(409).json({ error: 'Avaliação já enviada — não pode ser editada (RN08)' });
+    if (enviar && (!comentario || !comentario.trim())) return res.status(400).json({ error: 'Comentário obrigatório (RN08)' });
+
+    let avId = existente?.id;
+    if (avId) await supabase.from('prop_avaliacao').update({ comentario: comentario || null, enviada_em: enviar ? new Date().toISOString() : null, updated_at: new Date().toISOString() }).eq('id', avId);
+    else { const { data: nova, error } = await supabase.from('prop_avaliacao').insert({ proposta_id: p.id, diretor_usuario_id: me, comentario: comentario || null, enviada_em: enviar ? new Date().toISOString() : null }).select('id').single(); if (error) return res.status(400).json({ error: error.message }); avId = nova.id; }
+    // notas (0-5 por critério)
+    await supabase.from('prop_avaliacao_nota').delete().eq('avaliacao_id', avId);
+    const linhas = Object.entries(notas || {}).filter(([, v]) => v != null && v !== '').map(([criterio_id, nota]) => ({ avaliacao_id: avId, criterio_id, nota: Math.max(0, Math.min(5, Number(nota))) }));
+    if (linhas.length) await supabase.from('prop_avaliacao_nota').insert(linhas);
+    res.json({ ok: true, enviada: !!enviar });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Mural da reunião · ranking + orçamento (RN09/RN10/RN11/RN13)
+router.get('/mural', authorizeModule('propostas', 1), async (req, res) => {
+  try {
+    if (!(await souAvaliador(req))) return res.status(403).json({ error: 'Mural restrito a diretores/presidente' });
+    const cicloId = req.query.ciclo_id;
+    if (!cicloId) return res.status(400).json({ error: 'ciclo_id obrigatório' });
+    const [{ data: ciclo }, { data: props }, { data: crit }, minAv] = await Promise.all([
+      supabase.from('prop_ciclo').select('orcamento_disponivel').eq('id', cicloId).maybeSingle(),
+      supabase.from('prop_proposta').select('id, codigo, tipo, titulo, area_id, custo_total, custo_liquido, classificacao_custo, complexidade, impacto_esperado, passa_no_ourico, estado, area:areas(nome)').eq('ciclo_id', cicloId).in('estado', ESTADOS_MURAL).is('deleted_at', null),
+      supabase.from('prop_criterio').select('id, peso').eq('ciclo_id', cicloId).eq('ativo', true),
+      paramCiclo(cicloId, 'min_avaliadores', '3'),
+    ]);
+    const propostas = props || [];
+    const ids = propostas.map(p => p.id);
+    const pesoDe = Object.fromEntries((crit || []).map(c => [c.id, Number(c.peso || 1)]));
+    const somaPesos = Object.values(pesoDe).reduce((s, w) => s + w, 0) || 1;
+    // diretor de cada área
+    const areaIds = [...new Set(propostas.map(p => p.area_id).filter(Boolean))];
+    let diretorArea = {};
+    if (areaIds.length) { const { data: ad } = await supabase.from('prop_area_diretor').select('area_id, diretor_usuario_id').in('area_id', areaIds); diretorArea = Object.fromEntries((ad || []).map(a => [a.area_id, a.diretor_usuario_id])); }
+    // avaliações enviadas + notas + nomes
+    let avs = [], notasPorAv = {}, nomes = {};
+    if (ids.length) {
+      const { data: a } = await supabase.from('prop_avaliacao').select('id, proposta_id, diretor_usuario_id, comentario').not('enviada_em', 'is', null).in('proposta_id', ids);
+      avs = a || [];
+      const avIds = avs.map(x => x.id);
+      if (avIds.length) { const { data: ns } = await supabase.from('prop_avaliacao_nota').select('avaliacao_id, criterio_id, nota').in('avaliacao_id', avIds); (ns || []).forEach(n => { (notasPorAv[n.avaliacao_id] = notasPorAv[n.avaliacao_id] || []).push(n); }); }
+      const dids = [...new Set(avs.map(x => x.diretor_usuario_id))];
+      if (dids.length) { const { data: profs } = await supabase.from('profiles').select('id, name').in('id', dids); nomes = Object.fromEntries((profs || []).map(p => [p.id, p.name])); }
+    }
+    const notaAv = (avId) => { const ns = notasPorAv[avId] || []; if (!ns.length) return null; const soma = ns.reduce((s, n) => s + Number(n.nota) * (pesoDe[n.criterio_id] || 1), 0); return soma / somaPesos; };
+    const minA = Number(minAv);
+    const linhas = propostas.map(p => {
+      const avP = avs.filter(a => a.proposta_id === p.id);
+      const dirArea = diretorArea[p.area_id];
+      const outros = avP.filter(a => a.diretor_usuario_id !== dirArea);
+      const daArea = avP.find(a => a.diretor_usuario_id === dirArea);
+      const mediaOutros = outros.length ? outros.reduce((s, a) => s + (notaAv(a.id) || 0), 0) / outros.length : null;
+      const notaArea = daArea ? notaAv(daArea.id) : null;
+      const geral = avP.length ? avP.reduce((s, a) => s + (notaAv(a.id) || 0), 0) / avP.length : null;
+      return {
+        id: p.id, codigo: p.codigo, tipo: p.tipo, titulo: p.titulo, area: p.area?.nome, estado: p.estado,
+        custo_total: Number(p.custo_total), custo_liquido: Number(p.custo_liquido), classificacao_custo: p.classificacao_custo,
+        complexidade: p.complexidade, impacto: p.impacto_esperado, passa_no_ourico: p.passa_no_ourico,
+        nota_outros: mediaOutros, nota_area: notaArea, nota_geral: geral, n_avaliadores: avP.length,
+        quorum: avP.length >= minA,
+        comentarios: avP.map(a => ({ diretor: nomes[a.diretor_usuario_id] || '—', comentario: a.comentario, nota: notaAv(a.id) })),
+      };
+    });
+    // ranking: com quórum primeiro, por nota_geral desc; sem quórum ao fim
+    linhas.sort((a, b) => (b.quorum - a.quorum) || ((b.nota_geral ?? -1) - (a.nota_geral ?? -1)));
+    linhas.forEach((l, i) => { l.posicao = l.quorum ? i + 1 : null; });
+    res.json({ orcamento_disponivel: Number(ciclo?.orcamento_disponivel || 0), min_avaliadores: minA, propostas: linhas });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Registrar decisão da reunião (RN14/RN15/RN17) — move o estado
+router.post('/:id/deliberar', authorizeModule('propostas', 2), async (req, res) => {
+  try {
+    if (!(await souAvaliador(req))) return res.status(403).json({ error: 'Só diretores/presidente decidem' });
+    const { resultado, ressalvas, motivo } = req.body || {};
+    const mapa = { aprovado: 'deliberar_aprovar', aprovado_com_ressalvas: 'deliberar_ressalvas', devolvido: 'deliberar_devolver', reprovado: 'deliberar_reprovar' };
+    if (!mapa[resultado]) return res.status(400).json({ error: 'Resultado inválido' });
+    if (resultado === 'aprovado_com_ressalvas' && !ressalvas?.trim()) return res.status(400).json({ error: 'Ressalvas obrigatórias' });
+    if ((resultado === 'devolvido' || resultado === 'reprovado') && !motivo?.trim()) return res.status(400).json({ error: 'Motivo obrigatório' });
+
+    const { data: p } = await supabase.from('prop_proposta').select('*').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!p) return res.status(404).json({ error: 'Proposta não encontrada' });
+
+    // snapshot da proposta no momento da decisão (RN17)
+    const { data: snap } = await supabase.from('prop_snapshot').insert({ proposta_id: p.id, versao: p.versao, payload: p }).select('id').maybeSingle();
+
+    // garante EM_DELIBERACAO (a decisão em reunião move avaliação→deliberação)
+    if (p.estado === 'EM_AVALIACAO') {
+      const { data: t1 } = await supabase.rpc('fn_prop_transicionar', { p_id: p.id, p_acao: 'entrar_deliberacao', p_ator: meuId(req) });
+      if (t1 && t1.ok === false) return res.status(409).json(t1);
+    }
+    const coment = resultado === 'aprovado_com_ressalvas' ? ressalvas : (motivo || null);
+    const { data: r, error } = await supabase.rpc('fn_prop_transicionar', { p_id: p.id, p_acao: mapa[resultado], p_comentario: coment, p_ator: meuId(req) });
+    if (error) return res.status(400).json({ error: error.message });
+    if (!r?.ok) return res.status(409).json(r);
+
+    await supabase.from('prop_deliberacao').insert({ proposta_id: p.id, tipo: 'deliberacao', resultado, ressalvas: ressalvas || null, motivo: motivo || null, snapshot_id: snap?.id || null, registrado_por_usuario_id: meuId(req) });
+    if (p.criado_por_usuario_id) notificar({ modulo: 'propostas', tipo: 'proposta_deliberacao', titulo: `Proposta ${p.codigo || ''} · ${r.para}`, mensagem: coment || `Decisão da reunião: ${resultado}.`, link: '/propostas', targetIds: [p.criado_por_usuario_id], email: false }).catch(() => {});
+    res.json(r);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 module.exports = router;
