@@ -159,7 +159,7 @@ async function buscarCep(cep) {
 }
 
 const EMPTY_FORM = {
-  nome: '', sobrenome: '', cpf: '', email: '', telefone: '', data_nascimento: '', estado_civil: '',
+  nome: '', sobrenome: '', apelido: '', cpf: '', email: '', telefone: '', data_nascimento: '', estado_civil: '',
   endereco: '', bairro: '', cidade: '', cep: '', profissao: '',
   ministerio: '', grupo: '', status: 'membro_ativo',
   familia_id: '', familia_nome_novo: '', parentesco: '', observacoes: '',
@@ -297,6 +297,7 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
       setForm({
         nome: primeiro,
         sobrenome: restante,
+        apelido: editData.apelido || '',
         cpf: editData.cpf || '',
         email: editData.email || '',
         telefone: editData.telefone || '',
@@ -408,6 +409,14 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
         if (payload[k] === '') delete payload[k];
       }
 
+      // Apelido é LIMPÁVEL: o loop acima descarta string vazia, então apagar o
+      // apelido não gravaria nada. Só manda NULL quando havia apelido antes
+      // (aí a coluna existe com certeza) — se não há nada a escrever, o campo
+      // fica fora do payload.
+      const apelidoLimpo = (form.apelido || '').trim();
+      if (apelidoLimpo) payload.apelido = apelidoLimpo;
+      else if (isEdit && editData?.apelido) payload.apelido = null;
+
       let membroId;
       if (isEdit) {
         await membresia.membros.update(editData.id, payload);
@@ -501,6 +510,13 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
                 <div className="space-y-1.5">
                   <Label>Sobrenome *</Label>
                   <Input value={form.sobrenome} onChange={e => set('sobrenome', e.target.value)} placeholder="Sobrenome" />
+                </div>
+                <div className="space-y-1.5 sm:col-span-2">
+                  <Label>Apelido (como é conhecido)</Label>
+                  <Input value={form.apelido} onChange={e => set('apelido', e.target.value)} placeholder='Ex: "Tuninho"' maxLength={60} />
+                  <p className="text-xs text-muted-foreground">
+                    Entra na busca pública de grupos por líder — quem só conhece o apelido acha o grupo.
+                  </p>
                 </div>
                 <div className="space-y-1.5">
                   <Label>CPF *</Label>

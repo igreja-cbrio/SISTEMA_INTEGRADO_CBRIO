@@ -662,7 +662,13 @@ export default function InscricaoGrupos() {
                   {grupoEscolhido.lider_nome && (
                     <span style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12.5, color: C.text3 }}>
                       <User size={14} style={{ color: '#00B39D', flexShrink: 0 }} />
-                      Líder: <strong style={{ color: C.text, fontWeight: 600 }}>{grupoEscolhido.lider_nome}</strong>
+                      {/* Com apelido cadastrado mostra "Nome (Apelido)" — é como a
+                          pessoa conhece o líder ("ah, é o Tuninho"). */}
+                      Líder: <strong style={{ color: C.text, fontWeight: 600 }}>
+                        {grupoEscolhido.lider_apelido
+                          ? `${grupoEscolhido.lider_nome} (${grupoEscolhido.lider_apelido})`
+                          : grupoEscolhido.lider_nome}
+                      </strong>
                     </span>
                   )}
                   {formatarQuando(grupoEscolhido) && (

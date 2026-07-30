@@ -333,6 +333,53 @@ casal junto** (idem recusa). A opção aparece **só** nessa categoria.
   vale no link do WhatsApp; (2) a caixa de entrada não mostra selo de "casal"
   ainda.
 
+## Grupos · busca sem acento + apelido do líder (2026-07-30 · migration 20260730170000)
+
+Caso real: a Patrícia tentou se inscrever no grupo do "Antônio" no domingo e
+**nenhum pedido dela existe no banco** — não conseguiu concluir. O líder está
+cadastrado como **"ANTONIO MARCO PEREIRA"** (sem acento) e a busca era
+acento-SENSÍVEL, então quem digitava a grafia correta não achava o grupo. Ele
+também é conhecido como **"Tuninho"**, e não havia busca por apelido.
+
+- **Régua ÚNICA de busca em 2 espelhos** (a filtragem acontece nos dois lados):
+  `src/lib/busca.js` (cliente) e `backend/services/busca.js` (servidor) —
+  `normalizarBusca` (NFD → tira diacrítico → lower → colapsa espaço → trim),
+  `contemNormalizado(alvo, termo)` e `algumContemNormalizado(lista, termo)`.
+  ⚠️ **Compara normalizado contra normalizado nos DOIS lados** (termo E alvo):
+  normalizar só um não resolve nada. Mudou a regra num arquivo? Mudar no outro.
+  Testes: `src/test/busca.test.ts` (acento nos 2 sentidos, cedilha, caixa,
+  espaço, NFD×NFC · determinístico, sem depender de hora/locale).
+  ⚠️ SÓ pra texto exibido — NUNCA em slug/enum/chave/coluna.
+- **Onde já vale:** `publicGrupos.js` `GET /buscar` (filtros `lider_nome` e `q`)
+  e `GET /lideres/buscar`; `GrupoSelector` (busca por grupo e por líder);
+  `GruposMapView` (busca do mapa); lista de grupos do `/grupos` (admin).
+  ⚠️ O filtro de `/lideres/buscar` **saiu do `ilike`** (que é acento-sensível e
+  não alcança o apelido) pra JS — são dezenas de líderes por temporada.
+- **`mem_membros.apelido`** = "como a pessoa é conhecida na igreja". Cadastrado
+  pela equipe no form de edição do membro da **Membresia** (`PUT /membros/:id`
+  grava `req.body` direto · o form manda `null` só quando havia apelido antes,
+  pra permitir limpar). **Entra na BUSCA sem poluir a EXIBIÇÃO do nome real:**
+  `lideres_nomes`/`lider_nome` seguem só com nomes reais; `lideres_busca` =
+  nomes + apelidos (é nele que os filtros procuram, com fallback pros nomes pra
+  bundle antigo/deploy em 2 etapas); `lideres_exibicao`/`lider_apelido` montam
+  "Nome (Apelido)" no cartão do grupo, no balão do mapa e na confirmação do
+  grupo escolhido (`InscricaoGrupos`) — é o "ah, é o Tuninho".
+- ⚠️ **O `apelido` é selecionado em consulta ISOLADA e best-effort**
+  (`buscarApelidos` em publicGrupos.js): se a migration não tiver sido aplicada,
+  pedir a coluna faria o PostgREST recusar a query INTEIRA e derrubaria a busca
+  de grupos pra todo mundo (lição do `parcelas_max`). Falha ali = "sem apelido
+  nesta resposta", nunca busca quebrada.
+- **Migration `20260730170000_membros_apelido.sql`** (aditiva/idempotente · sem
+  FK/constraint/tabela nova) + seed do caso real (`apelido='Tuninho'` achando o
+  id por `upper(btrim(nome))`, só quando `apelido IS NULL`). ⚠️ Numerada 170000
+  porque **160000 já estava ocupado** (`..._next_dia_sessao_real_e_semana`).
+  NÃO cadastrar outros apelidos por migration — é dado que a equipe preenche
+  caso a caso na Membresia.
+- **Limitações conhecidas:** o `/grupos/buscar` **autenticado** não devolve
+  `lideres_busca`/apelido (a busca lá é acento-insensível, mas não acha por
+  apelido); a ficha da pessoa da aba Pessoas do /grupos ainda não edita apelido;
+  a Membresia não exibe o apelido no cabeçalho do membro (só no form).
+
 ## ⚠️ Google Tag Manager · SÓ no domínio público, nunca no ERP (2026-07-29)
 
 Gustavo (tráfego pago, parceiro externo) precisava medir anúncio → o site não

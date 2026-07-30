@@ -22,6 +22,8 @@ const {
   validarCamposPadrao, // régua única dos campos padrão (usada no bloco do cônjuge)
 } = require('../services/inscricaoContrato');
 const { requireCron } = require('../utils/cronAuth');
+// Régua ÚNICA de busca (acento/caixa/espaço) · espelho de src/lib/busca.js.
+const { normalizarBusca, contemNormalizado, algumContemNormalizado } = require('../services/busca');
 
 // ── Rate limit dedicado do totem de inscrição de grupos ──
 // O formulário roda num navegador quiosque no lounge (1 IP) e, num domingo
@@ -65,6 +67,39 @@ function distanciaKm(lat1, lng1, lat2, lng2) {
             Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
             Math.sin(dLng / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// buscarApelidos · apelido do líder ("como a pessoa é conhecida na igreja" ·
+// ex.: o Antonio Marco Pereira é o "Tuninho"). Entra na BUSCA sem poluir a
+// exibição do nome real.
+//
+// ⚠️ SELECT ISOLADO e BEST-EFFORT de propósito: se a migration da coluna
+// `apelido` ainda não foi aplicada, pedir a coluna faz o PostgREST recusar a
+// query INTEIRA (lição do `parcelas_max`) — e a busca de grupos cairia pra
+// TODO MUNDO. Aqui a falha só significa "sem apelido nesta resposta".
+async function buscarApelidos(ids) {
+  const mapa = {};
+  const unicos = [...new Set((ids || []).filter(Boolean))];
+  if (!unicos.length) return mapa;
+  for (let i = 0; i < unicos.length; i += 200) { // .in() em lote (URL do PostgREST)
+    const { data, error } = await supabase.from('mem_membros')
+      .select('id, apelido').in('id', unicos.slice(i, i + 200));
+    if (error) {
+      console.warn('[public grupos] apelido indisponível (migration pendente?):', error.message);
+      return {};
+    }
+    (data || []).forEach(m => {
+      const ap = (m.apelido || '').trim();
+      if (ap) mapa[m.id] = ap;
+    });
+  }
+  return mapa;
+}
+
+// Nome como a pessoa reconhece: "Antonio Marco Pereira (Tuninho)".
+function nomeComApelido(nome, apelido) {
+  if (!nome) return null;
+  return apelido ? `${nome} (${apelido})` : nome;
 }
 
 // GET /api/public/grupos/temporadas
@@ -118,39 +153,65 @@ router.get('/buscar', async (req, res) => {
     const rosterLideres = {};
     for (let i = 0; i < gIds.length; i += 200) {
       const { data: rl } = await supabase.from('mem_grupo_membros')
-        .select('grupo_id, mem_membros!inner(nome)')
+        .select('grupo_id, membro_id, mem_membros!inner(nome)')
         .in('grupo_id', gIds.slice(i, i + 200))
         .in('funcao', ['lider', 'co_lider'])
         .is('saiu_em', null).is('deleted_at', null);
       (rl || []).forEach(v => {
         if (!v.mem_membros?.nome) return;
-        (rosterLideres[v.grupo_id] = rosterLideres[v.grupo_id] || []).push(v.mem_membros.nome);
+        (rosterLideres[v.grupo_id] = rosterLideres[v.grupo_id] || [])
+          .push({ nome: v.mem_membros.nome, membro_id: v.membro_id || null });
       });
     }
 
+    // Apelidos de TODOS os líderes visíveis (principal + roster) — 1 consulta,
+    // isolada e tolerante à coluna ausente.
+    const apelidos = await buscarApelidos([
+      ...liderIds,
+      ...Object.values(rosterLideres).flat().map(r => r.membro_id),
+    ]);
+
     let resultado = (grupos || []).map(g => {
       const principal = lideresMap[g.lider_id]?.nome || null;
-      const lideresNomes = [...new Set([principal, ...(rosterLideres[g.id] || [])].filter(Boolean))];
+      // lideres_nomes / lider_nome = SÓ nomes reais (é o que a equipe cadastrou).
+      // lideres_exibicao = "Nome (Apelido)" · lideres_busca = nomes + apelidos.
+      const lideresNomes = [];
+      const lideresExibicao = [];
+      const lideresBusca = [];
+      const addLider = (nome, membroId) => {
+        if (!nome || lideresNomes.includes(nome)) return;
+        const ap = membroId ? (apelidos[membroId] || null) : null;
+        lideresNomes.push(nome);
+        lideresExibicao.push(nomeComApelido(nome, ap));
+        lideresBusca.push(nome);
+        if (ap) lideresBusca.push(ap);
+      };
+      addLider(principal, g.lider_id);
+      (rosterLideres[g.id] || []).forEach(r => addLider(r.nome, r.membro_id));
       return {
         ...g,
         lider_nome: principal,
+        lider_apelido: g.lider_id ? (apelidos[g.lider_id] || null) : null,
         lider_foto: lideresMap[g.lider_id]?.foto_url || null,
         lideres_nomes: lideresNomes,
+        lideres_exibicao: lideresExibicao,
+        lideres_busca: [...new Set(lideresBusca)],
       };
     });
 
+    // Busca de líder = nome OU apelido, insensível a acento/caixa/espaço.
+    // Fallback pra lideres_nomes: bundle antigo/deploy em 2 etapas.
+    const alvosLider = (g) => (g.lideres_busca && g.lideres_busca.length ? g.lideres_busca : (g.lideres_nomes || []));
     if (lider_nome) {
-      const term = String(lider_nome).toLowerCase();
-      resultado = resultado.filter(g => (g.lideres_nomes || []).some(n => n.toLowerCase().includes(term)));
+      resultado = resultado.filter(g => algumContemNormalizado(alvosLider(g), lider_nome));
     }
     if (q) {
-      const term = String(q).toLowerCase();
       resultado = resultado.filter(g =>
-        g.nome?.toLowerCase().includes(term)
-        || (g.lideres_nomes || []).some(n => n.toLowerCase().includes(term))
-        || g.bairro?.toLowerCase().includes(term)
-        || g.local?.toLowerCase().includes(term)
-        || g.codigo?.toLowerCase().includes(term)
+        contemNormalizado(g.nome, q)
+        || algumContemNormalizado(alvosLider(g), q)
+        || contemNormalizado(g.bairro, q)
+        || contemNormalizado(g.local, q)
+        || contemNormalizado(g.codigo, q)
       );
     }
 
@@ -189,7 +250,7 @@ router.get('/buscar', async (req, res) => {
 router.get('/lideres/buscar', async (req, res) => {
   try {
     const { q, temporada } = req.query;
-    const term = String(q || '').trim().toLowerCase();
+    const term = normalizarBusca(q);
     if (term.length < 2) return res.json([]);
 
     let query = supabase.from('mem_grupos').select('lider_id').eq('ativo', true).is('deleted_at', null).not('lider_id', 'is', null);
@@ -198,15 +259,27 @@ router.get('/lideres/buscar', async (req, res) => {
     const liderIds = [...new Set((grupos || []).map(g => g.lider_id))];
     if (!liderIds.length) return res.json([]);
 
-    const { data: lideres } = await supabase
-      .from('mem_membros')
-      .select('id, nome, foto_url')
-      .in('id', liderIds)
-      .ilike('nome', `%${term}%`)
-      .order('nome')
-      .limit(20);
+    // O filtro saiu do `ilike` pro JS: `ilike` é acento-SENSÍVEL (quem digita
+    // "Antônio" não achava "ANTONIO") e não alcança o apelido. São dezenas de
+    // líderes por temporada — trazer e filtrar aqui é barato.
+    const lideres = [];
+    for (let i = 0; i < liderIds.length; i += 200) {
+      const { data } = await supabase.from('mem_membros')
+        .select('id, nome, foto_url').in('id', liderIds.slice(i, i + 200));
+      lideres.push(...(data || []));
+    }
+    const apelidos = await buscarApelidos(liderIds);
 
-    res.json(lideres || []);
+    const casam = lideres
+      .map(l => ({ ...l, apelido: apelidos[l.id] || null }))
+      .filter(l => contemNormalizado(l.nome, q) || contemNormalizado(l.apelido, q))
+      .sort((a, b) => String(a.nome || '').localeCompare(String(b.nome || ''), 'pt-BR'))
+      .slice(0, 20)
+      // nome_exibicao é ADITIVO (o shape antigo id/nome/foto_url continua) —
+      // a UI pode mostrar "Antonio Marco Pereira (Tuninho)" sem montar nada.
+      .map(l => ({ ...l, nome_exibicao: nomeComApelido(l.nome, l.apelido) }));
+
+    res.json(casam);
   } catch { res.status(500).json({ error: 'Erro' }); }
 });
 
@@ -225,11 +298,24 @@ router.get('/:id', async (req, res) => {
 
     let lider_nome = null;
     let lider_foto = null;
+    let lider_apelido = null;
     if (grupo.lider_id) {
       const { data: lider } = await supabase.from('mem_membros').select('nome, foto_url').eq('id', grupo.lider_id).maybeSingle();
       if (lider) { lider_nome = lider.nome; lider_foto = lider.foto_url; }
+      // Apelido isolado/best-effort (deep-link ?grupo=<id> não pode quebrar se a
+      // coluna ainda não existir).
+      const ap = await buscarApelidos([grupo.lider_id]);
+      lider_apelido = ap[grupo.lider_id] || null;
     }
-    res.json({ ...grupo, lider_nome, lider_foto });
+    res.json({
+      ...grupo,
+      lider_nome,
+      lider_apelido,
+      lider_foto,
+      lideres_nomes: lider_nome ? [lider_nome] : [],
+      lideres_exibicao: lider_nome ? [nomeComApelido(lider_nome, lider_apelido)] : [],
+      lideres_busca: [lider_nome, lider_apelido].filter(Boolean),
+    });
   } catch (e) {
     console.error('[public grupos getById]', e.message);
     res.status(500).json({ error: 'Erro ao buscar grupo' });

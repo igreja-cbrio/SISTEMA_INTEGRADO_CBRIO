@@ -19,6 +19,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { grupos as authApi, gruposPublic } from '../../api';
+// Régua ÚNICA de busca (acento/caixa/espaço) · espelho de backend/services/busca.js
+import { normalizarBusca, contemNormalizado, algumContemNormalizado } from '../../lib/busca';
 import { Input } from '../ui/input';
 import { Search, MapPin, Clock, User as UserIcon, Users, List as ListIcon, Map as MapIcon } from 'lucide-react';
 import { GruposMapView } from './GruposMapView';
@@ -159,7 +161,7 @@ export default function GrupoSelector({ onSelect, selectedGrupoId, mode = 'full'
   const faixas = useMemo(() => [...new Set(grupos.map(g => g.faixa_etaria).filter(Boolean))].sort(), [grupos]);
 
   const filtrados = useMemo(() => {
-    const s = busca.trim().toLowerCase();
+    const s = normalizarBusca(busca);
     return grupos.filter(g => {
       if (fCategoria && g.categoria !== fCategoria) return false;
       if (fFaixa && g.faixa_etaria !== fFaixa) return false;
@@ -169,13 +171,18 @@ export default function GrupoSelector({ onSelect, selectedGrupoId, mode = 'full'
       if (fRecorrencia && (g.recorrencia || '').toLowerCase().trim() !== fRecorrencia) return false;
       if (s) {
         if (searchMode === 'lider') {
-          // Grupo com dois líderes aparece buscando por QUALQUER um
-          // (o principal + os marcados como líder/co-líder no grupo).
-          const nomes = (g.lideres_nomes && g.lideres_nomes.length ? g.lideres_nomes : [g.lider_nome]).filter(Boolean);
-          if (!nomes.some(n => n.toLowerCase().includes(s))) return false;
+          // Grupo com dois líderes aparece buscando por QUALQUER um (o principal
+          // + os marcados como líder/co-líder no grupo) e também pelo APELIDO
+          // ("Tuninho" acha o grupo do Antonio Marco Pereira) — `lideres_busca`
+          // já vem com nomes + apelidos. Fallback pros nomes: bundle antigo/
+          // backend em deploy de 2 etapas.
+          const alvos = (g.lideres_busca && g.lideres_busca.length)
+            ? g.lideres_busca
+            : (g.lideres_nomes && g.lideres_nomes.length ? g.lideres_nomes : [g.lider_nome]).filter(Boolean);
+          if (!algumContemNormalizado(alvos, s)) return false;
         } else {
-          const alvo = [g.nome, g.codigo, g.local, g.bairro, g.tema].filter(Boolean).join(' ').toLowerCase();
-          if (!alvo.includes(s)) return false;
+          const alvo = [g.nome, g.codigo, g.local, g.bairro, g.tema].filter(Boolean).join(' ');
+          if (!contemNormalizado(alvo, s)) return false;
         }
       }
       return true;
@@ -365,8 +372,12 @@ function ResultsList({ grupos, loading, selectedGrupoId, onSelect, isMobile = fa
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', fontSize: 11, color: C.t3 }}>
               {(() => {
                 // Mostra TODOS os líderes (principal + co-líderes) — a pessoa
-                // acha o grupo pelo líder que conhece.
-                const nomes = (g.lideres_nomes && g.lideres_nomes.length ? g.lideres_nomes : [g.lider_nome]).filter(Boolean);
+                // acha o grupo pelo líder que conhece. Com apelido cadastrado
+                // vem "Nome (Apelido)" pronto do backend (`lideres_exibicao`):
+                // é o "ah, é o Tuninho" que faz a pessoa reconhecer o grupo.
+                const nomes = (g.lideres_exibicao && g.lideres_exibicao.length
+                  ? g.lideres_exibicao
+                  : (g.lideres_nomes && g.lideres_nomes.length ? g.lideres_nomes : [g.lider_nome])).filter(Boolean);
                 return nomes.length ? <span><UserIcon size={10} style={{ display: 'inline', marginRight: 2 }} /> {nomes.join(' · ')}</span> : null;
               })()}
               {g.bairro && <span><MapPin size={10} style={{ display: 'inline', marginRight: 2 }} /> {g.bairro}</span>}

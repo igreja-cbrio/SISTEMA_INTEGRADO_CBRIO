@@ -4,6 +4,8 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { AbrirRotaMenu } from '../../components/grupos/AbrirRotaMenu';
 import { grupos as api, membresia, encaminhamentos } from '../../api';
+// Régua ÚNICA de busca (acento/caixa/espaço) · espelho de backend/services/busca.js
+import { contemNormalizado } from '../../lib/busca';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { DatePicker } from '@/components/ui/date-picker';
@@ -659,8 +661,10 @@ export default function Grupos() {
 
   const filtered = gruposList.filter(g => {
     if (search) {
-      const s = search.toLowerCase();
-      if (!(g.codigo?.toLowerCase().includes(s) || g.nome?.toLowerCase().includes(s) || g.lider_nome?.toLowerCase().includes(s) || g.local?.toLowerCase().includes(s) || g.bairro?.toLowerCase().includes(s))) return false;
+      // Insensível a acento/caixa/espaço (régua única · src/lib/busca.js):
+      // quem digita "Antônio" tem que achar "ANTONIO MARCO PEREIRA".
+      const alvo = [g.codigo, g.nome, g.lider_nome, g.local, g.bairro].filter(Boolean).join(' ');
+      if (!contemNormalizado(alvo, search)) return false;
     }
     if (filterTipo !== 'all' && g.categoria !== filterTipo) return false;
     // Diário casa com qualquer dia filtrado (acontece todos os dias).

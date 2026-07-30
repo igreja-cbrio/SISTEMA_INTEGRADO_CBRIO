@@ -18,6 +18,8 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { AbrirRotaMenu } from "@/components/grupos/AbrirRotaMenu";
+// Régua ÚNICA de busca (acento/caixa/espaço) · espelho de backend/services/busca.js
+import { normalizarBusca, contemNormalizado } from "@/lib/busca";
 
 const DIAS_MAP: Record<number, string> = {
   0: "Domingo",
@@ -33,6 +35,14 @@ const DIAS_MAP: Record<number, string> = {
 const ehDiario = (g: { recorrencia?: string | null }) =>
   (g?.recorrencia || "").toLowerCase().trim() === "diario";
 
+// Líder como a pessoa reconhece: "Nome (Apelido)" quando há apelido cadastrado.
+const liderExibicao = (g: any): string | null => {
+  if (g?.lideres_exibicao?.length) return g.lideres_exibicao.join(" · ");
+  const nome = g?.lider?.nome || g?.lider_nome;
+  if (!nome) return null;
+  return g?.lider_apelido ? `${nome} (${g.lider_apelido})` : nome;
+};
+
 export interface MapGroup {
   id: string;
   nome: string;
@@ -45,6 +55,9 @@ export interface MapGroup {
   horario?: string | null;
   lider?: { nome?: string } | null;
   lider_nome?: string | null;
+  lider_apelido?: string | null;
+  lideres_exibicao?: string[] | null;
+  lideres_busca?: string[] | null;
   dist?: number | null;
   bairro?: string | null;
   codigo?: string | null;
@@ -199,13 +212,20 @@ export function GruposMapView({
   );
 
   const filtered = useMemo(() => {
-    const s = search.trim().toLowerCase();
+    const s = normalizarBusca(search);
     return grupos.filter((g: any) => {
       if (filterCat && g.categoria !== filterCat) return false;
       if (filterBairro && g.bairro !== filterBairro) return false;
       if (s) {
-        const hay = `${g.nome ?? ""} ${g.lider?.nome ?? g.lider_nome ?? ""} ${g.local ?? ""} ${g.bairro ?? ""}`.toLowerCase();
-        if (!hay.includes(s)) return false;
+        // Insensível a acento/caixa/espaço + casa apelido do líder (lideres_busca).
+        const hay = [
+          g.nome,
+          g.lider?.nome ?? g.lider_nome,
+          ...(g.lideres_busca || []),
+          g.local,
+          g.bairro,
+        ].filter(Boolean).join(" ");
+        if (!contemNormalizado(hay, s)) return false;
       }
       return true;
     });
@@ -373,9 +393,9 @@ export function GruposMapView({
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-semibold truncate">{g.nome}</p>
-                        {(g.lider?.nome || g.lider_nome) && (
+                        {liderExibicao(g) && (
                           <p className={cn("text-xs truncate", mutedText)}>
-                            Líder: {g.lider?.nome || g.lider_nome}
+                            Líder: {liderExibicao(g)}
                           </p>
                         )}
                         <div className={cn("flex flex-wrap gap-x-2 gap-y-0.5 mt-1 text-[11px]", subtleText)}>
@@ -608,9 +628,9 @@ function GrupoInfo({
           </div>
         )}
       </div>
-      {(g.lider?.nome || g.lider_nome) && (
+      {liderExibicao(g) && (
         <p className="text-xs text-muted-foreground">
-          Líder: <span className="text-foreground font-medium">{g.lider?.nome || g.lider_nome}</span>
+          Líder: <span className="text-foreground font-medium">{liderExibicao(g)}</span>
         </p>
       )}
       <div className="flex flex-wrap gap-x-2 gap-y-1 text-xs text-muted-foreground">
