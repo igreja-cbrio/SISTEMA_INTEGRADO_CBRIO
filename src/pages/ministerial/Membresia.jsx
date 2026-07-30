@@ -640,7 +640,7 @@ const VINC_TIPOS = {
 };
 
 // Vínculos familiares (grafo de parentesco) · "esta pessoa é filho/irmão de X".
-function VinculosFamiliares({ membroId, onAbrirPessoa }) {
+function VinculosFamiliares({ membroId, onAbrirPessoa, onFamiliaMudou }) {
   const [lista, setLista] = useState([]);
   const [aberto, setAberto] = useState(false);
   const [tipo, setTipo] = useState('filho');
@@ -668,9 +668,13 @@ function VinculosFamiliares({ membroId, onAbrirPessoa }) {
     if (!sel) return;
     setSalvando(true);
     try {
-      await membresia.vinculos.create(membroId, { relacionado_id: sel.id, tipo });
-      toast.success('Vínculo criado');
+      const r = await membresia.vinculos.create(membroId, { relacionado_id: sel.id, tipo });
+      const CLOSE = new Set(['pai_mae', 'filho', 'conjuge', 'irmao']);
+      if (r?.familia_unificada) toast.success('Vínculo criado — as duas pessoas agora estão na mesma família');
+      else if (CLOSE.has(tipo)) toast.success('Vínculo criado');
+      else toast.success('Vínculo criado (parentesco distante não junta a família)');
       setAberto(false); setSel(null); setQ(''); setTipo('filho'); carregar();
+      if (r?.familia_unificada) onFamiliaMudou?.();
     } catch (e) { toast.error(e?.message || 'Erro ao criar vínculo'); } finally { setSalvando(false); }
   }
   async function remover(id) {
@@ -703,6 +707,9 @@ function VinculosFamiliares({ membroId, onAbrirPessoa }) {
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>{Object.entries(VINC_TIPOS).map(([k, l]) => <SelectItem key={k} value={k}>{l}</SelectItem>)}</SelectContent>
           </Select>
+          <div style={{ fontSize: 11, color: C.text3, lineHeight: 1.4 }}>
+            Pai/mãe, filho(a), cônjuge ou irmão(ã) também colocam as duas pessoas na <b>mesma família</b> automaticamente.
+          </div>
           {sel ? (
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '8px 12px', background: 'var(--cbrio-card)', borderRadius: 8 }}>
               <span style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{sel.nome}</span>
@@ -1916,33 +1923,54 @@ export default function Membresia() {
                       {selectedMembro.familiares.map(f => {
                         const pOpt = PARENTESCO_OPTIONS[f.parentesco];
                         return (
-                          <button
+                          <div
                             key={f.id}
-                            type="button"
-                            onClick={() => openDetail(f.id)}
-                            style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', background: 'var(--cbrio-input-bg)', borderRadius: 10, border: 'none', cursor: 'pointer', textAlign: 'left', width: '100%', transition: 'background 0.15s' }}
+                            style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 4px 2px 0', background: 'var(--cbrio-input-bg)', borderRadius: 10, transition: 'background 0.15s' }}
                             onMouseEnter={e => e.currentTarget.style.background = C.primaryBg}
                             onMouseLeave={e => e.currentTarget.style.background = 'var(--cbrio-input-bg)'}
                           >
-                            <div style={{ width: 36, height: 36, borderRadius: '50%', background: C.primaryBg, color: C.primary, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, flexShrink: 0, overflow: 'hidden' }}>
-                              {f.foto_url ? (
-                                <img data-foto-avatar="" src={f.foto_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                              ) : (
-                                f.nome?.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()
-                              )}
-                            </div>
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <div style={{ fontSize: 14, fontWeight: 500, color: C.text }}>{f.nome}</div>
-                              {pOpt && (
-                                <div style={{ marginTop: 2 }}>
-                                  <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 8, color: pOpt.cor, background: pOpt.bg, fontWeight: 600 }}>
-                                    {pOpt.label}
-                                  </span>
-                                </div>
-                              )}
-                            </div>
-                            {f.status && <Badge status={f.status} />}
-                          </button>
+                            <button
+                              type="button"
+                              onClick={() => openDetail(f.id)}
+                              style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 4px 10px 14px', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', flex: 1, minWidth: 0 }}
+                            >
+                              <div style={{ width: 36, height: 36, borderRadius: '50%', background: C.primaryBg, color: C.primary, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, flexShrink: 0, overflow: 'hidden' }}>
+                                {f.foto_url ? (
+                                  <img data-foto-avatar="" src={f.foto_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                ) : (
+                                  f.nome?.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()
+                                )}
+                              </div>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontSize: 14, fontWeight: 500, color: C.text }}>{f.nome}</div>
+                                {pOpt && (
+                                  <div style={{ marginTop: 2 }}>
+                                    <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 8, color: pOpt.cor, background: pOpt.bg, fontWeight: 600 }}>
+                                      {pOpt.label}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                              {f.status && <Badge status={f.status} />}
+                            </button>
+                            {isDiretor && (
+                              <button
+                                type="button"
+                                title="Remover desta família"
+                                onClick={async () => {
+                                  if (!window.confirm(`Remover ${f.nome} desta família?\n\nA pessoa continua no sistema — só deixa de aparecer como familiar.`)) return;
+                                  try {
+                                    await membresia.familias.vincular(f.id, { familia_id: null });
+                                    toast.success(`${f.nome} removido(a) da família`);
+                                    openDetail(selectedMembro.id);
+                                  } catch (e) { toast.error(e?.message || 'Erro ao remover da família'); }
+                                }}
+                                style={{ flexShrink: 0, width: 30, height: 30, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: 'none', cursor: 'pointer', color: C.text3 }}
+                              >
+                                <X style={{ width: 15, height: 15 }} />
+                              </button>
+                            )}
+                          </div>
                         );
                       })}
                     </div>
@@ -1963,7 +1991,7 @@ export default function Membresia() {
                     </div>
                   )}
                   {isDiretor && (
-                    <VinculosFamiliares membroId={selectedMembro.id} onAbrirPessoa={openDetail} />
+                    <VinculosFamiliares membroId={selectedMembro.id} onAbrirPessoa={openDetail} onFamiliaMudou={() => openDetail(selectedMembro.id)} />
                   )}
                 </TabsContent>
 

@@ -3282,7 +3282,42 @@ router.post('/membros/:id/vinculos', authorize('admin', 'diretor'), async (req, 
       .insert({ pessoa_id: relacionado_id, relacionado_id: pessoa_id, tipo: VINC_INVERSO[tipo], par_id: a.id, created_by: req.user?.id || null })
       .select('id').single();
     if (b) await supabase.from('mem_vinculos_familiares').update({ par_id: b.id }).eq('id', a.id);
-    res.status(201).json({ ok: true, id: a.id });
+
+    // PONTE vínculo → família: parentesco PRÓXIMO (mesmo domicílio) já coloca os
+    // dois na mesma família. Conservador: se cada um já tem uma família DIFERENTE,
+    // não funde households (só cria o grafo); o usuário funde manualmente se quiser.
+    let familia_unificada = false;
+    const CLOSE = new Set(['pai_mae', 'filho', 'conjuge', 'irmao']);
+    if (CLOSE.has(tipo)) {
+      try {
+        const ultimoSobrenome = (n) => { const t = String(n || '').trim().split(/\s+/).filter(Boolean); return t.length ? t[t.length - 1] : ''; };
+        const [{ data: pA }, { data: pB }] = await Promise.all([
+          supabase.from('mem_membros').select('id, nome, familia_id').eq('id', pessoa_id).maybeSingle(),
+          supabase.from('mem_membros').select('id, nome, familia_id').eq('id', relacionado_id).maybeSingle(),
+        ]);
+        const fa = pA?.familia_id || null, fb = pB?.familia_id || null;
+        if (!(fa && fb && fa !== fb)) { // não funde 2 famílias distintas já existentes
+          let familiaId = fa || fb || null;
+          if (!familiaId) {
+            const sob = ultimoSobrenome(pA?.nome) || ultimoSobrenome(pB?.nome) || 'sem sobrenome';
+            const { data: fam } = await supabase.from('mem_familias').insert({ nome: `Família ${sob}` }).select('id').single();
+            familiaId = fam?.id || null;
+          }
+          if (familiaId) {
+            const semFamilia = [pessoa_id, relacionado_id].filter((pid) => (pid === pessoa_id ? fa : fb) !== familiaId);
+            if (semFamilia.length) await supabase.from('mem_membros').update({ familia_id: familiaId }).in('id', semFamilia);
+            familia_unificada = true;
+            // par não-duplicata (evita reaparecer na fila de duplicidades)
+            const [x, y] = [pessoa_id, relacionado_id].sort();
+            await supabase.from('mem_duplicados_ignorados').upsert(
+              { membro_a_id: x, membro_b_id: y, ignorado_por: req.user?.id || null, motivo: 'Vínculo familiar (mesma família)' },
+              { onConflict: 'membro_a_id,membro_b_id' }).then(() => {}, () => {});
+          }
+        }
+      } catch (e2) { console.warn('[membresia/vinculos] unificar família:', e2.message); }
+    }
+
+    res.status(201).json({ ok: true, id: a.id, familia_unificada });
   } catch (e) {
     console.error('[membresia/vinculos POST]', e.message);
     res.status(500).json({ error: 'Erro ao criar vínculo' });
