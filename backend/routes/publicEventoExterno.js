@@ -204,7 +204,9 @@ async function cobrarInscricao({ ev, inscricaoId, val, membroId }) {
   const { error } = await supabase.from('insc_pagamentos').insert({
     inscricao_id: inscricaoId,
     cobranca_id: cobranca.id,
-    metodo: cobranca.metodo || 'pix',   // a pessoa escolhe no checkout
+    // NULL = ainda não escolheu. Chutar 'pix' aqui era o que fazia a lista
+    // mostrar Pix pra todo mundo (a pessoa escolhe depois, na tela de pagamento).
+    metodo: cobranca.metodo || null,
     provider: 'psp',
     provider_ref: cobranca.provider_cobranca_id || null,
     valor_centavos: cobranca.valor_centavos,

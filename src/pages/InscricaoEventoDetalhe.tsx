@@ -376,6 +376,22 @@ export default function InscricaoEventoDetalhe() {
         </div>
       )}
 
+      {/* Por forma de pagamento — a versão agregada de "como cada um pagou".
+          Só conta quem PAGOU; isenta aparece separada porque não pagou nada. */}
+      {resumo && ev.pagamento_ativo && (Object.keys(resumo.por_metodo || {}).length > 0 || resumo.isentas > 0) && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground px-1">
+          <span className="font-medium text-foreground">Como pagaram:</span>
+          {Object.entries(resumo.por_metodo || {})
+            .sort((a: any, b: any) => b[1] - a[1])
+            .map(([m, n]: any) => (
+              <span key={m}>
+                {m === 'nao_informado' ? 'Forma não informada' : (METODO_LABEL[m] || m)} <b className="text-foreground">{n}</b>
+              </span>
+            ))}
+          {resumo.isentas > 0 && <span>Isentas <b className="text-primary">{resumo.isentas}</b></span>}
+        </div>
+      )}
+
       {/* Sorteio */}
       {(ev.tem_sorteio !== false) && (
         <Card className="glass-solid p-4">

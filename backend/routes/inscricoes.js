@@ -840,24 +840,52 @@ async function contadoresEvento(eventoId) {
   // Arrecadado = soma dos pagamentos PAGOS (a view resolve o estado canônico).
   // ⚠️ Isto é acompanhamento operacional, NÃO caixa: o caixa recebe 1 receita
   // por REPASSE do PSP em `fin_transacoes` (lei nº 6 do núcleo de pagamentos).
+  //
+  // O MESMO laço conta **por forma de pagamento** — é a resposta agregada pra
+  // "dá pra saber como cada pessoa pagou?". Custo zero: as linhas já vêm.
   let arrecadado_centavos = null;
+  let por_metodo = null;
   try {
     let soma = 0;
+    const formas = {};
     for (let off = 0; off < 20000; off += 1000) {
       const { data, error } = await supabase.from('vw_insc_pagamento_estado')
-        .select('valor_pago_centavos')
+        .select('valor_pago_centavos, metodo')
         .eq('evento_id', eventoId).eq('status_pagamento', 'pago')
         .range(off, off + 999);
       if (error) throw error;
-      for (const p of (data || [])) soma += Number(p.valor_pago_centavos || 0);
+      for (const p of (data || [])) {
+        soma += Number(p.valor_pago_centavos || 0);
+        // `metodo` nulo = pagou mas o provedor não disse como (não inventar).
+        const k = p.metodo || 'nao_informado';
+        formas[k] = (formas[k] || 0) + 1;
+      }
       if (!data || data.length < 1000) break;
     }
     arrecadado_centavos = soma;
+    por_metodo = formas;
   } catch (e) {
     console.error('[inscricoes] arrecadação indisponível:', e.message);
   }
 
-  return { inscritos, ativos: inscritos - canceladas, confirmadas, aguardando_pagamento: aguardando, canceladas, presentes, arrecadado_centavos };
+  // Isentas (bolsa integral) NÃO têm forma de pagamento — não pagaram. Contam
+  // separado pra soma "por forma + isentas" fechar com os confirmados.
+  let isentas = 0;
+  try {
+    isentas = await conta(supabase.from('inscricoes')
+      .select('id', { count: 'exact', head: true })
+      .eq('evento_id', eventoId).is('deleted_at', null)
+      .eq('bolsa_tipo', 'integral'));
+  } catch (e) {
+    // Coluna nova (migration 20260730170000): ambiente sem ela não quebra a tela.
+    console.error('[inscricoes] contagem de isentas indisponível:', e.message);
+  }
+
+  return {
+    inscritos, ativos: inscritos - canceladas, confirmadas,
+    aguardando_pagamento: aguardando, canceladas, presentes,
+    arrecadado_centavos, por_metodo, isentas,
+  };
 }
 
 // GET /eventos/:id/inscricoes — lista de inscritos (tela do sistema · completa).
@@ -996,7 +1024,7 @@ router.post('/eventos/:id/inscricoes/:inscricaoId/bolsa', authorizeModule('inscr
         };
         await supabase.from('insc_pagamentos').insert({
           inscricao_id: insc.id, cobranca_id: cobranca.id,
-          metodo: cobranca.metodo || 'pix', provider: 'psp',
+          metodo: cobranca.metodo || null, provider: 'psp',
           provider_ref: cobranca.provider_cobranca_id || null,
           valor_centavos: cobranca.valor_centavos, status: 'aguardando',
           qr_payload: cobranca.pix_payload || null, expira_em: cobranca.expira_em || null,

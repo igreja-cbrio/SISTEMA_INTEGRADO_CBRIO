@@ -47,6 +47,9 @@ async function espelhar(cobranca, extra = {}) {
     ...extra,
   };
   if (cobranca.pago_em) patch.pago_em = cobranca.pago_em;
+  // Propaga a FORMA escolhida. Sem isto o espelho guardava pra sempre o valor
+  // do momento da criação — quando a pessoa ainda não havia escolhido.
+  if (cobranca.metodo) patch.metodo = cobranca.metodo;
   const { error } = await supabase.from('insc_pagamentos')
     .update(patch).eq('cobranca_id', cobranca.id);
   if (error) console.error('[pagamentos/inscricao] espelho insc_pagamentos:', error.message);

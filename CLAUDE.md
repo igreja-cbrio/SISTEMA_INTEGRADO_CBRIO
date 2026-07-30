@@ -5180,6 +5180,50 @@ Motivo é obrigatório no CHECK do banco — conceder benefício sem dizer por q
 registro que ninguém defende seis meses depois. Na lista, isenta ganha selo
 **"isenta"** em vez de "aguardando pagamento" (não está aguardando nada).
 
+### ⚠️ Forma de pagamento por PESSOA · a view lia a coluna errada (2026-07-30 · migration `20260730180000`)
+
+Pergunta do Marcos: *"pelo sistema vou conseguir saber a forma de pagamento de
+cada pessoa?"* Ia responder "sim" — e estava **errado**: a tela mostrava **"Pix"
+pra todo mundo**.
+
+`vw_insc_pagamento_estado` resolve status, valor, `pago_em` e `expira_em` com
+`COALESCE(motor, espelho)` — **menos `metodo`**, que lia `ip.metodo` cru, só do
+espelho `insc_pagamentos`. E o espelho (a) nascia com `cobranca.metodo || 'pix'`
+(palpite gravado como fato, já que na criação a pessoa **ainda não escolheu**),
+(b) **nunca era atualizado** (`espelhar()` só tocava status/pago_em) e (c) não
+**podia** guardar a verdade: `NOT NULL CHECK (metodo IN ('pix','cartao'))` —
+**boleto não cabia** e "ainda não escolheu" não cabia. O método certo sempre
+existiu em `pag_cobrancas.metodo`; era só a LEITURA no lugar errado.
+
+- Migration: `metodo` do espelho vira **nullable** com CHECK no vocabulário
+  ÚNICO de `pag_cobrancas.metodo` / `pagamentos/tipos.js`
+  (pix|boleto|cartao|apple_pay|dinheiro|transferencia — nome real do CHECK
+  descoberto no catálogo antes de dropar) e a view passa a
+  `COALESCE(c.metodo, ip.metodo)`. **Sem backfill**: onde há cobrança o motor
+  responde; onde não há (pagamento manual) o espelho É a verdade.
+- Os 2 writers pararam de chutar (`cobranca.metodo || null`) e `espelhar()`
+  propaga a forma quando ela existe.
+- Herdaram o conserto de graça: badge da lista, CSV, e o agrupamento "por
+  pagamento" da lista impressa.
+- **Placar ganhou "Como pagaram"** — o MESMO laço que soma o arrecadado agora
+  conta por forma (custo zero), com **isentas separadas** (bolsa integral não
+  pagou nada, então não tem forma). `metodo` nulo aparece como "Forma não
+  informada" em vez de virar Pix.
+
+### 🎨 Personalização da fatura do Asaas (pesquisado em 30/07 · não é código)
+
+- **Dá pra marcar, não pra redesenhar**: a API `salvar-personalizacao-da-fatura`
+  aceita 4 campos (`logoFile`, `logoBackgroundColor`, `infoBackgroundColor`,
+  `fontColor`) e passa por **aprovação manual do Asaas** (algumas horas). A
+  estrutura da página é deles.
+- Conta de **associação** pode trocar "Cobrança" → "Doação" na fatura (Minha
+  conta → Personalização → Fatura).
+- ⚠️ **Cartão na nossa página está FORA, com fonte**: o Asaas **não oferece
+  tokenização client-side**, então o PAN passaria pelo nosso Express e a
+  aplicação precisaria de **SAQ-D**. É a lei nº 5 do núcleo, agora documentada.
+  Pix e boleto seguem nativos (QR e linha digitável não são dado sensível) e o
+  Asaas só aparece no cartão.
+
 ### ✅ Placar do evento + API do app do staff (2026-07-30 · SEM migration)
 
 - **`GET /inscricoes/eventos/:id/resumo`** → contadores por **COUNT no banco**
