@@ -449,3 +449,106 @@ describe('asaas · definirMetodo confirma a forma que VOLTOU', () => {
     expect(f).not.toHaveBeenCalled();
   });
 });
+
+describe('asaas · parcelamento é ESCOLHA da pessoa, não o teto do evento', () => {
+  // Regressão do bug de dinheiro de 30/07: `parcelas_max` (teto de configuração)
+  // era enviado como `installmentCount`, então TODA cobrança de um evento com
+  // teto 12 nascia como 12 × R$ 75 — o QR do Pix saía com R$ 75 enquanto a tela
+  // mostrava R$ 900, e o pagamento da 1ª parcela quitava a cobrança, confirmando
+  // a inscrição com 1/12 pago.
+  const comChave = () => {
+    vi.stubEnv('ASAAS_API_KEY', '$aact_hmlg_teste');
+    vi.stubEnv('VERCEL_ENV', 'preview');
+  };
+  const respostas = (lista: unknown[]) => {
+    const f = vi.fn();
+    for (const body of lista) {
+      f.mockResolvedValueOnce({
+        ok: true, status: 200, text: () => Promise.resolve(JSON.stringify(body)),
+      } as any);
+    }
+    return f;
+  };
+  const corpoDaChamada = (f: any, i: number) => JSON.parse(f.mock.calls[i][1].body);
+
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it('criarCobranca NUNCA manda installmentCount, mesmo com parcelas_max alto', async () => {
+    comChave();
+    const f = respostas([
+      { data: [{ id: 'cus_1' }] },                                  // busca cliente
+      { id: 'pay_1', invoiceUrl: 'https://asaas/i/x', value: 900 }, // POST /payments
+      { success: false },                                           // QR best-effort
+    ]);
+    vi.stubGlobal('fetch', f);
+
+    await A.criarCobranca({
+      valor_centavos: 90000, parcelas_max: 12, referencia: 'inscricao:abc',
+      pagador_nome: 'Maria', pagador_cpf: '39053344705', vencimento: '2026-08-01',
+    });
+
+    const corpo = corpoDaChamada(f, 1);
+    expect(corpo.installmentCount).toBeUndefined();
+    expect(corpo.totalValue).toBeUndefined();
+    // Valor CHEIO na cobrança: é o que o QR do Pix e a tela têm que mostrar.
+    expect(corpo.value).toBe(900);
+  });
+
+  it('definirMetodo parcela SÓ no cartão e com o número escolhido', async () => {
+    comChave();
+    const f = respostas([
+      { id: 'pay_1', billingType: 'UNDEFINED', dueDate: '2026-08-01', value: 900 },
+      { id: 'pay_1', billingType: 'CREDIT_CARD', installmentCount: 6, invoiceUrl: 'https://asaas/i/x' },
+    ]);
+    vi.stubGlobal('fetch', f);
+
+    const r = await A.definirMetodo(
+      { provider_cobranca_id: 'pay_1', valor_centavos: 90000 }, METODOS.CARTAO, { parcelas: 6 },
+    );
+    const put = corpoDaChamada(f, 1);
+    expect(put.installmentCount).toBe(6);
+    expect(put.totalValue).toBe(900);   // valor CHEIO; o Asaas divide
+    expect(put.value).toBeUndefined();  // `value` seria o valor da parcela
+    expect(r.parcelas).toBe(6);
+  });
+
+  it('Pix IGNORA parcelas — QR de uma parcela com a tela mostrando o total era o bug', async () => {
+    comChave();
+    const f = respostas([
+      { id: 'pay_1', billingType: 'UNDEFINED', dueDate: '2026-08-01', value: 900 },
+      { id: 'pay_1', billingType: 'PIX', value: 900 },
+      { success: true, payload: '00020126', encodedImage: 'iVBOR' },
+    ]);
+    vi.stubGlobal('fetch', f);
+
+    const r = await A.definirMetodo(
+      { provider_cobranca_id: 'pay_1', valor_centavos: 90000 }, METODOS.PIX, { parcelas: 12 },
+    );
+    const put = corpoDaChamada(f, 1);
+    expect(put.installmentCount).toBeNull();  // desfaz plano, não cria
+    expect(put.value).toBe(900);
+    expect(r.parcelas).toBe(1);
+  });
+
+  it('1ª parcela paga em PIX não quita a cobrança (só cartão quita)', () => {
+    // Sem esta guarda, uma cobrança parcelada paga por Pix marcava `statusFinal`
+    // PAGO na primeira parcela → inscrição confirmada com 1/N do valor.
+    const pix = A.normalizarEvento({
+      id: 'evt_1', event: 'PAYMENT_CONFIRMED',
+      payment: {
+        id: 'pay_p1', value: 75, netValue: 73, billingType: 'PIX', status: 'CONFIRMED',
+        installment: 'inst_1', installmentCount: 12, installmentNumber: 1,
+      },
+    });
+    expect(pix.quita_cobranca).toBe(false);
+
+    const cartao = A.normalizarEvento({
+      id: 'evt_2', event: 'PAYMENT_CONFIRMED',
+      payment: {
+        id: 'pay_c1', value: 75, netValue: 73, billingType: 'CREDIT_CARD', status: 'CONFIRMED',
+        installment: 'inst_1', installmentCount: 12, installmentNumber: 1,
+      },
+    });
+    expect(cartao.quita_cobranca).toBe(true);
+  });
+});

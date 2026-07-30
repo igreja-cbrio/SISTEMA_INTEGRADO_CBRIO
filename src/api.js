@@ -392,8 +392,10 @@ export const eventoPublico = {
   // A pessoa escolheu como pagar → o provedor PREPARA aquela forma e devolve o
   // artefato real (QR do Pix, linha do boleto, checkout do cartão). Em erro do
   // provedor o corpo traz `pagamento` com o estado atual, pra tela não regredir.
-  pagamentoMetodo: (token, metodo) => fetch(`${API}/public/evento/pagamento/${encodeURIComponent(token)}/metodo`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ metodo }),
+  // `parcelas` só faz efeito no cartão, e o SERVIDOR valida contra o teto do
+  // evento — o número da tela é pedido, não decisão.
+  pagamentoMetodo: (token, metodo, parcelas = 1) => fetch(`${API}/public/evento/pagamento/${encodeURIComponent(token)}/metodo`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ metodo, parcelas }),
   }).then(async r => {
     const j = await r.json();
     if (!r.ok) { const e = new Error(j.error || 'Erro'); e.pagamento = j.pagamento || null; throw e; }

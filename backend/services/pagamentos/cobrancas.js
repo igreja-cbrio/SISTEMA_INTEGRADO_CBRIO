@@ -204,7 +204,7 @@ async function pedirAoProvider(adapter, linha) {
  * Cobrança que já recebeu dinheiro (ou terminal) não troca de forma: o método
  * ali é fato consumado, e reescrevê-lo apagaria como o dinheiro entrou.
  */
-async function definirMetodo(cobrancaOuId, metodo) {
+async function definirMetodo(cobrancaOuId, metodo, opcoes = {}) {
   const c = typeof cobrancaOuId === 'string' ? await porId(cobrancaOuId) : cobrancaOuId;
   if (!c) throw new Error('Cobrança não encontrada');
   if (c.valor_pago_centavos > 0 || estaTerminal(c.status)) {
@@ -226,7 +226,7 @@ async function definirMetodo(cobrancaOuId, metodo) {
 
   let r;
   try {
-    r = await adapter.definirMetodo(c, metodo);
+    r = await adapter.definirMetodo(c, metodo, opcoes);
   } catch (e) {
     // Guarda o motivo e propaga: aqui a pessoa PEDIU esta forma, então engolir
     // o erro em silêncio a deixaria olhando uma aba vazia sem explicação.
@@ -240,6 +240,10 @@ async function definirMetodo(cobrancaOuId, metodo) {
     metodo: r.metodo || metodo,
     ultimo_erro: null,
   };
+  // Parcelas CONFIRMADAS pelo provedor (1 = à vista). Diferente dos artefatos
+  // abaixo, este campo é sobrescrito sempre: voltar de 6x pra 1x tem que
+  // aparecer, senão a tela e o comprovante seguem falando em 6 parcelas.
+  if (Number(r.parcelas) > 0) patch.parcelas_total = Number(r.parcelas);
   // Só sobrescreve artefato quando veio algo — trocar pra cartão não pode
   // apagar o QR do Pix que a pessoa talvez volte a usar.
   if (r.checkout_url) patch.checkout_url = r.checkout_url;

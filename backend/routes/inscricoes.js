@@ -1081,7 +1081,13 @@ router.post('/eventos/:id/inscricoes/:inscricaoId/bolsa', authorizeModule('inscr
           referencia: `inscricao:${insc.id}:bolsa:${Date.now()}`,
           valor_centavos: valorCobrado,
           descricao: `Inscrição (bolsa) · ${ev.nome}`,
-          metodos_ofertados: Array.isArray(ev.pagamento_metodos) ? ev.pagamento_metodos : [],
+          // ⚠️ Cruza com a capacidade do provider, igual à porta pública faz
+          // (`metodosDoEvento`). Passar `pagamento_metodos` cru ofertava boleto
+          // num PSP que não faz boleto: a aba aparecia na tela e a pessoa tomava
+          // 502 ao escolher.
+          metodos_ofertados: pagamentos.metodosDisponiveis(
+            Array.isArray(ev.pagamento_metodos) ? ev.pagamento_metodos : [],
+          ),
           parcelas_max: ev.parcelas_max || null,
           juros_repassados: ev.juros_repassados !== false,
           expira_em: new Date(Date.now() + horas * 3600000).toISOString(),

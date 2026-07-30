@@ -512,8 +512,21 @@ router.post('/pagamento/:token/metodo', async (req, res) => {
     }
     if (cobranca.status === 'pago') return res.json(await respostaPagamento(cobranca));
 
+    // Parcelas: teto validado NO SERVIDOR contra o do evento. Confiar no número
+    // que vem da tela deixaria alguém parcelar em 21x um retiro configurado
+    // para 3x — e o teto existe porque ele é a data em que a igreja paga o local.
+    // `parcelas_max` NULL = vale o teto da conta do PSP (decisão registrada), e
+    // não 1 — tratar NULL como 1x tiraria o parcelado de todo evento que não
+    // configurou teto.
+    const tetoEvento = Number(cobranca.parcelas_max) > 0
+      ? Number(cobranca.parcelas_max)
+      : (pagamentos.capacidades(cobranca.provider)?.parcelas_max || 1);
+    const pedidas = Math.floor(Number(req.body?.parcelas) || 1);
+    const parcelas = metodo === 'cartao' && pedidas > 1
+      ? Math.min(pedidas, tetoEvento) : 1;
+
     try {
-      const r = await pagamentos.definirMetodo(cobranca, metodo);
+      const r = await pagamentos.definirMetodo(cobranca, metodo, { parcelas });
       // `alterada: false` = a cobrança não aceita mais troca de forma (já tem
       // dinheiro dentro ou está terminal). Era um 200 SILENCIOSO: a aba mudava,
       // o servidor não, e a tela ficava mostrando duas verdades sem dizer nada.

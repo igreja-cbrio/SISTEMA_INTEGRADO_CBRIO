@@ -80,7 +80,11 @@ const ABERTOS = ['criada', 'aguardando_pagamento', 'pago_parcial'];
 const CSS_MOBILE = `
   .pgto-page { padding: 32px 16px; }
   .pgto-card { padding: 28px 22px; }
-  .pgto-qr { width: 200px; height: 200px; }
+  /* ⚠️ display+margin, não só o textAlign do pai: o preflight do Tailwind
+     (@tailwind base) faz \`img { display: block }\`, então a imagem deixa de ser
+     inline e o \`text-align: center\` do container NÃO a centraliza — ela encosta
+     na esquerda enquanto o texto ao redor fica centralizado. */
+  .pgto-qr { width: 200px; height: 200px; display: block; margin-inline: auto; }
   .pgto-acao { min-height: 48px; }
   @media (max-width: 560px) {
     .pgto-page { padding: 16px 10px; }
@@ -252,6 +256,10 @@ export default function PagamentoInscricao() {
   // Guarda O QUE foi copiado (Pix ou boleto), pra dar retorno no botão certo.
   const [copiado, setCopiado] = useState('');
   const [metodoSel, setMetodoSel] = useState<string | null>(null);
+  // Parcelas ESCOLHIDAS pela pessoa (1 = à vista). Antes o sistema mandava o
+  // TETO do evento como número de parcelas, o que criava um plano parcelado em
+  // toda cobrança e confirmava inscrição com 1/N pago.
+  const [parcelasSel, setParcelasSel] = useState(1);
   // Formas já PREPARADAS no provedor nesta sessão — pedir a mesma duas vezes é
   // desperdício (o artefato já está na resposta anterior).
   const preparados = useRef<Set<string>>(new Set());
@@ -286,14 +294,47 @@ export default function PagamentoInscricao() {
   // Polling enquanto está em aberto. Para sozinho quando resolve — e o backend
   // consulta o provedor quando a cobrança está parada há mais de 2 min, então
   // não dependemos do webhook chegar.
+  // ⚠️ Backoff progressivo, não 6s pra sempre. Uma aba esquecida aberta a 6s
+  // dava 10 requisições/min; no lançamento, com dezenas de pessoas esperando o
+  // Pix cair no WiFi da igreja (1 IP), isso saturava o limiter por IP e ainda
+  // batia na API key do provedor. O Pix cai em segundos — quem não pagou nos
+  // primeiros minutos não precisa de 6s de resolução.
+  const tentativas = useRef(0);
+  // ⚠️ Depende do STATUS, não do objeto `pag`: cada poll troca a referência de
+  // `pag`, o effect re-rodaria e o backoff seria zerado a cada volta — ficando
+  // em 6s pra sempre, que é exatamente o que estamos consertando.
+  const statusAberto = pag && ABERTOS.includes(pag.status) ? pag.status : null;
   useEffect(() => {
-    if (!pag || !ABERTOS.includes(pag.status)) return;
-    const iv = setInterval(() => carregar(), 6000);
-    // Voltar do checkout dispara uma consulta na hora, sem esperar o intervalo.
-    const aoVoltar = () => { if (document.visibilityState === 'visible') carregar(); };
+    if (!statusAberto) return;
+    tentativas.current = 0;
+    let vivo = true;
+    let timer: ReturnType<typeof setTimeout>;
+    const proximo = () => {
+      const n = tentativas.current;
+      // 6s nos 10 primeiros (1 min, cobre o Pix), depois 15s, 30s e teto de 60s.
+      const espera = n < 10 ? 6000 : n < 20 ? 15000 : n < 30 ? 30000 : 60000;
+      timer = setTimeout(async () => {
+        if (!vivo) return;
+        tentativas.current += 1;
+        await carregar();
+        if (vivo) proximo();
+      }, espera);
+    };
+    proximo();
+    // Voltar do checkout dispara uma consulta na hora e RESETA o backoff — é
+    // sinal de que a pessoa está ativa, e é o momento mais provável de ter pago.
+    const aoVoltar = () => {
+      if (document.visibilityState !== 'visible') return;
+      tentativas.current = 0;
+      carregar();
+    };
     document.addEventListener('visibilitychange', aoVoltar);
-    return () => { clearInterval(iv); document.removeEventListener('visibilitychange', aoVoltar); };
-  }, [pag, carregar]);
+    return () => {
+      vivo = false;
+      clearTimeout(timer);
+      document.removeEventListener('visibilitychange', aoVoltar);
+    };
+  }, [statusAberto, carregar]);
 
   useEffect(() => {
     if (!pag?.pix_payload) { setQr(null); return; }
@@ -344,14 +385,17 @@ export default function PagamentoInscricao() {
    * Sem isso a aba mostrava um caminho que a cobrança não tinha — foi o bug do
    * "só aparece boleto" do 1º teste em sandbox.
    */
-  const escolherMetodo = useCallback(async (m: string) => {
+  const escolherMetodo = useCallback(async (m: string, parcelas = 1) => {
     setMetodoSel(m);
     setErroMetodo('');
-    if (preparados.current.has(m)) return;
+    // Trocar o número de parcelas exige preparar de novo no provedor (é ele que
+    // divide o valor), então a chave do cache inclui as parcelas.
+    const chave = m === 'cartao' ? `${m}:${parcelas}` : m;
+    if (preparados.current.has(chave)) return;
     setPreparando(m);
     try {
-      const r = await eventoPublico.pagamentoMetodo(token, m);
-      preparados.current.add(m);
+      const r = await eventoPublico.pagamentoMetodo(token, m, parcelas);
+      preparados.current.add(chave);
       setFalhas(f => { const { [m]: _fora, ...resto } = f; return resto; });
       setPag(r);
     } catch (e: any) {
@@ -373,14 +417,36 @@ export default function PagamentoInscricao() {
     }
   }, [token]);
 
-  // Pré-seleciona a primeira forma (Pix, quando há) e já a prepara. Só uma vez —
-  // se a pessoa trocou de aba, o polling não deve arrastá-la de volta.
+  // Pré-seleciona a forma que o servidor JÁ confirmou; só cai na primeira da lista
+  // (Pix) quando a cobrança ainda não tem forma. Uma vez só — se a pessoa trocou de
+  // aba, o polling não deve arrastá-la de volta.
   const preSelecionou = useRef(false);
   useEffect(() => {
     if (preSelecionou.current || metodoSel || !metodos.length || !emAberto) return;
     preSelecionou.current = true;
-    escolherMetodo(metodos[0]);
-  }, [metodos, metodoSel, emAberto, escolherMetodo]);
+
+    /**
+     * ⚠️ A forma da cobrança muda SÓ quando a pessoa troca — nunca no
+     * carregamento. Antes daqui, todo load pré-selecionava `metodos[0]` (Pix) e
+     * chamava `escolherMetodo`, que faz `POST /metodo` e REESCREVE a forma no
+     * provedor: quem escolhia cartão em 6x, saía pra pagar e voltava pra conferir
+     * tinha a cobrança convertida em Pix — e o `installmentCount: null` que
+     * Pix/boleto mandam desfazia o parcelamento. Na tela isso aparecia como aba
+     * "Pix" com QR sobre um campo FORMA dizendo "cartao": duas verdades juntas.
+     */
+    const jaEscolhida = pag?.metodo && metodos.includes(pag.metodo) ? pag.metodo : null;
+    if (jaEscolhida) {
+      const parcelas = jaEscolhida === 'cartao' ? (pag?.parcelas || 1) : 1;
+      // Sem isto o seletor exibiria "1x" numa cobrança que está em 6x.
+      if (jaEscolhida === 'cartao') setParcelasSel(parcelas);
+      // Já está preparada no provedor (o artefato veio no payload), então semear o
+      // cache com a MESMA chave do `escolherMetodo` evita um POST redundante.
+      preparados.current.add(jaEscolhida === 'cartao' ? `${jaEscolhida}:${parcelas}` : jaEscolhida);
+      setMetodoSel(jaEscolhida);
+      return;
+    }
+    escolherMetodo(metodos[0], 1);
+  }, [metodos, metodoSel, emAberto, escolherMetodo, pag]);
 
   return (
     <div className="pgto-page" style={{ minHeight: '100dvh', background: C.pageBg, color: C.text, display: 'flex' }}>
@@ -456,7 +522,7 @@ export default function PagamentoInscricao() {
                 {metodos.length > 1 && (
                   <div style={{ display: 'flex', gap: 6, marginTop: 16 }}>
                     {metodos.map(m => (
-                      <button key={m} onClick={() => escolherMetodo(m)} disabled={!!preparando}
+                      <button key={m} onClick={() => escolherMetodo(m, m === 'cartao' ? parcelasSel : 1)} disabled={!!preparando}
                         // Forma já recusada fica marcada: sem isso a pessoa tenta
                         // a mesma aba de novo sem saber que ela não funciona aqui.
                         title={falhas[m] || undefined}
@@ -538,7 +604,7 @@ export default function PagamentoInscricao() {
                   ) : (
                     <>
                       <p style={{ fontSize: 13, color: C.text2, marginTop: 14 }}>
-                        Você conclui o Pix no ambiente do Asaas, que processa o pagamento da igreja.
+                        Você conclui o Pix no ambiente do provedor de pagamento da igreja.
                       </p>
                       {pag.checkout_url && (
                         <a href={pag.checkout_url} style={{ textDecoration: 'none' }}>
@@ -557,11 +623,47 @@ export default function PagamentoInscricao() {
 
                 {metodoSel === 'cartao' && !falhas.cartao && (
                   <>
+                    {/* Seletor de parcelas: é a PESSOA que escolhe, e o número
+                        escolhido é o que vai pro provedor. O teto vem do evento
+                        (definido por quando a igreja paga o local). */}
+                    {pag.parcelas_max && pag.parcelas_max > 1 && (
+                      <div style={{ marginTop: 14 }}>
+                        <label htmlFor="pgto-parcelas" style={{ fontSize: 12.5, color: C.text3, display: 'block', marginBottom: 6 }}>
+                          Em quantas vezes?
+                        </label>
+                        <select
+                          id="pgto-parcelas"
+                          value={parcelasSel}
+                          disabled={!!preparando}
+                          onChange={(e) => {
+                            const n = Number(e.target.value);
+                            setParcelasSel(n);
+                            escolherMetodo('cartao', n);
+                          }}
+                          style={{
+                            width: '100%', minHeight: 48, padding: '10px 12px', borderRadius: 10,
+                            border: `1px solid ${C.inputBorder}`, background: C.optionBg || 'transparent',
+                            color: C.text, fontSize: 16,
+                          }}
+                        >
+                          {Array.from({ length: Math.min(pag.parcelas_max, 12) }, (_, i) => i + 1).map(n => (
+                            <option key={n} value={n}>
+                              {n === 1
+                                ? `À vista — ${brl(pag.valor_centavos)}`
+                                : `${n}x de ${brl(Math.round(pag.valor_centavos / n))}`}
+                            </option>
+                          ))}
+                        </select>
+                        {parcelasSel > 1 && (
+                          <p style={{ fontSize: 11.5, color: C.textDim, marginTop: 6 }}>
+                            Total {brl(pag.valor_centavos)}. Juros do parcelamento, quando houver,
+                            aparecem na tela do provedor antes de você confirmar.
+                          </p>
+                        )}
+                      </div>
+                    )}
                     <p style={{ fontSize: 13, color: C.text2, marginTop: 14 }}>
-                      Você digita os dados do cartão no ambiente seguro do Asaas.
-                      {pag.parcelas_max && pag.parcelas_max > 1
-                        ? ` Dá para parcelar em até ${pag.parcelas_max}x.`
-                        : ''}
+                      Você digita os dados do cartão no ambiente seguro do provedor de pagamento.
                     </p>
                     <p style={{ fontSize: 12, color: C.textDim, marginTop: 6 }}>
                       A igreja não recebe nem guarda o número do seu cartão.
