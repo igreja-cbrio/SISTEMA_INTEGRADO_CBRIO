@@ -246,6 +246,16 @@ export const propostas = {
     atualizarCriterio: (id, data) => put(`/propostas/config/criterios/${id}`, data),
     removerCriterio: (id) => del(`/propostas/config/criterios/${id}`),
   },
+  aux: () => get('/propostas/aux'),
+  list: (params) => get('/propostas' + (params ? '?' + new URLSearchParams(params) : '')),
+  get: (id) => get(`/propostas/${id}`),
+  criar: (data) => post('/propostas', data),
+  atualizar: (id, data) => put(`/propostas/${id}`, data),
+  transicao: (id, acao, comentario) => post(`/propostas/${id}/transicao`, { acao, comentario }),
+  historico: (id) => get(`/propostas/${id}/historico`),
+  remover: (id) => del(`/propostas/${id}`),
+  uploadAnexo: (id, file) => { const fd = new FormData(); fd.append('file', file); return requestFile(`/propostas/${id}/anexos`, fd); },
+  removerAnexo: (anexoId) => del(`/propostas/anexos/${anexoId}`),
 };
 
 export const projects = {
