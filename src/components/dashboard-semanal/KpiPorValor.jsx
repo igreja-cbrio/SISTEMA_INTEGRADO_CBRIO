@@ -25,34 +25,47 @@ const AREAS_ORDEM = ['sede', 'kids', 'ami', 'bridge', 'online', 'cba'];
 const corPct = (p) => (p == null ? '#9ca3af' : p >= 100 ? '#10b981' : p >= 90 ? '#f59e0b' : '#ef4444');
 const RITUAL_SEMANA = { 1: 'planejamento / OKR', 2: 'DRE (financeiro)', 3: 'revisão de KPIs', 4: 'ciclo de conexão', 5: 'ciclo de conexão' };
 
-function CabecalhoSemana() {
+function CabecalhoSemana({ ano }) {
   const hoje = new Date();
   const semanaMes = Math.ceil(hoje.getDate() / 7);
   const ciclo = hoje.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
   return (
     <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm">
       <CalendarDays className="h-4 w-4 text-primary" />
-      <span className="font-medium capitalize">{ciclo}</span>
-      <span className="text-muted-foreground">· {semanaMes}ª semana{semanaMes === 3 ? ' · semana de KPIs (diretoria)' : ` · foco: ${RITUAL_SEMANA[semanaMes] || ''}`}</span>
+      {ano ? (
+        <>
+          <span className="font-medium">Ano {ano}</span>
+          <span className="text-muted-foreground">· desempenho médio dos KPIs no ano (gráficos e valores)</span>
+        </>
+      ) : (
+        <>
+          <span className="font-medium capitalize">{ciclo}</span>
+          <span className="text-muted-foreground">· {semanaMes}ª semana{semanaMes === 3 ? ' · semana de KPIs (diretoria)' : ` · foco: ${RITUAL_SEMANA[semanaMes] || ''}`}</span>
+        </>
+      )}
     </div>
   );
 }
 
+const ANO_ATUAL = new Date().getFullYear();
+const ANOS = [ANO_ATUAL, ANO_ATUAL - 1, ANO_ATUAL - 2, ANO_ATUAL - 3];
+
 export default function KpiPorValor() {
   const [valorSel, setValorSel] = useState('seguir');
   const [meses, setMeses] = useState(12);
+  const [ano, setAno] = useState(null); // null = janela móvel; senão filtra o ano
   const [kpiSel, setKpiSel] = useState(null);
 
   const { data, isLoading } = useQuery({
-    queryKey: ['kpi-objetivos', meses],
-    queryFn: () => gov.kpiObjetivos(meses),
+    queryKey: ['kpi-objetivos', ano || `m${meses}`],
+    queryFn: () => gov.kpiObjetivos(meses, ano),
     staleTime: 60_000,
   });
   const objetivos = (data?.objetivos || []).filter(o => Array.isArray(o.valores) && o.valores.includes(valorSel));
 
   return (
     <div className="space-y-4">
-      <CabecalhoSemana />
+      <CabecalhoSemana ano={ano} />
 
       {/* Chips de valor */}
       <div className="flex flex-wrap gap-2">
@@ -67,11 +80,18 @@ export default function KpiPorValor() {
             </button>
           );
         })}
-        <div className="ml-auto flex items-center gap-1">
+        <div className="ml-auto flex items-center gap-1 flex-wrap justify-end">
           {PERIODOS.map(p => (
-            <button key={p.m} onClick={() => setMeses(p.m)}
-              className={`rounded-md px-2.5 py-1 text-xs font-medium ${meses === p.m ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted'}`}>
+            <button key={p.m} onClick={() => { setAno(null); setMeses(p.m); }}
+              className={`rounded-md px-2.5 py-1 text-xs font-medium ${!ano && meses === p.m ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted'}`}>
               {p.l}
+            </button>
+          ))}
+          <span className="mx-1 h-4 w-px bg-border" />
+          {ANOS.map(a => (
+            <button key={a} onClick={() => setAno(ano === a ? null : a)}
+              className={`rounded-md px-2.5 py-1 text-xs font-medium ${ano === a ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted'}`}>
+              {a}
             </button>
           ))}
         </div>

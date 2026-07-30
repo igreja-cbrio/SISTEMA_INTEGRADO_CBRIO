@@ -937,6 +937,9 @@ router.get('/kpi-objetivos', rd, async (req, res) => {
   try {
     // Até 60 meses: o comparativo de 5 anos da reunião de KPI agrega por ano.
     const meses = Math.max(3, Math.min(60, Number(req.query.meses) || 12));
+    // Modo ANO: filtra a série (jan–dez) E os valores/gauge para o desempenho
+    // daquele ano (média do % vs meta no ano), em vez do estado atual.
+    const ano = /^\d{4}$/.test(String(req.query.ano || '')) ? String(req.query.ano) : null;
 
     const [objRes, taticos] = await Promise.all([
       supabase.from('kpi_objetivos_gerais')
@@ -961,8 +964,12 @@ router.get('/kpi-objetivos', rd, async (req, res) => {
       if (t.meta_periodo != null && Number(t.meta_periodo) > 0) metaPorKpi[t.kpi_id] = Number(t.meta_periodo);
     }
     const idsComMeta = Object.keys(metaPorKpi);
-    const mesInicio = new Date(); mesInicio.setUTCMonth(mesInicio.getUTCMonth() - (meses - 1));
-    const mesInicioStr = mesInicio.toISOString().slice(0, 7);
+    // Janela: no modo ANO é jan–dez do ano; senão os últimos N meses até hoje.
+    const mesInicioStr = ano ? `${ano}-01` : (() => {
+      const d = new Date(); d.setUTCMonth(d.getUTCMonth() - (meses - 1));
+      return d.toISOString().slice(0, 7);
+    })();
+    const mesFimStr = ano ? `${ano}-12` : null;
 
     // valores por kpi × mês (média quando há várias semanas no mês)
     const buckets = {}; // `${kpi}|${mes}` -> number[]
@@ -970,44 +977,61 @@ router.get('/kpi-objetivos', rd, async (req, res) => {
       if (valor == null || metaPorKpi[kpi] == null) return;
       const mes = periodoParaMes(periodo);
       if (!mes || mes < mesInicioStr) return;
+      if (mesFimStr && mes > mesFimStr) return;
       (buckets[`${kpi}|${mes}`] ||= []).push(Number(valor));
     };
     if (idsComMeta.length) {
       // Corte por ano é seguro pra todos os formatos de período ('YYYY-MM',
       // 'YYYY-Wnn', 'YYYY-Qn'…): comparação lexicográfica com o prefixo do ano.
-      const anoCorte = mesInicioStr.slice(0, 4);
+      // No modo ANO limita [ano, ano+1); senão a partir do ano de início.
+      const gteCorte = ano ? ano : mesInicioStr.slice(0, 4);
+      const ltCorte = ano ? String(Number(ano) + 1) : null;
+      const aplicarCorte = (q) => { let x = q.gte('periodo_referencia', gteCorte); return ltCorte ? x.lt('periodo_referencia', ltCorte) : x; };
       const [calc, regs] = await Promise.all([
         fetchPaged('kpi_valores_calculados', 'kpi_id, periodo_referencia, valor_calculado',
-          (q) => q.in('kpi_id', idsComMeta).gt('valor_calculado', 0).gte('periodo_referencia', anoCorte)),
+          (q) => aplicarCorte(q.in('kpi_id', idsComMeta).gt('valor_calculado', 0))),
         fetchPaged('kpi_registros', 'indicador_id, periodo_referencia, valor_realizado',
-          (q) => q.in('indicador_id', idsComMeta).gt('valor_realizado', 0).gte('periodo_referencia', anoCorte)),
+          (q) => aplicarCorte(q.in('indicador_id', idsComMeta).gt('valor_realizado', 0))),
       ]);
       // Calculados têm precedência (mesma regra da view) · registros cobrem os manuais.
       const temCalc = new Set(calc.map(c => c.kpi_id));
       for (const c of calc) addBucket(c.kpi_id, c.periodo_referencia, c.valor_calculado);
       for (const r of regs) if (!temCalc.has(r.indicador_id)) addBucket(r.indicador_id, r.periodo_referencia, r.valor_realizado);
     }
-    // % do kpi no mês → média por objetivo no mês
+    // % do kpi no mês → média por objetivo no mês. Também guarda o % do kpi no
+    // ANO (média dos meses) pra alimentar gauge/áreas no modo ano.
     const serieObj = {}; // objetivoId -> { mes -> number[] }
+    const kpiPctsAno = {}; // kpi -> number[] (% mensais no ano)
     for (const [chave, vals] of Object.entries(buckets)) {
       const [kpi, mes] = chave.split('|');
       const media = vals.reduce((a, b) => a + b, 0) / vals.length;
       const pct = Math.round((media / metaPorKpi[kpi]) * 1000) / 10;
       const obj = objPorKpi[kpi];
       ((serieObj[obj] ||= {})[mes] ||= []).push(pct);
+      (kpiPctsAno[kpi] ||= []).push(pct);
     }
+    const kpiAnoPct = {}; // kpi -> % médio no ano
+    for (const [kpi, ps] of Object.entries(kpiPctsAno)) kpiAnoPct[kpi] = avg(ps);
 
     const resposta = objetivos.map(o => {
       const ts = porObjetivo[o.id] || [];
-      const medidos = ts.filter(t => t.ultimo_valor != null);
-      const pcts = ts.map(t => t.percentual_meta).filter(v => v != null).map(Number);
+      // No modo ANO, "medido" = tem dado no ano; % = desempenho no ano. Senão, estado atual.
+      const medidos = ano ? ts.filter(t => kpiAnoPct[t.kpi_id] != null) : ts.filter(t => t.ultimo_valor != null);
+      const pcts = ano
+        ? ts.map(t => kpiAnoPct[t.kpi_id]).filter(v => v != null)
+        : ts.map(t => t.percentual_meta).filter(v => v != null).map(Number);
       const porArea = {};
       for (const t of ts) {
         const a = t.area || 'sem_area';
         (porArea[a] ||= { pcts: [], medidos: 0, total: 0 });
         porArea[a].total++;
-        if (t.ultimo_valor != null) porArea[a].medidos++;
-        if (t.percentual_meta != null) porArea[a].pcts.push(Number(t.percentual_meta));
+        const pctAno = kpiAnoPct[t.kpi_id];
+        if (ano) {
+          if (pctAno != null) { porArea[a].medidos++; porArea[a].pcts.push(pctAno); }
+        } else {
+          if (t.ultimo_valor != null) porArea[a].medidos++;
+          if (t.percentual_meta != null) porArea[a].pcts.push(Number(t.percentual_meta));
+        }
       }
       const areas = {};
       for (const [a, v] of Object.entries(porArea)) areas[a] = { pct: avg(v.pcts), medidos: v.medidos, total: v.total };
