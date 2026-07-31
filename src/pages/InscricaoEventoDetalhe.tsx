@@ -213,12 +213,13 @@ export default function InscricaoEventoDetalhe() {
     const campos = (ev.campos || []) as any[];
     const esc = (v: any) => `"${String(v ?? '').replaceAll('"', '""')}"`;
     const header = [
-      'Nome completo', 'WhatsApp', 'E-mail', 'Nascimento', 'Idade', 'Faixa', 'Sexo',
+      // Primeira coluna: é por ele que a pessoa se identifica no atendimento.
+      'Código', 'Nome completo', 'WhatsApp', 'E-mail', 'Nascimento', 'Idade', 'Faixa', 'Sexo',
       'Pagamento', 'Forma', 'Nº da sorte', 'Status', 'Inscrição em',
       ...campos.map((c: any) => c.label),
     ];
     const linhas = (ev.inscritos || []).map((i: any) => [
-      i.nome_completo, i.telefone || '', i.email || '',
+      i.codigo || '', i.nome_completo, i.telefone || '', i.email || '',
       i.data_nascimento ? new Date(`${i.data_nascimento}T00:00:00`).toLocaleDateString('pt-BR') : '',
       idadeEmAnos(i.data_nascimento) ?? '',
       i.data_nascimento ? faixaLabel(i.data_nascimento, true) : '',
@@ -525,6 +526,13 @@ export default function InscricaoEventoDetalhe() {
                         </span>
                       )}
                       <span className="font-semibold text-sm truncate">{i.nome_completo}</span>
+                      {/* Código da inscrição: é o que a pessoa dita no telefone.
+                          Some em linha antiga sem código (backend em deploy). */}
+                      {i.codigo && (
+                        <span className="text-[11px] font-mono text-muted-foreground shrink-0" title="Código da inscrição">
+                          {i.codigo}
+                        </span>
+                      )}
                       {cancelada && <span className="rounded-full bg-red-500/10 text-red-600 text-[11px] font-medium px-2 py-0.5 shrink-0">cancelada</span>}
                       {i.telefone && (
                         <a href={`https://wa.me/55${tel}`} target="_blank" rel="noreferrer"
