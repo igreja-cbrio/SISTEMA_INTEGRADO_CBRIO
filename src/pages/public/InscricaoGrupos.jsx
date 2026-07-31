@@ -29,8 +29,9 @@ import { gruposPublic } from '../../api';
 import AnimatedBackground from './AnimatedBackground';
 import { usePublicTheme, PublicThemeToggle, PublicPaletteCtx, usePublicPalette } from './publicTheme';
 import GrupoSelector from '../../components/grupos/GrupoSelector';
+import DescricaoGrupo from '../../components/grupos/DescricaoGrupo';
 import { BirthDatePicker } from '../../components/ui/birth-date-picker';
-import { CheckCircle2, ArrowLeft, Users, Camera, X, HelpCircle, User, CalendarClock, Heart } from 'lucide-react';
+import { CheckCircle2, ArrowLeft, Users, Camera, X, HelpCircle, User, CalendarClock, Heart, Info } from 'lucide-react';
 // Contrato de Inscrição (F3.1 · porta 7 · docs/modulo-inscricoes/): validadores
 // da fonte única — só os que não colidem com os helpers locais deste form.
 import { nomeCompletoValido, temAbreviacaoNome, validarNascimento } from '../../lib/inscricao';
@@ -676,6 +677,22 @@ export default function InscricaoGrupos() {
                       <CalendarClock size={14} style={{ color: '#00B39D', flexShrink: 0 }} />
                       <strong style={{ color: C.text, fontWeight: 600 }}>{formatarQuando(grupoEscolhido)}</strong>
                     </span>
+                  )}
+                  {/* Do que o grupo trata — pedido do Marcos (31/07). Vem depois
+                      de líder/quando porque é leitura, não conferência. */}
+                  {(grupoEscolhido.descricao || '').trim() && (
+                    <div style={{
+                      display: 'flex', gap: 7, alignItems: 'flex-start', minWidth: 0,
+                      paddingTop: 4,
+                      borderTop: `1px solid ${C.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'}`,
+                    }}>
+                      <Info size={14} style={{ color: '#00B39D', flexShrink: 0, marginTop: 2 }} />
+                      <DescricaoGrupo
+                        texto={grupoEscolhido.descricao}
+                        cor={C.text3}
+                        linhas={3}
+                      />
+                    </div>
                   )}
                 </div>
               )}

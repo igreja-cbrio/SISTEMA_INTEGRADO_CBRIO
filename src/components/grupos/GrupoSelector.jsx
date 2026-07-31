@@ -23,6 +23,7 @@ import { grupos as authApi, gruposPublic } from '../../api';
 import { normalizarBusca, contemNormalizado, algumContemNormalizado } from '../../lib/busca';
 import { Input } from '../ui/input';
 import { Search, MapPin, Clock, User as UserIcon, Users, List as ListIcon, Map as MapIcon } from 'lucide-react';
+import DescricaoGrupo from './DescricaoGrupo';
 import { GruposMapView } from './GruposMapView';
 
 const C = {
@@ -399,6 +400,18 @@ function ResultsList({ grupos, loading, selectedGrupoId, onSelect, isMobile = fa
                 return null;
               })()}
             </div>
+            {/* Prévia do que o grupo trata — ajuda a ESCOLHER. Só 2 linhas e sem
+                botão de expandir: o cartão é um <button> (botão aninhado é HTML
+                inválido e o clique escolheria o grupo) e 87 cartões com o texto
+                inteiro tornariam a lista impossível de percorrer. O texto
+                completo abre na confirmação, depois de escolher. */}
+            <DescricaoGrupo
+              texto={g.descricao}
+              linhas={2}
+              expansivel={false}
+              fontSize={11.5}
+              cor={C.t3}
+            />
           </button>
         );
       })}
