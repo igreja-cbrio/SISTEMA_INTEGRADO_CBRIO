@@ -1229,6 +1229,12 @@ router.get('/pedidos/list', async (req, res) => {
     const montar = () => {
       let q = supabase.from('mem_grupo_pedidos')
         .select('*, mem_grupos(id, nome, codigo, bairro, lider_id, capacidade, aceitando_inscricoes, mem_membros!lider_id(id, nome))')
+        // deleted_at (31/07): a lista trazia pedidos soft-deletados (16 da limpeza
+        // de 17/07). Os cards de resumo da aba somam ESTA lista no cliente, entao
+        // "aprovados"/"recusados" contavam linha morta; e um PENDENTE apagado
+        // apareceria acionavel — aprovar devolveria 404 sem explicacao, porque
+        // aprovarPedidoCore filtra. /pedidos/resumo ja filtrava.
+        .is('deleted_at', null)
         .order('created_at', { ascending: false });
       if (status) q = q.eq('status', status);
       if (grupo_id) q = q.eq('grupo_id', grupo_id);
@@ -1381,13 +1387,13 @@ router.get('/pedidos/count', async (req, res) => {
     let mine = 0;
     if (ids.length) {
       const { count } = await supabase.from('mem_grupo_pedidos')
-        .select('id', { count: 'exact', head: true }).eq('status', 'pendente').in('grupo_id', ids);
+        .select('id', { count: 'exact', head: true }).eq('status', 'pendente').is('deleted_at', null).in('grupo_id', ids);
       mine = count || 0;
     }
     let total = mine;
     if (isAdmin) {
       const { count } = await supabase.from('mem_grupo_pedidos')
-        .select('id', { count: 'exact', head: true }).eq('status', 'pendente');
+        .select('id', { count: 'exact', head: true }).eq('status', 'pendente').is('deleted_at', null);
       total = count || 0;
     }
     // Candidaturas de líder/anfitrião aguardando a triagem (badge da caixa)
@@ -2624,11 +2630,31 @@ async function aprovarPedidoCore(pedidoId, user) {
         // F3 · WhatsApp de boas-vindas à pessoa aprovada (template
         // grupos_pedido_aprovado). Cobre aprovação logada E via link do
         // líder. Gated por WHATSAPP_ENABLED no whatsappService.
+        // ⚠️ Opt-in EFETIVO da pessoa (D4 · corrigido 31/07). Esta mensagem era
+        // a única do fluxo que não checava consentimento, e 3 pessoas reais que
+        // marcaram "não quero WhatsApp" receberam. Lê o membro promovido e, se
+        // não houver, o cadastro pendente do pedido — em vez de confiar numa
+        // variável de escopo anterior, que muda conforme o caminho da aprovação.
+        let optinPessoa = null;
+        try {
+          if (membroId) {
+            const { data: m } = await supabase.from('mem_membros')
+              .select('whatsapp_optin').eq('id', membroId).maybeSingle();
+            if (m) optinPessoa = m.whatsapp_optin === true;
+          }
+          if (optinPessoa === null && pedido.cadastro_pendente_id) {
+            const { data: c } = await supabase.from('mem_cadastros_pendentes')
+              .select('whatsapp_optin').eq('id', pedido.cadastro_pendente_id).maybeSingle();
+            if (c) optinPessoa = c.whatsapp_optin === true;
+          }
+        } catch (e) { console.error('[Pedido aprovar optin]', e.message); }
+
         await notificarPessoaAprovada({
           telefone: pedido.telefone,
           grupo,
           liderNome,
           liderTelefone,
+          optin: optinPessoa,
         });
       } catch (e) { console.error('[Pedido aprovar notify]', e.message); }
     })();

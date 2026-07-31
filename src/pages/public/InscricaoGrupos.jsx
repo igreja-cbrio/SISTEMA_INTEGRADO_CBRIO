@@ -34,7 +34,7 @@ import { BirthDatePicker } from '../../components/ui/birth-date-picker';
 import { CheckCircle2, ArrowLeft, Users, Camera, X, HelpCircle, User, CalendarClock, Heart, Info } from 'lucide-react';
 // Contrato de Inscrição (F3.1 · porta 7 · docs/modulo-inscricoes/): validadores
 // da fonte única — só os que não colidem com os helpers locais deste form.
-import { nomeCompletoValido, temAbreviacaoNome, validarNascimento } from '../../lib/inscricao';
+import { nomeCompletoValido, temAbreviacaoNome, validarNascimento, tirarCodigoPais } from '../../lib/inscricao';
 
 const TEXTO_CONSENTIMENTO = `Ao enviar este formulário, você autoriza a CBRio a utilizar seus dados pessoais para fins de comunicação com a igreja e participação em grupo de conexão, conforme a LGPD.`;
 // LGPD: o titular não consente sozinho pelo outro — ele DECLARA que o cônjuge
@@ -111,7 +111,8 @@ function mascaraCpf(v) {
   return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`;
 }
 function mascaraTelefone(v) {
-  const d = soDigitos(v).slice(0, 11);
+  // tirarCodigoPais antes de truncar — ver comentário em src/lib/inscricao.js
+  const d = tirarCodigoPais(soDigitos(v)).slice(0, 11);
   if (d.length <= 2) return `(${d}`;
   if (d.length <= 7) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
   if (d.length <= 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;

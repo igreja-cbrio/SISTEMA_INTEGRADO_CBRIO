@@ -2393,16 +2393,28 @@ export const familiaPublic = {
   },
 };
 
+// Erro da busca publica de grupos com mensagem PROPRIA. Antes era `return []`,
+// e ai qualquer falha (inclusive 429 do limite por IP no culto, quando a igreja
+// toda sai por um IP so) aparecia como "Nenhum grupo encontrado com esses
+// filtros" — a pessoa concluia que os grupos acabaram.
+function erroPublicoGrupos(r) {
+  const e = new Error(r.status === 429
+    ? 'Muitos acessos ao mesmo tempo. Aguarde alguns segundos e toque em tentar de novo.'
+    : 'Nao conseguimos carregar os grupos agora. Verifique a conexao e tente de novo.');
+  e.status = r.status;
+  return e;
+}
+
 export const gruposPublic = {
   temporadas: async () => {
     const r = await fetch(`${API}/public/grupos/temporadas`);
-    if (!r.ok) return [];
+    if (!r.ok) throw erroPublicoGrupos(r);
     return r.json();
   },
   buscar: async (params) => {
     const qs = params ? '?' + new URLSearchParams(params).toString() : '';
     const r = await fetch(`${API}/public/grupos/buscar${qs}`);
-    if (!r.ok) return [];
+    if (!r.ok) throw erroPublicoGrupos(r);
     return r.json();
   },
   getById: async (id) => {

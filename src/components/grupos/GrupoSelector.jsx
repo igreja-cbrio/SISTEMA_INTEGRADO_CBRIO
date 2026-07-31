@@ -89,6 +89,11 @@ export default function GrupoSelector({ onSelect, selectedGrupoId, mode = 'full'
   const [temporada, setTemporada] = useState(temporadaId || '');
   const [grupos, setGrupos] = useState([]);
   const [loading, setLoading] = useState(false);
+  // Falha de carga precisa ser VISIVEL: `catch -> setGrupos([])` mostrava
+  // "Nenhum grupo encontrado com esses filtros", e a pessoa concluia que os
+  // grupos acabaram (era o sintoma do 429 por IP no culto). 31/07.
+  const [erroCarga, setErroCarga] = useState(null);
+  const [tentativa, setTentativa] = useState(0);
 
   const [searchMode, setSearchMode] = useState('grupo'); // 'grupo' | 'lider'
   const [busca, setBusca] = useState('');
@@ -139,11 +144,12 @@ export default function GrupoSelector({ onSelect, selectedGrupoId, mode = 'full'
     // Trocar de temporada zera os filtros (as opções são data-driven da
     // temporada carregada — valor antigo poderia não existir na nova).
     setFCategoria(''); setFFaixa(''); setFBairro(''); setFDia(''); setFRecorrencia('');
+    setErroCarga(null);
     api.buscar({ temporada, status_temporada: 'ativo' })
-      .then(d => setGrupos(d || []))
-      .catch(() => setGrupos([]))
+      .then(d => { setGrupos(d || []); setErroCarga(null); })
+      .catch(e => { setGrupos([]); setErroCarga(e?.message || 'Nao conseguimos carregar os grupos agora.'); })
       .finally(() => setLoading(false));
-  }, [temporada]);
+  }, [temporada, tentativa]);
 
   // Opções de filtro derivadas do dado real (só aparecem quando existem →
   // nunca oferece um valor que não casa nada · sem filtro-fantasma)
@@ -310,7 +316,7 @@ export default function GrupoSelector({ onSelect, selectedGrupoId, mode = 'full'
           />
         </div>
       ) : (
-        <ResultsList grupos={filtrados} loading={loading} selectedGrupoId={selectedGrupoId} onSelect={onSelect} isMobile={isMobile} />
+        <ResultsList grupos={filtrados} loading={loading} selectedGrupoId={selectedGrupoId} onSelect={onSelect} isMobile={isMobile} erro={erroCarga} onTentarDeNovo={() => setTentativa(t => t + 1)} />
       )}
 
       {/* Botão FIXO de Inscrever — SÓ na visão LISTA (no mapa a ação vive no
@@ -346,8 +352,22 @@ export default function GrupoSelector({ onSelect, selectedGrupoId, mode = 'full'
   );
 }
 
-function ResultsList({ grupos, loading, selectedGrupoId, onSelect, isMobile = false }) {
+function ResultsList({ grupos, loading, selectedGrupoId, onSelect, isMobile = false, erro = null, onTentarDeNovo }) {
   if (loading) return <div style={{ padding: 24, textAlign: 'center', color: C.t3, fontSize: 13 }}>Carregando...</div>;
+  // Erro vem ANTES do vazio: falha de rede/limite nao pode se disfarcar de
+  // "nenhum grupo encontrado" (a pessoa desistiria achando que nao ha grupos).
+  if (erro) return (
+    <div style={{ padding: 20, textAlign: 'center', display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'center' }}>
+      <div style={{ fontSize: 13, color: C.text, lineHeight: 1.5, maxWidth: 340 }}>{erro}</div>
+      {onTentarDeNovo && (
+        <button type="button" onClick={onTentarDeNovo} style={{
+          padding: '10px 18px', borderRadius: 999, minHeight: 44, cursor: 'pointer',
+          border: `1px solid ${C.primary}`, background: C.primaryBg, color: C.primary,
+          fontSize: 13, fontWeight: 700,
+        }}>Tentar de novo</button>
+      )}
+    </div>
+  );
   if (!grupos.length) return <div style={{ padding: 24, textAlign: 'center', color: C.t3, fontSize: 13 }}>Nenhum grupo encontrado com esses filtros.</div>;
 
   return (

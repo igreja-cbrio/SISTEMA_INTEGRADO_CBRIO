@@ -88,6 +88,13 @@ function emailValido(v) {
 // Valida o bloco de campos padrão. Retorna { erros, valores } — erros vazio = ok.
 // opts existe SÓ para exceções documentadas (ex.: walk-in do totem não exige
 // nascimento); o default é o contrato pleno.
+// Espelho de tirarCodigoPais de src/lib/inscricao.js — mudou aqui, mude lá.
+function tirarCodigoPaisTelefone(digitos) {
+  const d = String(digitos || '');
+  if (d.length >= 12 && d.length <= 13 && d.startsWith('55')) return d.slice(2);
+  return d;
+}
+
 function validarCamposPadrao(body = {}, opts = {}) {
   const {
     exigirCpf = true, exigirEmail = true, exigirNascimento = true, exigirSexo = true,
@@ -101,7 +108,10 @@ function validarCamposPadrao(body = {}, opts = {}) {
     erros.nome_completo = 'Escreva o nome completo, sem abreviações.';
   }
 
-  const telefone = String(body.telefone || '').replace(/\D/g, '');
+  // Normaliza o código do país ANTES de medir: cliente antigo (bundle em cache)
+  // ou integração pode mandar com 55 na frente. Só remove quando o resto ainda
+  // é telefone completo — DDD 55 (Santa Maria/RS) precisa passar intacto.
+  const telefone = tirarCodigoPaisTelefone(String(body.telefone || '').replace(/\D/g, ''));
   if (telefone.length < 10 || telefone.length > 11) erros.telefone = 'Informe um telefone válido com DDD.';
 
   const cpf = normalizarCpf(body.cpf);
@@ -192,6 +202,7 @@ async function registrarConsentimentos({ porta, refId, membroId = null, ip = nul
 }
 
 module.exports = {
+  tirarCodigoPaisTelefone,
   SEXOS,
   TEXTOS,
   temAbreviacaoNome,

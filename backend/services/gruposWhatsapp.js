@@ -200,10 +200,19 @@ async function notificarLiderNovoPedido({ grupo, pedidoId, pessoa }) {
 
 // Template 2 · grupos_pedido_aprovado — boas-vindas à PESSOA aprovada.
 // {{1}} grupo · {{2}} dia/hora · {{3}} local · {{4}} líder · {{5}} tel do líder
-async function notificarPessoaAprovada({ telefone, grupo, liderNome, liderTelefone }) {
+// ⚠️ Gate de opt-in (D4 · corrigido 31/07): esta era a ÚNICA mensagem do fluxo
+// que NÃO checava o consentimento — e é a mais comum. Em produção 3 pessoas reais
+// que marcaram "não quero WhatsApp" receberam (Ester Lima, Michele Jeane, Douglas
+// Ferreira). O formulário promete o contrário, com estas palavras: "se você não
+// marcar, não conseguiremos te enviar confirmações, lembretes e avisos".
+// `optin` vem do chamador (aprovarPedidoCore lê o membro/cadastro); quando não
+// for informado, mantém o comportamento antigo pra não silenciar aviso de fluxo
+// que ainda não passa a informação.
+async function notificarPessoaAprovada({ telefone, grupo, liderNome, liderTelefone, optin }) {
   try {
     if (await bloqueioTotalAtivo()) return { sent: false, reason: 'bloqueio_total' };
     if (!telefone) return { sent: false, reason: 'pessoa_sem_telefone' };
+    if (optin === false) return { sent: false, reason: 'sem_optin' };
     const r = await enfileirar({
       telefone,
       template: TPL_PEDIDO_APROVADO,
