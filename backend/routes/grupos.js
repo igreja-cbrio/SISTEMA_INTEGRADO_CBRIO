@@ -1873,6 +1873,221 @@ router.post('/renovacao/:renId/triar', authorizeModule('grupos', 3), async (req,
 });
 
 // ─────────────────────────────────────────────────────────────
+// CONFIRA A LISTA DO SEU GRUPO (Marcos · 2026-07-31)
+// 3º fluxo do líder (irmão da renovação · SEM "vai continuar?" e SEM trava de
+// temporada aberta): a coordenação DISPARA MANUALMENTE (aba Envios) e o líder
+// responde pelo link público /g/c/<token> (publicGrupos.js) desmarcando quem
+// não faz mais parte. Aqui ficam o PAINEL DE TRIAGEM (quem respondeu, quantos
+// saíram, quem não respondeu) e o "marcar como tratada".
+// Rotas com 2 segmentos — não colidem com /:id.
+// ⚠️ Tudo tolera a migration 20260731120000 AUSENTE (503/aviso · nunca 500
+// opaco). Os fluxos existentes não leem essa tabela — não piscam sem ela.
+// ─────────────────────────────────────────────────────────────
+
+// GET /api/grupos/confira/painel?temporada=&status=
+// Painel de triagem: resumo + 1 linha por grupo (última rodada, líder, nº de
+// membros ativos, contadores da resposta).
+router.get('/confira/painel', authorizeModule('grupos', 1), async (req, res) => {
+  try {
+    let temporadaId = req.query.temporada || null;
+    if (!temporadaId) {
+      const { data: ativa } = await supabase.from('mem_temporadas')
+        .select('id').eq('ativa', true).maybeSingle();
+      temporadaId = ativa?.id || null;
+    }
+    if (!temporadaId) return res.status(404).json({ error: 'Nenhuma temporada ativa.' });
+    const { data: temporada } = await supabase.from('mem_temporadas')
+      .select('id, label, ativa, inscricoes_abertas').eq('id', temporadaId).maybeSingle();
+    if (!temporada) return res.status(404).json({ error: 'Temporada não encontrada.' });
+
+    // Universo = grupos ATIVOS da temporada (mesma seleção do disparo)
+    const { data: grupos } = await supabase.from('mem_grupos')
+      .select('id, nome, codigo, lider_id')
+      .eq('ativo', true).eq('temporada', temporadaId).is('deleted_at', null)
+      .limit(1000);
+    const grupoIds = (grupos || []).map(g => g.id);
+
+    // Última conferência por grupo (tolera tabela ausente)
+    let porGrupo = new Map();
+    if (grupoIds.length) {
+      try {
+        porGrupo = await gruposEnvios.ultimasConferencias(grupoIds);
+      } catch (e) {
+        if (gruposEnvios.schemaAusenteConf(e)) {
+          return res.json({
+            disponivel: false, aviso: gruposEnvios.AVISO_CONF_SEM_MIGRATION,
+            temporada, resumo: null, rows: [],
+          });
+        }
+        throw e;
+      }
+    }
+
+    // Líderes (nome/telefone) em lotes ≤200
+    const liderIds = [...new Set((grupos || []).map(g => g.lider_id).filter(Boolean))];
+    const lideres = new Map();
+    for (let i = 0; i < liderIds.length; i += 200) {
+      const { data: pagina } = await supabase.from('mem_membros')
+        .select('id, nome, telefone').in('id', liderIds.slice(i, i + 200)).is('deleted_at', null);
+      (pagina || []).forEach(l => lideres.set(l.id, l));
+    }
+
+    // Pessoas ativas por grupo (paginado — o total da base passa de 1000).
+    // ⚠️ Set de membro_id, não contador de LINHAS: é a MESMA régua do {{3}} do
+    // template e da tela do líder (participações × PESSOAS · CLAUDE.md 23/07).
+    // Contar vínculos aqui faria o painel discordar do que o líder viu.
+    const membrosPorGrupo = new Map();
+    for (let offset = 0; ; offset += 1000) {
+      const { data: pagina, error: eV } = await supabase.from('mem_grupo_membros')
+        .select('grupo_id, membro_id')
+        .is('saiu_em', null).is('deleted_at', null)
+        .order('id').range(offset, offset + 999);
+      if (eV) throw eV;
+      (pagina || []).forEach(v => {
+        if (!membrosPorGrupo.has(v.grupo_id)) membrosPorGrupo.set(v.grupo_id, new Set());
+        if (v.membro_id) membrosPorGrupo.get(v.grupo_id).add(v.membro_id);
+      });
+      if (!pagina || pagina.length < 1000) break;
+    }
+
+    const telefoneOk = (t) => String(t || '').replace(/\D/g, '').length >= 10;
+    let rows = (grupos || []).map(g => {
+      const c = porGrupo.get(g.id) || null;
+      const lider = g.lider_id ? (lideres.get(g.lider_id) || null) : null;
+      return {
+        grupo_id: g.id, grupo_nome: g.nome, grupo_codigo: g.codigo || null,
+        membros_ativos: membrosPorGrupo.get(g.id)?.size || 0,
+        lider_id: g.lider_id, lider_nome: lider?.nome || null, lider_telefone: lider?.telefone || null,
+        pode_receber: !!(g.lider_id && telefoneOk(lider?.telefone)),
+        conferencia: c ? {
+          id: c.id, rodada: c.rodada, status: c.status,
+          roster_total: c.roster_total, mantidos_count: c.mantidos_count,
+          removidos_count: c.removidos_count, observacao: c.observacao,
+          token_geracao: c.token_geracao, enviado_em: c.enviado_em,
+          ultima_resposta_em: c.ultima_resposta_em, triado_em: c.triado_em,
+        } : null,
+      };
+    });
+    if (req.query.status) {
+      rows = rows.filter(r => (r.conferencia?.status || 'nao_enviada') === req.query.status);
+    }
+    // Quem respondeu com remoção primeiro (é o que a coordenação precisa ver),
+    // depois sem resposta, depois o resto — grupo grande na frente.
+    rows.sort((a, b) => {
+      const peso = (r) => {
+        const s = r.conferencia?.status;
+        if (s === 'respondida' && (r.conferencia?.removidos_count || 0) > 0) return 0;
+        if (s === 'respondida') return 1;
+        if (s === 'enviada') return 2;
+        if (s === 'triada') return 4;
+        return 3; // nunca conferida
+      };
+      return peso(a) - peso(b) || b.membros_ativos - a.membros_ativos;
+    });
+
+    const dos = (s) => rows.filter(r => r.conferencia?.status === s).length;
+    res.json({
+      disponivel: true,
+      temporada,
+      whatsapp_ligado: whatsappConfigurado(),
+      resumo: {
+        grupos: rows.length,
+        podem_receber: rows.filter(r => r.pode_receber).length,
+        sem_lider: rows.filter(r => !r.lider_id).length,
+        lider_sem_telefone: rows.filter(r => r.lider_id && !r.pode_receber).length,
+        enviadas: rows.filter(r => r.conferencia).length,
+        sem_resposta: dos('enviada'),
+        responderam: dos('respondida'),
+        triadas: dos('triada'),
+        nunca_conferidos: rows.filter(r => !r.conferencia).length,
+        // Total de pessoas que os líderes tiraram da lista (leitura direta do
+        // que o fluxo entregou de valor).
+        removidos_total: rows.reduce((a, r) => a + (r.conferencia?.removidos_count || 0), 0),
+      },
+      rows,
+    });
+  } catch (e) {
+    console.error('[grupos confira painel]', e.message);
+    res.status(500).json({ error: 'Erro ao carregar o painel da conferência' });
+  }
+});
+
+// POST /api/grupos/confira/preview — body { audiencia, nova_rodada }
+// Prévia do disparo (contagem + exemplo + quem não recebe + quem é pulado).
+router.post('/confira/preview', authorizeModule('grupos', 3), async (req, res) => {
+  try {
+    const r = await gruposEnvios.previewConfira(req.body?.audiencia, { nova_rodada: !!req.body?.nova_rodada });
+    if (r?.sem_migration) return res.status(503).json({ error: r.erro });
+    if (r?.erro) return res.status(400).json({ error: r.erro });
+    res.json(r);
+  } catch (e) {
+    console.error('[grupos confira preview]', e.message);
+    res.status(500).json({ error: 'Erro ao gerar a prévia da conferência' });
+  }
+});
+
+// POST /api/grupos/confira/disparar — body { audiencia, nova_rodada }
+// Disparo MANUAL (nível 5 · operação em massa pro líder · boost de área dá 5
+// pra coordenação de Grupos). Reenvio manda só pra quem NÃO respondeu; grupo
+// que já respondeu só entra de novo com nova_rodada=true. 2 segmentos, como o
+// /renovacao/disparar — nunca colide com /:id.
+router.post('/confira/disparar', authorizeModule('grupos', 5), async (req, res) => {
+  try {
+    // Bloqueio geral vence tudo (garantia 100% · Marcos 2026-07-23).
+    if (await gruposEnviosConfig.bloqueioTotalAtivo()) {
+      return res.status(409).json({ error: 'Envios de grupos estão BLOQUEADOS (bloqueio geral ligado na aba Envios). Desligue pra poder disparar.' });
+    }
+    // Erro visível, não sucesso-zero (lição do conselho na renovação).
+    if (!whatsappConfigurado()) {
+      return res.status(409).json({ error: 'O envio de WhatsApp não está configurado no servidor — nada foi enviado.' });
+    }
+    const r = await gruposEnvios.dispararConfira(req.body?.audiencia, { nova_rodada: !!req.body?.nova_rodada });
+    if (r?.sem_migration) return res.status(503).json({ error: r.erro });
+    if (r?.erro) return res.status(409).json({ error: r.erro });
+    console.log('[grupos confira] disparo:', JSON.stringify({ enfileirados: r.enfileirados, destinatarios: r.destinatarios, pulados: r.pulados, erros: r.erros }));
+    res.json({ ok: true, ...r });
+  } catch (e) {
+    console.error('[grupos confira disparar]', e.message);
+    res.status(500).json({ error: 'Erro ao disparar a conferência da lista' });
+  }
+});
+
+// POST /api/grupos/confira/:confId/triar — body { obs }
+// A coordenação marca a conferência como TRATADA (sai da fila de pendências e
+// o link do líder morre). Nota curta obrigatória — triagem sem registro é
+// buraco de auditoria (mesma régua da renovação).
+router.post('/confira/:confId/triar', authorizeModule('grupos', 3), async (req, res) => {
+  try {
+    const obsLimpa = String(req.body?.obs || '').trim();
+    if (obsLimpa.length < 3) {
+      return res.status(400).json({ error: 'Escreva uma nota curta do que foi conferido.', campo: 'obs' });
+    }
+    const { data: conf, error: eSel } = await supabase.from('mem_grupo_conferencias')
+      .select('id, status').eq('id', req.params.confId).is('deleted_at', null).maybeSingle();
+    if (eSel) {
+      if (gruposEnvios.schemaAusenteConf(eSel)) return res.status(503).json({ error: gruposEnvios.AVISO_CONF_SEM_MIGRATION });
+      throw eSel;
+    }
+    if (!conf) return res.status(404).json({ error: 'Conferência não encontrada.' });
+    if (conf.status !== 'respondida') {
+      return res.status(409).json({ error: `Só conferências respondidas passam por triagem (esta está "${conf.status}").` });
+    }
+    const agora = new Date().toISOString();
+    const { error } = await supabase.from('mem_grupo_conferencias')
+      .update({
+        status: 'triada', triagem_obs: obsLimpa.slice(0, 2000),
+        triado_por: req.user.userId || null, triado_por_nome: req.user.name || null,
+        triado_em: agora, updated_at: agora,
+      }).eq('id', conf.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[grupos confira triar]', e.message);
+    res.status(500).json({ error: 'Erro ao registrar a triagem' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
 // CONSOLE DE ENVIOS (Marcos 2026-07-23) — "aba Envios" do /grupos.
 // Barreira central + disparo MANUAL da coordenação (frequência por líder/
 // bairro/rede/todos). Rotas de 2 segmentos — antes de /:id.

@@ -2119,6 +2119,311 @@ router.post('/grupo/renovacao', async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────
+// CONFIRA A LISTA DO SEU GRUPO (/g/c/<token> · sem login).
+// 3º fluxo do líder, irmão da renovação: SEM a pergunta "vai continuar?" e SEM
+// a trava de temporada aberta. O líder abre, vê a lista ATUAL do grupo — toda
+// marcada como "faz parte" — e DESMARCA quem não faz mais parte.
+//
+// Diferença de produto vs. renovação (decisão do Marcos · 2026-07-31): lá a
+// lista vem DESMARCADA (o líder confirma ativamente quem fica); aqui vem toda
+// MARCADA (o padrão esperado é "a lista está certa" e queremos atrito só em
+// quem sai). Remoção soft e rastreável por conferencia_id; reedição permitida
+// (última vence); observação ÚNICA e OPCIONAL pro lote; NUNCA remover por
+// omissão; a pessoa removida NÃO é notificada.
+//
+// Token 'conf' = { p: grupoId, c: conferenciaId, g: geração, l: liderId } ·
+// a validade REAL é decidida aqui a cada uso (não só o exp de 30d): geração ×
+// linha (reenvio mata link antigo), liderança atual e linha não triada.
+// ─────────────────────────────────────────────────────────────
+
+// ⚠️ A tabela/coluna nova é do fluxo NOVO. Se a migration 20260731120000 não
+// estiver aplicada, o PostgREST recusa a query inteira (lição `parcelas_max`) —
+// aqui isso vira 503 com aviso claro, NUNCA 500 opaco. Nenhum fluxo existente
+// toca essas colunas, então frequência/renovação não piscam sem a migration.
+const RE_SCHEMA_AUSENTE = /(does not exist|could not find|schema cache|42703|42P01|PGRST20[24])/i;
+function schemaAusente(e) {
+  return RE_SCHEMA_AUSENTE.test(`${e?.code || ''} ${e?.message || ''} ${e?.details || ''}`);
+}
+const AVISO_SEM_MIGRATION = 'A conferência da lista ainda não está disponível no servidor (migration pendente). Avise a coordenação.';
+
+async function contextoConferencia(token) {
+  const payload = verificarToken(token, 'conf');
+  if (!payload) return { erro: { status: 401, msg: 'Link inválido ou expirado.' } };
+  const { data: conf, error } = await supabase.from('mem_grupo_conferencias')
+    .select('*').eq('id', payload.c).is('deleted_at', null).maybeSingle();
+  if (error) throw error;
+  if (!conf || conf.grupo_id !== payload.p) return { erro: { status: 404, msg: 'Conferência não encontrada.' } };
+  if ((payload.g || 1) !== (conf.token_geracao || 1)) {
+    return { erro: { status: 403, msg: 'Este link foi substituído por um mais novo — abra o último que você recebeu no WhatsApp.' } };
+  }
+  const { data: grupo } = await supabase.from('mem_grupos')
+    .select('id, nome, lider_id, ativo').eq('id', conf.grupo_id).is('deleted_at', null).maybeSingle();
+  if (!grupo || !grupo.ativo) return { erro: { status: 404, msg: 'Grupo não encontrado ou já encerrado.' } };
+  if (!payload.l || grupo.lider_id !== payload.l) {
+    return { erro: { status: 403, msg: 'A liderança deste grupo mudou — este link não vale mais.' } };
+  }
+  if (conf.status === 'triada') {
+    return { erro: { status: 409, msg: 'A coordenação já tratou a conferência deste grupo. Se algo mudou, fale direto com ela.' } };
+  }
+  // Cinto e suspensório da revogação: rodada NOVA torna a anterior inválida.
+  // O disparo já incrementa o token_geracao da linha antiga (gruposEnvios ·
+  // dispararConfira), mas a checagem de geração só olha a PRÓPRIA linha — se
+  // aquele update falhar/for revertido, o link velho continuaria abrindo e as
+  // remoções cairiam na rodada errada (o painel lê só a última).
+  const { data: maisNova, error: eNova } = await supabase.from('mem_grupo_conferencias')
+    .select('id').eq('grupo_id', conf.grupo_id).is('deleted_at', null)
+    .gt('rodada', conf.rodada || 1).limit(1);
+  if (eNova) throw eNova;
+  if (maisNova && maisNova.length) {
+    return { erro: { status: 403, msg: 'Este link foi substituído por um mais novo — abra o último que você recebeu no WhatsApp.' } };
+  }
+  // NOTA: de propósito NÃO há trava de temporada aqui (é o que diferencia este
+  // fluxo da renovação · a lista precisa poder ser conferida no meio da T2).
+  return { payload, conf, grupo };
+}
+
+// ⚠️ LIDERANÇA NÃO É REMOVÍVEL por este fluxo. Cenário real: co-líder Ana no
+// roster; o líder desmarca achando que é participante → `saiu_em` gravado → o
+// `GET /public/grupos/buscar` (que monta lideres_busca/lideres_exibicao com
+// `funcao IN ('lider','co_lider')` + `saiu_em IS NULL`) para de devolver a Ana
+// e **o grupo deixa de ser encontrável pelo nome dela** na página pública e no
+// mapa, sem ninguém ser avisado. Trocar liderança é ato de gestão (aba Pessoas
+// do /grupos · PUT /membros/:id/funcao), não efeito colateral de conferir lista.
+const FUNCOES_PROTEGIDAS = new Set(['lider', 'co_lider']);
+const RANK_FUNCAO = { coordenador: 7, supervisor: 6, lider: 5, co_lider: 4, lider_treinamento: 3, frequentador: 2, visitante: 1 };
+const rotuloFuncao = (f) => ({
+  coordenador: 'Coordenador', supervisor: 'Supervisor', lider: 'Líder',
+  co_lider: 'Co-líder', lider_treinamento: 'Em treinamento',
+}[f] || null);
+
+// Roster pra tela: vínculos ATIVOS (marcados = "faz parte") + os que ESTA
+// conferência removeu (desmarcados · pra reedição). 1 linha por pessoa, com o
+// papel de MAIOR nível entre os vínculos dela no grupo (multi-vínculo é real).
+async function rosterConferencia(conf) {
+  const linhas = new Map(); // membro_id → { id, nome, foto_url, marcado, funcao, papel, protegido }
+  const { data: ativos, error: eA } = await supabase.from('mem_grupo_membros')
+    .select('membro_id, funcao, mem_membros!inner(id, nome, foto_url)')
+    .eq('grupo_id', conf.grupo_id).is('saiu_em', null).is('deleted_at', null)
+    .limit(1000);
+  if (eA) throw eA;
+  for (const v of (ativos || [])) {
+    const atual = linhas.get(v.membro_id);
+    if (!atual) {
+      linhas.set(v.membro_id, {
+        id: v.mem_membros.id, nome: v.mem_membros.nome,
+        foto_url: v.mem_membros.foto_url || null,
+        // Aqui SEMPRE marcado (o oposto da renovação): quem está no roster
+        // "faz parte" até o líder desmarcar.
+        marcado: true,
+        funcao: v.funcao || null,
+        papel: rotuloFuncao(v.funcao),
+        protegido: FUNCOES_PROTEGIDAS.has(v.funcao),
+      });
+    } else if ((RANK_FUNCAO[v.funcao] || 0) > (RANK_FUNCAO[atual.funcao] || 0)) {
+      atual.funcao = v.funcao || null;
+      atual.papel = rotuloFuncao(v.funcao);
+      atual.protegido = atual.protegido || FUNCOES_PROTEGIDAS.has(v.funcao);
+    }
+  }
+  const { data: removidos, error: eR } = await supabase.from('mem_grupo_membros')
+    .select('membro_id, funcao, mem_membros!inner(id, nome, foto_url)')
+    .eq('grupo_id', conf.grupo_id).eq('conferencia_id', conf.id)
+    .not('saiu_em', 'is', null).is('deleted_at', null)
+    .limit(1000);
+  if (eR) throw eR;
+  for (const v of (removidos || [])) {
+    if (!linhas.has(v.membro_id)) {
+      linhas.set(v.membro_id, {
+        id: v.mem_membros.id, nome: v.mem_membros.nome,
+        foto_url: v.mem_membros.foto_url || null, marcado: false,
+        funcao: v.funcao || null, papel: rotuloFuncao(v.funcao),
+        // Já saiu por ESTA conferência (antes da regra existir, ou por outra
+        // função) — pode ser re-marcado, não trava a reedição.
+        protegido: false,
+      });
+    }
+  }
+  return [...linhas.values()].sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt-BR'));
+}
+
+// GET /api/public/grupos/grupo/confira?token=...
+router.get('/grupo/confira', async (req, res) => {
+  try {
+    const ctx = await contextoConferencia(req.query.token);
+    if (ctx.erro) return res.status(ctx.erro.status).json({ error: ctx.erro.msg });
+    const { conf, grupo } = ctx;
+    const membros = await rosterConferencia(conf);
+    res.json({
+      grupo: { nome: grupo.nome },
+      status: conf.status,                 // enviada | respondida
+      ja_respondeu: conf.status !== 'enviada',
+      observacao: conf.observacao || null,
+      membros,
+    });
+  } catch (e) {
+    if (schemaAusente(e)) {
+      console.error('[public grupos confira get] migration pendente:', e.message);
+      return res.status(503).json({ error: AVISO_SEM_MIGRATION });
+    }
+    console.error('[public grupos confira get]', e.message);
+    res.status(500).json({ error: 'Erro ao carregar a lista do grupo.' });
+  }
+});
+
+// POST /api/public/grupos/grupo/confira
+// body { token, mantem: [membro_ids], exibidos: [membro_ids], observacao }
+// O servidor SÓ age sobre `exibidos ∩ roster ativo atual`: quem entrou no
+// grupo DEPOIS da tela aberta (pedido aprovado, visitante da chamada) nunca é
+// removido por um submit atrasado. Última resposta vence (reedição).
+router.post('/grupo/confira', async (req, res) => {
+  try {
+    const { token, observacao } = req.body || {};
+    const ctx = await contextoConferencia(token);
+    if (ctx.erro) return res.status(ctx.erro.status).json({ error: ctx.erro.msg });
+    const { conf, grupo } = ctx;
+    const agora = new Date().toISOString();
+    const hoje = agora.slice(0, 10);
+
+    const mantem = Array.isArray(req.body?.mantem) ? req.body.mantem : null;
+    const exibidos = Array.isArray(req.body?.exibidos) ? req.body.exibidos : null;
+    if (!mantem || !exibidos) {
+      return res.status(400).json({ error: 'Lista de participantes inválida.' });
+    }
+
+    // Roster ativo ATUAL (vínculos linha a linha — pode haver mais de um por pessoa)
+    const { data: ativos, error: eAt } = await supabase.from('mem_grupo_membros')
+      .select('id, membro_id, funcao')
+      .eq('grupo_id', grupo.id).is('saiu_em', null).is('deleted_at', null)
+      .limit(1000);
+    if (eAt) throw eAt;
+    const ativosPorMembro = new Map();
+    const protegidos = new Set(); // liderança do grupo — nunca sai por este fluxo
+    for (const v of (ativos || [])) {
+      if (!ativosPorMembro.has(v.membro_id)) ativosPorMembro.set(v.membro_id, []);
+      ativosPorMembro.get(v.membro_id).push(v.id);
+      if (FUNCOES_PROTEGIDAS.has(v.funcao)) protegidos.add(v.membro_id);
+    }
+
+    const setExibidos = new Set(exibidos);
+    const setMantem = new Set(mantem.filter(id => setExibidos.has(id)));
+    // A tela já bloqueia desmarcar liderança, mas a decisão é do SERVIDOR
+    // (payload é do cliente): líder/co-líder exibido conta SEMPRE como mantido.
+    for (const membroId of protegidos) {
+      if (setExibidos.has(membroId)) setMantem.add(membroId);
+    }
+    const obsLimpa = String(observacao || '').trim().slice(0, 2000) || null;
+    // Rótulo humano em motivo_saida (texto livre exibido na UI). A observação
+    // do lote entra aqui quando existe — é o contexto que a Naná vai ler.
+    const rotuloSaida = obsLimpa
+      ? `Removido pelo líder na conferência da lista: ${obsLimpa.slice(0, 160)}`
+      : 'Removido pelo líder na conferência da lista do grupo';
+
+    // 1) Remover: exibido + ativo agora + NÃO marcado → fecha TODOS os vínculos
+    //    ativos da pessoa neste grupo (soft · conferencia_id = reversível aqui).
+    const removerVincIds = [];
+    const removidosMembroIds = [];
+    for (const [membroId, vincIds] of ativosPorMembro) {
+      if (!setExibidos.has(membroId)) continue; // entrou depois da tela — intocado
+      if (setMantem.has(membroId)) continue;    // (liderança já entrou aqui acima)
+      removerVincIds.push(...vincIds);
+      removidosMembroIds.push(membroId);
+    }
+    if (removerVincIds.length) {
+      for (let i = 0; i < removerVincIds.length; i += 150) {
+        // ⚠️ `.is('saiu_em', null)` fecha a corrida com a coordenação: se a Naná
+        // fechou o vínculo entre a leitura e este UPDATE, sobrescrever o
+        // motivo/data dela faria a saída MANUAL virar reversível pela reedição
+        // do líder (o conferencia_id passaria a apontar pra cá).
+        const { error } = await supabase.from('mem_grupo_membros')
+          .update({ saiu_em: hoje, motivo_saida: rotuloSaida, conferencia_id: conf.id })
+          .in('id', removerVincIds.slice(i, i + 150))
+          .is('saiu_em', null);
+        if (error) throw error;
+      }
+    }
+
+    // 2) Reativar: pessoa re-marcada cujo vínculo FOI fechado por ESTA
+    //    conferência (reedição corrigindo). Só se não houver outro vínculo ativo
+    //    dela no grupo (a Naná pode ter recriado manualmente — nunca duplicar).
+    const { data: fechadosPorNos, error: eF } = await supabase.from('mem_grupo_membros')
+      .select('id, membro_id')
+      .eq('grupo_id', grupo.id).eq('conferencia_id', conf.id)
+      .not('saiu_em', 'is', null).is('deleted_at', null)
+      .limit(1000);
+    if (eF) throw eF;
+    const reativarIds = [];
+    const reativadosMembroIds = new Set();
+    for (const v of (fechadosPorNos || [])) {
+      if (!setMantem.has(v.membro_id)) continue;
+      if (ativosPorMembro.has(v.membro_id)) continue;      // já ativo por outra via
+      if (reativadosMembroIds.has(v.membro_id)) continue;  // 1 vínculo por pessoa basta
+      reativarIds.push(v.id);
+      reativadosMembroIds.add(v.membro_id);
+    }
+    if (reativarIds.length) {
+      for (let i = 0; i < reativarIds.length; i += 150) {
+        const { error } = await supabase.from('mem_grupo_membros')
+          .update({ saiu_em: null, motivo_saida: null, conferencia_id: null })
+          .in('id', reativarIds.slice(i, i + 150));
+        if (error) throw error;
+      }
+    }
+
+    // 3) Resumo na linha (cache de exibição — a fonte auditável é o audit log de
+    //    mem_grupo_membros + conferencia_id). Contadores refletem o estado APÓS
+    //    a operação (reedição inclui quem já estava fora e continuou fora).
+    const mantidosFinal = [...setMantem];
+    const seguemFora = (fechadosPorNos || []).filter(v => !setMantem.has(v.membro_id));
+    const foraAgoraIds = [...removerVincIds, ...seguemFora.map(v => v.id)];
+    const foraAgoraMembros = new Set([...removidosMembroIds, ...seguemFora.map(v => v.membro_id)]);
+    const { error: eUp } = await supabase.from('mem_grupo_conferencias')
+      .update({
+        status: 'respondida',
+        observacao: obsLimpa,
+        roster_total: setExibidos.size,
+        mantidos_count: mantidosFinal.length,
+        removidos_count: foraAgoraMembros.size,
+        mantidos_ids: mantidosFinal,
+        removidos_vinculo_ids: [...new Set(foraAgoraIds)],
+        primeira_resposta_em: conf.primeira_resposta_em || agora,
+        ultima_resposta_em: agora, updated_at: agora,
+      }).eq('id', conf.id);
+    if (eUp) throw eUp;
+
+    // A pessoa removida NÃO é notificada (decisão pastoral vigente na
+    // renovação). A COORDENAÇÃO é — o roster mudou e ela precisa saber.
+    if (foraAgoraMembros.size > 0) {
+      try {
+        await notificar({
+          modulo: 'grupos',
+          tipo: 'confira_lista_respondida',
+          titulo: `Lista conferida: ${grupo.nome}`,
+          mensagem: `O líder do grupo ${grupo.nome} conferiu a lista: ${mantidosFinal.length} continua(m) e ${foraAgoraMembros.size} saiu(ram).`
+            + (obsLimpa ? ` Observação: ${obsLimpa.slice(0, 200)}` : ''),
+          link: '/grupos?tab=envios',
+          severidade: 'info',
+          chaveDedup: `confira_lista_${conf.id}_${hoje}`,
+        });
+      } catch (eN) { console.error('[confira lista notificar]', eN.message); }
+    }
+
+    res.json({
+      ok: true, status: 'respondida',
+      mantidos: mantidosFinal.length,
+      removidos: foraAgoraMembros.size,
+      reativados: reativarIds.length,
+    });
+  } catch (e) {
+    if (schemaAusente(e)) {
+      console.error('[public grupos confira post] migration pendente:', e.message);
+      return res.status(503).json({ error: AVISO_SEM_MIGRATION });
+    }
+    console.error('[public grupos confira post]', e.message);
+    res.status(500).json({ error: 'Erro ao salvar a resposta.' });
+  }
+});
+
 // GET /api/public/grupos/cron/frequencia-mensal — Vercel Cron (dia 28)
 // ENFILEIRA o template pra cada líder de grupo ativo com roster (a fila
 // horária cron/whatsapp-fila entrega com retry/backoff). Gated por

@@ -1786,6 +1786,112 @@ override `WHATSAPP_TEMPLATE_GRUPOS_RENOVACAO`) via fila `whatsapp_envios`.
 A pessoa removida NÃO é notificada (decisão pastoral) — o caminho de volta é o
 broadcast de abertura das inscrições.
 
+## Grupos · "Confira a lista do seu grupo" (2026-07-31 · migration `20260731120000`)
+
+**3º fluxo do líder**, irmão da renovação mas SEM a pergunta "vai continuar?" e
+SEM a trava de temporada aberta. Problema real: o roster está poluído (gente que
+saiu, cadastros de teste da varredura de julho, importados de 10/07 que talvez
+nunca tenham frequentado) e a coordenação (Naná/Pr. Nélio) não tem como saber —
+**o líder é a única fonte confiável**. Os 2 links que existiam não resolvem: a
+**frequência** (`/g/f/`) só MARCA PRESENÇA (não remove ninguém) e a **renovação**
+(`/g/r/`) é BLOQUEADA com as inscrições da temporada abertas e fala de "preparar
+a próxima temporada" (confuso no meio da T2).
+
+O líder abre `/g/c/<token>` (`GrupoConfiraLista.jsx`), vê a lista atual **toda
+marcada** e **DESMARCA quem não faz mais parte**.
+
+**Decisões de produto (fechadas · não reabrir):**
+- **Marca quem SAI** — o OPOSTO da renovação (que vem desmarcada). Aqui o padrão
+  esperado é "a lista está certa" e o atrito fica só em quem sai.
+- **Confirmação com os NOMES** de quem vai sair antes de aplicar (o líder tem
+  que ver quem está removendo).
+- **Motivo NÃO é obrigatório por pessoa** (atrito demais): é UM só, do lote, e
+  OPCIONAL (`mem_grupo_conferencias.observacao` · vai também pro `motivo_saida`).
+- **Remoção soft e rastreável**: `mem_grupo_membros.saiu_em` +
+  **`conferencia_id`** (coluna dedicada espelhando o `renovacao_id` — NUNCA tag
+  em texto). Reedição permitida (última vence), reativando SÓ o que ESTA
+  conferência removeu.
+- **NUNCA remover por omissão** (líder que não responde = roster intocado) e a
+  **pessoa removida NÃO é notificada** (decisão pastoral vigente na renovação) —
+  quem é notificada é a COORDENAÇÃO, quando houve remoção.
+- **Repetível na temporada** (diferente da renovação, 1×/semestre): 1 linha por
+  **(grupo, rodada)**. `temporada_id` é só SNAPSHOT informativo — de propósito
+  não trava nada.
+- ⚠️ **LIDERANÇA (`funcao IN ('lider','co_lider')`) NÃO É REMOVÍVEL por aqui.**
+  Cenário real: co-líder Ana no roster; o líder desmarca achando que é
+  participante → `saiu_em` gravado → o `GET /public/grupos/buscar` (que monta
+  `lideres_busca`/`lideres_exibicao` com `funcao IN ('lider','co_lider')` +
+  `saiu_em IS NULL`) para de devolver a Ana e **o grupo deixa de ser encontrável
+  pelo nome dela** na página pública e no mapa, sem ninguém ser avisado. O roster
+  devolve `funcao`/`papel`/`protegido` (papel de MAIOR nível entre os vínculos —
+  multi-vínculo é real), a tela mostra badge de papel + cadeado e o **SERVIDOR
+  força liderança exibida como mantida** (payload é do cliente; a decisão é
+  nossa). Trocar liderança é ato de gestão (aba Pessoas do /grupos ·
+  `PUT /membros/:id/funcao`), nunca efeito colateral de conferir lista.
+- ⚠️ **Contagem é de PESSOAS, não de vínculos** (régua de 23/07): o `{{3}}` do
+  template e o `membros_ativos` do painel contam `Set` de `membro_id`
+  (`comRoster` = Map de Set · `membrosPorGrupo` idem). A UNIQUE de vínculo ativo
+  foi dropada (multi-grupo real), então contar LINHAS diria "são 12 pessoas" no
+  WhatsApp e mostraria 10 na tela.
+
+**Segurança do submit** (lição registrada da renovação): o servidor só age sobre
+`exibidos ∩ roster ativo atual` — quem entrou depois da tela aberta nunca é
+removido por submit atrasado. O UPDATE de remoção leva **`.is('saiu_em', null)`**:
+fechamento concorrente da coordenação não é sobrescrito (senão a saída MANUAL
+dela passaria a apontar pra esta conferência e viraria reversível pela reedição
+do líder). Token `conf` = `{ p: grupoId, c: conferenciaId, g: geração,
+l: liderId }` (30d), mas a validade REAL é decidida a cada uso: geração × linha,
+liderança atual e linha não triada.
+
+⚠️ **RODADA NOVA MATA O LINK DA ANTERIOR em 2 camadas.** `nova_rodada` faz INSERT
+de linha nova, então (1) o disparo **incrementa o `token_geracao` da linha
+antiga** (o mecanismo de revogação que já existe · feito ANTES do insert — se
+falhar, não abrimos rodada nova com dois links vivos) e (2) `contextoConferencia`
+recusa 403 quando existe linha viva do mesmo grupo com `rodada` maior. Sem isso o
+líder podia clicar na mensagem VELHA e remover gente gravando o `conferencia_id`
+da rodada 1 — o painel (que lê só a última rodada) não contaria essas saídas e
+mostraria a rodada 2 como "não respondeu": a coordenação decidiria sobre um
+painel que subestima o que aconteceu.
+⚠️ `ultimasConferencias` é **paginado com `.range()`** (não `.limit(1000)`): o
+`order('rodada')` é CROSS-GROUP e num truncamento quem cai fora é justamente o
+grupo que só tem rodada 1 → seria classificado como 'nova' → INSERT com rodada 1
+bate 23505 contra o UNIQUE parcial → erro engolido em `erros.linha` e **o líder
+nunca recebe**. Por isso o toast do disparo soma `erros.linha + erros.montar` e
+avisa em âmbar quando > 0 — falha silenciosa aqui é líder sem mensagem.
+
+**Disparo SEMPRE manual** (lei de 20/07 · **sem cron**), no card "Confira a lista
+do grupo" da aba **Envios** (`GruposEnvios.jsx`), no padrão dos outros disparos:
+audiência líder/bairro/rede/todos → prévia (contagem + exemplo + quem NÃO recebe
++ quem é pulado) → **confirmação DIGITANDO o número** (freio mais forte que os
+outros cards: é o único disparo que muda o roster). Reenvio manda só pra quem
+**não respondeu**; grupo que já respondeu só volta com `nova_rodada=true`.
+Respeita bloqueio geral, `whatsapp_lideres.recebe_lembretes` (opt-out) e exige
+roster (grupo vazio não tem lista pra conferir). **Painel de triagem no mesmo
+card** (não criei tela nova): quem respondeu, quantos saíram, quem não respondeu,
++ "Marcar tratada" (nota curta obrigatória → status `triada`, que mata o link).
+
+Template Meta **`grupos_confira_lista`** (UTILITY pt_BR · 4 variáveis · {{1}} 1º
+nome do líder · {{2}} grupo · {{3}} quantidade de pessoas na lista · {{4}} o link
+como **variável de body**, não botão — é o que mantém a categoria UTILITY). Env
+de override `WHATSAPP_TEMPLATE_GRUPOS_CONFIRA` (default `grupos_confira_lista`).
+Sai pela fila `whatsapp_envios` (retry/backoff), como todos os outros.
+
+**Arquivos:** migration `20260731120000_grupos_confira_lista.sql` ·
+`services/gruposWhatsapp.js` (`montarEnvioConfira`) · `services/gruposEnvios.js`
+(`previewConfira`/`dispararConfira`/`ultimasConferencias`) · `routes/grupos.js`
+(`/confira/painel`, `/confira/preview`, `/confira/disparar`, `/confira/:id/triar`)
+· `routes/publicGrupos.js` (GET/POST `/grupo/confira`) ·
+`pages/public/GrupoConfiraLista.jsx` + rota `/g/c/:token` · `api.js`
+(`grupos.confira.*` + `gruposPublic.confiraPorToken/responderConfira`).
+
+⚠️ **Aplicar a migration antes do merge.** O fluxo NOVO tolera a ausência dela
+(`schemaAusente()` → **503 com aviso claro** no público, `{disponivel:false, aviso}`
+no painel), e **nenhum fluxo existente lê a tabela/coluna nova** — frequência e
+renovação não piscam sem a migration (lição `parcelas_max`).
+⚠️ `montarDestinatariosFrequencia` passou a devolver `roster_count` por grupo
+(`comRoster` virou Map pra alimentar o {{3}} do template) — `.has()` segue
+idêntico pros chamadores antigos.
+
 ## Grupos · contagens (vínculo × pessoa) + nova régua visitante/frequentador (2026-07-23)
 
 Auditoria (4 agentes) das divergências que o Marcos pegou entre as abas. **Régua de

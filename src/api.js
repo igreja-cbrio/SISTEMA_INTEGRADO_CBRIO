@@ -655,6 +655,14 @@ export const grupos = {
     disparar: (temporadaId) => post('/grupos/renovacao/disparar', { temporada_id: temporadaId }),
     triar: (renId, body) => post(`/grupos/renovacao/${renId}/triar`, body),
   },
+  // "Confira a lista do seu grupo" (Marcos 2026-07-31): 3º fluxo do líder —
+  // ele desmarca quem não faz mais parte. Disparo manual pela aba Envios.
+  confira: {
+    painel: (params) => get('/grupos/confira/painel' + (params ? '?' + new URLSearchParams(params) : '')),
+    preview: (audiencia, novaRodada = false) => post('/grupos/confira/preview', { audiencia, nova_rodada: novaRodada }),
+    disparar: (audiencia, novaRodada = false) => post('/grupos/confira/disparar', { audiencia, nova_rodada: novaRodada }),
+    triar: (confId, obs) => post(`/grupos/confira/${confId}/triar`, { obs }),
+  },
   envios: {
     getConfig: () => get('/grupos/envios/config'),
     setConfig: (patch) => put('/grupos/envios/config', patch),
@@ -2479,6 +2487,24 @@ export const gruposPublic = {
     const j = await r.json().catch(() => ({}));
     if (!r.ok) { const e = new Error(j.error || 'Erro ao salvar a resposta'); Object.assign(e, j); throw e; }
     return j; // { ok, status, confirmados?, removidos?, reativados? }
+  },
+  // Conferência da lista · o líder DESMARCA quem não faz mais parte
+  confiraPorToken: async (token) => {
+    const r = await fetch(`${API}/public/grupos/grupo/confira?token=${encodeURIComponent(token)}`);
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || 'Erro ao carregar a lista do grupo');
+    // { grupo, status, ja_respondeu, observacao, membros } · cada membro traz
+    // funcao/papel/protegido (liderança não é desmarcável — o servidor também recusa)
+    return j;
+  },
+  responderConfira: async (token, body) => {
+    const r = await fetch(`${API}/public/grupos/grupo/confira`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, ...body }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { const e = new Error(j.error || 'Erro ao salvar a resposta'); Object.assign(e, j); throw e; }
+    return j; // { ok, status, mantidos, removidos, reativados }
   },
 };
 
