@@ -315,23 +315,38 @@ router.delete('/localizacoes/:id', async (req, res) => {
 router.get('/bens', async (req, res) => {
   try {
     const { status, categoria_id, localizacao_id, busca } = req.query;
-    let query = supabase.from('pat_bens').select('*, pat_categorias(nome, vida_util_meses), pat_localizacoes(nome), responsavel:profiles!responsavel_id(name), alerta:pat_revisao_itens!alerta_divergencia_item_id(data_revisao, localizacao_encontrada:pat_localizacoes!localizacao_encontrada_id(nome))').order('nome');
-    if (status) query = query.eq('status', status);
-    // Sentinela "__sem__" filtra bens SEM categoria/localização — pra
-    // priorizar o saneamento de cadastro (pedido do usuário 2026-07-28).
-    if (categoria_id === '__sem__') query = query.is('categoria_id', null);
-    else if (categoria_id) query = query.eq('categoria_id', categoria_id);
-    if (localizacao_id === '__sem__') query = query.is('localizacao_id', null);
-    else if (localizacao_id) query = query.eq('localizacao_id', localizacao_id);
-    // Busca por nome OU código de barras OU nº de série — permite achar o bem
-    // pelo número, não só pelo nome (pedido do usuário 2026-07-27).
-    if (busca) {
-      const b = escapePostgrestValue(busca.trim());
-      query = query.or(`nome.ilike.%${b}%,codigo_barras.ilike.%${b}%,numero_serie.ilike.%${b}%`);
+    const montarQuery = (offset, pageSize) => {
+      let query = supabase.from('pat_bens').select('*, pat_categorias(nome, vida_util_meses), pat_localizacoes(nome), responsavel:profiles!responsavel_id(name), alerta:pat_revisao_itens!alerta_divergencia_item_id(data_revisao, localizacao_encontrada:pat_localizacoes!localizacao_encontrada_id(nome))').order('nome');
+      if (status) query = query.eq('status', status);
+      // Sentinela "__sem__" filtra bens SEM categoria/localização — pra
+      // priorizar o saneamento de cadastro (pedido do usuário 2026-07-28).
+      if (categoria_id === '__sem__') query = query.is('categoria_id', null);
+      else if (categoria_id) query = query.eq('categoria_id', categoria_id);
+      if (localizacao_id === '__sem__') query = query.is('localizacao_id', null);
+      else if (localizacao_id) query = query.eq('localizacao_id', localizacao_id);
+      // Busca por nome OU código de barras OU nº de série — permite achar o bem
+      // pelo número, não só pelo nome (pedido do usuário 2026-07-27).
+      if (busca) {
+        const b = escapePostgrestValue(busca.trim());
+        query = query.or(`nome.ilike.%${b}%,codigo_barras.ilike.%${b}%,numero_serie.ilike.%${b}%`);
+      }
+      return query.range(offset, offset + pageSize - 1);
+    };
+    // Paginado (lei do projeto · cap de 1000 do PostgREST) — o parque já passa
+    // de 4 mil bens, então sem isso a aba Bens (e a exportação) truncava
+    // silenciosamente nos primeiros 1000 (achado do usuário 2026-07-31).
+    let all = [];
+    let offset = 0;
+    const pageSize = 1000;
+    while (true) {
+      const { data, error } = await montarQuery(offset, pageSize);
+      if (error) return res.status(400).json({ error: error.message });
+      if (!data || data.length === 0) break;
+      all = all.concat(data);
+      if (data.length < pageSize) break;
+      offset += pageSize;
     }
-    const { data, error } = await query;
-    if (error) return res.status(400).json({ error: error.message });
-    res.json((data || []).map(b => ({ ...b, depreciacao: calcularDepreciacao(b) })));
+    res.json(all.map(b => ({ ...b, depreciacao: calcularDepreciacao(b) })));
   } catch (e) { res.status(500).json({ error: 'Erro ao listar bens' }); }
 });
 

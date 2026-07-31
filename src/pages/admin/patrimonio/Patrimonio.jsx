@@ -15,6 +15,7 @@ import { Button } from '../../../components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
 import BarcodeScanner from '../../../components/BarcodeScanner';
 import Paginacao, { usePaginacaoLocal } from '../../../components/Paginacao';
+import { exportCSV, exportPDF } from '../../../lib/export';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
@@ -166,6 +167,40 @@ const fmtCodigo = (c) => {
   if (/^\d+$/.test(s)) return s.padStart(5, '0');
   return s;
 };
+
+// Lista de bens EXATAMENTE como está na tela (já filtrada pelos selects +
+// ordenada pelas pills) — pedido do usuário 2026-07-31. Mesmas colunas
+// exibidas na tabela; não pagina (exporta tudo que passou no filtro, não só
+// a página visível de 25 — o backend também não pagina mais em 1000, então
+// isso cobre o parque inteiro que bater no filtro).
+const BENS_EXPORT_HEADERS = ['Código', 'Nome', 'Categoria', 'Localização', 'Marca/Modelo', 'Valor de Aquisição', 'Status'];
+function bensParaExportar(lista) {
+  return lista.map((b) => [
+    fmtCodigo(b.codigo_barras),
+    b.nome,
+    b.pat_categorias?.nome || '',
+    b.pat_localizacoes?.nome || '',
+    [b.marca, b.modelo].filter(Boolean).join(' '),
+    b.valor_aquisicao != null ? fmtMoney(b.valor_aquisicao) : '',
+    STATUS_BEM[b.status]?.label || b.status || '',
+  ]);
+}
+function exportarBensCSV(lista) {
+  // CSV usa o valor cru (sem "R$"), pra abrir certo como número no Excel.
+  const rows = lista.map((b) => [
+    fmtCodigo(b.codigo_barras),
+    b.nome,
+    b.pat_categorias?.nome || '',
+    b.pat_localizacoes?.nome || '',
+    [b.marca, b.modelo].filter(Boolean).join(' '),
+    b.valor_aquisicao ?? '',
+    STATUS_BEM[b.status]?.label || b.status || '',
+  ]);
+  exportCSV(BENS_EXPORT_HEADERS, rows, 'patrimonio_bens');
+}
+function exportarBensPDF(lista) {
+  exportPDF('Patrimônio — Bens', BENS_EXPORT_HEADERS, bensParaExportar(lista));
+}
 
 function Modal({ open, onClose, title, children, footer }) {
   if (!open) return null;
@@ -734,7 +769,7 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
   const [ordenarAberto, setOrdenarAberto] = useState(false);
   const [ordenacao, setOrdenacao] = useState('padrao');
   const bensOrdenados = useMemo(() => ordenarBens(bens, ordenacao), [bens, ordenacao]);
-  const { pageItems: bensPag, paginacaoProps: bensPagProps, setPage: setBensPage } = usePaginacaoLocal(bensOrdenados, 25);
+  const { pageItems: bensPag, paginacaoProps: bensPagProps, setPage: setBensPage, setPageSize: setBensPageSize } = usePaginacaoLocal(bensOrdenados, 25);
   useEffect(() => { setBensPage(1); }, [ordenacao]);
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState('');
@@ -811,6 +846,8 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
         <Button variant="outline" onClick={() => setOrdenarAberto(o => !o)}>
           Ordenar {ordenacao !== 'padrao' ? `· ${ORDENACOES_BENS.find(o => o.key === ordenacao)?.label}` : ''} {ordenarAberto ? '▴' : '▾'}
         </Button>
+        <Button variant="outline" onClick={() => exportarBensCSV(bensOrdenados)}>Exportar CSV</Button>
+        <Button variant="outline" onClick={() => exportarBensPDF(bensOrdenados)}>Exportar PDF</Button>
         {isDiretor && <div style={{ marginLeft: 'auto' }}><Button onClick={onNew}>+ Novo Bem</Button></div>}
       </div>
 
@@ -911,7 +948,7 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
           </table>
         </div>
       </div>
-      <Paginacao {...bensPagProps} itemLabel="bens" />
+      <Paginacao {...bensPagProps} itemLabel="bens" onPageSizeChange={setBensPageSize} />
 
       <BulkEditarModal open={modalBulkEditar} qtd={selecionados.size} categorias={categorias} locOptions={locOptions} responsaveis={responsaveis} busy={bulkBusy}
         onClose={() => setModalBulkEditar(false)}
