@@ -15,7 +15,6 @@
 // docs/politica-reembolso-inscricoes.md guarda as decisões e o porquê — não
 // duplicar o texto lá.
 import { useEffect } from 'react';
-import { Link } from 'react-router-dom';
 
 const C = {
   bg: 'var(--cbrio-bg, #0b0f14)',
@@ -149,10 +148,12 @@ export default function PoliticaReembolso() {
         </p>
 
         <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 26, paddingTop: 14 }}>
+          {/* "cbrio.org" fica como TEXTO, não link: apontar pra "/" levaria o
+              visitante público pra tela de login do ERP, que não é o que ele
+              procura numa página informativa. */}
           <p style={{ margin: 0, fontSize: 13, color: C.text3 }}>
             Dúvidas: <a href="mailto:financeiro@cbrio.com.br" style={{ color: C.primary }}>financeiro@cbrio.com.br</a>
-            {' · '}
-            <Link to="/" style={{ color: C.text3 }}>cbrio.org</Link>
+            {' · Comunidade Batista do Rio de Janeiro'}
           </p>
         </div>
       </div>
