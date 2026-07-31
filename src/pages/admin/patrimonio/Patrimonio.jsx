@@ -1423,7 +1423,10 @@ function MovFormModal({ open, data, locOptions, onClose, onSave }) {
       <Select label="Tipo *" value={f.tipo} onChange={e => upd('tipo', e.target.value)}>
         {Object.entries(TIPO_MOV).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
       </Select>
-      {(f.tipo === 'transferencia' || f.tipo === 'saida') && (
+      {/* Doação (tipo='saida' no banco): só motivo — o bem sai do patrimônio
+          de vez, não faz sentido pedir localização de origem/destino (pedido
+          do usuário 2026-07-31). */}
+      {f.tipo === 'transferencia' && (
         <Select label="Localização Origem" value={f.localizacao_origem_id || ''} onChange={e => upd('localizacao_origem_id', e.target.value)}>
           <option value="">Selecionar</option>
           {locOptions.map(l => <option key={l.id} value={l.id}>{locIndent(l.depth)}{l.nome}</option>)}
@@ -1535,7 +1538,8 @@ function BulkMovModal({ open, qtd, locOptions, busy, onClose, onSave }) {
       <Select label="Tipo *" value={f.tipo} onChange={e => upd('tipo', e.target.value)}>
         {Object.entries(TIPO_MOV).filter(([k]) => k !== 'baixa').map(([k, v]) => <option key={k} value={k}>{v}</option>)}
       </Select>
-      {(f.tipo === 'transferencia' || f.tipo === 'saida') && (
+      {/* Doação (tipo='saida' no banco): só motivo — ver MovFormModal acima. */}
+      {f.tipo === 'transferencia' && (
         <Select label="Localização Origem" value={f.localizacao_origem_id || ''} onChange={e => upd('localizacao_origem_id', e.target.value)}>
           <option value="">Selecionar</option>
           {locOptions.map(l => <option key={l.id} value={l.id}>{locIndent(l.depth)}{l.nome}</option>)}
