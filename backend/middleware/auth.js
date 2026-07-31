@@ -543,6 +543,7 @@ function authorizeModule(routeKey, nivelMinimo = 2) {
 
   return (req, res, next) => {
     if (!req.user) return res.status(401).json({ error: 'Não autenticado' });
+    if (req.user.is_super_admin === true) return next();
 
     // Bloqueio explícito de módulo (deny por usuário) · vence até admin/diretor.
     const bloqueados = req.user.granular?.modulosBloqueados || [];
@@ -622,7 +623,10 @@ async function isSuperAdminEmail(email) {
 
 // Middleware: só super-admin passa (ex.: Analytics do app · dado sensível).
 async function requireSuperAdmin(req, res, next) {
-  if (await isSuperAdminEmail(req.user?.email)) return next();
+  if (await isSuperAdminEmail(req.user?.email)) {
+    req.user.is_super_admin = true;
+    return next();
+  }
   return res.status(403).json({ error: 'Acesso restrito aos administradores gerais.' });
 }
 

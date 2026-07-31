@@ -11,7 +11,7 @@
 // tabelas e manda o relatório diário.
 // ============================================================================
 const router = require('express').Router();
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, requireSuperAdmin } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 
 router.use(authenticate);
@@ -63,8 +63,9 @@ router.post('/', async (req, res) => {
   }
 });
 
-// ── Daqui pra baixo: só admin/diretor ───────────────────────────────────────
-router.use(authorize('admin', 'diretor'));
+// O envio continua disponível a qualquer autenticado. A gestão foi consolidada
+// no Sistema e, daqui pra baixo, exige superadmin estrito.
+router.use(requireSuperAdmin);
 
 router.get('/', async (req, res) => {
   try {
