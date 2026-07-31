@@ -44,7 +44,7 @@ const TIPOS = Object.freeze(['confirmada', 'pendente', 'expirada']);
 async function carregarTemplate(tipo, eventoId) {
   try {
     let q = supabase.from('insc_email_templates')
-      .select('tipo, evento_id, assunto, corpo_html')
+      .select('tipo, evento_id, assunto, corpo_html, incluir_assinatura')
       .eq('tipo', tipo).eq('ativo', true);
     q = eventoId ? q.or(`evento_id.eq.${eventoId},evento_id.is.null`) : q.is('evento_id', null);
     const { data, error } = await q;
@@ -167,6 +167,106 @@ function preparar(inscricao) {
   return { email };
 }
 
+/**
+ * Remove o que não pode existir num corpo vindo de editor. Espelha o
+ * `sanitizarHtml` de volEmailSender.js (não importo de lá pra não acoplar dois
+ * módulos por um helper de 6 linhas).
+ */
+function sanitizarHtml(html) {
+  return String(html || '')
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<script[^>]*>/gi, '')
+    .replace(/\son\w+\s*=\s*"[^"]*"/gi, '')
+    .replace(/\son\w+\s*=\s*'[^']*'/gi, '')
+    .replace(/javascript:/gi, '');
+}
+
+/** Assinatura global (tipo='assinatura'). Fail-soft: sem ela, e-mail sem rodapé. */
+async function carregarAssinatura() {
+  try {
+    const { data, error } = await supabase.from('insc_email_templates')
+      .select('corpo_html').eq('tipo', 'assinatura').is('evento_id', null)
+      .eq('ativo', true).maybeSingle();
+    if (error) return '';
+    return data?.corpo_html || '';
+  } catch { return ''; }
+}
+
+/**
+ * O texto PADRÃO de cada tipo, já em HTML e com as variáveis no lugar dos
+ * valores — é o que a tela carrega no botão "Começar do texto padrão".
+ *
+ * ⚠️ Sai do MESMO `montarHtml` que gera o e-mail real (passando `{{var}}` como
+ * valor). Então o que a pessoa vê ao começar do padrão é exatamente o layout
+ * que já está sendo enviado hoje — sem uma segunda cópia do texto pra divergir.
+ */
+function esqueletoPadrao(tipo) {
+  const V = {
+    nome: '{{nome}}', primeiro: '{{primeiro_nome}}', codigo: '{{codigo}}',
+    evento: '{{evento}}', data: '{{data}}', local: '{{local}}',
+    valor: '{{valor}}', forma: '{{forma}}', expira: '{{expira_em}}', link: '{{link}}',
+  };
+  const linhasComuns = [
+    { rotulo: 'Código', valor: V.codigo },
+    { rotulo: 'Evento', valor: V.evento },
+    { rotulo: 'Quando', valor: V.data },
+    { rotulo: 'Local', valor: V.local },
+  ];
+
+  if (tipo === 'confirmada') {
+    return {
+      assunto: `Inscrição confirmada · ${V.evento} (${V.codigo})`,
+      corpo_html: montarHtml({
+        titulo: 'Inscrição confirmada',
+        saudacao: `${V.primeiro}, sua inscrição está garantida.`,
+        paragrafos: [
+          'Recebemos seu pagamento.',
+          'Guarde o código abaixo: é ele que identifica sua inscrição se você precisar falar com a equipe.',
+        ],
+        linhas: [...linhasComuns, { rotulo: 'Valor', valor: V.valor }, { rotulo: 'Forma', valor: V.forma }],
+        acao: { rotulo: 'Ver meu comprovante', url: V.link },
+      }),
+    };
+  }
+  if (tipo === 'pendente') {
+    return {
+      assunto: `Pagamento pendente · ${V.evento} (${V.codigo})`,
+      corpo_html: montarHtml({
+        titulo: 'Falta pagar para garantir sua vaga',
+        saudacao: `${V.primeiro}, recebemos sua inscrição.`,
+        paragrafos: [
+          'Sua vaga está reservada, mas só fica garantida depois do pagamento.',
+          `Se o pagamento não for feito até ${V.expira}, a vaga volta para a fila.`,
+        ],
+        linhas: [...linhasComuns, { rotulo: 'Valor', valor: V.valor }],
+        acao: { rotulo: 'Pagar minha inscrição', url: V.link },
+      }),
+    };
+  }
+  if (tipo === 'expirada') {
+    return {
+      assunto: `Reserva expirada · ${V.evento} (${V.codigo})`,
+      corpo_html: montarHtml({
+        titulo: 'Sua reserva expirou',
+        saudacao: `${V.primeiro}, o prazo de pagamento da sua inscrição venceu.`,
+        paragrafos: [
+          'A vaga voltou para a fila, então sua inscrição não está mais valendo.',
+          'Se ainda quiser participar, é possível se inscrever de novo enquanto houver vaga.',
+        ],
+        linhas: [{ rotulo: 'Código', valor: V.codigo }, { rotulo: 'Evento', valor: V.evento }],
+        acao: { rotulo: 'Inscrever-se de novo', url: V.link },
+      }),
+    };
+  }
+  // Assinatura: ponto de partida editável, não um e-mail.
+  return {
+    assunto: '',
+    corpo_html: '<p><strong>Comunidade Batista do Rio de Janeiro</strong><br>'
+      + 'Rua do Catete, 26 — Rio de Janeiro/RJ<br>'
+      + '<a href="https://cbrio.org">cbrio.org</a></p>',
+  };
+}
+
 /** Alternativa em texto puro quando o corpo veio de template HTML. */
 function semTags(html) {
   return String(html || '')
@@ -197,15 +297,34 @@ async function despachar({ to, subject, corpo, html, text }) {
  * código. `assuntoPadrao`/`corpo` são o padrão; `vars` alimenta os dois.
  */
 async function despacharTipo({ tipo, eventoId, to, vars, assuntoPadrao, corpo }) {
-  const tpl = await carregarTemplate(tipo, eventoId);
+  const [tpl, assinaturaBruta] = await Promise.all([
+    carregarTemplate(tipo, eventoId),
+    carregarAssinatura(),
+  ]);
+
+  // A assinatura acompanha os dois caminhos (template e padrão). No template,
+  // respeita o liga/desliga da linha; no padrão, entra sempre — quem não quer
+  // deixa a assinatura vazia.
+  const quer = tpl ? tpl.incluir_assinatura !== false : true;
+  const assinatura = (quer && assinaturaBruta)
+    ? `<div style="margin-top:26px;padding-top:14px;border-top:1px solid #e5e7eb;
+                   font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+                   font-size:13px;color:#374151">${sanitizarHtml(renderizar(assinaturaBruta, vars))}</div>`
+    : '';
+
   if (tpl) {
     return despachar({
       to,
       subject: renderizar(tpl.assunto, vars) || assuntoPadrao,
-      html: renderizar(tpl.corpo_html, vars),
+      html: sanitizarHtml(renderizar(tpl.corpo_html, vars)) + assinatura,
     });
   }
-  return despachar({ to, subject: assuntoPadrao, corpo });
+  return despachar({
+    to,
+    subject: assuntoPadrao,
+    html: montarHtml(corpo) + assinatura,
+    text: montarTexto(corpo),
+  });
 }
 
 /** Variáveis comuns a todos os tipos. */
@@ -355,7 +474,7 @@ async function enviarEmailInscricaoExpirada({ inscricao, evento }) {
  * enviar nada e sem tocar em inscrição real. `corpo_html`/`assunto` vêm do
  * rascunho que está na tela (nem precisa estar salvo).
  */
-function previewTemplate({ tipo, assunto, corpo_html }) {
+function previewTemplate({ tipo, assunto, corpo_html, assinaturaHtml, incluirAssinatura = true }) {
   const exemplo = {
     nome: 'Maria Aparecida de Souza',
     primeiro_nome: 'Maria',
@@ -369,10 +488,16 @@ function previewTemplate({ tipo, assunto, corpo_html }) {
     forma: 'Pix',
     expira_em: '02/08/2026, 10:15:08',
   };
+  // A prévia mostra o corpo COM a assinatura, senão ela mentiria sobre o que
+  // a pessoa vai receber.
+  const assinatura = (incluirAssinatura && assinaturaHtml && tipo !== 'assinatura')
+    ? `<div style="margin-top:26px;padding-top:14px;border-top:1px solid #e5e7eb;font-size:13px;color:#374151">${sanitizarHtml(renderizar(assinaturaHtml, exemplo))}</div>`
+    : '';
+
   return {
     tipo,
     assunto: renderizar(assunto, exemplo),
-    html: renderizar(corpo_html, exemplo),
+    html: sanitizarHtml(renderizar(corpo_html, exemplo)) + assinatura,
     variaveis_usadas: [...String(corpo_html || '').matchAll(/\{\{\s*([a-z_]+)\s*\}\}/gi)]
       .map((m) => m[1].toLowerCase())
       .filter((v, i, a) => a.indexOf(v) === i),
@@ -385,6 +510,9 @@ module.exports = {
   enviarEmailInscricaoExpirada,
   previewTemplate,
   carregarTemplate,
+  carregarAssinatura,
+  esqueletoPadrao,
+  sanitizarHtml,
   renderizar,
   TIPOS,
   VARIAVEIS,

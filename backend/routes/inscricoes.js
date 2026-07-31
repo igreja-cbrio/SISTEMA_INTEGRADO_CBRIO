@@ -16,9 +16,15 @@ const { verificarTokenComprovanteAtivo, extrairToken } = require('../services/in
 const { portasSatelites, fontesUnificadas, catalogoPublico } = require('../services/inscricaoPortas');
 const {
   previewTemplate,
+  esqueletoPadrao,
+  carregarAssinatura,
+  sanitizarHtml: sanitizarHtmlEmail,
   TIPOS: TIPOS_EMAIL,
   VARIAVEIS: VARIAVEIS_EMAIL,
 } = require('../services/inscricaoEmail');
+// A assinatura é editável pela mesma tela, mas não é um e-mail — por isso entra
+// só na lista do CRUD, não em TIPOS (que é o vocabulário dos envios).
+const TIPOS_EDITAVEIS = [...TIPOS_EMAIL, 'assinatura'];
 const { enviarEmail } = require('../services/email');
 // Push pro app de membros quando um evento é publicado (broadcast).
 const { notificarApp } = require('../services/appPush');
@@ -2066,8 +2072,14 @@ router.post('/upload-capa', authorizeModule('inscricoes', 3), upload.single('arq
 /** Lista os templates + o catálogo de variáveis pra tela montar a ajuda. */
 router.get('/email-templates', authorizeModule('inscricoes', 2), async (req, res) => {
   try {
+    // Esqueleto do texto padrão de cada tipo: é com ele que a tela abre
+    // PREENCHIDA (o botão "Começar do texto padrão"). Sem isso o editor abria
+    // em branco e a pessoa tinha que montar o e-mail do zero.
+    const padrao = {};
+    TIPOS_EDITAVEIS.forEach((t) => { padrao[t] = esqueletoPadrao(t); });
+
     let q = supabase.from('insc_email_templates')
-      .select('id, tipo, evento_id, assunto, corpo_html, ativo, atualizado_por_nome, updated_at');
+      .select('id, tipo, evento_id, assunto, corpo_html, ativo, incluir_assinatura, atualizado_por_nome, updated_at');
     if (req.query.evento_id) {
       q = q.or(`evento_id.eq.${escapePostgrestValue(String(req.query.evento_id))},evento_id.is.null`);
     } else {
@@ -2078,9 +2090,12 @@ router.get('/email-templates', authorizeModule('inscricoes', 2), async (req, res
     // tudo está no padrão, que é a verdade.
     if (error) {
       console.warn('[inscricoes] email-templates indisponível:', error.message);
-      return res.json({ templates: [], tipos: TIPOS_EMAIL, variaveis: VARIAVEIS_EMAIL, aviso: 'Personalização ainda não disponível (migration pendente). Os e-mails estão saindo no texto padrão.' });
+      return res.json({
+        templates: [], tipos: TIPOS_EMAIL, variaveis: VARIAVEIS_EMAIL, padrao,
+        aviso: 'Personalização ainda não disponível (migration pendente). Os e-mails estão saindo no texto padrão.',
+      });
     }
-    res.json({ templates: data || [], tipos: TIPOS_EMAIL, variaveis: VARIAVEIS_EMAIL });
+    res.json({ templates: data || [], tipos: TIPOS_EMAIL, variaveis: VARIAVEIS_EMAIL, padrao });
   } catch (e) {
     console.error('[inscricoes] GET email-templates:', e.message);
     res.status(500).json({ error: 'Erro ao carregar os templates' });
@@ -2091,20 +2106,27 @@ router.get('/email-templates', authorizeModule('inscricoes', 2), async (req, res
 router.put('/email-templates/:tipo', authorizeModule('inscricoes', 5), async (req, res) => {
   try {
     const tipo = String(req.params.tipo || '');
-    if (!TIPOS_EMAIL.includes(tipo)) return res.status(400).json({ error: 'Tipo inválido' });
+    if (!TIPOS_EDITAVEIS.includes(tipo)) return res.status(400).json({ error: 'Tipo inválido' });
 
-    const assunto = String(req.body?.assunto || '').trim();
+    const ehAssinatura = tipo === 'assinatura';
+    // A assinatura não tem assunto (não é um e-mail); guarda string vazia pra
+    // satisfazer o NOT NULL da coluna.
+    const assunto = ehAssinatura ? '' : String(req.body?.assunto || '').trim();
     const corpo = String(req.body?.corpo_html || '').trim();
-    if (!assunto) return res.status(400).json({ error: 'O assunto é obrigatório' });
-    if (!corpo) return res.status(400).json({ error: 'O corpo do e-mail é obrigatório' });
+    if (!ehAssinatura && !assunto) return res.status(400).json({ error: 'O assunto é obrigatório' });
+    if (!corpo) return res.status(400).json({ error: ehAssinatura ? 'A assinatura está vazia' : 'O corpo do e-mail é obrigatório' });
 
-    const eventoId = req.body?.evento_id || null;
+    // Assinatura é sempre global (o CHECK do banco também recusa por evento).
+    const eventoId = ehAssinatura ? null : (req.body?.evento_id || null);
     const linha = {
       tipo,
       evento_id: eventoId,
       assunto,
-      corpo_html: corpo,
+      // Sanitiza na ENTRADA além da saída: o que fica guardado no banco já vai
+      // sem script/handler, então um leitor futuro não herda o problema.
+      corpo_html: sanitizarHtmlEmail(corpo),
       ativo: req.body?.ativo !== false,
+      incluir_assinatura: req.body?.incluir_assinatura !== false,
       atualizado_por: req.user?.id || null,
       atualizado_por_nome: req.user?.name || req.user?.email || null,
     };
@@ -2132,7 +2154,7 @@ router.put('/email-templates/:tipo', authorizeModule('inscricoes', 5), async (re
 router.delete('/email-templates/:tipo', authorizeModule('inscricoes', 5), async (req, res) => {
   try {
     const tipo = String(req.params.tipo || '');
-    if (!TIPOS_EMAIL.includes(tipo)) return res.status(400).json({ error: 'Tipo inválido' });
+    if (!TIPOS_EDITAVEIS.includes(tipo)) return res.status(400).json({ error: 'Tipo inválido' });
     let q = supabase.from('insc_email_templates').delete().eq('tipo', tipo);
     q = req.query.evento_id ? q.eq('evento_id', String(req.query.evento_id)) : q.is('evento_id', null);
     const { error } = await q;
@@ -2147,10 +2169,14 @@ router.delete('/email-templates/:tipo', authorizeModule('inscricoes', 5), async 
 /** Prévia com dados fictícios · não envia nada e não toca em inscrição real. */
 router.post('/email-templates/preview', authorizeModule('inscricoes', 2), async (req, res) => {
   try {
+    // A prévia inclui a assinatura salva — senão ela mentiria sobre o que a
+    // pessoa vai receber.
     const p = previewTemplate({
       tipo: String(req.body?.tipo || ''),
       assunto: String(req.body?.assunto || ''),
       corpo_html: String(req.body?.corpo_html || ''),
+      assinaturaHtml: await carregarAssinatura(),
+      incluirAssinatura: req.body?.incluir_assinatura !== false,
     });
     res.json(p);
   } catch (e) {
@@ -2175,6 +2201,8 @@ router.post('/email-templates/teste', authorizeModule('inscricoes', 5), async (r
       tipo: String(req.body?.tipo || ''),
       assunto: String(req.body?.assunto || ''),
       corpo_html: String(req.body?.corpo_html || ''),
+      assinaturaHtml: await carregarAssinatura(),
+      incluirAssinatura: req.body?.incluir_assinatura !== false,
     });
     const r = await enviarEmail({
       to: para,
