@@ -3963,6 +3963,77 @@ cargos no nível 3** (= 89 usuários com INSERT/UPDATE direto em `inscricoes`,
 um cargo chamado **"Acesso negado"** — o seed subiu todo mundo pra 3. A view
 unificada está revogada de `authenticated`; as tabelas-base não.
 
+## ⚠️ Sorteio · só quem fez CHECK-IN, 1 prêmio por PESSOA (2026-07-31 · migration 20260731210000)
+
+Conversa do Marcos sobre o fluxo do dia do Celebra (29/08 · 98 inscrições, 18
+prêmios, números de 4 dígitos únicos gerados no lock atômico). As 3 decisões
+dele, agora em código e cobertas por teste no gate de deploy
+(`npm run test:inscricao-sorteio`):
+
+1. **Presença é pré-requisito.** O pool era "inscrita, não cancelada, com
+   número" — presença não contava. Com 18 prêmios e um terço faltando, ~6
+   sorteios cairiam em quem não está no salão. Agora o bolo é `insc_checkins`.
+   Sem ninguém marcado, o endpoint **RECUSA com a razão certa** ("o sorteio é
+   entre quem fez check-in, e ninguém foi marcado ainda") em vez de cair no bolo
+   antigo em silêncio. Efeito colateral desejado: **o check-in deixa de ser
+   opcional** no dia.
+2. **Inscrição MIGRADA concorre igual** (*"todos os 97 devem participar, não
+   apenas quem se inscreveu após o módulo"*): o filtro exige só `numero_sorte` +
+   não-cancelada. ⚠️ **Nunca** acrescentar CPF/`membro_id`/`legado_fonte IS NULL`
+   ali — 85 das 98 do Celebra são legado e 82 não têm CPF; qualquer um desses
+   filtros cortaria o salão inteiro. Há teste dedicado a isso.
+3. **Uma pessoa nunca leva 2 prêmios no mesmo evento** — o dedup passou a ser por
+   PESSOA (`membro_id` > cpf > telefone > nome), não por linha de inscrição, e
+   **`permitir_repetir` deixou de existir** (bundle antigo que ainda mande a flag
+   é ignorado: virou regra da casa, não opção de tela).
+
+- **Re-sortear virou SUBSTITUIÇÃO** (`substituido_em` · migration
+  `20260731210000`). Antes o botão inseria uma 2ª linha pro MESMO prêmio: a tela
+  mostrava o 1º ganhador e o outro ficava **bloqueado de concorrer sem ter
+  prêmio na mão**. Agora o anterior é marcado como substituído (sai da leitura,
+  fica como trilha — `insc_sorteios` não se apaga) e o ganhador trocado volta ao
+  bolo. A tela confirma nominalmente antes ("Fulano deixa de ter este prêmio").
+- **Leitura do pool é PAGINADA** (inscritos e check-ins): `.select()` cru trunca
+  em 1000 e num evento grande o milésimo-primeiro não concorreria, em silêncio.
+- ⚠️ **Deploy em 2 etapas coberto**: a tela do evento lê `substituido_em` em
+  consulta **isolada best-effort** (pedir a coluna dentro do embed derrubaria o
+  `GET /eventos/:id` inteiro sem a migration — lição do `parcelas_max`), e o
+  sorteio tem **fallback de select**: sem a coluna, ele NÃO trata "erro" como
+  "nenhum sorteio" (isso deixaria a mesma pessoa ganhar de novo).
+- **Check-in aceita o CÓDIGO**: `/checkin/buscar` com 4 dígitos casa
+  `numero_sorte` (único por evento) além de CPF/telefone, e o código exato vem
+  primeiro na lista. É o caminho rápido da portaria quando o QR não abre — o
+  código **não substitui** a busca por nome/CPF.
+
+**Fluxo do dia (combinado):** portaria liga o check-in (1 clique na tela) → 2
+postos, um no QR e outro na busca (a tela já trata QR de outro evento, cancelada,
+pagamento pendente com liberação auditada e duplo check-in avisando a hora) →
+palco chama **número**, não nome. Responsabilidade é do dono do evento (evento da
+AMI, AMI opera) — **tácito, não permissão de sistema** (decisão do Marcos).
+
+### Opt-in do Celebra por decisão da liderança + opt-out que já existia
+
+- ⚠️ **O opt-out padrão JÁ EXISTE desde 24/07** (`services/whatsappOptout.js` +
+  interceptação de prioridade máxima no webhook): pega SAIR/PARAR/STOP/"não quero
+  mais receber" e o payload de botão, responde confirmando, registra em
+  `whatsapp_coletas` e desliga a pessoa. **Não criar outro** — o que faltava era
+  só a LINHA na mensagem dizendo como cancelar (isso vive no texto do template).
+  Fechei um furo dele: agora desliga também `inscricoes.whatsapp_optin`, que é o
+  flag que o `inscricaoWhatsapp` realmente lê (a maioria dos inscritos não tem
+  cadastro em `mem_membros`, então o opt-out era pela metade).
+- **Decisão do Marcos (31/07)**: *"são todos voluntários, marque a opção de
+  opt-in para eles, como se eles tivessem aceitado (...) só não mande mensagem
+  pra ninguém agora"*. Contexto medido: **só 15 das 98** tinham opt-in, porque 85
+  são migradas do formulário antigo, **que não tinha o checkbox** — "não marcou"
+  ali não é "recusou". Script `backend/scripts/_optin_evento_lideranca.cjs`
+  (dry-run · `--exec` · backup JSON antes de escrever · trava
+  `.eq('whatsapp_optin', false)` pra não sobrescrever quem já decidiu).
+- ⚠️ **O registro em `inscricao_consentimentos` diz a VERDADE**: o texto grava que
+  foi decisão da liderança, **não** que a pessoa aceitou. Fabricar prova de
+  aceite é pior que não ter registro. O script **não envia nada** e **não toca em
+  `mem_membros.whatsapp_optin`** (isso mudaria envios de outros módulos, que não
+  foram decididos aqui).
+
 ## Devocionais · módulo do Matheus (no ar)
 
 Módulo existe e roda: `backend/routes/devocionalPlanos.js` (CRUD + geração de

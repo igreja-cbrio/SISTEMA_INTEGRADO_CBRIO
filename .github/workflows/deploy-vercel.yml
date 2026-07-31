@@ -38,6 +38,9 @@ jobs:
       - name: Inscrições orphan queue keys and door pointers
         run: npm run test:inscricao-orfas
 
+      - name: Inscrições raffle eligibility (check-in only, one prize per person)
+        run: npm run test:inscricao-sorteio
+
       - name: Inscrições QR signature and inventory hash
         run: npm run test:inscricao-qr
 
