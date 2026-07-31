@@ -189,8 +189,18 @@ const TABS = ['Dashboard', 'Bens', 'Categorias / Localizações', 'Revisão', 'M
 const fmtDateTime = (d) => d ? new Date(d).toLocaleString('pt-BR') : '—';
 
 export default function Patrimonio() {
-  const { isAdmin: isDiretor, cargoSlug } = useAuth();
-  const isCoordenadorRevisao = isDiretor || cargoSlug === CARGO_COORDENADOR_REVISAO;
+  const { getAccessLevel, cargoSlug } = useAuth();
+  // Nível da matriz de permissões pro módulo Patrimônio (achado 2026-07-31 ·
+  // reportado pelo usuário: a matriz dizia nível 3 "Mexer (editar)" pro
+  // Erivelton, mas a tela só liberava edição pra quem tem role global
+  // admin/diretor — ignorava o nível configurado). getAccessLevel já devolve
+  // 5/4 automaticamente pra admin/diretor, então não precisa de OR à parte.
+  // 3 = "Ver + editar (CRUD)" · 4 = "+ deletar" (remover categoria/localização,
+  // coordenar a Revisão periódica).
+  const nivelPatrimonio = getAccessLevel(['patrimonio', 'Patrimônio']);
+  const podeEditar = nivelPatrimonio >= 3;
+  const podeExcluir = nivelPatrimonio >= 4;
+  const isCoordenadorRevisao = nivelPatrimonio >= 4 || cargoSlug === CARGO_COORDENADOR_REVISAO;
   const [tab, setTab] = useState(0);
   const [dash, setDash] = useState(null);
   const [bens, setBens] = useState([]);
@@ -328,15 +338,15 @@ export default function Patrimonio() {
           filtroCat={filtroCat} setFiltroCat={setFiltroCat} filtroLoc={filtroLoc} setFiltroLoc={setFiltroLoc}
           categorias={categorias} localizacoes={localizacoes} locOptions={locOptions} responsaveis={responsaveis}
           onNew={() => setModalBem({})} onDetail={openDetail} onDetailPorCodigo={openDetailPorCodigo}
-          onBaixar={baixarBem} isDiretor={isDiretor}
+          onBaixar={baixarBem} isDiretor={podeEditar}
           onReload={() => { loadBens(); loadDash(); loadIndicadores(); }}
         />
       )}
-      {tab === 2 && <CatLocTab categorias={categorias} localizacoes={localizacoes} locOptions={locOptions} newCat={newCat} setNewCat={setNewCat} addCat={addCat} removeCat={removeCat} updateCat={updateCat} addLoc={addLoc} removeLoc={removeLoc} updateLoc={updateLoc} isDiretor={isDiretor} />}
+      {tab === 2 && <CatLocTab categorias={categorias} localizacoes={localizacoes} locOptions={locOptions} newCat={newCat} setNewCat={setNewCat} addCat={addCat} removeCat={removeCat} updateCat={updateCat} addLoc={addLoc} removeLoc={removeLoc} updateLoc={updateLoc} isDiretor={podeEditar} podeExcluir={podeExcluir} />}
       {tab === 3 && (
         <RevisaoTab ciclos={revisaoCiclos} indicadores={revisaoIndic}
           onNovoCiclo={() => setModalNovoCiclo(true)} onAbrirConvocacao={abrirConvocacao}
-          isDiretor={isDiretor} isCoordenadorRevisao={isCoordenadorRevisao}
+          isDiretor={podeEditar} isCoordenadorRevisao={isCoordenadorRevisao}
         />
       )}
       {tab === 4 && (
@@ -350,7 +360,7 @@ export default function Patrimonio() {
       )}
 
       <BemFormModal open={!!modalBem} data={modalBem} categorias={categorias} locOptions={locOptions} responsaveis={responsaveis} onClose={() => setModalBem(null)} onSave={saveBem} />
-      <BemDetailModal open={!!modalDetail} data={modalDetail} onClose={() => setModalDetail(null)} onEdit={(b) => { setModalDetail(null); setModalBem(b); }} onBaixar={baixarBem} onMov={(bemId) => setModalMov({ bem_id: bemId })} onDispensarAlerta={dispensarAlerta} isDiretor={isDiretor} />
+      <BemDetailModal open={!!modalDetail} data={modalDetail} onClose={() => setModalDetail(null)} onEdit={(b) => { setModalDetail(null); setModalBem(b); }} onBaixar={baixarBem} onMov={(bemId) => setModalMov({ bem_id: bemId })} onDispensarAlerta={dispensarAlerta} isDiretor={podeEditar} />
       <MovFormModal open={!!modalMov} data={modalMov} locOptions={locOptions} onClose={() => setModalMov(null)} onSave={saveMov} />
       <NovoCicloModal open={modalNovoCiclo} responsaveis={responsaveis} onClose={() => setModalNovoCiclo(false)} onSave={criarCiclo} />
       <ConvocacaoModal open={!!modalConvocacao} data={modalConvocacao} locOptions={locOptions} onClose={() => setModalConvocacao(null)} onIniciar={iniciarConvocacao} onAtualizarItem={atualizarItemRevisao} onConcluir={concluirConvocacao} isDiretor={isCoordenadorRevisao} />
@@ -921,7 +931,7 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
 
 // Nó da árvore de localizações (expandir/colapsar filhas · pedido do usuário
 // 2026-07-29: "clique na localização-pai expande pra mostrar as salas").
-function LocTreeNode({ node, depth, expanded, toggleExpanded, isDiretor, onEdit, removeLoc }) {
+function LocTreeNode({ node, depth, expanded, toggleExpanded, isDiretor, podeExcluir, onEdit, removeLoc }) {
   const temFilhas = node.children.length > 0;
   const aberto = expanded.has(node.id);
   return (
@@ -932,21 +942,21 @@ function LocTreeNode({ node, depth, expanded, toggleExpanded, isDiretor, onEdit,
           {node.nome}
           {temFilhas && <span style={{ fontSize: 11, color: C.text3 }}>({node.children.length})</span>}
         </span>
-        {isDiretor && (
+        {(isDiretor || podeExcluir) && (
           <span style={{ display: 'flex', gap: 2 }}>
-            <Button variant="ghost" size="xs" onClick={() => onEdit(node)}><Pencil style={{ width: 13, height: 13 }} /></Button>
-            <Button variant="ghost" size="xs" onClick={() => removeLoc(node.id)}><Trash2 style={{ width: 14, height: 14 }} /></Button>
+            {isDiretor && <Button variant="ghost" size="xs" onClick={() => onEdit(node)}><Pencil style={{ width: 13, height: 13 }} /></Button>}
+            {podeExcluir && <Button variant="ghost" size="xs" onClick={() => removeLoc(node.id)}><Trash2 style={{ width: 14, height: 14 }} /></Button>}
           </span>
         )}
       </div>
       {temFilhas && aberto && node.children.map(c => (
-        <LocTreeNode key={c.id} node={c} depth={depth + 1} expanded={expanded} toggleExpanded={toggleExpanded} isDiretor={isDiretor} onEdit={onEdit} removeLoc={removeLoc} />
+        <LocTreeNode key={c.id} node={c} depth={depth + 1} expanded={expanded} toggleExpanded={toggleExpanded} isDiretor={isDiretor} podeExcluir={podeExcluir} onEdit={onEdit} removeLoc={removeLoc} />
       ))}
     </div>
   );
 }
 
-function CatLocTab({ categorias, localizacoes, locOptions, newCat, setNewCat, addCat, removeCat, updateCat, addLoc, removeLoc, updateLoc, isDiretor }) {
+function CatLocTab({ categorias, localizacoes, locOptions, newCat, setNewCat, addCat, removeCat, updateCat, addLoc, removeLoc, updateLoc, isDiretor, podeExcluir }) {
   const [novoNomeLoc, setNovoNomeLoc] = useState('');
   const [novoPaiLoc, setNovoPaiLoc] = useState('');
   const [editLoc, setEditLoc] = useState(null); // { id, nome, pai_id }
@@ -989,10 +999,10 @@ function CatLocTab({ categorias, localizacoes, locOptions, newCat, setNewCat, ad
                 {c.icone && `${c.icone} `}{c.nome}
                 {c.vida_util_meses ? <span style={{ fontSize: 11, color: C.text3 }}>({c.vida_util_meses}m vida útil)</span> : null}
               </span>
-              {isDiretor && (
+              {(isDiretor || podeExcluir) && (
                 <span style={{ display: 'flex', gap: 2 }}>
-                  <Button variant="ghost" size="xs" onClick={() => setEditCat({ id: c.id, nome: c.nome, icone: c.icone || '', vida_util_meses: c.vida_util_meses || '' })}><Pencil style={{ width: 13, height: 13 }} /></Button>
-                  <Button variant="ghost" size="xs" onClick={() => removeCat(c.id)}><Trash2 style={{ width: 14, height: 14 }} /></Button>
+                  {isDiretor && <Button variant="ghost" size="xs" onClick={() => setEditCat({ id: c.id, nome: c.nome, icone: c.icone || '', vida_util_meses: c.vida_util_meses || '' })}><Pencil style={{ width: 13, height: 13 }} /></Button>}
+                  {podeExcluir && <Button variant="ghost" size="xs" onClick={() => removeCat(c.id)}><Trash2 style={{ width: 14, height: 14 }} /></Button>}
                 </span>
               )}
             </div>
@@ -1014,7 +1024,7 @@ function CatLocTab({ categorias, localizacoes, locOptions, newCat, setNewCat, ad
           )}
           {localizacoes.length === 0 && <div style={styles.empty}>Nenhuma localização</div>}
           {tree.map(node => (
-            <LocTreeNode key={node.id} node={node} depth={0} expanded={expanded} toggleExpanded={toggleExpanded} isDiretor={isDiretor} onEdit={setEditLoc} removeLoc={removeLoc} />
+            <LocTreeNode key={node.id} node={node} depth={0} expanded={expanded} toggleExpanded={toggleExpanded} isDiretor={isDiretor} podeExcluir={podeExcluir} onEdit={setEditLoc} removeLoc={removeLoc} />
           ))}
         </div>
       </div>
