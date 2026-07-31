@@ -15,7 +15,7 @@ import { Button } from '../../../components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
 import BarcodeScanner from '../../../components/BarcodeScanner';
 import Paginacao, { usePaginacaoLocal } from '../../../components/Paginacao';
-import { exportCSV } from '../../../lib/export';
+import { exportCSV, exportPDF } from '../../../lib/export';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
@@ -168,12 +168,25 @@ const fmtCodigo = (c) => {
   return s;
 };
 
-// Exporta a lista de bens EXATAMENTE como está na tela (já filtrada pelos
-// selects + ordenada pelas pills) — pedido do usuário 2026-07-31. Mesmas
-// colunas exibidas na tabela; não pagina (exporta tudo que passou no filtro,
-// não só a página visível).
+// Lista de bens EXATAMENTE como está na tela (já filtrada pelos selects +
+// ordenada pelas pills) — pedido do usuário 2026-07-31. Mesmas colunas
+// exibidas na tabela; não pagina (exporta tudo que passou no filtro, não só
+// a página visível de 25 — o backend também não pagina mais em 1000, então
+// isso cobre o parque inteiro que bater no filtro).
+const BENS_EXPORT_HEADERS = ['Código', 'Nome', 'Categoria', 'Localização', 'Marca/Modelo', 'Valor de Aquisição', 'Status'];
+function bensParaExportar(lista) {
+  return lista.map((b) => [
+    fmtCodigo(b.codigo_barras),
+    b.nome,
+    b.pat_categorias?.nome || '',
+    b.pat_localizacoes?.nome || '',
+    [b.marca, b.modelo].filter(Boolean).join(' '),
+    b.valor_aquisicao != null ? fmtMoney(b.valor_aquisicao) : '',
+    STATUS_BEM[b.status]?.label || b.status || '',
+  ]);
+}
 function exportarBensCSV(lista) {
-  const headers = ['Código', 'Nome', 'Categoria', 'Localização', 'Marca/Modelo', 'Valor de Aquisição', 'Status'];
+  // CSV usa o valor cru (sem "R$"), pra abrir certo como número no Excel.
   const rows = lista.map((b) => [
     fmtCodigo(b.codigo_barras),
     b.nome,
@@ -183,7 +196,10 @@ function exportarBensCSV(lista) {
     b.valor_aquisicao ?? '',
     STATUS_BEM[b.status]?.label || b.status || '',
   ]);
-  exportCSV(headers, rows, 'patrimonio_bens');
+  exportCSV(BENS_EXPORT_HEADERS, rows, 'patrimonio_bens');
+}
+function exportarBensPDF(lista) {
+  exportPDF('Patrimônio — Bens', BENS_EXPORT_HEADERS, bensParaExportar(lista));
 }
 
 function Modal({ open, onClose, title, children, footer }) {
@@ -831,6 +847,7 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
           Ordenar {ordenacao !== 'padrao' ? `· ${ORDENACOES_BENS.find(o => o.key === ordenacao)?.label}` : ''} {ordenarAberto ? '▴' : '▾'}
         </Button>
         <Button variant="outline" onClick={() => exportarBensCSV(bensOrdenados)}>Exportar CSV</Button>
+        <Button variant="outline" onClick={() => exportarBensPDF(bensOrdenados)}>Exportar PDF</Button>
         {isDiretor && <div style={{ marginLeft: 'auto' }}><Button onClick={onNew}>+ Novo Bem</Button></div>}
       </div>
 
