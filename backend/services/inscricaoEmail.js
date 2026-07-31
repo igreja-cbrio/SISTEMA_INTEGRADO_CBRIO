@@ -93,6 +93,17 @@ function baseUrl() {
   return url;
 }
 
+/**
+ * Link da política de reembolso pro rodapé. Só faz sentido onde houve (ou vai
+ * haver) pagamento — inscrição gratuita não tem o que devolver. Vazio quando não
+ * há base pública confiável, pela mesma guarda de URL local.
+ */
+function politicaHtml() {
+  const base = baseUrl();
+  if (!base) return '';
+  return `<a href="${base}/politica-reembolso" style="color:#9ca3af">Política de reembolso e cancelamento</a>`;
+}
+
 function escapar(v) {
   return String(v ?? '').replace(/[&<>"']/g, (c) => (
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
@@ -121,7 +132,7 @@ const ROTULO_METODO = Object.freeze({
 });
 
 /** Layout único · HTML simples e inline (cliente de e-mail não carrega CSS externo). */
-function montarHtml({ titulo, saudacao, paragrafos = [], linhas = [], acao, rodape }) {
+function montarHtml({ titulo, saudacao, paragrafos = [], linhas = [], acao, rodape, politica }) {
   const itens = linhas
     .filter((l) => l && l.valor)
     .map((l) => `<tr>
@@ -146,6 +157,7 @@ function montarHtml({ titulo, saudacao, paragrafos = [], linhas = [], acao, roda
     ${botao}
     <hr style="border:none;border-top:1px solid #e5e7eb;margin:26px 0 14px">
     <p style="margin:0;color:#9ca3af;font-size:12px">${escapar(rodape || 'Comunidade Batista do Rio de Janeiro')}</p>
+    ${politica ? `<p style="margin:8px 0 0;color:#9ca3af;font-size:12px">${politica}</p>` : ''}
   </div>`;
 }
 
@@ -376,6 +388,8 @@ async function enviarEmailInscricaoConfirmada({ inscricao, evento, cobranca, com
     rodape: comprovanteToken
       ? 'Apresente o comprovante na entrada do evento. Comunidade Batista do Rio de Janeiro'
       : undefined,
+    // Só quem pagou: inscrição gratuita/isenta não tem devolução a tratar.
+    politica: pagou ? politicaHtml() : '',
   };
 
   return despacharTipo({
@@ -421,6 +435,7 @@ async function enviarEmailInscricaoPendente({ inscricao, evento, cobranca }) {
     ],
     acao: link ? { rotulo: 'Pagar minha inscrição', url: link } : null,
     rodape: 'Se você já pagou, ignore este e-mail. Comunidade Batista do Rio de Janeiro',
+    politica: politicaHtml(),
   };
 
   return despacharTipo({

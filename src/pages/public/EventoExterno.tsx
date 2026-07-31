@@ -557,6 +557,22 @@ export default function EventoExterno() {
                   📲 <b style={{ color: C.text }}>Quero receber avisos deste evento no WhatsApp</b><br />
                   {textos.aviso_optin || AVISO_OPTIN}
                 </ConsentBox>
+
+                {/* Só em evento PAGO: em evento gratuito não há o que reembolsar,
+                    e o link viraria ruído. O CDC exige informação PRÉVIA — por
+                    isso o link fica ANTES do botão de enviar, não na tela de
+                    sucesso. Abre em nova aba pra não perder o formulário
+                    preenchido. */}
+                {evento?.pagamento_ativo && (
+                  <p style={{ fontSize: 12.5, color: C.text3, margin: '10px 0 0', lineHeight: 1.5 }}>
+                    Inscrição paga. Antes de continuar, veja como funcionam
+                    cancelamento e devolução na{' '}
+                    <a href="/politica-reembolso" target="_blank" rel="noreferrer"
+                      style={{ color: '#00B39D', textDecoration: 'underline' }}>
+                      Política de Reembolso
+                    </a>.
+                  </p>
+                )}
               </div>
 
               <input value={website} onChange={e => setWebsite(e.target.value)} tabIndex={-1} autoComplete="off" style={{ display: 'none' }} aria-hidden="true" />
