@@ -68,7 +68,7 @@ router.get('/dashboard/depreciacao', async (req, res) => {
     const pageSize = 1000;
     while (true) {
       const { data, error } = await supabase.from('pat_bens')
-        .select('valor_aquisicao, data_aquisicao, status, categoria_id, pat_categorias(nome, vida_util_meses)')
+        .select('id, nome, valor_aquisicao, data_aquisicao, status, categoria_id, pat_categorias(nome, vida_util_meses)')
         .neq('status', 'baixado')
         .range(offset, offset + pageSize - 1);
       if (error) throw error;
@@ -81,6 +81,9 @@ router.get('/dashboard/depreciacao', async (req, res) => {
     // Agregado por categoria (pra gráfico aquisição × atual) — chave por
     // categoria_id (null vira "Sem categoria"), sem precisar de migration.
     const porCategoria = new Map();
+    // Bens perto do fim da vida útil (pedido do usuário 2026-07-31) — lista
+    // acionável pra planejamento de reposição, não só o total agregado.
+    const bensFimVidaUtil = [];
     for (const bem of all) {
       const dep = calcularDepreciacao(bem);
       if (dep) {
@@ -93,10 +96,45 @@ router.get('/dashboard/depreciacao', async (req, res) => {
         atual.valor_aquisicao += Number(bem.valor_aquisicao);
         atual.valor_atual += dep.valor_atual_estimado;
         porCategoria.set(chave, atual);
+        if (dep.percentual_depreciado >= 80) {
+          bensFimVidaUtil.push({
+            id: bem.id, nome: bem.nome, categoria: nome,
+            percentual_depreciado: dep.percentual_depreciado,
+            valor_atual_estimado: dep.valor_atual_estimado,
+          });
+        }
       } else if (bem.valor_aquisicao != null) {
         bensSemConfiguracao++;
       }
     }
+
+    // Aquisições por período (pedido do usuário 2026-07-31) — histórico de
+    // COMPRA independe do status atual do bem, então busca à parte incluindo
+    // baixados (a lista acima exclui baixado de propósito, pra depreciação).
+    let aquisicoesRaw = [];
+    {
+      let offset2 = 0;
+      while (true) {
+        const { data, error } = await supabase.from('pat_bens')
+          .select('data_aquisicao, valor_aquisicao')
+          .not('data_aquisicao', 'is', null)
+          .range(offset2, offset2 + pageSize - 1);
+        if (error) throw error;
+        if (!data || data.length === 0) break;
+        aquisicoesRaw = aquisicoesRaw.concat(data);
+        if (data.length < pageSize) break;
+        offset2 += pageSize;
+      }
+    }
+    const porMes = new Map();
+    for (const b of aquisicoesRaw) {
+      const mes = b.data_aquisicao.slice(0, 7); // YYYY-MM
+      const atual = porMes.get(mes) || { mes, quantidade: 0, valor_total: 0 };
+      atual.quantidade += 1;
+      atual.valor_total += b.valor_aquisicao != null ? Number(b.valor_aquisicao) : 0;
+      porMes.set(mes, atual);
+    }
+
     res.json({
       valor_aquisicao_total: Math.round(valorAquisicaoTotal * 100) / 100,
       valor_atual_estimado_total: Math.round(valorAtualTotal * 100) / 100,
@@ -109,10 +147,58 @@ router.get('/dashboard/depreciacao', async (req, res) => {
           valor_atual: Math.round(c.valor_atual * 100) / 100,
         }))
         .sort((a, b) => b.valor_aquisicao - a.valor_aquisicao),
+      bens_fim_vida_util: bensFimVidaUtil
+        .sort((a, b) => b.percentual_depreciado - a.percentual_depreciado)
+        .slice(0, 20),
+      aquisicoes_por_mes: Array.from(porMes.values())
+        .sort((a, b) => a.mes.localeCompare(b.mes))
+        .map(m => ({ ...m, valor_total: Math.round(m.valor_total * 100) / 100 })),
     });
   } catch (e) {
     console.error('[PAT] Agregado de depreciação falhou:', e.message);
     res.status(500).json({ error: 'Erro ao calcular depreciação agregada' });
+  }
+});
+
+// Atividade recente (pedido do usuário 2026-07-31) — volume de
+// pat_movimentacoes nos últimos 30/90 dias por tipo, pra mostrar o quanto o
+// patrimônio está circulando (hoje só aparece dentro do popup de cada bem).
+router.get('/dashboard/atividade', async (req, res) => {
+  try {
+    const desde90 = new Date();
+    desde90.setDate(desde90.getDate() - 90);
+    let all = [];
+    let offset = 0;
+    const pageSize = 1000;
+    while (true) {
+      const { data, error } = await supabase.from('pat_movimentacoes')
+        .select('tipo, data_movimentacao')
+        .gte('data_movimentacao', desde90.toISOString())
+        .range(offset, offset + pageSize - 1);
+      if (error) throw error;
+      if (!data || data.length === 0) break;
+      all = all.concat(data);
+      if (data.length < pageSize) break;
+      offset += pageSize;
+    }
+    const desde30 = new Date();
+    desde30.setDate(desde30.getDate() - 30);
+    const porTipo = new Map();
+    let total30 = 0;
+    for (const m of all) {
+      const atual = porTipo.get(m.tipo) || { tipo: m.tipo, total_30d: 0, total_90d: 0 };
+      atual.total_90d += 1;
+      if (new Date(m.data_movimentacao) >= desde30) { atual.total_30d += 1; total30++; }
+      porTipo.set(m.tipo, atual);
+    }
+    res.json({
+      total_30d: total30,
+      total_90d: all.length,
+      por_tipo: Array.from(porTipo.values()).sort((a, b) => b.total_90d - a.total_90d),
+    });
+  } catch (e) {
+    console.error('[PAT] Atividade recente falhou:', e.message);
+    res.status(500).json({ error: 'Erro ao calcular atividade recente' });
   }
 });
 

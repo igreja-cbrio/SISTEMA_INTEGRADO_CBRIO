@@ -177,6 +177,8 @@ export default function Patrimonio() {
   const loadIndicadores = useCallback(async () => { try { setIndicadores(await patrimonio.dashboardIndicadores()); } catch (e) { console.error(e); } }, []);
   const [depreciacaoIndic, setDepreciacaoIndic] = useState(null);
   const loadDepreciacao = useCallback(async () => { try { setDepreciacaoIndic(await patrimonio.dashboardDepreciacao()); } catch (e) { console.error(e); } }, []);
+  const [atividadeRecente, setAtividadeRecente] = useState(null);
+  const loadAtividade = useCallback(async () => { try { setAtividadeRecente(await patrimonio.dashboardAtividade()); } catch (e) { console.error(e); } }, []);
   const loadBens = useCallback(async () => {
     try { setLoading(true); const p = {}; if (filtroStatus) p.status = filtroStatus; if (filtroCat) p.categoria_id = filtroCat; if (filtroLoc) p.localizacao_id = filtroLoc; if (busca) p.busca = busca; setBens(await patrimonio.bens.list(p)); }
     catch (e) { console.error(e); } finally { setLoading(false); }
@@ -210,7 +212,7 @@ export default function Patrimonio() {
     } catch (e) { console.error(e); } finally { setMovLoading(false); }
   }, [movPage, movFiltroTipo, movFiltroLoc, movBusca]);
 
-  useEffect(() => { loadDash(); loadIndicadores(); loadDepreciacao(); loadBens(); loadCats(); loadLocs(); loadRevisao(); loadRevisaoIndic(); loadResponsaveis(); }, []);
+  useEffect(() => { loadDash(); loadIndicadores(); loadDepreciacao(); loadAtividade(); loadBens(); loadCats(); loadLocs(); loadRevisao(); loadRevisaoIndic(); loadResponsaveis(); }, []);
   useEffect(() => { loadBens(); }, [filtroStatus, filtroCat, filtroLoc, busca]);
   useEffect(() => { if (tab === 4) loadMovimentacoes(); }, [tab, movPage, movFiltroTipo, movFiltroLoc, movBusca]);
   useEffect(() => { setMovPage(1); }, [movFiltroTipo, movFiltroLoc, movBusca]);
@@ -267,6 +269,7 @@ export default function Patrimonio() {
           dash={dash}
           indicadores={indicadores}
           depreciacaoIndic={depreciacaoIndic}
+          atividadeRecente={atividadeRecente}
           localizacoes={localizacoes}
           onNavigate={(targetTab, status) => { setFiltroStatus(status || ''); setTab(targetTab); }}
           onNavigateFiltro={(f) => {
@@ -356,7 +359,7 @@ function PatStatCard({ label, value, bg, svg, onClick }) {
   );
 }
 
-function DashboardTab({ dash, indicadores, depreciacaoIndic, localizacoes, onNavigate, onNavigateFiltro, onAbrirBem }) {
+function DashboardTab({ dash, indicadores, depreciacaoIndic, atividadeRecente, localizacoes, onNavigate, onNavigateFiltro, onAbrirBem }) {
   if (!dash) return <div style={styles.empty}>Carregando dashboard...</div>;
   // Tab 1 = Bens; filtra por status quando aplicável
   const kpis = [
@@ -419,6 +422,9 @@ function DashboardTab({ dash, indicadores, depreciacaoIndic, localizacoes, onNav
     .sort((a, b) => b.value - a.value);
 
   const depreciacaoPorCategoria = depreciacaoIndic?.por_categoria || [];
+  const bensFimVidaUtil = depreciacaoIndic?.bens_fim_vida_util || [];
+  const aquisicoesPorMes = (depreciacaoIndic?.aquisicoes_por_mes || []).map(m => ({ ...m, mesLabel: m.mes.slice(2).replace('-', '/') }));
+  const atividadePorTipo = (atividadeRecente?.por_tipo || []).map(t => ({ ...t, tipoLabel: TIPO_MOV[t.tipo] || t.tipo }));
 
   // Tooltip do recharts, explícito nas 3 propriedades (content/item/label) —
   // o CSS global (.recharts-default-tooltip) só cobre fundo/borda/label; o
@@ -464,6 +470,32 @@ function DashboardTab({ dash, indicadores, depreciacaoIndic, localizacoes, onNav
                 </div>
               ))}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Atividade recente (pedido do usuário 2026-07-31) — volume de
+          movimentações dos últimos 30/90d por tipo, sinal de o quanto o
+          patrimônio está circulando (antes só visível dentro de cada bem). */}
+      {atividadePorTipo.length > 0 && (
+        <div style={{ ...styles.card, marginBottom: 24, padding: 16 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 8 }}>
+            <div style={styles.cardTitle}>Atividade recente (movimentações)</div>
+            <div style={{ fontSize: 11, color: C.text3 }}>{atividadeRecente.total_30d} nos últimos 30d · {atividadeRecente.total_90d} nos últimos 90d</div>
+          </div>
+          <div style={{ width: '100%', height: Math.max(140, atividadePorTipo.length * 34 + 20), marginTop: 12 }}>
+            <ResponsiveContainer>
+              <BarChart data={atividadePorTipo} layout="vertical" margin={{ top: 0, right: 30, bottom: 0, left: 8 }}>
+                <CartesianGrid horizontal={false} stroke={C.border} />
+                <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11 }} />
+                <YAxis type="category" dataKey="tipoLabel" width={110} tick={{ fontSize: 11 }} />
+                <Tooltip {...tooltipProps} formatter={(v, n) => [v, n === 'total_30d' ? 'Últimos 30d' : 'Últimos 90d']} />
+                <Bar dataKey="total_90d" name="total_90d" fill={gradFill('#94a3b8')} radius={[0, 4, 4, 0]} maxBarSize={14} />
+                <Bar dataKey="total_30d" name="total_30d" fill={gradFill(C.primary)} radius={[0, 4, 4, 0]} maxBarSize={14}>
+                  <LabelList dataKey="total_30d" position="right" style={{ fontSize: 10, fill: C.text2 }} />
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
           </div>
         </div>
       )}
@@ -518,6 +550,25 @@ function DashboardTab({ dash, indicadores, depreciacaoIndic, localizacoes, onNav
         </div>
       )}
 
+      {/* Fim de vida útil (pedido do usuário 2026-07-31) — lista acionável de
+          bens com depreciação >= 80%, pra entrar no planejamento de reposição. */}
+      {bensFimVidaUtil.length > 0 && (
+        <div style={{ ...styles.card, marginBottom: 24 }}>
+          <div style={styles.cardHeader}><div style={styles.cardTitle}>Fim de vida útil próximo (≥80% depreciado)</div></div>
+          <div style={{ padding: 16 }}>
+            {bensFimVidaUtil.map((b) => (
+              <div key={b.id} className="cbrio-row" style={{ cursor: 'pointer', display: 'flex', justifyContent: 'space-between', gap: 12, padding: '8px 0', borderBottom: `1px solid ${C.border}` }} onClick={() => onAbrirBem(b.id)}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>{b.nome}</div>
+                  <div style={{ fontSize: 11, color: C.text3 }}>{b.categoria} · valor atual estimado {fmtMoney(b.valor_atual_estimado)}</div>
+                </div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: b.percentual_depreciado >= 100 ? C.red : C.amber, whiteSpace: 'nowrap' }}>{b.percentual_depreciado}%</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 24 }}>
         <div style={styles.card}>
           <div style={styles.cardHeader}><div style={styles.cardTitle}>Por Categoria</div></div>
@@ -562,6 +613,25 @@ function DashboardTab({ dash, indicadores, depreciacaoIndic, localizacoes, onNav
           </div>
         </div>
       </div>
+
+      {/* Aquisições por período (pedido do usuário 2026-07-31) — ritmo de
+          crescimento do patrimônio ao longo do tempo (data_aquisicao). */}
+      {aquisicoesPorMes.length > 0 && (
+        <div style={{ ...styles.card, marginBottom: 24, padding: 16 }}>
+          <div style={styles.cardTitle}>Aquisições por período</div>
+          <div style={{ width: '100%', height: 220, marginTop: 12 }}>
+            <ResponsiveContainer>
+              <BarChart data={aquisicoesPorMes} margin={{ top: 8, right: 16, bottom: 0, left: 8 }}>
+                <CartesianGrid vertical={false} stroke={C.border} />
+                <XAxis dataKey="mesLabel" tick={{ fontSize: 11 }} />
+                <YAxis tickFormatter={(v) => fmtMoney(v)} tick={{ fontSize: 10 }} width={70} />
+                <Tooltip {...tooltipProps} formatter={(v, n) => n === 'valor_total' ? [fmtMoney(v), 'Valor adquirido'] : [v, 'Bens']} />
+                <Bar dataKey="valor_total" name="valor_total" fill={gradFill(C.primary)} radius={[4, 4, 0, 0]} maxBarSize={28} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
 
       {indicadores && (
         <div style={{ marginBottom: 24 }}>

@@ -1523,6 +1523,7 @@ export const patrimonio = {
   dashboard: () => get('/patrimonio/dashboard'),
   dashboardIndicadores: () => get('/patrimonio/dashboard/indicadores'),
   dashboardDepreciacao: () => get('/patrimonio/dashboard/depreciacao'),
+  dashboardAtividade: () => get('/patrimonio/dashboard/atividade'),
   categorias: {
     list: () => get('/patrimonio/categorias'),
     create: (data) => post('/patrimonio/categorias', data),
