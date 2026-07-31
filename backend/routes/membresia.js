@@ -3542,27 +3542,22 @@ router.post('/identidade-pendencias/:id/confirmar-cpf', async (req, res) => {
   }
 });
 
-// ── Onde cada porta guarda o ponteiro de pessoa ────────────────────────────
-// Espelha `escritores` de services/inscricaoPortas.js. ⚠️ A apresentação usa
-// `responsavel_membro_id` (a criança não é a pessoa do vínculo) — por isso a
-// coluna é declarada por porta em vez de assumida como `membro_id`.
-const PORTA_VINCULO = {
-  next: { tabela: 'next_matriculas', col: 'membro_id' },
-  voluntariado: { tabela: 'vol_inscricoes', col: 'membro_id' },
-  inscricoes: { tabela: 'inscricoes', col: 'membro_id' },
-  eventos_externos: { tabela: 'ext_inscricoes', col: 'membro_id' },
-  batismo: { tabela: 'batismo_inscricoes', col: 'membro_id' },
-  grupos: { tabela: 'mem_grupo_pedidos', col: 'membro_id' },
-  grupos_lider: { tabela: 'mem_lider_inscricoes', col: 'membro_id' },
-  apresentacao_criancas: { tabela: 'apresentacao_criancas', col: 'responsavel_membro_id' },
-  apresentacao_bebes: { tabela: 'apresentacao_bebes', col: 'responsavel_membro_id' },
-};
+// Régua da pessoa órfã + mapa porta→ponteiro: fonte ÚNICA, compartilhada com
+// o script de enfileiramento (services/inscricaoOrfas.js).
+const { chavePessoa, PORTA_VINCULO, lerLinhasOrfas } = require('../services/inscricaoOrfas');
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // POST /api/membresia/identidade-pendencias/:id/ligar-inscricao
-// Liga a linha de inscrição órfã ao cadastro CANDIDATO da pendência. É a ação
-// humana da fila `inscricao_sem_vinculo` — o sistema nunca liga sozinho (a
-// evidência mais forte que temos em 161 dos 166 pares é telefone+nome, e
-// telefone é compartilhado em família).
+// Liga ao cadastro CANDIDATO **todas as linhas de inscrição daquela pessoa**. É
+// a ação humana da fila `inscricao_sem_vinculo` — o sistema nunca liga sozinho
+// (a evidência mais forte em 160 dos 190 pares é telefone+nome, e telefone é
+// compartilhado em família).
+//
+// ⚠️ Ligava UMA linha só (`p.origem_id` = ref_id) e resolvia a pendência —
+// então pessoa com 2+ inscrições ficava com as outras órfãs e SEM pendência
+// nenhuma (18 casos, 20 linhas, medido em 31/07). Agora `origem_id` é a chave
+// da pessoa e o clique varre a view.
 router.post('/identidade-pendencias/:id/ligar-inscricao', async (req, res) => {
   try {
     if (nivelFilaIdentidade(req) < 3) return res.status(403).json({ error: 'Sem permissão para agir na fila' });
@@ -3575,38 +3570,109 @@ router.post('/identidade-pendencias/:id/ligar-inscricao', async (req, res) => {
       return res.status(422).json({ error: 'Só pendências de inscrição sem vínculo aceitam esta ação' });
     }
     if (!p.membro_id) return res.status(422).json({ error: 'Pendência sem cadastro candidato' });
-    const map = PORTA_VINCULO[p.origem];
-    if (!map || !p.origem_id) {
-      return res.status(422).json({ error: `Porta "${p.origem}" não tem ponteiro de pessoa mapeado — resolva pelo módulo dono` });
-    }
+    if (!p.origem_id) return res.status(422).json({ error: 'Pendência sem referência da inscrição' });
 
     // O membro candidato precisa estar vivo (pode ter sido fundido/apagado
     // entre o enfileiramento e o clique).
     const { data: m } = await supabase.from('mem_membros')
-      .select('id, nome, telefone, email, data_nascimento')
+      .select('id, nome, telefone, email, cpf, data_nascimento')
       .eq('id', p.membro_id).is('deleted_at', null).maybeSingle();
     if (!m) return res.status(409).json({ error: 'O cadastro candidato não existe mais (fundido ou removido) — reavalie' });
 
-    // `.is(col, null)` é a trava: se alguém já ligou essa linha no meio do
-    // caminho, não sobrescreve o vínculo alheio.
-    const { data: ligada, error: eUp } = await supabase.from(map.tabela)
-      .update({ [map.col]: p.membro_id })
-      .eq('id', p.origem_id).is(map.col, null)
-      .select('id').maybeSingle();
-    if (eUp) throw eUp;
-    if (!ligada) {
-      return res.status(409).json({ error: 'Essa inscrição já está ligada a algum cadastro — recarregue a fila' });
+    // Alvos = as linhas ÓRFÃS dessa pessoa, relidas AGORA (a view é a verdade;
+    // lista guardada no enfileiramento envelhece).
+    let alvos;
+    if (UUID_RE.test(String(p.origem_id))) {
+      // Pendência do formato antigo (origem_id = 1 linha). Mantido pra não
+      // travar a fila entre o deploy e o re-enfileiramento.
+      const map = PORTA_VINCULO[p.origem];
+      if (!map) {
+        return res.status(422).json({ error: `Porta "${p.origem}" não tem ponteiro de pessoa mapeado — resolva pelo módulo dono` });
+      }
+      alvos = [{ porta: p.origem, ref_id: p.origem_id }];
+    } else {
+      const orfas = await lerLinhasOrfas(supabase);
+      alvos = orfas.filter((l) => chavePessoa(l) === p.origem_id);
+      if (!alvos.length) {
+        return res.status(409).json({ error: 'As inscrições dessa pessoa já foram ligadas a algum cadastro — recarregue a fila' });
+      }
     }
 
-    // Contrato de porta: o vínculo novo é uma observação de identidade.
+    const ligadas = [], jaLigadas = [], naoMapeadas = [];
+    for (const l of alvos) {
+      const map = PORTA_VINCULO[l.porta];
+      if (!map) { naoMapeadas.push(l.porta); continue; }
+      // `.is(col, null)` é a trava: se alguém já ligou essa linha no meio do
+      // caminho, não sobrescreve o vínculo alheio.
+      const { data: ok, error: eUp } = await supabase.from(map.tabela)
+        .update({ [map.col]: p.membro_id })
+        .eq('id', l.ref_id).is(map.col, null)
+        .select('id').maybeSingle();
+      if (eUp) throw eUp;
+      if (ok) ligadas.push({ porta: l.porta, tabela: map.tabela, inscricao_id: l.ref_id, linha: l });
+      else jaLigadas.push({ porta: l.porta, inscricao_id: l.ref_id });
+    }
+
+    if (!ligadas.length) {
+      return res.status(409).json({
+        error: naoMapeadas.length
+          ? `Nenhuma linha ligada: porta(s) ${[...new Set(naoMapeadas)].join(', ')} sem ponteiro mapeado — resolva pelo módulo dono`
+          : 'Essas inscrições já estão ligadas a algum cadastro — recarregue a fila',
+        ja_ligadas: jaLigadas.length,
+      });
+    }
+
+    // Contrato de porta: o vínculo novo é uma observação de identidade — com os
+    // dados DA INSCRIÇÃO, não os do candidato. Registrar o que o cadastro já
+    // tinha não acrescenta chave nenhuma; o que faz a próxima porta encontrar
+    // essa pessoa é o telefone/CPF que ela usou no formulário.
     try {
       const { registrarObservacaoSegura } = require('../services/identidadeProgressiva');
-      await registrarObservacaoSegura({
-        membroId: p.membro_id,
-        nome: m.nome, telefone: m.telefone, email: m.email, dataNascimento: m.data_nascimento,
-        origem: 'fila_identidade:' + p.origem, origemId: String(p.origem_id),
-      });
+      for (const g of ligadas) {
+        const l = g.linha || {};
+        await registrarObservacaoSegura({
+          membroId: p.membro_id,
+          nome: l.nome_display || m.nome,
+          telefone: l.telefone_norm || null,
+          cpf: l.cpf_norm || null,
+          email: l.email_norm || null,
+          dataNascimento: l.nascimento || null,
+          origem: 'fila_identidade:' + g.porta,
+          origemId: String(g.inscricao_id),
+        });
+      }
     } catch (e) { console.warn('[ligar-inscricao] observação:', e.message); }
+
+    // Contato divergente ACUMULA (mem_contatos · nunca sobrescreve o principal).
+    // É o que o matcher consulta pra achar a pessoa na porta seguinte.
+    try {
+      const { registrarContatoDaPorta } = require('../services/membroMatch');
+      for (const g of ligadas) {
+        const l = g.linha || {};
+        if (l.telefone_norm || l.email_norm) {
+          registrarContatoDaPorta(p.membro_id, { telefone: l.telefone_norm, email: l.email_norm }, 'fila_identidade:' + g.porta);
+        }
+      }
+    } catch (e) { console.warn('[ligar-inscricao] contato:', e.message); }
+
+    // CPF que veio na inscrição e o cadastro não tem → consolida pelo caminho
+    // canônico. `confianca: 'forte'` porque a decisão é HUMANA e auditada
+    // (`resolvida_por`), não um match por sinal fraco; conflito de CPF continua
+    // virando pendência, nunca fusão automática. O nascimento da inscrição vai
+    // junto justamente pra guarda de divergência funcionar.
+    let cpfTardio = null;
+    const comCpf = ligadas.find((g) => String(g.linha?.cpf_norm || '').replace(/\D/g, '').length === 11);
+    if (comCpf && !m.cpf) {
+      try {
+        const { reconciliarCpfTardio } = require('../services/cpfReconciliar');
+        const r = await reconciliarCpfTardio({
+          membroId: p.membro_id, cpf: comCpf.linha.cpf_norm,
+          origem: 'fila_identidade:' + comCpf.porta, origemId: String(comCpf.inscricao_id),
+          dataNascimento: comCpf.linha.nascimento || null, confianca: 'forte',
+        });
+        cpfTardio = r?.acao || null;
+      } catch (e) { console.warn('[ligar-inscricao] cpf tardio:', e.message); }
+    }
 
     await supabase.from('identidade_pendencias').update({
       status: 'resolvida',
@@ -3618,11 +3684,25 @@ router.post('/identidade-pendencias/:id/ligar-inscricao', async (req, res) => {
       tipo: 'identidade', acao: 'inscricao_vinculada',
       membro_principal_id: p.membro_id, membro_secundario_id: null,
       origem: 'identidade_pendencias', origem_id: String(p.id),
-      detalhe: { porta: p.origem, tabela: map.tabela, inscricao_id: p.origem_id },
+      detalhe: {
+        chave_pessoa: p.origem_id,
+        ligadas: ligadas.map((g) => ({ porta: g.porta, tabela: g.tabela, inscricao_id: g.inscricao_id })),
+        ja_ligadas: jaLigadas,
+        nao_mapeadas: [...new Set(naoMapeadas)],
+        cpf_tardio: cpfTardio,
+      },
       resolvido_por: req.user?.id || null,
     });
 
-    res.json({ ok: true, porta: p.origem, tabela: map.tabela, membro_id: p.membro_id });
+    res.json({
+      ok: true,
+      membro_id: p.membro_id,
+      ligadas: ligadas.length,
+      portas: [...new Set(ligadas.map((g) => g.porta))],
+      ja_ligadas: jaLigadas.length,
+      nao_mapeadas: [...new Set(naoMapeadas)],
+      cpf_tardio: cpfTardio,
+    });
   } catch (e) {
     console.error('[membresia/identidade-pendencias/ligar-inscricao]', e.message);
     res.status(500).json({ error: 'Erro ao ligar a inscrição ao cadastro' });

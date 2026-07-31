@@ -3802,6 +3802,85 @@ indecidíveis.
   fila humana. Régua: **existe chave (CPF/telefone/e-mail) pra reconciliar?**
   Se não, não é pessoa.
 
+## ⚠️ Fila de identidade · a decisão é por PESSOA (2026-07-31 · migration 20260731120000)
+
+Revisão adversarial das 5 PRs de 30–31/07, com os números reconferidos no banco.
+Os três achados que viraram código:
+
+**1 · A confirmação HUMANA da conciliação ainda fabricava cadastro.**
+`financeiroClassificador.resolverMembroPorDocumento` tinha
+`{ criarSemNome = true }` como padrão, e o único caller que não passava a opção
+era justamente o clique de gente:
+`conciliacaoBalancoOfx.confirmarVinculo` (`financeiroV2.js` POST
+`/conciliacao-ofx/confirmar`). Memo sem nome parseável → `Contribuinte
+070230...`, o MESMO fantasma que a limpeza de 30/07 apagou 93 vezes. O default
+virou **false**: sem nome real o retorno é NULL e a confirmação responde
+"cadastre a pessoa na Membresia com este CPF e volte" — ninguém precisa lembrar
+de passar flag. ⚠️ Junto, a busca do dono do CPF ganhou **`deleted_at IS NULL`**:
+84 dos contribuintes apagados TÊM CPF, e sem o filtro o extrato voltaria a ligar
+lançamento novo num cadastro que a igreja tirou da base (foi assim que 4 linhas
+de `fin_lancamentos_brutos`, R$ 1.107, ficaram penduradas em cadastro
+soft-deletado).
+
+**2 · A fila `inscricao_sem_vinculo` dedupava por CANDIDATO, e isso perdia
+gente + rebaixava prova.** Ela reusou o UNIQUE histórico
+`(tipo, membro_id, membro_conflito_id)`, correto pros 3 tipos antigos (a
+pendência fala de um PAR DE CADASTROS) e errado pra este (fala de uma PESSOA
+ÓRFÃ, que não tem cadastro, e duas pessoas órfãs podem apontar o mesmo
+candidato). Medido: 195 pessoas com candidato → **190 candidatos distintos, 189
+gravados**; as colapsadas **desapareciam da fila sem registro** e, nas 3
+colisões abertas, quem sobrevivia era a evidência **mais fraca** (nome exato),
+porque o critério era ordem de inserção. E o clique ligava **uma linha só**
+(`origem_id` = `ref_id`) e resolvia a pendência: **18 pendências eram de gente
+com 2+ inscrições → 20 linhas ficavam órfãs e SEM pendência nenhuma.**
+- `origem_id` deste tipo passa a guardar a **CHAVE DA PESSOA**
+  (`cpf:` > `tel:` > `nome:` > `ref:`), com UNIQUE parcial próprio
+  `(tipo, origem_id)`; o UNIQUE histórico ganhou `AND tipo <> 'inscricao_sem_vinculo'`.
+- A régua virou **fonte única** em `services/inscricaoOrfas.js` (`chavePessoa` +
+  `PORTA_VINCULO` + `lerLinhasOrfas`), importada pelo script E pela rota — a
+  cópia dentro do script era o que permitia a fila apontar pra linha diferente
+  da que o clique liga. Teste `npm run test:inscricao-orfas` (no gate de deploy)
+  exige que **toda fonte da view tenha ponteiro** e vice-versa: porta nova sem
+  ponteiro = pendência que o humano decide e nada acontece. Mutation-testado.
+- `ligar-inscricao` relê a view AGORA e liga **todas** as linhas da pessoa
+  (`.is(col, null)` por linha, como antes), devolvendo
+  `{ ligadas, portas, ja_ligadas, nao_mapeadas, cpf_tardio }`. Pendência do
+  formato antigo (origem_id = uuid) segue funcionando — deploy em 2 etapas.
+- ⚠️ **A observação de identidade gravava os dados do CANDIDATO**, o que não
+  acrescenta chave nenhuma (era exatamente por não achar a pessoa que a
+  inscrição estava órfã). Agora grava os dados **DA INSCRIÇÃO**, ACUMULA
+  telefone/e-mail em `mem_contatos` (`membroMatch.registrarContatoDaPorta`, a
+  MESMA função do match — exportada, não duplicada) e, quando a inscrição traz
+  CPF e o cadastro não tem, consolida por `reconciliarCpfTardio` com
+  `confianca: 'forte'` (decisão humana auditada em `resolvida_por`; conflito
+  segue virando pendência, nunca fusão). É isso que faz a próxima porta
+  encontrar a pessoa — sem isso, os 26 pares de nome fraco voltariam órfãos.
+- **Pós-migration**: rodar `node backend/scripts/_entradas_inscricao_sem_vinculo.cjs`
+  (dry-run) e depois `--exec`. Esperado ~195 pendências (as 5 pessoas colapsadas
+  voltam). A PARTE 3 da migration **aborta** se alguma pendência deste tipo já
+  tiver sido triada.
+
+**3 · Números que não se sustentaram na reconferência** (registrados pra não
+serem citados errado): a base viva de `mem_membros` é **3.930**, não ~4.018 — o
+dia 30/07 fechou com **3.553** contribuintes soft-deletados, não 3.469, porque
+houve **duas** limpezas (a migration às 13:50 + 93 registros `Contribuinte
+NNNNNN...` COM CPF, do import de 24/07, às 13:37). E o split do Next é
+**963 nível 2 / 641 nível 3**, não 1.109/495: o total de backfill (1.604) bate
+exato, mas **34% da porta Next está em dia sintético**, não 26%. A régua do
+nível 2 exige aparição **no mês da turma**; medir "aparição em qualquer mês" dá
+990 e ainda não chega a 1.109.
+
+**Alarmes reconferidos** (nenhum era falso): Celebra 29/08 tem 97 inscrições
+confirmadas e **9 QRs emitidos** — e `checkin_ativo=false`, que a tela de
+check-in já resolve com o botão "Ativar check-in" (1 clique no dia; o QR é HMAC
+derivado, existe pra todos, e o check-in por busca de nome funciona sem ele).
+`insc_checkins` está **vazia** e o evento Patrocinadores tem 0 QR: o ensaio de
+#2175 não deixou artefato em prod. RLS: módulo `inscricoes` tem **37 dos 41
+cargos no nível 3** (= 89 usuários com INSERT/UPDATE direto em `inscricoes`,
+`insc_eventos`, `insc_pagamentos`, `insc_checkins`, `insc_sorteios`), incluindo
+um cargo chamado **"Acesso negado"** — o seed subiu todo mundo pra 3. A view
+unificada está revogada de `authenticated`; as tabelas-base não.
+
 ## Devocionais · módulo do Matheus (no ar)
 
 Módulo existe e roda: `backend/routes/devocionalPlanos.js` (CRUD + geração de

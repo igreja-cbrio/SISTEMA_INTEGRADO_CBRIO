@@ -34,7 +34,7 @@ const TIPOS = {
   cpf_conflito: { label: 'Provável duplicata', cor: '#DC2626', hint: 'O CPF já pertence a outro membro vivo — provavelmente a mesma pessoa em 2 cadastros (fundir).' },
   cpf_divergente: { label: 'CPF divergente', cor: '#EA580C', hint: 'O membro já tinha OUTRO CPF quando este chegou — conferir qual é o certo no cadastro.' },
   vinculo_divergente: { label: 'Vínculo divergente', cor: '#7C3AED', hint: 'Uma inscrição/linha aponta pra um membro diferente do dono do CPF — corrigir o vínculo manualmente.' },
-  inscricao_sem_vinculo: { label: 'Inscrição sem cadastro', cor: '#0891B2', hint: 'A inscrição não aponta pra cadastro nenhum, mas há um candidato na base. Confira nome e telefone ANTES de ligar — telefone é compartilhado em família, e ligar errado gruda a inscrição de uma pessoa no cadastro de outra.' },
+  inscricao_sem_vinculo: { label: 'Inscrição sem cadastro', cor: '#0891B2', hint: 'A inscrição não aponta pra cadastro nenhum, mas há um candidato na base. Ligar resolve TODAS as inscrições dessa pessoa de uma vez. Confira nome e telefone ANTES — telefone é compartilhado em família, e ligar errado gruda a inscrição de uma pessoa no cadastro de outra.' },
 };
 
 const ORIGENS = {
@@ -107,11 +107,13 @@ export default function IdentidadePendenciasPanel({ statusFixo = null, ocultarFi
 
   const invalidar = () => qc.invalidateQueries({ queryKey: ['identidade-pendencias'] });
 
+  // `okMsg` pode ser função da resposta: a ligação de inscrição resolve N linhas
+  // e dizer "1 inscrição ligada" quando foram 4 esconde o que aconteceu.
   async function agir(id, fn, okMsg) {
     setBusyId(id);
     try {
-      await fn();
-      toast.success(okMsg);
+      const r = await fn();
+      toast.success(typeof okMsg === 'function' ? okMsg(r) : okMsg);
       invalidar();
     } catch (e) {
       toast.error(e?.message || 'Erro ao atualizar a pendência');
@@ -237,7 +239,14 @@ export default function IdentidadePendenciasPanel({ statusFixo = null, ocultarFi
                     )}
                     {p.tipo === 'inscricao_sem_vinculo' && p.membro && !p.membro.deleted_at && (
                       <Button size="sm" className="h-8 text-xs" disabled={busy}
-                        onClick={() => agir(p.id, () => membresiaApi.identidade.ligarInscricao(p.id), 'Inscrição ligada ao cadastro')}>
+                        onClick={() => agir(p.id, () => membresiaApi.identidade.ligarInscricao(p.id), (r) => {
+                          const n = r?.ligadas || 1;
+                          const base = n > 1 ? `${n} inscrições ligadas ao cadastro` : 'Inscrição ligada ao cadastro';
+                          const resto = (r?.nao_mapeadas || []).length
+                            ? ` · ${r.nao_mapeadas.join(', ')} precisa(m) do módulo dono`
+                            : '';
+                          return base + resto;
+                        })}>
                         {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
                         <span className="ml-1.5">Ligar ao cadastro</span>
                       </Button>

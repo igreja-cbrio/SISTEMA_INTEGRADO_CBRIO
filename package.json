@@ -12,6 +12,7 @@
     "test": "vitest run",
     "test:inscricao-contrato": "node backend/services/inscricaoContrato.test.js",
     "test:inscricao-portas": "node backend/services/inscricaoPortas.test.js",
+    "test:inscricao-orfas": "node backend/services/inscricaoOrfas.test.js",
     "test:inscricao-qr": "node backend/services/inscricaoComprovante.test.js",
     "test:watch": "vitest",
     "test:e2e": "playwright test",

@@ -14,18 +14,26 @@
 //   nome           · FRACO — só nome exato. Entra marcado como fraco no detalhe,
 //                    porque nome igual não é prova (a lei da casa).
 //
-// Dedup: 1 pendência ABERTA por (tipo, membro candidato) — é o UNIQUE da tabela
-// com NULLS NOT DISTINCT. Reenfileirar é no-op (23505 engolido).
+// ⚠️ DEDUP POR PESSOA ÓRFÃ, não por candidato (corrigido 2026-07-31): a versão
+// anterior gravava `origem_id = ref_id` (UMA linha) e dependia do UNIQUE
+// (tipo, membro_id) — então duas pessoas órfãs diferentes apontando pro MESMO
+// cadastro colapsavam numa pendência só e a segunda desaparecia da fila sem
+// registro (5 casos em produção, e em todos sobrevivia a evidência mais FRACA,
+// porque quem ganhava era a ordem de inserção). Agora `origem_id` é a CHAVE DA
+// PESSOA (`cpf:…`/`tel:…`/`nome:…`) e o UNIQUE parcial da migration
+// 20260731120000 é (tipo, origem_id) → 1 decisão por pessoa órfã, e o clique
+// liga TODAS as linhas dela.
 //
 // Dry-run por padrão. `--exec` grava.
 // ============================================================================
 require('dotenv').config();
 const { supabase } = require('../utils/supabase');
+const {
+  chavePessoa, PORTA_VINCULO, lerLinhasOrfas, agruparPorPessoa,
+  digitosOrfa: dig, normOrfa: norm,
+} = require('../services/inscricaoOrfas');
 
 const EXEC = process.argv.includes('--exec');
-const dig = (v) => String(v || '').replace(/\D/g, '');
-const norm = (v) => String(v || '').normalize('NFD').replace(/[̀-ͯ]/g, '')
-  .toLowerCase().replace(/\s+/g, ' ').trim();
 
 const pag = async (t, sel, f = (q) => q) => {
   let all = [], off = 0;
@@ -40,23 +48,10 @@ const pag = async (t, sel, f = (q) => q) => {
 };
 
 (async () => {
-  const linhas = await pag('vw_inscricoes_unificadas',
-    'porta,ref_id,membro_id,nome_display,telefone_norm,cpf_norm,email_norm,criado_em,evento_rotulo');
-  const orfas = linhas.filter((l) => !l.membro_id);
-  console.log('linhas na view:', linhas.length, '| sem membro_id:', orfas.length);
+  const orfas = await lerLinhasOrfas(supabase);
+  console.log('linhas da view sem membro_id:', orfas.length);
 
-  // Uma pendência por PESSOA, não por linha (a decisão é sobre a pessoa).
-  const chaveP = (l) => {
-    const c = dig(l.cpf_norm); if (c.length === 11) return 'cpf:' + c;
-    const t = dig(l.telefone_norm); if (t.length >= 10) return 'tel:' + t;
-    const n = norm(l.nome_display); return n ? 'nome:' + n : 'ref:' + l.ref_id;
-  };
-  const pessoas = new Map();
-  for (const l of orfas) {
-    const k = chaveP(l);
-    if (!pessoas.has(k)) pessoas.set(k, []);
-    pessoas.get(k).push(l);
-  }
+  const pessoas = agruparPorPessoa(orfas);
 
   const membros = await pag('mem_membros', 'id,nome,cpf,telefone,email', (q) => q.is('deleted_at', null));
   const porCpf = new Map(), porTel = new Map(), porNome = new Map();
@@ -68,11 +63,8 @@ const pag = async (t, sel, f = (q) => q) => {
 
   const pares = [];
   const semCandidato = [];
-  for (const [, ls] of pessoas) {
-    // A linha mais informativa da pessoa vira a "âncora" do par.
-    const l = ls.slice().sort((a, b) =>
-      (dig(b.cpf_norm).length - dig(a.cpf_norm).length)
-      || (String(b.criado_em) > String(a.criado_em) ? 1 : -1))[0];
+  for (const [chave, ls] of pessoas) {
+    const l = ls[0]; // âncora (quem tem CPF, depois a mais recente)
     const c = dig(l.cpf_norm), t = dig(l.telefone_norm), n = norm(l.nome_display);
     let cand = null, via = null;
 
@@ -90,7 +82,7 @@ const pag = async (t, sel, f = (q) => q) => {
     }
 
     if (!cand) { semCandidato.push({ porta: [...new Set(ls.map((x) => x.porta))].join('+'), nome: l.nome_display }); continue; }
-    pares.push({ linha: l, todas: ls, candidato: cand, via });
+    pares.push({ chave, linha: l, todas: ls, candidato: cand, via });
   }
 
   const porVia = {};
@@ -100,24 +92,37 @@ const pag = async (t, sel, f = (q) => q) => {
   console.log('  COM candidato na base:', pares.length, JSON.stringify(porVia));
   console.log('  SEM candidato (não estão na base):', semCandidato.length);
 
-  // Um mesmo candidato pode servir a 2 pessoas-chave diferentes; o UNIQUE da
-  // tabela deduplica, mas avisar aqui evita susto na contagem final.
+  // Linhas que a fila cobre = TODAS as linhas das pessoas com candidato. Antes
+  // só 1 por pessoa entrava, e as outras ficavam órfãs mesmo depois do clique.
+  const linhasCobertas = pares.reduce((a, p) => a + p.todas.length, 0);
+  const multi = pares.filter((p) => p.todas.length > 1);
+  console.log('  linhas cobertas por essas pendências:', linhasCobertas,
+    `(${multi.length} pessoas com 2+ linhas)`);
+
+  // Um mesmo candidato pode servir a 2 pessoas-chave diferentes — e isso agora
+  // gera DUAS pendências (uma por pessoa), de propósito.
   const candDup = new Map();
   for (const p of pares) candDup.set(p.candidato.id, (candDup.get(p.candidato.id) || 0) + 1);
   const colididos = [...candDup.values()].filter((n) => n > 1).length;
-  if (colididos) console.log('  ⚠️ candidatos apontados por mais de uma chave:', colididos, '(o UNIQUE vai deduplicar)');
+  if (colididos) console.log('  candidatos apontados por mais de uma pessoa órfã:', colididos, '(2 pendências, decisão separada)');
+
+  // Porta sem ponteiro mapeado: o clique não conseguiria ligar. Avisar aqui
+  // (e não descobrir no clique) é o ponto do dry-run.
+  const semMapa = new Set();
+  for (const p of pares) for (const l of p.todas) if (!PORTA_VINCULO[l.porta]) semMapa.add(l.porta);
+  if (semMapa.size) console.log('  ⚠️ portas SEM ponteiro em PORTA_VINCULO:', [...semMapa].join(', '));
 
   console.log('');
   console.log('amostra (10):');
   for (const p of pares.slice(0, 10)) {
-    console.log('  [' + p.via + '] "' + p.linha.nome_display + '" (' + p.linha.porta + ')'
-      + ' -> cadastro "' + p.candidato.nome + '"');
+    console.log('  [' + p.via + '] "' + p.linha.nome_display + '" (' + p.todas.length + ' linha(s): '
+      + [...new Set(p.todas.map((x) => x.porta))].join(', ') + ') -> cadastro "' + p.candidato.nome + '"');
   }
 
   if (!EXEC) {
     console.log('');
     console.log('DRY-RUN. Nada foi gravado. Rode com --exec pra enfileirar em Entradas.');
-    console.log('⚠️ Exige a migration 20260730170000 aplicada (tipo inscricao_sem_vinculo no CHECK).');
+    console.log('⚠️ Exige as migrations 20260730170000 (tipo no CHECK) e 20260731120000 (UNIQUE por pessoa).');
     return;
   }
 
@@ -127,14 +132,14 @@ const pag = async (t, sel, f = (q) => q) => {
     const detalhe = `Inscrição sem cadastro em ${portas}: "${p.linha.nome_display}"`
       + ` (tel ${p.linha.telefone_norm || '—'}${p.linha.cpf_norm ? ', CPF informado' : ', sem CPF'}).`
       + ` Candidato achado por ${p.via}: "${p.candidato.nome}".`
-      + ` ${p.todas.length} linha(s) de inscrição desta pessoa.`
+      + ` ${p.todas.length} linha(s) de inscrição desta pessoa — ligar resolve todas.`
       + (p.via.includes('FRACO') ? ' ⚠️ SINAL FRACO — nome igual não é prova; confira antes de ligar.' : '');
     const { error } = await supabase.from('identidade_pendencias').insert({
       tipo: 'inscricao_sem_vinculo',
       membro_id: p.candidato.id,
       membro_conflito_id: null,
-      origem: p.linha.porta,
-      origem_id: String(p.linha.ref_id),
+      origem: p.linha.porta,          // porta que revelou (rótulo)
+      origem_id: p.chave,             // CHAVE DA PESSOA — é o que a rota usa
       detalhe: detalhe.slice(0, 1000),
       status: 'pendente',
     });

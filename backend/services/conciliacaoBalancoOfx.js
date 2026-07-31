@@ -229,8 +229,18 @@ async function confirmarVinculo({ transacaoId, brutoId, userId = null }) {
   const cpf = normalizarCpf(bruto.documento_contraparte);
   const doc = String(bruto.documento_contraparte || '').replace(/\D/g, '');
   const nome = extractNomeContraparte(bruto.memo);
+  // Sem nome no memo, `resolverMembroPorDocumento` devolve NULL de propósito
+  // (default `criarSemNome: false` desde 31/07) — a confirmação humana não
+  // fabrica mais `Contribuinte NNNNNN...`. O caminho é cadastrar a pessoa na
+  // Membresia com o CPF e voltar; aí o vínculo acha o cadastro real.
   const r = await resolverMembroPorDocumento(doc, nome);
-  if (!r?.membro_id) throw new Error('Não consegui resolver o membro do CPF');
+  if (!r?.membro_id) {
+    throw new Error(
+      nome
+        ? 'Não consegui resolver o membro do CPF'
+        : 'O extrato não traz o nome do pagador. Cadastre a pessoa na Membresia com este CPF e confirme o vínculo depois — não vou criar cadastro sem nome.',
+    );
+  }
   if (cpf) await registrarObservacaoSegura({ origem: 'financeiro_ofx', origemId: cpf, cpf, nome });
   const { error } = await supabase.from('fin_transacoes').update({
     membro_id: r.membro_id,

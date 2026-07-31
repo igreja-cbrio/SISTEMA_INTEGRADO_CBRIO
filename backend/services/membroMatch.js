@@ -381,4 +381,9 @@ module.exports = {
   acharOuCriar,
   acharOuCriarGuardado,
   acharMembroGuardado,
+  // Exportado (2026-07-31) pra fila de identidade das Entradas: quando um humano
+  // liga inscrição órfã a um cadastro, o telefone/e-mail QUE ELA USOU no
+  // formulário tem que acumular em mem_contatos — senão a próxima porta não
+  // encontra a pessoa e nasce órfã de novo. Mesma função do match; não duplicar.
+  registrarContatoDaPorta: _registrarContatoNoMatch,
 };
