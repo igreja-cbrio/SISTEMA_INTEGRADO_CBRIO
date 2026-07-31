@@ -398,6 +398,19 @@ router.get('/bens/barcode/:codigo', async (req, res) => {
   }
 });
 
+// Próximo(s) número(s) de patrimônio em sequência (pedido do usuário
+// 2026-07-31: novo bem sempre segue a ordem — último 4433 → próximo 4434).
+// Precisa vir ANTES de /bens/:id para não conflitar.
+router.get('/bens/proximo-codigo', async (req, res) => {
+  try {
+    const qtd = Math.max(1, Number(req.query.qtd) || 1);
+    const { data, error } = await supabase.rpc('pat_proximo_codigo_barras', { p_qtd: qtd });
+    if (error) return res.status(400).json({ error: error.message });
+    const codigos = (data || []).map(r => String(r.codigo));
+    res.json({ proximo: codigos[0] || null, codigos });
+  } catch (e) { res.status(500).json({ error: 'Erro ao calcular próximo número de patrimônio' }); }
+});
+
 router.get('/bens/:id', async (req, res) => {
   try {
     const { data: bem, error } = await supabase.from('pat_bens')
@@ -419,6 +432,47 @@ router.post('/bens', async (req, res) => {
     if (error) return res.status(400).json({ error: error.message });
     res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro ao cadastrar bem' }); }
+});
+
+// Cadastro em massa (pedido do usuário 2026-07-31): vários bens do MESMO tipo
+// e categoria, não necessariamente no mesmo local — ex. 10 lâmpadas iguais
+// distribuídas em salas diferentes. Cada unidade recebe um número de
+// patrimônio sequencial (ver pat_proximo_codigo_barras), calculado na hora do
+// insert (não reservado antes — evita número "furado" se o usuário cancelar).
+router.post('/bens/lote', async (req, res) => {
+  try {
+    const { nome, descricao, categoria_id, marca, modelo, valor_aquisicao, data_aquisicao, numero_nf, tem_garantia, garantia_ate, responsavel_id, distribuicao } = req.body;
+    if (!nome || !nome.trim()) return res.status(400).json({ error: 'Nome é obrigatório' });
+    const dist = Array.isArray(distribuicao) ? distribuicao.filter(d => Number(d?.quantidade) > 0) : [];
+    const totalQtd = dist.reduce((s, d) => s + Number(d.quantidade), 0);
+    if (!dist.length || totalQtd <= 0) return res.status(400).json({ error: 'Informe ao menos uma quantidade maior que zero' });
+    if (totalQtd > 300) return res.status(400).json({ error: 'Máximo de 300 bens por lote' });
+
+    const { data: codigosData, error: codigosErr } = await supabase.rpc('pat_proximo_codigo_barras', { p_qtd: totalQtd });
+    if (codigosErr) return res.status(400).json({ error: codigosErr.message });
+    const codigos = (codigosData || []).map(r => String(r.codigo));
+    if (codigos.length < totalQtd) return res.status(500).json({ error: 'Falha ao gerar números de patrimônio para o lote' });
+
+    const base = {
+      nome: nome.trim(), descricao: descricao || null, categoria_id: categoria_id || null,
+      marca: marca || null, modelo: modelo || null, valor_aquisicao: valor_aquisicao || null,
+      data_aquisicao: data_aquisicao || null, numero_nf: numero_nf || null, tem_garantia: !!tem_garantia,
+      garantia_ate: garantia_ate || null, responsavel_id: responsavel_id || null, created_by: req.user.userId,
+    };
+    const rows = [];
+    let cursor = 0;
+    for (const d of dist) {
+      const qtd = Number(d.quantidade);
+      const localizacao_id = d.localizacao_id || null;
+      for (let i = 0; i < qtd; i++) {
+        rows.push({ ...base, codigo_barras: codigos[cursor], localizacao_id });
+        cursor += 1;
+      }
+    }
+    const { data, error } = await supabase.from('pat_bens').insert(rows).select('id, codigo_barras, localizacao_id');
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ criados: data.length, codigo_inicial: codigos[0], codigo_final: codigos[codigos.length - 1], bens: data });
+  } catch (e) { res.status(500).json({ error: 'Erro ao cadastrar bens em massa' }); }
 });
 
 router.put('/bens/:id', async (req, res) => {
