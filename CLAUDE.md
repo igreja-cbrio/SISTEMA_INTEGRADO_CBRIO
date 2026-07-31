@@ -2016,6 +2016,52 @@ abre lá para quem não tem geolocalização.
 `00000031` "Grupo de Conexão RJ, Floripa, SP - OnLine" (online, segue sem
 coordenada, correto). Filtrar por nome aqui pega os dois — usar código.
 
+### ⚠️ Quem RECEBE a mensagem do grupo = `mem_grupos.lider_id`, e é UM só (2026-07-31)
+
+Pergunta do Marcos na véspera: *"temos muitos líderes em um mesmo grupo, mas
+devemos garantir que só um deles está recebendo mensagens a respeito daquele
+grupo"*. **Isso já é garantido por construção** — conferido nos dois resolvedores:
+`gruposWhatsapp.js` (novo pedido, frequência, renovação, confira, sugestão) e
+`gruposEnvios.js` (`montarDestinatarios*`) leem **`grupo.lider_id`**, um único
+`mem_membros`. Co-líder e `lider_treinamento` do roster **nunca** recebem. E medido:
+**0 grupos com 2+ vínculos ativos em `whatsapp_lideres`** (o outro canal, do bot).
+
+⚠️ **A régua frágil é outra: nada garante que o `lider_id` seja um líder do
+roster** — e era exatamente aí que estava o problema. Medição de 31/07 nos 87
+ativos: **3 grupos** cujo destinatário não estava entre os `funcao IN
+('lider','co_lider')`, sendo 2 casos reais e graves:
+
+- **CURSO ALIANÇA (00000057)**: recebia a **Desiree**, que no roster é
+  **`frequentador`** (nem líder!) e cujo telefone tem 9 dígitos (`996013179` =
+  inalcançável). Os 3 líderes de verdade (Carlos, Ester, **Paulo Pessanha**) não
+  recebiam nada. Sintoma que confirma: o grupo tinha **0 vínculo no bot**, porque
+  o auto-sync não cria vínculo com telefone inválido. → passou pro **Paulo**
+  (`21999648788`), decisão do Marcos.
+- **Cond. Península – JOVENS (T2-2026-005)**: recebia a **Marcella Martins Leta**,
+  que **não tem vínculo nenhum no grupo**; o líder do roster é o **Vitor Leta**. →
+  passou pro **Vitor** (`21994884484`), decisão do Marcos.
+
+**Estado final (87 ativos): 0 destinatário com telefone inválido · 0 destinatário
+que não é líder do roster · 0 grupo com 2+ vínculos no bot · 0 grupo sem
+`lider_id`.** Isso também tirou o telefone da Desiree do caminho crítico do
+lançamento (o grupo dela passou a ter destinatário alcançável) — o número dela
+segue pendente como correção de CADASTRO, não de envio.
+
+⚠️ **Trocar `lider_id` por UPDATE direto NÃO sincroniza o bot.** O
+`syncWhatsappLideres` é hook do backend (POST/PUT de grupo); em script é preciso
+chamar `sincronizarLideresGrupos()` na mão, senão os 2 canais discordam (o de
+grupos manda pro novo líder e o bot continua no antigo). Foi o que aconteceu aqui
+até rodar o sync (desativou o vínculo antigo e criou o novo).
+⚠️ **O checkout principal está na branch `claude/poolpg-projects-patrimonio` e NEM
+TEM `backend/services/whatsappGrupos.js`** — script que precise de serviço do
+backend tem que resolver o require na **worktree de `origin/main`** (com
+`node_modules`/`.env` do principal). É a lição de "ler da worktree, não do main",
+agora com sintoma novo: `MODULE_NOT_FOUND` num arquivo que existe em produção.
+⚠️ **Follow-up combinado (pós-domingo, decisão do Marcos):** criar verificação que
+avise a coordenação quando o destinatário não for líder do roster. Sem ela, a
+incoerência volta silenciosamente na próxima troca de liderança — porque a aba
+Pessoas muda `mem_grupo_membros.funcao` e o `lider_id` do grupo é outro campo.
+
 ## Grupos · contagens (vínculo × pessoa) + nova régua visitante/frequentador (2026-07-23)
 
 Auditoria (4 agentes) das divergências que o Marcos pegou entre as abas. **Régua de
