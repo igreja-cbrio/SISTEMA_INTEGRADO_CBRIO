@@ -295,6 +295,7 @@ const InscricaoNext = lazyWithRetry(() => import('./pages/public/InscricaoNext')
 const EventoExterno = lazyWithRetry(() => import('./pages/public/EventoExterno'));
 const PagamentoInscricao = lazyWithRetry(() => import('./pages/public/PagamentoInscricao'));
 const InscricaoComprovante = lazyWithRetry(() => import('./pages/public/InscricaoComprovante'));
+const PoliticaReembolso = lazyWithRetry(() => import('./pages/public/PoliticaReembolso'));
 const InscricaoEventoCheckin = lazyWithRetry(() => import('./pages/InscricaoEventoCheckin'));
 // EventosExternos/EventoExternoDetalhe (gestão do ext) saíram das rotas na
 // virada pro /inscricoes (SPEC-04 · 2026-07-28); arquivos ficam no repo até
@@ -533,6 +534,9 @@ function AppRoutes() {
       <Route path="/pagamento/:token" element={<Suspense fallback={<Loading />}><PagamentoInscricao /></Suspense>} />
       {/* Comprovante da inscrição (SPEC-06) · público, token ASSINADO — é a URL do QR do check-in */}
       <Route path="/i/c/:token" element={<Suspense fallback={<Loading />}><InscricaoComprovante /></Suspense>} />
+      {/* Política de reembolso · o CDC exige informação PRÉVIA e clara, então
+          precisa ser alcançável antes da compra, sem login. */}
+      <Route path="/politica-reembolso" element={<Suspense fallback={<Loading />}><PoliticaReembolso /></Suspense>} />
       <Route path="/inscricao-grupos" element={<Suspense fallback={<Loading />}><InscricaoGrupos /></Suspense>} />
       <Route path="/inscricao-lideres" element={<Suspense fallback={<Loading />}><InscricaoLideres /></Suspense>} />
       {/* Líder aprova pedido de grupo pelo link do WhatsApp · token = credencial · sem login */}

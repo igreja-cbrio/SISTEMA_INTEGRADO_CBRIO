@@ -516,6 +516,15 @@ export default function PagamentoInscricao() {
               </p>
             )}
 
+            {/* Informação prévia exigida pelo CDC: fica junto do valor, visível
+                antes e depois de pagar. Nova aba pra não interromper o pagamento. */}
+            <p style={{ fontSize: 12, color: C.text3, marginTop: 8 }}>
+              <a href="/politica-reembolso" target="_blank" rel="noreferrer"
+                style={{ color: C.text3, textDecoration: 'underline' }}>
+                Política de reembolso e cancelamento
+              </a>
+            </p>
+
             {/* Comprovante do check-in (SPEC-06): pagou → o QR da entrada
                 aparece AQUI (a tela de sucesso do formulário ficou pra trás
                 quando a pessoa foi pro checkout). Sem `pago`, sem QR. */}
