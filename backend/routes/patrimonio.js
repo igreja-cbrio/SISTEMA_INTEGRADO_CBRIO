@@ -440,6 +440,101 @@ router.delete('/bens/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao dar baixa no bem' }); }
 });
 
+// ── EDIÇÃO E MOVIMENTAÇÃO EM MASSA ─────────────────────────
+// Pedido do usuário 2026-07-31: muitos bens foram lançados de uma vez com
+// erro de digitação no nome, e faltava um jeito de corrigir/mover vários bens
+// juntos sem editar um por um. Rotas com path fixo "bulk" — não conflitam com
+// GET/PUT/DELETE /bens/:id porque são métodos e sub-paths diferentes.
+
+// Define um valor comum (categoria/localização/responsável/status) pra N bens
+// de uma vez. Cada campo é opcional — só atualiza o que veio no body.
+router.put('/bens/bulk', async (req, res) => {
+  try {
+    const { ids, categoria_id, localizacao_id, responsavel_id, status } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'Selecione ao menos um bem' });
+    const update = {};
+    if (categoria_id !== undefined) update.categoria_id = categoria_id || null;
+    // Reatribuir localização em massa também é decisão humana — limpa o
+    // alerta de divergência/pendência, mesma regra do PUT individual.
+    if (localizacao_id !== undefined) { update.localizacao_id = localizacao_id || null; update.localizacao_pendente = false; update.alerta_divergencia_item_id = null; }
+    if (responsavel_id !== undefined) update.responsavel_id = responsavel_id || null;
+    if (status !== undefined) {
+      update.status = status;
+      update.data_baixa = status === 'baixado' ? new Date().toISOString().slice(0, 10) : null;
+    }
+    if (Object.keys(update).length === 0) return res.status(400).json({ error: 'Nenhum campo para atualizar' });
+    const { data, error } = await supabase.from('pat_bens').update(update).in('id', ids).select('id');
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ atualizados: (data || []).length });
+  } catch (e) { res.status(500).json({ error: 'Erro ao editar bens em massa' }); }
+});
+
+// Corrige erro de digitação repetido no nome de vários bens de uma vez
+// (busca um trecho e substitui, igual pra todos os selecionados) — "definir
+// valor comum" acima não resolve isso porque cada bem tem um nome diferente.
+router.put('/bens/bulk/renomear', async (req, res) => {
+  try {
+    const { ids, buscar, substituir } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'Selecione ao menos um bem' });
+    if (!buscar) return res.status(400).json({ error: 'Informe o texto a buscar' });
+    const { data: bensAlvo, error: fetchErr } = await supabase.from('pat_bens').select('id, nome').in('id', ids);
+    if (fetchErr) return res.status(400).json({ error: fetchErr.message });
+    let atualizados = 0;
+    let semOcorrencia = 0;
+    for (const b of bensAlvo || []) {
+      if (!b.nome || !b.nome.includes(buscar)) { semOcorrencia++; continue; }
+      const novoNome = b.nome.split(buscar).join(substituir ?? '');
+      const { error } = await supabase.from('pat_bens').update({ nome: novoNome }).eq('id', b.id);
+      if (!error) atualizados++;
+    }
+    res.json({ atualizados, sem_ocorrencia: semOcorrencia });
+  } catch (e) { res.status(500).json({ error: 'Erro ao renomear bens em massa' }); }
+});
+
+// Movimentação (entrada/saída/transferência/manutenção) pra N bens de uma vez
+// — chama a MESMA RPC atômica do fluxo individual, bem por bem (não é uma
+// transação única entre bens; reporta quem falhou em vez de abortar tudo).
+router.post('/bens/bulk/movimentar', async (req, res) => {
+  try {
+    const { ids, tipo, localizacao_origem_id, localizacao_destino_id, motivo } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'Selecione ao menos um bem' });
+    if (!tipo) return res.status(400).json({ error: 'Tipo é obrigatório' });
+    const falhas = [];
+    let sucesso = 0;
+    for (const bemId of ids) {
+      const { error } = await supabase.rpc('pat_registrar_movimentacao', {
+        p_bem_id: bemId, p_tipo: tipo,
+        p_localizacao_origem_id: localizacao_origem_id || null, p_localizacao_destino_id: localizacao_destino_id || null,
+        p_responsavel_id: req.user.userId, p_motivo: motivo || null, p_revisao_item_id: null, p_created_by: req.user.userId,
+      });
+      if (error) falhas.push({ id: bemId, erro: error.message });
+      else sucesso++;
+    }
+    res.json({ sucesso, falhas });
+  } catch (e) { res.status(500).json({ error: 'Erro ao movimentar bens em massa' }); }
+});
+
+// Dar baixa em N bens de uma vez — mesma lógica do DELETE individual (nunca
+// hard-delete: grava a movimentação de baixa e marca o status).
+router.post('/bens/bulk/baixa', async (req, res) => {
+  try {
+    const { ids, motivo } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'Selecione ao menos um bem' });
+    const falhas = [];
+    let sucesso = 0;
+    const hoje = new Date().toISOString().slice(0, 10);
+    for (const bemId of ids) {
+      const { error: movErr } = await supabase.from('pat_movimentacoes')
+        .insert({ bem_id: bemId, tipo: 'baixa', responsavel_id: req.user.userId, motivo: motivo || null, created_by: req.user.userId });
+      if (movErr) { falhas.push({ id: bemId, erro: movErr.message }); continue; }
+      const { error } = await supabase.from('pat_bens').update({ status: 'baixado', data_baixa: hoje }).eq('id', bemId);
+      if (error) { falhas.push({ id: bemId, erro: error.message }); continue; }
+      sucesso++;
+    }
+    res.json({ sucesso, falhas });
+  } catch (e) { res.status(500).json({ error: 'Erro ao dar baixa em massa' }); }
+});
+
 // ── MOVIMENTAÇÕES ──────────────────────────────────────────
 // Histórico central de TODAS as movimentações de TODOS os bens (pedido do
 // usuário 2026-07-29, item 1) — local antigo/novo, item, motivo, e destaque
