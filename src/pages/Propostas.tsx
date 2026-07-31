@@ -709,9 +709,9 @@ function MuralTab({ cicloId }: { cicloId: string }) {
                   <td className="p-2 text-xs">{p.area || '—'}</td>
                   <td className="p-2 text-right tabular-nums">{money(p.custo_liquido)}</td>
                   <td className="p-2 text-xs">{p.classificacao_custo === 'nao_classificado' ? '—' : p.classificacao_custo}</td>
-                  <td className="p-2 text-right tabular-nums">{p.quorum ? nota(p.nota_outros) : <span className="text-amber-600 text-xs">insuf.</span>}</td>
+                  <td className="p-2 text-right tabular-nums">{p.quorum ? nota(p.nota_outros) : <span className="text-amber-600 text-xs">faltam {p.faltam}</span>}</td>
                   <td className="p-2 text-right tabular-nums">{nota(p.nota_area)}</td>
-                  <td className="p-2 text-center">{p.n_avaliadores}</td>
+                  <td className="p-2 text-center tabular-nums">{p.n_avaliadores}{d.total_avaliadores ? `/${d.total_avaliadores}` : ''}</td>
                   <td className="p-2 text-center"><input type="checkbox" checked={marcadas.has(p.id)} onChange={() => toggle(p.id)} /></td>
                   <td className="p-2">
                     {deliberavel(p.estado) ? (
@@ -736,7 +736,7 @@ function MuralTab({ cicloId }: { cicloId: string }) {
           </tbody>
         </table>
       </div>
-      <p className="text-[11px] text-muted-foreground">Nota = média ponderada dos critérios (0–5). "Nota (outros)" exige quórum de {d.min_avaliadores} avaliadores. Marcar "Aprovar" só soma no orçamento acima; a decisão oficial é registrada nos botões de Decisão.</p>
+      <p className="text-[11px] text-muted-foreground">Nota = média ponderada dos critérios (0–5). O ranking só fecha quando <b>todos os {d.total_avaliadores || 'N'} diretores</b> avaliam a proposta — a decisão fica bloqueada até lá. A classificação de custo é relativa à <b>média</b> dos projetos do ciclo (até as faixas serem definidas). Marcar "Aprovar" só soma no orçamento; a decisão oficial é nos botões de Decisão.</p>
     </div>
   );
 }

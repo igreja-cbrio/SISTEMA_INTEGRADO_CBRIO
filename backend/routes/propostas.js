@@ -16,7 +16,7 @@ const PARAMS_DEFAULT = {
   faixa_custo_baixo_ate: '',
   faixa_custo_medio_ate: '',
   min_avaliadores: '3',
-  prazo_recurso_dias: '10',
+  prazo_recurso_dias: '5',
   desembolso_bloqueia_envio: 'false',
 };
 
@@ -471,16 +471,23 @@ router.get('/mural', authorizeModule('propostas', 1), async (req, res) => {
     const cicloId = req.query.ciclo_id;
     if (!cicloId) return res.status(400).json({ error: 'ciclo_id obrigatório' });
     await expirarRecursos(cicloId).catch(() => {}); // RN16 · varredura lazy (sem cron novo)
-    const [{ data: ciclo }, { data: props }, { data: crit }, minAv] = await Promise.all([
+    const [{ data: ciclo }, { data: props }, { data: crit }, avalSet] = await Promise.all([
       supabase.from('prop_ciclo').select('orcamento_disponivel').eq('id', cicloId).maybeSingle(),
       supabase.from('prop_proposta').select('id, codigo, tipo, titulo, area_id, custo_total, custo_liquido, classificacao_custo, complexidade, impacto_esperado, passa_no_ourico, estado, area:areas(nome)').eq('ciclo_id', cicloId).in('estado', ESTADOS_MURAL).is('deleted_at', null),
       supabase.from('prop_criterio').select('id, peso').eq('ciclo_id', cicloId).eq('ativo', true),
-      paramCiclo(cicloId, 'min_avaliadores', '3'),
+      avaliadoresSet(),
     ]);
     const propostas = props || [];
     const ids = propostas.map(p => p.id);
     const pesoDe = Object.fromEntries((crit || []).map(c => [c.id, Number(c.peso || 1)]));
     const somaPesos = Object.values(pesoDe).reduce((s, w) => s + w, 0) || 1;
+    // Quórum = TODOS os diretores avaliaram (decisão do Yago 2026-07-31).
+    const totalAvaliadores = avalSet.size;
+    // Classificação de custo pela MÉDIA dos projetos do ciclo (até faixas serem
+    // definidas): < 75% da média = baixo · > 125% = alto · senão médio.
+    const custos = propostas.map(p => Number(p.custo_liquido || 0));
+    const mediaCusto = custos.length ? custos.reduce((s, v) => s + v, 0) / custos.length : 0;
+    const classePorMedia = (cl) => mediaCusto <= 0 ? 'nao_classificado' : (cl < mediaCusto * 0.75 ? 'baixo' : cl > mediaCusto * 1.25 ? 'alto' : 'medio');
     // diretor de cada área
     const areaIds = [...new Set(propostas.map(p => p.area_id).filter(Boolean))];
     let diretorArea = {};
@@ -496,7 +503,6 @@ router.get('/mural', authorizeModule('propostas', 1), async (req, res) => {
       if (dids.length) { const { data: profs } = await supabase.from('profiles').select('id, name').in('id', dids); nomes = Object.fromEntries((profs || []).map(p => [p.id, p.name])); }
     }
     const notaAv = (avId) => { const ns = notasPorAv[avId] || []; if (!ns.length) return null; const soma = ns.reduce((s, n) => s + Number(n.nota) * (pesoDe[n.criterio_id] || 1), 0); return soma / somaPesos; };
-    const minA = Number(minAv);
     const linhas = propostas.map(p => {
       const avP = avs.filter(a => a.proposta_id === p.id);
       const dirArea = diretorArea[p.area_id];
@@ -505,19 +511,21 @@ router.get('/mural', authorizeModule('propostas', 1), async (req, res) => {
       const mediaOutros = outros.length ? outros.reduce((s, a) => s + (notaAv(a.id) || 0), 0) / outros.length : null;
       const notaArea = daArea ? notaAv(daArea.id) : null;
       const geral = avP.length ? avP.reduce((s, a) => s + (notaAv(a.id) || 0), 0) / avP.length : null;
+      const classe = p.classificacao_custo && p.classificacao_custo !== 'nao_classificado' ? p.classificacao_custo : classePorMedia(Number(p.custo_liquido || 0));
       return {
         id: p.id, codigo: p.codigo, tipo: p.tipo, titulo: p.titulo, area: p.area?.nome, estado: p.estado,
-        custo_total: Number(p.custo_total), custo_liquido: Number(p.custo_liquido), classificacao_custo: p.classificacao_custo,
+        custo_total: Number(p.custo_total), custo_liquido: Number(p.custo_liquido), classificacao_custo: classe,
         complexidade: p.complexidade, impacto: p.impacto_esperado, passa_no_ourico: p.passa_no_ourico,
-        nota_outros: mediaOutros, nota_area: notaArea, nota_geral: geral, n_avaliadores: avP.length,
-        quorum: avP.length >= minA,
+        nota_outros: mediaOutros, nota_area: notaArea, nota_geral: geral,
+        n_avaliadores: avP.length, faltam: Math.max(0, totalAvaliadores - avP.length),
+        quorum: totalAvaliadores > 0 && avP.length >= totalAvaliadores,
         comentarios: avP.map(a => ({ diretor: nomes[a.diretor_usuario_id] || '—', comentario: a.comentario, nota: notaAv(a.id) })),
       };
     });
-    // ranking: com quórum primeiro, por nota_geral desc; sem quórum ao fim
+    // ranking: com quórum (todos avaliaram) primeiro, por nota_geral desc
     linhas.sort((a, b) => (b.quorum - a.quorum) || ((b.nota_geral ?? -1) - (a.nota_geral ?? -1)));
     linhas.forEach((l, i) => { l.posicao = l.quorum ? i + 1 : null; });
-    res.json({ orcamento_disponivel: Number(ciclo?.orcamento_disponivel || 0), min_avaliadores: minA, propostas: linhas });
+    res.json({ orcamento_disponivel: Number(ciclo?.orcamento_disponivel || 0), total_avaliadores: totalAvaliadores, media_custo: mediaCusto, propostas: linhas });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -533,6 +541,13 @@ router.post('/:id/deliberar', authorizeModule('propostas', 2), async (req, res) 
 
     const { data: p } = await supabase.from('prop_proposta').select('*').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
     if (!p) return res.status(404).json({ error: 'Proposta não encontrada' });
+
+    // A decisão só rola quando TODOS os diretores avaliaram (decisão do Yago).
+    if (p.estado === 'EM_AVALIACAO') {
+      const total = (await avaliadoresSet()).size;
+      const { count: enviadas } = await supabase.from('prop_avaliacao').select('id', { count: 'exact', head: true }).eq('proposta_id', p.id).not('enviada_em', 'is', null);
+      if (total > 0 && (enviadas || 0) < total) return res.status(409).json({ error: `Aguardando todos os diretores avaliarem (${enviadas || 0}/${total}).` });
+    }
 
     // snapshot da proposta no momento da decisão (RN17)
     const { data: snap } = await supabase.from('prop_snapshot').insert({ proposta_id: p.id, versao: p.versao, payload: p }).select('id').maybeSingle();
@@ -591,7 +606,7 @@ async function materializarProposta(propostaId) {
 
 // RN16 · move AGUARDANDO_RECURSO → REPROVADO quando o prazo vence (varredura lazy).
 async function expirarRecursos(cicloId) {
-  const dias = Number(await paramCiclo(cicloId, 'prazo_recurso_dias', '10')) || 10;
+  const dias = Number(await paramCiclo(cicloId, 'prazo_recurso_dias', '5')) || 5;
   const { data: props } = await supabase.from('prop_proposta').select('id').eq('ciclo_id', cicloId).eq('estado', 'AGUARDANDO_RECURSO').is('deleted_at', null);
   if (!props?.length) return;
   const ids = props.map(p => p.id);
