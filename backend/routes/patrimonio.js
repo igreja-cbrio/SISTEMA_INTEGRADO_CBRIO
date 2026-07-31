@@ -446,12 +446,47 @@ router.delete('/bens/:id', async (req, res) => {
 // juntos sem editar um por um. Rotas com path fixo "bulk" — não conflitam com
 // GET/PUT/DELETE /bens/:id porque são métodos e sub-paths diferentes.
 
+// Trava contra descompasso com revisão ativa (pedido do usuário 2026-07-31):
+// um ciclo de revisão tira uma FOTOGRAFIA dos bens esperados em cada
+// localização quando é criado (pat_revisao_itens). Mudar localização ou dar
+// baixa em bens que estão nessa fotografia enquanto a convocação ainda está
+// pendente/em_andamento deixa a conferência física desatualizada — o revisor
+// continuaria esperando achar ali um bem que já saiu por fora, contra a
+// minúcia que a revisão busca. Bloqueia em vez de deixar acontecer em
+// silêncio (mesmo risco já existia editando 1 bem por vez; em massa é mais
+// fácil atingir vários sem perceber).
+async function bensEmRevisaoAtiva(ids) {
+  const { data, error } = await supabase.from('pat_revisao_itens')
+    .select('bem_id, pat_bens(nome), convocacao:pat_revisao_convocacoes(status, pat_localizacoes(nome))')
+    .in('bem_id', ids);
+  if (error) throw new Error(error.message);
+  const vistos = new Set();
+  const conflitos = [];
+  for (const item of data || []) {
+    if (!item.convocacao || !['pendente', 'em_andamento'].includes(item.convocacao.status)) continue;
+    if (vistos.has(item.bem_id)) continue;
+    vistos.add(item.bem_id);
+    conflitos.push({ bem_id: item.bem_id, nome: item.pat_bens?.nome || item.bem_id, localizacao: item.convocacao.pat_localizacoes?.nome || null });
+  }
+  return conflitos;
+}
+
+function mensagemBensEmRevisao(conflitos) {
+  const nomes = conflitos.slice(0, 5).map(c => c.nome).join(', ');
+  const resto = conflitos.length > 5 ? ` e mais ${conflitos.length - 5}` : '';
+  return `${conflitos.length} bem(ns) selecionado(s) está(ão) numa convocação de revisão ainda em andamento (${nomes}${resto}) — mudar localização ou dar baixa agora deixaria a conferência física desatualizada. Aguarde a revisão concluir ou remova-os da seleção.`;
+}
+
 // Define um valor comum (categoria/localização/responsável/status) pra N bens
 // de uma vez. Cada campo é opcional — só atualiza o que veio no body.
 router.put('/bens/bulk', async (req, res) => {
   try {
     const { ids, categoria_id, localizacao_id, responsavel_id, status } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'Selecione ao menos um bem' });
+    if (localizacao_id !== undefined || status === 'baixado') {
+      const conflitos = await bensEmRevisaoAtiva(ids);
+      if (conflitos.length > 0) return res.status(409).json({ error: mensagemBensEmRevisao(conflitos), bens_em_revisao: conflitos });
+    }
     const update = {};
     if (categoria_id !== undefined) update.categoria_id = categoria_id || null;
     // Reatribuir localização em massa também é decisão humana — limpa o
@@ -499,6 +534,8 @@ router.post('/bens/bulk/movimentar', async (req, res) => {
     const { ids, tipo, localizacao_origem_id, localizacao_destino_id, motivo } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'Selecione ao menos um bem' });
     if (!tipo) return res.status(400).json({ error: 'Tipo é obrigatório' });
+    const conflitos = await bensEmRevisaoAtiva(ids);
+    if (conflitos.length > 0) return res.status(409).json({ error: mensagemBensEmRevisao(conflitos), bens_em_revisao: conflitos });
     const falhas = [];
     let sucesso = 0;
     for (const bemId of ids) {
@@ -520,6 +557,8 @@ router.post('/bens/bulk/baixa', async (req, res) => {
   try {
     const { ids, motivo } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'Selecione ao menos um bem' });
+    const conflitos = await bensEmRevisaoAtiva(ids);
+    if (conflitos.length > 0) return res.status(409).json({ error: mensagemBensEmRevisao(conflitos), bens_em_revisao: conflitos });
     const falhas = [];
     let sucesso = 0;
     const hoje = new Date().toISOString().slice(0, 10);
