@@ -20,6 +20,11 @@
 const { supabase } = require('../../../utils/supabase');
 const { notificar } = require('../../notificar');
 const { enviarConfirmacaoInscricao } = require('../../inscricaoWhatsapp');
+const {
+  enviarEmailInscricaoConfirmada,
+  enviarEmailInscricaoExpirada,
+} = require('../../inscricaoEmail');
+const { emitirTokenComprovante } = require('../../inscricaoComprovante');
 const { STATUS } = require('../tipos');
 
 const origem_tipo = 'inscricao';
@@ -59,7 +64,7 @@ async function espelhar(cobranca, extra = {}) {
 async function carregarInscricao(cobranca) {
   if (!cobranca.origem_id) return null;
   const { data, error } = await supabase.from('inscricoes')
-    .select('id, evento_id, nome_completo, telefone, whatsapp_optin, status, membro_id, evento:insc_eventos(id, nome, data, hora)')
+    .select('id, evento_id, nome_completo, telefone, email, codigo, bolsa_tipo, valor_cobrado_centavos, whatsapp_optin, status, membro_id, evento:insc_eventos(id, nome, data, hora, local, slug)')
     .eq('id', cobranca.origem_id).is('deleted_at', null).maybeSingle();
   if (error) throw error;
   return data || null;
@@ -115,6 +120,17 @@ async function aoPagar(cobranca) {
     inscricaoId: insc.id, nome: insc.nome_completo, telefone: insc.telefone,
     optin: !!insc.whatsapp_optin, evento: insc.evento,
   }).catch((e) => console.error('[pagamentos/inscricao] confirmação WhatsApp:', e.message));
+
+  // E-mail de confirmação (pedido do Marcos · 31/07) — no MESMO gate
+  // `confirmouAgora`, então reentrega de webhook/reconciliação não reenvia.
+  // Ao contrário do WhatsApp, NÃO depende de opt-in: é e-mail transacional de
+  // uma compra que a pessoa acabou de fazer, não divulgação.
+  (async () => {
+    const token = await emitirTokenComprovante(insc.id, 'email_confirmacao').catch(() => null);
+    await enviarEmailInscricaoConfirmada({
+      inscricao: insc, evento: insc.evento, cobranca, comprovanteToken: token,
+    });
+  })().catch((e) => console.error('[pagamentos/inscricao] e-mail confirmação:', e.message));
 }
 
 async function aoPagarParcial(cobranca) {
@@ -138,10 +154,27 @@ async function aoExpirar(cobranca, ctx = {}) {
   // pessoa deixou de pagar. Sem isso, conceder gratuidade cancelaria a
   // inscrição de quem acabou de ganhar a vaga — o oposto da intenção.
   if (ctx.preservar_inscricao) return;
-  const { error } = await supabase.from('inscricoes')
+
+  const insc = await carregarInscricao(cobranca).catch(() => null);
+
+  // `.select('id')` pra saber se a transição REALMENTE aconteceu: sem isso o
+  // e-mail sairia de novo a cada reentrega, avisando "sua reserva expirou" pra
+  // quem já tinha sido avisado.
+  const { data, error } = await supabase.from('inscricoes')
     .update({ status: 'cancelada' })
-    .eq('id', cobranca.origem_id).eq('status', 'recebida');
+    .eq('id', cobranca.origem_id).eq('status', 'recebida')
+    .select('id');
   if (error) throw error;
+
+  const expirouAgora = Array.isArray(data) && data.length > 0;
+
+  // ⚠️ SÓ em expiração de verdade. `aoCancelar` cai aqui também, e cancelamento
+  // por decisão nossa (valor corrigido, acerto interno) não deve dizer à pessoa
+  // que ela perdeu a vaga por falta de pagamento — seria mentira.
+  if (expirouAgora && insc && cobranca.status === STATUS.EXPIRADA) {
+    enviarEmailInscricaoExpirada({ inscricao: insc, evento: insc.evento })
+      .catch((e) => console.error('[pagamentos/inscricao] e-mail expirada:', e.message));
+  }
 }
 
 async function aoCancelar(cobranca, ctx = {}) {

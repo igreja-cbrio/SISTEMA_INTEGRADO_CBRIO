@@ -37,6 +37,9 @@ interface Pagamento {
   pago_em: string | null;
   evento_nome: string | null;
   evento_slug: string | null;
+  // Código legível da inscrição (CBR-AAAA-NNNNNN). Opcional porque bundle novo
+  // pode falar com backend antigo durante o deploy.
+  codigo?: string | null;
   comprovante_token: string | null;
   // Anexo de comprovante (Pix/TED pago fora do provedor). `aceita_comprovante`
   // vem do servidor: só é oferecido enquanto não está pago e em forma que pode
@@ -498,8 +501,17 @@ export default function PagamentoInscricao() {
               )}
             </div>
 
-            {pag.pago && pag.pago_em && (
+            {/* Código da inscrição — é o que a pessoa cita ao falar com a
+                equipe. Fica visível pago ou não; some se o backend for antigo
+                (deploy em 2 etapas) em vez de mostrar "null". */}
+            {pag.codigo && (
               <p style={{ fontSize: 12.5, color: C.text3, marginTop: 10 }}>
+                Código da inscrição: <strong style={{ color: C.text, letterSpacing: 0.3 }}>{pag.codigo}</strong>
+              </p>
+            )}
+
+            {pag.pago && pag.pago_em && (
+              <p style={{ fontSize: 12.5, color: C.text3, marginTop: 6 }}>
                 Pago em {new Date(pag.pago_em).toLocaleString('pt-BR')}.
               </p>
             )}

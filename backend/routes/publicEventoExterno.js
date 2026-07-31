@@ -29,6 +29,10 @@ const {
   verificarTokenComprovanteAtivo,
 } = require('../services/inscricaoComprovante');
 const { enviarConfirmacaoInscricao } = require('../services/inscricaoWhatsapp');
+const {
+  enviarEmailInscricaoPendente,
+  enviarEmailInscricaoConfirmada,
+} = require('../services/inscricaoEmail');
 // Fachada do núcleo de pagamentos. ⚠️ NUNCA importar `providers/*` aqui — é o
 // que faz trocar de PSP custar 1 arquivo + 1 env (ver services/pagamentos/tipos.js).
 const pagamentos = require('../services/pagamentos');
@@ -296,7 +300,58 @@ async function cobrarInscricao({ ev, inscricaoId, val, membroId, valorCentavos }
     console.error('[publicEvento espinha] espelho insc_pagamentos:', error.message);
   }
 
+  // E-mail com o LINK DE PAGAMENTO (decisão do Marcos · 31/07). Sem ele, quem
+  // fecha a aba perde o `public_token` e não tem NENHUM caminho de volta pra
+  // pagar. Fire-and-forget: a cobrança e a vaga já foram decididas acima, e o
+  // fluxo não pode falhar porque o e-mail soluçou.
+  emailPendenteBestEffort({ ev, inscricaoId, val, cobranca });
+
   return cobranca;
+}
+
+/**
+ * Busca só o `codigo` (gerado pelo trigger no INSERT) e manda o e-mail de
+ * pendente. Tudo engolido: nenhum erro daqui pode subir pro chamador.
+ */
+function emailPendenteBestEffort({ ev, inscricaoId, val, cobranca }) {
+  (async () => {
+    const { data } = await supabase.from('inscricoes')
+      .select('codigo, nome_completo, email').eq('id', inscricaoId).maybeSingle();
+    await enviarEmailInscricaoPendente({
+      inscricao: {
+        codigo: data?.codigo || null,
+        nome_completo: data?.nome_completo || val?.nomeCompleto,
+        email: data?.email || val?.email,
+      },
+      evento: ev,
+      cobranca,
+    });
+  })().catch((e) => console.error('[publicEvento espinha] e-mail pendente:', e.message));
+}
+
+/**
+ * E-mail de confirmação do caminho SEM cobrança (gratuito e isento por bolsa
+ * integral) — nesses casos a inscrição nasce `confirmada` aqui mesmo. Em evento
+ * pago, quem manda é o handler do pagamento. Best-effort.
+ */
+function emailConfirmadaBestEffort({ ev, inscricaoId, val, comprovanteToken }) {
+  (async () => {
+    const { data } = await supabase.from('inscricoes')
+      .select('codigo, nome_completo, email, bolsa_tipo, valor_cobrado_centavos')
+      .eq('id', inscricaoId).maybeSingle();
+    await enviarEmailInscricaoConfirmada({
+      inscricao: {
+        codigo: data?.codigo || null,
+        nome_completo: data?.nome_completo || val?.nomeCompleto,
+        email: data?.email || val?.email,
+        bolsa_tipo: data?.bolsa_tipo || null,
+        valor_cobrado_centavos: data?.valor_cobrado_centavos ?? null,
+      },
+      evento: ev,
+      cobranca: null,
+      comprovanteToken,
+    });
+  })().catch((e) => console.error('[publicEvento espinha] e-mail confirmada:', e.message));
 }
 
 /** Resposta padrão do fluxo pago (o front redireciona pro checkout). */
@@ -357,6 +412,17 @@ async function comprovantesDaInscricao(inscricaoId) {
   } catch { return []; }
 }
 
+/** Código legível da inscrição. Consulta isolada e fail-soft (a coluna é nova). */
+async function codigoDaInscricao(inscricaoId) {
+  if (!inscricaoId) return null;
+  try {
+    const { data, error } = await supabase.from('inscricoes')
+      .select('codigo').eq('id', inscricaoId).maybeSingle();
+    if (error) return null;
+    return data?.codigo || null;
+  } catch { return null; }
+}
+
 async function respostaPagamento(cobranca) {
   const daInscricao = cobranca.origem_tipo === 'inscricao' ? cobranca.origem_id : null;
   const comprovanteToken = (cobranca.status === 'pago' && daInscricao)
@@ -383,6 +449,10 @@ async function respostaPagamento(cobranca) {
     pago_em: cobranca.pago_em || null,
     evento_nome: cobranca.metadata?.evento_nome || null,
     evento_slug: cobranca.metadata?.evento_slug || null,
+    // Código legível da inscrição (CBR-AAAA-NNNNNN) — é o que a pessoa cita
+    // quando fala com a equipe. NÃO é credencial: quem acessa esta página já
+    // chegou pelo public_token.
+    codigo: await codigoDaInscricao(daInscricao),
     // Comprovante do check-in (SPEC-06): quem pagou recebe o QR da entrada
     // AQUI — a tela de sucesso do formulário já ficou pra trás quando a
     // pessoa foi pro checkout, e esta é a página que ela reabre.
@@ -932,6 +1002,7 @@ async function inscreverEspinha(req, res, ev) {
   }
 
   const comprovanteToken = await emitirTokenComprovante(ins.id, 'form_sucesso');
+  emailConfirmadaBestEffort({ ev, inscricaoId: ins.id, val, comprovanteToken });
   return res.status(201).json({
     ok: true, numero_sorte: ins.numero_sorte, tem_sorteio: ev.tem_sorteio,
     // QR do comprovante na tela de sucesso (SPEC-06) — só a espinha tem

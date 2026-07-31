@@ -390,6 +390,17 @@ export const inscricoesApi = {
   checkinMarcar: (eventoId, data) => post(`/inscricoes/eventos/${eventoId}/checkin`, data),
   checkinDesfazer: (eventoId, inscricaoId, motivo) => del(`/inscricoes/eventos/${eventoId}/checkin/${inscricaoId}`, { motivo }),
   checkinHistorico: (eventoId) => get(`/inscricoes/eventos/${eventoId}/checkin/historico`),
+
+  // Templates dos e-mails de inscrição (confirmada / pendente / expirada).
+  // Sem template salvo, o e-mail sai no texto padrão do código — a tela mostra
+  // isso como "no padrão", e "Restaurar padrão" é um DELETE.
+  emailTemplates: (eventoId) => get(`/inscricoes/email-templates${eventoId ? `?evento_id=${eventoId}` : ''}`),
+  salvarEmailTemplate: (tipo, data) => put(`/inscricoes/email-templates/${tipo}`, data),
+  restaurarEmailTemplate: (tipo, eventoId) =>
+    del(`/inscricoes/email-templates/${tipo}${eventoId ? `?evento_id=${eventoId}` : ''}`),
+  previewEmailTemplate: (data) => post('/inscricoes/email-templates/preview', data),
+  // Envia o rascunho pro e-mail de quem está logado (destinatário é do servidor).
+  testarEmailTemplate: (data) => post('/inscricoes/email-templates/teste', data),
 };
 
 // Eventos Externos · formulário público de confirmação de presença (sem auth)

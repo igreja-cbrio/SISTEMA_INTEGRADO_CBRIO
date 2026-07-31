@@ -14,6 +14,12 @@ const { supabase } = require('../utils/supabase');
 const { escapePostgrestValue } = require('../utils/sanitize');
 const { verificarTokenComprovanteAtivo, extrairToken } = require('../services/inscricaoComprovante');
 const { portasSatelites, fontesUnificadas, catalogoPublico } = require('../services/inscricaoPortas');
+const {
+  previewTemplate,
+  TIPOS: TIPOS_EMAIL,
+  VARIAVEIS: VARIAVEIS_EMAIL,
+} = require('../services/inscricaoEmail');
+const { enviarEmail } = require('../services/email');
 // Push pro app de membros quando um evento é publicado (broadcast).
 const { notificarApp } = require('../services/appPush');
 // CPF com DV pelo canônico do Contrato de Inscrição — NÃO recriar cópia local
@@ -720,7 +726,7 @@ router.get('/eventos/:id', authorizeModule('inscricoes', 1), async (req, res) =>
 // listas impressas por faixa/sexo) e `membro_id` (vínculo com o cadastro).
 // **CPF continua fora** — é o campo de identificação mais sensível e serve pro
 // matcher, não pra tela; quem precisa vê no detalhe da pessoa.
-const INSCRITOS_COLS = 'id, nome_completo, telefone, email, data_nascimento, sexo, membro_id, status, numero_sorte, whatsapp_optin, dados, created_at, '
+const INSCRITOS_COLS = 'id, codigo, nome_completo, telefone, email, data_nascimento, sexo, membro_id, status, numero_sorte, whatsapp_optin, dados, created_at, '
   // Bolsa/isenção (migration 20260730170000): quem paga menos ou nada, por quê
   // e quem concedeu. Sem isto a lista mostraria "aguardando pagamento" pra quem
   // foi de graça — que não está aguardando nada.
@@ -2043,6 +2049,145 @@ router.post('/upload-capa', authorizeModule('inscricoes', 3), upload.single('arq
   } catch (e) {
     console.error('[inscricoes] upload-capa:', e.message);
     res.status(500).json({ error: 'Erro ao enviar a capa' });
+  }
+});
+
+// ============================================================================
+// Templates de e-mail (pedido do Marcos · 31/07)
+//
+// Resolução em 3 níveis, feita no serviço: template do EVENTO > template GLOBAL
+// > layout do código. Tabela vazia = todos os e-mails saem no padrão, então este
+// CRUD é sempre OPCIONAL — apagar um template não deixa ninguém sem e-mail.
+//
+// Níveis: ler = 2 (quem opera inscrições) · escrever = 5 (mudar o texto muda o
+// que TODA pessoa inscrita recebe em nome da igreja).
+// ============================================================================
+
+/** Lista os templates + o catálogo de variáveis pra tela montar a ajuda. */
+router.get('/email-templates', authorizeModule('inscricoes', 2), async (req, res) => {
+  try {
+    let q = supabase.from('insc_email_templates')
+      .select('id, tipo, evento_id, assunto, corpo_html, ativo, atualizado_por_nome, updated_at');
+    if (req.query.evento_id) {
+      q = q.or(`evento_id.eq.${escapePostgrestValue(String(req.query.evento_id))},evento_id.is.null`);
+    } else {
+      q = q.is('evento_id', null);
+    }
+    const { data, error } = await q;
+    // Tabela ausente (deploy em 2 etapas) NÃO é 500: a tela abre mostrando que
+    // tudo está no padrão, que é a verdade.
+    if (error) {
+      console.warn('[inscricoes] email-templates indisponível:', error.message);
+      return res.json({ templates: [], tipos: TIPOS_EMAIL, variaveis: VARIAVEIS_EMAIL, aviso: 'Personalização ainda não disponível (migration pendente). Os e-mails estão saindo no texto padrão.' });
+    }
+    res.json({ templates: data || [], tipos: TIPOS_EMAIL, variaveis: VARIAVEIS_EMAIL });
+  } catch (e) {
+    console.error('[inscricoes] GET email-templates:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar os templates' });
+  }
+});
+
+/** Cria/atualiza o template de um tipo (global, ou de um evento). */
+router.put('/email-templates/:tipo', authorizeModule('inscricoes', 5), async (req, res) => {
+  try {
+    const tipo = String(req.params.tipo || '');
+    if (!TIPOS_EMAIL.includes(tipo)) return res.status(400).json({ error: 'Tipo inválido' });
+
+    const assunto = String(req.body?.assunto || '').trim();
+    const corpo = String(req.body?.corpo_html || '').trim();
+    if (!assunto) return res.status(400).json({ error: 'O assunto é obrigatório' });
+    if (!corpo) return res.status(400).json({ error: 'O corpo do e-mail é obrigatório' });
+
+    const eventoId = req.body?.evento_id || null;
+    const linha = {
+      tipo,
+      evento_id: eventoId,
+      assunto,
+      corpo_html: corpo,
+      ativo: req.body?.ativo !== false,
+      atualizado_por: req.user?.id || null,
+      atualizado_por_nome: req.user?.name || req.user?.email || null,
+    };
+
+    // Upsert manual: são dois índices parciais (global × por evento), então não
+    // existe um onConflict único que sirva pros dois casos.
+    let existente = supabase.from('insc_email_templates').select('id').eq('tipo', tipo);
+    existente = eventoId ? existente.eq('evento_id', eventoId) : existente.is('evento_id', null);
+    const { data: achado } = await existente.maybeSingle();
+
+    const q = achado?.id
+      ? supabase.from('insc_email_templates').update(linha).eq('id', achado.id).select().single()
+      : supabase.from('insc_email_templates').insert(linha).select().single();
+
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json({ ok: true, template: data });
+  } catch (e) {
+    console.error('[inscricoes] PUT email-templates:', e.message);
+    res.status(500).json({ error: 'Erro ao salvar o template' });
+  }
+});
+
+/** Restaura o padrão do código = apaga a customização. */
+router.delete('/email-templates/:tipo', authorizeModule('inscricoes', 5), async (req, res) => {
+  try {
+    const tipo = String(req.params.tipo || '');
+    if (!TIPOS_EMAIL.includes(tipo)) return res.status(400).json({ error: 'Tipo inválido' });
+    let q = supabase.from('insc_email_templates').delete().eq('tipo', tipo);
+    q = req.query.evento_id ? q.eq('evento_id', String(req.query.evento_id)) : q.is('evento_id', null);
+    const { error } = await q;
+    if (error) throw error;
+    res.json({ ok: true, restaurado: 'padrao' });
+  } catch (e) {
+    console.error('[inscricoes] DELETE email-templates:', e.message);
+    res.status(500).json({ error: 'Erro ao restaurar o padrão' });
+  }
+});
+
+/** Prévia com dados fictícios · não envia nada e não toca em inscrição real. */
+router.post('/email-templates/preview', authorizeModule('inscricoes', 2), async (req, res) => {
+  try {
+    const p = previewTemplate({
+      tipo: String(req.body?.tipo || ''),
+      assunto: String(req.body?.assunto || ''),
+      corpo_html: String(req.body?.corpo_html || ''),
+    });
+    res.json(p);
+  } catch (e) {
+    console.error('[inscricoes] preview email:', e.message);
+    res.status(500).json({ error: 'Erro ao gerar a prévia' });
+  }
+});
+
+/**
+ * Envia o rascunho pro e-mail de QUEM PEDIU.
+ *
+ * ⚠️ Destinatário é SEMPRE `req.user.email` — nunca aceita endereço do corpo da
+ * requisição. Um "enviar teste para..." livre transformaria a tela num relay de
+ * e-mail em nome da igreja.
+ */
+router.post('/email-templates/teste', authorizeModule('inscricoes', 5), async (req, res) => {
+  try {
+    const para = req.user?.email;
+    if (!para) return res.status(400).json({ error: 'Sua conta não tem e-mail cadastrado' });
+
+    const p = previewTemplate({
+      tipo: String(req.body?.tipo || ''),
+      assunto: String(req.body?.assunto || ''),
+      corpo_html: String(req.body?.corpo_html || ''),
+    });
+    const r = await enviarEmail({
+      to: para,
+      subject: `[TESTE] ${p.assunto}`,
+      html: p.html,
+      text: p.html.replace(/<[^>]+>/g, ''),
+      fromName: 'CBRio',
+    });
+    if (!r.ok) return res.status(502).json({ error: `Não foi possível enviar: ${r.error}` });
+    res.json({ ok: true, enviado_para: para });
+  } catch (e) {
+    console.error('[inscricoes] teste email:', e.message);
+    res.status(500).json({ error: 'Erro ao enviar o teste' });
   }
 });
 
