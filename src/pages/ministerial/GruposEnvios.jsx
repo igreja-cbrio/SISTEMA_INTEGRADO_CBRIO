@@ -11,7 +11,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { grupos as api } from '../../api';
 import { Button } from '../../components/ui/button';
 import { toast } from 'sonner';
-import { Send, Power, Users, CheckCircle2, AlertTriangle, RefreshCw, Zap, Info, Paperclip, FileText, X } from 'lucide-react';
+import { Send, Power, Users, CheckCircle2, AlertTriangle, RefreshCw, Zap, Info, Paperclip, FileText, X, ListChecks, UserMinus } from 'lucide-react';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
@@ -54,6 +54,23 @@ export default function GruposEnvios({ podeEditar = false }) {
   const [carregandoPreviewM, setCarregandoPreviewM] = useState(false);
   const [enviandoM, setEnviandoM] = useState(false);
 
+  // Box "Confira a lista do grupo" (Marcos 2026-07-31) — o líder desmarca quem
+  // não faz mais parte. Confirmação DIGITANDO o número (freio deliberado: é o
+  // único disparo que muda o roster do grupo).
+  const [tipoAudC, setTipoAudC] = useState('todos');
+  const [valorAudC, setValorAudC] = useState('');
+  const [novaRodadaC, setNovaRodadaC] = useState(false);
+  const [previewC, setPreviewC] = useState(null);
+  const [carregandoPreviewC, setCarregandoPreviewC] = useState(false);
+  const [enviandoC, setEnviandoC] = useState(false);
+  const [confirmandoC, setConfirmandoC] = useState(false);
+  const [numeroDigitado, setNumeroDigitado] = useState('');
+  const [confPainel, setConfPainel] = useState(null);
+  const [verTriagem, setVerTriagem] = useState(false);
+  const [triandoId, setTriandoId] = useState(null);
+  const [triarObs, setTriarObs] = useState('');
+  const [salvandoTriagem, setSalvandoTriagem] = useState(false);
+
   // Box "Convite de abertura" — avisa o líder que as inscrições abriram (Utility).
   const [tipoAudA, setTipoAudA] = useState('todos');
   const [valorAudA, setValorAudA] = useState('');
@@ -65,13 +82,16 @@ export default function GruposEnvios({ podeEditar = false }) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [cfg, a, h, rp] = await Promise.all([
+      const [cfg, a, h, rp, cp] = await Promise.all([
         api.envios.getConfig().catch(() => ({ bloqueio_total: false, auto_frequencia: false })),
         api.envios.aux().catch(() => ({ redes: [], bairros: [], grupos: [], temporada: null })),
         api.envios.historico().then(r => r?.items || []).catch(() => []),
         api.renovacao.painel().catch(() => null),
+        // Sem a migration 20260731120000 o painel devolve { disponivel: false }
+        // (e o catch cobre o resto) — o resto da aba não pisca por isso.
+        api.confira.painel().catch(() => null),
       ]);
-      setConfig(cfg); setAux(a); setHistorico(h); setRenPainel(rp);
+      setConfig(cfg); setAux(a); setHistorico(h); setRenPainel(rp); setConfPainel(cp);
     } catch { toast.error('Erro ao carregar a aba de envios'); }
     finally { setLoading(false); }
   }, []);
@@ -155,6 +175,55 @@ export default function GruposEnvios({ podeEditar = false }) {
       api.envios.historico().then(res => setHistorico(res?.items || [])).catch(() => {});
     } catch (e) { toast.error(e.message || 'Erro ao enviar o material'); }
     finally { setEnviandoM(false); }
+  };
+
+  // ── Confira a lista do grupo (o líder desmarca quem saiu) ──
+  const audienciaC = () => ({ tipo: tipoAudC, valor: tipoAudC === 'todos' ? null : valorAudC });
+  const audienciaCValida = () => tipoAudC === 'todos' || !!valorAudC;
+
+  const gerarPreviewC = async () => {
+    if (!audienciaCValida()) { toast.error('Escolha o destino.'); return; }
+    setCarregandoPreviewC(true); setPreviewC(null);
+    try { setPreviewC(await api.confira.preview(audienciaC(), novaRodadaC)); }
+    catch (e) { toast.error(e.message || 'Erro ao gerar prévia'); }
+    finally { setCarregandoPreviewC(false); }
+  };
+
+  const enviarConfira = async () => {
+    setEnviandoC(true);
+    try {
+      const r = await api.confira.disparar(audienciaC(), novaRodadaC);
+      const enfileirados = r?.enfileirados ?? 0;
+      // Falha silenciosa aqui = líder sem mensagem. Erro de linha (a conferência
+      // não foi criada) ou de montagem (template/telefone) NÃO pode passar como
+      // sucesso só porque outros entraram na fila.
+      const falhas = (r?.erros?.linha || 0) + (r?.erros?.montar || 0);
+      if (falhas > 0) {
+        toast.warning(
+          `${enfileirados} na fila, mas ${falhas} líder(es) NÃO receberam `
+          + `(${r?.erros?.linha || 0} falha ao registrar, ${r?.erros?.montar || 0} falha ao montar a mensagem). `
+          + 'Gere a prévia de novo e reenvie — quem já recebeu é pulado.',
+          { duration: 12000 },
+        );
+      } else {
+        toast.success(`${enfileirados} mensagem(ns) na fila de envio`);
+      }
+      setPreviewC(null); setValorAudC(''); setConfirmandoC(false); setNumeroDigitado('');
+      load();
+    } catch (e) { toast.error(e.message || 'Erro ao enviar'); }
+    finally { setEnviandoC(false); }
+  };
+
+  const triarConferencia = async (confId) => {
+    if (triarObs.trim().length < 3) { toast.error('Escreva uma nota curta do que foi conferido.'); return; }
+    setSalvandoTriagem(true);
+    try {
+      await api.confira.triar(confId, triarObs.trim());
+      toast.success('Conferência marcada como tratada');
+      setTriandoId(null); setTriarObs('');
+      api.confira.painel().then(setConfPainel).catch(() => {});
+    } catch (e) { toast.error(e.message || 'Erro ao registrar a triagem'); }
+    finally { setSalvandoTriagem(false); }
   };
 
   // ── Convite de abertura (líderes encaminham no grupo) ──
@@ -470,6 +539,171 @@ export default function GruposEnvios({ podeEditar = false }) {
         )}
       </div>
 
+      {/* 2c) CONFIRA A LISTA DO GRUPO (manual) — o único disparo que MUDA o
+           roster: o líder desmarca quem não faz mais parte. Confirmação
+           digitando o número (freio deliberado). */}
+      <div style={{ background: C.card, borderRadius: 16, border: `1px solid ${C.border}`, padding: 18, opacity: bloqueado ? 0.6 : 1 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+          <ListChecks size={17} style={{ color: C.primary }} />
+          <h2 style={{ fontSize: 15, fontWeight: 700, color: C.text, margin: 0 }}>Confira a lista do grupo (manual)</h2>
+        </div>
+        <p style={{ fontSize: 12.5, color: C.t3, margin: '0 0 12px', lineHeight: 1.5 }}>
+          Manda pro líder a lista atual do grupo <strong>toda marcada</strong> — ele só desmarca quem não faz
+          mais parte. Serve pra limpar o roster (gente que saiu, cadastro de teste, importado que nunca
+          apareceu) sem falar de temporada nem perguntar se ele continua.
+          {' '}<strong>Quem não responder fica com a lista intocada.</strong>
+          {bloqueado && <strong style={{ color: C.red }}> Bloqueio geral ligado — nada sai.</strong>}
+        </p>
+
+        {confPainel && confPainel.disponivel === false && (
+          <div style={{ fontSize: 12.5, color: C.amber, background: C.amberBg, borderRadius: 10, padding: '10px 12px', marginBottom: 12, lineHeight: 1.5 }}>
+            <AlertTriangle size={13} style={{ display: 'inline', verticalAlign: -2, marginRight: 6 }} />
+            {confPainel.aviso || 'A conferência da lista precisa da migration aplicada no banco.'}
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 10 }}>
+          <select value={tipoAudC} onChange={e => { setTipoAudC(e.target.value); setValorAudC(''); setPreviewC(null); }} style={selStyle}>
+            <option value="todos">Todos os líderes</option>
+            <option value="lider">Um líder específico</option>
+            <option value="bairro">Por bairro</option>
+            <option value="rede">Por rede</option>
+          </select>
+          {tipoAudC === 'lider' && (
+            <select value={valorAudC} onChange={e => { setValorAudC(e.target.value); setPreviewC(null); }} style={{ ...selStyle, minWidth: 260 }}>
+              <option value="">Escolha o grupo/líder...</option>
+              {(aux?.grupos || []).map(g => <option key={g.id} value={g.id}>{g.nome}{g.lider_nome ? ` — ${g.lider_nome}` : ''}</option>)}
+            </select>
+          )}
+          {tipoAudC === 'bairro' && (
+            <select value={valorAudC} onChange={e => { setValorAudC(e.target.value); setPreviewC(null); }} style={selStyle}>
+              <option value="">Escolha o bairro...</option>
+              {(aux?.bairros || []).map(b => <option key={b} value={b}>{b}</option>)}
+            </select>
+          )}
+          {tipoAudC === 'rede' && (
+            <select value={valorAudC} onChange={e => { setValorAudC(e.target.value); setPreviewC(null); }} style={selStyle}>
+              <option value="">Escolha a rede...</option>
+              {(aux?.redes || []).map(r => <option key={r.id} value={r.id}>{r.nome}</option>)}
+            </select>
+          )}
+          <Button variant="outline" disabled={carregandoPreviewC || !audienciaCValida()} onClick={gerarPreviewC}>
+            {carregandoPreviewC ? 'Calculando...' : 'Ver prévia'}
+          </Button>
+        </div>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 12.5, color: C.t2, marginBottom: 12, cursor: 'pointer' }}>
+          <input type="checkbox" checked={novaRodadaC} onChange={e => { setNovaRodadaC(e.target.checked); setPreviewC(null); }} />
+          Pedir de novo a quem já respondeu (nova rodada)
+        </label>
+
+        {previewC && (
+          <div style={{ border: `1px solid ${C.border}`, borderRadius: 12, padding: 14, background: C.bg }}>
+            <div style={{ fontSize: 13.5, color: C.text, fontWeight: 600, marginBottom: 8 }}>
+              <Users size={14} style={{ display: 'inline', verticalAlign: -2, marginRight: 6, color: C.primary }} />
+              {previewC.total} líder(es) vão receber
+              {previewC.reenvios > 0 && <span style={{ color: C.t3, fontWeight: 400 }}> · {previewC.reenvios} é reenvio a quem não respondeu</span>}
+            </div>
+            {previewC.exemplo && (
+              <div style={{ fontSize: 12.5, color: C.t2, fontStyle: 'italic', borderLeft: `3px solid ${C.primary}`, paddingLeft: 10, marginBottom: 10, lineHeight: 1.5 }}>
+                Ex. ({previewC.exemplo.lider}): "{previewC.exemplo.texto}"
+              </div>
+            )}
+            {previewC.excluidos_total > 0 && (
+              <div style={{ fontSize: 12, color: C.t3, marginBottom: 6 }}>
+                🚫 {previewC.excluidos_total} não recebem:
+                {previewC.excluidos.sem_lider ? ` ${previewC.excluidos.sem_lider} sem líder ·` : ''}
+                {previewC.excluidos.sem_telefone ? ` ${previewC.excluidos.sem_telefone} sem WhatsApp ·` : ''}
+                {previewC.excluidos.opt_out ? ` ${previewC.excluidos.opt_out} pediram pra não receber ·` : ''}
+                {previewC.excluidos.sem_roster ? ` ${previewC.excluidos.sem_roster} sem participantes na lista` : ''}
+              </div>
+            )}
+            {((previewC.pulados?.ja_respondeu || 0) + (previewC.pulados?.enviada_ha_pouco || 0)) > 0 && (
+              <div style={{ fontSize: 12, color: C.t3, marginBottom: 10 }}>
+                ⏭️ Pulados:
+                {previewC.pulados.ja_respondeu ? ` ${previewC.pulados.ja_respondeu} já responderam ·` : ''}
+                {previewC.pulados.enviada_ha_pouco ? ` ${previewC.pulados.enviada_ha_pouco} receberam há menos de 10 min` : ''}
+              </div>
+            )}
+            {previewC.total > 0 ? (
+              <Button disabled={enviandoC || !podeEditar || bloqueado} onClick={() => { setNumeroDigitado(''); setConfirmandoC(true); }}>
+                <Send size={14} style={{ marginRight: 6 }} /> Enviar para {previewC.total} líder(es)
+              </Button>
+            ) : (
+              <div style={{ fontSize: 13, color: C.amber }}>Ninguém para enviar com esse destino.</div>
+            )}
+          </div>
+        )}
+
+        {/* Triagem da coordenação: quem respondeu, quantos saíram, quem não respondeu */}
+        {confPainel?.disponivel && confPainel.resumo && (
+          <div style={{ marginTop: 14, borderTop: `1px solid ${C.border}`, paddingTop: 12 }}>
+            <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 12.5, color: C.t2, marginBottom: 8 }}>
+              <span>Grupos: <strong style={{ color: C.text }}>{confPainel.resumo.grupos}</strong></span>
+              <span>Responderam: <strong style={{ color: C.green }}>{confPainel.resumo.responderam}</strong></span>
+              <span>Sem resposta: <strong style={{ color: C.amber }}>{confPainel.resumo.sem_resposta}</strong></span>
+              <span>Nunca conferidos: <strong style={{ color: C.t3 }}>{confPainel.resumo.nunca_conferidos}</strong></span>
+              <span>
+                <UserMinus size={12} style={{ display: 'inline', verticalAlign: -2, marginRight: 3 }} />
+                Saíram da lista: <strong style={{ color: C.red }}>{confPainel.resumo.removidos_total}</strong>
+              </span>
+              <button type="button" onClick={() => setVerTriagem(v => !v)} style={{ background: 'none', border: 'none', color: C.primary, fontSize: 12.5, fontWeight: 600, cursor: 'pointer', padding: 0 }}>
+                {verTriagem ? 'Esconder detalhes' : 'Ver por grupo'}
+              </button>
+            </div>
+            {verTriagem && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 340, overflowY: 'auto' }}>
+                {(confPainel.rows || []).map(r => {
+                  const c = r.conferencia;
+                  const st = c?.status || 'nao_enviada';
+                  const cor = st === 'respondida' ? C.green : st === 'enviada' ? C.amber : st === 'triada' ? C.t3 : C.t3;
+                  const rotulo = st === 'respondida' ? 'respondeu' : st === 'enviada' ? 'não respondeu' : st === 'triada' ? 'tratada' : 'nunca conferido';
+                  return (
+                    <div key={r.grupo_id} style={{ borderBottom: `1px solid ${C.border}`, padding: '6px 0' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12.5, flexWrap: 'wrap' }}>
+                        <span style={{ width: 8, height: 8, borderRadius: '50%', background: cor, flexShrink: 0 }} />
+                        <span style={{ color: C.text, fontWeight: 600, minWidth: 180 }}>{r.grupo_nome}</span>
+                        <span style={{ color: C.t3, minWidth: 140 }}>{r.lider_nome || 'sem líder'}</span>
+                        <span style={{ color: C.t3 }}>{r.membros_ativos} na lista</span>
+                        {c?.status === 'respondida' && (
+                          <span style={{ color: (c.removidos_count || 0) > 0 ? C.red : C.green, fontWeight: 600 }}>
+                            {c.removidos_count || 0} saíram · {c.mantidos_count ?? 0} ficaram
+                          </span>
+                        )}
+                        <span style={{ marginLeft: 'auto', color: cor, fontWeight: 600 }}>{rotulo}</span>
+                        {podeEditar && c?.status === 'respondida' && (
+                          <Button size="sm" variant="outline" onClick={() => { setTriandoId(c.id); setTriarObs(''); }}>
+                            Marcar tratada
+                          </Button>
+                        )}
+                      </div>
+                      {c?.observacao && (
+                        <div style={{ fontSize: 12, color: C.t3, fontStyle: 'italic', marginTop: 3, paddingLeft: 18 }}>
+                          "{c.observacao}"
+                        </div>
+                      )}
+                      {triandoId === c?.id && (
+                        <div style={{ display: 'flex', gap: 8, marginTop: 8, paddingLeft: 18, flexWrap: 'wrap' }}>
+                          <input
+                            value={triarObs}
+                            onChange={e => setTriarObs(e.target.value)}
+                            placeholder="O que foi conferido/decidido..."
+                            style={{ ...selStyle, minWidth: 260, flex: 1 }}
+                          />
+                          <Button size="sm" disabled={salvandoTriagem} onClick={() => triarConferencia(c.id)}>
+                            {salvandoTriagem ? 'Salvando...' : 'Salvar'}
+                          </Button>
+                          <Button size="sm" variant="outline" onClick={() => { setTriandoId(null); setTriarObs(''); }}>Cancelar</Button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
       {/* 3) RENOVAÇÃO DE TEMPORADA */}
       {renPainel?.temporada && (
         <div style={{ background: C.card, borderRadius: 16, border: `1px solid ${C.border}`, padding: 18 }}>
@@ -551,6 +785,42 @@ export default function GruposEnvios({ podeEditar = false }) {
               <Button variant="outline" style={{ flex: 1 }} onClick={() => setConfirmando(false)}>Cancelar</Button>
               <Button style={{ flex: 1 }} disabled={enviando} onClick={enviarFrequencia}>
                 {enviando ? 'Enviando...' : `Enviar para ${preview.total}`}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmação da conferência da lista — aqui o freio é DIGITAR o número
+           (é o único disparo que muda o roster do grupo) */}
+      {confirmandoC && previewC && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 1100, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.55)', padding: 16 }}>
+          <div style={{ width: '100%', maxWidth: 440, background: C.card, borderRadius: 16, border: `1px solid ${C.border}`, padding: 20 }}>
+            <h3 style={{ fontSize: 16, fontWeight: 800, color: C.text, margin: '0 0 10px' }}>Confirmar envio</h3>
+            <p style={{ fontSize: 13.5, color: C.t2, margin: '0 0 12px', lineHeight: 1.6 }}>
+              Vou pedir a <strong style={{ color: C.primary }}>{previewC.total} líder(es)</strong> que confiram a
+              lista do grupo. Cada um pode <strong>remover pessoas</strong> da lista dele — quem não responder
+              fica com a lista intocada.
+            </p>
+            <label style={{ display: 'block', fontSize: 12.5, color: C.t3, marginBottom: 6 }}>
+              Pra confirmar, digite <strong style={{ color: C.text }}>{previewC.total}</strong>:
+            </label>
+            <input
+              value={numeroDigitado}
+              onChange={e => setNumeroDigitado(e.target.value.replace(/\D/g, ''))}
+              inputMode="numeric"
+              autoFocus
+              placeholder={String(previewC.total)}
+              style={{ ...selStyle, width: '100%', minWidth: 0, marginBottom: 16, fontSize: 16 }}
+            />
+            <div style={{ display: 'flex', gap: 10 }}>
+              <Button variant="outline" style={{ flex: 1 }} onClick={() => { setConfirmandoC(false); setNumeroDigitado(''); }}>Cancelar</Button>
+              <Button
+                style={{ flex: 1 }}
+                disabled={enviandoC || numeroDigitado !== String(previewC.total)}
+                onClick={enviarConfira}
+              >
+                {enviandoC ? 'Enviando...' : `Enviar para ${previewC.total}`}
               </Button>
             </div>
           </div>

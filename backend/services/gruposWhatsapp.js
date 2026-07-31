@@ -46,6 +46,11 @@ const TPL_FREQUENCIA_MES = process.env.WHATSAPP_TEMPLATE_GRUPOS_FREQUENCIA || 'g
 // body — lição do grupos_sugestao_grupo: 2º link/tom promocional reclassifica
 // como MARKETING). Renovação semestral: o líder diz se continua com o grupo.
 const TPL_RENOVACAO = process.env.WHATSAPP_TEMPLATE_GRUPOS_RENOVACAO || 'grupos_renovacao_temporada';
+// grupos_confira_lista (UTILITY · 4 variáveis · o link é variável de BODY, não
+// botão — mesma técnica do renovacao/frequencia, que é o que mantém a categoria
+// UTILITY na revisão da Meta). "Confira a lista do seu grupo": o líder abre e
+// DESMARCA quem não faz mais parte (a lista vem toda marcada).
+const TPL_CONFIRA = process.env.WHATSAPP_TEMPLATE_GRUPOS_CONFIRA || 'grupos_confira_lista';
 // Material do grupo (envio manual · aba Envios). O template ainda NÃO existe na
 // Meta (Marcos: testar na próxima temporada) → sem a env, montarEnvioMaterial
 // devolve erro 'sem_template' e nada sai (nunca texto livre proativo).
@@ -74,6 +79,11 @@ const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 dias
 // backoff — o token é assinado no MONTAR, não no entregar). A revogação real
 // é server-side: geração do token × linha + inscrições abertas + triagem.
 const RENOV_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 dias
+// Conferência da lista: mesma razão do TTL longo da renovação (o token é
+// assinado no MONTAR, e a fila pode segurar a entrega por dias no backoff). A
+// revogação real é server-side: geração do token × linha, liderança atual e
+// linha não triada.
+const CONFIRA_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 dias
 
 // URL local (dev) NUNCA vira link de WhatsApp — quem recebe é sempre externo.
 // Incidente 29/07/2026: redisparo local montou o link com localhost:5173.
@@ -362,6 +372,46 @@ function montarEnvioRenovacao({ grupo, lider, temporada, renovacaoId, geracao })
   };
 }
 
+// Template 8 · grupos_confira_lista — "Confira a lista do seu grupo": o líder
+// abre /g/c/<token>, vê a lista ATUAL toda marcada e DESMARCA quem não faz mais
+// parte. Irmão da renovação, mas sem "vai continuar?" e sem trava de temporada.
+// {{1}} primeiro nome do líder · {{2}} grupo · {{3}} quantidade de pessoas na
+// lista · {{4}} link (variável de BODY · não botão).
+// Token 'conf' = { p: grupoId, c: conferenciaId, g: geração, l: liderId } ·
+// 30 dias — MAS a validade real é decidida no servidor a cada uso (geração ×
+// linha, liderança atual, linha não triada).
+// Monta SEM enviar (o disparo manual enfileira em lote); gate ANTES de assinar
+// (token não pode parar em log de dry-run).
+function montarEnvioConfira({ grupo, lider, conferenciaId, geracao, qtd }) {
+  if (!WHATSAPP_LIGADO()) return { erro: 'disabled' };
+  if (!lider?.telefone) return { erro: 'lider_sem_telefone' };
+  let link;
+  try {
+    link = `${baseUrl()}/g/c/${assinarToken('conf', grupo.id, {
+      c: conferenciaId, g: geracao || 1, l: grupo.lider_id,
+    }, CONFIRA_TTL_MS)}`;
+  } catch (e) {
+    console.error('[GruposWPP] token não assinado:', e.message);
+    return { erro: 'sem_secret' };
+  }
+  return {
+    envio: {
+      telefone: lider.telefone,
+      template: TPL_CONFIRA,
+      params: [
+        (lider.nome || '').trim().split(/\s+/)[0] || 'Líder',
+        (grupo.nome || '').trim() || 'seu grupo',
+        // Param de template NUNCA pode ser string vazia (a Meta rejeita a
+        // mensagem inteira) — 0 vira '0', não ''.
+        String(Number.isFinite(qtd) ? qtd : 0),
+        link,
+      ],
+      contexto: 'grupos.confira_lista',
+      refId: conferenciaId,
+    },
+  };
+}
+
 // Template 6 · material do grupo (envio manual · aba Envios · Marcos 23/07).
 // {{1}} primeiro nome do líder · {{2}} título/material · {{3}} link do arquivo.
 // Monta SEM enviar (o disparo manual enfileira em lote). ⚠️ Sem o template
@@ -443,6 +493,7 @@ module.exports = {
   montarEnvioFrequencia,
   notificarLiderFrequencia,
   montarEnvioRenovacao,
+  montarEnvioConfira,
   montarEnvioMaterial,
   montarEnvioAbertura,
   enviarInscricaoConfirmada,
