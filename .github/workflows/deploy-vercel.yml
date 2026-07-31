@@ -35,6 +35,9 @@ jobs:
       - name: Inscrições doors and route aliases
         run: npm run test:inscricao-portas
 
+      - name: Inscrições orphan queue keys and door pointers
+        run: npm run test:inscricao-orfas
+
       - name: Inscrições QR signature and inventory hash
         run: npm run test:inscricao-qr
 

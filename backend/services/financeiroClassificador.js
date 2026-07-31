@@ -197,17 +197,32 @@ async function aprenderClassificacao({ documento, nome, plano_contas_id, centro_
 /**
  * Identifica/cria membro a partir de CPF/CNPJ encontrado no extrato
  * Retorna { membro_id, criado_novo }
+ *
+ * ⚠️ `criarSemNome` é FALSE por padrão (2026-07-31). Era `true`, e o único
+ * caller que não passava a opção era a confirmação HUMANA do par de conciliação
+ * (`conciliacaoBalancoOfx.confirmarVinculo` → `financeiroV2.js` POST
+ * `/conciliacao-ofx/confirmar`): memo sem nome parseável fabricava
+ * `Contribuinte 070230...` — exatamente o fantasma que a limpeza de 30/07
+ * apagou 93 vezes. Com o default invertido, sem nome real o retorno é NULL e
+ * quem chama avisa a pessoa; ninguém precisa lembrar de passar a flag.
+ * Passar `criarSemNome: true` explicitamente segue possível, mas hoje NENHUM
+ * caller faz isso — e reintroduzir é criar cadastro de pessoa sem nome.
  */
-async function resolverMembroPorDocumento(documento, nome, { criarSemNome = true } = {}) {
+async function resolverMembroPorDocumento(documento, nome, { criarSemNome = false } = {}) {
   if (!documento) return null;
   const cleanDoc = documento.replace(/\D/g, '');
   if (cleanDoc.length !== 11 && cleanDoc.length !== 14) return null;
 
   // Busca em mem_membros
+  // ⚠️ `deleted_at IS NULL` é obrigatório: 3.553 contribuintes fantasmas foram
+  // soft-deletados em 30/07 e 84 deles TÊM CPF — sem o filtro, o extrato voltaria
+  // a ligar lançamento novo num cadastro que a igreja decidiu tirar da base
+  // (foi assim que 4 linhas de fin_lancamentos_brutos ficaram penduradas).
   const { data: existente } = await supabase
     .from('mem_membros')
     .select('id, nome, status')
     .or(`cpf.eq.${cleanDoc},cnpj.eq.${cleanDoc}`)
+    .is('deleted_at', null)
     .maybeSingle();
 
   if (existente) {
