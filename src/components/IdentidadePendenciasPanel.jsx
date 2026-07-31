@@ -34,6 +34,7 @@ const TIPOS = {
   cpf_conflito: { label: 'Provável duplicata', cor: '#DC2626', hint: 'O CPF já pertence a outro membro vivo — provavelmente a mesma pessoa em 2 cadastros (fundir).' },
   cpf_divergente: { label: 'CPF divergente', cor: '#EA580C', hint: 'O membro já tinha OUTRO CPF quando este chegou — conferir qual é o certo no cadastro.' },
   vinculo_divergente: { label: 'Vínculo divergente', cor: '#7C3AED', hint: 'Uma inscrição/linha aponta pra um membro diferente do dono do CPF — corrigir o vínculo manualmente.' },
+  inscricao_sem_vinculo: { label: 'Inscrição sem cadastro', cor: '#0891B2', hint: 'A inscrição não aponta pra cadastro nenhum, mas há um candidato na base. Confira nome e telefone ANTES de ligar — telefone é compartilhado em família, e ligar errado gruda a inscrição de uma pessoa no cadastro de outra.' },
 };
 
 const ORIGENS = {
@@ -232,6 +233,13 @@ export default function IdentidadePendenciasPanel({ statusFixo = null, ocultarFi
                       <Button size="sm" className="h-8 text-xs" disabled={busy} onClick={() => setConfirmar(p)}>
                         {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
                         <span className="ml-1.5">Confirmar CPF</span>
+                      </Button>
+                    )}
+                    {p.tipo === 'inscricao_sem_vinculo' && p.membro && !p.membro.deleted_at && (
+                      <Button size="sm" className="h-8 text-xs" disabled={busy}
+                        onClick={() => agir(p.id, () => membresiaApi.identidade.ligarInscricao(p.id), 'Inscrição ligada ao cadastro')}>
+                        {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
+                        <span className="ml-1.5">Ligar ao cadastro</span>
                       </Button>
                     )}
                     {(p.tipo === 'cpf_conflito' || p.tipo === 'cpf_divergente') && p.membro && p.conflito && !p.membro.deleted_at && !p.conflito.deleted_at && (

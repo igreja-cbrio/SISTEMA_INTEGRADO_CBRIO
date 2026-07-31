@@ -3542,6 +3542,93 @@ router.post('/identidade-pendencias/:id/confirmar-cpf', async (req, res) => {
   }
 });
 
+// ── Onde cada porta guarda o ponteiro de pessoa ────────────────────────────
+// Espelha `escritores` de services/inscricaoPortas.js. ⚠️ A apresentação usa
+// `responsavel_membro_id` (a criança não é a pessoa do vínculo) — por isso a
+// coluna é declarada por porta em vez de assumida como `membro_id`.
+const PORTA_VINCULO = {
+  next: { tabela: 'next_matriculas', col: 'membro_id' },
+  voluntariado: { tabela: 'vol_inscricoes', col: 'membro_id' },
+  inscricoes: { tabela: 'inscricoes', col: 'membro_id' },
+  eventos_externos: { tabela: 'ext_inscricoes', col: 'membro_id' },
+  batismo: { tabela: 'batismo_inscricoes', col: 'membro_id' },
+  grupos: { tabela: 'mem_grupo_pedidos', col: 'membro_id' },
+  grupos_lider: { tabela: 'mem_lider_inscricoes', col: 'membro_id' },
+  apresentacao_criancas: { tabela: 'apresentacao_criancas', col: 'responsavel_membro_id' },
+  apresentacao_bebes: { tabela: 'apresentacao_bebes', col: 'responsavel_membro_id' },
+};
+
+// POST /api/membresia/identidade-pendencias/:id/ligar-inscricao
+// Liga a linha de inscrição órfã ao cadastro CANDIDATO da pendência. É a ação
+// humana da fila `inscricao_sem_vinculo` — o sistema nunca liga sozinho (a
+// evidência mais forte que temos em 161 dos 166 pares é telefone+nome, e
+// telefone é compartilhado em família).
+router.post('/identidade-pendencias/:id/ligar-inscricao', async (req, res) => {
+  try {
+    if (nivelFilaIdentidade(req) < 3) return res.status(403).json({ error: 'Sem permissão para agir na fila' });
+    const { data: p, error } = await supabase.from('identidade_pendencias')
+      .select('*').eq('id', req.params.id).maybeSingle();
+    if (error) throw error;
+    if (!p) return res.status(404).json({ error: 'Pendência não encontrada' });
+    if (p.status !== 'pendente') return res.status(409).json({ error: 'Pendência já triada' });
+    if (p.tipo !== 'inscricao_sem_vinculo') {
+      return res.status(422).json({ error: 'Só pendências de inscrição sem vínculo aceitam esta ação' });
+    }
+    if (!p.membro_id) return res.status(422).json({ error: 'Pendência sem cadastro candidato' });
+    const map = PORTA_VINCULO[p.origem];
+    if (!map || !p.origem_id) {
+      return res.status(422).json({ error: `Porta "${p.origem}" não tem ponteiro de pessoa mapeado — resolva pelo módulo dono` });
+    }
+
+    // O membro candidato precisa estar vivo (pode ter sido fundido/apagado
+    // entre o enfileiramento e o clique).
+    const { data: m } = await supabase.from('mem_membros')
+      .select('id, nome, telefone, email, data_nascimento')
+      .eq('id', p.membro_id).is('deleted_at', null).maybeSingle();
+    if (!m) return res.status(409).json({ error: 'O cadastro candidato não existe mais (fundido ou removido) — reavalie' });
+
+    // `.is(col, null)` é a trava: se alguém já ligou essa linha no meio do
+    // caminho, não sobrescreve o vínculo alheio.
+    const { data: ligada, error: eUp } = await supabase.from(map.tabela)
+      .update({ [map.col]: p.membro_id })
+      .eq('id', p.origem_id).is(map.col, null)
+      .select('id').maybeSingle();
+    if (eUp) throw eUp;
+    if (!ligada) {
+      return res.status(409).json({ error: 'Essa inscrição já está ligada a algum cadastro — recarregue a fila' });
+    }
+
+    // Contrato de porta: o vínculo novo é uma observação de identidade.
+    try {
+      const { registrarObservacaoSegura } = require('../services/identidadeProgressiva');
+      await registrarObservacaoSegura({
+        membroId: p.membro_id,
+        nome: m.nome, telefone: m.telefone, email: m.email, dataNascimento: m.data_nascimento,
+        origem: 'fila_identidade:' + p.origem, origemId: String(p.origem_id),
+      });
+    } catch (e) { console.warn('[ligar-inscricao] observação:', e.message); }
+
+    await supabase.from('identidade_pendencias').update({
+      status: 'resolvida',
+      resolvida_por: req.user?.id || null,
+      resolvida_em: new Date().toISOString(),
+    }).eq('id', p.id).eq('status', 'pendente');
+
+    await registrarResolucaoEntrada({
+      tipo: 'identidade', acao: 'inscricao_vinculada',
+      membro_principal_id: p.membro_id, membro_secundario_id: null,
+      origem: 'identidade_pendencias', origem_id: String(p.id),
+      detalhe: { porta: p.origem, tabela: map.tabela, inscricao_id: p.origem_id },
+      resolvido_por: req.user?.id || null,
+    });
+
+    res.json({ ok: true, porta: p.origem, tabela: map.tabela, membro_id: p.membro_id });
+  } catch (e) {
+    console.error('[membresia/identidade-pendencias/ligar-inscricao]', e.message);
+    res.status(500).json({ error: 'Erro ao ligar a inscrição ao cadastro' });
+  }
+});
+
 // POST /api/membresia/identidade-pendencias/:id/status · resolvida|descartada
 // Descartada = "avaliado e rejeitado": o cron do wifi NÃO recria (guarda
 // anti-zumbi). Resolvida = tratado por fora (fusão, edição do cadastro…).
