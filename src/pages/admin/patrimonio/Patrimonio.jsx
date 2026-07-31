@@ -249,6 +249,8 @@ export default function Patrimonio() {
   const [filtroLoc, setFiltroLoc] = useState('');
   const [busca, setBusca] = useState('');
   const [modalBem, setModalBem] = useState(null);
+  const [modalLote, setModalLote] = useState(false);
+  const [loteSaving, setLoteSaving] = useState(false);
   const [modalDetail, setModalDetail] = useState(null);
   const [modalMov, setModalMov] = useState(null);
   const [newCat, setNewCat] = useState('');
@@ -309,6 +311,17 @@ export default function Patrimonio() {
 
   async function saveBem(data) {
     try { if (data.id) await patrimonio.bens.update(data.id, data); else await patrimonio.bens.create(data); setModalBem(null); loadBens(); loadDash(); } catch (e) { setError(e.message); }
+  }
+  // Cadastro em massa (pedido do usuário 2026-07-31): mesmo tipo/categoria,
+  // distribuído por N localizações — cada unidade recebe um número de
+  // patrimônio sequencial (ver backend pat_proximo_codigo_barras).
+  async function saveLote(data) {
+    try {
+      setLoteSaving(true);
+      const r = await patrimonio.bens.criarLote(data);
+      setModalLote(false); loadBens(); loadDash();
+      alert(`${r.criados} bens cadastrados — números ${fmtCodigo(r.codigo_inicial)} a ${fmtCodigo(r.codigo_final)}.`);
+    } catch (e) { setError(e.message); } finally { setLoteSaving(false); }
   }
   async function baixarBem(id) {
     if (!confirm('Dar baixa neste bem? Ele sai de "ativo" (fica marcado como baixado), mas o cadastro e o histórico de movimentações são preservados — dá pra reativar depois editando o status.')) return;
@@ -374,7 +387,7 @@ export default function Patrimonio() {
           filtroStatus={filtroStatus} setFiltroStatus={setFiltroStatus}
           filtroCat={filtroCat} setFiltroCat={setFiltroCat} filtroLoc={filtroLoc} setFiltroLoc={setFiltroLoc}
           categorias={categorias} localizacoes={localizacoes} locOptions={locOptions} responsaveis={responsaveis}
-          onNew={() => setModalBem({})} onDetail={openDetail} onDetailPorCodigo={openDetailPorCodigo}
+          onNew={() => setModalBem({})} onNewLote={() => setModalLote(true)} onDetail={openDetail} onDetailPorCodigo={openDetailPorCodigo}
           onBaixar={baixarBem} isDiretor={podeEditar}
           onReload={() => { loadBens(); loadDash(); loadIndicadores(); }}
         />
@@ -397,6 +410,7 @@ export default function Patrimonio() {
       )}
 
       <BemFormModal open={!!modalBem} data={modalBem} categorias={categorias} locOptions={locOptions} responsaveis={responsaveis} onClose={() => setModalBem(null)} onSave={saveBem} />
+      <BemLoteModal open={modalLote} categorias={categorias} locOptions={locOptions} busy={loteSaving} onClose={() => setModalLote(false)} onSave={saveLote} />
       <BemDetailModal open={!!modalDetail} data={modalDetail} onClose={() => setModalDetail(null)} onEdit={(b) => { setModalDetail(null); setModalBem(b); }} onBaixar={baixarBem} onMov={(bemId) => setModalMov({ bem_id: bemId })} onDispensarAlerta={dispensarAlerta} isDiretor={podeEditar} />
       <MovFormModal open={!!modalMov} data={modalMov} locOptions={locOptions} onClose={() => setModalMov(null)} onSave={saveMov} />
       <NovoCicloModal open={modalNovoCiclo} responsaveis={responsaveis} onClose={() => setModalNovoCiclo(false)} onSave={criarCiclo} />
@@ -765,7 +779,7 @@ function DashboardTab({ dash, indicadores, depreciacaoIndic, atividadeRecente, l
   );
 }
 
-function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus, filtroCat, setFiltroCat, filtroLoc, setFiltroLoc, categorias, locOptions, responsaveis, onNew, onDetail, onDetailPorCodigo, onBaixar, isDiretor, onReload }) {
+function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus, filtroCat, setFiltroCat, filtroLoc, setFiltroLoc, categorias, locOptions, responsaveis, onNew, onNewLote, onDetail, onDetailPorCodigo, onBaixar, isDiretor, onReload }) {
   const [ordenarAberto, setOrdenarAberto] = useState(false);
   const [ordenacao, setOrdenacao] = useState('padrao');
   const bensOrdenados = useMemo(() => ordenarBens(bens, ordenacao), [bens, ordenacao]);
@@ -848,7 +862,7 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
         </Button>
         <Button variant="outline" onClick={() => exportarBensCSV(bensOrdenados)}>Exportar CSV</Button>
         <Button variant="outline" onClick={() => exportarBensPDF(bensOrdenados)}>Exportar PDF</Button>
-        {isDiretor && <div style={{ marginLeft: 'auto' }}><Button onClick={onNew}>+ Novo Bem</Button></div>}
+        {isDiretor && <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}><Button variant="outline" onClick={onNewLote}>+ Em massa</Button><Button onClick={onNew}>+ Novo Bem</Button></div>}
       </div>
 
       {/* Ordenação por "pills" (pedido do usuário 2026-07-31, inspirado num
@@ -1150,7 +1164,21 @@ function MovimentacoesTab({ list, total, page, pageSize, loading, onPageChange, 
 function BemFormModal({ open, data, categorias, locOptions, responsaveis, onClose, onSave }) {
   const [f, setF] = useState({});
   const [formError, setFormError] = useState('');
-  useEffect(() => { if (data) { setF({ ...data }); setFormError(''); } }, [data]);
+  const [codigoSugerido, setCodigoSugerido] = useState(false);
+  useEffect(() => { if (data) { setF({ ...data }); setFormError(''); setCodigoSugerido(false); } }, [data]);
+  // Regra do usuário 2026-07-31: todo bem novo segue a ordem dos números de
+  // patrimônio (último 4433 → sugestão automática 4434). Só pra CADASTRO NOVO
+  // (bem sem id) — editar um bem existente nunca mexe no código já gravado.
+  // Sugestão fica editável (o campo continua um <Input> normal), pra cobrir a
+  // exceção de reaproveitar um código de etiqueta física já impressa.
+  useEffect(() => {
+    if (!open || data?.id) return;
+    let cancelado = false;
+    patrimonio.bens.proximoCodigo().then(r => {
+      if (!cancelado && r?.proximo) { setF(p => ({ ...p, codigo_barras: p.codigo_barras || r.proximo })); setCodigoSugerido(true); }
+    }).catch(() => {});
+    return () => { cancelado = true; };
+  }, [open, data]);
   const upd = (k, v) => setF(p => ({ ...p, [k]: v }));
   // Sugestão automática do responsável (pedido do usuário 2026-07-29, item 4):
   // ao escolher a localização, se ainda não há responsável definido, sugere
@@ -1175,7 +1203,10 @@ function BemFormModal({ open, data, categorias, locOptions, responsaveis, onClos
         </div>
       )}
       <div style={styles.formRow}>
-        <Input label="Código de Barras *" value={f.codigo_barras || ''} onChange={e => upd('codigo_barras', e.target.value)} />
+        <div style={styles.formGroup}>
+          <Input label="Código de Barras *" value={f.codigo_barras || ''} onChange={e => upd('codigo_barras', e.target.value)} />
+          {!f.id && codigoSugerido && <div style={{ fontSize: 11, color: C.text3, marginTop: 2 }}>Sugerido automaticamente pela ordem do patrimônio — editável se precisar reaproveitar um código já impresso.</div>}
+        </div>
         <Input label="Nome *" value={f.nome || ''} onChange={e => upd('nome', e.target.value)} />
       </div>
       <div style={styles.formRow}>
@@ -1229,6 +1260,91 @@ function BemFormModal({ open, data, categorias, locOptions, responsaveis, onClos
       <div style={styles.formGroup}>
         <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Observações</label>
         <textarea className="flex w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" style={{ minHeight: 40, resize: 'vertical' }} value={f.observacoes || ''} onChange={e => upd('observacoes', e.target.value)} />
+      </div>
+    </Modal>
+  );
+}
+
+// Cadastro em massa (pedido do usuário 2026-07-31): bens do MESMO tipo/
+// categoria, não necessariamente no mesmo local — ex.: 10 lâmpadas iguais
+// distribuídas em salas diferentes. Cada linha da distribuição é uma
+// localização + quantidade; o total soma quantas unidades nascem. Os números
+// de patrimônio saem em sequência (item 4 · integrado com a regra do item 2).
+function BemLoteModal({ open, categorias, locOptions, busy, onClose, onSave }) {
+  const [f, setF] = useState({});
+  const [dist, setDist] = useState([{ localizacao_id: '', quantidade: 1 }]);
+  const [formError, setFormError] = useState('');
+  const [preview, setPreview] = useState(null);
+  useEffect(() => { if (open) { setF({}); setDist([{ localizacao_id: '', quantidade: 1 }]); setFormError(''); setPreview(null); } }, [open]);
+  const upd = (k, v) => setF(p => ({ ...p, [k]: v }));
+
+  const totalQtd = dist.reduce((s, d) => s + (Number(d.quantidade) || 0), 0);
+
+  // Prévia dos números que SERIAM usados (não reserva nada — o número real é
+  // calculado de novo no momento do salvar, na mesma transação do insert).
+  useEffect(() => {
+    if (!open || totalQtd <= 0) { setPreview(null); return; }
+    let cancelado = false;
+    patrimonio.bens.proximoCodigo(totalQtd).then(r => {
+      if (!cancelado && r?.codigos?.length) setPreview({ inicio: r.codigos[0], fim: r.codigos[r.codigos.length - 1] });
+    }).catch(() => {});
+    return () => { cancelado = true; };
+  }, [open, totalQtd]);
+
+  function updDist(i, k, v) { setDist(p => p.map((d, idx) => idx === i ? { ...d, [k]: v } : d)); }
+  function addDist() { setDist(p => [...p, { localizacao_id: '', quantidade: 1 }]); }
+  function removeDist(i) { setDist(p => p.filter((_, idx) => idx !== i)); }
+
+  function handleSave() {
+    if (!f.nome || !f.nome.trim()) { setFormError('Nome é obrigatório.'); return; }
+    if (totalQtd <= 0) { setFormError('Informe ao menos uma quantidade maior que zero.'); return; }
+    setFormError('');
+    onSave({ ...f, distribuicao: dist.filter(d => Number(d.quantidade) > 0).map(d => ({ localizacao_id: d.localizacao_id || null, quantidade: Number(d.quantidade) })) });
+  }
+
+  return (
+    <Modal open={open} onClose={onClose} title="Cadastrar bens em massa"
+      footer={<Button disabled={busy} onClick={handleSave}>{busy ? 'Cadastrando...' : `Cadastrar ${totalQtd || ''} bens`}</Button>}>
+      {formError && (
+        <div style={{ background: '#ef444418', border: '1px solid #ef4444', borderRadius: 8, padding: '10px 14px', marginBottom: 14, color: '#ef4444', fontSize: 13 }}>{formError}</div>
+      )}
+      <div style={{ fontSize: 12, color: C.text2, marginBottom: 12 }}>
+        Pra bens iguais (mesmo tipo/categoria) cadastrados de uma vez — cada unidade recebe seu próprio número de patrimônio em sequência e pode ir pra uma localização diferente.
+      </div>
+      <div style={styles.formRow}>
+        <Input label="Nome *" value={f.nome || ''} onChange={e => upd('nome', e.target.value)} placeholder="ex.: Lâmpada LED 9W" />
+        <Select label="Categoria" value={f.categoria_id || ''} onChange={e => upd('categoria_id', e.target.value)}>
+          <option value="">Selecionar</option>
+          {categorias.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
+        </Select>
+      </div>
+      <div style={styles.formRow}>
+        <Input label="Marca" value={f.marca || ''} onChange={e => upd('marca', e.target.value)} />
+        <Input label="Modelo" value={f.modelo || ''} onChange={e => upd('modelo', e.target.value)} />
+      </div>
+      <div style={styles.formRow}>
+        <Input label="Valor Aquisição (R$) por unidade" type="number" value={f.valor_aquisicao || ''} onChange={e => upd('valor_aquisicao', e.target.value)} />
+        <div style={styles.formGroup}><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Data Aquisição</label><DatePicker value={f.data_aquisicao || ''} onChange={v => upd('data_aquisicao', v)} /></div>
+      </div>
+      <Input label="Nº da NF" value={f.numero_nf || ''} onChange={e => upd('numero_nf', e.target.value)} />
+
+      <div style={{ marginTop: 16, marginBottom: 8, fontSize: 12, fontWeight: 700, color: C.text2, textTransform: 'uppercase' }}>Distribuir por localização</div>
+      {dist.map((d, i) => (
+        <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'flex-end', marginBottom: 6 }}>
+          <Select label={i === 0 ? 'Localização' : undefined} value={d.localizacao_id} onChange={e => updDist(i, 'localizacao_id', e.target.value)} style={{ flex: 2 }}>
+            <option value="">— Sem localização —</option>
+            {locOptions.map(l => <option key={l.id} value={l.id}>{locIndent(l.depth)}{l.nome}</option>)}
+          </Select>
+          <Input label={i === 0 ? 'Quantidade' : undefined} type="number" min={1} value={d.quantidade} onChange={e => updDist(i, 'quantidade', e.target.value)} style={{ flex: 1 }} />
+          {dist.length > 1 && <Button variant="ghost" size="xs" onClick={() => removeDist(i)}><Trash2 style={{ width: 14, height: 14 }} /></Button>}
+        </div>
+      ))}
+      <Button variant="outline" size="xs" onClick={addDist}>+ Adicionar outra localização</Button>
+
+      <div style={{ marginTop: 16, padding: '10px 12px', background: 'var(--cbrio-input-bg)', borderRadius: 8, fontSize: 13 }}>
+        Total: <strong>{totalQtd}</strong> {totalQtd === 1 ? 'bem' : 'bens'}
+        {preview && <> — números {fmtCodigo(preview.inicio)} a {fmtCodigo(preview.fim)}</>}
+        <div style={{ fontSize: 11, color: C.text3, marginTop: 2 }}>Prévia — o número definitivo é calculado no momento do cadastro.</div>
       </div>
     </Modal>
   );
