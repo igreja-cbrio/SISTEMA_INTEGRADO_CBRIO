@@ -7,7 +7,7 @@ import {
   Search, Users, DollarSign, Truck, Tag, CalendarDays,
   FolderKanban, BookOpen, ClipboardList, Bot, User,
   LayoutDashboard, Map, UserCheck, UsersRound, Heart,
-  HandHelping, Megaphone, Sparkles,
+  HandHelping, Megaphone, Sparkles, Settings,
 } from 'lucide-react'
 
 interface SearchItem {
@@ -21,6 +21,7 @@ interface SearchItem {
   perm?: string
   module?: string
   moduleMin?: number
+  superAdminOnly?: boolean
 }
 
 // Gates espelham o ModuleGuard das rotas (src/App.tsx) · igual ao menu.
@@ -33,6 +34,7 @@ const PAGES: SearchItem[] = [
   { label: 'Logística', description: 'Fornecedores, compras e pedidos', path: '/admin/logistica', icon: Truck, category: 'Administrativo', perm: 'canLogistica' },
   { label: 'Patrimônio', description: 'Bens, localizações e inventário', path: '/admin/patrimonio', icon: Tag, category: 'Administrativo', perm: 'canPatrimonio' },
   { label: 'Assistente IA', description: 'Agentes de auditoria e análise', path: '/assistente-ia', icon: Bot, category: 'Administrativo', perm: 'canIA' },
+  { label: 'Sistema', description: 'Command center técnico e governança', path: '/sistema', icon: Settings, category: 'Administrativo', superAdminOnly: true },
   { label: 'Eventos', description: 'Gestão de eventos da igreja', path: '/eventos', icon: CalendarDays, category: 'Projetos e Eventos', perm: 'canAgenda' },
   { label: 'Projetos', description: 'Acompanhamento de projetos', path: '/projetos', icon: FolderKanban, category: 'Projetos e Eventos', perm: 'canProjetos' },
   { label: 'Gestão Anual', description: 'Próximo ano e resultados · eventos e projetos', path: '/planejamento', icon: FolderKanban, category: 'Projetos e Eventos' },

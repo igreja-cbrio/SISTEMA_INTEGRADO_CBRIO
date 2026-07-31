@@ -13,6 +13,9 @@ const hpp = require('hpp');
 const morgan = require('morgan');
 const compression = require('compression');
 const path = require('path');
+const { requestContext } = require('./middleware/requestContext');
+const { systemJobTracking } = require('./middleware/systemJobTracking');
+const { recordServerError } = require('./services/serverErrorTelemetry');
 
 const app = express();
 // Atrás do proxy do Vercel (1 hop) · faz req.ip = IP real do cliente (x-forwarded-for)
@@ -24,6 +27,7 @@ const PORT = process.env.PORT || 3001;
 // Request handler do Sentry (precisa vir antes de qualquer middleware
 // e antes das rotas para capturar request data nos eventos).
 app.use(sentryRequestHandler());
+app.use(requestContext);
 
 // ── Security middleware ──
 app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
@@ -57,7 +61,8 @@ app.use(cors({
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID'],
+  exposedHeaders: ['X-Request-ID'],
 }));
 app.use(rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -87,6 +92,7 @@ app.use('/api/staff', express.json({ limit: '10mb' }));
 // rawBody capturado pra validar HMAC do webhook do WhatsApp (X-Hub-Signature-256)
 app.use(express.json({ limit: '1mb', verify: (req, _res, buf) => { req.rawBody = buf; } }));
 if (process.env.NODE_ENV !== 'production') app.use(morgan('dev'));
+app.use(systemJobTracking);
 
 // ── Telemetria de 500 (aba "Erros do servidor" do Feedback) ──
 // O error handler global só vê exceções NÃO tratadas; a maioria dos 500 reais
@@ -97,21 +103,24 @@ app.use((req, res, next) => {
   res.on('finish', () => {
     if (res.statusCode < 500 || res.locals._erro500Registrado) return;
     try {
-      const { supabase } = require('./utils/supabase');
-      supabase.from('app_erros_servidor').insert({
+      void recordServerError({
         user_id: req.user?.id || null,
         user_email: req.user?.email || null,
         metodo: req.method,
         rota: String(req.path || req.originalUrl || '').slice(0, 300),
         mensagem: `HTTP ${res.statusCode} respondido pela rota (sem exceção · ver logs da função)`,
         status: res.statusCode,
-      }).then(() => {}, (e) => console.warn('[app_erros_servidor]', e.message));
+        request_id: req.requestId,
+        release: process.env.VERCEL_GIT_COMMIT_SHA || null,
+        environment: process.env.VERCEL_ENV || process.env.NODE_ENV || 'unknown',
+      }).catch((e) => console.warn('[app_erros_servidor]', e.message));
     } catch (_) { /* tabela ausente / supabase off · ignora */ }
   });
   next();
 });
 
 // ── Routes ──
+app.use('/api/telemetry', require('./routes/systemTelemetry')); // Web Vitals anônimos, best-effort
 app.use('/api/app', require('./routes/app'));               // Mobile app (sem auth ERP)
 app.use('/api/auth/planning-center', require('./routes/authPlanningCenter'));
 app.use('/api/auth', require('./routes/auth'));
@@ -245,6 +254,8 @@ app.use('/api/nsm', require('./routes/nsm'));
 app.use('/api/painel', require('./routes/painel'));
 app.use('/api/painel-area', require('./routes/painelArea'));
 app.use('/api/app-analytics', require('./routes/appAnalytics'));
+app.use('/api/sistema', require('./routes/sistema'));
+app.use('/api/sistema', require('./routes/sistemaV1').router);
 app.use('/api/comunicados', require('./routes/comunicados'));
 app.use('/api/totem-kids', require('./routes/totemKids'));
 app.use('/api/estrategia', require('./routes/estrategia'));
@@ -281,6 +292,7 @@ app.use('/api', (req, res) => {
     error: 'Endpoint de API não encontrado',
     path: req.originalUrl,
     method: req.method,
+    request_id: req.requestId,
   });
 });
 
@@ -298,13 +310,12 @@ app.use(sentryErrorHandler());
 
 // ── Error handler ──
 app.use((err, req, res, next) => {
-  console.error('[ERROR]', err.message);
+  console.error(`[ERROR] [${req.requestId || 'sem-request-id'}]`, err.message);
   res.locals._erro500Registrado = true; // o hook de finish não duplica este registro
   // Sink de telemetria (Onda 0) · fire-and-forget · NUNCA quebra a resposta ·
   // sem query/body pra não vazar PII (só rota, método, mensagem e stack).
   try {
-    const { supabase } = require('./utils/supabase');
-    supabase.from('app_erros_servidor').insert({
+    void recordServerError({
       user_id: req.user?.id || null,
       user_email: req.user?.email || null,
       metodo: req.method,
@@ -312,9 +323,15 @@ app.use((err, req, res, next) => {
       mensagem: String(err.message || '').slice(0, 1000),
       stack: String(err.stack || '').slice(0, 4000),
       status: err.status || 500,
-    }).then(() => {}, (e) => console.warn('[app_erros_servidor]', e.message));
+      request_id: req.requestId,
+      release: process.env.VERCEL_GIT_COMMIT_SHA || null,
+      environment: process.env.VERCEL_ENV || process.env.NODE_ENV || 'unknown',
+    }).catch((e) => console.warn('[app_erros_servidor]', e.message));
   } catch (_) { /* tabela ausente / supabase off · ignora */ }
-  res.status(500).json({ error: 'Erro interno do servidor' });
+  res.status(500).json({
+    error: 'Erro interno do servidor',
+    request_id: req.requestId,
+  });
 });
 
 if (process.env.VERCEL !== '1') {
