@@ -1545,6 +1545,10 @@ export const patrimonio = {
     movimentar: (id, data) => post(`/patrimonio/bens/${id}/movimentacoes`, data),
     dispensarAlerta: (id) => post(`/patrimonio/bens/${id}/dispensar-alerta`, {}),
     porCodigo: (codigo) => get(`/patrimonio/bens/barcode/${encodeURIComponent(codigo)}`),
+    bulkEditar: (data) => put('/patrimonio/bens/bulk', data),
+    bulkRenomear: (data) => put('/patrimonio/bens/bulk/renomear', data),
+    bulkMovimentar: (data) => post('/patrimonio/bens/bulk/movimentar', data),
+    bulkBaixa: (data) => post('/patrimonio/bens/bulk/baixa', data),
   },
   movimentacoes: {
     list: (params) => get('/patrimonio/movimentacoes' + (params ? '?' + new URLSearchParams(params) : '')),

@@ -283,9 +283,10 @@ export default function Patrimonio() {
         <BensTab bens={bens} loading={loading} busca={busca} setBusca={setBusca}
           filtroStatus={filtroStatus} setFiltroStatus={setFiltroStatus}
           filtroCat={filtroCat} setFiltroCat={setFiltroCat} filtroLoc={filtroLoc} setFiltroLoc={setFiltroLoc}
-          categorias={categorias} localizacoes={localizacoes} locOptions={locOptions}
+          categorias={categorias} localizacoes={localizacoes} locOptions={locOptions} responsaveis={responsaveis}
           onNew={() => setModalBem({})} onDetail={openDetail} onDetailPorCodigo={openDetailPorCodigo}
           onBaixar={baixarBem} isDiretor={isDiretor}
+          onReload={() => { loadBens(); loadDash(); loadIndicadores(); }}
         />
       )}
       {tab === 2 && <CatLocTab categorias={categorias} localizacoes={localizacoes} locOptions={locOptions} newCat={newCat} setNewCat={setNewCat} addCat={addCat} removeCat={removeCat} updateCat={updateCat} addLoc={addLoc} removeLoc={removeLoc} updateLoc={updateLoc} isDiretor={isDiretor} />}
@@ -674,10 +675,51 @@ function DashboardTab({ dash, indicadores, depreciacaoIndic, atividadeRecente, l
   );
 }
 
-function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus, filtroCat, setFiltroCat, filtroLoc, setFiltroLoc, categorias, locOptions, onNew, onDetail, onDetailPorCodigo, onBaixar, isDiretor }) {
+function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus, filtroCat, setFiltroCat, filtroLoc, setFiltroLoc, categorias, locOptions, responsaveis, onNew, onDetail, onDetailPorCodigo, onBaixar, isDiretor, onReload }) {
   const { pageItems: bensPag, paginacaoProps: bensPagProps } = usePaginacaoLocal(bens, 25);
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState('');
+
+  // Seleção múltipla pra edição/movimentação em massa (pedido do usuário
+  // 2026-07-31) — Set de ids, sobrevive à paginação local (trocar de página
+  // não perde quem já foi marcado nas outras).
+  const [selecionados, setSelecionados] = useState(() => new Set());
+  const [modalBulkEditar, setModalBulkEditar] = useState(false);
+  const [modalBulkMov, setModalBulkMov] = useState(false);
+  const [modalBulkBaixa, setModalBulkBaixa] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkResultado, setBulkResultado] = useState(null);
+
+  const idsFiltrados = useMemo(() => bens.map(b => b.id), [bens]);
+  const todosPaginaMarcados = bensPag.length > 0 && bensPag.every(b => selecionados.has(b.id));
+
+  function toggleSelecionado(id) {
+    setSelecionados(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  }
+  function toggleTodosPagina() {
+    setSelecionados(prev => {
+      const n = new Set(prev);
+      if (todosPaginaMarcados) bensPag.forEach(b => n.delete(b.id));
+      else bensPag.forEach(b => n.add(b.id));
+      return n;
+    });
+  }
+  function selecionarTodosFiltrados() { setSelecionados(new Set(idsFiltrados)); }
+  function limparSelecao() { setSelecionados(new Set()); }
+
+  async function executarBulk(fn) {
+    setBulkBusy(true); setBulkResultado(null);
+    try {
+      const res = await fn();
+      setBulkResultado(res);
+      limparSelecao();
+      onReload?.();
+    } catch (e) {
+      setBulkResultado({ erro: e?.message || 'Erro na operação em massa' });
+    } finally {
+      setBulkBusy(false);
+    }
+  }
 
   function handleDetected(code) {
     setScanning(false);
@@ -720,19 +762,51 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
         <div style={{ background: '#ef444418', border: '1px solid #ef4444', borderRadius: 8, padding: '10px 14px', marginBottom: 16, color: '#ef4444', fontSize: 13 }}>{scanError}</div>
       )}
 
+      {/* Barra de ação em massa (pedido do usuário 2026-07-31) — some quando
+          não há seleção; some por completo pra quem não edita (isDiretor). */}
+      {isDiretor && selecionados.size > 0 && (
+        <div style={{ ...styles.card, marginBottom: 16, padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', background: C.primaryBg, border: `1px solid ${C.primary}` }}>
+          <span style={{ fontSize: 13, fontWeight: 700 }}>{selecionados.size} selecionado{selecionados.size > 1 ? 's' : ''}</span>
+          {selecionados.size < idsFiltrados.length && (
+            <Button variant="ghost" size="xs" onClick={selecionarTodosFiltrados}>Selecionar todos os {idsFiltrados.length} filtrados</Button>
+          )}
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <Button variant="outline" size="xs" onClick={() => setModalBulkEditar(true)}>Editar em massa</Button>
+            <Button variant="outline" size="xs" onClick={() => setModalBulkMov(true)}>Mover em massa</Button>
+            <Button variant="outline" size="xs" onClick={() => setModalBulkBaixa(true)}>Dar baixa em massa</Button>
+            <Button variant="ghost" size="xs" onClick={limparSelecao}>Limpar</Button>
+          </div>
+        </div>
+      )}
+
+      {bulkResultado && (
+        <div style={{ ...styles.card, marginBottom: 16, padding: '10px 14px', fontSize: 13, background: bulkResultado.erro ? '#ef444418' : C.greenBg, border: `1px solid ${bulkResultado.erro ? '#ef4444' : C.green}`, display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+          <span>
+            {bulkResultado.erro
+              ? bulkResultado.erro
+              : bulkResultado.atualizados !== undefined
+                ? `${bulkResultado.atualizados} bem(ns) atualizado(s)${bulkResultado.sem_ocorrencia ? ` · ${bulkResultado.sem_ocorrencia} sem o texto buscado` : ''}`
+                : `${bulkResultado.sucesso} bem(ns) processado(s)${bulkResultado.falhas?.length ? ` · ${bulkResultado.falhas.length} falhou(aram)` : ''}`}
+          </span>
+          <Button variant="ghost" size="xs" onClick={() => setBulkResultado(null)}>×</Button>
+        </div>
+      )}
+
       <div style={styles.card}>
         <div style={{ overflowX: 'auto' }}>
           <table style={styles.table}>
             <thead><tr>
+              {isDiretor && <th style={{ ...styles.th, width: 32 }}><input type="checkbox" checked={todosPaginaMarcados} onChange={toggleTodosPagina} onClick={e => e.stopPropagation()} /></th>}
               <th style={styles.th}>Código</th><th style={styles.th}>Nome</th><th style={styles.th}>Categoria</th>
               <th style={styles.th}>Localização</th><th style={styles.th}>Marca/Modelo</th><th style={styles.th}>Valor</th><th style={styles.th}>Status</th>
               {isDiretor && <th style={styles.th}></th>}
             </tr></thead>
             <tbody>
-              {loading && <tr><td colSpan={8}><div className="flex items-center justify-center py-6 gap-2"><div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-primary" /><span className="text-xs text-muted-foreground">Carregando...</span></div></td></tr>}
-              {!loading && bens.length === 0 && <tr><td colSpan={8}><div className="flex flex-col items-center py-10 gap-2"><div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center mb-1"><svg className="h-5 w-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" /></svg></div><span className="text-sm font-medium text-foreground">Nenhum bem encontrado</span></div></td></tr>}
+              {loading && <tr><td colSpan={9}><div className="flex items-center justify-center py-6 gap-2"><div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-primary" /><span className="text-xs text-muted-foreground">Carregando...</span></div></td></tr>}
+              {!loading && bens.length === 0 && <tr><td colSpan={9}><div className="flex flex-col items-center py-10 gap-2"><div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center mb-1"><svg className="h-5 w-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" /></svg></div><span className="text-sm font-medium text-foreground">Nenhum bem encontrado</span></div></td></tr>}
               {bensPag.map(b => (
                 <tr key={b.id} className="cbrio-row" onClick={() => onDetail(b.id)}>
+                  {isDiretor && <td style={styles.td} onClick={e => e.stopPropagation()}><input type="checkbox" checked={selecionados.has(b.id)} onChange={() => toggleSelecionado(b.id)} /></td>}
                   <td style={{ ...styles.td, fontFamily: 'monospace', fontSize: 12 }}>{fmtCodigo(b.codigo_barras)}</td>
                   <td style={{ ...styles.td, fontWeight: 600 }}>{b.nome}</td>
                   <td style={styles.td}>{b.pat_categorias?.nome || '—'}</td>
@@ -752,6 +826,21 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
         </div>
       </div>
       <Paginacao {...bensPagProps} itemLabel="bens" />
+
+      <BulkEditarModal open={modalBulkEditar} qtd={selecionados.size} categorias={categorias} locOptions={locOptions} responsaveis={responsaveis} busy={bulkBusy}
+        onClose={() => setModalBulkEditar(false)}
+        onSalvarCampos={(campos) => executarBulk(() => patrimonio.bens.bulkEditar({ ids: [...selecionados], ...campos })).then(() => setModalBulkEditar(false))}
+        onRenomear={(buscar, substituir) => executarBulk(() => patrimonio.bens.bulkRenomear({ ids: [...selecionados], buscar, substituir })).then(() => setModalBulkEditar(false))}
+      />
+      <BulkMovModal open={modalBulkMov} qtd={selecionados.size} locOptions={locOptions} busy={bulkBusy}
+        onClose={() => setModalBulkMov(false)}
+        onSave={(campos) => executarBulk(() => patrimonio.bens.bulkMovimentar({ ids: [...selecionados], ...campos })).then(() => setModalBulkMov(false))}
+      />
+      <ConfirmDialog open={modalBulkBaixa} title="Dar baixa em massa"
+        message={`Confirma dar baixa em ${selecionados.size} bem(ns)? Essa ação registra a movimentação de baixa e marca o status — não é uma exclusão.`}
+        busy={bulkBusy} onCancel={() => setModalBulkBaixa(false)}
+        onConfirm={() => executarBulk(() => patrimonio.bens.bulkBaixa({ ids: [...selecionados] })).then(() => setModalBulkBaixa(false))}
+      />
     </>
   );
 }
@@ -1111,6 +1200,127 @@ function MovFormModal({ open, data, locOptions, onClose, onSave }) {
         <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Motivo</label>
         <textarea className="flex w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" style={{ minHeight: 60, resize: 'vertical' }} value={f.motivo || ''} onChange={e => upd('motivo', e.target.value)} />
       </div>
+    </Modal>
+  );
+}
+
+// Edição em massa (pedido do usuário 2026-07-31) — 2 modos, porque resolvem
+// problemas diferentes: "Definir valor comum" (mesma categoria/localização/
+// responsável/status pra todos) não ajuda a corrigir nome, já que cada bem
+// tem um nome diferente; por isso "Buscar e substituir" existe à parte,
+// pensado pro caso real de erro de digitação repetido num lote importado.
+function BulkEditarModal({ open, qtd, categorias, locOptions, responsaveis, busy, onClose, onSalvarCampos, onRenomear }) {
+  const [modo, setModo] = useState('campos');
+  const [aplicar, setAplicar] = useState({ categoria_id: false, localizacao_id: false, responsavel_id: false, status: false });
+  const [f, setF] = useState({});
+  const [buscar, setBuscar] = useState('');
+  const [substituir, setSubstituir] = useState('');
+  useEffect(() => { if (open) { setModo('campos'); setAplicar({ categoria_id: false, localizacao_id: false, responsavel_id: false, status: false }); setF({}); setBuscar(''); setSubstituir(''); } }, [open]);
+
+  function toggleAplicar(campo) { setAplicar(p => ({ ...p, [campo]: !p[campo] })); }
+
+  function salvarCampos() {
+    const campos = {};
+    if (aplicar.categoria_id) campos.categoria_id = f.categoria_id || null;
+    if (aplicar.localizacao_id) campos.localizacao_id = f.localizacao_id || null;
+    if (aplicar.responsavel_id) campos.responsavel_id = f.responsavel_id || null;
+    if (aplicar.status) campos.status = f.status || 'ativo';
+    if (Object.keys(campos).length === 0) return;
+    onSalvarCampos(campos);
+  }
+
+  return (
+    <Modal open={open} onClose={onClose} title={`Editar em massa (${qtd} selecionado${qtd > 1 ? 's' : ''})`}
+      footer={modo === 'campos'
+        ? <Button disabled={busy || !Object.values(aplicar).some(Boolean)} onClick={salvarCampos}>{busy ? 'Salvando...' : 'Aplicar'}</Button>
+        : <Button disabled={busy || !buscar} onClick={() => onRenomear(buscar, substituir)}>{busy ? 'Salvando...' : 'Renomear'}</Button>}
+    >
+      <div style={{ display: 'flex', gap: 6, marginBottom: 16 }}>
+        <Button variant={modo === 'campos' ? 'default' : 'outline'} size="xs" onClick={() => setModo('campos')}>Definir valor comum</Button>
+        <Button variant={modo === 'renomear' ? 'default' : 'outline'} size="xs" onClick={() => setModo('renomear')}>Buscar e substituir no nome</Button>
+      </div>
+
+      {modo === 'campos' && (
+        <>
+          <div style={{ fontSize: 12, color: C.text2, marginBottom: 12 }}>Marque só os campos que devem mudar — os demais ficam como estão em cada bem.</div>
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, marginBottom: 4 }}>
+            <input type="checkbox" checked={aplicar.categoria_id} onChange={() => toggleAplicar('categoria_id')} style={{ marginBottom: 10 }} />
+            <Select label="Categoria" value={f.categoria_id || ''} onChange={e => setF(p => ({ ...p, categoria_id: e.target.value }))} disabled={!aplicar.categoria_id} style={{ flex: 1 }}>
+              <option value="">— Sem categoria —</option>
+              {categorias.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
+            </Select>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, marginBottom: 4 }}>
+            <input type="checkbox" checked={aplicar.localizacao_id} onChange={() => toggleAplicar('localizacao_id')} style={{ marginBottom: 10 }} />
+            <Select label="Localização" value={f.localizacao_id || ''} onChange={e => setF(p => ({ ...p, localizacao_id: e.target.value }))} disabled={!aplicar.localizacao_id} style={{ flex: 1 }}>
+              <option value="">— Sem localização —</option>
+              {locOptions.map(l => <option key={l.id} value={l.id}>{locIndent(l.depth)}{l.nome}</option>)}
+            </Select>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, marginBottom: 4 }}>
+            <input type="checkbox" checked={aplicar.responsavel_id} onChange={() => toggleAplicar('responsavel_id')} style={{ marginBottom: 10 }} />
+            <Select label="Responsável pelo bem" value={f.responsavel_id || ''} onChange={e => setF(p => ({ ...p, responsavel_id: e.target.value }))} disabled={!aplicar.responsavel_id} style={{ flex: 1 }}>
+              <option value="">— Sem responsável —</option>
+              {(responsaveis || []).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+            </Select>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8 }}>
+            <input type="checkbox" checked={aplicar.status} onChange={() => toggleAplicar('status')} style={{ marginBottom: 10 }} />
+            <Select label="Status" value={f.status || 'ativo'} onChange={e => setF(p => ({ ...p, status: e.target.value }))} disabled={!aplicar.status} style={{ flex: 1 }}>
+              {Object.entries(STATUS_BEM).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+            </Select>
+          </div>
+        </>
+      )}
+
+      {modo === 'renomear' && (
+        <>
+          <div style={{ fontSize: 12, color: C.text2, marginBottom: 12 }}>Troca um trecho do nome em todos os selecionados — pensado pra corrigir erro de digitação repetido num lote lançado de uma vez.</div>
+          <Input label="Buscar (trecho exato no nome)" value={buscar} onChange={e => setBuscar(e.target.value)} placeholder="ex.: Cadeura" />
+          <Input label="Substituir por" value={substituir} onChange={e => setSubstituir(e.target.value)} placeholder="ex.: Cadeira" />
+        </>
+      )}
+    </Modal>
+  );
+}
+
+// Movimentação em massa — mesmos campos do MovFormModal individual, aplicados
+// a N bens de uma vez (chama a mesma RPC por bem no backend).
+function BulkMovModal({ open, qtd, locOptions, busy, onClose, onSave }) {
+  const [f, setF] = useState({ tipo: 'transferencia' });
+  useEffect(() => { if (open) setF({ tipo: 'transferencia' }); }, [open]);
+  const upd = (k, v) => setF(p => ({ ...p, [k]: v }));
+  return (
+    <Modal open={open} onClose={onClose} title={`Mover em massa (${qtd} selecionado${qtd > 1 ? 's' : ''})`}
+      footer={<Button disabled={busy} onClick={() => onSave(f)}>{busy ? 'Registrando...' : 'Registrar'}</Button>}>
+      <Select label="Tipo *" value={f.tipo} onChange={e => upd('tipo', e.target.value)}>
+        {Object.entries(TIPO_MOV).filter(([k]) => k !== 'baixa').map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+      </Select>
+      {(f.tipo === 'transferencia' || f.tipo === 'saida') && (
+        <Select label="Localização Origem" value={f.localizacao_origem_id || ''} onChange={e => upd('localizacao_origem_id', e.target.value)}>
+          <option value="">Selecionar</option>
+          {locOptions.map(l => <option key={l.id} value={l.id}>{locIndent(l.depth)}{l.nome}</option>)}
+        </Select>
+      )}
+      {(f.tipo === 'transferencia' || f.tipo === 'entrada') && (
+        <Select label="Localização Destino" value={f.localizacao_destino_id || ''} onChange={e => upd('localizacao_destino_id', e.target.value)}>
+          <option value="">Selecionar</option>
+          {locOptions.map(l => <option key={l.id} value={l.id}>{locIndent(l.depth)}{l.nome}</option>)}
+        </Select>
+      )}
+      <div style={styles.formGroup}>
+        <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Motivo</label>
+        <textarea className="flex w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" style={{ minHeight: 60, resize: 'vertical' }} value={f.motivo || ''} onChange={e => upd('motivo', e.target.value)} />
+      </div>
+    </Modal>
+  );
+}
+
+function ConfirmDialog({ open, title, message, busy, onCancel, onConfirm }) {
+  return (
+    <Modal open={open} onClose={onCancel} title={title}
+      footer={<><Button variant="outline" onClick={onCancel} disabled={busy}>Cancelar</Button><Button variant="destructive" onClick={onConfirm} disabled={busy}>{busy ? 'Processando...' : 'Confirmar'}</Button></>}>
+      <div style={{ fontSize: 13, color: C.text2 }}>{message}</div>
     </Modal>
   );
 }
