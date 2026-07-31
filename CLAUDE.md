@@ -1892,6 +1892,88 @@ renovação não piscam sem a migration (lição `parcelas_max`).
 (`comRoster` virou Map pra alimentar o {{3}} do template) — `.has()` segue
 idêntico pros chamadores antigos.
 
+## ⚠️ Grupos · auditoria pré-abertura + 5 correções (2026-07-31 · PR #2209 · SEM migration)
+
+Pedido do Marcos na véspera ("rode agentes para checar tudo no módulo, pois é
+domingo que vamos abrir de fato essas inscrições"). 5 agentes em lentes distintas
+(porta pública · WhatsApp · aprovação · dados de produção · busca/features), cada
+achado **reconferido contra o banco vivo antes de virar código** — dois se
+dissolveram na verificação. Corrigido:
+
+1. **⚠️ O aviso ao líder podia NÃO SAIR — e não saiu em 30/07.** O bloco de
+   notificação rodava em `(async () => {…})()` **sem await**, com o `res.json()`
+   logo depois: em serverless o container congela ao responder e o trabalho
+   pendente é descartado. Prova: dos 3 pedidos pendentes, o do Bruno (30/07
+   22:28) tem **0 envios e 0 notificações** — a líder Jane não recebeu NADA em
+   toda a tabela, com telefone válido. Agora o WhatsApp ao líder é **AWAITED e
+   vem PRIMEIRO** (era o 4º passo, atrás de um `notificar()` que sem regra
+   configurada escreve pra 16 admins ≈ 32 round-trips). Enfileirar é 1 INSERT,
+   então o custo em latência é baixo. A notificação in-app segue fire-and-forget
+   de propósito — a coordenação tem a Caixa de entrada como caminho garantido.
+   **Regra que fica: em porta pública serverless, o que não pode se perder vai
+   awaited; fire-and-forget só pro que tem caminho alternativo.**
+2. **⚠️ Telefone colado com "+55" gravava número inexistente.** A máscara
+   truncava em 11 dígitos **ANTES** de normalizar o prefixo (o bug era a ORDEM,
+   não a ausência da normalização): `"+55 21 99999-8888"` → `55219999988`, que
+   passa nas duas validações. **15 cadastros em produção** nesse padrão,
+   incluindo o `55219969835` do "carlos" da Barra — mesma classe do incidente de
+   26/07. Helper único `tirarCodigoPais` (`src/lib/inscricao.js` + espelho
+   `tirarCodigoPaisTelefone` no `inscricaoContrato.js`), aplicado na máscara, na
+   validação e **nos 2 pontos de gravação** do `publicGrupos.js` (o `telDigitos`
+   lia o body cru — corrigir só a validação não bastava).
+   ⚠️⚠️ **DDD 55 é Santa Maria/RS**: só remove o `55` quando o resto AINDA é
+   telefone completo (12–13 dígitos). `replace(/^55/,'')` destruiria todo número
+   legítimo de lá. `src/test/telefoneCodigoPais.test.ts` é **mutation-testado**
+   contra exatamente essa simplificação.
+3. **Mensagem de aprovação ignorava o opt-in (LGPD).** `notificarPessoaAprovada`
+   era a ÚNICA do fluxo sem gate — e é a mais comum. 3 pessoas reais que
+   marcaram "não quero" receberam (Ester Lima, Michele Jeane, Douglas Ferreira),
+   contra o texto do próprio formulário. O opt-in efetivo é lido do membro
+   promovido (ou do cadastro pendente) **no ponto do envio**, não de variável de
+   escopo anterior — que muda conforme o caminho da aprovação.
+4. **Teto de requisições 1.000 → 10.000 por IP** (igual ao NPS, que calibrou com
+   multidão real): no culto a igreja sai por UM IP (subsolo sem 4G) e cada pessoa
+   gasta ~4 requisições ⇒ 1.000 dava ~250 pessoas/15min. E o **429 aparecia como
+   "Nenhum grupo encontrado com esses filtros"** (`if (!r.ok) return []` no
+   `api.js`) — a pessoa concluiria que os grupos acabaram. Agora propaga com
+   mensagem própria e o `GrupoSelector` mostra o erro + **"Tentar de novo"**;
+   **erro vem ANTES do vazio na renderização**, nunca disfarçado dele.
+5. **A fila da coordenação mostrava pedido apagado.** `/pedidos/list` e as 2
+   contagens do badge não filtravam `deleted_at` — 16 soft-deletados da limpeza
+   de 17/07, e os cards de resumo somam a lista no cliente. Latente pior: um
+   PENDENTE apagado apareceria **clicável** e aprovar devolveria 404 seco
+   (`aprovarPedidoCore` filtra).
+
+**Reparos de DADO aplicados no mesmo dia** (backup em
+`scratchpad/backup_reparo_prelancamento.json` · script `reparo_prelancamento.js`
+com dry-run por padrão):
+- **Telefone da Thatianna Almeida Lage** `996969257` → `21996969257`. Era
+  **regressão da consolidação de 30/07** (o merge manteve o registro truncado).
+  Só escrevi porque havia **3 evidências independentes**: envio a esse número em
+  28/07 com `delivered_at` E `read_at`; `mem_merge_log` "Consolidacao
+  Tathiana/Thatianna Almeida"; e um 3º cadastro vivo (`610fa1a4` "Tathiana
+  Case") com o número completo — que **segue como duplicata a consolidar**.
+- **11 opt-ins restaurados** (a pessoa marcou "quero receber" e a promoção
+  pré-fix de 28/07 não propagava). ⚠️ O match exige **telefone + NOME**: minha
+  1ª versão casava só por telefone e teria ligado consentimento de quem não
+  pediu (família compartilha número) — a lei "telefone sozinho nunca identifica"
+  vale também pra reparo de dado.
+- **8 bairros unificados** (o filtro público compara `.eq` exato): `BARRA DA
+  TIJUCA` era 19+5 em duas grafias → **24 num valor só**; `RECREIO` idem; e o
+  typo real `RIO DE JANEIRP/RJ` corrigido. Régua: variante MAIS FREQUENTE vence.
+
+⚠️ **ABERTO na véspera** (não é código): **DESIREE CASTELO PESSANHA** (líder do
+CURSO ALIANÇA, grupo de casais) segue com telefone de 9 dígitos `996013179` —
+**não há evidência do número real**, então NÃO inventei DDD; precisa confirmar
+com ela. **Teto da Meta = TIER_250** (250 destinatários únicos/24h · qualidade
+GREEN): cada inscrição gasta 2 (líder + pessoa) ⇒ **~125 inscrições/dia**, e
+decisão do Marcos foi gastar os 250 no domingo, com o excedente saindo segunda
+pelo retry da fila. **13 grupos presenciais sem `lat/lng`** ficam inselecionáveis
+na visão Mapa (a Lista, que é o padrão, mostra todos) — rodar geocode na aba
+Endereços. **Falha de entrega reportada pela Meta (`failed` no webhook) não
+avisa ninguém** e não há como **reenviar o link ao líder** (o token vale 7 dias):
+os dois viram trabalho pós-domingo.
+
 ## Grupos · contagens (vínculo × pessoa) + nova régua visitante/frequentador (2026-07-23)
 
 Auditoria (4 agentes) das divergências que o Marcos pegou entre as abas. **Régua de
