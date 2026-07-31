@@ -14,8 +14,20 @@ export function soDigitos(v) {
   return String(v || '').replace(/\D/g, '');
 }
 
+// Tira o código do país ANTES de truncar. Sem isso, colar "+55 21 99999-8888"
+// (o formato que sai dos contatos do celular) virava `55219999988` — 11 dígitos,
+// passava nas duas validações e gravava um número que não existe. Havia 15
+// cadastros nesse padrão em produção quando isto foi corrigido (31/07).
+// ⚠️ Só remove quando o resto AINDA é telefone completo (12-13 dígitos): DDD 55
+// existe (Santa Maria/RS), então "(55) 99999-8888" tem que ficar intacto.
+export function tirarCodigoPais(digitos) {
+  const d = String(digitos || '');
+  if (d.length >= 12 && d.length <= 13 && d.startsWith('55')) return d.slice(2);
+  return d;
+}
+
 export function mascaraTelefone(v) {
-  const d = soDigitos(v).slice(0, 11);
+  const d = tirarCodigoPais(soDigitos(v)).slice(0, 11);
   if (d.length <= 2) return d;
   if (d.length <= 6) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
   if (d.length <= 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;

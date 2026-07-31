@@ -20,6 +20,7 @@ const { registrarObservacaoSegura } = require('../services/identidadeProgressiva
 const {
   temAbreviacaoNome, registrarConsentimentos, cpfValido, emailValido,
   validarCamposPadrao, // régua única dos campos padrão (usada no bloco do cônjuge)
+  tirarCodigoPaisTelefone, // "+55 21 9..." colado do contato não pode comer o DDD
 } = require('../services/inscricaoContrato');
 const { requireCron } = require('../utils/cronAuth');
 // Régua ÚNICA de busca (acento/caixa/espaço) · espelho de src/lib/busca.js.
@@ -36,7 +37,11 @@ const totemLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   // 1000 (não 300): totem e WiFi da igreja compartilham 1 IP — num domingo
   // cheio, ~6 requests por inscrição × dezenas de pessoas estoura 300/15min.
-  max: parseInt(process.env.GRUPOS_PUBLIC_RATE_LIMIT_MAX) || (process.env.NODE_ENV === 'production' ? 1000 : 5000),
+  // 10.000 = mesmo teto do NPS público (publicNps.js), e por isso: no culto a
+  // igreja toda sai por UM IP (o subsolo não tem 4G). Cada pessoa gasta ~4
+  // requisições no fluxo, então 1.000 dava ~250 pessoas por janela de 15 min —
+  // e quem estourasse via "Nenhum grupo encontrado", não aviso de excesso.
+  max: parseInt(process.env.GRUPOS_PUBLIC_RATE_LIMIT_MAX) || (process.env.NODE_ENV === 'production' ? 10000 : 20000),
   message: { error: 'Muitas tentativas em pouco tempo. Aguarde um instante e tente de novo.' },
   skip: () => process.env.NODE_ENV !== 'production',
   standardHeaders: true,
@@ -529,7 +534,7 @@ async function processarPessoaPedido({ grupo, pessoa = {}, contexto = {}, princi
   const nomeLimpo = String(pessoa.nome || '').trim();
   const cpfLimpo = pessoa.cpf ? soDigitos(pessoa.cpf) : null;
   const emailLimpo = pessoa.email ? String(pessoa.email).trim().toLowerCase() : null;
-  const telDigitos = soDigitos(pessoa.telefone);
+  const telDigitos = tirarCodigoPaisTelefone(soDigitos(pessoa.telefone));
   const generoLimpo = ['masculino', 'feminino'].includes(String(pessoa.genero || '').toLowerCase())
     ? String(pessoa.genero).toLowerCase() : null;
   const dataNascimento = pessoa.data_nascimento || null;
@@ -996,10 +1001,68 @@ router.post('/inscrever', async (req, res) => {
     if (rc && rc.ok && rc.criado) criados.push({ nome: rc.nome, telefone: rc.telefone, email: rc.email, optin: rc.whatsapp_optin, pedidoId: rc.pedido_id });
 
     if (criados.length) {
+      const nomes = criados.map(p => p.nome).join(' e ');
+      const ehCasal = criados.length > 1;
+
+      // ⚠️ AWAITED de propósito (incidente 30/07): este bloco JÁ FOI
+      // fire-and-forget (IIFE sem await) e, em serverless, o container pode ser
+      // congelado assim que a resposta sai — o trabalho pendente é descartado.
+      // Efeito medido: o pedido do Bruno (30/07 22:28) gravou o pedido mas NÃO
+      // gerou envio nem notificação; a líder Jane nunca soube que ele pediu, e
+      // ele ficou esperando. Enfileirar é 1 INSERT (a entrega é no cron da
+      // fila), então o custo de latência aqui é baixo e o ganho é o lançamento
+      // não perder gente em silêncio.
+      // A ORDEM também mudou: o WhatsApp ao líder é o que destrava a aprovação,
+      // então vem PRIMEIRO — antes ele era o 4º passo, atrás de um notificar()
+      // que, sem regra configurada, escreve pra 16 admins (~32 round-trips).
+      try {
+        // F3 · WhatsApp pro líder com o link de aprovar sem login.
+        // UM aviso só, mesmo no casal: os dois nomes em {{3}}, os dois
+        // contatos em {{4}}, e o link do pedido do 1º — aprovar por ele
+        // aprova o casal (vínculo casal_pedido_id). Gated por
+        // WHATSAPP_ENABLED no whatsappService (sem env → dry-run).
+        // O telefone vai FORMATADO no aviso: o fluxo novo do líder (Pr. Nélio ·
+        // 29/07) manda LIGAR pra pessoa antes de aceitar, então o número é o
+        // dado que ele usa na mão — "(21) 99999-8888" lê e disca melhor que
+        // "21999998888". O que gravamos no banco segue digits-only.
+        const contatoDe = (p) => [telefoneExibicao(p.telefone), p.email].filter(Boolean).join(' · ') || 'sem contato';
+        await notificarLiderNovoPedido({
+          grupo,
+          pedidoId: criados[0].pedidoId,
+          pessoa: {
+            nome: nomes,
+            telefone: criados[0].telefone || null,
+            email: criados[0].email || null,
+            contato: ehCasal
+              ? criados.map(p => `${(p.nome || '').split(/\s+/)[0]}: ${contatoDe(p)}`).join(' · ')
+              : contatoDe(criados[0]),
+          },
+        });
+
+        // Mensagem 1 pra PESSOA: «recebemos sua inscrição» (utility
+        // cbrio_inscricao_confirmada). Via fila: registra e reenvia sozinho
+        // se o envio bater no teto diário da Meta. GATED pelo opt-in (D4):
+        // quem não marcou o checkbox não recebe — é exatamente o que o aviso
+        // do formulário promete ("se você não marcar, não conseguiremos te
+        // enviar confirmações…"). No casal roda POR PESSOA (dois telefones,
+        // cada um recebe a sua).
+        for (const p of criados) {
+          if (!p.optin) continue;
+          await enviarInscricaoConfirmada({
+            telefone: p.telefone,
+            nome: p.nome,
+            grupoNome: grupo.nome,
+            pedidoId: p.pedidoId,
+          });
+        }
+      } catch (err) { console.error('[public grupos inscrever wpp]', err.message); }
+
+      // Notificação in-app da coordenação: fica fire-and-forget de propósito.
+      // Sem regra configurada em notificacao_regras, o fallback escreve pra ~16
+      // admins (1 count + 1 insert cada) — não vale segurar a resposta da pessoa
+      // por isso, e a coordenação tem a Caixa de entrada como caminho garantido.
       (async () => {
         try {
-          const nomes = criados.map(p => p.nome).join(' e ');
-          const ehCasal = criados.length > 1;
           let liderAuthUserId = null;
           if (grupo.lider_id) {
             const { data: liderProf } = await supabase.from('vol_profiles')
@@ -1018,46 +1081,6 @@ router.post('/inscrever', async (req, res) => {
             chaveDedup: `pedido_grupo_${criados[0].pedidoId}`,
             extraTargetIds: liderAuthUserId ? [liderAuthUserId] : [],
           });
-
-          // F3 · WhatsApp pro líder com o link de aprovar sem login.
-          // UM aviso só, mesmo no casal: os dois nomes em {{3}}, os dois
-          // contatos em {{4}}, e o link do pedido do 1º — aprovar por ele
-          // aprova o casal (vínculo casal_pedido_id). Gated por
-          // WHATSAPP_ENABLED no whatsappService (sem env → dry-run).
-          // O telefone vai FORMATADO no aviso: o fluxo novo do líder (Pr. Nélio ·
-          // 29/07) manda LIGAR pra pessoa antes de aceitar, então o número é o
-          // dado que ele usa na mão — "(21) 99999-8888" lê e disca melhor que
-          // "21999998888". O que gravamos no banco segue digits-only.
-          const contatoDe = (p) => [telefoneExibicao(p.telefone), p.email].filter(Boolean).join(' · ') || 'sem contato';
-          await notificarLiderNovoPedido({
-            grupo,
-            pedidoId: criados[0].pedidoId,
-            pessoa: {
-              nome: nomes,
-              telefone: criados[0].telefone || null,
-              email: criados[0].email || null,
-              contato: ehCasal
-                ? criados.map(p => `${(p.nome || '').split(/\s+/)[0]}: ${contatoDe(p)}`).join(' · ')
-                : contatoDe(criados[0]),
-            },
-          });
-
-          // Mensagem 1 pra PESSOA: «recebemos sua inscrição» (utility
-          // cbrio_inscricao_confirmada). Via fila: registra e reenvia sozinho
-          // se o envio bater no teto diário da Meta. GATED pelo opt-in (D4):
-          // quem não marcou o checkbox não recebe — é exatamente o que o aviso
-          // do formulário promete ("se você não marcar, não conseguiremos te
-          // enviar confirmações…"). No casal roda POR PESSOA (dois telefones,
-          // cada um recebe a sua).
-          for (const p of criados) {
-            if (!p.optin) continue;
-            await enviarInscricaoConfirmada({
-              telefone: p.telefone,
-              nome: p.nome,
-              grupoNome: grupo.nome,
-              pedidoId: p.pedidoId,
-            });
-          }
         } catch (err) { console.error('[public grupos inscrever notify]', err.message); }
       })();
     }
@@ -1129,7 +1152,7 @@ router.post('/inscrever-lider', async (req, res) => {
     if (nome.trim().split(/\s+/).length < 2 || temAbreviacaoNome(nome)) {
       return res.status(400).json({ error: 'Escreva o nome completo, sem abreviações.', campo: 'nome' });
     }
-    const telDigitos = soDigitos(telefone);
+    const telDigitos = tirarCodigoPaisTelefone(soDigitos(telefone));
     if (telDigitos.length < 10 || telDigitos.length > 11) return res.status(400).json({ error: 'Digite um celular válido com DDD.', campo: 'telefone' });
     if (!cpf || soDigitos(cpf).length !== 11) return res.status(400).json({ error: 'Informe o CPF completo.', campo: 'cpf' });
     if (!cpfValido(cpf)) return res.status(400).json({ error: 'Este CPF não é válido — confira os números.', campo: 'cpf' });
