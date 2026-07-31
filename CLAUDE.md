@@ -1968,11 +1968,53 @@ CURSO ALIANÇA, grupo de casais) segue com telefone de 9 dígitos `996013179` �
 com ela. **Teto da Meta = TIER_250** (250 destinatários únicos/24h · qualidade
 GREEN): cada inscrição gasta 2 (líder + pessoa) ⇒ **~125 inscrições/dia**, e
 decisão do Marcos foi gastar os 250 no domingo, com o excedente saindo segunda
-pelo retry da fila. **13 grupos presenciais sem `lat/lng`** ficam inselecionáveis
-na visão Mapa (a Lista, que é o padrão, mostra todos) — rodar geocode na aba
-Endereços. **Falha de entrega reportada pela Meta (`failed` no webhook) não
-avisa ninguém** e não há como **reenviar o link ao líder** (o token vale 7 dias):
-os dois viram trabalho pós-domingo.
+pelo retry da fila. **Falha de entrega reportada pela Meta (`failed` no webhook)
+não avisa ninguém** e não há como **reenviar o link ao líder** (o token vale 7
+dias): os dois viram trabalho pós-domingo.
+
+### ✅ Geocodificação dos 13 presenciais FEITA (2026-07-31 · só dado, sem código)
+
+Os 13 grupos presenciais sem `lat/lng` foram geocodificados (autorizado pelo
+Marcos na véspera). Estado atual: **87 ativos = 55 com coordenada + 32 sem, e os
+32 são TODOS online** — nenhum grupo presencial fica de fora da visão Mapa.
+Script `scratchpad/geo_grupos.js` (dry-run por padrão · backup do estado anterior
+em `backup_geo_grupos.json`) replica FIELMENTE a lógica do
+`POST /api/grupos/geocode-batch`: mesma ordem de tentativas (CEP via ViaCEP →
+texto do endereço → **centróide do bairro**), mesmo guard `inRJ`, mesmo atalho de
+coordenada fixa da sede, e o `sleep(1100)` da política de 1 req/s do Nominatim.
+Resultado: 6 por `texto_endereco` · 6 por `bairro` · 1 tratado à parte.
+
+⚠️ **Grupo online NÃO é identificado por coluna `modalidade` — ela não existe.** A
+régua real (grupos.js:3779) é `bairro === 'Online'` OU `local` contendo "online".
+Quem escrever rotina nova de endereço precisa usar essa, senão vai "consertar"
+grupo online que está certo do jeito que está.
+
+⚠️ **6 dos 13 caíram em CENTRÓIDE DE BAIRRO, e isso vai parecer bug.** Três grupos
+do Recreio ficaram com coordenada **idêntica** (`-23.01852, -43.46340`) → no mapa
+os pins se empilham e parecem um só. É o 3º fallback do endpoint por desenho ("pin
+aproximado no bairro certo" é melhor que grupo invisível), disparado quando o
+Nominatim não acha o logradouro (casos reais: `Rua Nicette Bruno 75`,
+`Rua Gernica 100`). Só melhora com endereço mais completo no cadastro (CEP resolve)
+— não com mais uma rodada de geocode.
+
+⚠️ **O `inRJ` do endpoint NUNCA resolveria o `GRUPO DE CONEXÃO FLORIPA`** (Lagoa da
+Conceição, **Florianópolis/SC** · CEP 88062000): o guard recusa toda coordenada
+fora do RJ metropolitano, de propósito (evita casar bairro homônimo em outra
+cidade). Resolvi por script separado (`geo_floripa.js`) exigindo **3 evidências
+convergentes**: o logradouro do cadastro é EXATAMENTE o que o ViaCEP devolve para
+o CEP, o bairro confere, e o Nominatim achou a mesma avenida em Florianópolis/SC
+(guard de caixa de SC + o `display_name` tem que citar a cidade do CEP). **Grupo
+presencial fora do RJ é ponto cego permanente do botão "Endereços"** — se a igreja
+abrir grupo em outro estado, a coordenada dele não sai por lá.
+✅ Antes de gravar, conferi que o pin de SC **não estraga o enquadramento**: o
+`GruposMapView` não usa `fitBounds` (zoom fixo 12/13) e o centro inicial é
+`coords do membro > withCoords[0] > default Rio`, com a lista ordenada por NOME —
+o 1º com coordenada é "BRIDGE ADOLESCENTES" (B), então o de Floripa (G) nunca
+assume o centro. ⚠️ Se algum dia o 1º grupo por nome for de outro estado, o mapa
+abre lá para quem não tem geolocalização.
+⚠️ Existem DOIS grupos com "Floripa" no nome: o `00001115` (presencial, este) e o
+`00000031` "Grupo de Conexão RJ, Floripa, SP - OnLine" (online, segue sem
+coordenada, correto). Filtrar por nome aqui pega os dois — usar código.
 
 ## Grupos · contagens (vínculo × pessoa) + nova régua visitante/frequentador (2026-07-23)
 
