@@ -15,7 +15,7 @@
 // ============================================================================
 const router = require('express').Router();
 const crypto = require('crypto');
-const { authenticate, authorizeModule } = require('../middleware/auth');
+const { authenticate, authorizeModule, requireSuperAdmin } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const { requireCron } = require('../utils/cronAuth');
@@ -62,8 +62,9 @@ router.get('/cron/expurgo', requireCron, async (_req, res) => {
   }
 });
 
-// Daqui pra baixo exige login + nível no módulo face.
-router.use(authenticate, authorizeModule('face', 1));
+// Facial foi consolidado no command center Sistema. O cron mantém CRON_SECRET;
+// toda operação humana abaixo exige superadmin estrito.
+router.use(authenticate, requireSuperAdmin);
 
 // ── Reconhecer (núcleo do device) ───────────────────────────────────────────
 // Recebe o descriptor de um rosto → tenta MEMBRO; senão ANÔNIMO recorrente;

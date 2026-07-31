@@ -624,7 +624,8 @@ function AppRoutes() {
         <Route path="/admin/patrimonio" element={<ModuleGuard permKey="canPatrimonio"><Suspense fallback={<Loading />}><Patrimonio /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/membresia" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><Membresia /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/membresia/scan" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><MemberScan /></Suspense></ModuleGuard>} />
-        <Route path="/ministerial/reconhecimento-facial" element={<ModuleGuard moduleSlug="face"><Suspense fallback={<Loading />}><ReconhecimentoFacial /></Suspense></ModuleGuard>} />
+        {/* Superfície interna do Sistema; URL legada preservada para os links da aba Governança. */}
+        <Route path="/ministerial/reconhecimento-facial" element={<SuperAdminGuard><Suspense fallback={<Loading />}><ReconhecimentoFacial /></Suspense></SuperAdminGuard>} />
         <Route path="/ministerial/voluntariado/*" element={<VoluntariadoGuard><Suspense fallback={<Loading />}><Voluntariado /></Suspense></VoluntariadoGuard>} />
         {/* Totem Kids · check-in/checkout/painel · 2026-05-21 */}
         <Route path="/ministerial/totem-kids" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsCheckin /></Suspense></ModuleGuard>} />
@@ -657,7 +658,8 @@ function AppRoutes() {
         {/* Redirects das rotas antigas → não quebrar bookmarks/links */}
         <Route path="/conversas" element={<Navigate to="/comunicacao?tab=conversas" replace />} />
         <Route path="/admin/conversas-setores" element={<Navigate to="/comunicacao?tab=bot" replace />} />
-        <Route path="/wifi" element={<ModuleGuard moduleSlug="wifi"><Suspense fallback={<Loading />}><WifiModulo /></Suspense></ModuleGuard>} />
+        {/* Superfície interna do Sistema; não é mais um módulo autônomo. */}
+        <Route path="/wifi" element={<SuperAdminGuard><Suspense fallback={<Loading />}><WifiModulo /></Suspense></SuperAdminGuard>} />
         <Route path="/ministerial/devocional" element={<Navigate to="/ministerial/cuidados?tab=devocional" replace />} />
         <Route path="/ministerial/jornada" element={<Navigate to="/ministerial/membresia" replace />} />
         <Route path="/ministerial/integracao" element={<ModuleGuard anyOf={['integracao', 'next']}><Suspense fallback={<Loading />}><Integracao /></Suspense></ModuleGuard>} />
@@ -720,7 +722,7 @@ function AppRoutes() {
         <Route path="/admin/solicitacoes-responsaveis" element={<Suspense fallback={<Loading />}><SolicitacoesResponsaveis /></Suspense>} />
         <Route path="/admin/solicitacoes-fluxo" element={<Suspense fallback={<Loading />}><SolicitacoesFluxo /></Suspense>} />
         <Route path="/admin/permissoes" element={<Suspense fallback={<Loading />}><PermissoesAdmin /></Suspense>} />
-        <Route path="/admin/feedback" element={<Suspense fallback={<Loading />}><FeedbackAdmin /></Suspense>} />
+        <Route path="/admin/feedback" element={<SuperAdminGuard><Suspense fallback={<Loading />}><FeedbackAdmin /></Suspense></SuperAdminGuard>} />
         <Route path="/admin/app-analytics" element={<SuperAdminGuard><Suspense fallback={<Loading />}><AppAnalytics /></Suspense></SuperAdminGuard>} />
         <Route path="/sistema" element={<SuperAdminGuard><Suspense fallback={<Loading />}><Sistema /></Suspense></SuperAdminGuard>} />
         {/* Bot WhatsApp virou aba dentro de Comunicação */}
