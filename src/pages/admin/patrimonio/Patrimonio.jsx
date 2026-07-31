@@ -173,7 +173,7 @@ const fmtCodigo = (c) => {
 // exibidas na tabela; não pagina (exporta tudo que passou no filtro, não só
 // a página visível de 25 — o backend também não pagina mais em 1000, então
 // isso cobre o parque inteiro que bater no filtro).
-const BENS_EXPORT_HEADERS = ['Código', 'Nome', 'Categoria', 'Localização', 'Marca/Modelo', 'Valor de Aquisição', 'Status'];
+const BENS_EXPORT_HEADERS = ['Número', 'Nome', 'Categoria', 'Localização', 'Marca/Modelo', 'Valor de Aquisição', 'Status'];
 function bensParaExportar(lista) {
   return lista.map((b) => [
     fmtCodigo(b.codigo_barras),
@@ -934,7 +934,7 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
           <table style={styles.table}>
             <thead><tr>
               {isDiretor && <th style={{ ...styles.th, width: 32 }}><input type="checkbox" checked={todosPaginaMarcados} onChange={toggleTodosPagina} onClick={e => e.stopPropagation()} /></th>}
-              <th style={styles.th}>Código</th><th style={styles.th}>Nome</th><th style={styles.th}>Categoria</th>
+              <th style={styles.th}>Número</th><th style={styles.th}>Nome</th><th style={styles.th}>Categoria</th>
               <th style={styles.th}>Localização</th><th style={styles.th}>Marca/Modelo</th><th style={styles.th}>Valor</th><th style={styles.th}>Status</th>
               {isDiretor && <th style={styles.th}></th>}
             </tr></thead>
@@ -1188,7 +1188,7 @@ function BemFormModal({ open, data, categorias, locOptions, responsaveis, onClos
   }
   function handleSave() {
     if (!f.nome || !f.nome.trim()) { setFormError('Nome é obrigatório.'); return; }
-    if (!f.codigo_barras || !f.codigo_barras.trim()) { setFormError('Código de barras é obrigatório.'); return; }
+    if (!f.codigo_barras || !f.codigo_barras.trim()) { setFormError('Número do patrimônio é obrigatório.'); return; }
     if (f.valor_aquisicao !== undefined && f.valor_aquisicao !== '' && Number(f.valor_aquisicao) < 0) { setFormError('Valor de aquisição deve ser >= 0.'); return; }
     setFormError('');
     onSave(f);
@@ -1204,7 +1204,7 @@ function BemFormModal({ open, data, categorias, locOptions, responsaveis, onClos
       )}
       <div style={styles.formRow}>
         <div style={styles.formGroup}>
-          <Input label="Código de Barras *" value={f.codigo_barras || ''} onChange={e => upd('codigo_barras', e.target.value)} />
+          <Input label="Número do Patrimônio *" value={f.codigo_barras || ''} onChange={e => upd('codigo_barras', e.target.value)} />
           {!f.id && codigoSugerido && <div style={{ fontSize: 11, color: C.text3, marginTop: 2 }}>Sugerido automaticamente pela ordem do patrimônio — editável se precisar reaproveitar um código já impresso.</div>}
         </div>
         <Input label="Nome *" value={f.nome || ''} onChange={e => upd('nome', e.target.value)} />
@@ -1363,7 +1363,7 @@ function BemDetailModal({ open, data, onClose, onEdit, onBaixar, onMov, onDispen
         </div>
       )}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 16px', marginBottom: 20 }}>
-        <div><span style={{ fontSize: 11, color: C.text2 }}>Código:</span><div style={{ fontSize: 14, fontFamily: 'monospace' }}>{fmtCodigo(data.codigo_barras)}</div></div>
+        <div><span style={{ fontSize: 11, color: C.text2 }}>Número:</span><div style={{ fontSize: 14, fontFamily: 'monospace' }}>{fmtCodigo(data.codigo_barras)}</div></div>
         <div><span style={{ fontSize: 11, color: C.text2 }}>Status:</span><div><Badge status={data.status} map={STATUS_BEM} /></div></div>
         <div><span style={{ fontSize: 11, color: C.text2 }}>Categoria:</span><div style={{ fontSize: 14 }}>{data.pat_categorias?.nome || '—'}</div></div>
         <div><span style={{ fontSize: 11, color: C.text2 }}>Localização:</span><div style={{ fontSize: 14 }}>{data.pat_localizacoes?.nome || '—'}{data.localizacao_pendente && <div style={{ fontSize: 11, color: C.amber, marginTop: 2 }}>⚠ virou grupamento — realocar pra uma sala final</div>}</div></div>
