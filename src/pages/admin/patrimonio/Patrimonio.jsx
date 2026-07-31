@@ -41,6 +41,39 @@ function formatarMesAno(mesISO) {
   return `${MESES_ABREV[idx] || mes}/${ano.slice(2)}`;
 }
 
+// Ordenação da aba Bens (pedido do usuário 2026-07-31 — inspirado no padrão
+// de "pills" de ordenação de e-commerce, adaptado aos temas das colunas reais
+// da tabela: nome, valor e data de aquisição, em vez de preço/desconto/vendas).
+const ORDENACOES_BENS = [
+  { key: 'padrao', label: 'Padrão' },
+  { key: 'recentes', label: 'Mais recentes' },
+  { key: 'nome_asc', label: 'Nome A-Z' },
+  { key: 'nome_desc', label: 'Nome Z-A' },
+  { key: 'valor_desc', label: 'Maior valor' },
+  { key: 'valor_asc', label: 'Menor valor' },
+  { key: 'categoria_asc', label: 'Categoria A-Z' },
+];
+function ordenarBens(lista, chave) {
+  if (chave === 'padrao') return lista;
+  const arr = [...lista];
+  const porValor = (a, b) => {
+    const va = a.valor_aquisicao, vb = b.valor_aquisicao;
+    if (va == null && vb == null) return 0;
+    if (va == null) return 1; // sem valor sempre no fim, nas 2 direções
+    if (vb == null) return -1;
+    return Number(va) - Number(vb);
+  };
+  switch (chave) {
+    case 'recentes': return arr.sort((a, b) => (b.data_aquisicao || '').localeCompare(a.data_aquisicao || ''));
+    case 'nome_asc': return arr.sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt-BR'));
+    case 'nome_desc': return arr.sort((a, b) => (b.nome || '').localeCompare(a.nome || '', 'pt-BR'));
+    case 'valor_asc': return arr.sort(porValor);
+    case 'valor_desc': return arr.sort((a, b) => -porValor(a, b));
+    case 'categoria_asc': return arr.sort((a, b) => (a.pat_categorias?.nome || 'zzz').localeCompare(b.pat_categorias?.nome || 'zzz', 'pt-BR'));
+    default: return lista;
+  }
+}
+
 const TIPO_MOV = {
   entrada: 'Entrada', saida: 'Saída', transferencia: 'Transferência',
   manutencao: 'Manutenção', baixa: 'Baixa',
@@ -686,7 +719,11 @@ function DashboardTab({ dash, indicadores, depreciacaoIndic, atividadeRecente, l
 }
 
 function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus, filtroCat, setFiltroCat, filtroLoc, setFiltroLoc, categorias, locOptions, responsaveis, onNew, onDetail, onDetailPorCodigo, onBaixar, isDiretor, onReload }) {
-  const { pageItems: bensPag, paginacaoProps: bensPagProps } = usePaginacaoLocal(bens, 25);
+  const [ordenarAberto, setOrdenarAberto] = useState(false);
+  const [ordenacao, setOrdenacao] = useState('padrao');
+  const bensOrdenados = useMemo(() => ordenarBens(bens, ordenacao), [bens, ordenacao]);
+  const { pageItems: bensPag, paginacaoProps: bensPagProps, setPage: setBensPage } = usePaginacaoLocal(bensOrdenados, 25);
+  useEffect(() => { setBensPage(1); }, [ordenacao]);
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState('');
 
@@ -759,8 +796,35 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
           <option value="__sem__">— Sem localização —</option>
           {locOptions.map(l => <option key={l.id} value={l.id}>{locIndent(l.depth)}{l.nome}</option>)}
         </select>
+        <Button variant="outline" onClick={() => setOrdenarAberto(o => !o)}>
+          Ordenar {ordenacao !== 'padrao' ? `· ${ORDENACOES_BENS.find(o => o.key === ordenacao)?.label}` : ''} {ordenarAberto ? '▴' : '▾'}
+        </Button>
         {isDiretor && <div style={{ marginLeft: 'auto' }}><Button onClick={onNew}>+ Novo Bem</Button></div>}
       </div>
+
+      {/* Ordenação por "pills" (pedido do usuário 2026-07-31, inspirado num
+          print de e-commerce) — adaptada aos temas das colunas da tabela. */}
+      {ordenarAberto && (
+        <div style={{ ...styles.card, marginBottom: 16, padding: '12px 14px' }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: C.text2, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Ordenar por</div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {ORDENACOES_BENS.map(o => (
+              <button
+                key={o.key}
+                onClick={() => setOrdenacao(o.key)}
+                style={{
+                  padding: '6px 14px', borderRadius: 999, fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                  border: `1px solid ${ordenacao === o.key ? C.primary : C.border}`,
+                  background: ordenacao === o.key ? C.primary : 'transparent',
+                  color: ordenacao === o.key ? '#fff' : C.text,
+                }}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {scanning && (
         <div style={{ ...styles.card, marginBottom: 16, padding: 20, maxWidth: 400 }}>
