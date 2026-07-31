@@ -15,6 +15,7 @@ import { Button } from '../../../components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
 import BarcodeScanner from '../../../components/BarcodeScanner';
 import Paginacao, { usePaginacaoLocal } from '../../../components/Paginacao';
+import { exportCSV } from '../../../lib/export';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
@@ -166,6 +167,24 @@ const fmtCodigo = (c) => {
   if (/^\d+$/.test(s)) return s.padStart(5, '0');
   return s;
 };
+
+// Exporta a lista de bens EXATAMENTE como está na tela (já filtrada pelos
+// selects + ordenada pelas pills) — pedido do usuário 2026-07-31. Mesmas
+// colunas exibidas na tabela; não pagina (exporta tudo que passou no filtro,
+// não só a página visível).
+function exportarBensCSV(lista) {
+  const headers = ['Código', 'Nome', 'Categoria', 'Localização', 'Marca/Modelo', 'Valor de Aquisição', 'Status'];
+  const rows = lista.map((b) => [
+    fmtCodigo(b.codigo_barras),
+    b.nome,
+    b.pat_categorias?.nome || '',
+    b.pat_localizacoes?.nome || '',
+    [b.marca, b.modelo].filter(Boolean).join(' '),
+    b.valor_aquisicao ?? '',
+    STATUS_BEM[b.status]?.label || b.status || '',
+  ]);
+  exportCSV(headers, rows, 'patrimonio_bens');
+}
 
 function Modal({ open, onClose, title, children, footer }) {
   if (!open) return null;
@@ -811,6 +830,7 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
         <Button variant="outline" onClick={() => setOrdenarAberto(o => !o)}>
           Ordenar {ordenacao !== 'padrao' ? `· ${ORDENACOES_BENS.find(o => o.key === ordenacao)?.label}` : ''} {ordenarAberto ? '▴' : '▾'}
         </Button>
+        <Button variant="outline" onClick={() => exportarBensCSV(bensOrdenados)}>Exportar CSV</Button>
         {isDiretor && <div style={{ marginLeft: 'auto' }}><Button onClick={onNew}>+ Novo Bem</Button></div>}
       </div>
 
