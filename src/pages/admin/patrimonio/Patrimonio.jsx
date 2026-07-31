@@ -769,7 +769,7 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
   const [ordenarAberto, setOrdenarAberto] = useState(false);
   const [ordenacao, setOrdenacao] = useState('padrao');
   const bensOrdenados = useMemo(() => ordenarBens(bens, ordenacao), [bens, ordenacao]);
-  const { pageItems: bensPag, paginacaoProps: bensPagProps, setPage: setBensPage } = usePaginacaoLocal(bensOrdenados, 25);
+  const { pageItems: bensPag, paginacaoProps: bensPagProps, setPage: setBensPage, setPageSize: setBensPageSize } = usePaginacaoLocal(bensOrdenados, 25);
   useEffect(() => { setBensPage(1); }, [ordenacao]);
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState('');
@@ -948,7 +948,7 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
           </table>
         </div>
       </div>
-      <Paginacao {...bensPagProps} itemLabel="bens" />
+      <Paginacao {...bensPagProps} itemLabel="bens" onPageSizeChange={setBensPageSize} />
 
       <BulkEditarModal open={modalBulkEditar} qtd={selecionados.size} categorias={categorias} locOptions={locOptions} responsaveis={responsaveis} busy={bulkBusy}
         onClose={() => setModalBulkEditar(false)}

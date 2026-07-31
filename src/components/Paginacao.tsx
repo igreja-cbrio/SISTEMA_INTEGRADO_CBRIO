@@ -14,6 +14,11 @@ export interface PaginacaoProps {
   /** Rótulo do item no resumo (ex.: "membros", "grupos"). Default "itens". */
   itemLabel?: string;
   className?: string;
+  /** Quando fornecido, mostra o seletor "Itens por página" (pedido do
+   *  usuário 2026-07-31). Omitir pra manter o comportamento antigo, sem seletor. */
+  onPageSizeChange?: (pageSize: number) => void;
+  /** Opções do seletor de itens por página. Default [25, 50, 100]. */
+  pageSizeOptions?: number[];
 }
 
 // Páginas a exibir: 1 … (atual-1, atual, atual+1) … última
@@ -38,9 +43,10 @@ function janelaDePaginas(atual: number, totalPaginas: number): (number | 'gap')[
  */
 export default function Paginacao({
   page, pageSize, total, onPageChange, itemLabel = 'itens', className,
+  onPageSizeChange, pageSizeOptions = [25, 50, 100],
 }: PaginacaoProps) {
   const totalPaginas = Math.max(1, Math.ceil(total / pageSize));
-  if (totalPaginas <= 1) return null;
+  if (totalPaginas <= 1 && !onPageSizeChange) return null;
 
   const inicio = total === 0 ? 0 : (page - 1) * pageSize + 1;
   const fim = Math.min(page * pageSize, total);
@@ -49,11 +55,26 @@ export default function Paginacao({
 
   return (
     <div className={cn('flex flex-col sm:flex-row items-center justify-between gap-3 pt-4', className)}>
-      <p className="text-xs text-muted-foreground order-2 sm:order-1">
-        Mostrando <span className="font-medium text-foreground">{inicio}</span>
-        –<span className="font-medium text-foreground">{fim}</span> de{' '}
-        <span className="font-medium text-foreground">{total}</span> {itemLabel}
-      </p>
+      <div className="flex items-center gap-3 order-2 sm:order-1">
+        <p className="text-xs text-muted-foreground">
+          Mostrando <span className="font-medium text-foreground">{inicio}</span>
+          –<span className="font-medium text-foreground">{fim}</span> de{' '}
+          <span className="font-medium text-foreground">{total}</span> {itemLabel}
+        </p>
+        {onPageSizeChange && (
+          <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            Por página:
+            <select
+              className="h-7 rounded-md border border-input bg-background px-1.5 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              value={pageSize}
+              onChange={(e) => onPageSizeChange(Number(e.target.value))}
+            >
+              {pageSizeOptions.map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+          </label>
+        )}
+      </div>
+      {totalPaginas > 1 && (
       <div className="flex items-center gap-1 order-1 sm:order-2">
         <Button
           variant="outline" size="icon" className="h-8 w-8"
@@ -82,6 +103,7 @@ export default function Paginacao({
           <ChevronRight className="h-4 w-4" />
         </Button>
       </div>
+      )}
     </div>
   );
 }
@@ -95,9 +117,16 @@ export default function Paginacao({
  *   const { pageItems, paginacaoProps } = usePaginacaoLocal(listaFiltrada, 25);
  *   ...pageItems.map(...)
  *   <Paginacao {...paginacaoProps} itemLabel="membros" />
+ *
+ * Pra oferecer o seletor "itens por página" (25/50/100), passe também
+ * `onPageSizeChange={setPageSize}` no <Paginacao> (opt-in explícito — quem
+ * não passar mantém o comportamento antigo, sem seletor):
+ *   const { pageItems, paginacaoProps, setPageSize } = usePaginacaoLocal(lista, 25);
+ *   <Paginacao {...paginacaoProps} itemLabel="bens" onPageSizeChange={setPageSize} />
  */
-export function usePaginacaoLocal<T>(items: T[], pageSize = 25) {
+export function usePaginacaoLocal<T>(items: T[], pageSizeInicial = 25) {
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSizeState] = useState(pageSizeInicial);
   const total = items.length;
   const totalPaginas = Math.max(1, Math.ceil(total / pageSize));
 
@@ -112,12 +141,17 @@ export function usePaginacaoLocal<T>(items: T[], pageSize = 25) {
     [items, safePage, pageSize],
   );
 
+  // Trocar o tamanho da página sempre volta pra página 1 — senão a página 4
+  // de 25 vira um índice sem sentido quando o tamanho muda pra 100.
+  const setPageSize = (novoPageSize: number) => { setPageSizeState(novoPageSize); setPage(1); };
+
   return {
     page: safePage,
     setPage,
     pageItems,
     total,
     pageSize,
+    setPageSize,
     paginacaoProps: { page: safePage, pageSize, total, onPageChange: setPage } as PaginacaoProps,
   };
 }
