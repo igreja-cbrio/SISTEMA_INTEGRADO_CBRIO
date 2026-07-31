@@ -23,6 +23,68 @@ const TEMPLATE_LANG = process.env.WHATSAPP_TEMPLATE_LANG || 'pt_BR';
 // Backoff por tentativa (minutos): 30m → 2h → 6h → 12h → 24h.
 const BACKOFF_MIN = [30, 120, 360, 720, 1440];
 
+// ⚠️ NÃO DESISTIR ANTES DA JANELA DA META VIRAR (achado de 31/07/2026).
+// A soma do backoff das 5 tentativas coloca a ÚLTIMA em t+20,5h da 1ª falha —
+// e o teto do TIER_250 é uma janela MÓVEL de 24h. Cenário real do domingo de
+// abertura: teto estoura às 11h (os 1ºs envios foram 9h, então a cota só começa
+// a liberar 9h de segunda) → as 5 tentativas caem 11:00, 11:30, 13:30, 19:30 e
+// 07:30 de segunda → a linha morria às 07:30, 1h30 ANTES de a cota liberar. Ou
+// seja: a pessoa se inscrevia e o líder NUNCA recebia o link, e o plano do
+// Marcos ("estourou o dia, sai no dia seguinte") não se cumpria.
+// Correção: acabar as tentativas NÃO é motivo pra desistir enquanto a linha for
+// mais nova que isto — segue pendente com nova tentativa a cada hora (o cron
+// roda de hora em hora). Erro PERMANENTE continua desistindo na 1ª falha.
+const IDADE_MIN_DESISTIR_H = 36;
+const RETRY_APOS_ESGOTAR_MIN = 60;
+
+// Rajada: quando a cota libera, o cron drena a fila de uma vez. Pessoa recebe 1
+// mensagem, mas um LÍDER com N pedidos represados receberia N templates
+// idênticos em segundos — que é exatamente o padrão que a Meta lê como spam e
+// derruba a nota de qualidade (a nota é o que decide a subida de tier que a
+// igreja quer). Máx 2 por telefone por rodada: 8 pedidos drenam em 4 horas.
+const MAX_POR_TELEFONE_POR_RODADA = 2;
+
+// Decisão de retry isolada em função PURA — é ela que decide se a pessoa recebe
+// o link ou não, então precisa ser testável sem banco nem Meta.
+// Devolve { status, tentativas, backoffMin, terminal }.
+function decidirRetry({ reason, tentativas, maxTentativas, idadeHoras, permanente }) {
+  // 'disabled' (env desligada no meio do caminho) nunca queima tentativa —
+  // a linha espera o cron com a env de volta.
+  if (reason === 'disabled') {
+    return { status: 'pendente', tentativas, backoffMin: BACKOFF_MIN[0], terminal: false };
+  }
+  const n = tentativas + 1;
+  if (permanente) return { status: 'erro', tentativas: n, backoffMin: BACKOFF_MIN[0], terminal: true };
+
+  const acabaramTentativas = n >= (maxTentativas || 5);
+  if (acabaramTentativas && idadeHoras >= IDADE_MIN_DESISTIR_H) {
+    return { status: 'erro', tentativas: n, backoffMin: BACKOFF_MIN[0], terminal: true };
+  }
+  if (acabaramTentativas) {
+    // Ainda dentro da janela em que faz sentido esperar a cota liberar.
+    return { status: 'pendente', tentativas: n, backoffMin: RETRY_APOS_ESGOTAR_MIN, terminal: false };
+  }
+  return {
+    status: 'pendente',
+    tentativas: n,
+    backoffMin: BACKOFF_MIN[Math.min(Math.max(n - 1, 0), BACKOFF_MIN.length - 1)],
+    terminal: false,
+  };
+}
+
+// Máx N por telefone por rodada, preservando a ordem (mais antigo primeiro).
+function limitarPorTelefone(pendentes, max = MAX_POR_TELEFONE_POR_RODADA) {
+  const conta = new Map();
+  const saida = [];
+  for (const p of pendentes || []) {
+    const k = String(p.telefone || '');
+    const n = (conta.get(k) || 0) + 1;
+    conta.set(k, n);
+    if (n <= max) saida.push(p);
+  }
+  return saida;
+}
+
 // Erro PERMANENTE não ganha retry: reenviar não muda o resultado (telefone
 // inválido/rejeitado, template inexistente, param errado). O retry com
 // backoff fica só pra falha passageira — o teto diário da Meta, que é o
@@ -112,24 +174,28 @@ async function tentarEnvio(id) {
     return { sent: true, messageId: r.messageId || null };
   }
 
-  // 'disabled' (env desligada no meio do caminho) não queima tentativa —
-  // a linha espera o cron com a env de volta.
   const razao = r.reason === 'api_error'
     ? (r.detail?.error?.message || `HTTP ${r.status || '?'}`)
     : (r.reason || 'erro_desconhecido');
-  const tentativas = r.reason === 'disabled' ? (e.tentativas || 0) : (e.tentativas || 0) + 1;
-  const permanente = r.reason !== 'disabled' && falhaPermanente(r);
-  const esgotou = r.reason !== 'disabled' && (permanente || tentativas >= (e.max_tentativas || 5));
-  const backoffMin = BACKOFF_MIN[Math.min(Math.max(tentativas - 1, 0), BACKOFF_MIN.length - 1)];
+  const idadeHoras = e.criado_em
+    ? (Date.now() - new Date(e.criado_em).getTime()) / 3600000
+    : 0;
+  const d = decidirRetry({
+    reason: r.reason,
+    tentativas: e.tentativas || 0,
+    maxTentativas: e.max_tentativas || 5,
+    idadeHoras,
+    permanente: falhaPermanente(r),
+  });
 
   await supabase.from('whatsapp_envios').update({
-    status: esgotou ? 'erro' : 'pendente',
-    tentativas,
+    status: d.status,
+    tentativas: d.tentativas,
     erro: String(razao).slice(0, 500),
-    proxima_tentativa_em: new Date(Date.now() + backoffMin * 60000).toISOString(),
+    proxima_tentativa_em: new Date(Date.now() + d.backoffMin * 60000).toISOString(),
   }).eq('id', id);
 
-  if (esgotou) await avisarFalhaTerminal(e, razao);
+  if (d.terminal) await avisarFalhaTerminal(e, razao);
 
   return { sent: false, reason: razao };
 }
@@ -179,19 +245,32 @@ async function processarFila({ limite = 200 } = {}) {
   if (!configurado()) return { processados: 0, enviados: 0, motivo: 'disabled' };
   const agora = new Date().toISOString();
   const { data: pendentes, error } = await supabase.from('whatsapp_envios')
-    .select('id')
+    .select('id, telefone')
     .eq('status', 'pendente')
     .lte('proxima_tentativa_em', agora)
     .order('criado_em', { ascending: true })
     .limit(limite);
   if (error) return { processados: 0, enviados: 0, erro: error.message };
 
+  // Suaviza a rajada por destinatário (ver MAX_POR_TELEFONE_POR_RODADA). O que
+  // ficou de fora não perde a vez: segue pendente e vencido, entra na próxima
+  // hora — e como veio ordenado por criado_em, o mais antigo é o que passa.
+  const naRodada = limitarPorTelefone(pendentes || []);
   let enviados = 0;
-  for (const p of pendentes || []) {
+  for (const p of naRodada) {
     const r = await tentarEnvio(p.id);
     if (r.sent) enviados += 1;
   }
-  return { processados: (pendentes || []).length, enviados };
+  return {
+    processados: naRodada.length,
+    enviados,
+    adiadosPorTelefone: (pendentes || []).length - naRodada.length,
+  };
 }
 
-module.exports = { enfileirar, enfileirarLote, processarFila, tentarEnvio };
+module.exports = {
+  enfileirar, enfileirarLote, processarFila, tentarEnvio,
+  // Puras — exportadas pro teste (decidem se a pessoa recebe o link ou não).
+  decidirRetry, limitarPorTelefone, falhaPermanente,
+  IDADE_MIN_DESISTIR_H, MAX_POR_TELEFONE_POR_RODADA, BACKOFF_MIN,
+};
