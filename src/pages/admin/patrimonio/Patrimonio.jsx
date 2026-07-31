@@ -74,8 +74,10 @@ function ordenarBens(lista, chave) {
   }
 }
 
+// Label "Doação" pro tipo 'saida' (pedido do usuário 2026-07-31) — só o texto
+// exibido muda; a chave/valor no banco continua 'saida' (não é migration).
 const TIPO_MOV = {
-  entrada: 'Entrada', saida: 'Saída', transferencia: 'Transferência',
+  entrada: 'Entrada', saida: 'Doação', transferencia: 'Transferência',
   manutencao: 'Manutenção', baixa: 'Baixa',
 };
 
