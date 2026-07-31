@@ -2016,6 +2016,37 @@ abre lá para quem não tem geolocalização.
 `00000031` "Grupo de Conexão RJ, Floripa, SP - OnLine" (online, segue sem
 coordenada, correto). Filtrar por nome aqui pega os dois — usar código.
 
+### ✅ Pinos empilhados RESOLVIDOS na exibição (2026-07-31 · `src/lib/pinosMapa.ts`)
+
+Decisão do Marcos: *"não vou ter o CEP dessas pessoas, consegue separar um pouco,
+na mesma rua, coloca mais a frente outro mais atrás — é o que podemos fazer,
+depois fazemos um levantamento cadastral."*
+
+**Números reais medidos antes de mexer (a nota anterior de "3 grupos do Recreio"
+subestimava): 19 grupos empilhados em 5 coordenadas**, entre os 81 visíveis na
+busca pública — a maior pilha com **7 grupos** no mesmo ponto da Barra
+(`-23.00149,-43.38804`), mais 4 no Recreio, 4 na Barra, e 2 pares.
+
+`espalharPinosSobrepostos` (`src/lib/pinosMapa.ts`) agrupa por coordenada
+arredondada a 5 casas (≈1 m) e, quando há colisão, distribui os pinos numa
+**roseta** de raio 45 m (~meia quadra · anéis de 6, raio crescente). O balão
+ganha "Localização aproximada — confirme o endereço com o líder".
+
+- ⚠️ **É SÓ EXIBIÇÃO** — `mem_grupos.lat/lng` não é tocado. A coordenada guardada
+  segue honesta ("centro do bairro"); gravar precisão inventada faria o
+  levantamento cadastral futuro perder a distinção entre endereço real e chute.
+- ⚠️ **Determinístico** (ordena por id): pino que muda de lugar a cada refresh é
+  pior que pino empilhado — a pessoa perde o que já tinha achado. Guarda
+  mutation-testada em `src/test/espalharPinos.test.ts`.
+- ⚠️ **A coordenada deslocada NÃO pode vazar do render**: `onGroupSelect`,
+  `onPinClick` e o "Como chegar" recebem sempre o grupo ORIGINAL (`origPorId`);
+  só o desenho do marcador e o `flyTo` usam a posição deslocada (`posPorId`).
+- ⚠️ Vive em `src/lib` e não no componente porque `GruposMapView` importa
+  `maplibre-gl`, que não carrega em jsdom — função pura em lib é testável.
+- ⚠️ Neste arquivo **`Map` é o COMPONENTE do maplibre** (import do topo), não o
+  `Map` do JS: `new Map<...>()` ali é erro de tipo (TS2350/TS2558). Os índices
+  por id são objetos (`Record<string, MapGroup>`) de propósito.
+
 ### ⚠️ Quem RECEBE a mensagem do grupo = `mem_grupos.lider_id`, e é UM só (2026-07-31)
 
 Pergunta do Marcos na véspera: *"temos muitos líderes em um mesmo grupo, mas
@@ -2148,6 +2179,50 @@ pra revisão da Meta e o envio para; criar `_v2`, aprovar em paralelo e trocar
 o default/env. Os v1 (`grupos_pedido_novo_lider`/`grupos_pedido_aprovado`)
 podem ser excluídos na Meta após confirmar envio real com os v2. Envs
 `WHATSAPP_TEMPLATE_GRUPOS_PEDIDO_LIDER`/`_APROVADO` seguem como override.
+
+## ⚠️ Fila WhatsApp · a fila NÃO PODE desistir antes da janela da Meta virar (2026-07-31)
+
+Marcos, sobre o TIER_250 na véspera da abertura: *"quero que você analise isso
+bem, para não dar problemas de travar inscrições, ou de mandar várias mensagens
+em sequência no dia seguinte."* As duas coisas foram medidas:
+
+**1 · Inscrição NÃO trava** ✅ — o bloco de WhatsApp do `POST /inscrever` está
+dentro de `try/catch` que só loga, e `enfileirar` devolve objeto (nunca lança),
+inclusive no teto. Teto estourado ⇒ a pessoa é inscrita e vê sucesso; só a
+mensagem espera.
+
+**2 · Mas a mensagem MORRIA antes de a cota liberar** 🔴 (corrigido aqui). O
+backoff `[30m, 2h, 6h, 12h, 24h]` com `max_tentativas=5` coloca a 5ª e última
+tentativa em **t+20,5h da 1ª falha** — e o teto do TIER_250 é uma janela **móvel
+de 24h**. Cenário do domingo: teto estoura 11h (1ºs envios às 9h ⇒ cota só começa
+a liberar 9h de segunda) → tentativas às 11:00, 11:30, 13:30, 19:30 e **07:30 de
+segunda**, todas dentro do bloqueio → linha vira `erro` **1h30 antes de a cota
+liberar**. Resultado: pessoa inscrita e **líder nunca recebe o link**. O plano
+"estourou o dia, sai no dia seguinte" não se cumpria.
+→ `decidirRetry` (função PURA, exportada e testada): **acabar as tentativas não é
+motivo pra desistir** enquanto a linha for mais nova que `IDADE_MIN_DESISTIR_H`
+(36h > 24h da Meta, com folga) — segue `pendente` tentando a cada hora. Erro
+PERMANENTE continua desistindo na 1ª falha (não virou "tenta pra sempre").
+
+**3 · Rajada por destinatário** — quando a cota libera, o cron drena tudo numa
+rodada. Cada PESSOA recebe 1 mensagem, mas um LÍDER com N pedidos represados
+receberia N templates idênticos em segundos, que é o padrão que a Meta lê como
+spam e **derruba a nota de qualidade — a nota é o que decide a subida de tier que
+a igreja quer**. `limitarPorTelefone` deixa **máx 2 por telefone por rodada** (8
+pedidos drenam em 4h); quem sobra não perde a vez (segue pendente e vencido, e a
+ordem é `criado_em` ASC). `processarFila` devolve `adiadosPorTelefone`.
+
+⚠️ **Correção de conta sobre o TIER_250**: o limite da Meta é de **destinatários
+ÚNICOS** por janela de 24h — mensagem repetida pro MESMO número dentro da janela
+**não consome cota nova**. Então a capacidade não é "250 ÷ 2 = 125 inscrições"
+(que assume 1 líder novo por inscrição): é ≈ `250 − (líderes distintos
+contatados)` inscrições, e só conta pessoa com **opt-in** (quem recusou não gasta
+cota). Com pedidos espalhados por ~60 grupos, dá ~190 inscrições/dia, não 125.
+Não é motivo pra relaxar: é a ordem de grandeza certa pra decidir no domingo.
+
+⚠️ Cron da fila = `0 * * * *` (horário) · cap 200/rodada · `maxDuration: 300`
+(200 envios sequenciais ≈ 80s, cabe). Testes: `src/test/whatsappFilaRetry.test.ts`
+(13 casos · a guarda das 36h é mutation-testada).
 
 ## Fila WhatsApp · política de reenvio + falha avisa gente (2026-07-27)
 

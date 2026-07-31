@@ -17,6 +17,7 @@ import { Map, MapMarker, MarkerContent, MarkerPopup, MapControls, useMap } from 
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { espalharPinosSobrepostos } from "@/lib/pinosMapa";
 import { AbrirRotaMenu } from "@/components/grupos/AbrirRotaMenu";
 // Régua ÚNICA de busca (acento/caixa/espaço) · espelho de backend/services/busca.js
 import { normalizarBusca, contemNormalizado } from "@/lib/busca";
@@ -64,6 +65,9 @@ export interface MapGroup {
   temporada?: string | null;
   complemento?: string | null;
   descricao?: string | null;
+  /** Só EXIBIÇÃO: pino deslocado porque vários grupos compartilham a mesma
+   *  coordenada (centróide de bairro). Ver espalharPinosSobrepostos. */
+  pinoAproximado?: boolean;
 }
 
 interface Coords {
@@ -231,7 +235,37 @@ export function GruposMapView({
     });
   }, [grupos, search, filterCat, filterBairro]);
 
-  const withCoords = filtered.filter((g) => g.lat != null && g.lng != null);
+  const withCoords = useMemo(
+    () => espalharPinosSobrepostos(filtered.filter((g) => g.lat != null && g.lng != null)),
+    [filtered]
+  );
+
+  // ⚠️ `Map` neste arquivo é o COMPONENTE do maplibre (import no topo), não o
+  // Map do JS — por isso os índices abaixo são objetos, não `new Map()`.
+  //
+  // Posição EXIBIDA do grupo (pode estar deslocada — ver
+  // espalharPinosSobrepostos). Clicar na lista tem que voar pro pino que a
+  // pessoa VÊ, não pra coordenada crua embaixo da pilha.
+  const posPorId = useMemo(() => {
+    const m: Record<string, MapGroup> = {};
+    withCoords.forEach((g) => { m[g.id] = g; });
+    return m;
+  }, [withCoords]);
+
+  // O grupo ENTREGUE ao chamador é sempre o original (coordenada crua do
+  // banco): a posição deslocada é de desenho e não pode vazar pra quem
+  // seleciona o grupo (inscrição, totem).
+  const origPorId = useMemo(() => {
+    const m: Record<string, MapGroup> = {};
+    filtered.forEach((g) => { m[g.id] = g; });
+    return m;
+  }, [filtered]);
+
+  // Balão/cartão do pino: dado ORIGINAL + o aviso de posição aproximada.
+  const infoDoPino = (g: MapGroup): MapGroup => ({
+    ...(origPorId[g.id] ?? g),
+    pinoAproximado: g.pinoAproximado,
+  });
 
   // Initial center: member coords > first group with coords > Rio default
   const initialCenter: [number, number] = memberCoords
@@ -242,9 +276,10 @@ export function GruposMapView({
 
   const handleSelectFromList = (g: MapGroup) => {
     if (g.lat == null || g.lng == null) return;
+    const alvo = posPorId[g.id] ?? g;
     setActiveId(g.id);
-    flyTargetRef.current = g;
-    setFlyTarget({ ...g });
+    flyTargetRef.current = alvo;
+    setFlyTarget({ ...alvo });
   };
 
   const themeBg = theme === "dark" ? "bg-gray-950 text-white" : "bg-white text-gray-900";
@@ -492,7 +527,7 @@ export function GruposMapView({
               key={g.id}
               longitude={g.lng!}
               latitude={g.lat!}
-              onClick={() => { setActiveId(g.id); onPinClick?.(g); }}
+              onClick={() => { setActiveId(g.id); onPinClick?.(origPorId[g.id] ?? g); }}
             >
               <MarkerContent>
                 <GroupPin active={activeId === g.id} />
@@ -502,7 +537,7 @@ export function GruposMapView({
               {!isMobile && (
                 <MarkerPopup>
                   <GrupoInfo
-                    g={g}
+                    g={infoDoPino(g)}
                     onGroupSelect={onGroupSelect}
                     onGroupSelectLabel={onGroupSelectLabel}
                     mostrarBotaoInscricao={mostrarBotaoInscricao}
@@ -517,8 +552,9 @@ export function GruposMapView({
               PINADO no rodapé do cartão — sempre visível sem rolar; só o
               texto (descrição etc.) rola quando não cabe. */}
           {isMobile && (() => {
-            const ativo = withCoords.find((g) => g.id === activeId);
-            if (!ativo) return null;
+            const pino = withCoords.find((g) => g.id === activeId);
+            if (!pino) return null;
+            const ativo = infoDoPino(pino);
             return (
               <div
                 className={cn(
@@ -661,6 +697,13 @@ function GrupoInfo({
       )}
       {g.descricao && (
         <p className="text-xs text-muted-foreground line-clamp-3">{g.descricao}</p>
+      )}
+      {/* Pino deslocado pra não empilhar: dizer que é aproximado é o honesto —
+          a pessoa não pode achar que o pino é a porta da casa. */}
+      {g.pinoAproximado && (
+        <p className="text-[11px] text-amber-600 dark:text-amber-400">
+          Localização aproximada — confirme o endereço com o líder.
+        </p>
       )}
       {g.dist != null && (
         <p className="text-xs text-[#00B39D] font-medium">
