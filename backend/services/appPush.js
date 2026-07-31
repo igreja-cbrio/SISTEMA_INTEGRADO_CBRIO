@@ -5,6 +5,16 @@
 // webpush.js/VAPID).
 const { supabase } = require('../utils/supabase');
 
+function safeText(value, max = 500) {
+  return value == null ? null : String(value).replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, max) || null;
+}
+
+async function persistExpoTickets(items) {
+  if (!items.length) return;
+  const { error } = await supabase.from('system_mobile_push_tickets').insert(items);
+  if (error) console.warn('[appPush] histórico de tickets:', error.message);
+}
+
 // Resolve membro_id -> user_id (profiles.id) quando vier por membro.
 async function membrosParaUsuarios(membroIds) {
   if (!membroIds?.length) return [];
@@ -21,12 +31,17 @@ async function pushExpoParaUsers(userIds, { title, body, data } = {}) {
     const ids = [...new Set((userIds || []).filter(Boolean))];
     if (!ids.length || !title) return { enviados: 0 };
 
-    const { data: toks } = await supabase.from('app_push_tokens').select('token').in('user_id', ids);
-    const tokens = [...new Set((toks || []).map((t) => t.token).filter(Boolean))];
+    const { data: toks } = await supabase.from('app_push_tokens').select('token,platform').in('user_id', ids);
+    const seen = new Set();
+    const tokens = (toks || []).filter((item) => {
+      if (!item.token || seen.has(item.token)) return false;
+      seen.add(item.token);
+      return true;
+    });
     if (!tokens.length) return { enviados: 0 };
 
-    const messages = tokens.map((to) => ({
-      to,
+    const messages = tokens.map((item) => ({
+      to: item.token,
       sound: 'cbrio-chime.wav',
       channelId: 'default',
       title,
@@ -34,14 +49,45 @@ async function pushExpoParaUsers(userIds, { title, body, data } = {}) {
       data: data || {},
     }));
 
+    let aceitos = 0;
+    let erros = 0;
     for (let i = 0; i < messages.length; i += 100) {
-      await fetch('https://exp.host/--/api/v2/push/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(messages.slice(i, i + 100)),
-      }).catch((e) => console.error('[appPush] Expo:', e.message));
+      const chunk = messages.slice(i, i + 100);
+      const chunkTokens = tokens.slice(i, i + 100);
+      try {
+        const response = await fetch('https://exp.host/--/api/v2/push/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify(chunk),
+        });
+        const payload = await response.json().catch(() => ({}));
+        const tickets = Array.isArray(payload?.data) ? payload.data : [];
+        const rows = chunkTokens.map((token, index) => {
+          const ticket = tickets[index] || {};
+          const accepted = response.ok && ticket.status === 'ok' && ticket.id;
+          if (accepted) aceitos += 1;
+          else erros += 1;
+          return {
+            provider_ticket_id: accepted ? safeText(ticket.id, 160) : null,
+            platform: ['android', 'ios'].includes(String(token.platform).toLowerCase()) ? String(token.platform).toLowerCase() : 'unknown',
+            ticket_status: accepted ? 'accepted' : 'error',
+            ticket_error_code: accepted ? null : safeText(ticket.details?.error || payload?.errors?.[0]?.code || `HTTP_${response.status}`, 120),
+            ticket_error_message: accepted ? null : safeText(ticket.message || payload?.errors?.[0]?.message, 500),
+          };
+        });
+        await persistExpoTickets(rows);
+      } catch (error) {
+        erros += chunk.length;
+        console.error('[appPush] Expo:', error.message);
+        await persistExpoTickets(chunkTokens.map((token) => ({
+          platform: ['android', 'ios'].includes(String(token.platform).toLowerCase()) ? String(token.platform).toLowerCase() : 'unknown',
+          ticket_status: 'error',
+          ticket_error_code: 'NETWORK_ERROR',
+          ticket_error_message: safeText(error.message, 500),
+        })));
+      }
     }
-    return { enviados: messages.length };
+    return { enviados: messages.length, aceitos, erros };
   } catch (e) {
     console.error('[appPush] pushExpoParaUsers erro:', e.message);
     return { enviados: 0 };

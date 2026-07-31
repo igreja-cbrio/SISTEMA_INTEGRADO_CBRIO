@@ -4,8 +4,10 @@ import "./index.css";
 import { initSentry, Sentry } from "./lib/sentry";
 import { useState } from "react";
 import { reloadForAppUpdate } from "./lib/appUpdate";
+import { initWebVitals } from "./lib/webVitals";
 
 initSentry();
+initWebVitals();
 
 function FallbackError() {
   const [updating, setUpdating] = useState(false);

@@ -133,7 +133,9 @@ async function request(path, opts = {}) {
       no_token:       'Sessão expirada. Faça login novamente.',
       invalid_token:  'Sua sessão expirou. Redirecionando para o login...',
     };
-    throw new Error(reasonMsg[body.reason] || body.error || 'Não autorizado. Verifique se o backend está configurado corretamente.');
+    const error = new Error(reasonMsg[body.reason] || body.error || 'Não autorizado. Verifique se o backend está configurado corretamente.');
+    error.requestId = res.headers.get('x-request-id') || body.request_id || null;
+    throw error;
   }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: 'Erro desconhecido' }));
@@ -141,6 +143,7 @@ async function request(path, opts = {}) {
     // Preserve all extra fields from error body (alreadyCheckedIn, volunteerName, etc.)
     Object.assign(error, err);
     error.status = res.status;
+    error.requestId = res.headers.get('x-request-id') || err.request_id || null;
     throw error;
   }
   return res.json();
@@ -1725,6 +1728,32 @@ export const notificacoes = {
 export const appAnalytics = {
   resumo: (dias = 14) => get(`/app-analytics/resumo?dias=${dias}`),
   aoVivo: () => get('/app-analytics/ao-vivo'),
+};
+
+// Command center técnico · somente super-admin.
+export const sistema = {
+  fundacao: () => get('/sistema/fundacao'),
+  overview: (hours = 24) => get(`/sistema/overview?hours=${hours}`),
+  runs: (params = {}) => get('/sistema/jobs/runs?' + new URLSearchParams(
+    Object.entries(params).filter(([, value]) => value != null && value !== '')
+  )),
+  incidents: (params = {}) => get('/sistema/incidents?' + new URLSearchParams(
+    Object.entries(params).filter(([, value]) => value != null && value !== '')
+  )),
+  createIncident: (data) => post('/sistema/incidents', data),
+  updateIncident: (id, data) => patch(`/sistema/incidents/${id}`, data),
+  incidentEvents: (id) => get(`/sistema/incidents/${id}/events`),
+  addIncidentNote: (id, message) => post(`/sistema/incidents/${id}/notes`, { message }),
+  webErrors: (limit = 100) => get(`/sistema/web/errors?limit=${limit}`),
+  webCommandCenter: (hours = 24 * 7) => get(`/sistema/web/command-center?hours=${hours}`),
+  runWebSynthetics: () => post('/sistema/web/synthetics/run', {}),
+  mobileCommandCenter: (platform, days = 14) => get(`/sistema/mobile/command-center?platform=${encodeURIComponent(platform)}&days=${days}`),
+  refreshMobilePushReceipts: () => post('/sistema/mobile/push/receipts/refresh', {}),
+  governanceCommandCenter: () => get('/sistema/governance/command-center'),
+  updateGovernanceControl: (controlKey, data) => patch(`/sistema/governance/controls/${encodeURIComponent(controlKey)}`, data),
+  feedback: (params = {}) => get('/sistema/feedback?' + new URLSearchParams(
+    Object.entries(params).filter(([, value]) => value != null && value !== '')
+  )),
 };
 
 // Comunicados / Mural (criados no Marketing → app)

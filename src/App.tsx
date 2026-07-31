@@ -185,6 +185,7 @@ const SolicitacoesFluxo = lazyWithRetry(() => import('./pages/admin/Solicitacoes
 const PermissoesAdmin = lazyWithRetry(() => import('./pages/admin/Permissoes'));
 const FeedbackAdmin = lazyWithRetry(() => import('./pages/admin/Feedback'));
 const AppAnalytics = lazyWithRetry(() => import('./pages/admin/AppAnalytics'));
+const Sistema = lazyWithRetry(() => import('./pages/sistema/Sistema'));
 const MeusKpis = lazyWithRetry(() => import('./pages/MeusKpis'));
 const Painel = lazyWithRetry(() => import('./pages/Painel'));
 // /painel/kpi/:id removido na Fase 2.5F — agora detalhe abre como modal (KpiDetalheModal)
@@ -358,7 +359,19 @@ function MemberOnlyRedirect({ children }: { children: ReactNode }) {
 function SuperAdminGuard({ children }: { children: ReactNode }) {
   const auth = useAuth() as Record<string, unknown>;
   if (auth.loading) return <Loading />;
-  if (!auth.isSuperAdmin) return <Navigate to="/dashboard" replace />;
+  if (!auth.isSuperAdmin) {
+    const email = (auth.user as { email?: string } | null)?.email;
+    return (
+      <div className="mx-auto max-w-2xl px-4 py-16">
+        <div className="rounded-2xl border border-amber-300/50 bg-amber-50 p-6 text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
+          <h1 className="text-xl font-semibold">Acesso restrito ao Sistema</h1>
+          <p className="mt-2 text-sm leading-6 opacity-80">Esta área exige cadastro ativo em app_super_admins. Ser admin ou diretor não libera o command center técnico.</p>
+          {email && <p className="mt-3 rounded-lg border border-current/15 px-3 py-2 font-mono text-xs">Conta atual: {email}</p>}
+          <a href="/dashboard" className="mt-5 inline-flex min-h-10 items-center rounded-md bg-amber-900 px-4 text-sm font-medium text-white dark:bg-amber-200 dark:text-amber-950">Voltar ao painel</a>
+        </div>
+      </div>
+    );
+  }
   return <>{children}</>;
 }
 
@@ -706,6 +719,7 @@ function AppRoutes() {
         <Route path="/admin/permissoes" element={<Suspense fallback={<Loading />}><PermissoesAdmin /></Suspense>} />
         <Route path="/admin/feedback" element={<Suspense fallback={<Loading />}><FeedbackAdmin /></Suspense>} />
         <Route path="/admin/app-analytics" element={<SuperAdminGuard><Suspense fallback={<Loading />}><AppAnalytics /></Suspense></SuperAdminGuard>} />
+        <Route path="/sistema" element={<SuperAdminGuard><Suspense fallback={<Loading />}><Sistema /></Suspense></SuperAdminGuard>} />
         {/* Bot WhatsApp virou aba dentro de Comunicação */}
         <Route path="/admin/whatsapp" element={<Navigate to="/comunicacao?tab=bot" replace />} />
         {/* Apresentações: módulo desativado (2026-07-06 · pedido do Matheus) — rota redireciona */}

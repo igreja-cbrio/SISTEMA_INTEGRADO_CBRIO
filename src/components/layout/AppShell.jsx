@@ -96,9 +96,10 @@ const NAV_ITEMS = [
       {
         title: 'Configurações',
         items: [
+          { label: 'Sistema', description: 'Centro de controle técnico, automações, integrações e releases', icon: Settings, path: '/sistema', superAdminOnly: true },
           { label: 'Permissões', description: 'Matriz cargo × módulo + usuários (cargo, áreas, overrides)', icon: Shield, path: '/admin/permissoes', perm: 'isAdmin' },
-          { label: 'Feedback do piloto', description: 'Reportes dos testadores + erros capturados durante os testes', icon: Activity, path: '/admin/feedback', perm: 'isAdmin' },
-          { label: 'Analytics do App', description: 'Painel ao vivo (online agora, cadastros) + uso e erros do app', icon: MonitorSmartphone, path: '/admin/app-analytics', superAdminOnly: true },
+          { label: 'Feedback do piloto', description: 'Reportes dos testadores + erros capturados durante os testes', icon: Activity, path: '/admin/feedback', perm: 'isAdmin', systemConsolidated: true },
+          { label: 'Analytics do App', description: 'Painel ao vivo (online agora, cadastros) + uso e erros do app', icon: MonitorSmartphone, path: '/admin/app-analytics', superAdminOnly: true, systemConsolidated: true },
         ],
       },
     ],
@@ -123,8 +124,8 @@ const NAV_ITEMS = [
           { label: 'NPS', description: 'Pesquisas de satisfação geradas por IA · análise automática', icon: MessageSquare, path: '/nps', module: 'nps' },
           { label: 'Gestão (PMO)', description: 'Pulso · Estrutura OKR · Saúde · Configurar (admin)', icon: Settings, path: '/gestao', perm: 'isAdmin' },
           { label: 'Agentes & Auditoria', description: 'Fila de aprovação e agentes de auditoria · acesso restrito (devs)', icon: BrainCircuit, path: '/assistente-ia', perm: 'isDev' },
-          { label: 'WiFi', description: 'Visitantes do WiFi · frequência por culto e cruzamento com a membresia', icon: Wifi, path: '/wifi', module: 'wifi' },
-          { label: 'Reconhecimento Facial', description: 'Presença na entrada · membros identificados + rostos anônimos a resolver', icon: Camera, path: '/ministerial/reconhecimento-facial', module: 'face' },
+          { label: 'WiFi', description: 'Visitantes do WiFi · frequência por culto e cruzamento com a membresia', icon: Wifi, path: '/wifi', module: 'wifi', systemConsolidated: true },
+          { label: 'Reconhecimento Facial', description: 'Presença na entrada · membros identificados + rostos anônimos a resolver', icon: Camera, path: '/ministerial/reconhecimento-facial', module: 'face', systemConsolidated: true },
         ],
       },
     ],
@@ -219,7 +220,10 @@ export default function AppShell() {
   // Visibilidade de item de menu · navItemAllowed (src/lib/menuAccess) espelha
   // o ModuleGuard das rotas (src/App.tsx) e é compartilhado com a busca ⌘K
   // (CommandSearch), pra que um módulo inacessível nunca apareça em nenhum dos dois.
-  const itemAllowed = (item) => navItemAllowed(item, auth);
+  const itemAllowed = (item) => {
+    if (auth.isSuperAdmin === true && item.systemConsolidated) return false;
+    return navItemAllowed(item, auth);
+  };
 
   function sectionAllowed(section) {
     if (!section.roles) return true;
