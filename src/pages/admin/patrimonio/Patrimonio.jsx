@@ -31,6 +31,16 @@ const STATUS_BEM = {
   extraviado: { c: C.red, bg: C.redBg, label: 'Extraviado' },
 };
 
+// "mmm/aa" em vez de "aa/mm" (pedido do usuário 2026-07-31: o formato
+// anterior lia como se fosse dia/mês, no padrão brasileiro — confuso, e sem
+// jeito de distinguir de cara "13/07" (ano) de um dia 13 de julho).
+const MESES_ABREV = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+function formatarMesAno(mesISO) {
+  const [ano, mes] = mesISO.split('-');
+  const idx = Number(mes) - 1;
+  return `${MESES_ABREV[idx] || mes}/${ano.slice(2)}`;
+}
+
 const TIPO_MOV = {
   entrada: 'Entrada', saida: 'Saída', transferencia: 'Transferência',
   manutencao: 'Manutenção', baixa: 'Baixa',
@@ -424,7 +434,7 @@ function DashboardTab({ dash, indicadores, depreciacaoIndic, atividadeRecente, l
 
   const depreciacaoPorCategoria = depreciacaoIndic?.por_categoria || [];
   const bensFimVidaUtil = depreciacaoIndic?.bens_fim_vida_util || [];
-  const aquisicoesPorMes = (depreciacaoIndic?.aquisicoes_por_mes || []).map(m => ({ ...m, mesLabel: m.mes.slice(2).replace('-', '/') }));
+  const aquisicoesPorMes = (depreciacaoIndic?.aquisicoes_por_mes || []).map(m => ({ ...m, mesLabel: formatarMesAno(m.mes) }));
   const atividadePorTipo = (atividadeRecente?.por_tipo || []).map(t => ({ ...t, tipoLabel: TIPO_MOV[t.tipo] || t.tipo }));
 
   // Tooltip do recharts, explícito nas 3 propriedades (content/item/label) —
