@@ -10,6 +10,13 @@ const Anthropic = require('@anthropic-ai/sdk');
 
 const HUB_SITE_ID = 'infracbrio.sharepoint.com,04b50f10-ea32-40ba-84bd-44a3b38ee2a7,94fe6af6-f064-455d-afc5-67a377f5e82c';
 
+// Quanto texto vai pro PROMPT do Haiku (custo por documento) e quanto vai pro
+// ÍNDICE de busca (espaço em disco, que é barato). Eram o mesmo número — e como
+// o texto era descartado, de um relatório longo o sistema perdia tudo depois da
+// página 4. Separar custa nada e é o que faz a busca alcançar o documento todo.
+const MAX_CHARS_PROMPT = 15000;
+const MAX_CHARS_INDICE = 100000;
+
 const MAPA_VAULT = {
   'Gestão':       'gestao',
   'Criativo':     'criativo',
@@ -54,6 +61,39 @@ async function carregarRegrasDoSharePoint() {
   }
 }
 
+/**
+ * Guarda o texto do documento para a busca do assistente.
+ *
+ * BEST-EFFORT por decisão: o write primário (a nota no SharePoint + a fila
+ * atualizada) já aconteceu e não se desfaz porque o índice falhou. Se a
+ * migration `20260730220000` ainda não tiver sido aplicada, isto loga e segue —
+ * o Cérebro continua funcionando exatamente como antes.
+ *
+ * Upsert por `fila_id`: reprocessar o mesmo arquivo substitui a linha, sem
+ * duplicar e sem deixar texto velho para trás.
+ */
+async function indexarTexto(item, texto, notaPath) {
+  try {
+    if (!texto || texto.startsWith('[') || texto.trim().length < 50) return;
+    const { error } = await supabase.from('cerebro_doc_texto').upsert({
+      fila_id: item.id,
+      biblioteca: item.biblioteca || null,
+      nome_arquivo: item.nome_arquivo,
+      nota_path: notaPath || item.nota_path || null,
+      sharepoint_url: item.sharepoint_url || null,
+      hash_arquivo: item.hash_arquivo || null,
+      conteudo: texto,
+      indexado_em: new Date().toISOString(),
+    }, { onConflict: 'fila_id' });
+    // ⚠️ Só o comprimento no log, nunca o texto: ele pode conter salário, nome
+    // de pessoa em atendimento pastoral, dado de menor.
+    if (error) console.warn(`[CEREBRO] índice de texto falhou (${item.nome_arquivo}): ${error.message}`);
+    else console.log(`  [IDX] ${item.nome_arquivo} · ${texto.length} chars indexados`);
+  } catch (e) {
+    console.warn(`[CEREBRO] índice de texto falhou (${item.nome_arquivo}): ${e.message}`);
+  }
+}
+
 async function processarFila() {
   // Carregar regras atualizadas do SharePoint
   _cachedRegras = await carregarRegrasDoSharePoint();
@@ -81,8 +121,15 @@ async function processarFila() {
       const buffer = Buffer.from(await dlRes.arrayBuffer());
 
       // 2. Extrair texto ou preparar imagem
+      //
+      // ⚠️ Dois tetos diferentes de propósito: extraímos até MAX_CHARS_INDICE
+      // para GUARDAR, e mandamos só os primeiros MAX_CHARS_PROMPT pro Haiku.
+      // Antes havia um teto único de 15.000 e o texto era descartado — ou seja,
+      // de um relatório longo o sistema perdia tudo depois da página 4, para
+      // sempre. O custo do prompt não muda; o que muda é o que fica pesquisável.
       const mimeType = getMimeType(item.extensao);
-      const texto = await extractText(buffer, mimeType, item.nome_arquivo, 15000);
+      const texto = await extractText(buffer, mimeType, item.nome_arquivo, MAX_CHARS_INDICE);
+      const textoPrompt = texto.length > MAX_CHARS_PROMPT ? texto.slice(0, MAX_CHARS_PROMPT) : texto;
 
       // 3. Enviar pro Haiku classificar
       let messages;
@@ -96,7 +143,7 @@ async function processarFila() {
         await supabase.from('cerebro_fila').update({ status: 'ignorado', erro_mensagem: 'Sem conteúdo extraivel', processado_em: new Date().toISOString() }).eq('id', item.id);
         continue;
       } else {
-        messages = [{ role: 'user', content: buildPrompt(item) + '\n\nConteudo:\n---\n' + texto + '\n---' }];
+        messages = [{ role: 'user', content: buildPrompt(item) + '\n\nConteudo:\n---\n' + textoPrompt + '\n---' }];
       }
 
       const response = await client.messages.create({
@@ -124,6 +171,13 @@ async function processarFila() {
         tags: analise.tags || [], tokens_usados: analise.tokensUsados,
         processado_em: new Date().toISOString()
       }).eq('id', item.id);
+
+      // 7. Guardar o texto para a busca do assistente.
+      //
+      // ⚠️ DEPOIS do update de sucesso e em try/catch próprio: se propagasse, o
+      // arquivo viraria `erro`, voltaria pra fila e pagaria o Haiku de novo — um
+      // problema de índice não pode custar reprocessamento.
+      await indexarTexto(item, texto, notaPath);
 
       console.log(`  [OK] ${item.nome_arquivo} → ${notaPath}`);
       processados++;

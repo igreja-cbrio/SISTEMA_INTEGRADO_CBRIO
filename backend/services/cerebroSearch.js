@@ -45,13 +45,63 @@ const MAX_QUERY_TERMS = 5;
 
 /**
  * Retorna true se o usuário pode ver o conteúdo naquele módulo.
+ *
+ * ⚠️ FAIL-CLOSED (2026-07-30): origem sem routeKey mapeado NÃO é visível — só
+ * admin/diretor. Antes era `if (!routeKey) return true`, e isso é um gatilho
+ * armado, não um detalhe: `cerebro_config.bibliotecas_monitoradas` é uma STRING
+ * EDITÁVEL em runtime (routes/cerebro.js:78,153), sem deploy e sem PR. Bastava
+ * alguém acrescentar "Financas" ali para o resumo de todo documento financeiro
+ * entrar no prompt do assistente de qualquer autenticado.
+ *
+ * Medição de 30/07 antes de inverter: as 5 bibliotecas monitoradas (Gestão,
+ * Criativo, Ministerial, Planejamento, CRM e Pessoas) e as 5 pastas presentes em
+ * cerebro_entidades_indice estavam TODAS mapeadas — ou seja, não havia vazamento
+ * ativo e esta mudança não esconde nada que hoje aparece.
+ *
+ * O custo de fechar é o documento novo ficar invisível até alguém mapear a
+ * biblioteca. Por isso `avisarOrigemNaoMapeada` existe: fecha a porta E conta.
  */
 function canReadRouteKey(req, routeKey) {
   if (!req || !req.user) return false;
   if (['admin', 'diretor'].includes(req.user.role)) return true;
   if (routeKey === 'admin_only') return false;
-  if (!routeKey) return true;
+  if (!routeKey) return false;
   return getEffectiveLevel(req, routeKey) >= 2;
+}
+
+// Origens já avisadas nesta instância — evita repetir a notificação a cada
+// busca. Serverless recicla o processo, então o dedup real é o `chaveDedup`
+// por dia lá no notificar().
+const origensAvisadas = new Set();
+
+/**
+ * Conta que uma origem ficou de fora por falta de mapeamento.
+ *
+ * Sem isto, o fail-closed vira uma segunda falha silenciosa: o documento some da
+ * busca e ninguém entende por quê. Aqui quem adicionou a biblioteca recebe o
+ * aviso de que falta mapear — o oposto de descobrir por acaso meses depois.
+ * Best-effort: nunca derruba a busca.
+ */
+function avisarOrigemNaoMapeada(tipo, origem) {
+  const chave = `${tipo}:${origem}`;
+  if (!origem || origensAvisadas.has(chave)) return;
+  origensAvisadas.add(chave);
+  console.warn(`[CEREBRO SEARCH] ${tipo} "${origem}" sem routeKey mapeado — documentos ocultos (fail-closed)`);
+  try {
+    const { notificar } = require('./notificar');
+    const dia = new Date().toISOString().slice(0, 10);
+    notificar({
+      modulo: 'cerebro',
+      tipo: 'cerebro_origem_nao_mapeada',
+      titulo: 'Documentos do Cérebro ocultos por falta de permissão mapeada',
+      mensagem: `A ${tipo === 'biblioteca' ? 'biblioteca' : 'pasta'} "${origem}" está sendo monitorada mas não tem módulo de permissão definido. `
+        + 'Por segurança os documentos dela não aparecem na busca do assistente (só para admin/diretor). '
+        + 'Para liberar, mapeie a origem em backend/services/cerebroSearch.js.',
+      severidade: 'aviso',
+      chaveDedup: `cerebro_origem_${tipo}_${origem}_${dia}`,
+      link: '/cerebro',
+    }).catch(() => {});
+  } catch (_) { /* notificar indisponível — o console.warn já registrou */ }
 }
 
 /**
@@ -102,6 +152,7 @@ async function searchVault(query, req, limit = MAX_RESULTS_DEFAULT) {
     for (const row of data || []) {
       const routeKey = AREA_VAULT_TO_ROUTE_KEY[row.area_vault]
         || (row.area_vault ? AREA_VAULT_TO_ROUTE_KEY[row.area_vault.split('/')[0]] : null);
+      if (!routeKey) avisarOrigemNaoMapeada('pasta', row.area_vault);
       if (!canReadRouteKey(req, routeKey)) continue;
       results.push({
         titulo: row.titulo,
@@ -131,6 +182,7 @@ async function searchVault(query, req, limit = MAX_RESULTS_DEFAULT) {
 
     for (const row of data || []) {
       const routeKey = BIBLIOTECA_TO_ROUTE_KEY[row.biblioteca];
+      if (!routeKey) avisarOrigemNaoMapeada('biblioteca', row.biblioteca);
       if (!canReadRouteKey(req, routeKey)) continue;
       results.push({
         titulo: row.nome_arquivo,
@@ -159,4 +211,14 @@ async function searchVault(query, req, limit = MAX_RESULTS_DEFAULT) {
   return deduped;
 }
 
-module.exports = { searchVault, extractTerms };
+// `canReadRouteKey` e os mapas são exportados para REUSO, não para cópia:
+// `conhecimentoBase.js` já mantém uma segunda versão desta função com régua
+// diferente (nível 1 lá, nível 2 aqui), e duas cópias divergentes de uma regra
+// de permissão é como uma delas fica para trás numa correção futura.
+module.exports = {
+  searchVault,
+  extractTerms,
+  canReadRouteKey,
+  AREA_VAULT_TO_ROUTE_KEY,
+  BIBLIOTECA_TO_ROUTE_KEY,
+};
