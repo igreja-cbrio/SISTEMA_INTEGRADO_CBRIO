@@ -75,6 +75,10 @@ const KANBAN_MACRO = [
     desc: 'Solicitações entregues/finalizadas nos últimos 90 dias. As rejeitadas e canceladas ficam no bloco "Não aprovadas", separado, no rodapé.' },
 ];
 const MACRO_REJEITADO_MATCH = ['rejeitado', 'cancelado'];
+// Estados terminais · usado pra tirar item já encerrado da fila "Para Atender"
+// (Foco/Lista) por padrão. Espelha os matches de concluído (KANBAN_MACRO) +
+// não aprovado (MACRO_REJEITADO_MATCH) num Set só, pra checagem O(1).
+const STATUS_ENCERRADO_ATENDER = new Set(['concluido', 'avaliado', ...MACRO_REJEITADO_MATCH]);
 
 // Cor de acento por categoria (borda-esquerda + pontinho do card macro). Poucas
 // cores, semânticas (a paleta que o Matheus curtiu na referência): a categoria é
@@ -458,6 +462,18 @@ export default function Solicitacoes() {
   const [showRejeitados, setShowRejeitados] = useState(false);
   const [infoCol, setInfoCol] = useState(null); // qual etapa está com o "izinho" aberto
 
+  // Fila "Para Atender" (Foco/Lista) · esconde o que já foi ENCERRADO (concluído/
+  // avaliado/rejeitado/cancelado) por padrão — não pende mais de ação de ninguém
+  // (bug reportado 2026-08-03: solicitações concluídas apareciam misturadas na
+  // fila, sem nenhuma indicação de que já tinham terminado). O Kanban mantém a
+  // coluna própria "Concluído" + o bloco "Não aprovadas" (por isso ele segue
+  // usando `filtered` cru, sem este corte). Filtro explícito de Status (ex.:
+  // escolher "Concluído" no dropdown) sempre vence e mostra normalmente.
+  const filaAtender = useMemo(() => {
+    if (filterStatus !== 'todos') return filtered;
+    return filtered.filter(i => !STATUS_ENCERRADO_ATENDER.has(i.status));
+  }, [filtered, filterStatus]);
+
   // Kanban do solicitante (aba Minhas) · colunas macro read-only.
   const colunasSolicitante = useMemo(() => {
     return KANBAN_COLUNAS_SOLICITANTE.map(col => ({
@@ -785,12 +801,12 @@ export default function Solicitacoes() {
         <>
         <TermometroRefeitas />
         {atenderLayout === 'foco' ? (
-          <AtenderFoco items={filtered} onOpen={setDetailItem} selectedId={detailItem?.id} />
+          <AtenderFoco items={filaAtender} onOpen={setDetailItem} selectedId={detailItem?.id} />
         ) : atenderLayout === 'lista' ? (
-          <ListaSolicitacoes items={filtered} onOpen={setDetailItem} profileId={profile?.id}
+          <ListaSolicitacoes items={filaAtender} onOpen={setDetailItem} profileId={profile?.id}
             emptyMsg="Nenhuma solicitação na fila para os filtros atuais." />
         ) : atenderLayout === 'solicitante' ? (
-          <PainelPorSolicitante items={filtered} onOpen={setDetailItem} />
+          <PainelPorSolicitante items={filaAtender} onOpen={setDetailItem} />
         ) : (
         /* ── Board macro · 4 etapas (redesign 2026-07-24) ── */
         <div className="space-y-4">
