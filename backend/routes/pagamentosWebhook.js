@@ -98,6 +98,16 @@ router.get('/cron/tick', async (req, res) => {
     out.replay = { erro: e.message };
     console.error('[pagamentosWebhook] tick/replay:', e.message);
   }
+  // Sonda da CREDENCIAL — ela mesma se limita a 1x/dia (as outras 143 execuções
+  // diárias saem em `pulado: verificado_recentemente`, sem tocar o PSP). Está
+  // aqui, e não num cron novo, porque o projeto já tem 45 declarados. Nunca
+  // notifica quando está tudo bem; ver services/pagamentos/saude.js.
+  try {
+    out.saude = await pagamentos.verificarSaude();
+  } catch (e) {
+    out.saude = { erro: e.message };
+    console.error('[pagamentosWebhook] tick/saude:', e.message);
+  }
   res.json({ ok: true, ...out });
 });
 
@@ -138,6 +148,19 @@ router.get('/cron/replay', async (req, res) => {
   } catch (e) {
     console.error('[pagamentosWebhook] cron/replay:', e.message);
     res.status(500).json({ error: 'erro ao reprocessar eventos' });
+  }
+});
+
+// Sonda de credencial FORÇADA (ignora o intervalo de 1x/dia). Avulso pra
+// depurar e pra conferir antes de um lançamento de evento pago.
+router.get('/cron/saude', async (req, res) => {
+  if (!cronAutorizado(req)) return res.status(401).json({ error: 'não autorizado' });
+  try {
+    const r = await pagamentos.verificarSaude({ forcar: true });
+    res.json({ ok: true, ...r });
+  } catch (e) {
+    console.error('[pagamentosWebhook] cron/saude:', e.message);
+    res.status(500).json({ error: 'erro ao verificar credencial' });
   }
 });
 

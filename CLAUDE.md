@@ -6188,6 +6188,66 @@ passa a mentir.
   Pix e boleto seguem nativos (QR e linha digitável não são dado sensível) e o
   Asaas só aparece no cartão.
 
+### ✅ Sonda da credencial do PSP · a chave do Asaas expira por desuso (2026-08-03 · migration `20260803140000`)
+
+Achado na própria tela de gerar chave do Asaas: *"chaves de API sem uso são
+desabilitadas após **3 meses** e permanentemente expiradas após **6 meses**"*.
+Isso é uma bomba de relógio para o caso da igreja: nosso sistema **só fala com o
+Asaas quando existe cobrança** — o cron de 10 min não chama a API se não há nada
+pra reconciliar. Vender inscrição em fevereiro e ter o próximo evento pago em
+agosto = 6 meses sem uso = chave expirada **em silêncio**, com o sintoma
+aparecendo no lançamento seguinte, quando ninguém consegue pagar. Pedido do
+Matheus: resolver por código, não por lembrete no calendário.
+
+- **A sonda é `GET /customers?limit=1`** (`asaas.verificarChave`) — endpoint que
+  o adapter **já exercita** em `acharOuCriarCliente`. ⚠️ Eu ia usar `/myAccount`
+  e voltei atrás: seria chutar rota nunca testada, e sonda de saúde que falha
+  por si mesma é pior que sonda nenhuma. Read-only, não move dinheiro.
+- **Roda dentro do `/cron/tick` que já existe**, no máximo **1x/dia** (as outras
+  ~143 execuções diárias saem em `pulado: verificado_recentemente` sem tocar o
+  PSP). NÃO criamos cron novo — o projeto tem 45 declarados e cada slot é risco
+  de teto de plano. Avulso forçado: `/cron/saude` (CRON_SECRET).
+- **`pag_provider_saude`** (1 linha por provider): `verificado_em`, `ok`,
+  `status_http`, `erro`, `latencia_ms`, `falhas_consecutivas`, `avisado_em`.
+  Sem PII → fora da whitelist de soft-delete; apagar a linha só faz a próxima
+  sonda rodar. RLS: SELECT só super-admin (a linha carrega mensagem de erro do
+  provedor), escrita só service_role.
+- ⚠️ **LEIS do desenho (não regredir):** (1) **silenciosa quando está tudo
+  bem** — banner/notificação permanente de "tudo ok" treina a equipe a não ler
+  aviso; (2) **não reclama de credencial AUSENTE** (`pulado: sem_credencial`) —
+  é estado intencional, produção viveu semanas em `manual`, e alarmar sobre
+  configuração deliberada é o jeito mais rápido de virar ruído; (3) erro
+  **transitório** (rede/5xx) só avisa na **3ª falha seguida**, enquanto **401/403
+  e chave do ambiente errado** avisam na **primeira**; (4) aviso com dedup por
+  **dia** (`chaveDedup`), e recuperação só é anunciada se alguém foi incomodado
+  pela falha.
+- **Tela:** `AvisoCredencialPagamento` na aba Eventos do `/inscricoes` —
+  renderiza SÓ com falha ou sonda >7 dias; botão "Verificar agora" gated em
+  nível 3 (bate no PSP). Endpoint `GET /inscricoes/pagamento-saude` (nível 1;
+  `?verificar=1` exige 3) devolve **aviso, não 500**, se a tabela faltar —
+  deploy em duas etapas.
+- Testes: `src/test/pagamentosSaude.test.ts` (11 · classificadores de erro,
+  mutation-testado: tratar 500 como credencial recusada deixa vermelho).
+
+### ⚠️ CORREÇÃO · o "teto de 40 crons no plano Pro" NÃO se confirmou (2026-08-03)
+
+Verificado com `vercel crons ls`: **45 cron jobs registrados**, incluindo
+`/api/pagamentos-webhook/cron/tick` (`*/10`). Nada foi truncado. O alarme
+registrado neste arquivo (e repetido várias vezes) de que "vaga reservada nunca
+expira" e "o e-mail de expirada nunca sai" **era infundado**.
+
+⚠️ **Mas fica uma lição que vale mais que o alarme: cron só roda em PRODUÇÃO,
+nunca em preview.** Foi por isso que, em todo o teste de sandbox, o pagamento só
+era reconhecido quando a página de pagamento estava aberta (a rede de segurança
+de 2 min do `GET /pagamento/:token`) — o cron nunca participou. Em produção
+existe uma rede de 10 minutos que o sandbox não tem.
+
+Comandos: `vercel crons ls` lista o que está registrado; `vercel crons run
+<path>` **dispara o cron de produção na hora** (usar só pra depurar).
+⚠️ Rodar qualquer `vercel` a partir de uma **worktree** falha com "codebase isn't
+linked" — o `.vercel/project.json` existe só no checkout principal; sempre
+`cd` pra lá primeiro.
+
 ### ✅ Placar do evento + API do app do staff (2026-07-30 · SEM migration)
 
 - **`GET /inscricoes/eventos/:id/resumo`** → contadores por **COUNT no banco**
