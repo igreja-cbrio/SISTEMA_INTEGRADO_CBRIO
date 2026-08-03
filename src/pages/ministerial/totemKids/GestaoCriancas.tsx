@@ -3,7 +3,10 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { totemKids as api } from '../../../api';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
-import { hrefConversa } from '@/lib/conversas';
+// hrefConversa (inbox interno) segue nos botões da FICHA da criança; hrefWhatsapp
+// (WhatsApp de quem clica) é só na lista de faltantes, que é trabalho de ligar
+// pra família — pedido do Matheus 2026-08-03.
+import { hrefConversa, hrefWhatsapp } from '@/lib/conversas';
 import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
 import { Label } from '../../../components/ui/label';
@@ -33,6 +36,11 @@ import useConfirmarSaida from '../../../hooks/useConfirmarSaida';
 // certo (14 meses É 1 ano), mas é a única leitura em que o rótulo do filtro e o
 // texto da linha não são idênticos.
 const IDADE_SEM_DATA = 'sem-data';
+// ⚠️ `sexo` está VAZIO em ~40% das crianças (1.726 de 4.321 medidas em 03/08), então
+// o filtro de gênero PRECISA de opção própria pra "não informado" — sem ela, quase
+// metade da base desaparece de qualquer filtro, em silêncio.
+const SEXO_SEM_INFO = 'sem-info';
+const SEXO_LABEL: Record<string, string> = { M: 'Menino', F: 'Menina' };
 const idadeAnos = (meses: number | null | undefined) =>
   meses == null ? null : Math.floor(Number(meses) / 12);
 const TIPO_ATEND: Record<string, string> = {
@@ -49,6 +57,10 @@ export default function GestaoCriancas() {
   const [jornadaF, setJornadaF] = useState('todas'); // todas | convertidos | batizados
   const [modo, setModo] = useState<'lista' | 'faltantes'>('lista');
   const [ausentes, setAusentes] = useState<any[]>([]);
+  const [ausIdade, setAusIdade] = useState('todas');   // 'todas' | '<anos>' | IDADE_SEM_DATA
+  const [ausSexo, setAusSexo] = useState('todos');     // 'todos' | 'M' | 'F' | SEXO_SEM_INFO
+  const [ausContato, setAusContato] = useState('todos'); // 'todos' | 'contatados' | 'pendentes'
+  const [salvandoContato, setSalvandoContato] = useState<string | null>(null);
   const [loadingAus, setLoadingAus] = useState(false);
   const [sel, setSel] = useState<any>(null);     // criança aberta na ficha
   const [novoOpen, setNovoOpen] = useState(false);
@@ -94,6 +106,60 @@ export default function GestaoCriancas() {
       semData,
     };
   }, [lista]);
+
+  // Opções e filtragem da aba "Faltando 3+ cultos". Mesmas réguas da lista
+  // principal (idade exata derivada de idade_meses, opção própria pra quem não
+  // tem o dado) — duas réguas diferentes na mesma tela seriam duas verdades.
+  const ausOpcoes = useMemo(() => {
+    const porIdade = new Map<number, number>();
+    let semData = 0, semSexo = 0;
+    const porSexo = new Map<string, number>();
+    for (const a of ausentes) {
+      const anos = idadeAnos(a.idade_meses);
+      if (anos == null) semData += 1; else porIdade.set(anos, (porIdade.get(anos) || 0) + 1);
+      if (!a.sexo) semSexo += 1; else porSexo.set(a.sexo, (porSexo.get(a.sexo) || 0) + 1);
+    }
+    return {
+      anos: [...porIdade.entries()].sort((x, y) => x[0] - y[0]).map(([anos, qtd]) => ({ anos, qtd })),
+      semData,
+      sexos: [...porSexo.entries()].sort().map(([sexo, qtd]) => ({ sexo, qtd })),
+      semSexo,
+    };
+  }, [ausentes]);
+
+  const ausentesFiltrados = useMemo(() => ausentes.filter(a => {
+    const anos = idadeAnos(a.idade_meses);
+    if (ausIdade === IDADE_SEM_DATA) { if (anos != null) return false; }
+    else if (ausIdade !== 'todas') { if (anos == null || anos !== Number(ausIdade)) return false; }
+    if (ausSexo === SEXO_SEM_INFO) { if (a.sexo) return false; }
+    else if (ausSexo !== 'todos') { if (a.sexo !== ausSexo) return false; }
+    if (ausContato === 'contatados' && !a.contatado) return false;
+    if (ausContato === 'pendentes' && a.contatado) return false;
+    return true;
+  }), [ausentes, ausIdade, ausSexo, ausContato]);
+
+  const ausContatados = useMemo(() => ausentes.filter(a => a.contatado).length, [ausentes]);
+
+  // Marca/desmarca "família contatada". Atualiza a linha na hora (otimista) e
+  // reverte se o servidor recusar — a lista é de ação, travar em spinner a cada
+  // clique atrapalharia quem está ligando pra uma família atrás da outra.
+  const toggleContato = async (a: any) => {
+    const marcar = !a.contatado;
+    setSalvandoContato(a.crianca_id);
+    const antes = ausentes;
+    setAusentes(l => l.map(x => (x.crianca_id === a.crianca_id
+      ? { ...x, contatado: marcar, contatado_em: marcar ? new Date().toISOString().slice(0, 10) : null }
+      : x)));
+    try {
+      if (marcar) await api.ausenteContatar(a.crianca_id);
+      else await api.ausenteDescontatar(a.crianca_id, a.ultima_presenca || undefined);
+    } catch {
+      setAusentes(antes);
+      toast.error(marcar ? 'Não consegui marcar o contato' : 'Não consegui desmarcar');
+    } finally {
+      setSalvandoContato(null);
+    }
+  };
 
   const filtradas = useMemo(() => {
     const t = busca.trim().toLowerCase();
@@ -151,31 +217,98 @@ export default function GestaoCriancas() {
                 Crianças frequentadoras ativas que ficaram <b>3+ cultos seguidos sem check-in</b> (última presença nos últimos 90 dias). Vale um contato com a família. A frequência vem dos check-ins do totem.
               </p>
             </div>
+            {/* Filtros da lista de faltantes · idade exata, gênero e contato */}
+            {ausentes.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2 mb-3">
+                <Select value={ausIdade} onValueChange={setAusIdade}>
+                  <SelectTrigger className="w-44 h-9 text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="todas">Todas as idades</SelectItem>
+                    {ausOpcoes.anos.map(({ anos, qtd }) => (
+                      <SelectItem key={anos} value={String(anos)}>
+                        {anos === 0 ? 'Menos de 1 ano' : `${anos} ${anos === 1 ? 'ano' : 'anos'}`} ({qtd})
+                      </SelectItem>
+                    ))}
+                    {ausOpcoes.semData > 0 && (
+                      <SelectItem value={IDADE_SEM_DATA}>Sem data de nascimento ({ausOpcoes.semData})</SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
+                <Select value={ausSexo} onValueChange={setAusSexo}>
+                  <SelectTrigger className="w-40 h-9 text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="todos">Meninos e meninas</SelectItem>
+                    {ausOpcoes.sexos.map(({ sexo, qtd }) => (
+                      <SelectItem key={sexo} value={sexo}>{SEXO_LABEL[sexo] || sexo} ({qtd})</SelectItem>
+                    ))}
+                    {ausOpcoes.semSexo > 0 && (
+                      <SelectItem value={SEXO_SEM_INFO}>Sexo não informado ({ausOpcoes.semSexo})</SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
+                <Select value={ausContato} onValueChange={setAusContato}>
+                  <SelectTrigger className="w-44 h-9 text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="todos">Contatados e não</SelectItem>
+                    <SelectItem value="pendentes">Falta contatar ({ausentes.length - ausContatados})</SelectItem>
+                    <SelectItem value="contatados">Já contatados ({ausContatados})</SelectItem>
+                  </SelectContent>
+                </Select>
+                <span className="text-xs text-muted-foreground ml-auto">
+                  {ausentesFiltrados.length} de {ausentes.length} · {ausContatados} contatada{ausContatados === 1 ? '' : 's'}
+                </span>
+              </div>
+            )}
             {loadingAus ? (
               <div className="flex justify-center py-10"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
             ) : ausentes.length === 0 ? (
               <p className="text-sm text-muted-foreground py-8 text-center">Nenhuma criança faltando 3+ cultos. 🎉</p>
+            ) : ausentesFiltrados.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-8 text-center">Nenhuma criança nesses filtros.</p>
             ) : (
               <div className="space-y-2">
-                {ausentes.map(a => {
+                {ausentesFiltrados.map(a => {
                   const resp = (a.responsaveis || []).find((r: any) => r.telefone) || (a.responsaveis || [])[0];
-                  const tel = resp?.telefone ? String(resp.telefone).replace(/\D/g, '') : null;
-                  const telFull = tel ? (tel.length <= 11 && !tel.startsWith('55') ? '55' + tel : tel) : null;
+                  const wpp = hrefWhatsapp(resp?.telefone);
                   return (
-                    <div key={a.crianca_id} className="flex items-center gap-3 rounded-lg border border-border p-2.5">
+                    <div key={a.crianca_id} className={`flex items-center gap-3 rounded-lg border p-2.5 transition-colors ${
+                      a.contatado ? 'border-emerald-500/40 bg-emerald-500/5' : 'border-border'
+                    }`}>
+                      {/* Contatado · marca no clique e some da fila de "falta contatar" */}
+                      <label
+                        className="flex items-center shrink-0 cursor-pointer"
+                        title={a.contatado
+                          ? `Contatada${a.contatado_em ? ` em ${new Date(a.contatado_em + 'T12:00:00').toLocaleDateString('pt-BR')}` : ''}${a.contatado_por ? ` por ${a.contatado_por}` : ''} · clique pra desmarcar`
+                          : 'Marcar como contatada'}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={!!a.contatado}
+                          disabled={salvandoContato === a.crianca_id}
+                          onChange={() => toggleContato(a)}
+                          className="h-4 w-4 accent-emerald-600 cursor-pointer"
+                        />
+                      </label>
                       <button onClick={() => setSel({ id: a.crianca_id })} className="flex-1 min-w-0 text-left">
-                        <div className="font-medium text-sm truncate">{a.nome}</div>
+                        <div className="font-medium text-sm truncate flex items-center gap-2">
+                          {a.nome}
+                          {a.idade_label && <span className="text-xs font-normal text-muted-foreground shrink-0">{a.idade_label}</span>}
+                          {a.sexo && <span className="text-xs font-normal text-muted-foreground shrink-0">· {SEXO_LABEL[a.sexo] || a.sexo}</span>}
+                        </div>
                         <div className="text-xs text-muted-foreground">
                           <span className="text-amber-600 font-medium">{a.cultos_perdidos} cultos sem vir</span>
                           {a.ultima_presenca ? ` · última presença ${new Date(a.ultima_presenca + 'T12:00:00').toLocaleDateString('pt-BR')}` : ''}
                           {resp?.nome ? ` · ${resp.nome}` : ''}
+                          {a.contatado && a.contatado_em && (
+                            <span className="text-emerald-600 font-medium"> · contatada {new Date(a.contatado_em + 'T12:00:00').toLocaleDateString('pt-BR')}</span>
+                          )}
                         </div>
                       </button>
-                      {telFull && (
-                        <Link to={hrefConversa(telFull)}
-                          className="inline-flex items-center justify-center h-9 w-9 rounded-full bg-emerald-500 text-white hover:bg-emerald-600 shrink-0" title={`WhatsApp de ${resp?.nome || 'responsável'}`}>
+                      {wpp && (
+                        <a href={wpp} target="_blank" rel="noopener noreferrer"
+                          className="inline-flex items-center justify-center h-9 w-9 rounded-full bg-emerald-500 text-white hover:bg-emerald-600 shrink-0" title={`Falar com ${resp?.nome || 'responsável'} no seu WhatsApp`}>
                           <Phone className="h-4 w-4" />
-                        </Link>
+                        </a>
                       )}
                     </div>
                   );

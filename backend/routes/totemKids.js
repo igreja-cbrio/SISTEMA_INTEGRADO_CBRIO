@@ -2597,11 +2597,33 @@ router.get('/ausentes', authorizeModule('kids', 1), async (req, res) => {
     if (error) throw error;
     const ids = (ausentes || []).map(a => a.crianca_id);
     let respPorCrianca = {};
+    // Idade e sexo NÃO vêm da fn_kids_ausentes_consecutivos (ela devolve só
+    // crianca_id/nome/ultima_presenca/cultos_perdidos) — enriquecemos aqui, do
+    // mesmo jeito que já era feito com os responsáveis.
+    let dadosPorCrianca = {};
+    // "Contatado" reusa kids_atendimentos tipo='contato' (a ficha da criança já
+    // registra contato assim) — sem coluna nem tabela nova. Só conta contato
+    // FEITO DEPOIS da última presença: um telefonema de três meses atrás não
+    // resolve a ausência de agora.
+    let contatoPorCrianca = {};
     if (ids.length) {
-      const { data: resps } = await supabase
-        .from('kids_responsaveis')
-        .select('crianca_id, parentesco, autorizado_buscar, membro:mem_membros(nome, telefone)')
-        .in('crianca_id', ids);
+      const [{ data: resps }, { data: cris }, { data: contatos }] = await Promise.all([
+        supabase
+          .from('kids_responsaveis')
+          .select('crianca_id, parentesco, autorizado_buscar, membro:mem_membros(nome, telefone)')
+          .in('crianca_id', ids),
+        supabase
+          .from('kids_criancas')
+          .select('id, data_nascimento, sexo')
+          .in('id', ids),
+        supabase
+          .from('kids_atendimentos')
+          .select('crianca_id, data, registrado_por_nome')
+          .eq('tipo', 'contato')
+          .is('deleted_at', null)
+          .in('crianca_id', ids)
+          .order('data', { ascending: false }),
+      ]);
       for (const r of resps || []) {
         (respPorCrianca[r.crianca_id] = respPorCrianca[r.crianca_id] || []).push({
           nome: r.membro?.nome || null,
@@ -2610,14 +2632,85 @@ router.get('/ausentes', authorizeModule('kids', 1), async (req, res) => {
           autorizado_buscar: r.autorizado_buscar || false,
         });
       }
+      for (const c of cris || []) dadosPorCrianca[c.id] = c;
+      // Ordenado por data desc → o primeiro de cada criança é o contato mais recente
+      for (const ct of contatos || []) {
+        if (!contatoPorCrianca[ct.crianca_id]) contatoPorCrianca[ct.crianca_id] = ct;
+      }
     }
-    res.json((ausentes || []).map(a => ({
-      ...a,
-      responsaveis: respPorCrianca[a.crianca_id] || [],
-    })));
+    res.json((ausentes || []).map(a => {
+      const c = dadosPorCrianca[a.crianca_id] || {};
+      const meses = calcIdadeMeses(c.data_nascimento);
+      const ct = contatoPorCrianca[a.crianca_id];
+      // Contato só vale se for igual ou posterior à última presença. Sem última
+      // presença registrada, qualquer contato conta.
+      const contatoValido = !!ct && (!a.ultima_presenca || String(ct.data) >= String(a.ultima_presenca));
+      return {
+        ...a,
+        data_nascimento: c.data_nascimento || null,
+        sexo: c.sexo || null,
+        idade_meses: meses,
+        idade_label: formatIdade(meses),
+        contatado: contatoValido,
+        contatado_em: contatoValido ? ct.data : null,
+        contatado_por: contatoValido ? (ct.registrado_por_nome || null) : null,
+        responsaveis: respPorCrianca[a.crianca_id] || [],
+      };
+    }));
   } catch (e) {
     console.error('[totemKids/ausentes]', e.message);
     res.status(500).json({ error: 'Erro ao listar crianças faltantes' });
+  }
+});
+
+// POST/DELETE /api/totem-kids/ausentes/:criancaId/contato · marca/desmarca
+// "família contatada" na lista de faltantes.
+//
+// ⚠️ Grava em `kids_atendimentos` tipo='contato' de propósito — é a MESMA tabela
+// que a ficha da criança usa. Coluna `contatada` em kids_criancas seria um 2º
+// lugar guardando o mesmo fato, e a ficha deixaria de mostrar o contato feito
+// aqui. Efeito colateral desejado: o contato aparece no histórico da criança.
+router.post('/ausentes/:criancaId/contato', authorizeModule('kids', 2), async (req, res) => {
+  try {
+    const hoje = new Date().toISOString().slice(0, 10);
+    const descricao = String(req.body?.descricao || '').trim()
+      || 'Família contatada sobre as faltas seguidas (marcado na lista de faltantes).';
+    const { data: criado, error } = await supabase
+      .from('kids_atendimentos')
+      .insert({
+        crianca_id: req.params.criancaId,
+        tipo: 'contato',
+        descricao: descricao.slice(0, 2000),
+        data: hoje,
+        registrado_por: req.user?.userId || null,
+        registrado_por_nome: req.user?.name || req.user?.email || null,
+      })
+      .select('id, data, registrado_por_nome').single();
+    if (error) throw error;
+    res.status(201).json({ ok: true, contatado: true, contatado_em: criado.data, contatado_por: criado.registrado_por_nome });
+  } catch (e) {
+    console.error('[totemKids/ausentes/contato]', e.message);
+    res.status(500).json({ error: 'Erro ao marcar contato' });
+  }
+});
+
+// Desmarcar = soft-delete dos contatos DESTA ausência (a partir da última
+// presença). Não apaga histórico antigo — desfaz só o clique errado de agora.
+router.delete('/ausentes/:criancaId/contato', authorizeModule('kids', 2), async (req, res) => {
+  try {
+    const desde = /^\d{4}-\d{2}-\d{2}$/.test(req.query?.desde || '') ? req.query.desde : null;
+    let q = supabase.from('kids_atendimentos')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('crianca_id', req.params.criancaId)
+      .eq('tipo', 'contato')
+      .is('deleted_at', null);
+    if (desde) q = q.gte('data', desde);
+    const { error } = await q;
+    if (error) throw error;
+    res.json({ ok: true, contatado: false });
+  } catch (e) {
+    console.error('[totemKids/ausentes/contato del]', e.message);
+    res.status(500).json({ error: 'Erro ao desmarcar contato' });
   }
 });
 
