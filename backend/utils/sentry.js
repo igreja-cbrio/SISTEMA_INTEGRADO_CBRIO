@@ -9,6 +9,7 @@
 //   SENTRY_ENV         (opcional, default = NODE_ENV ou 'development')
 //   SENTRY_TRACES_RATE (opcional, default 0.1 em prod, 0 em dev)
 
+const { normalizeError } = require('./appError');
 let Sentry = null;
 let initialized = false;
 
@@ -95,10 +96,18 @@ function sentryRequestHandler() {
 // Em v8: Sentry.setupExpressErrorHandler(app) substitui o
 // errorHandler middleware. Como o server.js usa app.use(handler),
 // retornamos um middleware que delega ao captureException.
+function shouldCaptureException(error) {
+  const normalized = normalizeError(error);
+  return !(normalized.isOperational && Number(normalized.status) < 500);
+}
+
 function sentryErrorHandler() {
   if (!Sentry) return noopErrorHandler();
   return (err, _req, _res, next) => {
-    try { Sentry.captureException(err); } catch {}
+    // Erros operacionais 4xx são comportamento esperado, não incidentes.
+    if (shouldCaptureException(err)) {
+      try { Sentry.captureException(err); } catch {}
+    }
     next(err);
   };
 }
@@ -115,4 +124,5 @@ module.exports = {
   sentryErrorHandler,
   captureException,
   sanitizeSentryEvent,
+  shouldCaptureException,
 };
