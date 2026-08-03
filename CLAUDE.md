@@ -1892,6 +1892,76 @@ renovação não piscam sem a migration (lição `parcelas_max`).
 (`comRoster` virou Map pra alimentar o {{3}} do template) — `.has()` segue
 idêntico pros chamadores antigos.
 
+## Grupos · Caixa de entrada ganhou o "Retrato do período" + contato impossível (2026-08-03 · SEM migration)
+
+Depois da varredura do lançamento (domingo 02/08), o Marcos pediu: *"eu gostaria
+de ter essa visualização dentro do sistema ali na aba de caixa de entrada"*. A
+análise que eu fazia por script agora vive no módulo.
+
+**⚠️ NÃO virou sub-aba nem tela nova** — a Caixa de entrada é **lista única sem
+sub-abas** por decisão dele (14/07). O retrato entrou como bloco recolhível
+ACIMA da lista, e **derivado de `rowsBase`**, o mesmo objeto que já alimenta os
+cards: segue origem/período/busca automaticamente. Se fosse um endpoint de
+agregação próprio, a tela teria dois números para a mesma pergunta.
+
+O painel mostra: **pedidos × PESSOAS distintas** (176 pedidos do domingo eram 160
+pessoas — 14 pediram 2+ grupos, e um dos devolvidos foi exatamente alguém que se
+inscreveu duas vezes sem perceber), novas × já cadastradas, "as mensagens
+chegaram?" (líder avisado/falhou · pessoa avisada/falhou), por grupo + **quais
+grupos não receberam nenhum pedido**, e barras por dia.
+
+- `GET /grupos/entrada/cobertura?desde=` é o **único** dado que a lista não
+  responde (grupos ativos sem pedido — 30 de 87 no lançamento). Ignora
+  `modo_inscricao='fechado'`: grupo que não recebe inscrição pelo formulário não
+  pode ser cobrado de divulgação. Carregado **lazy**, só quando o painel abre.
+- `/grupos/pedidos/list` ganhou 3 campos por linha, em blocos **best-effort**
+  (mesmo padrão dos que já existiam — falha loga e a lista segue de pé):
+  `contato_status`, `avisos` (estado da entrega ao líder e à pessoa) e
+  `pessoa_nova`. `pessoa_nova` = cadastro pendente, ou membro criado a menos de
+  **10 min** do pedido (quem já existia tem `created_at` de dias/meses antes).
+
+## ⚠️ Grupos · "dá pra falar com essa pessoa?" · services/contatoPessoa.js (2026-08-03)
+
+Régua ÚNICA de contato, criada a partir de 2 casos reais do lançamento:
+
+1. **Telefone que o nosso envio não alcança.** A Patricia Künzler digitou um
+   número **suíço** (+41 76 576 45 38). O contrato de porta valida **quantidade
+   de dígitos, não o DDD** — então passou: um pedido gravou `0765764538` (DDD
+   "07" não existe) e outro `41765764538`. E `waSender.normalizarTelefone`
+   **prefixa `55` em tudo que tem 10-11 dígitos**, então virou `5541765764538`,
+   um número de Curitiba que não existe.
+2. **Número brasileiro válido sem WhatsApp** — 2 receberam "Message
+   undeliverable" da Meta.
+
+**Decisões do Marcos (03/08):** telefone estrangeiro **deve poder se inscrever**,
+só precisa gerar observação pra o líder procurar por e-mail; e *"número brasileiro
+sem WhatsApp é a mesma coisa que estrangeiro: classifique como **número errado —
+impossível contato**"* — daí o rótulo ser o MESMO nos dois casos.
+
+- `telefoneAlcancavel()` espelha o normalizador do envio e acrescenta o que
+  faltava: **DDD real** (lista da Anatel) e **o 9 do celular**.
+  ⚠️ **DDD 55 é Santa Maria/RS e é legítimo** — mesma armadilha do
+  `tirarCodigoPaisTelefone`; há teste dedicado pra isso.
+- ⚠️ **NÃO bloqueia inscrição em lugar nenhum.** É classificação de LEITURA: pinta
+  o selo na Caixa de entrada (número riscado, e-mail destacado, "Não recebe
+  WhatsApp — fale por e-mail") e troca o `{{4}}` do template do líder, que antes
+  entregava um número inexistente — o líder tentava, não conseguia, e concluía que
+  a pessoa desistiu.
+- ⚠️ **Sem coluna nova, de propósito**: o telefone É a evidência do caso 1 e
+  `whatsapp_envios.failed_at` é a do caso 2. Coluna gravada ficaria velha quando a
+  pessoa corrigisse o telefone.
+- ⚠️ `whatsapp_envios.telefone` guarda **o que o chamador passou**, não uma forma
+  canônica (grupos manda digits-only; `whatsapp_lideres` guarda com 55). O
+  cruzamento usa os **8 últimos dígitos** — comparar cru dependeria de sorte.
+- Testes: `src/test/contatoPessoa.test.ts` (14 casos, com os números reais do
+  lançamento). Validado contra produção: dos 181 pedidos, **177 ok · 2
+  numero_errado · 2 sem_whatsapp**, todos os 4 com e-mail disponível.
+
+⚠️ **Follow-up conhecido (não feito)**: `41765764538` é um número suíço VÁLIDO e o
+WhatsApp funciona internacionalmente — o que impede a entrega é o nosso envio
+assumir Brasil e prefixar 55. Suportar internacional de verdade é mexer no funil
+de envio (waSender) e vale sessão própria; hoje o caminho é o e-mail.
+
 ## ⚠️ Grupos · auditoria pré-abertura + 5 correções (2026-07-31 · PR #2209 · SEM migration)
 
 Pedido do Marcos na véspera ("rode agentes para checar tudo no módulo, pois é

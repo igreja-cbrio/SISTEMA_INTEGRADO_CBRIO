@@ -144,6 +144,10 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
   const [fOrigem, setFOrigem] = useState('todas');   // todas | inscricao | next
   const [fStatus, setFStatus] = useState('todos');
   const [fPeriodo, setFPeriodo] = useState(180);
+  // Retrato do período (a varredura do lançamento trazida pra dentro do sistema)
+  const [soContatoRuim, setSoContatoRuim] = useState(false);
+  const [painelAberto, setPainelAberto] = useState(false);
+  const [cobertura, setCobertura] = useState(null); // lazy: só quando abre o painel
 
   const [expandedId, setExpandedId] = useState(null);
   // Sub-painéis da linha de PEDIDO (mesma máquina do fluxo aprovar/recusar/sugerir)
@@ -216,6 +220,18 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
   }, [fPeriodo]);
 
   useEffect(() => { load(); }, [load, reloadKey]);
+
+  // Cobertura (quais grupos NÃO receberam pedido) — só quando o painel abre, e
+  // refaz quando o período muda. Falha silenciosa: o painel abre sem esse bloco.
+  useEffect(() => {
+    if (!painelAberto) return;
+    let vivo = true;
+    const desde = new Date(Date.now() - fPeriodo * 86400000).toISOString();
+    api.entradaCobertura({ desde })
+      .then(r => { if (vivo) setCobertura(r || null); })
+      .catch(() => { if (vivo) setCobertura(null); });
+    return () => { vivo = false; };
+  }, [painelAberto, fPeriodo]);
 
   const depois = () => { setEventosCache({}); load(); onMudou?.(); };
 
@@ -294,8 +310,12 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
 
   const rows = useMemo(() => {
     const bucket = FILTRO_STATUS.find(f => f.key === fStatus)?.casa || null;
-    return bucket ? rowsBase.filter(r => bucket.includes(r.statusKey)) : rowsBase;
-  }, [rowsBase, fStatus]);
+    let out = bucket ? rowsBase.filter(r => bucket.includes(r.statusKey)) : rowsBase;
+    // Filtro do card "Contato impossível" — clicar no número leva à lista de
+    // quem precisa ser procurado por e-mail.
+    if (soContatoRuim) out = out.filter(r => r.tipo === 'pedido' && r.raw?.contato_status?.ok === false);
+    return out;
+  }, [rowsBase, fStatus, soContatoRuim]);
 
   // ── Cards do resumo — derivados das linhas filtradas (substitui o
   // GET /pedidos/resumo global, que ignorava os filtros e contava "Recusados
@@ -323,11 +343,60 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
         nDecididos += 1;
       }
     }
+    // ── Retrato do período (varredura do lançamento 02/08 trazida pra cá) ──
+    // PESSOA ≠ PEDIDO: 176 pedidos do domingo eram 160 pessoas (14 pediram 2+
+    // grupos, e um dos devolvidos foi justamente alguém que se inscreveu duas
+    // vezes sem perceber). Âncora da pessoa: membro > cadastro pendente >
+    // telefone (mesma régua do contrato de porta).
+    const pessoas = new Map();
+    let contatoRuim = 0, semTelefone = 0;
+    let liderAvisado = 0, liderFalhou = 0, pessoaAvisada = 0, pessoaFalhou = 0;
+    const porGrupo = new Map();
+    const porDia = new Map();
+    for (const r of rowsBase) {
+      if (r.tipo !== 'pedido') continue;
+      const p = r.raw;
+      const chave = p.membro_id ? `m:${p.membro_id}`
+        : p.cadastro_pendente_id ? `c:${p.cadastro_pendente_id}`
+        : `t:${String(p.telefone || '').replace(/\D/g, '')}`;
+      const ja = pessoas.get(chave);
+      if (ja) ja.pedidos += 1;
+      else pessoas.set(chave, { pedidos: 1, nova: p.pessoa_nova });
+
+      if (p.contato_status?.motivo === 'sem_telefone') semTelefone += 1;
+      else if (p.contato_status && p.contato_status.ok === false) contatoRuim += 1;
+
+      if (p.avisos?.lider === 'falhou') liderFalhou += 1;
+      else if (p.avisos?.lider) liderAvisado += 1;
+      if (p.avisos?.pessoa === 'falhou') pessoaFalhou += 1;
+      else if (p.avisos?.pessoa) pessoaAvisada += 1;
+
+      const gk = p.mem_grupos?.codigo || p.grupo_id;
+      if (gk) {
+        const g = porGrupo.get(gk) || { codigo: p.mem_grupos?.codigo || '?', nome: p.mem_grupos?.nome || '?', n: 0 };
+        g.n += 1; porGrupo.set(gk, g);
+      }
+      const d = String(r.data || '').slice(0, 10);
+      if (d) porDia.set(d, (porDia.get(d) || 0) + 1);
+    }
+    const lista = [...pessoas.values()];
     return {
       hoje, pendentes, pend24, pend72,
       recusados: devolvidos + rejeitados, devolvidos,
       aprovados,
       tempoMedioHoras: nDecididos ? Math.round((somaDecisaoMs / nDecididos / 36e5) * 10) / 10 : null,
+      // retrato
+      pedidos: lista.reduce((a, x) => a + x.pedidos, 0),
+      pessoas: lista.length,
+      novas: lista.filter(x => x.nova === true).length,
+      jaExistiam: lista.filter(x => x.nova === false).length,
+      semSaber: lista.filter(x => x.nova == null).length,
+      multiGrupo: lista.filter(x => x.pedidos > 1).length,
+      contatoRuim, semTelefone,
+      liderAvisado, liderFalhou, pessoaAvisada, pessoaFalhou,
+      topGrupos: [...porGrupo.values()].sort((a, b) => b.n - a.n).slice(0, 8),
+      gruposComPedido: porGrupo.size,
+      porDia: [...porDia.entries()].sort((a, b) => a[0].localeCompare(b[0])).slice(-14),
     };
   }, [rowsBase]);
 
@@ -550,6 +619,115 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
               : estat.tempoMedioHoras < 48 ? `${estat.tempoMedioHoras}h`
               : `${Math.round(estat.tempoMedioHoras / 24)} dias`}
           />
+          {/* Contato impossível: clicável, porque é o único card que gera AÇÃO
+              (procurar a pessoa por e-mail). Só aparece quando há caso. */}
+          {estat.contatoRuim > 0 && (
+            <ResumoCard
+              titulo="Contato impossível"
+              valor={estat.contatoRuim}
+              destaque={soContatoRuim ? 'filtrando — clique pra limpar' : 'número errado — clique pra ver'}
+              corDestaque={C.red}
+              onClick={() => setSoContatoRuim(v => !v)}
+              ativo={soContatoRuim}
+            />
+          )}
+        </div>
+      )}
+
+      {/* ── Retrato do período ────────────────────────────────────────────────
+          A varredura que eu fazia no banco, agora dentro do sistema. Segue os
+          MESMOS filtros dos cards (origem, período, busca) pra não existirem
+          duas verdades na mesma tela. */}
+      {!loading && estat.pedidos > 0 && (
+        <div style={{ background: C.card, border: '1px solid var(--hairline)', borderRadius: 14, marginBottom: 14, overflow: 'hidden' }}>
+          <button
+            onClick={() => setPainelAberto(v => !v)}
+            style={{
+              width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px',
+              background: 'transparent', border: 0, cursor: 'pointer', color: C.text,
+              fontSize: 13, fontWeight: 700, textAlign: 'left',
+            }}
+          >
+            {painelAberto ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+            Retrato do período
+            <span style={{ fontWeight: 400, color: C.t3, fontSize: 12 }}>
+              · {estat.pedidos} pedido{estat.pedidos === 1 ? '' : 's'} de {estat.pessoas} pessoa{estat.pessoas === 1 ? '' : 's'}
+              {estat.novas > 0 && ` · ${estat.novas} nova${estat.novas === 1 ? '' : 's'} na plataforma`}
+            </span>
+          </button>
+
+          {painelAberto && (
+            <div style={{ padding: '0 14px 14px', display: 'grid', gap: 14 }}>
+              {/* Pessoas: pedido ≠ pessoa */}
+              <PainelBloco titulo="Pessoas">
+                <PainelLinha rotulo="Pedidos" valor={estat.pedidos} />
+                <PainelLinha rotulo="Pessoas distintas" valor={estat.pessoas} />
+                <PainelLinha rotulo="Novas na plataforma" valor={estat.novas} cor={C.green} />
+                <PainelLinha rotulo="Já estavam cadastradas" valor={estat.jaExistiam} />
+                {estat.semSaber > 0 && <PainelLinha rotulo="Não deu pra saber" valor={estat.semSaber} cor={C.t3} />}
+                {estat.multiGrupo > 0 && (
+                  <PainelLinha
+                    rotulo="Pediram 2+ grupos"
+                    valor={estat.multiGrupo}
+                    cor={C.amber}
+                    nota="pode ser engano — confirme antes de aprovar as duas"
+                  />
+                )}
+              </PainelBloco>
+
+              {/* Entregabilidade: a pergunta "o líder foi avisado?" */}
+              <PainelBloco titulo="As mensagens chegaram?">
+                <PainelLinha rotulo="Líder avisado" valor={estat.liderAvisado} />
+                {estat.liderFalhou > 0 && <PainelLinha rotulo="Aviso ao líder FALHOU" valor={estat.liderFalhou} cor={C.red} nota="o líder não recebeu o link" />}
+                <PainelLinha rotulo="Pessoa avisada" valor={estat.pessoaAvisada} />
+                {estat.pessoaFalhou > 0 && <PainelLinha rotulo="Aviso à pessoa FALHOU" valor={estat.pessoaFalhou} cor={C.red} />}
+                {estat.semTelefone > 0 && <PainelLinha rotulo="Sem telefone" valor={estat.semTelefone} cor={C.t3} />}
+                <div style={{ fontSize: 11, color: C.t3, marginTop: 2 }}>
+                  Casal conta 1 aviso ao líder (com os dois nomes), não 2.
+                </div>
+              </PainelBloco>
+
+              {/* Onde a procura aconteceu — e onde falta divulgar */}
+              <PainelBloco titulo="Por grupo">
+                {estat.topGrupos.map(g => (
+                  <PainelLinha key={g.codigo} rotulo={`${g.codigo} · ${g.nome}`} valor={g.n} />
+                ))}
+                {cobertura && (
+                  <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px dashed var(--hairline)' }}>
+                    <PainelLinha
+                      rotulo="Grupos que receberam pedido"
+                      valor={`${cobertura.grupos_com_pedido} de ${cobertura.grupos_elegiveis}`}
+                    />
+                    {cobertura.sem_pedido?.length > 0 && (
+                      <>
+                        <PainelLinha
+                          rotulo="Sem nenhum pedido"
+                          valor={cobertura.sem_pedido.length}
+                          cor={C.amber}
+                          nota="onde vale reforçar a divulgação"
+                        />
+                        <div style={{ fontSize: 11, color: C.t2, lineHeight: 1.6, marginTop: 4 }}>
+                          {cobertura.sem_pedido.slice(0, 24).map(g => (
+                            <span key={g.id} style={{ display: 'inline-block', marginRight: 10 }}>
+                              {g.codigo} <span style={{ color: C.t3 }}>{(g.nome || '').slice(0, 34)}</span>
+                            </span>
+                          ))}
+                          {cobertura.sem_pedido.length > 24 && <span style={{ color: C.t3 }}>+{cobertura.sem_pedido.length - 24}…</span>}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+              </PainelBloco>
+
+              {/* Quando as pessoas se inscrevem — ajuda a escolher hora de divulgar */}
+              {estat.porDia.length > 1 && (
+                <PainelBloco titulo="Por dia">
+                  <PorDiaBarras dados={estat.porDia} />
+                </PainelBloco>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -660,11 +838,41 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
                                 Contato novo
                               </span>
                             )}
+                            {/* Telefone que o WhatsApp não alcança (estrangeiro,
+                                DDD inexistente) ou que a Meta disse não existir.
+                                A inscrição VALE — só o contato tem que ser outro. */}
+                            {p?.contato_status?.ok === false && (
+                              <span
+                                title={p.contato_status.usarEmail
+                                  ? `${p.contato_status.rotulo} — procure por e-mail: ${p.contato_status.email}`
+                                  : `${p.contato_status.rotulo} — confirme o número com a pessoa`}
+                                style={{ fontSize: 9.5, padding: '1px 7px', borderRadius: 99, background: C.redBg, color: C.red, fontWeight: 700 }}
+                              >
+                                {p.contato_status.motivo === 'sem_telefone' ? 'Sem telefone' : 'Número errado'}
+                              </span>
+                            )}
                           </div>
                           <div style={{ fontSize: 11, color: C.t3, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                            {r.telefone && <span><Phone size={10} style={{ display: 'inline', marginRight: 3 }} />{r.telefone}</span>}
-                            {r.email && <span><Mail size={10} style={{ display: 'inline', marginRight: 3 }} />{r.email}</span>}
+                            {r.telefone && (
+                              <span style={p?.contato_status?.ok === false && p?.contato_status?.motivo !== 'sem_telefone'
+                                ? { textDecoration: 'line-through', color: C.red }
+                                : undefined}>
+                                <Phone size={10} style={{ display: 'inline', marginRight: 3 }} />{r.telefone}
+                              </span>
+                            )}
+                            {r.email && (
+                              <span style={p?.contato_status?.usarEmail ? { color: C.blue, fontWeight: 700 } : undefined}>
+                                <Mail size={10} style={{ display: 'inline', marginRight: 3 }} />{r.email}
+                              </span>
+                            )}
                           </div>
+                          {p?.contato_status?.ok === false && (
+                            <div style={{ fontSize: 10.5, color: C.red, marginTop: 2 }}>
+                              {p.contato_status.usarEmail
+                                ? 'Não recebe WhatsApp — fale por e-mail.'
+                                : 'Não recebe WhatsApp e não temos e-mail — confirme o número.'}
+                            </div>
+                          )}
                         </td>
                         <td style={{ padding: '10px 8px' }}>
                           {r.tipo === 'renov' ? (
@@ -782,12 +990,75 @@ function Th({ children, w }) {
   );
 }
 
-function ResumoCard({ titulo, valor, destaque, corDestaque }) {
-  return (
-    <div style={{ background: C.card, borderRadius: 12, padding: '10px 14px', border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)' }}>
+// Card do pulso. Com `onClick` vira botão (o de "Contato impossível" filtra a
+// lista) — sem onClick segue sendo leitura pura, como o Marcos definiu em 14/07.
+function ResumoCard({ titulo, valor, destaque, corDestaque, onClick, ativo }) {
+  const conteudo = (
+    <>
       <div style={{ fontSize: 11, color: C.t3 }}>{titulo}</div>
       <div style={{ fontSize: 20, fontWeight: 800, color: C.text }}>{valor ?? '—'}</div>
       {destaque && <div style={{ fontSize: 10.5, fontWeight: 700, color: corDestaque || C.amber }}>{destaque}</div>}
+    </>
+  );
+  const base = {
+    background: C.card, borderRadius: 12, padding: '10px 14px',
+    border: `1px solid ${ativo ? (corDestaque || C.amber) : 'var(--hairline)'}`,
+    boxShadow: 'var(--shadow)',
+  };
+  if (!onClick) return <div style={base}>{conteudo}</div>;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={!!ativo}
+      style={{ ...base, textAlign: 'left', cursor: 'pointer', font: 'inherit' }}
+    >
+      {conteudo}
+    </button>
+  );
+}
+
+// ── Peças do "Retrato do período" ──────────────────────────────────────────
+function PainelBloco({ titulo, children }) {
+  return (
+    <div>
+      <div style={{ fontSize: 11, fontWeight: 700, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 6 }}>
+        {titulo}
+      </div>
+      <div style={{ display: 'grid', gap: 3 }}>{children}</div>
+    </div>
+  );
+}
+
+function PainelLinha({ rotulo, valor, cor, nota }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, fontSize: 12.5 }}>
+      <span style={{ color: C.t2, flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {rotulo}
+      </span>
+      {nota && <span style={{ color: C.t3, fontSize: 11, flex: '0 1 auto' }}>{nota}</span>}
+      <span style={{ fontWeight: 800, color: cor || C.text, flex: '0 0 auto' }}>{valor}</span>
+    </div>
+  );
+}
+
+// Barras por dia · SVG inline (o módulo não carrega recharts nesta aba e o
+// gráfico aqui é acessório — não vale o peso do bundle).
+function PorDiaBarras({ dados }) {
+  const max = Math.max(...dados.map(([, n]) => n), 1);
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, height: 62 }}>
+      {dados.map(([dia, n]) => {
+        const [, m, d] = dia.split('-');
+        return (
+          <div key={dia} style={{ flex: 1, minWidth: 8, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}
+               title={`${d}/${m}: ${n} pedido${n === 1 ? '' : 's'}`}>
+            <div style={{ fontSize: 9.5, color: C.t3, lineHeight: 1 }}>{n}</div>
+            <div style={{ width: '100%', height: `${Math.round((n / max) * 38)}px`, minHeight: 2, background: C.primary, borderRadius: 3 }} />
+            <div style={{ fontSize: 9, color: C.t3, lineHeight: 1 }}>{d}/{m}</div>
+          </div>
+        );
+      })}
     </div>
   );
 }

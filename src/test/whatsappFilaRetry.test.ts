@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-// @ts-expect-error — serviço do backend em CommonJS, sem tipos.
+// @ts-ignore — serviço do backend em CommonJS, sem tipos.
 import fila from '../../backend/services/whatsappFila.js';
 
 const { decidirRetry, limitarPorTelefone, falhaPermanente, IDADE_MIN_DESISTIR_H, BACKOFF_MIN } = fila;
