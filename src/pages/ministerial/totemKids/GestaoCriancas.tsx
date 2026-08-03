@@ -20,13 +20,21 @@ import { DatePicker } from '@/components/ui/date-picker';
 import { BirthDatePicker } from '@/components/ui/birth-date-picker';
 import useConfirmarSaida from '../../../hooks/useConfirmarSaida';
 
-const FAIXAS = [
-  { key: 'todas', label: 'Todas as idades', min: 0, max: 9999 },
-  { key: '0-2', label: '0–2 anos', min: 0, max: 35 },
-  { key: '3-5', label: '3–5 anos', min: 36, max: 71 },
-  { key: '6-8', label: '6–8 anos', min: 72, max: 107 },
-  { key: '9-12', label: '9–12 anos', min: 108, max: 155 },
-];
+// Filtro por IDADE EXATA em anos (pedido do Marcos · antes eram faixas 0-2/3-5/
+// 6-8/9-12, que não respondem "quantas crianças de 4 anos eu tenho?").
+//
+// ⚠️ Deriva de `idade_meses`, que o backend já calcula e é a MESMA fonte da coluna
+// "Idade" da tabela (`calcIdadeMeses`/`formatIdade` em routes/totemKids.js).
+// Recalcular a partir de `data_nascimento` no cliente faria o filtro discordar da
+// linha exibida — e no dia do aniversário a diferença é de um ano inteiro.
+//
+// ⚠️ Abaixo de 24 meses a coluna mostra MESES ("14 meses"), não anos. Então quem
+// filtrar por "1 ano" vê crianças cuja coluna diz "12 meses"…"23 meses" — está
+// certo (14 meses É 1 ano), mas é a única leitura em que o rótulo do filtro e o
+// texto da linha não são idênticos.
+const IDADE_SEM_DATA = 'sem-data';
+const idadeAnos = (meses: number | null | undefined) =>
+  meses == null ? null : Math.floor(Number(meses) / 12);
 const TIPO_ATEND: Record<string, string> = {
   contato: 'Contato', ausencia: 'Ausência', saude: 'Saúde', observacao: 'Observação', outro: 'Outro',
 };
@@ -36,7 +44,7 @@ export default function GestaoCriancas() {
   const [lista, setLista] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [busca, setBusca] = useState('');
-  const [faixa, setFaixa] = useState('todas');
+  const [idadeSel, setIdadeSel] = useState('todas'); // 'todas' | '<anos>' | IDADE_SEM_DATA
   const [status, setStatus] = useState('ativos'); // ativos | inativos
   const [jornadaF, setJornadaF] = useState('todas'); // todas | convertidos | batizados
   const [modo, setModo] = useState<'lista' | 'faltantes'>('lista');
@@ -70,12 +78,35 @@ export default function GestaoCriancas() {
   }, []);
   useEffect(() => { if (modo === 'faltantes') carregarAusentes(); }, [modo, carregarAusentes]);
 
+  // Idades que EXISTEM na lista carregada, com a contagem de cada uma. Montar as
+  // opções a partir do dado (em vez de fixar 0..12) evita oferecer idade vazia e
+  // já responde "quantas de 4 anos?" no próprio seletor.
+  const idadesDisponiveis = useMemo(() => {
+    const porIdade = new Map<number, number>();
+    let semData = 0;
+    for (const c of lista) {
+      const a = idadeAnos(c.idade_meses);
+      if (a == null) { semData += 1; continue; }
+      porIdade.set(a, (porIdade.get(a) || 0) + 1);
+    }
+    return {
+      anos: [...porIdade.entries()].sort((x, y) => x[0] - y[0]).map(([anos, qtd]) => ({ anos, qtd })),
+      semData,
+    };
+  }, [lista]);
+
   const filtradas = useMemo(() => {
-    const f = FAIXAS.find(x => x.key === faixa)!;
     const t = busca.trim().toLowerCase();
     return lista.filter(c => {
-      const m = c.idade_meses;
-      if (faixa !== 'todas' && (m == null || m < f.min || m > f.max)) return false;
+      const a = idadeAnos(c.idade_meses);
+      // Criança sem data de nascimento tem opção PRÓPRIA no seletor: antes ela
+      // desaparecia em silêncio de qualquer filtro de idade, e é justamente ela
+      // que a equipe precisa achar pra completar o cadastro.
+      if (idadeSel === IDADE_SEM_DATA) {
+        if (a != null) return false;
+      } else if (idadeSel !== 'todas') {
+        if (a == null || a !== Number(idadeSel)) return false;
+      }
       if (t) {
         const resp = (c.responsaveis || []).map((r: any) => r.membro?.nome || '').join(' ');
         if (!(`${c.nome} ${resp}`.toLowerCase().includes(t))) return false;
@@ -84,7 +115,7 @@ export default function GestaoCriancas() {
       if (jornadaF === 'batizados' && !c.data_batismo) return false;
       return true;
     });
-  }, [lista, faixa, busca, status, jornadaF]);
+  }, [lista, idadeSel, busca, status, jornadaF]);
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-6 space-y-4">
@@ -161,9 +192,21 @@ export default function GestaoCriancas() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input className="pl-9" placeholder="Buscar por nome da criança ou responsável..." value={busca} onChange={e => setBusca(e.target.value)} />
         </div>
-        <Select value={faixa} onValueChange={setFaixa}>
-          <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
-          <SelectContent>{FAIXAS.map(f => <SelectItem key={f.key} value={f.key}>{f.label}</SelectItem>)}</SelectContent>
+        <Select value={idadeSel} onValueChange={setIdadeSel}>
+          <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="todas">Todas as idades</SelectItem>
+            {idadesDisponiveis.anos.map(({ anos, qtd }) => (
+              <SelectItem key={anos} value={String(anos)}>
+                {anos === 0 ? 'Menos de 1 ano' : `${anos} ${anos === 1 ? 'ano' : 'anos'}`} ({qtd})
+              </SelectItem>
+            ))}
+            {idadesDisponiveis.semData > 0 && (
+              <SelectItem value={IDADE_SEM_DATA}>
+                Sem data de nascimento ({idadesDisponiveis.semData})
+              </SelectItem>
+            )}
+          </SelectContent>
         </Select>
         <Select value={status} onValueChange={setStatus}>
           <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>

@@ -272,6 +272,62 @@ Celebra com só nome+telefone continuam válidas para sempre).
   submit quando há horários; `status='rejeitado'` segue FORA do CHECK
   (referências defensivas no código são vocabulário morto — não legalizar).
 
+## Kids · idade exata, WhatsApp pessoal e gerencial dentro da trava (2026-08-03 · SEM migration)
+
+Três pedidos do Matheus no mesmo dia, todos no Kids.
+
+**1 · Filtro de idade EXATA** em `GestaoCriancas.tsx` (`/ministerial/totem-kids/criancas`).
+Eram faixas fixas (`0-2 / 3-5 / 6-8 / 9-12`, em MESES), que não respondem "quantas
+crianças de 4 anos eu tenho?". Agora o seletor lista as **idades que existem na
+base**, com a contagem de cada uma, derivadas do `idade_meses` que o backend já
+manda (`floor(meses/12)`).
+- ⚠️ **Não recalcular a idade no cliente a partir de `data_nascimento`**: o filtro
+  discordaria da coluna "Idade" da linha, e no dia do aniversário a diferença é de
+  um ano inteiro. A fonte é `idade_meses` (`calcIdadeMeses` em routes/totemKids.js).
+- ⚠️ Abaixo de 24 meses o `formatIdade` do backend mostra **meses** ("14 meses"),
+  então filtrar "1 ano" traz linhas cuja coluna diz "12…23 meses". Está correto; é
+  o único ponto em que rótulo do filtro e texto da linha não são idênticos.
+- Criança **sem data de nascimento** ganhou opção PRÓPRIA no seletor. Antes ela
+  desaparecia em silêncio de qualquer faixa — e é justamente a que a equipe precisa
+  achar pra completar o cadastro.
+- Segue 100% client-side (o único param que vai ao servidor é `ativo`).
+
+**2 · O botão de WhatsApp da Apresentação de Crianças agora abre o WhatsApp DE QUEM
+CLICA**, não o inbox institucional. Era `hrefConversa` (→ `/conversas`); virou
+`hrefWhatsapp` (→ `wa.me`), helper NOVO no mesmo `src/lib/conversas.ts`. Decisão do
+Matheus: quem fala com a família é a voluntária, pelo aparelho dela.
+- ⚠️ **Isto é exceção consciente ao padrão da casa**, que é mandar pro inbox
+  interno (`hrefConversa`, usado em Cuidados e afins). Só a Apresentação mudou —
+  não replicar sem pedido, senão a conversa deixa de ficar registrada no
+  /conversas.
+- ⚠️ **`hrefWhatsapp` tem gap conhecido e DOCUMENTADO**: o `55` é condicional (≤11
+  dígitos), então **estrangeiro de 11 dígitos leva 55** — o suíço `41765764538` do
+  lançamento dos grupos vira `5541765764538`. **Nem lista de DDD desambigua**,
+  porque `41` é DDD legítimo de Curitiba; resolver exige guardar o código de país
+  separado na entrada. `src/test/hrefWhatsapp.test.ts` (10 casos) **fixa esse gap
+  num teste** pra que mudá-lo seja consciente, não acidental.
+
+**3 · Voluntário do Kids alcança o gerencial `/kids` dentro da trava de quiosque.**
+`MODULO_TRAVA_PREFIXOS.kids` ganhou `/kids` (antes ficava fora de propósito) + card
+"Indicadores e gestão" no `KidsHub`.
+- ⚠️ **NÃO é mudança de permissão.** O cargo `voluntario-kids` já tinha `kids`
+  nível 3, e `authorizeModule('painel-area', 1)` — o guard dos indicadores — usa
+  `ROUTE_MODULE_MAP['painel-area'] = ['kids','ami','bridge','online','producao']`:
+  **`painel-area` é routeKey, não slug de módulo** (não existe em `modulos`), então
+  quem tem `kids` já passava. O que bloqueava era só a trava de rota.
+- ⚠️ **O card no hub é obrigatório, não enfeite**: a trava esconde o menu inteiro
+  (`AppShell` não renderiza MegaMenu nem MobileNavSheet quando `rotaTravada`), então
+  sem ele o `/kids` fica inalcançável mesmo com permissão. De brinde, conserta o
+  "Voltar ao Kids" do `ApresentacaoCriancas.tsx`, que já apontava pra `/kids` e
+  ricocheteava em conta travada.
+- ⚠️ **NÃO desligar `is_membro_only`** pra resolver isso. Além de derrubar a trava
+  (que exige EXATAMENTE 1 módulo), faria aparecer o menu com **Painel CBRio e
+  Dashboard Semanal**, que `menuAccess.PUBLICO_TODOS` marca como visíveis a
+  qualquer logado. Voluntário do Kids passaria a ver os painéis macro da igreja.
+- ⚠️ Corolário do mesmo mecanismo: **dar um 2º módulo a um cargo de quiosque
+  DESLIGA a trava** (`slugsComAcesso.length === 1`). Quem precisar ampliar acesso
+  de conta travada tem que mexer nos PREFIXOS, não na matriz.
+
 ## Dashboard Semanal · acumulado do ano até hoje × anos anteriores (2026-08-03 · SEM migration)
 
 Pedido do Matheus na aba **Mensal**: *"quero ver o acumulado do ano até a data

@@ -10,7 +10,7 @@ import { Badge } from '../../../components/ui/badge';
 import { toast } from 'sonner';
 import {
   Baby, ScanLine, Users, Settings, Monitor, Printer,
-  Cake, DoorOpen, Loader2, MessageCircle,
+  Cake, DoorOpen, Loader2, MessageCircle, BarChart3,
 } from 'lucide-react';
 
 // Reorganização 2026-07-06 (pedido do Matheus): o hub fica só com a OPERAÇÃO
@@ -24,6 +24,11 @@ const ACESSOS = [
   { titulo: 'Painel ao vivo', desc: 'Quem está em cada sala agora', icon: Monitor, path: '/ministerial/totem-kids/painel', cor: '#f59e0b' },
   { titulo: 'Etiqueta', desc: 'Testar impressão da etiqueta', icon: Printer, path: '/ministerial/totem-kids/teste-etiqueta', cor: '#64748b' },
   { titulo: 'Configurações', desc: 'Sessões, salas e auditoria (overrides + portão)', icon: Settings, path: '/ministerial/totem-kids/configuracoes', cor: '#64748b' },
+  // Porta pro gerencial (2026-08-03 · pedido do Matheus: voluntário do Kids
+  // também precisa dos indicadores). É o ÚNICO caminho pra lá numa conta travada
+  // em quiosque — a trava esconde o menu inteiro, então sem este card o /kids
+  // fica inalcançável mesmo com permissão.
+  { titulo: 'Indicadores e gestão', desc: 'Frequência, equipe, estoque, batismos e indicadores da área', icon: BarChart3, path: '/kids', cor: '#7C3AED' },
 ];
 
 const fmtDiaMes = (d?: string | null) => (d ? `${String(d).slice(8, 10)}/${String(d).slice(5, 7)}` : '');
