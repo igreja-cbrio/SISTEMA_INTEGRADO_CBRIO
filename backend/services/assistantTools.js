@@ -15,6 +15,9 @@
 const { supabase } = require('../utils/supabase');
 const { getEffectiveLevel, getUserAreas } = require('../middleware/auth');
 const { searchConhecimento } = require('./conhecimentoBase');
+const {
+  extractTerms, canReadRouteKey, BIBLIOTECA_TO_ROUTE_KEY,
+} = require('./cerebroSearch');
 
 // Helper: valida YYYY-MM-DD (evita string arbitrária no filtro de data).
 function isYmd(s) {
@@ -26,6 +29,40 @@ function normalizarArea(a) {
   if (!a) return null;
   const s = String(a).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
   return AREAS_VALIDAS.includes(s) ? s : null;
+}
+
+/**
+ * Bibliotecas do Cérebro que ESTE usuário pode ver.
+ *
+ * ⚠️ Isto existe para a permissão entrar no SQL, não num filtro em JS depois do
+ * `.limit()`. Filtrar depois é o bug que `cerebroSearch` tem hoje: o banco
+ * devolve as N primeiras linhas, o JS descarta as sem permissão, e quem tem
+ * acesso a poucos módulos recebe "nada encontrado" existindo documento
+ * permitido logo abaixo do corte.
+ *
+ * Devolve `null` para admin/diretor = "não filtre" (veem tudo, inclusive origem
+ * ainda não mapeada, que é justamente quem precisa diagnosticar o mapeamento).
+ */
+function bibliotecasPermitidas(req) {
+  if (['admin', 'diretor'].includes(req?.user?.role)) return null;
+  return Object.keys(BIBLIOTECA_TO_ROUTE_KEY)
+    .filter((b) => canReadRouteKey(req, BIBLIOTECA_TO_ROUTE_KEY[b]));
+}
+
+// Trecho do documento em volta da primeira ocorrência de um dos termos — é o
+// que deixa o modelo julgar se vale abrir o documento inteiro, sem despejar
+// 100 mil caracteres no contexto.
+function trechoRelevante(conteudo, termos, tamanho = 400) {
+  const texto = String(conteudo || '');
+  const alvo = texto.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  let pos = -1;
+  for (const t of termos) {
+    const i = alvo.indexOf(t);
+    if (i >= 0 && (pos < 0 || i < pos)) pos = i;
+  }
+  if (pos < 0) return texto.slice(0, tamanho).trim();
+  const ini = Math.max(0, pos - Math.floor(tamanho / 3));
+  return (ini > 0 ? '…' : '') + texto.slice(ini, ini + tamanho).trim() + (ini + tamanho < texto.length ? '…' : '');
 }
 
 // ─── Registro de tools ───────────────────────────────────────────────────
@@ -52,6 +89,110 @@ const TOOLS = [
       return {
         encontrado: true,
         itens: itens.map((i) => ({ titulo: i.titulo, secao: i.secao, conteudo: i.conteudo })),
+      };
+    },
+  },
+
+  // ─── DOCUMENTOS DO CÉREBRO (conteúdo, não agregado) ───────────────────
+  //
+  // ⚠️ Estas duas fogem do padrão das demais: `minLevel: 0` NÃO significa
+  // "qualquer um vê". Significa que a permissão não cabe num único routeKey —
+  // ela é POR DOCUMENTO, resolvida dentro do handler pela biblioteca de origem
+  // (`canReadRouteKey`, fail-closed desde 30/07). O documento é a fronteira de
+  // permissão e de LGPD; foi por isso que o conteúdo não foi fatiado em chunks
+  // com o rótulo copiado em cada pedaço.
+  {
+    name: 'buscar_documento',
+    routeKey: null,
+    minLevel: 0,
+    description:
+      'Busca no CONTEÚDO dos documentos da igreja arquivados no Cérebro (atas, contratos, projetos, relatórios do SharePoint). '
+      + 'Devolve os documentos que casam com os termos, com um trecho de cada um. Use quando a pergunta for sobre o que está ESCRITO num documento '
+      + '("o que ficou decidido em...", "qual o prazo do contrato de...", "o que diz o relatório de..."). '
+      + 'Depois de escolher o documento certo, use ler_documento para ver o texto completo. '
+      + 'Não serve para números ao vivo do sistema — para isso use as tools de dados.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        pergunta: { type: 'string', description: 'A pergunta ou os termos a buscar, em português.' },
+      },
+      required: ['pergunta'],
+    },
+    handler: async (input, req) => {
+      const termos = extractTerms(input.pergunta || '');
+      if (!termos.length) return { encontrado: false, motivo: 'pergunta sem termos buscáveis', documentos: [] };
+
+      const permitidas = bibliotecasPermitidas(req);
+      if (permitidas && !permitidas.length) return { encontrado: false, documentos: [] };
+
+      // OR entre os termos (recall largo) — mesmo critério do conhecimentoBase.
+      // Os termos já vêm sem acento, e o `tsv` da tabela é gerado com
+      // f_unaccent, então os dois lados batem.
+      let q = supabase
+        .from('cerebro_doc_texto')
+        .select('nome_arquivo, biblioteca, nota_path, sharepoint_url, conteudo')
+        .textSearch('tsv', termos.join(' | '), { config: 'portuguese' });
+      if (permitidas) q = q.in('biblioteca', permitidas);
+
+      const { data, error } = await q.limit(5);
+      // Tabela ausente (migration não aplicada) não pode derrubar o assistente.
+      if (error) return { encontrado: false, indisponivel: true, documentos: [] };
+
+      const docs = (data || []).map((r) => ({
+        arquivo: r.nome_arquivo,
+        biblioteca: r.biblioteca,
+        nota_path: r.nota_path,
+        url: r.sharepoint_url || null,
+        trecho: trechoRelevante(r.conteudo, termos),
+      }));
+      return { encontrado: docs.length > 0, documentos: docs };
+    },
+  },
+
+  {
+    name: 'ler_documento',
+    routeKey: null,
+    minLevel: 0,
+    description:
+      'Lê o texto completo de UM documento do Cérebro, identificado pelo nome do arquivo (como devolvido por buscar_documento). '
+      + 'Use quando o trecho não bastar para responder. Devolve o texto que foi extraído do arquivo original.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        arquivo: { type: 'string', description: 'Nome do arquivo exatamente como veio em buscar_documento.' },
+      },
+      required: ['arquivo'],
+    },
+    handler: async (input, req) => {
+      const nome = String(input.arquivo || '').trim();
+      if (!nome) return { erro: 'Informe o nome do arquivo.' };
+
+      const permitidas = bibliotecasPermitidas(req);
+      if (permitidas && !permitidas.length) return { erro: 'Você não tem acesso a documentos do Cérebro.', sem_permissao: true };
+
+      let q = supabase
+        .from('cerebro_doc_texto')
+        .select('nome_arquivo, biblioteca, nota_path, sharepoint_url, conteudo, indexado_em')
+        .eq('nome_arquivo', nome);
+      if (permitidas) q = q.in('biblioteca', permitidas);
+
+      const { data, error } = await q.limit(1);
+      if (error) return { erro: 'Não consegui ler esse documento agora.' };
+      const doc = (data || [])[0];
+      // Mesma resposta para "não existe" e "existe mas você não pode ver": a
+      // diferença entre as duas já é informação sobre o acervo restrito.
+      if (!doc) return { encontrado: false };
+
+      const TETO = 20000;
+      const texto = String(doc.conteudo || '');
+      return {
+        encontrado: true,
+        arquivo: doc.nome_arquivo,
+        biblioteca: doc.biblioteca,
+        url: doc.sharepoint_url || null,
+        indexado_em: doc.indexado_em,
+        truncado: texto.length > TETO,
+        conteudo: texto.slice(0, TETO),
       };
     },
   },

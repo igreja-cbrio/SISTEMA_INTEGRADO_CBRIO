@@ -4736,6 +4736,76 @@ cerebro-cbrio/
   processando → concluido/erro/ignorado)
 - `cerebro_config` — configurações (bibliotecas monitoradas,
   extensões permitidas, delta links, limite de tokens)
+- `cerebro_doc_texto` — texto integral do documento (migration `20260730220000`)
+
+## ⚠️ Cérebro · a IA passa a ler o CONTEÚDO, e o filtro falha FECHADO (2026-07-30)
+
+Pedido do Marcos ("criar um RAG pro sistema saber todo o contexto da CBRio").
+Passou pelo conselho deliberativo; o desenho mudou por causa do que a
+investigação achou. **Não há embeddings** — e a decisão de não ter é registrada
+abaixo.
+
+**⚠️ LEI · o filtro de origem do Cérebro é FAIL-CLOSED.** `cerebroSearch.js`
+`canReadRouteKey` fazia `if (!routeKey) return true`: biblioteca fora do mapa
+ficava visível pra qualquer autenticado. Medição de 30/07 antes de mexer: as 5
+bibliotecas monitoradas (`Gestão, Criativo, Ministerial, Planejamento, CRM e
+Pessoas`) e as 5 pastas de `cerebro_entidades_indice` estavam **todas mapeadas**
+— não era vazamento ativo, era **gatilho armado**, porque
+`cerebro_config.bibliotecas_monitoradas` é uma STRING editável em runtime (sem
+deploy, sem PR): bastava alguém digitar "Financas" ali. Agora origem não mapeada
+não aparece pra ninguém além de admin/diretor, e `avisarOrigemNaoMapeada`
+**notifica o módulo cerebro** — fechar a porta em silêncio seria trocar um
+vazamento por um sumiço inexplicável. Travado em `src/test/cerebroPermissao.test.ts`
+(mutation-testado: reverter pra fail-open deixa 2 testes vermelhos).
+⚠️ Lição repetida: dois conselheiros afirmaram "isto já vaza"; o banco desmentiu.
+Consenso não é evidência — a régua do CLAUDE.md valeu de novo.
+
+**O texto do documento parou de ser jogado fora.** `cerebroProcessor.js` extraía
+até 15k chars, mandava pro Haiku e **descartava** — só `resumo` (2-5 frases)
+sobrevivia, e por isso `cerebroSearch` (que se autodenomina RAG no cabeçalho) só
+conseguia procurar em TÍTULO e RESUMO. Agora `indexarTexto` grava em
+`cerebro_doc_texto` com `tsvector` português + **`f_unaccent`** (obrigatório: o
+`extractTerms` já manda a pergunta sem acento, e o dicionário `portuguese`
+sozinho não faz unaccent). **Dois tetos separados**: `MAX_CHARS_PROMPT` (15k, o
+que vai pro Haiku — custo) e `MAX_CHARS_INDICE` (100k, o que fica pesquisável) —
+com teto único, todo relatório longo perdia o fim para sempre.
+É **best-effort e depois** do update de sucesso: se propagasse, o arquivo viraria
+`erro` e pagaria o Haiku de novo.
+
+**Documento INTEIRO, não chunks — decisão do conselho.** A fronteira de permissão
+(e de LGPD) é o documento; chunk espalharia pedaços de ata pastoral por várias
+linhas com o rótulo de permissão copiado em cada uma. Duas tools novas em
+`assistantTools.js`: `buscar_documento` (full-text no corpo, devolve trecho) e
+`ler_documento` (texto completo sob demanda). ⚠️ As duas têm `minLevel: 0` porque
+a permissão **não cabe num routeKey único** — é por documento, resolvida no
+handler. E a permissão entra **no SQL** (`bibliotecasPermitidas` → `.in()`), nunca
+num filtro em JS depois do `.limit()`: filtrar depois é o bug que faz quem tem
+poucos módulos receber "nada encontrado" existindo documento permitido abaixo do
+corte.
+
+**`serializeContext` não corta mais com `slice()` cego.** Ele truncava por ordem
+de inserção e `cerebro_vault` é o ÚLTIMO campo — a busca rodava, gastava consulta
+e era a primeira coisa descartada; pior, cortar JSON no meio entrega ao modelo um
+objeto **inválido** junto da instrução "responda SOMENTE com base no contexto".
+Agora preserva os campos pequenos (sistema, conhecimento curado, resultado da
+busca) e remove **módulos inteiros**, de trás pra frente. ⚠️ Guarda de regressão:
+sem `cerebro_vault`/`conhecimento_sistema` no objeto, volta ao caminho antigo
+byte a byte — é o caso dos auditores (`systemAuditor`/`moduleAuditor` chamam
+`buildContext` sem `options.query`). Coberto em `src/test/agentContextSerialize.test.ts`.
+
+**Por que NÃO tem embedding** (decisão, não esquecimento): a Anthropic não tem
+API de embeddings, então gerar vetor significa mandar o conteúdo pra um terceiro
+— e o acervo tem ata de diretoria, Kids e fila pastoral, exatamente o que a lei
+do Stax proíbe. O conselheiro jurídico apontou que a **LGPD não tem equivalente
+ao art. 9(2)(d) do GDPR** (organização religiosa), então a base para dado
+sensível é consentimento específico (art. 11, I), e transferência internacional
+exige cláusulas-padrão da ANPD (Res. 19/2024) — não basta DPA com cláusulas
+europeias. **A lei do Stax fica como está.** `pgvector` já está instalado (usado
+só por reconhecimento facial), então se um dia a decisão jurídica mudar, o
+caminho é acrescentar coluna `vector` na MESMA tabela e somar os rankings —
+nada do que foi feito aqui se perde. Antes disso: **medir** com ~30 perguntas
+reais; se as falhas forem de vocabulário (pergunta "desligamento", documento diz
+"rescisão"), vetor se justifica; se forem outras, não resolveria nada.
 
 ### AGENTE-REGRAS.md — fonte única de verdade
 
