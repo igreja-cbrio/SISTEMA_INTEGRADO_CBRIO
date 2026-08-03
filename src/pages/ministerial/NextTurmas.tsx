@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import {
   Loader2, Plus, Users, GraduationCap, CalendarDays, Search,
   CheckCircle2, AlertTriangle, X, UserPlus, UserCheck, Sparkles, RotateCcw,
-  Share2, Copy, MessageCircle, Monitor, ArrowRightLeft, Trash2,
+  Share2, Copy, MessageCircle, Monitor, ArrowRightLeft, Trash2, Pencil,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import QRCode from 'qrcode';
@@ -302,6 +302,10 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
   const [qrSatisfacaoOpen, setQrSatisfacaoOpen] = useState(false);
   const [transferir, setTransferir] = useState<Matricula | null>(null);
   const [ordem, setOrdem] = useState<'nome' | 'recentes'>('nome');
+  // Renomear turma (lápis no título) · o backend já aceita `nome` no PATCH /turmas/:id.
+  const [editandoNome, setEditandoNome] = useState(false);
+  const [nomeEdit, setNomeEdit] = useState('');
+  const [salvandoNome, setSalvandoNome] = useState(false);
   const load = useCallback(async () => {
     setLoading(true);
     try { setDet(await nextApi.turmas.get(turmaId)); } catch (e: any) { toast.error(e?.message || 'Erro'); }
@@ -353,6 +357,20 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
     try { await nextApi.turmas.update(turmaId, { status: 'aberta' }); toast.success('Turma reaberta'); await load(); onChanged(); }
     catch (e: any) { toast.error(e?.message || 'Erro'); }
   };
+  const salvarNome = async () => {
+    const nome = nomeEdit.trim();
+    if (!nome) { toast.error('Informe o nome da turma.'); return; }
+    if (nome === det?.nome) { setEditandoNome(false); return; }
+    setSalvandoNome(true);
+    try {
+      await nextApi.turmas.update(turmaId, { nome });
+      setDet(d => d ? { ...d, nome } : d);
+      setEditandoNome(false);
+      toast.success('Nome da turma atualizado.');
+      onChanged();
+    } catch (e: any) { toast.error(e?.message || 'Erro ao renomear a turma'); }
+    setSalvandoNome(false);
+  };
   const setData = async (encId: string, data: string) => {
     try { await nextApi.encontros.update(encId, { data: data || null }); await load(); } catch (e: any) { toast.error(e?.message); }
   };
@@ -366,8 +384,43 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
           <>
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2 flex-wrap">
-                {det.nome}
-                {det.status !== 'aberta' && <Badge variant="outline" className="text-[9px] uppercase">{det.status}</Badge>}
+                {editandoNome ? (
+                  <>
+                    <Input
+                      value={nomeEdit}
+                      onChange={e => setNomeEdit(e.target.value)}
+                      autoFocus
+                      disabled={salvandoNome}
+                      placeholder="Nome da turma"
+                      className="h-8 w-[220px] text-sm"
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') { e.preventDefault(); salvarNome(); }
+                        if (e.key === 'Escape') { e.preventDefault(); setEditandoNome(false); }
+                      }}
+                    />
+                    <Button size="sm" className="h-8" onClick={salvarNome} disabled={salvandoNome}
+                      style={{ background: C.primary, color: '#fff' }}>
+                      {salvandoNome ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Salvar'}
+                    </Button>
+                    <Button size="sm" variant="ghost" className="h-8" onClick={() => setEditandoNome(false)} disabled={salvandoNome}>
+                      Cancelar
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    {det.nome}
+                    <button
+                      type="button"
+                      onClick={() => { setNomeEdit(det.nome); setEditandoNome(true); }}
+                      title="Renomear turma"
+                      aria-label="Renomear turma"
+                      className="text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
+                    {det.status !== 'aberta' && <Badge variant="outline" className="text-[9px] uppercase">{det.status}</Badge>}
+                  </>
+                )}
               </DialogTitle>
             </DialogHeader>
             <div className="flex-1 overflow-y-auto min-h-0">
