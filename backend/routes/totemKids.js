@@ -2748,7 +2748,7 @@ async function fetchCheckinsAbertosPager() {
   const pageSize = 1000;
   for (let offset = 0; ; offset += pageSize) {
     const { data, error } = await supabase.from('kids_checkins')
-      .select('id, crianca_id, checkin_at, pager_numero, responsavel_checkin_nome, crianca:kids_criancas(nome, data_nascimento, tem_espectro, tem_limitacao_fisica), sala:kids_salas(nome)')
+      .select('id, crianca_id, checkin_at, pager_numero, responsavel_checkin_nome, crianca:kids_criancas(nome, data_nascimento, tem_espectro, tem_limitacao_fisica), sala:kids_salas(nome), sessao:kids_sessoes(culto:cultos(nome))')
       .is('checkout_at', null).is('deleted_at', null)
       .range(offset, offset + pageSize - 1);
     if (error) throw error;
@@ -2822,6 +2822,8 @@ router.get('/pagers-em-uso', authorizeModule('kids', 1), async (req, res) => {
         crianca_nome: (c.crianca && c.crianca.nome) || '—',
         sala_nome: (c.sala && c.sala.nome) || null,
         responsavel_nome: c.responsavel_checkin_nome || null,
+        // Em qual CULTO o pager está sendo usado (Mari 2026-08-03)
+        culto_nome: (c.sessao && c.sessao.culto && c.sessao.culto.nome) || null,
       };
       if (c.pager_numero) em_uso.push({ pager_numero: c.pager_numero, ...base });
       else if (precisaPagerServer(c.crianca)) pendentes.push(base);

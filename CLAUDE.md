@@ -3720,6 +3720,16 @@ via `window.print` na Brother QL-820NWB default do Windows).
   próximo check-in manual, já com a guarda). ⚠️ Os fantasmas restantes seguem
   no banco (lastro financeiro): nenhum fluxo de PESSOAS deve exibi-los nem
   preferi-los — usar `ehNomePlaceholder` em busca/vínculo novos.
+- **Pager de INCLUSÃO é OBRIGATÓRIO (Mari 2026-08-03 · sem migration)**: no
+  diálogo do pager, família com criança de inclusão (`tem_espectro` ou
+  `tem_limitacao_fisica` entre as obrigadas · `PagerFluxo.inclusao`) NÃO tem a
+  válvula "Sem pager disponível — imprimir mesmo assim" e o diálogo não fecha
+  por fora/Esc — só conclui com número. Menores de 4 anos sem inclusão mantêm
+  a válvula (o painel segue mostrando "pendentes" como rede). E o card **Pagers
+  em uso** do painel ao vivo agora mostra **em qual culto** cada pager está
+  (chip com a hora · `pagers-em-uso` devolve `culto_nome` via join da sessão) —
+  o histórico por culto com devolução já existia na **Conferência de pagers**
+  (28/07 · `ConferenciaPagers` no painel + `GET /pagers/conferencia`).
 - **Pendências operacionais**: aplicar migration
   `20260522300000_totem_kids_chamadas_display.sql`; Brother no Windows do totem
   (docs/totem-kids-setup-brother.md); comprar/parear 6 Fire TV Sticks;
