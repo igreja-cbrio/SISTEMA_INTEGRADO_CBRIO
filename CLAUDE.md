@@ -3998,6 +3998,29 @@ via `window.print` na Brother QL-820NWB default do Windows).
   importadas (56% com responsável · resto via auto-cadastro no 1º check-in).
   Diário completo no legado.
 
+## Next · renomear turma pelo lápis (2026-08-03 · SEM migration)
+
+Pedido do Marcos: lápis pra mudar o nome de uma turma do Next. Edição inline no
+título do modal da turma (`TurmaDetalheModal` em `NextTurmas.tsx`): lápis →
+`Input` + Salvar/Cancelar (Enter salva · Esc cancela). Grava por
+`nextApi.turmas.update(id, { nome })` — **o `PATCH /next/turmas/:id` já aceitava
+`nome`** na whitelist `['nome','status','responsavel_id','observacoes']`; só não
+havia caminho na UI (a tela nascia com o nome sugerido `nomeMesAtual()` e ele
+ficava imutável). Sem backend, sem migration, sem endpoint novo.
+
+- Atualização otimista do nome no `det` + `onChanged()` → o card da grade reflete
+  na hora, sem refetch do detalhe inteiro.
+- ⚠️ **O lápis fica SÓ no modal, não no card da grade**: o card é um `<button>`
+  (abre o detalhe) e botão dentro de botão é HTML inválido — o clique no lápis
+  seria capturado pelo card em parte dos navegadores.
+- ⚠️ **Não mexe em `next_turmas.origem_mes`**, que é a chave real usada pela
+  série derivada da view unificada (`serie_chave`/`edicao_rotulo`) e pelo
+  `origem_mes_key` do espelho de matrícula. Renomear é rótulo de exibição; a
+  identidade da turma segue sendo `origem_mes`. Não "melhorar" isso derivando
+  `origem_mes` do nome novo — o UNIQUE dela quebraria as turmas "/02" do mesmo mês.
+- Sem gate de permissão próprio, igual a Encerrar/Reabrir que já existiam ali (a
+  rota é `authenticate` + `ModuleGuard` do módulo `next` na tela).
+
 ## ⚠️ Next · backfill de 13/05, contagem dupla e identidades (2026-07-29)
 
 Investigação a pedido do Marcos ("Kelly Veiga com 24 inscrições, 23 do Next").
