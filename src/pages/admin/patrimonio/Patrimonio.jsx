@@ -32,6 +32,16 @@ const STATUS_BEM = {
   extraviado: { c: C.red, bg: C.redBg, label: 'Extraviado' },
 };
 
+// Doação recebida (pedido do usuário 2026-07-31, via conselho deliberativo):
+// origem de aquisição é fato permanente do CADASTRO do bem, não uma
+// movimentação — "comprado" (default) segue com os campos de NF/valor de
+// aquisição já existentes; "doado" pede quem doou.
+const DOADOR_TIPO_LABELS = {
+  pessoa_fisica: 'Pessoa física',
+  empresa: 'Empresa',
+  outro_ministerio: 'Outro ministério',
+};
+
 // "mmm/aa" em vez de "aa/mm" (pedido do usuário 2026-07-31: o formato
 // anterior lia como se fosse dia/mês, no padrão brasileiro — confuso, e sem
 // jeito de distinguir de cara "13/07" (ano) de um dia 13 de julho).
@@ -173,7 +183,10 @@ const fmtCodigo = (c) => {
 // exibidas na tabela; não pagina (exporta tudo que passou no filtro, não só
 // a página visível de 25 — o backend também não pagina mais em 1000, então
 // isso cobre o parque inteiro que bater no filtro).
-const BENS_EXPORT_HEADERS = ['Número', 'Nome', 'Categoria', 'Localização', 'Marca/Modelo', 'Valor de Aquisição', 'Status'];
+const BENS_EXPORT_HEADERS = ['Número', 'Nome', 'Categoria', 'Localização', 'Marca/Modelo', 'Valor de Aquisição', 'Status', 'Origem', 'Doador'];
+function origemParaExportar(b) {
+  return b.origem_aquisicao === 'doado' ? 'Doado' : 'Comprado';
+}
 function bensParaExportar(lista) {
   return lista.map((b) => [
     fmtCodigo(b.codigo_barras),
@@ -183,6 +196,8 @@ function bensParaExportar(lista) {
     [b.marca, b.modelo].filter(Boolean).join(' '),
     b.valor_aquisicao != null ? fmtMoney(b.valor_aquisicao) : '',
     STATUS_BEM[b.status]?.label || b.status || '',
+    origemParaExportar(b),
+    b.origem_aquisicao === 'doado' ? (b.doador || '') : '',
   ]);
 }
 function exportarBensCSV(lista) {
@@ -195,6 +210,8 @@ function exportarBensCSV(lista) {
     [b.marca, b.modelo].filter(Boolean).join(' '),
     b.valor_aquisicao ?? '',
     STATUS_BEM[b.status]?.label || b.status || '',
+    origemParaExportar(b),
+    b.origem_aquisicao === 'doado' ? (b.doador || '') : '',
   ]);
   exportCSV(BENS_EXPORT_HEADERS, rows, 'patrimonio_bens');
 }
@@ -1190,6 +1207,7 @@ function BemFormModal({ open, data, categorias, locOptions, responsaveis, onClos
     if (!f.nome || !f.nome.trim()) { setFormError('Nome é obrigatório.'); return; }
     if (!f.codigo_barras || !f.codigo_barras.trim()) { setFormError('Número do patrimônio é obrigatório.'); return; }
     if (f.valor_aquisicao !== undefined && f.valor_aquisicao !== '' && Number(f.valor_aquisicao) < 0) { setFormError('Valor de aquisição deve ser >= 0.'); return; }
+    if (f.origem_aquisicao === 'doado' && (!f.doador || !f.doador.trim())) { setFormError('Informe quem doou o bem.'); return; }
     setFormError('');
     onSave(f);
   }
@@ -1229,8 +1247,23 @@ function BemFormModal({ open, data, categorias, locOptions, responsaveis, onClos
       </div>
       <div style={styles.formRow}>
         <div style={styles.formGroup}><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Data Aquisição</label><DatePicker value={f.data_aquisicao || ''} onChange={v => upd('data_aquisicao', v)} /></div>
-        <Input label="Nº da NF" value={f.numero_nf || ''} onChange={e => upd('numero_nf', e.target.value)} />
+        <Input label="Nº da NF" value={f.numero_nf || ''} onChange={e => upd('numero_nf', e.target.value)} placeholder={f.origem_aquisicao === 'doado' ? 'Geralmente não há, na doação' : ''} />
       </div>
+      <div style={styles.formRow}>
+        <Select label="Origem" value={f.origem_aquisicao || 'comprado'} onChange={e => upd('origem_aquisicao', e.target.value)}>
+          <option value="comprado">Comprado</option>
+          <option value="doado">Doado</option>
+        </Select>
+        {f.origem_aquisicao === 'doado' && (
+          <Select label="Tipo de doador" value={f.doador_tipo || ''} onChange={e => upd('doador_tipo', e.target.value)}>
+            <option value="">Selecionar</option>
+            {Object.entries(DOADOR_TIPO_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </Select>
+        )}
+      </div>
+      {f.origem_aquisicao === 'doado' && (
+        <Input label="Doador *" value={f.doador || ''} onChange={e => upd('doador', e.target.value)} placeholder="Nome de quem doou" />
+      )}
       <div style={styles.formRow}>
         <Select label="Responsável pelo bem" value={f.responsavel_id || ''} onChange={e => upd('responsavel_id', e.target.value)}>
           <option value="">Selecionar</option>
@@ -1298,6 +1331,7 @@ function BemLoteModal({ open, categorias, locOptions, busy, onClose, onSave }) {
   function handleSave() {
     if (!f.nome || !f.nome.trim()) { setFormError('Nome é obrigatório.'); return; }
     if (totalQtd <= 0) { setFormError('Informe ao menos uma quantidade maior que zero.'); return; }
+    if (f.origem_aquisicao === 'doado' && (!f.doador || !f.doador.trim())) { setFormError('Informe quem doou os bens.'); return; }
     setFormError('');
     onSave({ ...f, distribuicao: dist.filter(d => Number(d.quantidade) > 0).map(d => ({ localizacao_id: d.localizacao_id || null, quantidade: Number(d.quantidade) })) });
   }
@@ -1326,7 +1360,22 @@ function BemLoteModal({ open, categorias, locOptions, busy, onClose, onSave }) {
         <Input label="Valor Aquisição (R$) por unidade" type="number" value={f.valor_aquisicao || ''} onChange={e => upd('valor_aquisicao', e.target.value)} />
         <div style={styles.formGroup}><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Data Aquisição</label><DatePicker value={f.data_aquisicao || ''} onChange={v => upd('data_aquisicao', v)} /></div>
       </div>
-      <Input label="Nº da NF" value={f.numero_nf || ''} onChange={e => upd('numero_nf', e.target.value)} />
+      <Input label="Nº da NF" value={f.numero_nf || ''} onChange={e => upd('numero_nf', e.target.value)} placeholder={f.origem_aquisicao === 'doado' ? 'Geralmente não há, na doação' : ''} />
+      <div style={styles.formRow}>
+        <Select label="Origem" value={f.origem_aquisicao || 'comprado'} onChange={e => upd('origem_aquisicao', e.target.value)}>
+          <option value="comprado">Comprado</option>
+          <option value="doado">Doado</option>
+        </Select>
+        {f.origem_aquisicao === 'doado' && (
+          <Select label="Tipo de doador" value={f.doador_tipo || ''} onChange={e => upd('doador_tipo', e.target.value)}>
+            <option value="">Selecionar</option>
+            {Object.entries(DOADOR_TIPO_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </Select>
+        )}
+      </div>
+      {f.origem_aquisicao === 'doado' && (
+        <Input label="Doador *" value={f.doador || ''} onChange={e => upd('doador', e.target.value)} placeholder="Nome de quem doou (mesmo doador pra todo o lote)" />
+      )}
 
       <div style={{ marginTop: 16, marginBottom: 8, fontSize: 12, fontWeight: 700, color: C.text2, textTransform: 'uppercase' }}>Distribuir por localização</div>
       {dist.map((d, i) => (
@@ -1372,6 +1421,7 @@ function BemDetailModal({ open, data, onClose, onEdit, onBaixar, onMov, onDispen
         <div><span style={{ fontSize: 11, color: C.text2 }}>Valor Aquisição:</span><div style={{ fontSize: 14, fontWeight: 600 }}>{fmtMoney(data.valor_aquisicao)}</div></div>
         <div><span style={{ fontSize: 11, color: C.text2 }}>Data Aquisição:</span><div style={{ fontSize: 14 }}>{fmtDate(data.data_aquisicao)}</div></div>
         <div><span style={{ fontSize: 11, color: C.text2 }}>Nº da NF:</span><div style={{ fontSize: 14 }}>{data.numero_nf || '—'}</div></div>
+        <div><span style={{ fontSize: 11, color: C.text2 }}>Origem:</span><div style={{ fontSize: 14 }}>{data.origem_aquisicao === 'doado' ? `Doado${data.doador ? ` — ${data.doador}` : ''}${data.doador_tipo ? ` (${DOADOR_TIPO_LABELS[data.doador_tipo] || data.doador_tipo})` : ''}` : 'Comprado'}</div></div>
         <div><span style={{ fontSize: 11, color: C.text2 }}>Garantia:</span><div style={{ fontSize: 14 }}>{data.tem_garantia ? `Sim${data.garantia_ate ? ` (até ${fmtDate(data.garantia_ate)})` : ''}` : 'Não'}</div></div>
         <div><span style={{ fontSize: 11, color: C.text2 }}>Responsável:</span><div style={{ fontSize: 14 }}>{data.responsavel?.name || '—'}</div></div>
         {data.status === 'baixado' && <div><span style={{ fontSize: 11, color: C.text2 }}>Data da baixa:</span><div style={{ fontSize: 14 }}>{fmtDate(data.data_baixa)}</div></div>}

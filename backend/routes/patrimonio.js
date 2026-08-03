@@ -424,10 +424,14 @@ router.get('/bens/:id', async (req, res) => {
 
 router.post('/bens', authorizeModule('patrimonio', 3), async (req, res) => {
   try {
-    const { codigo_barras, nome, descricao, categoria_id, localizacao_id, numero_serie, marca, modelo, valor_aquisicao, data_aquisicao, observacoes, numero_nf, tem_garantia, garantia_ate, responsavel_id } = req.body;
+    const { codigo_barras, nome, descricao, categoria_id, localizacao_id, numero_serie, marca, modelo, valor_aquisicao, data_aquisicao, observacoes, numero_nf, tem_garantia, garantia_ate, responsavel_id, origem_aquisicao, doador, doador_tipo } = req.body;
     if (!codigo_barras || !nome) return res.status(400).json({ error: 'Código de barras e nome são obrigatórios' });
+    // Doação recebida (pedido do usuário 2026-07-31): "doado" exige quem doou —
+    // "comprado" (default) ignora esses 2 campos mesmo que venham no payload.
+    const origem = origem_aquisicao === 'doado' ? 'doado' : 'comprado';
+    if (origem === 'doado' && (!doador || !doador.trim())) return res.status(400).json({ error: 'Informe quem doou o bem' });
     const { data, error } = await supabase.from('pat_bens')
-      .insert({ codigo_barras, nome, descricao: descricao || null, categoria_id: categoria_id || null, localizacao_id: localizacao_id || null, numero_serie: numero_serie || null, marca: marca || null, modelo: modelo || null, valor_aquisicao: valor_aquisicao || null, data_aquisicao: data_aquisicao || null, observacoes: observacoes || null, numero_nf: numero_nf || null, tem_garantia: !!tem_garantia, garantia_ate: garantia_ate || null, responsavel_id: responsavel_id || null, created_by: req.user.userId })
+      .insert({ codigo_barras, nome, descricao: descricao || null, categoria_id: categoria_id || null, localizacao_id: localizacao_id || null, numero_serie: numero_serie || null, marca: marca || null, modelo: modelo || null, valor_aquisicao: valor_aquisicao || null, data_aquisicao: data_aquisicao || null, observacoes: observacoes || null, numero_nf: numero_nf || null, tem_garantia: !!tem_garantia, garantia_ate: garantia_ate || null, responsavel_id: responsavel_id || null, created_by: req.user.userId, origem_aquisicao: origem, doador: origem === 'doado' ? doador.trim() : null, doador_tipo: origem === 'doado' ? (doador_tipo || null) : null })
       .select().single();
     if (error) return res.status(400).json({ error: error.message });
     res.json(data);
@@ -441,12 +445,17 @@ router.post('/bens', authorizeModule('patrimonio', 3), async (req, res) => {
 // insert (não reservado antes — evita número "furado" se o usuário cancelar).
 router.post('/bens/lote', authorizeModule('patrimonio', 3), async (req, res) => {
   try {
-    const { nome, descricao, categoria_id, marca, modelo, valor_aquisicao, data_aquisicao, numero_nf, tem_garantia, garantia_ate, responsavel_id, distribuicao } = req.body;
+    const { nome, descricao, categoria_id, marca, modelo, valor_aquisicao, data_aquisicao, numero_nf, tem_garantia, garantia_ate, responsavel_id, distribuicao, origem_aquisicao, doador, doador_tipo } = req.body;
     if (!nome || !nome.trim()) return res.status(400).json({ error: 'Nome é obrigatório' });
     const dist = Array.isArray(distribuicao) ? distribuicao.filter(d => Number(d?.quantidade) > 0) : [];
     const totalQtd = dist.reduce((s, d) => s + Number(d.quantidade), 0);
     if (!dist.length || totalQtd <= 0) return res.status(400).json({ error: 'Informe ao menos uma quantidade maior que zero' });
     if (totalQtd > 300) return res.status(400).json({ error: 'Máximo de 300 bens por lote' });
+    // Doação recebida em lote (pedido do usuário 2026-07-31): mesmo doador pra
+    // todo o lote — cobre o caso real "uma empresa doou 20 cadeiras de uma vez".
+    // Doação heterogênea (doador diferente por item) segue pelo cadastro individual.
+    const origem = origem_aquisicao === 'doado' ? 'doado' : 'comprado';
+    if (origem === 'doado' && (!doador || !doador.trim())) return res.status(400).json({ error: 'Informe quem doou os bens' });
 
     const { data: codigosData, error: codigosErr } = await supabase.rpc('pat_proximo_codigo_barras', { p_qtd: totalQtd });
     if (codigosErr) return res.status(400).json({ error: codigosErr.message });
@@ -458,6 +467,7 @@ router.post('/bens/lote', authorizeModule('patrimonio', 3), async (req, res) => 
       marca: marca || null, modelo: modelo || null, valor_aquisicao: valor_aquisicao || null,
       data_aquisicao: data_aquisicao || null, numero_nf: numero_nf || null, tem_garantia: !!tem_garantia,
       garantia_ate: garantia_ate || null, responsavel_id: responsavel_id || null, created_by: req.user.userId,
+      origem_aquisicao: origem, doador: origem === 'doado' ? doador.trim() : null, doador_tipo: origem === 'doado' ? (doador_tipo || null) : null,
     };
     const rows = [];
     let cursor = 0;
@@ -477,11 +487,12 @@ router.post('/bens/lote', authorizeModule('patrimonio', 3), async (req, res) => 
 
 router.put('/bens/:id', authorizeModule('patrimonio', 3), async (req, res) => {
   try {
-    const { codigo_barras, nome, descricao, categoria_id, localizacao_id, numero_serie, marca, modelo, valor_aquisicao, data_aquisicao, status, observacoes, numero_nf, tem_garantia, garantia_ate, responsavel_id, data_baixa } = req.body;
+    const { codigo_barras, nome, descricao, categoria_id, localizacao_id, numero_serie, marca, modelo, valor_aquisicao, data_aquisicao, status, observacoes, numero_nf, tem_garantia, garantia_ate, responsavel_id, data_baixa, origem_aquisicao, doador, doador_tipo } = req.body;
     // Reatribuir a localização (edição manual do cadastro) é decisão humana —
     // limpa o alerta de "localização pendente de reavaliação" (hierarquia
     // 2026-07-29). Se localizacao_id não veio no payload, o alerta é preservado.
-    const update = { codigo_barras, nome, descricao: descricao || null, categoria_id: categoria_id || null, localizacao_id: localizacao_id || null, numero_serie: numero_serie || null, marca: marca || null, modelo: modelo || null, valor_aquisicao: valor_aquisicao || null, data_aquisicao: data_aquisicao || null, status, observacoes: observacoes || null, numero_nf: numero_nf || null, tem_garantia: !!tem_garantia, garantia_ate: garantia_ate || null, responsavel_id: responsavel_id || null };
+    const origem = origem_aquisicao === 'doado' ? 'doado' : 'comprado';
+    const update = { codigo_barras, nome, descricao: descricao || null, categoria_id: categoria_id || null, localizacao_id: localizacao_id || null, numero_serie: numero_serie || null, marca: marca || null, modelo: modelo || null, valor_aquisicao: valor_aquisicao || null, data_aquisicao: data_aquisicao || null, status, observacoes: observacoes || null, numero_nf: numero_nf || null, tem_garantia: !!tem_garantia, garantia_ate: garantia_ate || null, responsavel_id: responsavel_id || null, origem_aquisicao: origem, doador: origem === 'doado' ? (doador || null) : null, doador_tipo: origem === 'doado' ? (doador_tipo || null) : null };
     if (localizacao_id !== undefined) { update.localizacao_pendente = false; update.alerta_divergencia_item_id = null; }
     // Data de baixa acompanha o status editado direto no cadastro (item 4 ·
     // 2026-07-29): entra em "baixado" grava a data (a informada ou hoje);
