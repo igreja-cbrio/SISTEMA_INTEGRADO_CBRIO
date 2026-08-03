@@ -50,7 +50,6 @@ const INDICADORES = {
 // ─────────────────────────────────────────────────────────────────────────────
 const { isoWeekRange, isoWeekOf, fmtDateBr, semanasDoMes } = require('../utils/isoWeek');
 
-
 const {
   hojeBrt, corteDoAno, ultimaSemanaIsoCompleta, resolverPeriodo,
   MES_NOMES_LONGO, MES_NOMES_CURTO,
