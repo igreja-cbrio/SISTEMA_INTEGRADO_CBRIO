@@ -7,12 +7,12 @@ Documentação de arquitetura e execução do command center técnico do CBRio.
 | Etapa | Estado | Entrega |
 |---|---|---|
 | 0 · Contrato e inventário | concluída tecnicamente | fronteiras, mapa funcional, taxonomia, SLOs propostos, segurança e inventário |
-| 1 · Fundação | concluída em código · ativação pendente | acesso, catálogo, correlação, releases, execução canônica e adapters |
-| 2 · Sistema v1 | migration aplicada · publicação pendente | visão geral, incidentes, automações e Web/API básico |
-| 3 · Web completa | migration aplicada · publicação pendente | performance, segurança, releases e testes sintéticos |
-| 4 · Android/iOS | implementada em código · migration pendente | telemetria segura, releases, falhas e operação por plataforma |
-| 5 · Dados, facial e Wi-Fi | implementada em código · migration pendente | governança, integridade, consentimento, retenção e espelhos sanitizados |
-| 6 · Custos e prestação de contas | não iniciada | FinOps e relatórios executivos |
+| 1 · Fundação | concluída | acesso, catálogo, correlação, releases, execução canônica e adapters |
+| 2 · Sistema v1 | concluída | visão geral, incidentes, automações e Web/API básico |
+| 3 · Web completa | concluída | performance, segurança, releases e testes sintéticos |
+| 4 · Android/iOS | concluída | telemetria segura, releases, falhas e operação por plataforma |
+| 5 · Dados, facial e Wi-Fi | concluída | governança, integridade, consentimento, retenção e espelhos sanitizados |
+| 6 · Custos e prestação de contas | concluída em código · publicação pendente | FinOps e relatórios executivos auditáveis |
 
 ## Artefatos da Etapa 0
 
@@ -38,6 +38,10 @@ Documentação de arquitetura e execução do command center técnico do CBRio.
 ## Artefatos da Etapa 5
 
 - [Governança de dados, Wi-Fi e reconhecimento facial](./etapa-5-governanca-dados.md)
+
+## Artefatos da Etapa 6
+
+- [FinOps e relatórios executivos](./etapa-6-finops-relatorios.md)
 
 ## Convenção de migrations
 

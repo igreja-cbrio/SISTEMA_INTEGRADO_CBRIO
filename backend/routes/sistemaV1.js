@@ -22,6 +22,14 @@ const {
   getGovernanceCommandCenter,
   updateGovernanceControl,
 } = require('../services/systemDataGovernance');
+const {
+  getFinanceCommandCenter,
+  createCostEntry,
+  updateProvider,
+  createExecutiveReport,
+  publishExecutiveReport,
+  getExecutiveReport,
+} = require('../services/systemFinOps');
 
 const SEVERITIES = new Set(['info', 'warning', 'error', 'critical']);
 const STATUSES = new Set([
@@ -181,6 +189,83 @@ router.patch('/governance/controls/:controlKey', async (req, res) => {
       return res.status(400).json({ error: error.message });
     }
     res.status(500).json({ error: 'Erro ao registrar a decisão de governança.' });
+  }
+});
+
+router.get('/finance/command-center', async (req, res) => {
+  try {
+    const result = await getFinanceCommandCenter(req.query.months);
+    await auditSensitiveRead(req, 'finance-command-center');
+    res.json(result);
+  } catch (error) {
+    console.error('[sistema/finance/command-center]', error.message);
+    res.status(500).json({ error: 'Erro ao montar custos e prestação de contas.' });
+  }
+});
+
+router.post('/finance/costs', async (req, res) => {
+  try {
+    res.status(201).json(await createCostEntry(req.body || {}, {
+      ...actor(req), requestId: req.requestId,
+    }));
+  } catch (error) {
+    console.error('[sistema/finance/costs POST]', error.message);
+    if (error.code === 'INVALID_FINOPS_INPUT') return res.status(400).json({ error: error.message });
+    if (error.code === '23503') return res.status(400).json({ error: 'Fornecedor não cadastrado.' });
+    if (error.code === '23505') return res.status(409).json({ error: 'Este lançamento já foi importado.' });
+    res.status(500).json({ error: 'Erro ao registrar custo.' });
+  }
+});
+
+router.patch('/finance/providers/:providerKey', async (req, res) => {
+  try {
+    res.json(await updateProvider(req.params.providerKey, req.body || {}, {
+      ...actor(req), requestId: req.requestId,
+    }));
+  } catch (error) {
+    console.error('[sistema/finance/providers PATCH]', error.message);
+    if (error.code === 'INVALID_FINOPS_INPUT') return res.status(400).json({ error: error.message });
+    if (error.code === 'PGRST116') return res.status(404).json({ error: 'Fornecedor não encontrado.' });
+    res.status(500).json({ error: 'Erro ao atualizar fornecedor.' });
+  }
+});
+
+router.post('/finance/reports', async (req, res) => {
+  try {
+    res.status(201).json(await createExecutiveReport(req.body || {}, {
+      ...actor(req), requestId: req.requestId,
+    }));
+  } catch (error) {
+    console.error('[sistema/finance/reports POST]', error.message);
+    if (error.code === 'INVALID_FINOPS_INPUT') return res.status(400).json({ error: error.message });
+    res.status(500).json({ error: 'Erro ao gerar relatório executivo.' });
+  }
+});
+
+router.post('/finance/reports/:id/publish', async (req, res) => {
+  try {
+    res.json(await publishExecutiveReport(req.params.id, {
+      ...actor(req), requestId: req.requestId,
+    }));
+  } catch (error) {
+    console.error('[sistema/finance/reports/publish]', error.message);
+    if (error.code === 'INVALID_FINOPS_INPUT') return res.status(400).json({ error: error.message });
+    if (error.code === 'PGRST116') return res.status(404).json({ error: 'Relatório não encontrado.' });
+    res.status(500).json({ error: 'Erro ao publicar relatório executivo.' });
+  }
+});
+
+router.get('/finance/reports/:id/export', async (req, res) => {
+  try {
+    const report = await getExecutiveReport(req.params.id);
+    await auditSensitiveRead(req, `finance-report-${req.params.id}`);
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="sistema-relatorio-${req.params.id}.json"`);
+    res.json(report);
+  } catch (error) {
+    console.error('[sistema/finance/reports/export]', error.message);
+    if (error.code === 'PGRST116') return res.status(404).json({ error: 'Relatório não encontrado.' });
+    res.status(500).json({ error: 'Erro ao exportar relatório executivo.' });
   }
 });
 

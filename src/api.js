@@ -1764,6 +1764,12 @@ export const sistema = {
   refreshMobilePushReceipts: () => post('/sistema/mobile/push/receipts/refresh', {}),
   governanceCommandCenter: () => get('/sistema/governance/command-center'),
   updateGovernanceControl: (controlKey, data) => patch(`/sistema/governance/controls/${encodeURIComponent(controlKey)}`, data),
+  financeCommandCenter: (months = 12) => get(`/sistema/finance/command-center?months=${months}`),
+  createFinanceCost: (data) => post('/sistema/finance/costs', data),
+  updateFinanceProvider: (providerKey, data) => patch(`/sistema/finance/providers/${encodeURIComponent(providerKey)}`, data),
+  createExecutiveReport: (data) => post('/sistema/finance/reports', data),
+  publishExecutiveReport: (id) => post(`/sistema/finance/reports/${id}/publish`, {}),
+  executiveReport: (id) => get(`/sistema/finance/reports/${id}/export`),
   feedback: (params = {}) => get('/sistema/feedback?' + new URLSearchParams(
     Object.entries(params).filter(([, value]) => value != null && value !== '')
   )),
