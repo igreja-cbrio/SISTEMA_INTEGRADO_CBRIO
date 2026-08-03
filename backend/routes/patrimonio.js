@@ -211,7 +211,7 @@ router.get('/categorias', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao listar categorias' }); }
 });
 
-router.post('/categorias', async (req, res) => {
+router.post('/categorias', authorizeModule('patrimonio', 3), async (req, res) => {
   try {
     const { nome, icone, pai_id, vida_util_meses } = req.body;
     if (!nome) return res.status(400).json({ error: 'Nome é obrigatório' });
@@ -222,7 +222,7 @@ router.post('/categorias', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao criar categoria' }); }
 });
 
-router.put('/categorias/:id', async (req, res) => {
+router.put('/categorias/:id', authorizeModule('patrimonio', 3), async (req, res) => {
   try {
     const { nome, icone, vida_util_meses } = req.body;
     const update = {};
@@ -236,7 +236,7 @@ router.put('/categorias/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar categoria' }); }
 });
 
-router.delete('/categorias/:id', async (req, res) => {
+router.delete('/categorias/:id', authorizeModule('patrimonio', 4), async (req, res) => {
   try {
     const { error } = await supabase.from('pat_categorias').delete().eq('id', req.params.id);
     if (error) return res.status(400).json({ error: error.message });
@@ -271,7 +271,7 @@ async function paiCriaCiclo(paiId, ownId) {
   return false;
 }
 
-router.post('/localizacoes', async (req, res) => {
+router.post('/localizacoes', authorizeModule('patrimonio', 3), async (req, res) => {
   try {
     const { nome, pai_id } = req.body;
     if (!nome) return res.status(400).json({ error: 'Nome é obrigatório' });
@@ -285,7 +285,7 @@ router.post('/localizacoes', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao criar localização' }); }
 });
 
-router.put('/localizacoes/:id', async (req, res) => {
+router.put('/localizacoes/:id', authorizeModule('patrimonio', 3), async (req, res) => {
   try {
     const { nome, pai_id } = req.body;
     const update = {};
@@ -303,7 +303,7 @@ router.put('/localizacoes/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar localização' }); }
 });
 
-router.delete('/localizacoes/:id', async (req, res) => {
+router.delete('/localizacoes/:id', authorizeModule('patrimonio', 4), async (req, res) => {
   try {
     const { error } = await supabase.from('pat_localizacoes').delete().eq('id', req.params.id);
     if (error) return res.status(400).json({ error: error.message });
@@ -422,7 +422,7 @@ router.get('/bens/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao buscar bem' }); }
 });
 
-router.post('/bens', async (req, res) => {
+router.post('/bens', authorizeModule('patrimonio', 3), async (req, res) => {
   try {
     const { codigo_barras, nome, descricao, categoria_id, localizacao_id, numero_serie, marca, modelo, valor_aquisicao, data_aquisicao, observacoes, numero_nf, tem_garantia, garantia_ate, responsavel_id } = req.body;
     if (!codigo_barras || !nome) return res.status(400).json({ error: 'Código de barras e nome são obrigatórios' });
@@ -439,7 +439,7 @@ router.post('/bens', async (req, res) => {
 // distribuídas em salas diferentes. Cada unidade recebe um número de
 // patrimônio sequencial (ver pat_proximo_codigo_barras), calculado na hora do
 // insert (não reservado antes — evita número "furado" se o usuário cancelar).
-router.post('/bens/lote', async (req, res) => {
+router.post('/bens/lote', authorizeModule('patrimonio', 3), async (req, res) => {
   try {
     const { nome, descricao, categoria_id, marca, modelo, valor_aquisicao, data_aquisicao, numero_nf, tem_garantia, garantia_ate, responsavel_id, distribuicao } = req.body;
     if (!nome || !nome.trim()) return res.status(400).json({ error: 'Nome é obrigatório' });
@@ -475,7 +475,7 @@ router.post('/bens/lote', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao cadastrar bens em massa' }); }
 });
 
-router.put('/bens/:id', async (req, res) => {
+router.put('/bens/:id', authorizeModule('patrimonio', 3), async (req, res) => {
   try {
     const { codigo_barras, nome, descricao, categoria_id, localizacao_id, numero_serie, marca, modelo, valor_aquisicao, data_aquisicao, status, observacoes, numero_nf, tem_garantia, garantia_ate, responsavel_id, data_baixa } = req.body;
     // Reatribuir a localização (edição manual do cadastro) é decisão humana —
@@ -498,7 +498,7 @@ router.put('/bens/:id', async (req, res) => {
 
 // "Dar baixa" (não é exclusão): grava a movimentação de baixa e marca o bem
 // como baixado, preservando cadastro e histórico — NUNCA hard-delete aqui.
-router.delete('/bens/:id', async (req, res) => {
+router.delete('/bens/:id', authorizeModule('patrimonio', 4), async (req, res) => {
   try {
     const { error: movErr } = await supabase.from('pat_movimentacoes')
       .insert({ bem_id: req.params.id, tipo: 'baixa', responsavel_id: req.user.userId, motivo: req.body?.motivo || null, created_by: req.user.userId });
@@ -548,7 +548,7 @@ function mensagemBensEmRevisao(conflitos) {
 
 // Define um valor comum (categoria/localização/responsável/status) pra N bens
 // de uma vez. Cada campo é opcional — só atualiza o que veio no body.
-router.put('/bens/bulk', async (req, res) => {
+router.put('/bens/bulk', authorizeModule('patrimonio', 3), async (req, res) => {
   try {
     const { ids, categoria_id, localizacao_id, responsavel_id, status } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'Selecione ao menos um bem' });
@@ -576,7 +576,7 @@ router.put('/bens/bulk', async (req, res) => {
 // Corrige erro de digitação repetido no nome de vários bens de uma vez
 // (busca um trecho e substitui, igual pra todos os selecionados) — "definir
 // valor comum" acima não resolve isso porque cada bem tem um nome diferente.
-router.put('/bens/bulk/renomear', async (req, res) => {
+router.put('/bens/bulk/renomear', authorizeModule('patrimonio', 3), async (req, res) => {
   try {
     const { ids, buscar, substituir } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'Selecione ao menos um bem' });
@@ -598,7 +598,7 @@ router.put('/bens/bulk/renomear', async (req, res) => {
 // Movimentação (entrada/saída/transferência/manutenção) pra N bens de uma vez
 // — chama a MESMA RPC atômica do fluxo individual, bem por bem (não é uma
 // transação única entre bens; reporta quem falhou em vez de abortar tudo).
-router.post('/bens/bulk/movimentar', async (req, res) => {
+router.post('/bens/bulk/movimentar', authorizeModule('patrimonio', 3), async (req, res) => {
   try {
     const { ids, tipo, localizacao_origem_id, localizacao_destino_id, motivo } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'Selecione ao menos um bem' });
@@ -622,7 +622,7 @@ router.post('/bens/bulk/movimentar', async (req, res) => {
 
 // Dar baixa em N bens de uma vez — mesma lógica do DELETE individual (nunca
 // hard-delete: grava a movimentação de baixa e marca o status).
-router.post('/bens/bulk/baixa', async (req, res) => {
+router.post('/bens/bulk/baixa', authorizeModule('patrimonio', 4), async (req, res) => {
   try {
     const { ids, motivo } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'Selecione ao menos um bem' });
@@ -697,7 +697,7 @@ router.get('/movimentacoes', async (req, res) => {
 // escritas separadas; se a 2ª falhasse no meio, a aba de Movimentações
 // passava a mentir sobre onde o bem está de verdade (dívida técnica
 // corrigida a pedido do usuário 2026-07-29).
-router.post('/bens/:id/movimentacoes', async (req, res) => {
+router.post('/bens/:id/movimentacoes', authorizeModule('patrimonio', 3), async (req, res) => {
   try {
     const { tipo, localizacao_origem_id, localizacao_destino_id, motivo } = req.body;
     if (!tipo) return res.status(400).json({ error: 'Tipo é obrigatório' });
@@ -786,7 +786,7 @@ router.get('/revisao/ciclos', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao listar ciclos de revisão' }); }
 });
 
-router.post('/revisao/ciclos', async (req, res) => {
+router.post('/revisao/ciclos', authorizeModule('patrimonio', 4), async (req, res) => {
   try {
     const { responsavel_id, data_inicio } = req.body;
     if (!responsavel_id || !data_inicio) return res.status(400).json({ error: 'Responsável e data de início são obrigatórios' });
@@ -846,7 +846,7 @@ router.get('/revisao/convocacoes/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao buscar convocação' }); }
 });
 
-router.post('/revisao/convocacoes/:id/iniciar', async (req, res) => {
+router.post('/revisao/convocacoes/:id/iniciar', authorizeModule('patrimonio', 4), async (req, res) => {
   try {
     const { data, error } = await supabase.from('pat_revisao_convocacoes')
       .update({ status: 'em_andamento', data_inicio: new Date().toISOString() })
@@ -900,7 +900,7 @@ router.put('/revisao/itens/:id', async (req, res) => {
 
 // Dispensar o alerta de divergência ligado num bem (mantido no lugar mas
 // sinalizado) — decisão humana explícita, nunca automática.
-router.post('/bens/:id/dispensar-alerta', async (req, res) => {
+router.post('/bens/:id/dispensar-alerta', authorizeModule('patrimonio', 3), async (req, res) => {
   try {
     const { error } = await supabase.from('pat_bens').update({ alerta_divergencia_item_id: null }).eq('id', req.params.id);
     if (error) return res.status(400).json({ error: error.message });
@@ -908,7 +908,7 @@ router.post('/bens/:id/dispensar-alerta', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao dispensar alerta' }); }
 });
 
-router.post('/revisao/convocacoes/:id/concluir', async (req, res) => {
+router.post('/revisao/convocacoes/:id/concluir', authorizeModule('patrimonio', 4), async (req, res) => {
   try {
     const { data, error } = await supabase.from('pat_revisao_convocacoes')
       .update({ status: 'concluida', data_conclusao: new Date().toISOString() })
