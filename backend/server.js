@@ -16,6 +16,8 @@ const path = require('path');
 const { requestContext } = require('./middleware/requestContext');
 const { systemJobTracking } = require('./middleware/systemJobTracking');
 const { recordServerError } = require('./services/serverErrorTelemetry');
+const { createCorsOriginValidator } = require('./utils/corsPolicy');
+const { createErrorHandler, requestRoute } = require('./middleware/errorHandler');
 
 const app = express();
 // Atrás do proxy do Vercel (1 hop) · faz req.ip = IP real do cliente (x-forwarded-for)
@@ -31,34 +33,9 @@ app.use(requestContext);
 
 // ── Security middleware ──
 app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
-// Domínios extras configuraveis via env (CSV) · ex: EXTRA_ALLOWED_ORIGINS="https://x.com,https://y.com"
-const extraOrigins = (process.env.EXTRA_ALLOWED_ORIGINS || '')
-  .split(',').map(s => s.trim()).filter(Boolean);
 
 app.use(cors({
-  origin: function (origin, callback) {
-    // Allow same-origin (no origin header) and known domains
-    const allowed = [
-      'http://localhost:5173',
-      'http://localhost:8080',
-      process.env.FRONTEND_URL,
-      ...extraOrigins,
-    ].filter(Boolean);
-    if (
-      !origin ||
-      allowed.includes(origin) ||
-      /\.vercel\.app$/.test(origin) ||
-      /\.lovable\.app$/.test(origin) ||
-      /\.lovableproject\.com$/.test(origin) ||
-      // Domínio próprio CBRio · cbrio.org + qualquer subdominio
-      /^https:\/\/(.+\.)?cbrio\.org$/.test(origin)
-    ) {
-      callback(null, true);
-    } else {
-      console.warn('[CORS] Origem bloqueada:', origin);
-      callback(new Error('Origem não permitida pelo CORS'));
-    }
-  },
+  origin: createCorsOriginValidator(),
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID'],
@@ -107,7 +84,7 @@ app.use((req, res, next) => {
         user_id: req.user?.id || null,
         user_email: req.user?.email || null,
         metodo: req.method,
-        rota: String(req.path || req.originalUrl || '').slice(0, 300),
+        rota: requestRoute(req),
         mensagem: `HTTP ${res.statusCode} respondido pela rota (sem exceção · ver logs da função)`,
         status: res.statusCode,
         request_id: req.requestId,
@@ -308,31 +285,10 @@ if (process.env.NODE_ENV === 'production') {
 // ── Sentry error handler (precisa vir antes do nosso) ──
 app.use(sentryErrorHandler());
 
-// ── Error handler ──
-app.use((err, req, res, next) => {
-  console.error(`[ERROR] [${req.requestId || 'sem-request-id'}]`, err.message);
-  res.locals._erro500Registrado = true; // o hook de finish não duplica este registro
-  // Sink de telemetria (Onda 0) · fire-and-forget · NUNCA quebra a resposta ·
-  // sem query/body pra não vazar PII (só rota, método, mensagem e stack).
-  try {
-    void recordServerError({
-      user_id: req.user?.id || null,
-      user_email: req.user?.email || null,
-      metodo: req.method,
-      rota: String(req.path || req.originalUrl || '').slice(0, 300),
-      mensagem: String(err.message || '').slice(0, 1000),
-      stack: String(err.stack || '').slice(0, 4000),
-      status: err.status || 500,
-      request_id: req.requestId,
-      release: process.env.VERCEL_GIT_COMMIT_SHA || null,
-      environment: process.env.VERCEL_ENV || process.env.NODE_ENV || 'unknown',
-    }).catch((e) => console.warn('[app_erros_servidor]', e.message));
-  } catch (_) { /* tabela ausente / supabase off · ignora */ }
-  res.status(500).json({
-    error: 'Erro interno do servidor',
-    request_id: req.requestId,
-  });
-});
+// ── Error handler canônico ──
+// Preserva causa/stack de falhas inesperadas, responde AppError 4xx sem poluir
+// a telemetria de servidor e nunca expõe a mensagem técnica ao cliente.
+app.use(createErrorHandler());
 
 if (process.env.VERCEL !== '1') {
   app.listen(PORT, () => {
