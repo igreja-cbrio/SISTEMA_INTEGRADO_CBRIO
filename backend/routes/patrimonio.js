@@ -29,6 +29,40 @@ function calcularDepreciacao(bem) {
   };
 }
 
+// Recalcula porCategoria/porLocalizacao só com bens ATIVOS (pedido do usuário
+// 2026-08-03: os gráficos "Por Categoria"/"Por Localização" do dashboard
+// somavam TODOS os status, incluindo baixado/extraviado/manutenção — inflava
+// contagem de item que já nem está mais em uso). A função SQL
+// `pat_dashboard_stats` é opaca (existe só no banco vivo, sem migration no
+// repo) — em vez de arriscar reescrevê-la sem ver a definição atual, o
+// recorte é feito aqui, sobrescrevendo só essas 2 chaves da resposta da RPC.
+// Paginado (cap de 1000 do PostgREST).
+async function porCategoriaLocalizacaoAtivos() {
+  let all = [];
+  let offset = 0;
+  const pageSize = 1000;
+  while (true) {
+    const { data, error } = await supabase.from('pat_bens')
+      .select('categoria_id, localizacao_id, pat_categorias(nome), pat_localizacoes(nome)')
+      .eq('status', 'ativo')
+      .range(offset, offset + pageSize - 1);
+    if (error) throw error;
+    if (!data || data.length === 0) break;
+    all = all.concat(data);
+    if (data.length < pageSize) break;
+    offset += pageSize;
+  }
+  const porCategoria = {};
+  const porLocalizacao = {};
+  for (const b of all) {
+    const catNome = b.categoria_id ? (b.pat_categorias?.nome || 'Sem categoria') : 'Sem categoria';
+    const locNome = b.localizacao_id ? (b.pat_localizacoes?.nome || 'Sem localização') : 'Sem localização';
+    porCategoria[catNome] = (porCategoria[catNome] || 0) + 1;
+    porLocalizacao[locNome] = (porLocalizacao[locNome] || 0) + 1;
+  }
+  return { porCategoria, porLocalizacao };
+}
+
 // ── DASHBOARD ──────────────────────────────────────────────
 router.get('/dashboard', async (req, res) => {
   try {
@@ -36,6 +70,13 @@ router.get('/dashboard', async (req, res) => {
     // 1k linhas. (O antigo fallback via pool pg não conecta no Vercel · removido.)
     const { data, error } = await supabase.rpc('pat_dashboard_stats');
     if (error) throw error;
+    try {
+      const { porCategoria, porLocalizacao } = await porCategoriaLocalizacaoAtivos();
+      data.porCategoria = porCategoria;
+      data.porLocalizacao = porLocalizacao;
+    } catch (e2) {
+      console.error('[PAT] Recorte de ativos em porCategoria/porLocalizacao falhou (mantendo RPC crua):', e2.message);
+    }
     res.json(data);
   } catch (e) {
     console.error('[PAT] Dashboard RPC falhou:', e.message);
