@@ -614,6 +614,7 @@ export const dashboardSemanal = {
   ranking: (params) => get('/dashboard-semanal/ranking?' + new URLSearchParams(params)),
   yoy: (params) => get('/dashboard-semanal/yoy?' + new URLSearchParams(params)),
   mensal: (params) => get('/dashboard-semanal/mensal?' + new URLSearchParams(params)),
+  ytd: (params) => get('/dashboard-semanal/ytd?' + new URLSearchParams(params)),
   mediaMovel: (params) => get('/dashboard-semanal/media-movel?' + new URLSearchParams(params)),
   metasList: () => get('/dashboard-semanal/metas'),
   metaCreate: (data) => post('/dashboard-semanal/metas', data),

@@ -50,6 +50,31 @@ const INDICADORES = {
 // ─────────────────────────────────────────────────────────────────────────────
 const { isoWeekRange, isoWeekOf, fmtDateBr, semanasDoMes } = require('../utils/isoWeek');
 
+const MES_NOMES_LONGO = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
+                         'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+const MES_NOMES_CURTO = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun',
+                         'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+
+const { hojeBrt, corteDoAno, ultimaSemanaIsoCompleta } = require('../utils/periodoYtd');
+
+// Lê TODAS as linhas de uma query, respeitando o cap de 1000 do PostgREST (que é
+// server-side e trunca em SILÊNCIO). Recebe uma FÁBRICA de query, não a query:
+// reusar o mesmo builder entre páginas depende de detalhe interno do supabase-js.
+async function selectPaginado(montarQuery, ordenarPor) {
+  const PAGINA = 1000;
+  const tudo = [];
+  for (let offset = 0; ; offset += PAGINA) {
+    let q = montarQuery();
+    if (ordenarPor) q = q.order(ordenarPor);
+    const { data, error } = await q.range(offset, offset + PAGINA - 1);
+    if (error) throw error;
+    if (!data || !data.length) break;
+    tudo.push(...data);
+    if (data.length < PAGINA) break;
+  }
+  return tudo;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /cultos · lista service_types ativos
 // ─────────────────────────────────────────────────────────────────────────────
@@ -822,11 +847,9 @@ router.get('/mensal', async (req, res) => {
       acc.set(key, (acc.get(key) || 0) + v);
     }
 
-    const MES_NOMES = ['janeiro','fevereiro','março','abril','maio','junho',
-                       'julho','agosto','setembro','outubro','novembro','dezembro'];
     const mesesUsados = meses || [1,2,3,4,5,6,7,8,9,10,11,12];
     const series = mesesUsados.map(m => {
-      const row = { mes: m, mes_nome: MES_NOMES[m - 1] };
+      const row = { mes: m, mes_nome: MES_NOMES_LONGO[m - 1] };
       // null (não 0) onde não há culto naquele mês/ano · linha de gráfico não cai a 0
       for (const a of anos) {
         const key = `${m}-${a}`;
@@ -901,6 +924,199 @@ router.get('/resumo-semana', async (req, res) => {
   } catch (e) {
     console.error('[DASH-SEM] resumo-semana', e.message);
     res.status(500).json({ error: 'Erro ao montar resumo da semana' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /ytd?anos=&indicador=&culto= · acumulado do ano ATÉ HOJE comparado com o
+// MESMO PERÍODO dos anos anteriores.
+//
+// ⚠️ O corte é por DIA (dia/mês de hoje em BRT), NÃO por mês fechado nem por ano
+// inteiro. Motivo medido em produção: os cultos do ano corrente já nascem
+// pré-agendados até dezembro com frequência 0 (2026 tem 347 linhas em `cultos`,
+// só ~199 até agosto). Somar "o ano" sem corte compararia 7 meses de 2026 com 12
+// de 2025 E inflaria o denominador de cultos — os dois erros na mesma direção.
+//
+// ⚠️ O nº de cultos no mesmo período MUDA de ano pra ano (154 em 2023 → 199 em
+// 2026, porque a igreja abriu horários novos). Por isso o total absoluto vem
+// sempre acompanhado da MÉDIA POR CULTO: é ela que compara igreja com igreja, e
+// não "mais cultos" com "mais gente".
+//
+// Voluntariado é a exceção do corte: vem de vw_dashboard_voluntariado (check-ins
+// reais), que agrega por semana ISO e NÃO tem coluna de data — o corte dele é a
+// última semana ISO COMPLETA, igual em todos os anos (YoY segue justo).
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/ytd', async (req, res) => {
+  try {
+    const indicadorKey = req.query.indicador || 'frequencia';
+    const indDef = INDICADORES[indicadorKey];
+    if (!indDef) return res.status(400).json({ error: 'indicador inválido' });
+    const cultoId = req.query.culto && req.query.culto !== 'todos' ? req.query.culto : null;
+
+    const hoje = hojeBrt();
+    const anos = (req.query.anos
+      ? String(req.query.anos).split(',').map(Number).filter(Number.isInteger)
+      : [hoje.ano - 2, hoje.ano - 1, hoje.ano]);
+    const anosOrd = [...new Set(anos)].sort((a, b) => a - b);
+    if (!anosOrd.length) return res.status(400).json({ error: 'anos é obrigatório' });
+
+    const avisos = [];
+
+    // Kids · exclui cultos sem kids (mesma régua de /yoy e /media-mes)
+    let excluir = new Set();
+    if (indicadorKey.includes('kids')) {
+      const { data: semKids } = await supabase
+        .from('vol_service_types')
+        .select('id')
+        .eq('has_kids', false);
+      excluir = new Set((semKids || []).map(s => s.id));
+    }
+
+    const porAno = new Map(); // ano -> { total, comDado, noPeriodo, porMes: Map }
+    let corte;
+
+    if (indicadorKey === 'voluntariado') {
+      const semanaCorte = ultimaSemanaIsoCompleta(hoje);
+      corte = {
+        tipo: 'semana',
+        semana: semanaCorte,
+        rotulo: `semana ISO ${semanaCorte}`,
+      };
+      if (cultoId) {
+        avisos.push('O filtro de culto não vale para Voluntariado: os check-ins são agregados por bloco (Domingo manhã/noite, Quarta, AMI, Bridge), que não são os mesmos tipos de culto do seletor.');
+      }
+      const cols = colunasView(indicadorKey);
+      await Promise.all(anosOrd.map(async (ano) => {
+        const linhas = await selectPaginado(() => supabase
+          .from(fonteView(indicadorKey))
+          .select(`mes, service_type_id, total_cultos, ${cols.join(', ')}`)
+          .eq('ano_iso', ano)
+          .lte('semana_iso', semanaCorte), 'mes');
+        const acc = { total: 0, comDado: 0, noPeriodo: 0, porMes: new Map() };
+        for (const r of linhas) {
+          if (excluir.has(r.service_type_id)) continue;
+          const v = somaColunas(r, cols);
+          const cultos = Number(r.total_cultos) || 0;
+          acc.noPeriodo += cultos;
+          acc.total += v;
+          if (v > 0) acc.comDado += cultos;
+          acc.porMes.set(r.mes, (acc.porMes.get(r.mes) || 0) + v);
+        }
+        porAno.set(ano, acc);
+      }));
+      avisos.push('Voluntariado conta presenças de voluntário (pessoas distintas por semana e bloco), não voluntários únicos no ano — a mesma pessoa servindo em duas semanas conta duas vezes.');
+    } else {
+      corte = {
+        tipo: 'dia',
+        dia: hoje.dia,
+        mes: hoje.mes,
+        rotulo: `${hoje.dia} de ${MES_NOMES_LONGO[hoje.mes - 1]}`,
+      };
+      const cols = colunasCultos(indicadorKey);
+      await Promise.all(anosOrd.map(async (ano) => {
+        const linhas = await selectPaginado(() => {
+          let q = supabase.from('cultos')
+            .select(`data, service_type_id, ${cols.join(', ')}`)
+            .gte('data', `${ano}-01-01`)
+            .lte('data', corteDoAno(ano, hoje.mes, hoje.dia));
+          if (cultoId) q = q.eq('service_type_id', cultoId);
+          return q;
+        }, 'data');
+        const acc = { total: 0, comDado: 0, noPeriodo: 0, porMes: new Map() };
+        for (const r of linhas) {
+          if (excluir.has(r.service_type_id)) continue;
+          acc.noPeriodo += 1;
+          const v = somaColunas(r, cols);
+          if (v > 0) { acc.comDado += 1; acc.total += v; }
+          const mes = Number(String(r.data).slice(5, 7));
+          acc.porMes.set(mes, (acc.porMes.get(mes) || 0) + v);
+        }
+        porAno.set(ano, acc);
+      }));
+    }
+
+    // Δ% sempre contra o ano anterior COM DADO na lista (ordem cronológica) — o
+    // usuário pode marcar 2024+2026 sem 2025, e comparar contra "nada" mentiria.
+    const resultados = anosOrd.map((ano, idx) => {
+      const acc = porAno.get(ano) || { total: 0, comDado: 0, noPeriodo: 0 };
+      const temDado = acc.total > 0;
+      let deltaPct = null, baseAno = null, deltaMediaPct = null;
+      const media = acc.comDado ? acc.total / acc.comDado : null;
+      for (let j = idx - 1; j >= 0; j--) {
+        const prev = porAno.get(anosOrd[j]);
+        if (!temDado || !prev || prev.total <= 0) continue;
+        deltaPct = ((acc.total - prev.total) / prev.total) * 100;
+        const mediaPrev = prev.comDado ? prev.total / prev.comDado : null;
+        if (media != null && mediaPrev) deltaMediaPct = ((media - mediaPrev) / mediaPrev) * 100;
+        baseAno = anosOrd[j];
+        break;
+      }
+      return {
+        ano,
+        total: acc.total,
+        cultos_com_dado: acc.comDado,
+        cultos_no_periodo: acc.noPeriodo,
+        media_por_culto: media != null ? Math.round(media * 10) / 10 : null,
+        delta_pct: deltaPct,
+        delta_media_pct: deltaMediaPct,
+        base_ano: baseAno,
+        tem_dado: temDado,
+      };
+    });
+
+    // Ano sem dado é COMUM e não é defeito: os check-ins de voluntário só começam
+    // na semana 16 de 2026 e o Online DS só existe a partir de 2024. Dizer isso na
+    // resposta evita que a tela pareça quebrada.
+    const anosComDado = resultados.filter(r => r.tem_dado).map(r => r.ano);
+    if (!anosComDado.length) {
+      avisos.push('Nenhum dos anos selecionados tem dado deste indicador no período.');
+    } else if (anosComDado.length === 1) {
+      avisos.push(`Só ${anosComDado[0]} tem dado deste indicador no período — não há histórico para comparar.`);
+    } else if (anosComDado.length < anosOrd.length) {
+      avisos.push(`Sem dado deste indicador no período em ${anosOrd.filter(a => !anosComDado.includes(a)).join(', ')}.`);
+    }
+
+    // Curva acumulada mês a mês · mesma janela em todos os anos (o último mês é
+    // parcial de propósito — é ele que representa "até hoje").
+    const running = new Map(anosOrd.map(a => [a, 0]));
+    const acumulado = [];
+    for (let m = 1; m <= hoje.mes; m++) {
+      const row = { mes: m, mes_nome: MES_NOMES_CURTO[m - 1] };
+      for (const a of anosOrd) {
+        const acc = porAno.get(a);
+        running.set(a, (running.get(a) || 0) + (acc?.porMes.get(m) || 0));
+        // Ano sem NENHUM dado no período vira null · linha não nasce rastejando no zero
+        row[String(a)] = acc && acc.total > 0 ? running.get(a) : null;
+      }
+      acumulado.push(row);
+    }
+
+    // Batismos realizados no mesmo período · não depende do filtro de culto
+    // (batismo não acontece "num tipo de culto"). Conta pela data da cerimônia.
+    const batismos = await Promise.all(anosOrd.map(async (ano) => {
+      const { count, error } = await supabase
+        .from('batismo_inscricoes')
+        .select('id', { count: 'exact', head: true })
+        .eq('status', 'realizado')
+        .gte('data_batismo', `${ano}-01-01`)
+        .lte('data_batismo', corteDoAno(ano, hoje.mes, hoje.dia));
+      if (error) throw error;
+      return { ano, total: count || 0 };
+    }));
+
+    res.json({
+      indicador: indicadorKey,
+      rotulo: indDef.rotulo,
+      corte,
+      anos: anosOrd,
+      resultados,
+      acumulado,
+      batismos,
+      avisos,
+    });
+  } catch (e) {
+    console.error('[DASH-SEM] ytd', e.message, e);
+    res.status(500).json({ error: 'Erro ao montar o acumulado do ano' });
   }
 });
 
