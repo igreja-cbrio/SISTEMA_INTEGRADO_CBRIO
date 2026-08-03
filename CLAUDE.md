@@ -3921,6 +3921,19 @@ via `window.print` na Brother QL-820NWB default do Windows).
   (chip com a hora · `pagers-em-uso` devolve `culto_nome` via join da sessão) —
   o histórico por culto com devolução já existia na **Conferência de pagers**
   (28/07 · `ConferenciaPagers` no painel + `GET /pagers/conferencia`).
+- **Devolução do pager = CHECK-OUT (Mari/Marcos 2026-08-03 · sem migration)**:
+  os dois registros andavam desacoplados ("Devolvido" não dava baixa → pager
+  seguia "em uso" com o número travado; check-out não carimbava devolução → a
+  conferência acusava "não devolvido" de pager já na mão da equipe). Agora:
+  (1) `POST /checkout` (métodos individuais) carimba `pager_devolvido_at` nas
+  linhas da família com pager; (2) o botão **"Devolvido" da conferência também
+  dá a baixa** (fecha as linhas abertas do grupo · metodo 'painel' ·
+  responsavel_checkout_nome "Devolução do pager (conferência)" · devolve
+  `baixados` pro toast); (3) `POST /checkin/:id/reabrir` limpa a devolução
+  (criança volta, pager volta pra família). ⚠️ A **baixa em massa**
+  (`checkout_forcado` · endpoint próprio) NÃO carimba devolução DE PROPÓSITO —
+  é o que sustenta o alerta "foi pra casa" da conferência. Desfazer a marcação
+  de devolvido não reabre check-out (pra isso, o reabrir da ficha).
 - **Pendências operacionais**: aplicar migration
   `20260522300000_totem_kids_chamadas_display.sql`; Brother no Windows do totem
   (docs/totem-kids-setup-brother.md); comprar/parear 6 Fire TV Sticks;

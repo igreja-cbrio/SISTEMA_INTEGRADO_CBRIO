@@ -2853,7 +2853,27 @@ router.patch('/checkin/:id/pager-devolvido', authorizeModule('kids', 2), async (
     q = alvo.checkin_grupo_id ? q.eq('checkin_grupo_id', alvo.checkin_grupo_id) : q.eq('id', alvo.id);
     const { error } = await q;
     if (error) throw error;
-    res.json({ ok: true, devolvido });
+
+    // Devolveu o pager = a família SAIU (Mari/Marcos 2026-08-03): o botão
+    // "Devolvido" da conferência também dá a baixa (check-out) nas linhas ainda
+    // abertas da família — senão o pager ficava "em uso" no painel e o número
+    // travado pro próximo. Desfazer a devolução NÃO reabre check-out (pra isso
+    // existe o "reabrir" da ficha).
+    let baixados = 0;
+    if (devolvido) {
+      let qOut = supabase.from('kids_checkins').update({
+        checkout_at: new Date().toISOString(),
+        checkout_metodo: 'painel',
+        responsavel_checkout_nome: 'Devolução do pager (conferência)',
+        checkout_por: req.user?.userId || null,
+      }).is('checkout_at', null).is('deleted_at', null);
+      qOut = alvo.checkin_grupo_id ? qOut.eq('checkin_grupo_id', alvo.checkin_grupo_id) : qOut.eq('id', alvo.id);
+      const { data: fechados, error: eOut } = await qOut.select('id');
+      if (eOut) console.warn('[totemKids] devolução: baixa não aplicada:', eOut.message);
+      else baixados = (fechados || []).length;
+    }
+
+    res.json({ ok: true, devolvido, baixados });
   } catch (e) {
     console.error('[totemKids] pager devolvido:', e.message);
     res.status(500).json({ error: 'Erro ao registrar devolução do pager' });
@@ -3649,6 +3669,24 @@ router.post('/checkout', authorizeModule('kids', 2), async (req, res) => {
     const { data, error } = await q.select(`*, crianca:kids_criancas(id, nome), sala:kids_salas(id, nome)`);
     if (error) throw error;
     if (!data || !data.length) return res.status(409).json({ error: 'Check-in já foi feito checkout' });
+
+    // Check-out individual = pager DEVOLVIDO (Mari/Marcos 2026-08-03): a equipe
+    // só faz check-out no balcão quando a família entrega o pager — os dois
+    // registros andavam desacoplados e a conferência acusava "não devolvido" de
+    // pager que já estava na mão da equipe. A baixa em massa (checkout_forcado,
+    // outro endpoint) NÃO passa por aqui de propósito: ela não prova devolução
+    // (é o que sustenta o alerta "foi pra casa"). Best-effort: falha não
+    // derruba o check-out.
+    if (data.some((r) => r.pager_numero)) {
+      let qDev = supabase.from('kids_checkins')
+        .update({ pager_devolvido_at: new Date().toISOString(), pager_devolvido_por: req.user.userId })
+        .not('pager_numero', 'is', null).is('pager_devolvido_at', null).is('deleted_at', null);
+      qDev = alvo.checkin_grupo_id ? qDev.eq('checkin_grupo_id', alvo.checkin_grupo_id) : qDev.eq('id', checkin_id);
+      await qDev.then(({ error: eDev }) => {
+        if (eDev) console.warn('[totemKids/checkout] pager devolvido não carimbado:', eDev.message);
+      });
+    }
+
     res.json({ ...data[0], cultos_encerrados: data.length });
   } catch (e) {
     console.error('[totemKids/checkout]', e.message);
@@ -3671,6 +3709,9 @@ router.post('/checkin/:id/reabrir', authorizeModule('kids', 2), async (req, res)
     const patch = {
       checkout_at: null, responsavel_checkout_id: null, responsavel_checkout_nome: null,
       checkout_metodo: null, checkout_por: null, override_motivo: null, override_aprovado_por: null,
+      // Reabrir = criança volta pra sala e o pager volta pra mão da família →
+      // limpa a devolução carimbada pelo check-out desfeito (2026-08-03).
+      pager_devolvido_at: null, pager_devolvido_por: null,
       updated_at: new Date().toISOString(),
     };
     let q = supabase.from('kids_checkins').update(patch).not('checkout_at', 'is', null);
