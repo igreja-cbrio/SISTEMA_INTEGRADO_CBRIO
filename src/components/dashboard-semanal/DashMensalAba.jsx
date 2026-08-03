@@ -246,14 +246,14 @@ export default function DashMensalAba() {
         </CardContent>
       </Card>
 
-      {/* Acumulado do ano até hoje × mesmo período dos anos anteriores.
-          Segue Indicador / Culto / Anos comparados dos filtros acima; o recorte
-          de Meses NÃO se aplica (o período é sempre 1º de janeiro → hoje). */}
+      {/* Acumulado no mesmo período × anos anteriores. Segue TODOS os filtros
+          acima, inclusive Meses — que é o seletor de período do bloco. */}
       <YtdAcumuladoCard
         indicador={indicador}
         indLabel={indDef?.label || 'Indicador'}
         culto={culto}
         anos={anos}
+        meses={mesesAtivos}
         cores={CORES_ANO}
       />
 

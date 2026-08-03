@@ -288,6 +288,45 @@ linhas em `cultos`, só ~199 até agosto). Somar "o ano" sem corte compararia 7
 meses de 2026 com 12 de 2025 **e** inflaria o denominador de cultos — os dois
 erros na mesma direção. Vale pra qualquer agregação "do ano" nova neste banco.
 
+### ⚠️ O período é escolhido nos chips **Meses** · `resolverPeriodo` (2026-08-03)
+
+Pedido do Matheus no mesmo dia: *"gostaria que eu pudesse escolher o filtro, para
+filtrar o período específico que eu quisesse"*. **NÃO criei um segundo seletor de
+período** — os chips **Meses** que já existiam passaram a valer também pro bloco
+(antes ele os ignorava). Dois controles de período na mesma tela seriam duas
+respostas pra "qual período estou vendo".
+
+`resolverPeriodo({ meses, anos, hoje })` (puro, em `backend/utils/periodoYtd.js`)
+traduz a seleção em UM período aplicado igual em todos os anos:
+
+| meses marcados | anos comparados | período resolvido |
+|---|---|---|
+| jan…dez | inclui 2026 | 1º de jan a **3 de agosto** (parcial) |
+| jan…jun | qualquer | 1º de jan a **30 de junho** (fechado) |
+| jan…dez | **só 2024 × 2025** | 1º de jan a **31 de dezembro** (fechado) |
+| mar, mai, jul | inclui 2026 | só esses 3 meses, somados |
+
+⚠️ **A regra que preserva a comparação justa**: o período só é PARCIAL quando o
+ano corrente está entre os comparados **E** os meses alcançam o mês de hoje. Sem
+isso, "ano inteiro comparando 2024 × 2025" seria truncado em agosto e jogaria 5
+meses de dado fora dos DOIS anos — e "ano inteiro incluindo 2026" compararia 12
+meses de 2025 com 7 de 2026. Mês marcado depois do corte é **descartado** (não
+há dado pra ele em ano nenhum do recorte).
+
+⚠️ **Fevereiro fechado devolve `dia = 29` de propósito**: quem clampa 29→28 em ano
+não bissexto é o `corteDoAno()`, que já é testado pra isso. Duplicar a regra no
+`ULTIMO_DIA_DO_MES` daria duas réguas pra decidir a mesma coisa.
+
+⚠️ **Seleção não-contígua (mar, mai, jul) tira o bloco de batismos do ar**, com
+aviso: a contagem dele é por intervalo `gte/lte` de datas e incluiria abril e
+junho. Total "quase certo" é pior que total ausente. O filtro por mês nos cultos
+é conferido **linha a linha** (`mesesNoPeriodo.has(mes)`), porque a janela de datas
+da query pega o intervalo inteiro.
+
+⚠️ **Voluntariado só usa o corte por semana ISO quando o período é PARCIAL.**
+Período fechado já termina no fim de um mês passado — cortar por semana ali
+recortaria o último mês pela metade sem motivo.
+
 **⚠️ Total absoluto e MÉDIA POR CULTO andam sempre juntos.** O nº de cultos no
 mesmo período cresceu ano a ano porque a igreja abriu horários (154 em 2023 → 152
 → 186 → **199 em 2026**). Frequência até 03/08: 2024 **58.198** (383/culto) ·
