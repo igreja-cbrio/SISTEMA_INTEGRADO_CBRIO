@@ -383,10 +383,13 @@ export default function TotemKidsCheckin() {
   // (< 4 anos / espectro / limitação) → a IMPRESSÃO espera o voluntário digitar
   // o número do pager entregue. O check-in JÁ está salvo (presença nunca é
   // bloqueada); só a impressão fica pendente até o número — ou até o "sem pager".
+  // ⚠️ INCLUSÃO (espectro/limitação física · Mari 2026-08-03): o pager é
+  // OBRIGATÓRIO — a válvula "sem pager" some e o diálogo não fecha sem número.
   type PagerFluxo = {
     etiquetas: { dados: Parameters<typeof imprimirEtiquetas>[0]; precisa: boolean }[];
     checkinId: string;   // representante da família — o PATCH propaga por checkin_grupo_id
     nomes: string[];     // 1º nomes das obrigadas (texto do diálogo)
+    inclusao: boolean;   // alguma obrigada é de inclusão → sem válvula de escape
   };
   const [pagerFluxo, setPagerFluxo] = useState<PagerFluxo | null>(null);
   const [pagerInput, setPagerInput] = useState('');
@@ -447,7 +450,8 @@ export default function TotemKidsCheckin() {
   // Válvula de escape: imprime SEM "Pager X" (pager acabou/quebrou). A criança
   // fica marcada como "pager pendente" no painel ao vivo (deriva de sem número).
   async function concluirSemPager() {
-    if (!pagerFluxo || salvandoPager) return;
+    // Inclusão exige pager (Mari 2026-08-03) — a válvula não existe pra ela.
+    if (!pagerFluxo || salvandoPager || pagerFluxo.inclusao) return;
     setSalvandoPager(true);
     await imprimirEtiquetasComPager(pagerFluxo.etiquetas, undefined);
     setSalvandoPager(false);
@@ -641,6 +645,7 @@ export default function TotemKidsCheckin() {
       // a impressão da família inteira espera o número (imprimirEtiquetasComPager).
       const etiquetas: { dados: Parameters<typeof imprimirEtiquetas>[0]; precisa: boolean }[] = [];
       const nomesPager: string[] = [];
+      let temInclusao = false;
       let checkinRepId = '';
       for (const s of saidas) {
         if (s?.ok) {
@@ -653,7 +658,10 @@ export default function TotemKidsCheckin() {
             });
             const precisa = precisaPager(cr);
             etiquetas.push({ dados, precisa });
-            if (precisa) nomesPager.push(cr.nome.split(' ')[0]);
+            if (precisa) {
+              nomesPager.push(cr.nome.split(' ')[0]);
+              if (cr.tem_espectro || cr.tem_limitacao_fisica) temInclusao = true;
+            }
             if (!checkinRepId) checkinRepId = s.checkin.id;
           }
           ok++;
@@ -662,7 +670,7 @@ export default function TotemKidsCheckin() {
       }
       if (nomesPager.length > 0 && etiquetas.length > 0) {
         // Família com criança(s) obrigada(s): a impressão inteira espera o pager.
-        fluxoPager = { etiquetas, checkinId: checkinRepId, nomes: nomesPager };
+        fluxoPager = { etiquetas, checkinId: checkinRepId, nomes: nomesPager, inclusao: temInclusao };
       } else {
         // Ninguém obrigado → imprime tudo na hora (recibo 1×).
         await imprimirEtiquetasComPager(etiquetas, undefined);
@@ -1416,10 +1424,12 @@ export default function TotemKidsCheckin() {
 
       {/* Pager no balcão (Mari 2026-07-22 · gate mole): criança < 4 anos ou com
           espectro/limitação → a impressão espera o número do pager. Fechar por
-          fora = "sem pager" (nunca deixa a criança sem etiqueta). */}
+          fora = "sem pager" (nunca deixa a criança sem etiqueta).
+          ⚠️ INCLUSÃO (Mari 2026-08-03): com criança de inclusão na família o
+          pager é OBRIGATÓRIO — sem válvula de escape e sem fechar por fora. */}
       {pagerFluxo && (
-        <Dialog open onOpenChange={(o) => { if (!o && !salvandoPager) concluirSemPager(); }}>
-          <DialogContent className="max-w-md">
+        <Dialog open onOpenChange={(o) => { if (!o && !salvandoPager && !pagerFluxo.inclusao) concluirSemPager(); }}>
+          <DialogContent className="max-w-md" onInteractOutside={(e) => { if (pagerFluxo.inclusao) e.preventDefault(); }} onEscapeKeyDown={(e) => { if (pagerFluxo.inclusao) e.preventDefault(); }}>
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2 text-amber-600">
                 <BellRing className="h-6 w-6" /> Pegue o pager no balcão
@@ -1456,14 +1466,20 @@ export default function TotemKidsCheckin() {
             >
               {salvandoPager ? 'Imprimindo…' : 'Concluir e imprimir'}
             </Button>
-            <button
-              type="button"
-              className="w-full text-sm text-muted-foreground underline underline-offset-4 hover:text-foreground disabled:opacity-50"
-              disabled={salvandoPager}
-              onClick={concluirSemPager}
-            >
-              Sem pager disponível — imprimir mesmo assim
-            </button>
+            {pagerFluxo.inclusao ? (
+              <p className="text-sm text-center font-medium text-violet-700 dark:text-violet-300 bg-violet-50 dark:bg-violet-950/30 border border-violet-200 dark:border-violet-800 rounded-lg px-3 py-2.5">
+                Criança de inclusão — o pager é <b>obrigatório</b> pra concluir este check-in.
+              </p>
+            ) : (
+              <button
+                type="button"
+                className="w-full text-sm text-muted-foreground underline underline-offset-4 hover:text-foreground disabled:opacity-50"
+                disabled={salvandoPager}
+                onClick={concluirSemPager}
+              >
+                Sem pager disponível — imprimir mesmo assim
+              </button>
+            )}
           </DialogContent>
         </Dialog>
       )}

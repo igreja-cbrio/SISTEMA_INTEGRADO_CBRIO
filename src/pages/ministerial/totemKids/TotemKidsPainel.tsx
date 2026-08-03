@@ -116,7 +116,10 @@ export default function TotemKidsPainel() {
     crianca_nome: string;
     sala_nome: string | null;
     responsavel_nome: string | null;
+    culto_nome?: string | null; // em qual culto o pager está em uso (Mari 2026-08-03)
   };
+  // Chip curto do culto ("10:00") a partir do nome longo ("Domingo 10:00 — 02/08/2026")
+  const horaCulto = (nome?: string | null) => nome?.match(/\d{2}:\d{2}/)?.[0] || null;
   const [pagers, setPagers] = useState<{ em_uso: PagerItem[]; pendentes: PagerItem[] }>({ em_uso: [], pendentes: [] });
   const [cultoSel, setCultoSel] = useState<CultoDia | null>(null);
   const cultoSelRef = useRef<string | null>(null);
@@ -512,6 +515,11 @@ export default function TotemKidsPainel() {
                   <span className="shrink-0 inline-flex items-center justify-center min-w-[2.2rem] h-7 px-2 rounded-md bg-amber-600 text-white font-mono font-bold">{p.pager_numero}</span>
                   <span className="font-medium truncate">{p.crianca_nome}</span>
                   {p.sala_nome && <span className="text-muted-foreground truncate">· {p.sala_nome}</span>}
+                  {horaCulto(p.culto_nome) && (
+                    <span className="shrink-0 text-[11px] font-semibold text-pink-600 bg-pink-50 dark:bg-pink-950/40 border border-pink-200 dark:border-pink-900 rounded px-1.5 py-0.5" title={p.culto_nome || undefined}>
+                      {horaCulto(p.culto_nome)}
+                    </span>
+                  )}
                   {p.responsavel_nome && <span className="text-muted-foreground truncate ml-auto text-right">{p.responsavel_nome}</span>}
                 </button>
               ))}
@@ -534,6 +542,11 @@ export default function TotemKidsPainel() {
                 >
                   <span className="font-medium truncate">{p.crianca_nome}</span>
                   {p.sala_nome && <span className="text-muted-foreground truncate">· {p.sala_nome}</span>}
+                  {horaCulto(p.culto_nome) && (
+                    <span className="shrink-0 text-[11px] font-semibold text-red-600 bg-red-100/70 dark:bg-red-900/40 border border-red-200 dark:border-red-800 rounded px-1.5 py-0.5" title={p.culto_nome || undefined}>
+                      {horaCulto(p.culto_nome)}
+                    </span>
+                  )}
                   {p.responsavel_nome && <span className="text-muted-foreground truncate ml-auto">{p.responsavel_nome}</span>}
                 </button>
               ))}
