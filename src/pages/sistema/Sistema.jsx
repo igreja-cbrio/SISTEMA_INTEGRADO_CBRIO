@@ -12,6 +12,7 @@ import {
   Loader2,
   Network,
   RefreshCw,
+  ReceiptText,
   ServerCog,
   ShieldCheck,
   Smartphone,
@@ -29,6 +30,7 @@ import {
 import { WebOperationsPanel } from './SistemaWebPanel';
 import { MobileOperationsPanel } from './SistemaMobilePanel';
 import { GovernanceOperationsPanel } from './SistemaGovernancePanel';
+import { FinanceOperationsPanel } from './SistemaFinancePanel';
 
 const VIEWS = [
   { id: 'overview', label: 'Visão geral', icon: Activity },
@@ -36,6 +38,7 @@ const VIEWS = [
   { id: 'mobile', label: 'Mobile', icon: Smartphone },
   { id: 'incidents', label: 'Incidentes & feedback', icon: ShieldCheck },
   { id: 'governance', label: 'Governança', icon: Layers3 },
+  { id: 'finance', label: 'Custos & relatórios', icon: ReceiptText },
   { id: 'services', label: 'Serviços', icon: Boxes },
   { id: 'jobs', label: 'Automações', icon: Workflow },
   { id: 'integrations', label: 'Integrações', icon: Network },
@@ -389,6 +392,7 @@ export default function Sistema() {
         {view === 'mobile' && <MobileOperationsPanel />}
         {view === 'incidents' && <IncidentsPanel />}
         {view === 'governance' && <GovernanceOperationsPanel />}
+        {view === 'finance' && <FinanceOperationsPanel />}
         {view === 'services' && <Services items={catalog.services || []} />}
         {view === 'jobs' && <><AutomationRunsPanel /><Jobs jobs={catalog.jobs || []} workflows={catalog.workflows || []} /></>}
         {view === 'integrations' && <Integrations items={catalog.integrations || []} />}
