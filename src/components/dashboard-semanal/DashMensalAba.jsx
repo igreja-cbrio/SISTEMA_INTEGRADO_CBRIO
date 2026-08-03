@@ -11,6 +11,7 @@ import {
 } from 'recharts';
 import { INDICADORES } from '../../pages/DashboardSemanal';
 import { ResumoMesCard } from './ResumoCards';
+import YtdAcumuladoCard from './YtdAcumuladoCard';
 
 const CORES_ANO = ['#1E3A8A', '#E97A3F', '#7C3AED', '#10b981', '#ef4444', '#f59e0b', '#3b82f6'];
 
@@ -244,6 +245,17 @@ export default function DashMensalAba() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Acumulado do ano até hoje × mesmo período dos anos anteriores.
+          Segue Indicador / Culto / Anos comparados dos filtros acima; o recorte
+          de Meses NÃO se aplica (o período é sempre 1º de janeiro → hoje). */}
+      <YtdAcumuladoCard
+        indicador={indicador}
+        indLabel={indDef?.label || 'Indicador'}
+        culto={culto}
+        anos={anos}
+        cores={CORES_ANO}
+      />
 
       {/* Gráfico principal */}
       <Card>
