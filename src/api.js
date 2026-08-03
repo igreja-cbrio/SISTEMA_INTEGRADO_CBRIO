@@ -1922,6 +1922,8 @@ export const totemKids = {
   },
   cultosDoDia: (data) => get(`/totem-kids/cultos-do-dia?data=${encodeURIComponent(data)}`),
   ausentes: (min = 3) => get(`/totem-kids/ausentes?min=${min}`),
+  ausenteContatar: (criancaId) => post(`/totem-kids/ausentes/${criancaId}/contato`, {}),
+  ausenteDescontatar: (criancaId, desde) => del(`/totem-kids/ausentes/${criancaId}/contato` + (desde ? `?desde=${desde}` : '')),
   // Painel ao vivo dos pagers: { em_uso:[{pager_numero,crianca_nome,sala_nome,responsavel_nome}], pendentes:[...] }
   pagersEmUso: () => get('/totem-kids/pagers-em-uso'),
   // Conferência/rastreio de devolução dos pagers (por CULTO · pager→criança→devolvido)
