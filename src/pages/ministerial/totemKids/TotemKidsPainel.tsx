@@ -928,7 +928,12 @@ function ConferenciaPagers() {
     if (!g.checkin_ids.length) return;
     setSalvando(g.pager_numero);
     try {
-      await totemKids.checkin.pagerDevolvido(g.checkin_ids[0], devolvido);
+      // Devolver = check-out (Mari/Marcos 2026-08-03): o backend também dá a
+      // baixa nas linhas abertas da família — pager liberado pro próximo.
+      const r: any = await totemKids.checkin.pagerDevolvido(g.checkin_ids[0], devolvido);
+      if (devolvido && r?.baixados > 0) {
+        toast.success(`Pager ${g.pager_numero} devolvido · check-out de ${r.baixados} criança(s) registrado`);
+      }
       await carregar();
     } catch (e: any) { toast.error(e?.message || 'Erro ao registrar devolução'); }
     setSalvando(null);
@@ -985,11 +990,12 @@ function ConferenciaPagers() {
                 {g.devolvido_at ? (
                   <button type="button" onClick={() => marcar(g, false)} disabled={salvando === g.pager_numero}
                     className="shrink-0 inline-flex items-center gap-1 text-xs text-emerald-600 font-medium"
-                    title="Devolvido — clique pra desfazer">
+                    title="Devolvido — clique pra desfazer a marcação (não desfaz o check-out; pra isso use o reabrir da ficha)">
                     <CheckCircle2 className="h-4 w-4" /> Devolvido
                   </button>
                 ) : (
                   <Button size="sm" variant={foiPraCasa ? 'default' : 'outline'} className="h-7 shrink-0"
+                    title="Marca a devolução E dá baixa (check-out) na família — libera o número pro próximo"
                     onClick={() => marcar(g, true)} disabled={salvando === g.pager_numero}>
                     {salvando === g.pager_numero ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Devolvido'}
                   </Button>
