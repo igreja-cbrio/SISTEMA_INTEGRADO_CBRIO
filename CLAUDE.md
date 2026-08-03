@@ -4943,6 +4943,46 @@ cerebro-cbrio/
   documentos já processados antes disso seguem sem corpo indexado — reprocessar o
   acervo custa Haiku de novo, então é decisão do Marcos, não automática.
 
+## ⚠️ Cérebro · o que pode virar nota no VAULT é uma ALLOWLIST (2026-08-03 · PR #2227)
+
+O sync reverso (`cerebroSync.js`) transforma entidade do ERP em markdown numa
+biblioteca do SharePoint espelhada pelo OneDrive. Isso significa duas coisas que
+mudam a régua: **markdown sincronizado não tem permissão por linha** (quem tem
+acesso à biblioteca lê tudo) e **a cópia local é irrevogável** — tirar o acesso
+depois não apaga o arquivo que o OneDrive já baixou no laptop.
+
+**`ENTIDADES_PERMITIDAS_NO_VAULT` = `membro · evento · projeto · voluntario ·
+funcionario · contribuicao-mes`.** Lista FECHADA, em 3 camadas (`enqueueSync`
+ignora com aviso · `upsertNoteForEntity` lança — `routes/cerebro.js` a importa
+direto pro backfill · `getSupportedEntityTypes` filtra, senão
+`POST /cerebro/backfill/:tipo` enfileirava a fila pastoral inteira de uma vez).
+`action: 'delete'` **nunca** é bloqueado (senão nota já publicada ficaria órfã).
+
+- ⚠️ **`acompanhamento` (fila pastoral) está FORA por decisão do Marcos** —
+  LGPD art. 11 + sigilo pastoral. A proteção anterior era **acidental**: as
+  rotas que chamavam `enqueueSync('acompanhamento', …)` ficaram dormentes no
+  refactor do Cuidados de 22/07, mas `AREA_VAULT_BY_ENTITY` continuava dizendo
+  que ela ia — quem "consertasse a inconsistência" publicaria a fila. Travado em
+  `src/test/cerebroVault.test.ts` (mutation-testado).
+- **`funcionario` é permitido porque o renderer EXCLUI salário**; mexer no
+  renderer sem reler isto vaza remuneração pro OneDrive de quem tem a biblioteca.
+- Acesso hoje: **só o Marcos e o Marcos Paulo** têm a biblioteca "Cerebro CBRio".
+
+**Falha de CONSULTA não é entidade ausente** (o mesmo padrão do `parcelas_max`,
+agora na fila): os loaders faziam `const { data } = await supabase…`,
+descartavam `error`, e o chamador concluía "entidade não encontrada" → a fila
+marcava **`erro` na 1ª tentativa** (com `tentativas` incrementado e nunca lido).
+Foi assim que **os 50 eventos da igreja ficaram fora do vault de 22/04 a 03/08** —
+os 50 ids existem em `events`, as 13 colunas existem, o loader funciona hoje; o
+que falhou em 22/04 é **impossível saber**, porque a mensagem real do PostgREST
+foi sobrescrita pela genérica. Agora `umaLinha()` marca `retentavel` e
+`decidirRetrySync` devolve `pendente` até `MAX_TENTATIVAS_SYNC = 4`; ausência
+real segue terminal na hora (re-tentar não faz a linha existir).
+✅ Os 50 foram devolvidos pra `pendente` em 03/08 (`tentativas=0`, erro limpo) —
+o cron `/api/cerebro/sync-erp` (`30 3 * * *` = 00:30 BRT) leva **8 por rodada**,
+FIFO por `enfileirado_em`, então drenam em ~7 dias. Pra acelerar: chamar o
+endpoint com `?limite=20` 3×.
+
 ## ⚠️ Cérebro · a IA passa a ler o CONTEÚDO, e o filtro falha FECHADO (2026-07-30)
 
 Pedido do Marcos ("criar um RAG pro sistema saber todo o contexto da CBRio").
