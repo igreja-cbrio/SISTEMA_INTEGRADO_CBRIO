@@ -481,6 +481,30 @@ async function resumoPortas(fontes) {
   return mapa;
 }
 
+// GET /pagamento-saude — estado da credencial do PSP, pra tela avisar ANTES de
+// um lançamento. A chave do Asaas expira por desuso (3 meses desabilita, 6
+// expira) e o sistema só fala com o PSP quando há cobrança; ver
+// services/pagamentos/saude.js.
+//
+// `?verificar=1` força a sonda AGORA (bate no PSP) — por isso exige nível 3,
+// enquanto ler o último resultado é nível 1.
+router.get('/pagamento-saude', authorizeModule('inscricoes', 1), async (req, res) => {
+  try {
+    const pagamentos = require('../services/pagamentos');
+    if (req.query.verificar === '1') {
+      const nivel = req.user?.granular?.modulePerms?.inscricoes?.leitura ?? 0;
+      if (nivel < 3) return res.status(403).json({ error: 'sem permissão para forçar a verificação' });
+      await pagamentos.verificarSaude({ forcar: true });
+    }
+    res.json(await pagamentos.saudeAtual());
+  } catch (e) {
+    // Tabela ausente (migration não aplicada) ou PSP fora do ar não pode
+    // derrubar a aba — devolve aviso, não 500. Deploy em duas etapas.
+    console.error('[inscricoes] pagamento-saude:', e.message);
+    res.json({ aviso: 'não foi possível ler o estado da credencial', detalhe: e.message });
+  }
+});
+
 // GET /portas — inventário das portas públicas + contagens/edições da view
 // unificada (as séries DERIVADAS do SPEC-10 t1 já dão edição por porta:
 // batismo/apresentação = mês, next = turma, grupos = temporada).

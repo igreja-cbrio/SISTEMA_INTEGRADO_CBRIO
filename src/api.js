@@ -385,6 +385,9 @@ export const inscricoesApi = {
   // Check-in do evento (SPEC-06) — tela fullscreen: QR do comprovante + busca
   // Inventário das portas públicas do sistema (grupos/next/batismo/…) — read-only
   portas: () => get('/inscricoes/portas'),
+  // Saúde da credencial do provedor de pagamento. `verificar` bate no PSP na
+  // hora (nível 3); sem ele, lê o último resultado da sonda diária.
+  pagamentoSaude: (verificar) => get(`/inscricoes/pagamento-saude${verificar ? '?verificar=1' : ''}`),
   qrs: (qs) => get(`/inscricoes/qrs${qs ? `?${qs}` : ''}`),
   revogarQr: (id, motivo) => patch(`/inscricoes/qrs/${id}/revogar`, { motivo }),
   reativarQr: (id, motivo) => patch(`/inscricoes/qrs/${id}/reativar`, { motivo }),

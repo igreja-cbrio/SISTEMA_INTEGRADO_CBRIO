@@ -16,6 +16,7 @@ const webhooks = require('./webhooks');
 const handlers = require('./handlers');
 const tipos = require('./tipos');
 const maquina = require('./maquinaEstados');
+const saude = require('./saude');
 
 const { STATUS, TIPO_PAGAMENTO } = tipos;
 
@@ -276,6 +277,11 @@ module.exports = {
   // crons
   expirarVencidas,
   reconciliar,
+
+  // Saúde da credencial do PSP (não do pagamento). Chave do Asaas expira por
+  // desuso — ver services/pagamentos/saude.js.
+  verificarSaude: saude.verificar,
+  saudeAtual: saude.atual,
 
   // webhook (usado só pela rota /api/pagamentos-webhook)
   processarWebhook: webhooks.processar,

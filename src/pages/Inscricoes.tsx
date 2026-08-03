@@ -503,11 +503,78 @@ function SerieModal({ grupo, onClose, onEditar, onDuplicar, onPublicar, onCopiar
   );
 }
 
+// Aviso da credencial de pagamento. ⚠️ Renderiza SÓ quando há o que dizer:
+// credencial recusada, ambiente trocado, ou sonda velha demais. Silencioso no
+// caso normal — banner permanente de "tudo ok" é o jeito mais rápido de treinar
+// a equipe a não ler avisos. Também fica quieto quando não há credencial
+// configurada, que é estado intencional (produção viveu semanas em `manual`).
+const DIAS_SONDA_VELHA = 7;
+
+function AvisoCredencialPagamento({ podeForcar }: { podeForcar: boolean }) {
+  const [s, setS] = useState<any>(null);
+  const [verificando, setVerificando] = useState(false);
+
+  useEffect(() => {
+    api.pagamentoSaude().then(setS).catch(() => setS(null));
+  }, []);
+
+  async function verificarAgora() {
+    setVerificando(true);
+    try {
+      setS(await api.pagamentoSaude(true));
+      toast.success('Credencial verificada');
+    } catch {
+      toast.error('Não foi possível verificar agora');
+    } finally { setVerificando(false); }
+  }
+
+  if (!s || s.aviso) return null;
+  if (!s.configurado) return null;              // provider manual / sem chave
+  if (s.ok === null || s.ok === undefined) return null;  // nunca sondada ainda
+
+  const diasDesde = s.verificado_em
+    ? (Date.now() - new Date(s.verificado_em).getTime()) / 86400000
+    : Infinity;
+  const velha = s.ok === true && diasDesde > DIAS_SONDA_VELHA;
+  if (s.ok === true && !velha) return null;     // saudável e recente → silêncio
+
+  const falhou = s.ok === false;
+  return (
+    <div className={`rounded-lg border p-3 mb-3 text-sm ${falhou ? 'border-red-500/40 bg-red-500/10' : 'border-amber-500/40 bg-amber-500/10'}`}>
+      <p className="font-medium mb-1">
+        {falhou
+          ? 'A credencial de pagamento não está respondendo'
+          : 'A credencial de pagamento não é verificada há alguns dias'}
+      </p>
+      <p className="text-muted-foreground text-xs">
+        {falhou ? (
+          <>
+            Evento pago pode não conseguir gerar cobrança, e pagamento feito pode não ser
+            confirmado sozinho. {s.status_http === 401 || s.status_http === 403
+              ? 'O provedor recusou a chave — ela pode ter sido revogada ou expirada por desuso.'
+              : s.erro ? `Detalhe: ${String(s.erro).slice(0, 160)}` : ''}
+          </>
+        ) : (
+          <>Vale conferir antes de abrir a venda de um evento — a chave do provedor é desabilitada após 3 meses sem uso.</>
+        )}
+      </p>
+      {podeForcar && (
+        <Button size="sm" variant="outline" className="mt-2" onClick={verificarAgora} disabled={verificando}>
+          {verificando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Verificar agora'}
+        </Button>
+      )}
+    </div>
+  );
+}
+
 export default function Inscricoes() {
   const navigate = useNavigate();
   const { getAccessLevel } = useAuth();
   // Aba Pessoas concentra PII (rollup por CPF/telefone) — SPEC-01: nível ≥2
   const podePessoas = getAccessLevel(['inscricoes']) >= 2;
+  // Forçar a sonda de credencial bate no PSP na hora — mesmo nível de quem edita
+  // evento (o backend também exige 3; a UI só evita oferecer botão que dá 403).
+  const podeEditar = getAccessLevel(['inscricoes']) >= 3;
   const [aba, setAba] = useState<'calendario' | 'eventos' | 'todas' | 'pessoas' | 'dashboard' | 'qrs' | 'emails'>('calendario');
   const [eventos, setEventos] = useState<any[]>([]);
   const [areas, setAreas] = useState<any[]>([]);
@@ -650,6 +717,7 @@ export default function Inscricoes() {
 
       {aba === 'eventos' && (
         <>
+        <AvisoCredencialPagamento podeForcar={podeEditar} />
         <Card className="glass-solid p-4">
           {loading ? (
             <div className="flex justify-center py-8"><Loader2 className="h-5 w-5 animate-spin text-primary" /></div>
