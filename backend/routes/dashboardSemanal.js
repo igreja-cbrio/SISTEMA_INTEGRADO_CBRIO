@@ -50,12 +50,10 @@ const INDICADORES = {
 // ─────────────────────────────────────────────────────────────────────────────
 const { isoWeekRange, isoWeekOf, fmtDateBr, semanasDoMes } = require('../utils/isoWeek');
 
-const MES_NOMES_LONGO = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
-                         'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
-const MES_NOMES_CURTO = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun',
-                         'jul', 'ago', 'set', 'out', 'nov', 'dez'];
-
-const { hojeBrt, corteDoAno, ultimaSemanaIsoCompleta } = require('../utils/periodoYtd');
+const {
+  hojeBrt, corteDoAno, ultimaSemanaIsoCompleta, resolverPeriodo,
+  MES_NOMES_LONGO, MES_NOMES_CURTO,
+} = require('../utils/periodoYtd');
 
 // Lê TODAS as linhas de uma query, respeitando o cap de 1000 do PostgREST (que é
 // server-side e trunca em SILÊNCIO). Recebe uma FÁBRICA de query, não a query:
@@ -960,6 +958,15 @@ router.get('/ytd', async (req, res) => {
     const anosOrd = [...new Set(anos)].sort((a, b) => a - b);
     if (!anosOrd.length) return res.status(400).json({ error: 'anos é obrigatório' });
 
+    // Período vem dos meses marcados no filtro da aba (lista vazia/ausente = ano
+    // todo). resolverPeriodo decide se o recorte é parcial (até hoje) ou fechado.
+    const periodo = resolverPeriodo({
+      meses: req.query.meses ? String(req.query.meses).split(',').map(Number) : [],
+      anos: anosOrd,
+      hoje,
+    });
+    const mesesNoPeriodo = new Set(periodo.meses);
+
     const avisos = [];
 
     // Kids · exclui cultos sem kids (mesma régua de /yoy e /media-mes)
@@ -976,25 +983,36 @@ router.get('/ytd', async (req, res) => {
     let corte;
 
     if (indicadorKey === 'voluntariado') {
-      const semanaCorte = ultimaSemanaIsoCompleta(hoje);
+      // A semana ISO só entra como corte quando o período é PARCIAL. Período
+      // fechado já termina no fim de um mês passado — cortar por semana ali
+      // recortaria o mês pela metade sem motivo.
+      const semanaCorte = periodo.parcial ? ultimaSemanaIsoCompleta(hoje) : null;
       corte = {
-        tipo: 'semana',
+        tipo: semanaCorte ? 'semana' : 'mes',
         semana: semanaCorte,
-        rotulo: `semana ISO ${semanaCorte}`,
+        rotulo: periodo.rotulo,
+        parcial: periodo.parcial,
       };
+      if (semanaCorte) {
+        avisos.push(`O corte do Voluntariado é a última semana ISO completa (semana ${semanaCorte}): a view de check-ins agrega por semana e não tem coluna de data.`);
+      }
       if (cultoId) {
         avisos.push('O filtro de culto não vale para Voluntariado: os check-ins são agregados por bloco (Domingo manhã/noite, Quarta, AMI, Bridge), que não são os mesmos tipos de culto do seletor.');
       }
       const cols = colunasView(indicadorKey);
       await Promise.all(anosOrd.map(async (ano) => {
-        const linhas = await selectPaginado(() => supabase
-          .from(fonteView(indicadorKey))
-          .select(`mes, service_type_id, total_cultos, ${cols.join(', ')}`)
-          .eq('ano_iso', ano)
-          .lte('semana_iso', semanaCorte), 'mes');
+        const linhas = await selectPaginado(() => {
+          let q = supabase
+            .from(fonteView(indicadorKey))
+            .select(`mes, service_type_id, total_cultos, ${cols.join(', ')}`)
+            .eq('ano_iso', ano);
+          if (semanaCorte) q = q.lte('semana_iso', semanaCorte);
+          return q;
+        }, 'mes');
         const acc = { total: 0, comDado: 0, noPeriodo: 0, porMes: new Map() };
         for (const r of linhas) {
           if (excluir.has(r.service_type_id)) continue;
+          if (!mesesNoPeriodo.has(r.mes)) continue;
           const v = somaColunas(r, cols);
           const cultos = Number(r.total_cultos) || 0;
           acc.noPeriodo += cultos;
@@ -1008,28 +1026,32 @@ router.get('/ytd', async (req, res) => {
     } else {
       corte = {
         tipo: 'dia',
-        dia: hoje.dia,
-        mes: hoje.mes,
-        rotulo: `${hoje.dia} de ${MES_NOMES_LONGO[hoje.mes - 1]}`,
+        dia: periodo.dia,
+        mes: periodo.fimMes,
+        rotulo: periodo.rotulo,
+        parcial: periodo.parcial,
       };
       const cols = colunasCultos(indicadorKey);
       await Promise.all(anosOrd.map(async (ano) => {
         const linhas = await selectPaginado(() => {
           let q = supabase.from('cultos')
             .select(`data, service_type_id, ${cols.join(', ')}`)
-            .gte('data', `${ano}-01-01`)
-            .lte('data', corteDoAno(ano, hoje.mes, hoje.dia));
+            .gte('data', `${ano}-${String(periodo.inicioMes).padStart(2, '0')}-01`)
+            .lte('data', corteDoAno(ano, periodo.fimMes, periodo.dia));
           if (cultoId) q = q.eq('service_type_id', cultoId);
           return q;
         }, 'data');
         const acc = { total: 0, comDado: 0, noPeriodo: 0, porMes: new Map() };
         for (const r of linhas) {
           if (excluir.has(r.service_type_id)) continue;
+          const mesLinha = Number(String(r.data).slice(5, 7));
+          // Seleção não-contígua (ex.: só mar, mai, jul) — a janela de datas pega
+          // o intervalo inteiro, então o mês tem que ser conferido linha a linha.
+          if (!mesesNoPeriodo.has(mesLinha)) continue;
           acc.noPeriodo += 1;
           const v = somaColunas(r, cols);
           if (v > 0) { acc.comDado += 1; acc.total += v; }
-          const mes = Number(String(r.data).slice(5, 7));
-          acc.porMes.set(mes, (acc.porMes.get(mes) || 0) + v);
+          acc.porMes.set(mesLinha, (acc.porMes.get(mesLinha) || 0) + v);
         }
         porAno.set(ano, acc);
       }));
@@ -1080,7 +1102,7 @@ router.get('/ytd', async (req, res) => {
     // parcial de propósito — é ele que representa "até hoje").
     const running = new Map(anosOrd.map(a => [a, 0]));
     const acumulado = [];
-    for (let m = 1; m <= hoje.mes; m++) {
+    for (const m of periodo.meses) {
       const row = { mes: m, mes_nome: MES_NOMES_CURTO[m - 1] };
       for (const a of anosOrd) {
         const acc = porAno.get(a);
@@ -1093,21 +1115,38 @@ router.get('/ytd', async (req, res) => {
 
     // Batismos realizados no mesmo período · não depende do filtro de culto
     // (batismo não acontece "num tipo de culto"). Conta pela data da cerimônia.
-    const batismos = await Promise.all(anosOrd.map(async (ano) => {
-      const { count, error } = await supabase
-        .from('batismo_inscricoes')
-        .select('id', { count: 'exact', head: true })
-        .eq('status', 'realizado')
-        .gte('data_batismo', `${ano}-01-01`)
-        .lte('data_batismo', corteDoAno(ano, hoje.mes, hoje.dia));
-      if (error) throw error;
-      return { ano, total: count || 0 };
-    }));
+    // ⚠️ A janela é contígua (gte/lte). Com seleção de meses não-contígua o número
+    // incluiria mês fora do recorte, então nesse caso o bloco não é calculado —
+    // devolver um total "quase certo" é pior que não devolver.
+    const batismos = periodo.contiguo
+      ? await Promise.all(anosOrd.map(async (ano) => {
+          const { count, error } = await supabase
+            .from('batismo_inscricoes')
+            .select('id', { count: 'exact', head: true })
+            .eq('status', 'realizado')
+            .gte('data_batismo', `${ano}-${String(periodo.inicioMes).padStart(2, '0')}-01`)
+            .lte('data_batismo', corteDoAno(ano, periodo.fimMes, periodo.dia));
+          if (error) throw error;
+          return { ano, total: count || 0 };
+        }))
+      : [];
+    if (!periodo.contiguo) {
+      avisos.push('Os meses escolhidos não são seguidos, então o bloco de batismos fica de fora: a contagem dele é por intervalo de datas e incluiria mês fora do recorte.');
+    }
 
     res.json({
       indicador: indicadorKey,
       rotulo: indDef.rotulo,
       corte,
+      periodo: {
+        meses: periodo.meses,
+        inicio_mes: periodo.inicioMes,
+        fim_mes: periodo.fimMes,
+        dia_fim: periodo.dia,
+        parcial: periodo.parcial,
+        contiguo: periodo.contiguo,
+        rotulo: periodo.rotulo,
+      },
       anos: anosOrd,
       resultados,
       acumulado,

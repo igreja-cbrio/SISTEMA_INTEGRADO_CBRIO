@@ -1,7 +1,10 @@
 import { describe, it, expect } from 'vitest';
 
 // @ts-expect-error módulo JS sem tipos
-import { hojeBrt, ehBissexto, corteDoAno, ultimaSemanaIsoCompleta } from '../../backend/utils/periodoYtd.js';
+import { hojeBrt, ehBissexto, corteDoAno, ultimaSemanaIsoCompleta, resolverPeriodo } from '../../backend/utils/periodoYtd.js';
+
+const HOJE = { ano: 2026, mes: 8, dia: 3 };
+const TODOS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 
 // "Agora" sempre INJETADO: teste que lê o relógio da máquina foi o que mordeu no
 // faixaEtaria.test.ts (roda verde de manhã, vermelho depois das 21h).
@@ -72,5 +75,83 @@ describe('ultimaSemanaIsoCompleta · semana corrente só conta quando FECHA', ()
   it('não estoura em 29/02 de ano bissexto', () => {
     // 2024-02-29 é quinta · semana ISO 9 aberta → 8
     expect(ultimaSemanaIsoCompleta({ ano: 2024, mes: 2, dia: 29 })).toBe(8);
+  });
+});
+
+describe('resolverPeriodo · o período escolhido vale IGUAL em todos os anos', () => {
+  it('ano todo com o ano corrente na lista → parcial, corta hoje', () => {
+    const p = resolverPeriodo({ meses: TODOS, anos: [2024, 2025, 2026], hoje: HOJE });
+    expect(p.parcial).toBe(true);
+    expect(p.fimMes).toBe(8);
+    expect(p.dia).toBe(3);
+    // Meses depois do corte são descartados: não há dado pra eles em ano nenhum
+    expect(p.meses).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(p.rotulo).toBe('1º de janeiro a 3 de agosto');
+  });
+
+  it('período que termina ANTES do mês de hoje → fechado, até o fim do mês', () => {
+    const p = resolverPeriodo({ meses: [1, 2, 3, 4, 5, 6], anos: [2024, 2025, 2026], hoje: HOJE });
+    expect(p.parcial).toBe(false);
+    expect(p.fimMes).toBe(6);
+    expect(p.dia).toBe(30);
+    expect(p.rotulo).toBe('1º de janeiro a 30 de junho');
+  });
+
+  it('⚠️ ano todo SEM o ano corrente → fechado em dezembro, não cortado em agosto', () => {
+    // Comparar 2024 × 2025 (dois anos completos) não pode ser truncado no dia de
+    // hoje: os dois já fecharam, e cortar jogaria 5 meses de dado fora dos dois.
+    const p = resolverPeriodo({ meses: TODOS, anos: [2024, 2025], hoje: HOJE });
+    expect(p.parcial).toBe(false);
+    expect(p.fimMes).toBe(12);
+    expect(p.dia).toBe(31);
+    expect(p.meses).toEqual(TODOS);
+  });
+
+  it('mês corrente sozinho → parcial do 1º ao dia de hoje', () => {
+    const p = resolverPeriodo({ meses: [8], anos: [2024, 2025, 2026], hoje: HOJE });
+    expect(p.parcial).toBe(true);
+    expect(p.meses).toEqual([8]);
+    expect(p.rotulo).toBe('1º de agosto a 3 de agosto');
+  });
+
+  it('fevereiro fechado devolve dia 29 · quem clampa por ano é o corteDoAno', () => {
+    const p = resolverPeriodo({ meses: [2], anos: [2024, 2025], hoje: HOJE });
+    expect(p.dia).toBe(29);
+    expect(corteDoAno(2025, p.fimMes, p.dia)).toBe('2025-02-28'); // não bissexto
+    expect(corteDoAno(2024, p.fimMes, p.dia)).toBe('2024-02-29'); // bissexto
+  });
+
+  it('seleção não-contígua é marcada e o rótulo lista os meses', () => {
+    const p = resolverPeriodo({ meses: [3, 5, 7], anos: [2024, 2025, 2026], hoje: HOJE });
+    expect(p.contiguo).toBe(false);
+    expect(p.meses).toEqual([3, 5, 7]);
+    expect(p.rotulo).toContain('mar, mai, jul');
+  });
+
+  it('seleção contígua NÃO é marcada como buraco', () => {
+    const p = resolverPeriodo({ meses: [3, 4, 5], anos: [2024], hoje: HOJE });
+    expect(p.contiguo).toBe(true);
+    expect(p.rotulo).toBe('1º de março a 31 de maio');
+  });
+
+  it('lista vazia cai no ano todo (nenhum mês marcado não vira período vazio)', () => {
+    const p = resolverPeriodo({ meses: [], anos: [2026], hoje: HOJE });
+    expect(p.inicioMes).toBe(1);
+    expect(p.fimMes).toBe(8);
+  });
+
+  it('mês fora de 1..12 é descartado', () => {
+    const p = resolverPeriodo({ meses: [0, 5, 13, 6], anos: [2024], hoje: HOJE });
+    expect(p.meses).toEqual([5, 6]);
+  });
+
+  it('só meses FUTUROS com o ano corrente na lista → parcial, sem mês sobrando', () => {
+    // set..dez em 2026 ainda não aconteceu: o corte é hoje e nenhum mês do
+    // recorte sobrevive, então a tela mostra "sem dado" em vez de somar 2024/2025
+    // num período que 2026 não viveu.
+    const p = resolverPeriodo({ meses: [9, 10, 11, 12], anos: [2024, 2025, 2026], hoje: HOJE });
+    expect(p.parcial).toBe(true);
+    expect(p.fimMes).toBe(8);
+    expect(p.meses).toEqual([]);
   });
 });

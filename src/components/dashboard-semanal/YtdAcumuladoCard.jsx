@@ -39,12 +39,13 @@ function Delta({ pct, base, sufixo }) {
   );
 }
 
-export default function YtdAcumuladoCard({ indicador, indLabel, culto, anos, cores }) {
+export default function YtdAcumuladoCard({ indicador, indLabel, culto, anos, meses, cores }) {
   const anosKey = [...anos].sort((a, b) => a - b).join(',');
+  const mesesKey = [...(meses || [])].sort((a, b) => a - b).join(',');
 
   const { data, isLoading, isError } = useQuery({
-    queryKey: ['dash-sem', 'ytd', anosKey, indicador, culto],
-    queryFn: () => api.ytd({ anos: anosKey, indicador, culto }),
+    queryKey: ['dash-sem', 'ytd', anosKey, indicador, culto, mesesKey],
+    queryFn: () => api.ytd({ anos: anosKey, indicador, culto, meses: mesesKey }),
     staleTime: 60_000,
     enabled: anos.length > 0,
   });
@@ -65,11 +66,16 @@ export default function YtdAcumuladoCard({ indicador, indLabel, culto, anos, cor
     <Card>
       <CardHeader className="pb-2">
         <CardTitle className="text-sm font-medium">
-          {indLabel} · acumulado do ano até {data?.corte?.rotulo || 'hoje'}
+          {indLabel} · acumulado de {data?.periodo?.rotulo || 'o período selecionado'}
         </CardTitle>
         <p className="text-[11px] text-muted-foreground">
-          Cada ano somado do dia 1º de janeiro até {data?.corte?.rotulo || 'a data de hoje'} —
-          o mesmo recorte em todos, para a comparação ser justa.
+          {data?.periodo
+            ? <>Cada ano somado no <strong>mesmo recorte</strong> ({data.periodo.rotulo}), para a
+                comparação ser justa. {data.periodo.parcial
+                  ? 'O período termina hoje porque o ano corrente está na comparação.'
+                  : 'Período fechado nos anos comparados.'}{' '}
+                Use os chips <strong>Meses</strong> acima para escolher outro período.</>
+            : 'Escolha o período nos chips Meses acima.'}
         </p>
       </CardHeader>
       <CardContent>
@@ -130,7 +136,8 @@ export default function YtdAcumuladoCard({ indicador, indLabel, culto, anos, cor
             {acumulado.length > 0 && (
               <div className="mt-5">
                 <p className="text-xs font-medium text-muted-foreground mb-2">
-                  Como o acumulado evoluiu mês a mês (o último mês é parcial)
+                  Como o acumulado evoluiu mês a mês
+                  {data?.periodo?.parcial && ' (o último mês é parcial)'}
                 </p>
                 <div className="h-[300px]">
                   <ResponsiveContainer width="100%" height="100%">
@@ -163,7 +170,7 @@ export default function YtdAcumuladoCard({ indicador, indLabel, culto, anos, cor
             )}
 
             {/* Batismos · KPI da aba que não passa pelo filtro de culto */}
-            {batismos.some(b => b.total > 0) && (
+            {batismos.length > 0 && batismos.some(b => b.total > 0) && (
               <div className="mt-5 rounded-lg border border-border bg-muted/30 p-3">
                 <p className="text-xs font-medium text-muted-foreground mb-2">
                   Batismos realizados no mesmo período
