@@ -376,8 +376,16 @@ export default function GestaoCriancas() {
                       {c.foto_url ? <img src={c.foto_url} alt="" className="h-full w-full object-cover" /> : <span className="text-sm font-bold text-primary">{c.nome?.charAt(0) || '?'}</span>}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="font-medium text-sm truncate">{c.nome}</div>
-                      <div className="text-xs text-muted-foreground truncate">{c.idade_label || '—'}{resp ? ` · ${resp.nome}` : ''}</div>
+                      {/* Idade AO LADO do nome (pedido do Matheus 2026-08-03) — antes
+                          ficava na 2ª linha, misturada com o nome do responsável, e
+                          era o dado que a equipe mais procura pra saber a sala. */}
+                      <div className="font-medium text-sm truncate flex items-center gap-2">
+                        <span className="truncate">{c.nome}</span>
+                        <span className="text-xs font-normal text-muted-foreground shrink-0">
+                          {c.idade_label || 'idade não informada'}
+                        </span>
+                      </div>
+                      <div className="text-xs text-muted-foreground truncate">{resp ? resp.nome : '—'}</div>
                     </div>
                     <div className="flex flex-col items-end gap-1 shrink-0">
                       {c.necessidades_especiais && <AlertCircle className="h-4 w-4 text-amber-500" />}
