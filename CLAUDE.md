@@ -4736,7 +4736,11 @@ cerebro-cbrio/
   processando → concluido/erro/ignorado)
 - `cerebro_config` — configurações (bibliotecas monitoradas,
   extensões permitidas, delta links, limite de tokens)
-- `cerebro_doc_texto` — texto integral do documento (migration `20260730220000`)
+- `cerebro_doc_texto` — texto integral do documento + `tsvector` português
+  (migration `20260730220000` · **aplicada em prod 2026-08-03**). ⚠️ Nasce
+  **VAZIA**: só recebe linha quando o cron do Cérebro processa arquivo NOVO. Os
+  documentos já processados antes disso seguem sem corpo indexado — reprocessar o
+  acervo custa Haiku de novo, então é decisão do Marcos, não automática.
 
 ## ⚠️ Cérebro · a IA passa a ler o CONTEÚDO, e o filtro falha FECHADO (2026-07-30)
 
@@ -5626,9 +5630,17 @@ reproduzir a trava.
   quebraria o insert (métodos aceitos: pix/cartao/boleto/apple_pay; dinheiro e
   transferência são lançamento manual, não opção da pessoa).
 
-⚠️ **O MCP do Supabase está barrado por aprovação neste ambiente**
-(`apply_migration` e `execute_sql` retornam `requires approval`). Migration nova
-= colar o SQL na conversa e o Marcos roda no SQL Editor.
+⚠️ **O MCP do Supabase VOLTOU a funcionar (2026-08-03)** — `apply_migration` e
+`execute_sql` aplicam direto no projeto `hhntwfawfnxvuobhdfkb` (confirmado
+aplicando a `20260730220000`). Antes retornavam `requires approval`, e é por isso
+que várias seções acima dizem "colar o SQL e o Marcos roda no SQL Editor". A
+disponibilidade **oscila por sessão**: tentar o MCP primeiro; se recusar, cair no
+SQL colado. O que NÃO muda: **colar o SQL da migration na conversa continua
+obrigatório** (regra "Migrations do Supabase") — é o registro do que foi aplicado,
+independente de quem executou. E **conferir o resultado no CATÁLOGO**
+(`information_schema`/`pg_policies`/`pg_indexes`), nunca só o `{"success":true}`
+— lição da lei nº 10 (o `ADD COLUMN IF NOT EXISTS … REFERENCES` que "declarava"
+uma FK que o banco nunca teve).
 
 **Caminho crítico que NÃO é código** (bloqueia a venda, não o build): abrir a
 conta no PSP no CNPJ da igreja avisando por escrito o volume do lançamento
