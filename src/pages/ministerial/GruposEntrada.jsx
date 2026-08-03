@@ -23,6 +23,8 @@ import { Input } from '../../components/ui/input';
 import { toast } from 'sonner';
 import { Check, X, Mail, Phone, Search, ChevronDown, ChevronRight, Inbox } from 'lucide-react';
 import Paginacao, { usePaginacaoLocal } from '../../components/Paginacao';
+// Janela do período (lista + painel + rótulo leem a MESMA) · ver src/lib/janelaPeriodo.js
+import { FILTRO_PERIODO, resolverJanela } from '../../lib/janelaPeriodo';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
@@ -84,14 +86,6 @@ const FUNCOES_VINCULO = [
   { key: 'lider_treinamento', label: 'Líder em treinamento' },
 ];
 
-const FILTRO_PERIODO = [
-  { dias: 30, label: 'Últimos 30 dias' },
-  { dias: 60, label: 'Últimos 60 dias' },
-  { dias: 90, label: 'Últimos 90 dias' },
-  { dias: 180, label: 'Últimos 180 dias' },
-  { dias: 365, label: 'Último ano' },
-  { dias: 1825, label: 'Últimos 5 anos' },
-];
 
 // Motivos prontos pra sugestão de outro grupo — é a frase que a PESSOA recebe
 // no WhatsApp (o motivo interno do líder nunca sai do sistema).
@@ -144,6 +138,8 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
   const [fOrigem, setFOrigem] = useState('todas');   // todas | inscricao | next
   const [fStatus, setFStatus] = useState('todos');
   const [fPeriodo, setFPeriodo] = useState(180);
+  // Temporada ativa — resolve a opção "Temporada atual" do filtro de período.
+  const [temporadaAtiva, setTemporadaAtiva] = useState(null);
   // Retrato do período (a varredura do lançamento trazida pra dentro do sistema)
   const [soContatoRuim, setSoContatoRuim] = useState(false);
   const [painelAberto, setPainelAberto] = useState(false);
@@ -193,10 +189,32 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
     }
   };
 
+  // Temporada ativa, uma vez. Falha silenciosa: sem ela a opção "Temporada
+  // atual" cai em 30 dias (ver janela) e o resto da aba segue igual.
+  useEffect(() => {
+    let vivo = true;
+    api.temporadas()
+      .then(rows => {
+        if (!vivo || !Array.isArray(rows)) return;
+        const ativa = rows.find(t => t.ativa) || rows.find(t => t.inscricoes_abertas)
+          || [...rows].sort((a, b) => String(b.data_inicio || '').localeCompare(String(a.data_inicio || '')))[0];
+        setTemporadaAtiva(ativa || null);
+      })
+      .catch(() => {});
+    return () => { vivo = false; };
+  }, []);
+
+  // Janela do período — fonte ÚNICA (lista, painel e rótulo). A lógica e o
+  // porquê estão em src/lib/janelaPeriodo.js, com teste.
+  const janela = useMemo(
+    () => resolverJanela({ fPeriodo, temporada: temporadaAtiva }),
+    [fPeriodo, temporadaAtiva]
+  );
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const desde = new Date(Date.now() - fPeriodo * 86400000).toISOString();
+      const desde = new Date(janela.desdeMs).toISOString();
       const [peds, encRows, lidRows, renRows] = await Promise.all([
         api.listarPedidos({ desde }),
         encApi.list({ destino: 'grupos' }).catch(() => []),
@@ -217,7 +235,7 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
     } finally {
       setLoading(false);
     }
-  }, [fPeriodo]);
+  }, [janela.desdeMs]);
 
   useEffect(() => { load(); }, [load, reloadKey]);
 
@@ -226,12 +244,12 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
   useEffect(() => {
     if (!painelAberto) return;
     let vivo = true;
-    const desde = new Date(Date.now() - fPeriodo * 86400000).toISOString();
+    const desde = new Date(janela.desdeMs).toISOString();
     api.entradaCobertura({ desde })
       .then(r => { if (vivo) setCobertura(r || null); })
       .catch(() => { if (vivo) setCobertura(null); });
     return () => { vivo = false; };
-  }, [painelAberto, fPeriodo]);
+  }, [painelAberto, janela.desdeMs]);
 
   const depois = () => { setEventosCache({}); load(); onMudou?.(); };
 
@@ -240,7 +258,7 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
   // os cards do resumo leem daqui (retrato por status do conjunto filtrado ·
   // Marcos 14/07) — assim, filtrar um status não zera os outros cards.
   const rowsBase = useMemo(() => {
-    const desdeMs = Date.now() - fPeriodo * 86400000;
+    const desdeMs = janela.desdeMs;
     const lista = [];
     for (const p of pedidos) {
       lista.push({
@@ -306,7 +324,7 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
         return true;
       })
       .sort((a, b) => new Date(b.data) - new Date(a.data));
-  }, [pedidos, encs, lideresInsc, renovacoes, busca, fOrigem, fPeriodo]);
+  }, [pedidos, encs, lideresInsc, renovacoes, busca, fOrigem, janela.desdeMs]);
 
   const rows = useMemo(() => {
     const bucket = FILTRO_STATUS.find(f => f.key === fStatus)?.casa || null;
@@ -349,7 +367,7 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
     // vezes sem perceber). Âncora da pessoa: membro > cadastro pendente >
     // telefone (mesma régua do contrato de porta).
     const pessoas = new Map();
-    let contatoRuim = 0, semTelefone = 0;
+    let contatoRuim = 0, semTelefone = 0, antesDaTemporada = 0;
     let liderAvisado = 0, liderFalhou = 0, pessoaAvisada = 0, pessoaFalhou = 0;
     const porGrupo = new Map();
     const porDia = new Map();
@@ -378,6 +396,7 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
       }
       const d = String(r.data || '').slice(0, 10);
       if (d) porDia.set(d, (porDia.get(d) || 0) + 1);
+      if (janela.temporadaIni && d && d < janela.temporadaIni) antesDaTemporada += 1;
     }
     const lista = [...pessoas.values()];
     return {
@@ -392,13 +411,13 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
       jaExistiam: lista.filter(x => x.nova === false).length,
       semSaber: lista.filter(x => x.nova == null).length,
       multiGrupo: lista.filter(x => x.pedidos > 1).length,
-      contatoRuim, semTelefone,
+      contatoRuim, semTelefone, antesDaTemporada,
       liderAvisado, liderFalhou, pessoaAvisada, pessoaFalhou,
       topGrupos: [...porGrupo.values()].sort((a, b) => b.n - a.n).slice(0, 8),
       gruposComPedido: porGrupo.size,
       porDia: [...porDia.entries()].sort((a, b) => a[0].localeCompare(b[0])).slice(-14),
     };
-  }, [rowsBase]);
+  }, [rowsBase, janela.temporadaIni]);
 
   const { pageItems, paginacaoProps } = usePaginacaoLocal(rows, 50);
 
@@ -649,12 +668,35 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
             }}
           >
             {painelAberto ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
-            Retrato do período
+            {/* ⚠️ O período TEM que aparecer no título. Sem isso o Marcos leu os
+                301 pedidos de 180 dias como se fossem os do lançamento (que foram
+                177) — o rótulo genérico "Retrato do período" era a armadilha. */}
+            <span>Retrato · {janela.rotulo} <span style={{ fontWeight: 400, color: C.t3 }}>({fmtData(janela.desdeMs)} a hoje)</span></span>
             <span style={{ fontWeight: 400, color: C.t3, fontSize: 12 }}>
               · {estat.pedidos} pedido{estat.pedidos === 1 ? '' : 's'} de {estat.pessoas} pessoa{estat.pessoas === 1 ? '' : 's'}
               {estat.novas > 0 && ` · ${estat.novas} nova${estat.novas === 1 ? '' : 's'} na plataforma`}
             </span>
           </button>
+
+          {/* Quando a janela pega pedido de ANTES da temporada atual, o total
+              mistura a operação de agora com a temporada passada (e com os
+              testes da demo). Diz isso e oferece o atalho. */}
+          {janela.temporadaIni && fPeriodo !== 'temporada' && estat.antesDaTemporada > 0 && (
+            <div style={{ padding: '0 14px 10px', fontSize: 11.5, color: C.amber, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'baseline' }}>
+              <span>
+                Inclui {estat.antesDaTemporada} pedido{estat.antesDaTemporada === 1 ? '' : 's'} de ANTES da temporada atual
+                {/* T12:00 · `new Date('2026-08-01')` é meia-noite UTC = 31/07 no Rio */}
+                (começou em {fmtData(`${janela.temporadaIni}T12:00:00`)}).
+              </span>
+              <button
+                type="button"
+                onClick={() => setFPeriodo('temporada')}
+                style={{ background: 'transparent', border: 0, padding: 0, color: C.primary, fontWeight: 700, cursor: 'pointer', font: 'inherit' }}
+              >
+                Ver só a temporada atual
+              </button>
+            </div>
+          )}
 
           {painelAberto && (
             <div style={{ padding: '0 14px 14px', display: 'grid', gap: 14 }}>
@@ -747,7 +789,7 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
         <select value={fStatus} onChange={e => setFStatus(e.target.value)} style={selStyle}>
           {FILTRO_STATUS.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
         </select>
-        <select value={fPeriodo} onChange={e => setFPeriodo(Number(e.target.value))} style={selStyle}>
+        <select value={fPeriodo} onChange={e => { const v = e.target.value; setFPeriodo(v === 'temporada' ? 'temporada' : Number(v)); }} style={selStyle}>
           {FILTRO_PERIODO.map(p => <option key={p.dias} value={p.dias}>{p.label}</option>)}
         </select>
       </div>
