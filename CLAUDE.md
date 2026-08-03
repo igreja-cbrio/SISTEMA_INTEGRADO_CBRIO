@@ -1898,6 +1898,32 @@ Depois da varredura do lançamento (domingo 02/08), o Marcos pediu: *"eu gostari
 de ter essa visualização dentro do sistema ali na aba de caixa de entrada"*. A
 análise que eu fazia por script agora vive no módulo.
 
+### ⚠️ O rótulo do período É parte do número (correção de 03/08 · mesmo dia)
+
+O Marcos abriu o painel e perguntou: *"você me disse que tinham 176 pessoas
+inscritas, mas agora diz 301 pedidos e 193 pessoas distintas, que números são
+esses?"* **Nenhum estava errado** — o filtro padrão da aba é **180 dias** e somava
+os **120 pedidos de julho** (demo, varredura da Nana, piloto de 26-28/07):
+301 = 120 (julho) + 181 (agosto). O defeito era o título genérico "Retrato do
+período", que não dizia QUAL período.
+
+- O título passou a **nomear a janela**: "Retrato · temporada T2-2026 (01/08 a
+  hoje)". Rótulo de agregado sem a janela ao lado é convite a ler o número errado.
+- Opção **"Temporada atual"** (1ª do filtro): *"como foi a abertura?"* é a
+  pergunta real e **nenhuma janela em DIAS a responde de forma estável** — hoje
+  "7 dias" pega a abertura, em duas semanas não pega mais.
+- Aviso âmbar quando a janela pega pedido de ANTES da temporada, com atalho pra
+  trocar. É o caso que gerou a dúvida.
+- **`src/lib/janelaPeriodo.js`** virou a fonte ÚNICA (lista + painel + rótulo).
+  ⚠️ Antes `Date.now() - fPeriodo * 86400000` estava repetido em **3 lugares** — e
+  com a opção nova (que não é número) cada um daria `NaN`; **NaN em comparação de
+  data não filtra nada: mostraria tudo, em silêncio.**
+  ⚠️ `data_inicio` é parseada com **`T12:00:00` local**: `new Date('2026-08-01')` é
+  meia-noite UTC = 31/07 21h no Rio, e um pedido da véspera (temporada ANTERIOR)
+  entraria como se fosse da nova. Guarda mutation-testada em
+  `src/test/janelaPeriodo.test.ts` (7 casos, com `agora` injetado — teste que
+  depende da hora da execução foi o que mordeu no `faixaEtaria.test.ts`).
+
 **⚠️ NÃO virou sub-aba nem tela nova** — a Caixa de entrada é **lista única sem
 sub-abas** por decisão dele (14/07). O retrato entrou como bloco recolhível
 ACIMA da lista, e **derivado de `rowsBase`**, o mesmo objeto que já alimenta os
