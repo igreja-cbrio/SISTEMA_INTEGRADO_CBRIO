@@ -18,20 +18,72 @@ const uploadMw = multer({
   },
 });
 
-// ── Rate limit específico para formulário público ──
-// Bem mais restritivo que o global: 10 submissões por IP a cada 15 min.
-// Sempre ativo (inclusive em dev) porque expõe tabela para anon.
+// ── Rate limit do formulário público de membresia ──
+//
+// ⚠️ DOIS BALDES SEPARADOS de propósito (sweep do CENSO · 2026-08-03). O teto
+// antigo era 10/15min por IP COMPARTILHADO entre submissão e os lookups que o
+// formulário dispara enquanto a pessoa digita (lookup-cpf, lookup-nome-telefone,
+// verificar-familia) — cada pessoa gasta 3-5 requisições, então no WiFi da igreja
+// (1 IP público via NAT) o formulário morria por volta da 3ª pessoa, e o
+// autocomplete queimava a cota ANTES de alguém conseguir enviar.
+//
+// O censo é escaneado pela igreja inteira no mesmo minuto do culto, então o teto
+// da submissão segue a calibragem já validada em multidão real do NPS e da
+// inscrição de grupos (10000/15min · ~700 pessoas × algumas requisições num IP só).
+//
+// ⚠️ Estes limiters ficam SÓ nas rotas (não em `router.use`): limiter no
+// router.use E na rota conta 2× a mesma requisição (lição do sweep de 28/07).
+// ⚠️ A proteção anti-DDoS da BORDA do Vercel é separada e pode desafiar uma
+// rajada concentrada no mesmo IP — mitigar via Firewall do Vercel.
 const cadastroLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 10,
+  max: parseInt(process.env.PUBLIC_MEMBRESIA_RATE_LIMIT_MAX) || 10000,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: 'Muitas submissões deste endereço. Tente novamente mais tarde.' },
+  message: { error: 'Muitas submissões deste endereço. Tente novamente em alguns minutos.' },
+});
+
+// Balde do PROBING (lookup por CPF / nome+telefone / família / wallet). Separado
+// da submissão porque estes endpoints respondem "esta pessoa existe na base?" —
+// teto menor limita varredura em lote sem derrubar o formulário no culto
+// (dimensionado pra ~700 pessoas × 4 consultas). NÃO unificar com o de cima:
+// foi a cota compartilhada que quebrava o formulário.
+const lookupLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: parseInt(process.env.PUBLIC_MEMBRESIA_LOOKUP_RATE_LIMIT_MAX) || 3000,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Muitas consultas deste endereço. Tente novamente em alguns minutos.' },
 });
 
 // Normaliza telefone mantendo apenas dígitos (para comparação de duplicados)
 function soDigitos(v) {
   return (v || '').toString().replace(/\D+/g, '');
+}
+
+// Vocabulário do vínculo AUTODECLARADO no censo (espelha o CHECK da migration
+// 20260803160000). Sem acento: é identificador persistido.
+const VINCULOS_DECLARADOS = ['membro', 'congregado', 'visitante'];
+
+// Colunas que só existem depois da migration do censo (20260803160000).
+const COLUNAS_CENSO = ['censo', 'vinculo_declarado', 'censo_conflitos'];
+
+// 42703 = undefined_column. O PostgREST recusa a query INTEIRA quando uma
+// coluna não existe, então pedir coluna nova antes da migration derrubaria o
+// formulário pra TODO MUNDO (lição do `parcelas_max`). Aqui a submissão é o que
+// não pode se perder: tenta com as colunas do censo e, se elas não existirem
+// ainda, repete SEM elas — a pessoa se cadastra, só a marcação do censo espera
+// a migration.
+function semColunasDoCenso(payload) {
+  const copia = { ...payload };
+  for (const c of COLUNAS_CENSO) delete copia[c];
+  return copia;
+}
+function ehColunaAusente(error) {
+  if (!error) return false;
+  return error.code === '42703'
+    || /column .* does not exist/i.test(error.message || '')
+    || /could not find the .* column/i.test(error.message || '');
 }
 
 // emailValido/cpfValido agora vêm de services/inscricaoContrato (fonte única —
@@ -71,7 +123,7 @@ router.post('/upload-foto', cadastroLimiter, uploadMw.single('foto'), async (req
 // GET /api/public/membresia/verificar-familia?sobrenome=...
 // Retorna famílias cujo nome contenha o sobrenome informado.
 // Usado pelo formulário público para sugerir vínculo antes do envio.
-router.get('/verificar-familia', cadastroLimiter, async (req, res) => {
+router.get('/verificar-familia', lookupLimiter, async (req, res) => {
   try {
     const { sobrenome } = req.query;
     if (!sobrenome || typeof sobrenome !== 'string' || sobrenome.trim().length < 2) {
@@ -115,7 +167,7 @@ function mascararTelefone(telefone) {
   return `(${d.slice(0, 2)}) ****-**${d.slice(8, 10)}`;
 }
 
-router.get('/lookup-nome-telefone', cadastroLimiter, async (req, res) => {
+router.get('/lookup-nome-telefone', lookupLimiter, async (req, res) => {
   try {
     const nomeRaw = (req.query.nome || '').toString().trim();
     const telefoneRaw = (req.query.telefone || '').toString();
@@ -182,7 +234,7 @@ router.get('/lookup-nome-telefone', cadastroLimiter, async (req, res) => {
 // confirmação visual. Se confirmar, o backend já faz o de-dup correto
 // na submissao via duplicado_de_id.
 // ─────────────────────────────────────────────────────────────────────────
-router.get('/lookup-cpf', cadastroLimiter, async (req, res) => {
+router.get('/lookup-cpf', lookupLimiter, async (req, res) => {
   try {
     const cpf = req.query.cpf;
     if (!cpf || !cpfValido(cpf)) {
@@ -266,6 +318,11 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
       whatsapp_optin, // consentimento p/ mensagens no WhatsApp (Marketing · LGPD)
       consentimento_texto,
       converteu_na_cbrio, // autodeclarado (checkbox) · NUNCA vira convertido/NSM
+      // Censo / recadastramento (2026-08-03). `vinculo_declarado` é
+      // AUTODECLARADO (membro|congregado|visitante) e NUNCA vira
+      // mem_membros.status — quem é membro é decisão da igreja.
+      vinculo_declarado,
+      censo,
       familia_sugerida_id,
       foto_url,
       // grupo de conexão opcional — cria pedido após cadastro
@@ -318,11 +375,22 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
       return res.status(400).json({ error: 'É necessário aceitar os termos para enviar o cadastro.' });
     }
 
+    if (!VINCULOS_DECLARADOS.includes(vinculo_declarado || '') && vinculo_declarado) {
+      return res.status(400).json({ error: 'Vínculo declarado inválido.' });
+    }
+    const ehCenso = !!censo;
+    if (ehCenso && !vinculo_declarado) {
+      return res.status(400).json({ error: 'Informe seu vínculo com a igreja.' });
+    }
+
     const origemValida = ['site', 'qr_code', 'evento', 'importacao'];
     const origemFinal = origemValida.includes(origem) ? origem : 'site';
 
     // ── Detecção de duplicado contra mem_membros ──
     let duplicadoDeId = null;
+    // Como o vínculo foi encontrado — decide se o censo pode aplicar dado
+    // sozinho. Só 'cpf' é chave forte (ver services/censoReconciliar.js).
+    let matchedBy = null;
     const emailLimpo = email ? email.trim().toLowerCase() : null;
     const telefoneLimpo = soDigitos(telefone);
     const cpfLimpo = soDigitos(cpf);
@@ -338,6 +406,11 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
         .maybeSingle();
       if (confirmado && soDigitos(confirmado.telefone) === telefoneLimpo) {
         duplicadoDeId = confirmado.id;
+        // ⚠️ Confirmação da pessoa NÃO é chave forte: o "sou eu" é validado só
+        // contra o TELEFONE, que a família compartilha — quem clica pode estar
+        // reconhecendo o cadastro do cônjuge/filho. Segue como sinal fraco (o
+        // censo só aplica se o nascimento conferir dos dois lados).
+        matchedBy = 'confirmado_usuario';
       }
     }
 
@@ -347,6 +420,7 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
         nome: nome.trim(), dataNascimento: data_nascimento,
       });
       duplicadoDeId = match?.membro_id || null;
+      matchedBy = match?.matched_by || null;
     }
 
     // ── Monta payload de inserção ──
@@ -384,13 +458,24 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
       duplicado_de_id: duplicadoDeId,
       ip_origem: ip,
       user_agent: userAgent,
+      ...(ehCenso ? { censo: true } : {}),
+      ...(vinculo_declarado ? { vinculo_declarado } : {}),
     };
 
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('mem_cadastros_pendentes')
       .insert(payload)
       .select('id, status')
       .single();
+
+    if (error && ehColunaAusente(error)) {
+      console.warn('[PUBLIC CADASTRO] colunas do censo ausentes (migration 20260803160000 não aplicada) — gravando sem elas');
+      ({ data, error } = await supabase
+        .from('mem_cadastros_pendentes')
+        .insert(semColunasDoCenso(payload))
+        .select('id, status')
+        .single());
+    }
 
     if (error) {
       console.error('[PUBLIC CADASTRO] insert error:', error.message);
@@ -405,16 +490,81 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
       dados: { status: data.status },
     });
 
-    // Notifica responsáveis pela integração (assíncrono, não bloqueia resposta)
-    notificar({
-      modulo: 'membresia',
-      tipo: 'novo_cadastro',
-      titulo: `Novo cadastro de membresia`,
-      mensagem: `${nome.trim()} enviou um cadastro pelo formulário público.`,
-      link: '/ministerial/membresia',
-      severidade: 'info',
-      chaveDedup: `novo_cadastro_${data.id}`,
-    }).catch(err => console.error('[PUBLIC CADASTRO] notificação falhou:', err.message));
+    // ── CENSO · recadastramento de quem JÁ EXISTE ─────────────────────────────
+    // Roda DEPOIS do insert de propósito: a submissão (e o consentimento LGPD
+    // que ela carrega) não pode se perder porque a reconciliação falhou. Se algo
+    // aqui estourar, a linha continua 'duplicado' e vai pra fila humana — que é
+    // o comportamento seguro, e era o comportamento de sempre.
+    let censoResultado = null;
+    if (ehCenso && duplicadoDeId) {
+      try {
+        const { reconciliarCenso } = require('../services/censoReconciliar');
+        censoResultado = await reconciliarCenso({
+          membroId: duplicadoDeId,
+          matchedBy,
+          origemId: data.id,
+          dados: {
+            email: emailLimpo, telefone: telefoneLimpo, data_nascimento,
+            estado_civil, endereco, bairro, cidade, cep, profissao,
+          },
+        });
+
+        // Sem conflito → sai da fila humana ('aplicado'), mas a linha continua
+        // existindo como prova do que a pessoa enviou e do que ela consentiu.
+        // Com conflito → segue 'duplicado' e carrega os dois lados de cada campo.
+        const semConflito = censoResultado.acao === 'aplicado'
+          || censoResultado.acao === 'sem_mudanca';
+        const patch = semConflito
+          ? { status: 'aplicado', censo_conflitos: null }
+          : { censo_conflitos: censoResultado.conflitos?.length ? censoResultado.conflitos : null };
+
+        let { error: ePatch } = await supabase
+          .from('mem_cadastros_pendentes').update(patch).eq('id', data.id);
+        if (ePatch && ehColunaAusente(ePatch)) {
+          // Migration ausente: 'aplicado' não existe no CHECK e censo_conflitos
+          // não existe na tabela. Mantém a linha na fila humana (seguro).
+          ePatch = null;
+        }
+        if (ePatch) console.error('[PUBLIC CADASTRO censo patch]', ePatch.message);
+        else if (semConflito) data.status = 'aplicado';
+
+        // Cobertura: a pessoa RESPONDEU, independente de ter dado conflito ou de
+        // o gate de confiança ter barrado a aplicação. Coberta é quem respondeu.
+        const { error: eCob } = await supabase
+          .from('mem_membros')
+          .update({
+            censo_respondido_em: new Date().toISOString(),
+            censo_vinculo_declarado: vinculo_declarado || null,
+          })
+          .eq('id', duplicadoDeId);
+        if (eCob && !ehColunaAusente(eCob)) {
+          console.error('[PUBLIC CADASTRO censo cobertura]', eCob.message);
+        }
+      } catch (censoErr) {
+        console.error('[PUBLIC CADASTRO censo]', censoErr.message);
+      }
+    }
+
+    // Notifica responsáveis pela integração (assíncrono, não bloqueia resposta).
+    // ⚠️ Submissão de censo que o reconciliador RESOLVEU não notifica: não há
+    // nada pra ninguém fazer, e no domingo do lançamento seriam centenas de
+    // avisos (sem regra configurada, `notificar` cai no fallback = TODOS os
+    // admin/diretor, então cada submissão viraria dezenas de linhas). Aviso é
+    // pra trabalho pendente — o volume do censo se acompanha pelo painel de
+    // cobertura, não pelo sino.
+    if (data.status !== 'aplicado') {
+      notificar({
+        modulo: 'membresia',
+        tipo: 'novo_cadastro',
+        titulo: ehCenso ? 'Censo · cadastro para revisar' : 'Novo cadastro de membresia',
+        mensagem: ehCenso
+          ? `${nome.trim()} respondeu o censo e o cadastro precisa de revisão${censoResultado?.conflitos?.length ? ` (${censoResultado.conflitos.length} campo(s) em conflito)` : ''}.`
+          : `${nome.trim()} enviou um cadastro pelo formulário público.`,
+        link: '/ministerial/membresia',
+        severidade: 'info',
+        chaveDedup: `novo_cadastro_${data.id}`,
+      }).catch(err => console.error('[PUBLIC CADASTRO] notificação falhou:', err.message));
+    }
 
     // Se a pessoa indicou grupo, cria pedido vinculado (cadastro_pendente_id ou
     // membro_id se já existe duplicado).
@@ -521,8 +671,17 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
       }
     }
 
-    // Resposta neutra — não confirma se foi duplicado, preserva privacidade
-    res.status(201).json({ ok: true, id: data.id, account_created: accountCreated, can_login_devocional: canLoginDevocional });
+    // Resposta neutra — não confirma se foi duplicado, preserva privacidade.
+    // `censo_atualizado` diz apenas se ATUALIZAMOS um cadastro (pra a tela dizer
+    // "seus dados foram atualizados" em vez de "cadastro enviado"); NÃO revela
+    // quais campos, nem se havia conflito, nem quem é a pessoa encontrada.
+    res.status(201).json({
+      ok: true,
+      id: data.id,
+      account_created: accountCreated,
+      can_login_devocional: canLoginDevocional,
+      ...(ehCenso ? { censo_atualizado: !!duplicadoDeId } : {}),
+    });
   } catch (e) {
     console.error('[PUBLIC CADASTRO] exception:', e.message);
     res.status(500).json({ error: 'Erro ao processar cadastro.' });
@@ -601,7 +760,7 @@ async function lookupCadastro(cpfLimpo, dataNascimento) {
 // POST /api/public/membresia/wallet/verify
 // Body: { cpf, data_nascimento } — valida se existe cadastro com esse par.
 // Usado pelo fluxo "Já fiz meu cadastro" antes de oferecer o botao da wallet.
-router.post('/wallet/verify', cadastroLimiter, async (req, res) => {
+router.post('/wallet/verify', lookupLimiter, async (req, res) => {
   try {
     const { cpf, data_nascimento } = req.body || {};
     const cleanCpf = soDigitos(cpf);
@@ -623,7 +782,7 @@ router.post('/wallet/verify', cadastroLimiter, async (req, res) => {
 // POST /api/public/membresia/wallet/qr-token
 // Body: { cpf, data_nascimento } — retorna o token do QR para renderizar
 // inline (fallback iPhone — salva como imagem da foto).
-router.post('/wallet/qr-token', cadastroLimiter, async (req, res) => {
+router.post('/wallet/qr-token', lookupLimiter, async (req, res) => {
   try {
     const { cpf, data_nascimento } = req.body || {};
     const cleanCpf = soDigitos(cpf);
@@ -649,7 +808,7 @@ router.post('/wallet/qr-token', cadastroLimiter, async (req, res) => {
 
 // POST /api/public/membresia/wallet/google
 // Body: { cpf, data_nascimento } — retorna URL do Google Wallet (Android)
-router.post('/wallet/google', cadastroLimiter, async (req, res) => {
+router.post('/wallet/google', lookupLimiter, async (req, res) => {
   try {
     const issuerId = process.env.GOOGLE_WALLET_ISSUER_ID;
     const serviceAccountEmail = process.env.GOOGLE_WALLET_SERVICE_ACCOUNT_EMAIL;
@@ -717,7 +876,7 @@ router.post('/wallet/google', cadastroLimiter, async (req, res) => {
 
 // POST /api/public/membresia/wallet/apple
 // Body: { cpf, data_nascimento } — retorna .pkpass para Apple Wallet (iOS)
-router.post('/wallet/apple', cadastroLimiter, async (req, res) => {
+router.post('/wallet/apple', lookupLimiter, async (req, res) => {
   try {
     const { buildMembroPass } = require('../services/appleWallet');
     const { cpf, data_nascimento } = req.body || {};

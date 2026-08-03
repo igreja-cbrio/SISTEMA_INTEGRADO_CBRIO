@@ -182,6 +182,17 @@ const ESTADO_CIVIL_OPTS = [
   { value: 'uniao_estavel', label: 'União estável' },
 ];
 
+// Vínculo AUTODECLARADO do censo. ⚠️ Os `value` espelham o CHECK da migration
+// 20260803160000 e são identificadores persistidos — NÃO acentuar (a regra de
+// acentuação vale pro `label`, que é o texto exibido).
+// ⚠️ Responder "membro" NÃO torna ninguém membro: o status de membresia continua
+// vindo de batismo/curso/carta. Isto é declaração da pessoa, não decisão nossa.
+const VINCULO_OPTS = [
+  { value: 'membro', label: 'Sou membro da CBRio' },
+  { value: 'congregado', label: 'Frequento, mas não sou membro' },
+  { value: 'visitante', label: 'É a minha primeira vez / estou conhecendo' },
+];
+
 const STEPS = [
   { id: 'pessoal', title: 'Dados Pessoais' },
   { id: 'info', title: 'Informações' },
@@ -250,6 +261,12 @@ export default function CadastroMembresia() {
   const searchParams = new URLSearchParams(window.location.search);
   const fromTotem = searchParams.get('from') === 'totem';
   const fromDevocional = searchParams.get('from') === 'devocional';
+  // ── Censo / recadastramento (2026-08-03) ──
+  // O QR do censo aponta pra `/cadastro-membresia?censo=1`. É o MESMO formulário
+  // (decisão do Marcos: um formulário só, com mais tempo pra preencher — não
+  // dividir em duas etapas), com duas diferenças: marca a submissão como censo
+  // e pede o vínculo declarado.
+  const ehCenso = searchParams.get('censo') === '1';
   // "Completar cadastro" vindo do totem já traz CPF + nascimento (a pessoa
   // digitou no totem e não achamos o cadastro) — pré-preenche pra não redigitar.
   const prefCpf = fromTotem ? soDigitos(searchParams.get('cpf')) : '';
@@ -266,6 +283,10 @@ export default function CadastroMembresia() {
   const [aceitaTermos, setAceitaTermos] = useState(false);
   const [aceitaComunicacao, setAceitaComunicacao] = useState(false);
   const [converteuCbrio, setConverteuCbrio] = useState(false);
+  // Vínculo AUTODECLARADO no censo. ⚠️ NÃO define membresia: responder o censo
+  // não faz ninguém membro (isso é batismo/curso/carta, decisão da igreja). Só
+  // separa quem já se considera membro de quem frequenta ou está chegando.
+  const [vinculoDeclarado, setVinculoDeclarado] = useState('');
   // Bairro: guarda a chave da seleção; se "Outro", o valor real vem de bairroOutro.
   const [bairroSel, setBairroSel] = useState('');
   const [bairroOutro, setBairroOutro] = useState('');
@@ -273,6 +294,10 @@ export default function CadastroMembresia() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [sent, setSent] = useState(false);
+  // Censo: o servidor diz se ATUALIZOU um cadastro que já existia (sem revelar
+  // qual, nem quais campos) — só pra a tela não prometer "entraremos em contato"
+  // pra quem só confirmou os próprios dados.
+  const [censoAtualizado, setCensoAtualizado] = useState(false);
   const [walletDialogOpen, setWalletDialogOpen] = useState(false);
 
   // ── Loop com o totem (from=totem) ──
@@ -491,6 +516,7 @@ export default function CadastroMembresia() {
       if (form.senha.length < 6) return 'A senha precisa ter ao menos 6 caracteres.';
       if (form.senha !== form.confirmar_senha) return 'As senhas não conferem.';
     }
+    if (ehCenso && !vinculoDeclarado) return 'Informe seu vínculo com a igreja.';
     if (!aceitaTermos) return 'É necessário aceitar os termos para enviar o cadastro.';
     return null;
   }
@@ -549,6 +575,8 @@ export default function CadastroMembresia() {
         aceita_contato: aceitaComunicacao,
         whatsapp_optin: aceitaComunicacao,
         converteu_na_cbrio: converteuCbrio || undefined,
+        censo: ehCenso || undefined,
+        vinculo_declarado: (ehCenso && vinculoDeclarado) || undefined,
         consentimento_texto: aceitaComunicacao
           ? `${TEXTO_CONSENTIMENTO}\n\n${TEXTO_COMUNICACAO}`
           : TEXTO_CONSENTIMENTO,
@@ -573,6 +601,7 @@ export default function CadastroMembresia() {
           }
         } catch { /* fallback: tela de sucesso normal */ }
       }
+      if (ehCenso) setCensoAtualizado(!!resp?.censo_atualizado);
       setSent(true);
     } catch (err) {
       setError(err.message || 'Não foi possível enviar o cadastro. Tente novamente.');
@@ -654,10 +683,16 @@ export default function CadastroMembresia() {
               fontSize: 28, marginBottom: 16,
             }}>&#10003;</div>
             <h2 style={{ fontSize: 18, fontWeight: 700, color: C.text, margin: 0 }}>
-              Cadastro enviado!
+              {ehCenso
+                ? (censoAtualizado ? 'Dados atualizados!' : 'Cadastro recebido!')
+                : 'Cadastro enviado!'}
             </h2>
             <p style={{ fontSize: 13, color: C.text3, marginTop: 10, lineHeight: 1.5 }}>
-              Obrigado por se conectar com a CBRio. Em breve nossa equipe entrará em contato com você.
+              {ehCenso
+                ? (censoAtualizado
+                  ? 'Obrigado! Encontramos o seu cadastro e atualizamos suas informações. Não precisa preencher de novo.'
+                  : 'Obrigado por participar do censo. Em breve nossa equipe entrará em contato com você.')
+                : 'Obrigado por se conectar com a CBRio. Em breve nossa equipe entrará em contato com você.'}
             </p>
 
             {fromTotem ? (
@@ -967,6 +1002,22 @@ export default function CadastroMembresia() {
               {currentStep === 1 && (
                 <div>
                   <SectionTitle>Informações</SectionTitle>
+                  {ehCenso && (
+                    <div style={{ marginBottom: 4 }}>
+                      <SelectField
+                        id="vinculo_declarado"
+                        label="Qual é o seu vínculo com a CBRio? *"
+                        value={vinculoDeclarado}
+                        onChange={(e) => setVinculoDeclarado(e.target.value)}
+                        options={VINCULO_OPTS}
+                        required
+                      />
+                      <p style={{ fontSize: 11, color: 'var(--cbrio-text3)', margin: '-12px 0 20px' }}>
+                        Não se preocupe em acertar: isso nos ajuda a organizar o
+                        acompanhamento e você pode mudar depois.
+                      </p>
+                    </div>
+                  )}
                   <Row>
                     <div style={{ marginBottom: 20, flex: 1 }}>
                       <label style={{ display: 'block', fontSize: 11, color: 'var(--cbrio-text3)', marginBottom: 6 }}>

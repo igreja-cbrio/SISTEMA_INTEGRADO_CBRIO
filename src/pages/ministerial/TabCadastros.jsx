@@ -1,13 +1,14 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { membresia } from '../../api';
+import PainelCenso from '../../components/membresia/PainelCenso';
 import { useAuth } from '../../contexts/AuthContext';
 import { hrefConversa } from '../../lib/conversas';
 import { toast } from 'sonner';
 import {
   Inbox, Check, X, Search, User, Mail, Phone,
   MapPin, Calendar, Copy, ExternalLink, Trash2, CheckCircle2,
-  CreditCard, RefreshCw, MessageSquare,
+  CreditCard, RefreshCw, MessageSquare, Sparkles, AlertTriangle,
 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
@@ -35,6 +36,10 @@ const STATUS_META = {
   aprovado:  { label: 'Aprovado',  cor: C.green, bg: C.greenBg, icon: CheckCircle2 },
   rejeitado: { label: 'Rejeitado', cor: C.red,   bg: C.redBg,   icon: X },
   duplicado: { label: 'Duplicado', cor: C.blue,  bg: C.blueBg,  icon: Copy },
+  // Censo: o reconciliador preencheu os campos vazios do cadastro existente e
+  // não sobrou conflito — a linha fica como prova do que a pessoa enviou (e do
+  // consentimento), mas NÃO é trabalho pendente de ninguém.
+  aplicado:  { label: 'Aplicado',  cor: C.primary, bg: C.primaryBg, icon: Sparkles },
 };
 
 const ORIGEM_LABEL = {
@@ -78,7 +83,7 @@ export default function TabCadastros({ onMembrosChange }) {
   useEffect(() => { membresia.cadastros.podeAprovar().then((r) => setPodeAprovar(!!r?.pode)).catch(() => {}); }, []);
 
   const [cadastros, setCadastros] = useState([]);
-  const [kpis, setKpis] = useState({ pendente: 0, aprovado: 0, rejeitado: 0, duplicado: 0 });
+  const [kpis, setKpis] = useState({ pendente: 0, aprovado: 0, rejeitado: 0, duplicado: 0, aplicado: 0 });
   const [loading, setLoading] = useState(true);
   const [filterStatus, setFilterStatus] = useState('pendente');
   const [busca, setBusca] = useState('');
@@ -242,6 +247,8 @@ export default function TabCadastros({ onMembrosChange }) {
 
   return (
     <div>
+      <PainelCenso />
+
       {error && (
         <div style={{
           background: C.redBg, border: `1px solid ${C.red}30`, color: C.red,
@@ -254,7 +261,7 @@ export default function TabCadastros({ onMembrosChange }) {
       )}
 
       {/* KPIs por status */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
         {Object.entries(STATUS_META).map(([key, meta]) => {
           const Icon = meta.icon;
           const active = filterStatus === key;
@@ -457,6 +464,45 @@ export default function TabCadastros({ onMembrosChange }) {
                     <strong>{selecionado.duplicado_de.nome}</strong>. Ao aprovar, os dados abaixo
                     serão aplicados ao cadastro existente (não cria membro novo).
                   </div>
+                </div>
+              )}
+
+              {/* CENSO · o que o reconciliador NÃO pôde aplicar sozinho.
+                  Mostra os dois lados de cada campo pra decisão ser um olhar,
+                  não uma investigação: o que já está no cadastro × o que a
+                  pessoa informou agora. Campo vazio no cadastro já foi
+                  preenchido automaticamente e não aparece aqui. */}
+              {Array.isArray(selecionado.censo_conflitos) && selecionado.censo_conflitos.length > 0 && (
+                <div style={{
+                  padding: '12px 14px', marginBottom: 16,
+                  background: C.amberBg, border: `1px solid ${C.amber}40`, borderRadius: 10,
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                    <AlertTriangle style={{ width: 15, height: 15, color: C.amber, flexShrink: 0 }} />
+                    <strong style={{ fontSize: 13, color: C.amber }}>
+                      Censo · {selecionado.censo_conflitos.length} campo(s) divergente(s)
+                    </strong>
+                  </div>
+                  <p style={{ fontSize: 11.5, color: C.text3, margin: '0 0 10px', lineHeight: 1.5 }}>
+                    O cadastro já tinha outro valor nestes campos, então nada foi
+                    sobrescrito. Confira qual está certo antes de aplicar.
+                  </p>
+                  {selecionado.censo_conflitos.map((cf) => (
+                    <div key={cf.campo} style={{
+                      display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'baseline',
+                      padding: '6px 0', borderTop: `1px solid ${C.amber}22`, fontSize: 12.5,
+                    }}>
+                      <span style={{ minWidth: 110, color: C.text3, textTransform: 'capitalize' }}>
+                        {String(cf.campo).replace(/_/g, ' ')}
+                      </span>
+                      <span style={{ color: C.text3 }}>
+                        no cadastro: <strong style={{ color: C.text2 }}>{cf.atual || '—'}</strong>
+                      </span>
+                      <span style={{ color: C.text3 }}>
+                        informado: <strong style={{ color: C.text }}>{cf.informado || '—'}</strong>
+                      </span>
+                    </div>
+                  ))}
                 </div>
               )}
 
