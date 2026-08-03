@@ -244,8 +244,25 @@ router.get('/', authorizeModule('propostas', 1), async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ⚠️ INCIDENTE 2026-08-03 · `/:id` engolia `/avaliar` e `/mural`.
+// No Express o primeiro match vence, e estas duas rotas LITERAIS são declaradas
+// depois daqui (linhas ~411 e ~468). Resultado: `GET /propostas/avaliar` caía neste
+// handler com `id='avaliar'`, o PostgREST recusava a comparação contra a coluna uuid
+// (22P02) e a resposta era 400 — as abas "Avaliar" e "Mural da reunião" não abriam.
+// Em cascata, nada chegava a APROVADO/CONSOLIDADO, então deliberação, ressalvas,
+// recurso, pós-evento e a consolidação do ciclo ficavam inalcançáveis, mesmo com o
+// backend inteiro pronto. É a mesma armadilha já registrada no CLAUDE.md para o
+// Grupos ("rota /kpis declarada ANTES de /:id").
+//
+// A guarda de UUID resolve E previne recaída: qualquer rota literal acrescentada
+// depois desta passa a ser alcançada sozinha, sem depender de alguém lembrar de
+// declará-la acima. Preferida a mover 60 linhas de bloco, onde o erro nasce.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 // Detalhe + filhas
-router.get('/:id', authorizeModule('propostas', 1), async (req, res) => {
+router.get('/:id', authorizeModule('propostas', 1), async (req, res, next) => {
+  // Não é id de proposta → é uma rota literal declarada abaixo. Segue o baile.
+  if (!UUID_RE.test(String(req.params.id || ''))) return next();
   const { data: p, error } = await supabase.from('prop_proposta').select('*, area:areas(id, nome)').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
   if (error) return res.status(400).json({ error: error.message });
   if (!p) return res.status(404).json({ error: 'Proposta não encontrada' });

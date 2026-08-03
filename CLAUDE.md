@@ -272,6 +272,65 @@ Celebra com só nome+telefone continuam válidas para sempre).
   submit quando há horários; `status='rejeitado'` segue FORA do CHECK
   (referências defensivas no código são vocabulário morto — não legalizar).
 
+## ⚠️ LEI · trocar a KEY de um campo de formulário ORFANA resposta (2026-08-03)
+
+Incidente: o Matheus abriu uma inscrição do Patrocinadores do Celebra e o modal
+mostrou **"—" em todas as 7 respostas**. O dado estava intacto em
+`inscricoes.dados` — o que quebrou foi o VÍNCULO pergunta↔resposta.
+
+**Causa:** `sanitizeCampos` (routes/inscricoes.js) testava
+`/^c_[a-z0-9_]+$/` e, para toda chave que não casasse, chamava `novaKeyCampo()`.
+Os eventos migrados do Celebra guardam a pergunta com chave em **formato slug do
+rótulo** (`nome_da_empresa_negocio`), que não casa com aquele padrão. Então, na
+PRIMEIRA vez que alguém abriu e **salvou** o evento no construtor (30/07 11:58),
+as 7 chaves foram trocadas de uma vez e as 15 respostas ficaram órfãs.
+
+⚠️ **O mesmo estava ARMADO para o "Celebra 2026"** (114 inscrições · evento em
+29/08): a chave dele (`em_qual_ministerio_voce_serve`) também é slug, e as
+respostas só continuavam casando porque **ninguém havia salvado aquele evento
+pelo construtor**. Um clique em Salvar teria orfanado as 113.
+
+- **A lei:** chave existente é **PRESERVADA byte a byte**. Chave nova só quando
+  não existe nenhuma. **NUNCA derivar/normalizar a chave a partir do label** — o
+  comentário do `novaKeyCampo` já dizia isso; a régua é que estava estreita demais
+  e regenerava o que devia preservar.
+- **`backend/utils/campoKey.js`** é a fonte única: `keyCampoPreservada()` aceita
+  qualquer chave em `[a-z0-9_]{1,60}` (charset conferido contra o banco vivo — as
+  **15** chaves de formulário de `insc_eventos`+`ext_eventos` e as **10** chaves
+  presentes em respostas de `inscricoes`+`ext_inscricoes` passam todas).
+  `src/test/campoKey.test.ts` (7 casos) é **mutation-test explícito**: voltar a
+  exigir prefixo `c_` deixa o gate vermelho.
+- **Reparo de dado aplicado** no evento Patrocinadores: as 7 chaves voltaram às
+  ORIGINAIS, lidas de `ext_eventos.campos` (a tabela de origem NÃO foi dropada) e
+  casadas por rótulo — derivado, não adivinhado. Dry-run antes: 7/7 acharam a
+  original e 7/7 tinham resposta gravada. Depois: **15/15 inscrições casam** (era
+  0/15). Backup do estado anterior em
+  `scratchpad/backup_campos_patrocinadores_20260803.json` (não versionado).
+- ⚠️ Se aparecer outro evento com respostas em "—", o diagnóstico é comparar
+  `insc_eventos.campos->>'key'` com `jsonb_object_keys(inscricoes.dados)`; a cura
+  é buscar a chave original em `ext_eventos`, nunca reescrever `dados`.
+
+## ⚠️ Propostas · `/:id` engolia `/avaliar` e `/mural` (2026-08-03 · SEM migration)
+
+As abas **Avaliar** e **Mural da reunião** não abriam: `GET /:id` é declarado na
+linha ~248 de `routes/propostas.js` e as duas rotas LITERAIS vêm depois (~411 e
+~468). No Express o primeiro match vence, então `GET /propostas/avaliar` caía no
+handler de detalhe com `id='avaliar'`, o PostgREST recusava a comparação contra a
+coluna `uuid` (22P02) e a resposta era **400**. Em cascata, nada chegava a
+`APROVADO`/`CONSOLIDADO`, então **deliberação, ressalvas, recurso, pós-evento e a
+consolidação do ciclo ficavam inalcançáveis** — com o backend inteiro pronto.
+Mesma armadilha já registrada aqui para o Grupos ("rota `/kpis` declarada ANTES
+de `/:id`").
+
+- **Correção: guarda de UUID no `/:id`** (`if (!UUID_RE.test(id)) return next()`),
+  não reordenação. Resolve E **previne recaída**: rota literal acrescentada depois
+  passa a ser alcançada sozinha, sem depender de alguém lembrar de declará-la
+  acima. Também evita mover um bloco de 60 linhas, que é onde o erro nasce.
+- Comportamento provado em app Express mínimo (5.2.1): `/avaliar` → handler de
+  avaliar · `/mural` → mural · uuid → detalhe · path desconhecido → 404.
+- ⚠️ Só `GET /:id` tinha o problema. `PUT /:id` e `DELETE /:id` não têm rota
+  literal declarada depois deles (`DELETE /anexos/:anexoId` vem ANTES).
+
 ## Kids · idade exata, WhatsApp pessoal e gerencial dentro da trava (2026-08-03 · SEM migration)
 
 Três pedidos do Matheus no mesmo dia, todos no Kids.

@@ -43,9 +43,9 @@ function slugify(s) {
 
 // key OPACA e estável dos campos extras (mesma regra do form-builder do ext:
 // gerada 1x, NUNCA re-derivada do label — senão orfana respostas antigas)
-function novaKeyCampo() {
-  return `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
-}
+// ⚠️ Chave de campo é PRESERVADA byte a byte quando já existe — mudar a chave é o
+// que orfana resposta já gravada. Ver o incidente do Celebra em utils/campoKey.js.
+const { keyCampoPreservada } = require('../utils/campoKey');
 
 const TIPOS_CAMPO = ['texto', 'textarea', 'email', 'select', 'escolha', 'multi', 'rede_social', 'imagem', 'numero', 'data'];
 function sanitizeCampos(campos) {
@@ -54,7 +54,7 @@ function sanitizeCampos(campos) {
     .filter(c => c && String(c.label || '').trim())
     .slice(0, 40)
     .map(c => ({
-      key: /^c_[a-z0-9_]+$/.test(String(c.key || '')) ? String(c.key) : novaKeyCampo(),
+      key: keyCampoPreservada(c.key),
       label: String(c.label).trim().slice(0, 200),
       tipo: TIPOS_CAMPO.includes(c.tipo) ? c.tipo : 'texto',
       obrigatorio: c.obrigatorio !== false,
