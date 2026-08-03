@@ -331,6 +331,35 @@ de `/:id`").
 - ⚠️ Só `GET /:id` tinha o problema. `PUT /:id` e `DELETE /:id` não têm rota
   literal declarada depois deles (`DELETE /anexos/:anexoId` vem ANTES).
 
+## Kids · lista mensal de aniversariantes impressa (2026-08-03 · SEM migration)
+
+`GET /totem-kids/aniversariantes?mes=1..12` + seletor de mês/agrupamento no
+`KidsHub` + gerador A4 em `src/lib/imprimirAniversariantesKids.ts` (molde do
+`imprimirListaPresencaBatismo`: thead repetido por folha, `page-break-inside`).
+
+- **Agrupamento à escolha: por DIA ou por SALA** (decisão do Matheus). A sala é
+  DERIVADA da idade em meses (`salaDaIdade`, mesma régua do `sugerirSala`), com o
+  catálogo carregado 1× em vez de uma consulta por criança.
+- ⚠️ **As faixas de `kids_salas` têm BURACOS** — Berçário acaba em 21 meses e
+  Maternal começa em 24, e nada cobre 0–5. Medido em agosto/2026: 68
+  aniversariantes, **5 sem sala nenhuma**. Por isso o agrupamento por sala tem o
+  grupo "Sem sala definida pela idade" no fim: criança sem faixa não pode
+  desaparecer da folha.
+- **A lista impressa SAI COM TELEFONE** do responsável (decisão explícita dele —
+  quem imprime vai ligar parabenizando). É a ÚNICA lista do sistema que imprime
+  PII por padrão: a folha leva aviso âmbar pra não circular e descartar depois.
+  Contraste proposital com `imprimirListaInscritos`, onde contato só sai marcando
+  a caixa. Mudar isso é mexer só neste arquivo.
+- **Idade que a criança COMPLETA**, não a idade de hoje: se o dia já passou no ano
+  corrente, o próximo aniversário é no ano que vem. É o número que vai no bolo.
+- ⚠️ **Bug de truncamento consertado junto**: o `/dashboard` lia as crianças com
+  `.range(0, 999)` e a base passou de mil (**1.023 ativas com nascimento** em
+  03/08) — **23 crianças ficavam de fora da lista da semana, em silêncio**. Virou
+  `fetchCriancasPaginado`. É a lição do cap de 1000 do PostgREST outra vez: o
+  código só quebra quando a base cresce, e sem aviso.
+- Idade passou a aparecer **ao lado do nome** na lista de Crianças (antes estava
+  na 2ª linha, misturada com o nome do responsável).
+
 ## Kids · idade exata, WhatsApp pessoal e gerencial dentro da trava (2026-08-03 · SEM migration)
 
 Três pedidos do Matheus no mesmo dia, todos no Kids.
