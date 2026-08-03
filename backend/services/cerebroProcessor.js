@@ -5,7 +5,8 @@
  */
 const { supabase } = require('../utils/supabase');
 const { getGraphToken, downloadFile } = require('./storageService');
-const { extractText, IMAGE_TYPES } = require('./textExtractor');
+const { extractText } = require('./textExtractor');
+const { montarEnvioHaiku } = require('./cerebroEnvioHaiku');
 const Anthropic = require('@anthropic-ai/sdk');
 
 const HUB_SITE_ID = 'infracbrio.sharepoint.com,04b50f10-ea32-40ba-84bd-44a3b38ee2a7,94fe6af6-f064-455d-afc5-67a377f5e82c';
@@ -132,19 +133,22 @@ async function processarFila() {
       const textoPrompt = texto.length > MAX_CHARS_PROMPT ? texto.slice(0, MAX_CHARS_PROMPT) : texto;
 
       // 3. Enviar pro Haiku classificar
-      let messages;
-      if (texto === '[IMAGEM]' || IMAGE_TYPES.includes(mimeType)) {
-        messages = [{ role: 'user', content: [
-          { type: 'image', source: { type: 'base64', media_type: mimeType, data: buffer.toString('base64') } },
-          { type: 'text', text: buildPrompt(item) }
-        ] }];
-      } else if (texto.startsWith('[') || texto.trim().length < 50) {
-        // Sem conteúdo útil
-        await supabase.from('cerebro_fila').update({ status: 'ignorado', erro_mensagem: 'Sem conteúdo extraivel', processado_em: new Date().toISOString() }).eq('id', item.id);
+      const envio = montarEnvioHaiku({
+        mimeType,
+        texto,
+        base64: buffer.toString('base64'),
+        prompt: buildPrompt(item),
+      });
+
+      if (envio.modo === 'ignorar') {
+        await supabase.from('cerebro_fila').update({ status: 'ignorado', erro_mensagem: envio.motivo, processado_em: new Date().toISOString() }).eq('id', item.id);
         continue;
-      } else {
-        messages = [{ role: 'user', content: buildPrompt(item) + '\n\nConteudo:\n---\n' + textoPrompt + '\n---' }];
       }
+
+      // O bloco de texto usa o teto do PROMPT; imagem/documento mandam o arquivo.
+      const messages = [{ role: 'user', content: envio.modo === 'texto'
+        ? buildPrompt(item) + '\n\nConteudo:\n---\n' + textoPrompt + '\n---'
+        : envio.content }];
 
       const response = await client.messages.create({
         model: 'claude-haiku-4-5-20251001', max_tokens: 1500,
