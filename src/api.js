@@ -741,6 +741,9 @@ export const grupos = {
   listarPedidos: (params) => get('/grupos/pedidos/list' + (params ? '?' + new URLSearchParams(params) : '')),
   contarPedidos: () => get('/grupos/pedidos/count'),
   resumoPedidos: () => get('/grupos/pedidos/resumo'),
+  // Retrato do período da Caixa de entrada: quais grupos NÃO receberam pedido
+  // (o resto do painel é derivado da própria lista, no cliente).
+  entradaCobertura: (params) => get('/grupos/entrada/cobertura' + (params ? '?' + new URLSearchParams(params) : '')),
   historicoMembros: (grupoId) => get(`/grupos/${grupoId}/historico-membros`),
   aprovarPedido: (pedidoId) => post(`/grupos/pedidos/${pedidoId}/aprovar`, {}),
   aprovarPedidosLote: (pedidoIds) => post('/grupos/pedidos/aprovar-lote', { pedido_ids: pedidoIds }),

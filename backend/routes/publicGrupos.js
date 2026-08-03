@@ -22,6 +22,9 @@ const {
   validarCamposPadrao, // régua única dos campos padrão (usada no bloco do cônjuge)
   tirarCodigoPaisTelefone, // "+55 21 9..." colado do contato não pode comer o DDD
 } = require('../services/inscricaoContrato');
+// "Dá pra falar com essa pessoa?" — telefone estrangeiro/errado manda o líder
+// pro e-mail (varredura do lançamento 02/08 · services/contatoPessoa.js).
+const { contatoParaLider } = require('../services/contatoPessoa');
 const { requireCron } = require('../utils/cronAuth');
 // Régua ÚNICA de busca (acento/caixa/espaço) · espelho de src/lib/busca.js.
 const { normalizarBusca, contemNormalizado, algumContemNormalizado } = require('../services/busca');
@@ -1025,7 +1028,15 @@ router.post('/inscrever', async (req, res) => {
         // 29/07) manda LIGAR pra pessoa antes de aceitar, então o número é o
         // dado que ele usa na mão — "(21) 99999-8888" lê e disca melhor que
         // "21999998888". O que gravamos no banco segue digits-only.
-        const contatoDe = (p) => [telefoneExibicao(p.telefone), p.email].filter(Boolean).join(' · ') || 'sem contato';
+        // Telefone que o nosso envio não alcança (estrangeiro, DDD inexistente)
+        // vira "procure por e-mail" em vez de um número que não existe — senão
+        // o líder tenta ligar, não consegue, e conclui que a pessoa desistiu.
+        // Decisão do Marcos 03/08, depois do caso do número suíço no lançamento.
+        const contatoDe = (p) => contatoParaLider({
+          telefone: p.telefone,
+          email: p.email,
+          telefoneExibicao: telefoneExibicao(p.telefone),
+        });
         await notificarLiderNovoPedido({
           grupo,
           pedidoId: criados[0].pedidoId,

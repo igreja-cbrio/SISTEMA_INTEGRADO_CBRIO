@@ -17,6 +17,8 @@ const { configurado: whatsappConfigurado } = require('../services/whatsappServic
 const gruposEnvios = require('../services/gruposEnvios');
 const gruposEnviosConfig = require('../services/gruposEnviosConfig');
 const { registrarEventoPedido } = require('../services/grupoPedidoEventos');
+// Régua única de "dá pra falar com essa pessoa?" (varredura do lançamento 02/08)
+const { classificarContato, digitos: contatoDigitos } = require('../services/contatoPessoa');
 
 // Auto-sync dos vínculos do bot WhatsApp (Marcos 2026-06-10): novo líder /
 // troca de líder reflete em whatsapp_lideres sem passo manual. Fire-and-forget
@@ -1309,8 +1311,127 @@ router.get('/pedidos/list', async (req, res) => {
       });
     } catch (e) { console.error('[Pedidos list veio_next]', e.message); }
 
+    // Contato alcançável + entrega das mensagens (varredura do lançamento de
+    // 02/08 · ver services/contatoPessoa.js). Dois selos que a triagem precisa:
+    //   · contato_status → "Número errado — impossível contato" (telefone que o
+    //     envio não alcança OU número que a Meta disse "undeliverable"), com o
+    //     e-mail como caminho alternativo. NÃO bloqueia nada: é leitura.
+    //   · avisos → o líder foi avisado? a pessoa recebeu? (enviado/entregue/
+    //     lido/falhou) — no domingo isso só era respondível consultando a fila
+    //     na mão, e o "líder não recebeu" foi o incidente de 30/07.
+    try {
+      const telsPedido = [...new Set(rows.map(p => contatoDigitos(p.telefone)).filter(t => t.length >= 8))];
+      // Falha de entrega é POR NÚMERO (não por pedido): o mesmo telefone pode
+      // ter recebido por outro contexto. Só as falhas interessam aqui.
+      const falhou = new Set();
+      const avisoPorRef = {}; // ref_id → { lider, pessoa }
+      for (let i = 0; i < telsPedido.length; i += 200) {
+        const { data: envs } = await supabase.from('whatsapp_envios')
+          .select('telefone, failed_at')
+          .in('telefone', telsPedido.slice(i, i + 200))
+          .not('failed_at', 'is', null);
+        (envs || []).forEach(e => falhou.add(contatoDigitos(e.telefone)));
+      }
+      // ⚠️ `whatsapp_envios.telefone` guarda o que o CHAMADOR passou, não uma
+      // forma canônica: hoje os envios de grupos vão digits-only (conferido nos
+      // 3 `failed_at` do lançamento), mas `whatsapp_lideres` guarda com o 55 na
+      // frente e outros fluxos podem passar E.164. Comparar cru dependeria de
+      // sorte — os 8 últimos dígitos sobrevivem ao 55/DDD e não colidem em
+      // volume desta ordem.
+      const fim8 = (t) => contatoDigitos(t).slice(-8);
+      const falhou8 = new Set([...falhou].map(fim8));
+      const refIds = rows.map(p => p.id);
+      for (let i = 0; i < refIds.length; i += 200) {
+        const { data: envs } = await supabase.from('whatsapp_envios')
+          .select('ref_id, contexto, status, delivered_at, read_at, failed_at')
+          .in('ref_id', refIds.slice(i, i + 200));
+        (envs || []).forEach(e => {
+          const alvo = e.contexto === 'grupos.pedido_novo_lider' ? 'lider'
+            : (e.contexto === 'grupos.inscricao_confirmada' || e.contexto === 'grupos.pedido_aprovado') ? 'pessoa'
+            : null;
+          if (!alvo) return;
+          const estado = e.failed_at ? 'falhou' : e.read_at ? 'lido' : e.delivered_at ? 'entregue'
+            : e.status === 'enviado' ? 'enviado' : e.status;
+          const at = (avisoPorRef[e.ref_id] = avisoPorRef[e.ref_id] || {});
+          // Mais informativo vence (lido > entregue > enviado); falha sempre aparece.
+          const peso = { falhou: 4, lido: 3, entregue: 2, enviado: 1 };
+          if (!at[alvo] || (peso[estado] || 0) > (peso[at[alvo]] || 0)) at[alvo] = estado;
+        });
+      }
+      rows.forEach(p => {
+        p.contato_status = classificarContato({
+          telefone: p.telefone,
+          email: p.email,
+          entregaFalhou: falhou8.has(fim8(p.telefone)),
+        });
+        p.avisos = avisoPorRef[p.id] || {};
+      });
+    } catch (e) { console.error('[Pedidos list contato_status]', e.message); }
+
+    // Pessoa NOVA na plataforma? (varredura 02/08: 85 de 160 eram inéditas)
+    // Novo = virou cadastro pendente, ou o membro nasceu junto com o pedido
+    // (a diferença de segundos entre criar o membro e criar o pedido).
+    try {
+      const memIds = [...new Set(rows.map(p => p.membro_id).filter(Boolean))];
+      const criadoEm = {};
+      for (let i = 0; i < memIds.length; i += 200) {
+        const { data: mems } = await supabase.from('mem_membros')
+          .select('id, created_at').in('id', memIds.slice(i, i + 200));
+        (mems || []).forEach(m => { criadoEm[m.id] = m.created_at; });
+      }
+      rows.forEach(p => {
+        if (p.cadastro_pendente_id) { p.pessoa_nova = true; return; }
+        const c = p.membro_id ? criadoEm[p.membro_id] : null;
+        if (!c) { p.pessoa_nova = null; return; } // não deu pra saber
+        // 10 min de folga: o membro criado no mesmo fluxo do pedido é "novo";
+        // quem já existia tem created_at de dias/meses antes.
+        p.pessoa_nova = (new Date(p.created_at) - new Date(c)) < 10 * 60000;
+      });
+    } catch (e) { console.error('[Pedidos list pessoa_nova]', e.message); }
+
     res.json(rows);
   } catch (e) { console.error('[Pedidos list]', e.message); res.status(500).json({ error: 'Erro ao listar pedidos' }); }
+});
+
+// GET /api/grupos/entrada/cobertura?desde=ISO — a ÚNICA coisa do painel da
+// Caixa de entrada que a lista de pedidos não responde: quais grupos ativos
+// NÃO receberam pedido nenhum no período (no lançamento de 02/08 foram 30 de
+// 87 — é onde o Pr. Nélio precisa divulgar). Os outros números do painel são
+// derivados da própria lista no cliente, pra não existirem duas verdades.
+router.get('/entrada/cobertura', async (req, res) => {
+  try {
+    const { desde } = req.query;
+    const desdeISO = desde && !Number.isNaN(new Date(desde).getTime())
+      ? new Date(desde).toISOString() : null;
+
+    const { data: grupos, error: eg } = await supabase.from('mem_grupos')
+      .select('id, codigo, nome, bairro, modo_inscricao, temporada')
+      .eq('ativo', true).is('deleted_at', null);
+    if (eg) throw eg;
+
+    let q = supabase.from('mem_grupo_pedidos').select('grupo_id').is('deleted_at', null);
+    if (desdeISO) q = q.gte('created_at', desdeISO);
+    const { data: peds, error: ep } = await q.limit(1000);
+    if (ep) throw ep;
+    const comPedido = new Set((peds || []).map(p => p.grupo_id).filter(Boolean));
+
+    // Grupo 'fechado' não recebe inscrição pelo formulário — não faz sentido
+    // cobrar divulgação dele.
+    const elegiveis = (grupos || []).filter(g => g.modo_inscricao !== 'fechado');
+    const semPedido = elegiveis.filter(g => !comPedido.has(g.id))
+      .map(g => ({ id: g.id, codigo: g.codigo, nome: g.nome, bairro: g.bairro }))
+      .sort((a, b) => String(a.nome).localeCompare(String(b.nome)));
+
+    res.json({
+      grupos_ativos: (grupos || []).length,
+      grupos_elegiveis: elegiveis.length,
+      grupos_com_pedido: elegiveis.length - semPedido.length,
+      sem_pedido: semPedido,
+    });
+  } catch (e) {
+    console.error('[Entrada cobertura]', e.message);
+    res.status(500).json({ error: 'Erro ao calcular a cobertura dos grupos' });
+  }
 });
 
 // GET /api/grupos/pedidos/resumo — cockpit da caixa de entrada (Nana):
