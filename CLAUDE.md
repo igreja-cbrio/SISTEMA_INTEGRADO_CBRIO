@@ -272,6 +272,62 @@ Celebra com só nome+telefone continuam válidas para sempre).
   submit quando há horários; `status='rejeitado'` segue FORA do CHECK
   (referências defensivas no código são vocabulário morto — não legalizar).
 
+## Dashboard Semanal · acumulado do ano até hoje × anos anteriores (2026-08-03 · SEM migration)
+
+Pedido do Matheus na aba **Mensal**: *"quero ver o acumulado do ano até a data
+atual, e comparar com os outros anos no mesmo período, a escolha dos indicadores
+deve refletir"*. A aba só respondia "como foi **este mês**" e "mês a mês por
+ano"; **nenhuma tela do sistema** respondia "como está o ano até aqui contra o
+ano passado até aqui". Bloco novo (`YtdAcumuladoCard.jsx`) entre os filtros e o
+gráfico mensal, seguindo Indicador / Culto / Anos comparados — o recorte de
+**Meses não se aplica** (o período é sempre 1º de janeiro → hoje).
+
+**⚠️ O corte é por DIA, não por mês fechado nem por ano inteiro.** Os cultos do
+ano corrente nascem **pré-agendados até dezembro com frequência 0** (2026 tem 347
+linhas em `cultos`, só ~199 até agosto). Somar "o ano" sem corte compararia 7
+meses de 2026 com 12 de 2025 **e** inflaria o denominador de cultos — os dois
+erros na mesma direção. Vale pra qualquer agregação "do ano" nova neste banco.
+
+**⚠️ Total absoluto e MÉDIA POR CULTO andam sempre juntos.** O nº de cultos no
+mesmo período cresceu ano a ano porque a igreja abriu horários (154 em 2023 → 152
+→ 186 → **199 em 2026**). Frequência até 03/08: 2024 **58.198** (383/culto) ·
+2025 **65.097** (352/culto) · 2026 **63.235** (328/culto) — o total de 2026 quase
+empata com 2025 **e a média por culto cai**, leitura que o total sozinho esconde.
+
+- **`GET /dashboard-semanal/ytd?anos=&indicador=&culto=`** lê **`cultos` direto**:
+  `vw_dashboard_semanal` perde `cultos.data` no `GROUP BY`, então "até hoje" não é
+  filtrável nela (mesmo motivo do `/resumo-mes`). Reusa `colunasCultos()` /
+  `somaColunas()` e a exclusão de `has_kids = false` pros indicadores de kids — a
+  régua de `/yoy` e `/media-mes`, que **falta no `/mensal`**. Paginado pelo cap de
+  1000 do PostgREST. Devolve total, cultos com dado, média por culto, Δ% do total
+  E da média, curva acumulada mês a mês e batismos do mesmo período.
+- **Voluntariado é a exceção do corte**: vem de `vw_dashboard_voluntariado`
+  (check-ins reais), que agrega por semana ISO e **não tem coluna de data** →
+  corte = **última semana ISO completa** (a corrente só fecha no domingo; incluí-la
+  compararia 1 dia de agosto com 7 dias dos outros anos). Igual em todos os anos,
+  então o YoY segue justo. ⚠️ O filtro de **culto não vale** ali: a view agrega por
+  BLOCO (`b10c0000-…`), ids que não são os de `vol_service_types` — declarado em
+  `avisos` em vez de devolver vazio em silêncio.
+- **Ano sem dado é DECLARADO em `avisos`**, não escondido: os check-ins de
+  voluntário só começam na **semana 16 de 2026** (zero histórico) e Online DS só
+  existe a partir de 2024. Sem o aviso a tela pareceria quebrada.
+- **⚠️ "Novos membros" ficou FORA do comparativo, de propósito**: `mem_membros`
+  tem `created_at` mínimo em **2026-04-14** (base importada) e `data_membresia` /
+  `data_batismo` / `data_conversao` estão **nulas nas 8.049 linhas** — não existe
+  histórico pra comparar. O card mensal continua como está. Não "consertar"
+  usando `created_at` como data de entrada: mediria o dia do import.
+- Batismos entram por `batismo_inscricoes.data_batismo` (status `realizado`) e
+  **não passam pelo filtro de culto** (batismo não acontece "num tipo de culto").
+  YTD até 03/08: 2024 **143** · 2025 **134** · 2026 **89**.
+- **`backend/utils/periodoYtd.js`** = helpers PUROS com o "agora" **injetado**
+  (teste que lê o relógio da máquina é o que mordeu no `faixaEtaria.test.ts`).
+  15 casos em `src/test/periodoYtd.test.ts`, guardas: (1) o dia vem do **fuso da
+  igreja** — às 23h BRT o dia UTC já virou e o corte pegaria os cultos de AMANHÃ,
+  que existem com valor 0; (2) **29/02 em ano não bissexto vira 28/02** —
+  `'2025-02-29'` é data inexistente e o Postgres recusa a **query inteira**, não
+  só a linha, então sem a guarda o comparativo quebraria por completo um dia a
+  cada quatro anos; (3) semana corrente só conta quando fecha no domingo.
+
 ## Grupos · inscrição de CASAL numa tela só (2026-07-30 · migration 20260730140000)
 
 Decisão do Marcos: em grupo com `mem_grupos.categoria = 'Casais'` (8 hoje,
