@@ -1152,11 +1152,14 @@ function TrilhaPessoas({ canEdit, reloadKey, onNova, onEditVisita, onNovoParaPes
   const [loading, setLoading] = useState(true);
   const [busca, setBusca] = useState('');
   const [sel, setSel] = useState<any | null>(null);
-  // Visão da aba: por PESSOA (histórico de quem foi atendido · como sempre foi) ou
-  // por PASTOR (quem atendeu · pedido do Matheus 2026-08-04 — "clicar no pastor e
-  // ver os atendimentos dele"). As duas leem o MESMO `pessoas` já carregado, então
-  // trocar de visão não faz round-trip nem pode divergir do outro lado.
-  const [visao, setVisao] = useState<'pessoa' | 'pastor'>('pessoa');
+  // Visão da aba: por PASTOR (quem atendeu · **default**, pedido do Matheus
+  // 2026-08-04) ou por PESSOA (histórico de quem foi atendido · como a aba era
+  // antes). As duas leem o MESMO `pessoas` já carregado, então trocar de visão não
+  // faz round-trip nem pode divergir do outro lado.
+  // ⚠️ O default é por pastor porque o uso real da aba é a liderança olhando o
+  // próprio acompanhamento; a busca por uma pessoa específica tem o campo de busca
+  // e a trilha continua a um clique de distância dentro do card do pastor.
+  const [visao, setVisao] = useState<'pessoa' | 'pastor'>('pastor');
   const [selPastor, setSelPastor] = useState<any | null>(null);
   // Filtros da trilha (tipo · status · quem atendeu · período)
   const [fTipo, setFTipo] = useState('todos');
@@ -1373,16 +1376,26 @@ function TrilhaPessoas({ canEdit, reloadKey, onNova, onEditVisita, onNovoParaPes
             labels desta barra. */}
         <div className="space-y-1">
           <Label className="block text-[11px] text-muted-foreground">Período do atendimento</Label>
-          <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/20 px-2 py-1">
-            <DatePicker value={fDe} onChange={setFDe} className="h-8 w-[142px] border-0 bg-transparent shadow-none" />
-            <span className="text-[11px] text-muted-foreground shrink-0">até</span>
-            <DatePicker value={fAte} onChange={setFAte} className="h-8 w-[142px] border-0 bg-transparent shadow-none" />
+          <div className="inline-flex items-center gap-1 rounded-lg border border-border bg-background px-1.5 py-1">
+            <DatePicker
+              value={fDe}
+              onChange={setFDe}
+              placeholder="Início"
+              className="h-7 w-[140px] border-0 bg-transparent shadow-none px-2 overflow-hidden"
+            />
+            <span className="text-[11px] text-muted-foreground shrink-0 px-0.5">até</span>
+            <DatePicker
+              value={fAte}
+              onChange={setFAte}
+              placeholder="Fim"
+              className="h-7 w-[140px] border-0 bg-transparent shadow-none px-2 overflow-hidden"
+            />
             {(fDe || fAte) && (
               <button
                 type="button"
                 onClick={() => { setFDe(''); setFAte(''); }}
                 title="Limpar o período"
-                className="text-muted-foreground hover:text-foreground shrink-0"
+                className="text-muted-foreground hover:text-foreground shrink-0 pl-1 pr-0.5"
               >
                 <X className="h-3.5 w-3.5" />
               </button>
