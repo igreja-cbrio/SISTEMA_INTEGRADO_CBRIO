@@ -272,6 +272,128 @@ Celebra com só nome+telefone continuam válidas para sempre).
   submit quando há horários; `status='rejeitado'` segue FORA do CHECK
   (referências defensivas no código são vocabulário morto — não legalizar).
 
+## ⚠️ LEI · o gatilho de `auth.users` é a ÚNICA entrada de PESSOA fora do contrato (2026-08-04)
+
+Marcos, ao ver cadastros recentes com nome errado: *"nós resolvemos as inscrições
+padronizando entradas, porque estamos recebendo dados recentes errados?"*
+Investigação a fundo (04/08). O Contrato de porta está **íntegro** — o furo é uma
+entrada que ele nunca cobriu porque **não está no repositório**.
+
+### O que foi medido
+
+Inventário de TODOS os escritores de `mem_membros`: **um** em JS
+(`services/membroMatch.js`, o matcher canônico) + 20 migrations (imports pontuais
+e o matcher SQL). **`grep` exaustivo em `backend/`, `src/` e `supabase/`: nenhum
+lugar do repo escreve `origem_cadastro='auth'`.** E o arquivo que o CLAUDE.md cita
+como fonte (`supabase/handle_new_user_membro.sql`) **nunca foi commitado** — não
+existe em nenhum commit de nenhuma branch (`git log --all --diff-filter=A`).
+
+Origem: commit `04ce6ea2` (16/06, Matheus) — o app passou a mandar
+`frequenta_area` por metadata e o gatilho foi estendido em prod pra criar
+`mem_membros`. A migration daquele PR só criou a COLUNA; a mudança no gatilho
+ficou fora do git.
+
+O `handle_new_user` que ESTÁ no git (`20260410014723`) só escreve `profiles`:
+`COALESCE(full_name, name, split_part(email,'@',1))`. A versão viva herdou esse
+`COALESCE` e passou a aplicá-lo a `mem_membros.nome`.
+
+### Por que isso viola o contrato inteiro
+
+O gatilho **não** normaliza, **não** chama o matcher canônico (logo não deduplica),
+**não** acumula contato em `mem_contatos`, **não** registra observação de
+identidade e **não exige nenhum campo**. Medido nos 22 cadastros `origem='auth'`:
+95% sem CPF, 95% sem telefone, 95% sem nascimento, 100% sem sexo, **15 com o nome
+igual ao prefixo do e-mail**.
+
+⚠️ **E já colidiu com uma porta correta.** Caso real de 02/08:
+
+```
+11:49  Maria Victória Lannes Campos → formulário público COM CPF  (mem_cadastros_pendentes)
+11:57  "Victória Lannes"            → gatilho auth, sem chave     (mem_membros)
+14:03  Maria Victória Lannes Campos → preencheu DE NOVO
+```
+
+O matcher teria ligado os dois por e-mail+nome. Ele não rodou. Ela preencheu duas
+vezes porque nunca foi reconhecida.
+
+⚠️ Sintoma que revela o estrago: `andre.texeira` e `kevyn.ricardo` têm o
+**profile** com nome correto e o **membro** ainda com o prefixo — alguém corrigiu
+na mão o lugar errado, e `mem_membros` é o que todo o sistema lê.
+
+### Pior caso: Apple Sign-In com "Ocultar meu e-mail"
+
+O relay (`sy9p84mryx@privaterelay.appleid.com`) tem prefixo aleatório, e a Apple só
+manda o nome na **primeira** autorização. Resultado: pessoa cadastrada como
+`sy9p84mryx`. Ritmo atual ~1/dia (`catiassgullo` 04/08, `juloora` 03/08,
+`sy9p84mryx` 02/08).
+
+### O que foi corrigido (sem tocar em auth)
+
+1. **`membroMatch.ehNomeDerivadoDeEmail(nome, email)`** — irmã do
+   `ehNomePlaceholder`. ⚠️ Exige o e-mail e compara com ele: **não** é heurística
+   de "nome estranho", então não pega apelido nem nome curto legítimo. Contrato em
+   `nomeDerivadoEmail.test.js` (**no gate de deploy**), com os casos reais de prod
+   e mutation-test do falso positivo — trocar a igualdade por "contém" transforma
+   a função numa máquina de sobrescrever nome de gente.
+   ⚠️ Caso-limite documentado no teste: nome real IGUAL ao prefixo
+   ("Marcelo Soares" × `marcelosoares@`) dá `true`. Aceitável porque o efeito é
+   reescrever com o nome que a própria pessoa digitou + avisar humano — **nunca
+   apagar**. Se um dia isso decidir algo destrutivo, a regra tem que mudar.
+2. **`publicMembresia` manda `full_name` no `createUser`** — sem isso o gatilho
+   gravava o prefixo do e-mail. E o ramo `else` (profile já existe, que é o caminho
+   NORMAL porque o gatilho chega primeiro) passou a corrigir `profiles.name` **e** o
+   `mem_membros.nome` que o gatilho criou, com guarda estreita
+   (`ehNomeDerivadoDeEmail`) e `.eq('nome', valorAtual)` contra corrida.
+3. **`origem_cadastro` no INSERT do matcher** — eram **2.163** cadastros com origem
+   nula (o parâmetro `origem` só ia pra observação de identidade), e "de onde veio
+   esse dado?" não tinha resposta. `'matcher'` genérico não é gravado.
+4. **Aviso diário agregado** (`notificacaoGenerator`, tipo
+   `cadastro_sem_nome_real`): 1 por dia, nunca 1 por pessoa (sem regra configurada
+   o `notificar` cai no fallback de TODOS os admin/diretor). ⚠️ Isto **não conserta
+   a causa** — existe pra o problema parar de crescer em silêncio enquanto o
+   gatilho não é corrigido. A mensagem diz explicitamente **não apagar**.
+
+### ⚠️ PENDENTE — precisa da definição viva do gatilho
+
+Não substituí o gatilho porque **não consigo ler o que ele faz hoje**: o
+`DATABASE_URL` do `backend/.env` está com senha recusada (`password
+authentication failed for user "postgres"`, testado também no formato de pooler
+`postgres.<ref>` e na porta 6543) e **nenhum dos 182 RPCs expostos lê o catálogo**.
+Substituir às cegas quebraria o devocional (o `resolveMembro` exige
+`profile.membro_id` ou match por e-mail, senão diz "você não é membro" — foi
+por isso que o gatilho ganhou essa responsabilidade) e perderia a validação de
+`frequenta_area` que só existe lá.
+
+Pra destravar, rodar no SQL Editor e colar a saída:
+
+```sql
+SELECT p.proname, pg_get_functiondef(p.oid)
+  FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+ WHERE p.proname LIKE 'handle_new_user%';
+
+SELECT tgname, pg_get_triggerdef(oid) FROM pg_trigger
+ WHERE NOT tgisinternal AND tgrelid = 'auth.users'::regclass;
+```
+
+Com isso: (a) commitar o gatilho — **entrada de PII fora do git é a causa-raiz**,
+o contrato foi desenhado sobre o que estava visível; (b) trocar o INSERT cru por
+`fn_link_or_create_membro` (o matcher SQL canônico da `20260716160000`), que
+resolve a duplicata da Victória; (c) parar de gravar o prefixo do e-mail — o app
+pede o nome na primeira tela. ⚠️ A ordem importa: o app pedir o nome vem ANTES de
+apertar o gatilho, senão o devocional quebra pra quem entra pela primeira vez.
+⚠️ O gatilho é do módulo do Matheus (app/devocional) — alinhar com ele.
+
+### Alarmes meus que NÃO se sustentaram (registrados de propósito)
+
+- **`pco_import_2026` = 292 "nos últimos 30 dias"**: é **um import único de
+  10/07**, dez dias antes da remoção do PCO. Artefato da minha janela, não
+  vazamento.
+- **`(null)` = 2.163 (649 recentes)**: não é porta sem controle — é o matcher
+  canônico não preenchendo `origem_cadastro`. Os picos batem com dias reais de
+  porta (23/06, 20-21/07, 02/08) e o dado é bom (CPF+telefone+nascimento).
+
+Lição repetida 3× neste dia: **conferir o que a sonda devolveu, não a contagem.**
+
 ## ⚠️ CENSO / recadastramento da membresia (2026-08-03 · migrations `20260803160000` + `20260803160100`)
 
 Demanda do **Arthur Serpa**: por um mês, 1 minuto de cada culto pra igreja

@@ -192,6 +192,28 @@ function ehNomePlaceholder(nome) {
   return /^contribuinte\b/i.test(String(nome || '').trim());
 }
 
+// ehNomeDerivadoDeEmail · o nome é o PREFIXO do próprio e-mail, não um nome.
+// Vem do gatilho de signup em auth.users, que faz
+// `COALESCE(full_name, name, split_part(email,'@',1))`: quando o provedor OAuth
+// não manda nome, o prefixo do e-mail vira o nome da pessoa. Casos reais:
+// "juloora", "catiassgullo", "toscano.milton" — e o pior, Apple Sign-In com
+// "Ocultar meu e-mail", que dá um relay aleatório ("sy9p84mryx").
+// ⚠️ NÃO é heurística de "nome estranho": exige o e-mail e compara com ele, então
+// não pega apelido nem nome curto legítimo. Usado pra AVISAR gente (fila humana),
+// nunca pra apagar cadastro.
+function ehNomeDerivadoDeEmail(nome, email) {
+  const n = String(nome || '').trim();
+  const em = String(email || '').trim();
+  if (!n || !em || !em.includes('@')) return false;
+  const prefixo = em.split('@')[0];
+  if (!prefixo) return false;
+  const norm = (v) => String(v).toLowerCase().replace(/[\s._-]+/g, '');
+  // igual ao prefixo (com ou sem pontuação/caixa) OU relay da Apple, em que o
+  // prefixo É o identificador aleatório e nunca é nome de pessoa.
+  if (norm(n) === norm(prefixo)) return true;
+  return /@privaterelay\.appleid\.com$/i.test(em) && norm(n) === norm(prefixo);
+}
+
 // _consolidarCpfNoMatch · quando a pessoa entrou COM CPF mas ligou por sinal
 // fraco (e-mail/telefone+nome/nascimento+nome), consolida o CPF no membro
 // ligado — é o "CPF tardio" (pessoa converteu antes sem CPF, voltou com CPF).
@@ -298,6 +320,15 @@ async function acharOuCriarGuardado({ cpf, email, telefone, nome, dataNascimento
     }
   }
 
+  // origem_cadastro = a PORTA que criou a pessoa. Sem isso, 2.163 cadastros
+  // ficaram com origem nula (medido 04/08) e "de onde veio esse dado?" não tinha
+  // resposta — exatamente a pergunta que uma auditoria de entrada precisa fazer.
+  // `extra` tem prioridade (chamador que já sabe a porta) e o 'matcher' genérico
+  // não é gravado (não informa nada).
+  const origemSlug = String(origem || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  const origemCadastro = extra.origem_cadastro
+    || (origemSlug && origemSlug !== 'matcher' ? origemSlug.slice(0, 60) : null);
+
   const { data, error } = await supabase.from('mem_membros').insert({
     ...extra,
     nome: nome || 'Sem nome',
@@ -306,6 +337,7 @@ async function acharOuCriarGuardado({ cpf, email, telefone, nome, dataNascimento
     cpf: cpf11,
     status,
     active: true,
+    ...(origemCadastro ? { origem_cadastro: origemCadastro } : {}),
   }).select('id').single();
   if (error) {
     // 23505 (uniq_mem_membros_cpf_ativo) = corrida: dois totens/fluxos com o
@@ -377,6 +409,7 @@ module.exports = {
   normalizarNome,
   nomesMesmaPessoa,
   ehNomePlaceholder,
+  ehNomeDerivadoDeEmail,
   buscarCandidatos,
   acharOuCriar,
   acharOuCriarGuardado,
