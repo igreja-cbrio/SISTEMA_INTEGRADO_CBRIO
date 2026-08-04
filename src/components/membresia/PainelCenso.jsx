@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
+import CardConviteCenso from './CardConviteCenso';
 
 const C = {
   card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
@@ -252,9 +253,13 @@ export default function PainelCenso() {
                 </div>
               )}
 
+              {/* Convite de atualização cadastral (quem está sem CPF) */}
+              <CardConviteCenso />
+
               {/* Quem falta */}
               <Button
                 variant="outline" size="sm"
+                style={{ marginTop: 14 }}
                 onClick={() => setVerFaltantes((v) => !v)}
               >
                 <Search style={{ width: 13, height: 13, marginRight: 6 }} />

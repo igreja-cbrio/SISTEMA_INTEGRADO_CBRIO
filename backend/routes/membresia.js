@@ -10,6 +10,7 @@ const { acharOuCriarGuardado } = require('../services/membroMatch');
 const { avaliarPossivelDuplicidade } = require('../services/duplicidadePolicy');
 const { montarPatchFusao } = require('../services/fusaoCampos');
 const { normalizarCpf: normCpf11, cpfValido } = require('../utils/cpf');
+const censoDisparo = require('../services/censoDisparo');
 
 const uploadMw = multer({
   storage: multer.memoryStorage(),
@@ -2954,6 +2955,66 @@ router.get('/censo/faltantes', authorizeModule('membresia', 2), async (req, res)
     res.status(500).json({ error: 'Erro ao listar quem falta responder' });
   }
 });
+
+// ── CENSO · disparo do convite (WhatsApp + e-mail) ─────────────────────────
+//
+// Pedido do Matheus (04/08): convidar quem NÃO tem CPF cadastrado, mas tem
+// celular ou e-mail, a atualizar os dados pelo link do cadastro de membresia.
+// A régua inteira (público, teto da Meta, quem já foi convidado) vive em
+// services/censoDisparo.js — aqui só ficam autorização e forma da resposta.
+
+// GET /api/membresia/censo/disparo/preview?status=&canais=&reenviar=
+// Nível 2: a prévia é agregada, mas diz quantas pessoas seriam alcançadas.
+router.get('/censo/disparo/preview', authorizeModule('membresia', 2), async (req, res) => {
+  try {
+    const prev = await censoDisparo.previewCenso({
+      status: parseStatusCenso(req.query.status),
+      canais: parseCanaisCenso(req.query.canais),
+      reenviar: req.query.reenviar === '1' || req.query.reenviar === 'true',
+    });
+    res.json(prev);
+  } catch (e) {
+    console.error('[CENSO disparo preview]', e.message);
+    res.status(500).json({ error: 'Erro ao montar a prévia do disparo' });
+  }
+});
+
+// POST /api/membresia/censo/disparo
+// ⚠️ Nível 4 (não 3): é envio em MASSA para fora, no número institucional da
+//    igreja, e cada destinatário consome cota do TIER_250 da Meta. Editar
+//    cadastro é 3; falar com 200 pessoas de uma vez é outra ordem de risco.
+router.post('/censo/disparo', authorizeModule('membresia', 4), async (req, res) => {
+  try {
+    const r = await censoDisparo.dispararCenso({
+      status: parseStatusCenso(req.body?.status),
+      canais: parseCanaisCenso(req.body?.canais),
+      reenviar: req.body?.reenviar === true,
+      por: req.user?.id || null,
+    });
+    if (r.ok === false) return res.status(409).json(r);
+    res.json(r);
+  } catch (e) {
+    console.error('[CENSO disparo]', e.message);
+    res.status(500).json({ error: 'Erro ao disparar o convite do censo' });
+  }
+});
+
+// `status` vem da tela como CSV. Default membro_ativo: é o público que a igreja
+// tem relação com, e o que caberia numa rodada. Visitante entra só se pedido
+// explicitamente (são ~1.800 pessoas, semanas de disparo no tier atual).
+function parseStatusCenso(raw) {
+  const PERMITIDOS = new Set(['membro_ativo', 'visitante', 'congregado', 'contribuinte_avulso']);
+  const lista = String(raw || '')
+    .split(',').map(s => s.trim()).filter(s => PERMITIDOS.has(s));
+  return lista.length ? lista : ['membro_ativo'];
+}
+
+function parseCanaisCenso(raw) {
+  const PERMITIDOS = new Set(['whatsapp', 'email']);
+  const lista = String(raw ?? 'whatsapp,email')
+    .split(',').map(s => s.trim()).filter(s => PERMITIDOS.has(s));
+  return lista.length ? lista : ['whatsapp', 'email'];
+}
 
 // ── Cadastros pendentes (fila de aprovação do formulário público) ──
 
