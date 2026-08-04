@@ -4,7 +4,7 @@ import { ThemeProvider } from './contexts/ThemeContext';
 import { TutorialProvider } from './contexts/TutorialContext';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { lazy, Suspense, Component, useEffect } from 'react';
-import type { ReactNode, ComponentType } from 'react';
+import type { ReactNode, ComponentType, ErrorInfo } from 'react';
 import { Toaster } from 'sonner';
 import AppShell from './components/layout/AppShell';
 import Login from './pages/Login';
@@ -22,6 +22,7 @@ import {
   hasNewAppVersion,
   reloadForAppUpdate,
 } from './lib/appUpdate';
+import { captureAppException } from './lib/sentry';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -114,7 +115,13 @@ class ErrorBoundary extends Component<
       && getAppUpdateRetryCount() < MAX_APP_UPDATE_RETRIES;
     return { hasError: true, error, updating };
   }
-  componentDidCatch(error: Error) {
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    captureAppException(error, {
+      mechanism: 'react-error-boundary',
+      tags: { surface: 'web' },
+      context: { componentStack: errorInfo.componentStack || null },
+    });
+
     // Se for chunk load error, tenta recarregar automaticamente (até MAX_RETRIES)
     const isChunkError = CHUNK_ERROR_RE.test(error?.message || '');
     if (isChunkError && getAppUpdateRetryCount() < MAX_APP_UPDATE_RETRIES) {

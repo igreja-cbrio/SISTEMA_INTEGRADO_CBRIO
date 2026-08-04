@@ -10,6 +10,8 @@ const { acharOuCriarGuardado } = require('../services/membroMatch');
 const { avaliarPossivelDuplicidade } = require('../services/duplicidadePolicy');
 const { montarPatchFusao } = require('../services/fusaoCampos');
 const { normalizarCpf: normCpf11, cpfValido } = require('../utils/cpf');
+const censoDisparo = require('../services/censoDisparo');
+const { avaliarProntidao } = require('../utils/prontidaoCadastro');
 
 const uploadMw = multer({
   storage: multer.memoryStorage(),
@@ -2955,6 +2957,66 @@ router.get('/censo/faltantes', authorizeModule('membresia', 2), async (req, res)
   }
 });
 
+// ── CENSO · disparo do convite (WhatsApp + e-mail) ─────────────────────────
+//
+// Pedido do Matheus (04/08): convidar quem NÃO tem CPF cadastrado, mas tem
+// celular ou e-mail, a atualizar os dados pelo link do cadastro de membresia.
+// A régua inteira (público, teto da Meta, quem já foi convidado) vive em
+// services/censoDisparo.js — aqui só ficam autorização e forma da resposta.
+
+// GET /api/membresia/censo/disparo/preview?status=&canais=&reenviar=
+// Nível 2: a prévia é agregada, mas diz quantas pessoas seriam alcançadas.
+router.get('/censo/disparo/preview', authorizeModule('membresia', 2), async (req, res) => {
+  try {
+    const prev = await censoDisparo.previewCenso({
+      status: parseStatusCenso(req.query.status),
+      canais: parseCanaisCenso(req.query.canais),
+      reenviar: req.query.reenviar === '1' || req.query.reenviar === 'true',
+    });
+    res.json(prev);
+  } catch (e) {
+    console.error('[CENSO disparo preview]', e.message);
+    res.status(500).json({ error: 'Erro ao montar a prévia do disparo' });
+  }
+});
+
+// POST /api/membresia/censo/disparo
+// ⚠️ Nível 4 (não 3): é envio em MASSA para fora, no número institucional da
+//    igreja, e cada destinatário consome cota do TIER_250 da Meta. Editar
+//    cadastro é 3; falar com 200 pessoas de uma vez é outra ordem de risco.
+router.post('/censo/disparo', authorizeModule('membresia', 4), async (req, res) => {
+  try {
+    const r = await censoDisparo.dispararCenso({
+      status: parseStatusCenso(req.body?.status),
+      canais: parseCanaisCenso(req.body?.canais),
+      reenviar: req.body?.reenviar === true,
+      por: req.user?.id || null,
+    });
+    if (r.ok === false) return res.status(409).json(r);
+    res.json(r);
+  } catch (e) {
+    console.error('[CENSO disparo]', e.message);
+    res.status(500).json({ error: 'Erro ao disparar o convite do censo' });
+  }
+});
+
+// `status` vem da tela como CSV. Default membro_ativo: é o público que a igreja
+// tem relação com, e o que caberia numa rodada. Visitante entra só se pedido
+// explicitamente (são ~1.800 pessoas, semanas de disparo no tier atual).
+function parseStatusCenso(raw) {
+  const PERMITIDOS = new Set(['membro_ativo', 'visitante', 'congregado', 'contribuinte_avulso']);
+  const lista = String(raw || '')
+    .split(',').map(s => s.trim()).filter(s => PERMITIDOS.has(s));
+  return lista.length ? lista : ['membro_ativo'];
+}
+
+function parseCanaisCenso(raw) {
+  const PERMITIDOS = new Set(['whatsapp', 'email']);
+  const lista = String(raw ?? 'whatsapp,email')
+    .split(',').map(s => s.trim()).filter(s => PERMITIDOS.has(s));
+  return lista.length ? lista : ['whatsapp', 'email'];
+}
+
 // ── Cadastros pendentes (fila de aprovação do formulário público) ──
 
 // GET /api/membresia/cadastros — lista cadastros pendentes (filtro por status)
@@ -2969,7 +3031,10 @@ router.get('/cadastros', async (req, res) => {
     if (status) query = query.eq('status', status);
     const { data, error } = await query;
     if (error) throw error;
-    res.json(data);
+    // `prontidao` viaja na lista pra tela poder pintar quem entra na aprovação
+    // em massa e por que alguém ficou de fora. ⚠️ É informativo: quem decide de
+    // verdade é o servidor, que reavalia a linha no `aprovar-lote`.
+    res.json((data || []).map((c) => ({ ...c, prontidao: avaliarProntidao(c) })));
   } catch (e) {
     console.error('[CADASTROS] list error:', e.message);
     res.status(500).json({ error: 'Erro ao buscar cadastros pendentes' });
@@ -3005,29 +3070,30 @@ router.get('/cadastros/kpis', async (req, res) => {
   }
 });
 
-// POST /api/membresia/cadastros/:id/aprovar — cria mem_membros e marca aprovado
-router.post('/cadastros/:id/aprovar', podeAprovarMembresia, async (req, res) => {
+// ⚠️ NÚCLEO da aprovação — usado pela rota individual E pela aprovação em massa.
+// Extraído (não duplicado) pelo mesmo motivo do `aprovarPedidoCore` dos Grupos:
+// duas cópias desta lógica divergiriam, e o que ela faz é CRIAR PESSOA no
+// sistema (matcher canônico, opt-in, histórico). Nunca escreve em `res`.
+//
+// @returns {{ok:true, membro, atualizacao:boolean}} | {{ok:false, status, error}}
+async function aprovarCadastroCore({
+  cad, familia_id: reqFamiliaId, parentesco, observacoes, userId,
+  notificarIndividual = true,
+}) {
   try {
-    const { id } = req.params;
-    const { familia_id: reqFamiliaId, parentesco, observacoes } = req.body || {};
-
-    const { data: cad, error: e1 } = await supabase
-      .from('mem_cadastros_pendentes')
-      .select('*')
-      .eq('id', id)
-      .single();
-    if (e1 || !cad) return res.status(404).json({ error: 'Cadastro não encontrado' });
+    const id = cad.id;
     if (cad.status === 'aprovado') {
-      return res.status(400).json({ error: 'Cadastro já foi aprovado.' });
+      return { ok: false, status: 400, error: 'Cadastro já foi aprovado.' };
     }
     // Censo já reconciliado: o reconciliador preencheu os campos vazios e não
     // sobrou divergência. Aprovar de novo faria o caminho de ATUALIZAÇÃO
     // reaplicar o formulário inteiro sobre o cadastro — inclusive por cima de
     // valor que a equipe pode ter corrigido depois. A linha fica só como prova.
     if (cad.status === 'aplicado') {
-      return res.status(400).json({
+      return {
+        ok: false, status: 400,
         error: 'Este cadastro do censo já foi aplicado automaticamente ao cadastro existente. Não há nada a aprovar.',
-      });
+      };
     }
 
     // Família: prioriza a escolhida no modal, senão usa sugestão do formulário público
@@ -3092,10 +3158,10 @@ router.post('/cadastros/:id/aprovar', podeAprovarMembresia, async (req, res) => 
         }
         const msg = eUpd?.message || 'registro não encontrado';
         console.error('[CADASTROS] erro ao atualizar membro:', msg);
-        return res.status(500).json({ error: `Erro ao atualizar membro: ${msg}` });
+        return { ok: false, status: 500, error: `Erro ao atualizar membro: ${msg}` };
       }
       if (!membro) {
-        return res.status(500).json({ error: 'Não foi possível atualizar: muitas colunas ausentes.' });
+        return { ok: false, status: 500, error: 'Não foi possível atualizar: muitas colunas ausentes.' };
       }
       foiAtualizacao = true;
     } else {
@@ -3117,7 +3183,7 @@ router.post('/cadastros/:id/aprovar', podeAprovarMembresia, async (req, res) => 
       });
       const { data: encontrado, error: e2 } = await supabase.from('mem_membros')
         .select().eq('id', resultado.membro_id).single();
-      if (e2) return res.status(500).json({ error: `Erro ao criar ou localizar membro: ${e2.message}` });
+      if (e2) return { ok: false, status: 500, error: `Erro ao criar ou localizar membro: ${e2.message}` };
       membro = encontrado;
       foiAtualizacao = !resultado.created;
     }
@@ -3140,7 +3206,7 @@ router.post('/cadastros/:id/aprovar', podeAprovarMembresia, async (req, res) => 
       .from('mem_cadastros_pendentes')
       .update({
         status: 'aprovado',
-        aprovado_por: req.user.userId,
+        aprovado_por: userId,
         aprovado_em: new Date().toISOString(),
         membro_id: membro.id,
         observacoes: observacoes || cad.observacoes,
@@ -3157,25 +3223,134 @@ router.post('/cadastros/:id/aprovar', podeAprovarMembresia, async (req, res) => 
         descricao: foiAtualizacao
           ? `Atualização cadastral a partir do formulário público (origem: ${cad.origem}).`
           : `Aprovado a partir do formulário público (origem: ${cad.origem}).`,
-        registrado_por: req.user.userId,
+        registrado_por: userId,
       });
       if (eHist) console.warn('[CADASTROS] histórico não gravado:', eHist.message);
     } catch (_) { /* histórico é opcional */ }
 
-    notificar({
-      modulo: 'membresia',
-      tipo: 'cadastro_aprovado',
-      titulo: `Cadastro aprovado: ${cad.nome}`,
-      mensagem: `O cadastro de ${cad.nome} foi ${foiAtualizacao ? 'atualizado' : 'aprovado'} e o membro está ativo no sistema.`,
-      link: `/ministerial/membresia`,
-      severidade: 'info',
-      chaveDedup: `cadastro_aprovado_${id}`,
-    }).catch(() => {});
+    // ⚠️ No LOTE isto vem desligado e o chamador manda UM aviso com o resumo.
+    // Sem regra configurada, `notificar` cai no fallback de todos os
+    // admin/diretor (16 pessoas): aprovar 50 cadastros geraria ~800 linhas de
+    // notificação e enterraria o sino. Mesma lição do censo — aviso é pra
+    // trabalho PENDENTE, e lote aprovado é trabalho FEITO.
+    if (notificarIndividual) {
+      notificar({
+        modulo: 'membresia',
+        tipo: 'cadastro_aprovado',
+        titulo: `Cadastro aprovado: ${cad.nome}`,
+        mensagem: `O cadastro de ${cad.nome} foi ${foiAtualizacao ? 'atualizado' : 'aprovado'} e o membro está ativo no sistema.`,
+        link: `/ministerial/membresia`,
+        severidade: 'info',
+        chaveDedup: `cadastro_aprovado_${id}`,
+      }).catch(() => {});
+    }
 
-    res.status(foiAtualizacao ? 200 : 201).json({ ok: true, membro, atualizacao: foiAtualizacao });
+    return { ok: true, membro, atualizacao: foiAtualizacao };
   } catch (e) {
     console.error('[CADASTROS] aprovar exception:', e.message, e.stack);
-    res.status(500).json({ error: `Erro ao aprovar cadastro: ${e.message}` });
+    return { ok: false, status: 500, error: `Erro ao aprovar cadastro: ${e.message}` };
+  }
+}
+
+// POST /api/membresia/cadastros/:id/aprovar — cria mem_membros e marca aprovado
+router.post('/cadastros/:id/aprovar', podeAprovarMembresia, async (req, res) => {
+  const { familia_id, parentesco, observacoes } = req.body || {};
+  const { data: cad, error } = await supabase
+    .from('mem_cadastros_pendentes').select('*').eq('id', req.params.id).single();
+  if (error || !cad) return res.status(404).json({ error: 'Cadastro não encontrado' });
+
+  const r = await aprovarCadastroCore({
+    cad, familia_id, parentesco, observacoes, userId: req.user.userId,
+  });
+  if (!r.ok) return res.status(r.status || 500).json({ error: r.error });
+  res.status(r.atualizacao ? 200 : 201).json({ ok: true, membro: r.membro, atualizacao: r.atualizacao });
+});
+
+// ── APROVAÇÃO EM MASSA ─────────────────────────────────────────────────────
+//
+// Pedido do Matheus (04/08): selecionar alguns ou todos e aprovar de uma vez,
+// com o sistema conferindo os dados obrigatórios e deixando quem está
+// incompleto para aprovação manual.
+//
+// ⚠️ A régua de "está pronto?" vive em utils/prontidaoCadastro.js (pura,
+//    testada) e é conferida NO SERVIDOR sobre a linha do banco — nunca a partir
+//    do que o cliente mandou. A tela sabe quem está pronto para pintar a
+//    seleção; a decisão de criar pessoa é sempre daqui.
+//
+// ⚠️ Não é um "aprovar tudo" mais permissivo que o manual: o que este endpoint
+//    recusa continua aprovável na mão, com a pessoa vendo os dados. Nada fica
+//    inalcançável — fica pendente de gente.
+const LOTE_APROVACAO_MAX = 200;
+const UUID_RE_CADASTRO = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// ⚠️ Rota LITERAL: não é engolida por `/cadastros/:id/aprovar` (3 segmentos vs
+//    2), mas fica declarada junto pra ninguém precisar conferir isso de novo —
+//    é a armadilha que derrubou as abas Avaliar/Mural do Propostas.
+router.post('/cadastros/aprovar-lote', podeAprovarMembresia, async (req, res) => {
+  try {
+    const ids = Array.isArray(req.body?.ids)
+      ? req.body.ids.map(String).filter(id => UUID_RE_CADASTRO.test(id))
+      : [];
+    if (!ids.length) return res.status(400).json({ error: 'Nenhum cadastro selecionado.' });
+    if (ids.length > LOTE_APROVACAO_MAX) {
+      return res.status(400).json({
+        error: `Selecione no máximo ${LOTE_APROVACAO_MAX} cadastros por vez.`,
+      });
+    }
+
+    // Relê do banco: o payload diz QUAIS, nunca SE pode.
+    const { data: linhas, error } = await supabase
+      .from('mem_cadastros_pendentes').select('*').in('id', ids);
+    if (error) throw error;
+
+    const aprovados = [];
+    const ignorados = [];
+    const falhas = [];
+
+    for (const id of ids) {
+      const cad = (linhas || []).find(l => l.id === id);
+      if (!cad) {
+        ignorados.push({ id, nome: null, motivos: ['cadastro não encontrado'] });
+        continue;
+      }
+      const prontidao = avaliarProntidao(cad);
+      if (!prontidao.pronto) {
+        ignorados.push({ id, nome: cad.nome, motivos: prontidao.rotulos });
+        continue;
+      }
+      // Sequencial de propósito: cada aprovação passa pelo matcher canônico e
+      // pode CRIAR pessoa. Em paralelo, dois cadastros da mesma família (mesmo
+      // telefone/e-mail) correriam no matcher ao mesmo tempo e poderiam gerar
+      // duplicata — exatamente o que a fila de Entradas existe pra limpar.
+      const r = await aprovarCadastroCore({
+        cad, userId: req.user.userId, notificarIndividual: false,
+      });
+      if (r.ok) aprovados.push({ id, nome: cad.nome, membro_id: r.membro?.id, atualizacao: r.atualizacao });
+      else falhas.push({ id, nome: cad.nome, erro: r.error });
+    }
+
+    if (aprovados.length) {
+      notificar({
+        modulo: 'membresia',
+        tipo: 'cadastros_aprovados_lote',
+        titulo: `${aprovados.length} cadastro(s) aprovados em lote`,
+        mensagem: `${aprovados.length} aprovados${ignorados.length ? ` · ${ignorados.length} ficaram para aprovação manual (dados incompletos)` : ''}${falhas.length ? ` · ${falhas.length} falharam` : ''}.`,
+        link: '/ministerial/membresia',
+        severidade: 'info',
+        chaveDedup: `cadastros_lote_${new Date().toISOString().slice(0, 16)}`,
+      }).catch(() => {});
+    }
+
+    res.json({
+      ok: true,
+      aprovados: aprovados.length,
+      ignorados,
+      falhas,
+      detalhe_aprovados: aprovados,
+    });
+  } catch (e) {
+    console.error('[CADASTROS] aprovar-lote exception:', e.message);
+    res.status(500).json({ error: `Erro ao aprovar em lote: ${e.message}` });
   }
 });
 
@@ -3648,10 +3823,13 @@ router.get('/identidade-pendencias', async (req, res) => {
   try {
     if (nivelFilaIdentidade(req) < 1) return res.status(403).json({ error: 'Sem permissão' });
     const status = req.query.status || 'pendente';
+    // ⚠️ Teto era 500 e em 04/08 havia 495 pendentes — a 5 de truncar em SILÊNCIO
+    // (a fila some do fim sem erro nenhum). 1000 é o cap do PostgREST; passando
+    // disso, paginar é obrigatório.
     let q = supabase.from('identidade_pendencias')
       .select('*')
       .order('created_at', { ascending: false })
-      .limit(500);
+      .limit(1000);
     if (status !== 'todas') q = q.eq('status', status);
     if (req.query.tipo) q = q.eq('tipo', req.query.tipo);
     const { data: pend, error } = await q;

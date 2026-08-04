@@ -121,6 +121,79 @@ export default function TabCadastros({ onMembrosChange }) {
 
   useEffect(() => { load(); }, [load]);
 
+  // ── Aprovação em massa ───────────────────────────────────────────────────
+  // ⚠️ A seleção é limpa a cada recarga/troca de filtro: manter id selecionado
+  // que saiu da lista faria o lote agir sobre gente que a pessoa não está vendo.
+  const [selecionados, setSelecionados] = useState(() => new Set());
+  const [aprovandoLote, setAprovandoLote] = useState(false);
+  const [resultadoLote, setResultadoLote] = useState(null);
+  const [progressoLote, setProgressoLote] = useState(null); // {feitos, total}
+  useEffect(() => { setSelecionados(new Set()); }, [filterStatus, busca]);
+
+  // ⚠️ LOTE VAI EM PEDAÇOS DE 8, e isso não é otimização — é correção de bug.
+  // Em 04/08 um lote de 49 rodou até o fim NO SERVIDOR (49 aprovados no banco)
+  // e o cliente abortou em 30s: a tela disse "Tempo esgotado, nada aconteceu"
+  // para um trabalho que tinha dado certo, e a lista ficou mostrando os 50
+  // pendentes que já não existiam. Cada aprovação passa pelo matcher canônico e
+  // escreve em várias tabelas (~1-2s), então o lote inteiro nunca cabe numa
+  // requisição confortável. Em pedaços: cada chamada volta rápido, o progresso
+  // aparece, e uma falha no meio não apaga o que já foi gravado.
+  const TAMANHO_PEDACO = 8;
+
+  const alternarSelecao = (id) => {
+    setSelecionados((atual) => {
+      const novo = new Set(atual);
+      if (novo.has(id)) novo.delete(id); else novo.add(id);
+      return novo;
+    });
+  };
+
+  async function handleAprovarLote() {
+    const ids = [...selecionados];
+    if (!ids.length) return;
+    setAprovandoLote(true);
+    setError('');
+    setProgressoLote({ feitos: 0, total: ids.length });
+
+    // Acumula o resultado dos pedaços num só, pra tela mostrar uma resposta.
+    const acc = { ok: true, aprovados: 0, ignorados: [], falhas: [] };
+    let interrompido = null;
+
+    try {
+      for (let i = 0; i < ids.length; i += TAMANHO_PEDACO) {
+        const pedaco = ids.slice(i, i + TAMANHO_PEDACO);
+        try {
+          const r = await membresia.cadastros.aprovarLote(pedaco);
+          acc.aprovados += r.aprovados || 0;
+          if (r.ignorados?.length) acc.ignorados.push(...r.ignorados);
+          if (r.falhas?.length) acc.falhas.push(...r.falhas);
+        } catch (e) {
+          // ⚠️ Para no primeiro pedaço que falha, mas PRESERVA o que já foi
+          // aprovado: o servidor já gravou, e sumir com esse número faria a
+          // pessoa reaprovar por cima (e achar que nada aconteceu, que foi
+          // exatamente o susto de 04/08).
+          interrompido = e.message || 'Erro ao aprovar em lote';
+          break;
+        }
+        setProgressoLote({ feitos: Math.min(i + TAMANHO_PEDACO, ids.length), total: ids.length });
+      }
+
+      setResultadoLote({ ...acc, interrompido, total_selecionado: ids.length });
+      setSelecionados(new Set());
+      if (acc.aprovados > 0) {
+        toast.success(`${acc.aprovados} cadastro(s) aprovados`);
+        onMembrosChange?.();
+      } else if (!interrompido) {
+        toast.warning('Nenhum cadastro foi aprovado — veja os motivos.');
+      }
+      if (interrompido) setError(`${interrompido} (${acc.aprovados} já foram aprovados antes da falha.)`);
+      load();
+    } finally {
+      setAprovandoLote(false);
+      setProgressoLote(null);
+    }
+  }
+
   // Quando abre o dialog de aprovação, busca famílias e detecta sobrenome
   useEffect(() => {
     if (acao !== 'aprovar' || !selecionado) return;
@@ -163,6 +236,18 @@ export default function TabCadastros({ onMembrosChange }) {
       (c.telefone || '').toLowerCase().includes(q)
     );
   });
+
+  // Só cadastro PENDENTE entra em lote: aprovado/rejeitado/aplicado não têm o
+  // que aprovar, e 'duplicado' é conferência humana por definição.
+  const selecionaveis = filtrados.filter((c) => c.status === 'pendente');
+  const prontos = selecionaveis.filter((c) => c.prontidao?.pronto);
+  const todosProntosMarcados = prontos.length > 0
+    && prontos.every((c) => selecionados.has(c.id));
+  // A coluna de checkbox só existe quando há pendente selecionável — o colSpan
+  // das linhas de "carregando"/"vazio" tem que acompanhar, senão a tabela
+  // desalinha justamente no estado vazio.
+  const mostrarSelecao = podeAprovar && selecionaveis.length > 0;
+  const colunas = mostrarSelecao ? 7 : 6;
 
   async function handleAprovar() {
     if (!selecionado) return;
@@ -327,11 +412,81 @@ export default function TabCadastros({ onMembrosChange }) {
         </div>
       </div>
 
+      {/* Barra de aprovação em massa · só aparece com pendente na tela */}
+      {mostrarSelecao && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+          padding: '12px 16px', marginBottom: 14, borderRadius: 12,
+          border: `1px solid ${selecionados.size ? C.primary : C.border}`,
+          background: selecionados.size ? C.primaryBg : 'var(--cbrio-card)',
+        }}>
+          <Button
+            variant="outline" size="sm"
+            onClick={() => setSelecionados(todosProntosMarcados
+              ? new Set()
+              : new Set(prontos.map((c) => c.id)))}
+            disabled={!prontos.length}
+          >
+            <CheckCircle2 style={{ width: 13, height: 13, marginRight: 6 }} />
+            {todosProntosMarcados
+              ? 'Desmarcar todos'
+              : `Selecionar os ${prontos.length} completos`}
+          </Button>
+
+          <span style={{ fontSize: 12, color: C.text2 }}>
+            {selecionados.size
+              ? `${selecionados.size} selecionado(s)`
+              : `${prontos.length} de ${selecionaveis.length} pendentes com todos os dados obrigatórios`}
+          </span>
+
+          {selecionaveis.length > prontos.length && (
+            <span style={{ fontSize: 11.5, color: C.amber, display: 'inline-flex', gap: 5, alignItems: 'center' }}>
+              <AlertTriangle style={{ width: 12, height: 12 }} />
+              {selecionaveis.length - prontos.length} precisam de aprovação manual
+            </span>
+          )}
+
+          <div style={{ flex: 1 }} />
+
+          <Button
+            size="sm"
+            disabled={!selecionados.size || aprovandoLote}
+            onClick={handleAprovarLote}
+          >
+            <Check style={{ width: 13, height: 13, marginRight: 6 }} />
+            {aprovandoLote
+              ? (progressoLote
+                // Progresso REAL, não spinner sem número: o lote leva ~1-2s por
+                // pessoa e sem contagem parece travado (foi o susto de 04/08).
+                ? `Aprovando ${progressoLote.feitos} de ${progressoLote.total}…`
+                : 'Aprovando…')
+              : `Aprovar ${selecionados.size || ''} selecionado(s)`}
+          </Button>
+        </div>
+      )}
+
       {/* Tabela */}
       <div style={{ background: 'var(--cbrio-card)', borderRadius: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', overflow: 'hidden' }}>
         <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0 }}>
           <thead>
             <tr>
+              {mostrarSelecao && (
+                <th style={{
+                  width: 42, padding: '14px 0 14px 18px',
+                  background: 'var(--cbrio-table-header)', borderBottom: `1px solid ${C.border}`,
+                }}>
+                  <input
+                    type="checkbox"
+                    checked={todosProntosMarcados}
+                    disabled={!prontos.length}
+                    onChange={() => setSelecionados(todosProntosMarcados
+                      ? new Set()
+                      : new Set(prontos.map((c) => c.id)))}
+                    title="Selecionar os cadastros com todos os dados obrigatórios"
+                    style={{ width: 15, height: 15, cursor: 'pointer', accentColor: C.primary }}
+                  />
+                </th>
+              )}
               {['Nome', 'Contato', 'Status', 'Origem', 'Recebido em', ''].map((h, i) => (
                 <th key={i} style={{
                   textAlign: 'left', padding: '14px 18px', fontSize: 11,
@@ -346,12 +501,12 @@ export default function TabCadastros({ onMembrosChange }) {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={6}><div className="flex items-center justify-center py-6 gap-2">
+              <tr><td colSpan={colunas}><div className="flex items-center justify-center py-6 gap-2">
                 <div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-primary" />
                 <span className="text-xs text-muted-foreground">Carregando...</span>
               </div></td></tr>
             ) : filtrados.length === 0 ? (
-              <tr><td colSpan={6}><div className="flex flex-col items-center py-10 gap-2">
+              <tr><td colSpan={colunas}><div className="flex flex-col items-center py-10 gap-2">
                 <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center mb-1">
                   <Inbox className="h-5 w-5 text-muted-foreground" />
                 </div>
@@ -360,6 +515,24 @@ export default function TabCadastros({ onMembrosChange }) {
               </div></td></tr>
             ) : filtrados.map((c) => (
               <tr key={c.id} className="cbrio-row" onClick={() => setSelecionado(c)}>
+                {mostrarSelecao && (
+                  <td
+                    style={{ padding: '14px 0 14px 18px', borderBottom: `1px solid ${C.border}` }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {c.status === 'pendente' && (
+                      <input
+                        type="checkbox"
+                        checked={selecionados.has(c.id)}
+                        onChange={() => alternarSelecao(c.id)}
+                        title={c.prontidao?.pronto
+                          ? 'Pronto para aprovação automática'
+                          : `Vai ficar para aprovação manual: falta ${(c.prontidao?.rotulos || []).join(', ')}`}
+                        style={{ width: 15, height: 15, cursor: 'pointer', accentColor: C.primary }}
+                      />
+                    )}
+                  </td>
+                )}
                 <td style={{ padding: '14px 18px', borderBottom: `1px solid ${C.border}` }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                     <div style={{
@@ -375,6 +548,12 @@ export default function TabCadastros({ onMembrosChange }) {
                       {c.duplicado_de && (
                         <div style={{ fontSize: 11, color: C.blue, marginTop: 2 }}>
                           ↻ possível duplicado de {c.duplicado_de.nome}
+                        </div>
+                      )}
+                      {/* Por que este cadastro não entra na aprovação em massa */}
+                      {c.status === 'pendente' && c.prontidao && !c.prontidao.pronto && (
+                        <div style={{ fontSize: 11, color: C.amber, marginTop: 2 }}>
+                          Falta: {c.prontidao.rotulos.join(' · ')}
                         </div>
                       )}
                     </div>
@@ -618,6 +797,72 @@ export default function TabCadastros({ onMembrosChange }) {
       )}
 
       {/* Dialog de confirmação — Aprovar */}
+      {/* Resultado da aprovação em massa · quem ficou de fora e por quê */}
+      <Dialog open={!!resultadoLote} onOpenChange={(v) => !v && setResultadoLote(null)}>
+        <DialogContent className="max-w-lg flex flex-col max-h-[85vh]">
+          <DialogHeader>
+            <DialogTitle>Resultado da aprovação em massa</DialogTitle>
+          </DialogHeader>
+          <div className="flex-1 overflow-y-auto min-h-0" style={{ fontSize: 13, lineHeight: 1.7 }}>
+            <p style={{ color: C.green, fontWeight: 600 }}>
+              {resultadoLote?.aprovados || 0} cadastro(s) aprovados.
+            </p>
+
+            {resultadoLote?.interrompido && (
+              <p style={{ color: C.red, fontSize: 12.5 }}>
+                O lote parou no meio: {resultadoLote.interrompido} Os aprovados acima
+                <strong> já estão gravados</strong> — selecione o que sobrou e rode de novo.
+              </p>
+            )}
+
+            {/* Quando o matcher reconhece a mesma pessoa em 2+ cadastros, o número
+                de pessoas é menor que o de cadastros. Dizer isso evita a leitura
+                errada de que "faltou aprovar alguém". */}
+            {!!resultadoLote?.aprovados && (
+              <p style={{ color: C.text3, fontSize: 11.5 }}>
+                Cadastros da mesma pessoa são consolidados num cadastro só, então o
+                número de pessoas pode ser menor que o de aprovações.
+              </p>
+            )}
+
+            {!!resultadoLote?.ignorados?.length && (
+              <div style={{ marginTop: 12 }}>
+                <p style={{ color: C.amber, fontWeight: 600, display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <AlertTriangle style={{ width: 14, height: 14 }} />
+                  {resultadoLote.ignorados.length} ficaram para aprovação manual
+                </p>
+                <p style={{ color: C.text3, fontSize: 11.5, marginBottom: 6 }}>
+                  Abra cada um, complete o que falta e aprove na tela.
+                </p>
+                {resultadoLote.ignorados.map((i) => (
+                  <div key={i.id} style={{ padding: '6px 0', borderBottom: `1px solid ${C.border}` }}>
+                    <div style={{ color: C.text, fontWeight: 500 }}>{i.nome || i.id}</div>
+                    <div style={{ color: C.amber, fontSize: 11.5 }}>Falta: {(i.motivos || []).join(' · ')}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {!!resultadoLote?.falhas?.length && (
+              <div style={{ marginTop: 12 }}>
+                <p style={{ color: C.red, fontWeight: 600 }}>
+                  {resultadoLote.falhas.length} falharam ao gravar
+                </p>
+                {resultadoLote.falhas.map((f) => (
+                  <div key={f.id} style={{ padding: '6px 0', borderBottom: `1px solid ${C.border}` }}>
+                    <div style={{ color: C.text, fontWeight: 500 }}>{f.nome || f.id}</div>
+                    <div style={{ color: C.red, fontSize: 11.5 }}>{f.erro}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setResultadoLote(null)}>Fechar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={acao === 'aprovar'} onOpenChange={(v) => !v && setAcao(null)}>
         <DialogContent className="max-w-md z-[1100]">
           <DialogHeader>

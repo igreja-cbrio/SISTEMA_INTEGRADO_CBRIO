@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { ModuleHeader } from '../../components/layout/ModuleHeader';
 import { useSearchParams, Link, useNavigate } from 'react-router-dom';
 import { hrefConversa } from '@/lib/conversas';
@@ -20,7 +20,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { Switch } from '../../components/ui/switch';
 import { Badge } from '../../components/ui/badge';
 import { StatisticsCard } from '../../components/ui/statistics-card';
-import { Heart, Users, UserCheck, CheckCircle2, Plus, Trash2, Loader2, Search, Sparkles, CalendarCheck, CalendarPlus, Phone, MessageSquare, AlertTriangle, HeartHandshake, Pencil, Check, X } from 'lucide-react';
+import { Heart, Users, UserCheck, UserRound, CheckCircle2, Plus, Trash2, Loader2, Search, Sparkles, CalendarCheck, CalendarPlus, Phone, MessageSquare, AlertTriangle, HeartHandshake, Pencil, Check, X } from 'lucide-react';
 import { ResponsiveContainer, LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 import { toast } from 'sonner';
 import { useAuth } from '../../contexts/AuthContext';
@@ -838,6 +838,87 @@ function emptyVisitaForm() {
 }
 
 // Registrar/editar uma visita pastoral ou atendimento avulso (fora dos convertidos).
+// "Quem visitou / atendeu" · seleção MÚLTIPLA do catálogo `cui_responsaveis`
+// (decisão do Matheus 04/08). Era `<Input>` de texto livre, e foi assim que o
+// mesmo pastor virou 4 grafias ("Pr. Wesley B. Ramos", "Pr. Wesley Barros",
+// "Wesley Barros", "Wesley Ramos") — a visão por pastor mostrava 6 cards pra 4
+// pessoas. Com o catálogo, grafia nova não nasce mais.
+//
+// ⚠️ Guarda o NOME (lista separada por ", "), não id. É o padrão do módulo de
+// propósito: essas pessoas não logam no sistema, `cui_responsaveis` é catálogo por
+// nome, e renomear no catálogo PROPAGA pro histórico (ver PATCH /responsaveis/:id).
+// Trocar pra id aqui exigiria satélite polimórfica (visita × acompanhamento) e
+// deixaria os dois lados do módulo com réguas diferentes.
+//
+// ⚠️ Valor legado fora do catálogo (ex.: "Léia Serpa", que pode ou não ser a
+// "Léia" inativa) é PRESERVADO e mostrado como pílula própria — sumir com o nome
+// de quem já atendeu seria perder histórico pra ganhar arrumação.
+function RespSelector({ valor, onChange }: { valor: string; onChange: (v: string) => void }) {
+  const [lista, setLista] = useState<any[]>([]);
+  useEffect(() => {
+    cuidadosApi.responsaveis.list()
+      .then((r: any[]) => setLista(Array.isArray(r) ? r : []))
+      .catch(() => setLista([]));
+  }, []);
+
+  const selecionados = useMemo(
+    () => String(valor || '').split(/\s*,\s*|\s+e\s+/i).map(s => s.trim()).filter(Boolean),
+    [valor],
+  );
+  const doCatalogo = useMemo(
+    () => lista.filter(r => r.ativo || selecionados.includes(r.nome)).map(r => r.nome),
+    [lista, selecionados],
+  );
+  // Nome que está no registro mas não no catálogo (histórico) entra como opção
+  const opcoes = useMemo(
+    () => [...new Set([...doCatalogo, ...selecionados])].sort((a, b) => a.localeCompare(b, 'pt-BR')),
+    [doCatalogo, selecionados],
+  );
+
+  const toggle = (nome: string) => {
+    const novo = selecionados.includes(nome)
+      ? selecionados.filter(n => n !== nome)
+      : [...selecionados, nome];
+    onChange(novo.join(', '));
+  };
+
+  return (
+    <div>
+      <Label>Quem visitou / atendeu</Label>
+      <p className="text-[11px] text-muted-foreground mb-1.5">
+        Pode marcar mais de um — visita em dupla conta para os dois.
+      </p>
+      {opcoes.length === 0 ? (
+        <p className="text-xs text-muted-foreground">
+          Nenhum responsável cadastrado. Cadastre em Próximos passos → Gerenciar responsáveis.
+        </p>
+      ) : (
+        <div className="flex flex-wrap gap-1.5">
+          {opcoes.map(nome => {
+            const on = selecionados.includes(nome);
+            const foraDoCatalogo = !doCatalogo.includes(nome);
+            return (
+              <button
+                key={nome}
+                type="button"
+                onClick={() => toggle(nome)}
+                title={foraDoCatalogo ? 'Nome do histórico, fora do catálogo atual' : undefined}
+                className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
+                  on
+                    ? 'bg-[#00B39D]/10 border-[#00B39D] text-[#00B39D]'
+                    : 'border-border text-muted-foreground hover:border-foreground/30'
+                }`}
+              >
+                {nome}{foraDoCatalogo ? ' *' : ''}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function VisitaModal({ open, onClose, onSaved, initial }: {
   open: boolean; onClose: () => void; onSaved: () => void; initial?: any | null;
 }) {
@@ -912,7 +993,10 @@ function VisitaModal({ open, onClose, onSaved, initial }: {
           {form.tipo === 'outro' && (
             <div><Label>Qual? *</Label><Input value={form.tipo_outro} onChange={e => setForm({ ...form, tipo_outro: e.target.value })} placeholder="Escreva o tipo de visita / atendimento" /></div>
           )}
-          <div><Label>Quem visitou / atendeu</Label><Input value={form.responsavel} onChange={e => setForm({ ...form, responsavel: e.target.value })} placeholder="Pastor / líder" /></div>
+          <RespSelector
+            valor={form.responsavel}
+            onChange={(v) => setForm({ ...form, responsavel: v })}
+          />
           <div>
             <Label>Observação</Label>
             <textarea className="w-full min-h-[80px] rounded-md border border-border p-2 text-sm" style={{ background: 'var(--cbrio-input-bg)' }}
@@ -1068,6 +1152,15 @@ function TrilhaPessoas({ canEdit, reloadKey, onNova, onEditVisita, onNovoParaPes
   const [loading, setLoading] = useState(true);
   const [busca, setBusca] = useState('');
   const [sel, setSel] = useState<any | null>(null);
+  // Visão da aba: por PASTOR (quem atendeu · **default**, pedido do Matheus
+  // 2026-08-04) ou por PESSOA (histórico de quem foi atendido · como a aba era
+  // antes). As duas leem o MESMO `pessoas` já carregado, então trocar de visão não
+  // faz round-trip nem pode divergir do outro lado.
+  // ⚠️ O default é por pastor porque o uso real da aba é a liderança olhando o
+  // próprio acompanhamento; a busca por uma pessoa específica tem o campo de busca
+  // e a trilha continua a um clique de distância dentro do card do pastor.
+  const [visao, setVisao] = useState<'pessoa' | 'pastor'>('pastor');
+  const [selPastor, setSelPastor] = useState<any | null>(null);
   // Filtros da trilha (tipo · status · quem atendeu · período)
   const [fTipo, setFTipo] = useState('todos');
   const [fStatus, setFStatus] = useState('todos');
@@ -1106,34 +1199,137 @@ function TrilhaPessoas({ canEdit, reloadKey, onNova, onEditVisita, onNovoParaPes
   const temFiltro = fTipo !== 'todos' || fStatus !== 'todos' || fResp !== 'todos' || !!fDe || !!fAte;
   const limparFiltros = () => { setFTipo('todos'); setFStatus('todos'); setFResp('todos'); setFDe(''); setFAte(''); };
 
+  // Régua ÚNICA de "este atendimento casa os filtros". As duas visões chamam esta
+  // função — duplicar a condição faria a contagem do pastor discordar da lista de
+  // pessoas com os mesmos filtros na tela.
+  // `ignorarResp` existe porque na visão por pastor o recorte por responsável É a
+  // própria visão: aplicar o filtro ali deixaria um card só, sem explicação.
+  const casaFiltros = useCallback((a: any, ignorarResp = false) => {
+    if (fTipo !== 'todos' && a.tipo !== fTipo) return false;
+    if (fStatus !== 'todos' && a.status !== fStatus) return false;
+    if (!ignorarResp && fResp !== 'todos' && a.responsavel !== fResp) return false;
+    if (fDe && (!a.data || a.data < fDe)) return false;
+    if (fAte && (!a.data || a.data > fAte)) return false;
+    return true;
+  }, [fTipo, fStatus, fResp, fDe, fAte]);
+
   const filtradas = useMemo(() => {
     const q = busca.trim().toLowerCase();
     return pessoas.filter(p => {
       if (q && !`${p.nome || ''} ${p.telefone || ''}`.toLowerCase().includes(q)) return false;
       if (!temFiltro) return true;
       // pessoa entra se tiver PELO MENOS UM atendimento que casa todos os filtros ativos
-      return (p.atendimentos || []).some((a: any) => {
-        if (fTipo !== 'todos' && a.tipo !== fTipo) return false;
-        if (fStatus !== 'todos' && a.status !== fStatus) return false;
-        if (fResp !== 'todos' && a.responsavel !== fResp) return false;
-        if (fDe && (!a.data || a.data < fDe)) return false;
-        if (fAte && (!a.data || a.data > fAte)) return false;
-        return true;
-      });
+      return (p.atendimentos || []).some((a: any) => casaFiltros(a));
     });
-  }, [pessoas, busca, fTipo, fStatus, fResp, fDe, fAte, temFiltro]);
-  const { pageItems, paginacaoProps } = usePaginacaoLocal(filtradas, 30);
+  }, [pessoas, busca, temFiltro, casaFiltros]);
+
+  // Agrupamento por QUEM ATENDEU.
+  //
+  // ⚠️ `responsavel` é TEXTO LIVRE (Input no form, não select do catálogo
+  // `cui_responsaveis`), então o mesmo pastor aparece em grafias diferentes — em
+  // 04/08 "Wesley" estava em 5 formas ("Pr. Wesley B. Ramos", "Pr. Wesley
+  // Barros", e mais 3 dentro de duplas). Aqui NÃO tentamos fundir grafias: casar
+  // "Wesley B. Ramos" com "Wesley Barros" é adivinhar identidade, exatamente o
+  // que a lei do Contrato de porta proíbe. O que dá pra fazer sem chutar é
+  // separar DUPLA ("X e Y" / "X, Y"), que é mecânico — visita conjunta conta pros
+  // dois, e é por isso que o card diz "participou de N", não "fez N".
+  const pastores = useMemo(() => {
+    const SEM = '__sem__';
+    const mapa = new Map<string, any>();
+    const nomesDoCampo = (bruto: string): string[] => {
+      const t = String(bruto || '').trim();
+      if (!t) return [];
+      return t.split(/\s+e\s+|\s*,\s*|\s*\/\s*|\s*&\s*/i)
+        .map(s => s.trim()).filter(Boolean);
+    };
+    for (const p of pessoas) {
+      for (const a of (p.atendimentos || [])) {
+        if (!casaFiltros(a, true)) continue;
+        const nomes = nomesDoCampo(a.responsavel);
+        for (const nome of (nomes.length ? nomes : [''])) {
+        const chave = nome || SEM;
+        if (!mapa.has(chave)) {
+          mapa.set(chave, {
+            chave,
+            nome: nome || 'Sem responsável registrado',
+            semNome: !nome,
+            itens: [] as any[],
+            pessoas: new Set<string>(),
+            tipos: new Set<string>(),
+            ultimo: null as string | null,
+            temConjunto: false,
+          });
+        }
+        const g = mapa.get(chave);
+        g.itens.push({ ...a, pessoa: p });
+        g.pessoas.add(p.chave);
+        if (a.tipo) g.tipos.add(a.tipo);
+        if (a.data && (!g.ultimo || a.data > g.ultimo)) g.ultimo = a.data;
+        // Registra se este atendimento foi conjunto — o dialog avisa quem mais estava
+        if (nomes.length > 1) g.temConjunto = true;
+        }
+      }
+    }
+    const q = busca.trim().toLowerCase();
+    return [...mapa.values()]
+      .map(g => ({
+        ...g,
+        total: g.itens.length,
+        pessoasCount: g.pessoas.size,
+        tiposArr: [...g.tipos],
+        // Mais recente primeiro dentro do pastor
+        itens: g.itens.sort((x: any, y: any) => String(y.data || '').localeCompare(String(x.data || ''))),
+      }))
+      .filter(g => !q || g.nome.toLowerCase().includes(q))
+      // Sem-responsável sempre no fim; o resto por volume de atendimento
+      .sort((a, b) => Number(a.semNome) - Number(b.semNome) || b.total - a.total || a.nome.localeCompare(b.nome, 'pt-BR'));
+  }, [pessoas, busca, casaFiltros]);
+
+  const listaAtual = visao === 'pastor' ? pastores : filtradas;
+  const { pageItems, paginacaoProps } = usePaginacaoLocal(listaAtual, 30);
 
   return (
     <div className="space-y-4">
       <div className="rounded-lg border border-border bg-card p-4">
         <div className="flex items-center gap-2 mb-1"><CalendarCheck className="h-4 w-4 text-primary" /><h3 className="font-semibold text-sm">Visitas e Atendimentos</h3></div>
-        <p className="text-xs text-muted-foreground">Histórico por pessoa — cada atendimento (visita, aconselhamento, capelania) na trilha da pessoa, com comentários.</p>
+        <p className="text-xs text-muted-foreground">
+          {visao === 'pastor'
+            ? 'Quem atendeu — clique no pastor/líder para ver os atendimentos dele.'
+            : 'Histórico por pessoa — cada atendimento (visita, aconselhamento, capelania) na trilha da pessoa, com comentários.'}
+        </p>
       </div>
+
+      {/* Visão: por pessoa (quem foi atendido) × por pastor (quem atendeu) */}
+      <div className="inline-flex rounded-lg border border-border p-0.5">
+        {([['pessoa', 'Por pessoa'], ['pastor', 'Por pastor']] as const).map(([v, label]) => (
+          <button
+            key={v}
+            type="button"
+            onClick={() => {
+              setVisao(v);
+              // O recorte por responsável é a própria visão por pastor — deixar o
+              // filtro ligado mostraria um card só, sem dizer por quê.
+              if (v === 'pastor') setFResp('todos');
+              setBusca('');
+            }}
+            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+              visao === v ? 'bg-[#00B39D] text-white' : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
       <div className="flex items-center gap-3 flex-wrap">
         <div className="relative flex-1 min-w-[220px]">
           <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
-          <Input placeholder="Buscar pessoa por nome ou telefone..." value={busca} onChange={e => setBusca(e.target.value)} className="pl-8" />
+          <Input
+            placeholder={visao === 'pastor' ? 'Buscar pastor ou líder pelo nome...' : 'Buscar pessoa por nome ou telefone...'}
+            value={busca}
+            onChange={e => setBusca(e.target.value)}
+            className="pl-8"
+          />
         </div>
         {canEdit && <Button onClick={onNova}><Plus className="h-4 w-4 mr-2" />Registrar atendimento</Button>}
       </div>
@@ -1158,26 +1354,61 @@ function TrilhaPessoas({ canEdit, reloadKey, onNova, onEditVisita, onNovoParaPes
             </SelectContent>
           </Select>
         </div>
+        {/* "Quem atendeu" só faz sentido na visão por pessoa — na visão por pastor
+            o recorte por responsável é a própria lista. */}
+        {visao === 'pessoa' && (
+          <div className="space-y-1">
+            <Label className="block text-[11px] text-muted-foreground">Quem atendeu</Label>
+            <Select value={fResp} onValueChange={setFResp}>
+              <SelectTrigger className="h-9 w-[180px]"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todos">Todos</SelectItem>
+                {respDisp.map(r => <SelectItem key={r} value={r}>{r}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+        {/* ⚠️ Período num grupo só, com `até` no meio. Antes eram dois blocos "De" e
+            "Até" soltos e as labels apareciam COLADAS ao lado do calendário: o
+            `Label` do shadcn é <label> (inline) e o DatePicker é um Button
+            inline-flex, então o `space-y-1` não empilhava nada — os dois fluíam na
+            mesma linha e o "Até" grudava no picker anterior. Daí o `block` nas
+            labels desta barra. */}
         <div className="space-y-1">
-          <Label className="text-[11px] text-muted-foreground">Quem atendeu</Label>
-          <Select value={fResp} onValueChange={setFResp}>
-            <SelectTrigger className="h-9 w-[180px]"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="todos">Todos</SelectItem>
-              {respDisp.map(r => <SelectItem key={r} value={r}>{r}</SelectItem>)}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-1">
-          <Label className="text-[11px] text-muted-foreground">De</Label>
-          <DatePicker value={fDe} onChange={setFDe} className="h-9 w-[150px]" />
-        </div>
-        <div className="space-y-1">
-          <Label className="text-[11px] text-muted-foreground">Até</Label>
-          <DatePicker value={fAte} onChange={setFAte} className="h-9 w-[150px]" />
+          <Label className="block text-[11px] text-muted-foreground">Período do atendimento</Label>
+          <div className="inline-flex items-center gap-1 rounded-lg border border-border bg-background px-1.5 py-1">
+            <DatePicker
+              value={fDe}
+              onChange={setFDe}
+              placeholder="Início"
+              className="h-7 w-[140px] border-0 bg-transparent shadow-none px-2 overflow-hidden"
+            />
+            <span className="text-[11px] text-muted-foreground shrink-0 px-0.5">até</span>
+            <DatePicker
+              value={fAte}
+              onChange={setFAte}
+              placeholder="Fim"
+              className="h-7 w-[140px] border-0 bg-transparent shadow-none px-2 overflow-hidden"
+            />
+            {(fDe || fAte) && (
+              <button
+                type="button"
+                onClick={() => { setFDe(''); setFAte(''); }}
+                title="Limpar o período"
+                className="text-muted-foreground hover:text-foreground shrink-0 pl-1 pr-0.5"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
         </div>
         {temFiltro && <Button variant="ghost" size="sm" className="h-9" onClick={limparFiltros}><X className="h-3.5 w-3.5 mr-1" />Limpar filtros</Button>}
       </div>
+      {fDe && fAte && fDe > fAte && (
+        <p className="text-[11px] text-amber-600">
+          A data inicial está depois da final — nenhum atendimento cabe nesse período.
+        </p>
+      )}
       {loading ? (
         <div className="text-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground inline" /></div>
       ) : erroTrilha && pessoas.length === 0 ? (
@@ -1186,8 +1417,38 @@ function TrilhaPessoas({ canEdit, reloadKey, onNova, onEditVisita, onNovoParaPes
           <div style={{ fontSize: 12, color: '#791F1F', marginBottom: 12 }}>Falha ao consultar os atendimentos. Isso não significa que não há histórico.</div>
           <button onClick={recarregarTrilha} style={{ background: '#E24B4A', color: '#fff', border: 'none', borderRadius: 6, padding: '8px 16px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Tentar de novo</button>
         </div>
-      ) : filtradas.length === 0 ? (
-        <div className="rounded-lg border border-border bg-card p-8 text-center text-muted-foreground text-sm">{pessoas.length === 0 ? 'Nenhum atendimento registrado ainda.' : (busca.trim() || temFiltro) ? 'Ninguém encontrado com esses filtros.' : 'Ninguém com esse nome/telefone.'}</div>
+      ) : listaAtual.length === 0 ? (
+        <div className="rounded-lg border border-border bg-card p-8 text-center text-muted-foreground text-sm">
+          {pessoas.length === 0
+            ? 'Nenhum atendimento registrado ainda.'
+            : visao === 'pastor'
+              ? (busca.trim() ? 'Nenhum pastor ou líder com esse nome.' : 'Nenhum atendimento nesses filtros.')
+              : (busca.trim() || temFiltro) ? 'Ninguém encontrado com esses filtros.' : 'Ninguém com esse nome/telefone.'}
+        </div>
+      ) : visao === 'pastor' ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {pageItems.map((g: any) => (
+            <button key={g.chave} type="button" onClick={() => setSelPastor(g)}
+              className="text-left rounded-lg border border-border bg-card p-3 hover:border-primary/50 transition-colors">
+              <div className={`font-medium flex items-center gap-1.5 ${g.semNome ? 'text-muted-foreground italic' : ''}`}>
+                <UserRound className="h-4 w-4 text-primary shrink-0" />
+                <span className="truncate">{g.nome}</span>
+              </div>
+              <div className="flex items-center justify-between mt-2">
+                <span className="text-xs text-muted-foreground">
+                  participou de {g.total} · {g.pessoasCount} pessoa{g.pessoasCount > 1 ? 's' : ''}
+                </span>
+                <span className="text-[11px] text-muted-foreground">{g.ultimo ? fmtDataBR(g.ultimo) : ''}</span>
+              </div>
+              <div className="flex flex-wrap gap-1 mt-1.5">
+                {g.tiposArr.slice(0, 4).map((t: string) => {
+                  const cor = ATEND_TIPO_COR[t] || '#64748b';
+                  return <span key={t} className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: cor + '20', color: cor }}>{ATEND_TIPO_LABEL[t] || t}</span>;
+                })}
+              </div>
+            </button>
+          ))}
+        </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {pageItems.map((p: any) => (
@@ -1209,7 +1470,7 @@ function TrilhaPessoas({ canEdit, reloadKey, onNova, onEditVisita, onNovoParaPes
           ))}
         </div>
       )}
-      <Paginacao {...paginacaoProps} itemLabel="pessoas" />
+      <Paginacao {...paginacaoProps} itemLabel={visao === 'pastor' ? 'pastores' : 'pessoas'} />
       <TrilhaPessoaDialog
         pessoa={sel}
         canEdit={canEdit}
@@ -1217,7 +1478,72 @@ function TrilhaPessoas({ canEdit, reloadKey, onNova, onEditVisita, onNovoParaPes
         onEditVisita={(a) => { setSel(null); onEditVisita(a); }}
         onNovoParaPessoa={(p) => { setSel(null); onNovoParaPessoa(p); }}
       />
+      <TrilhaPastorDialog
+        grupo={selPastor}
+        onClose={() => setSelPastor(null)}
+        onAbrirPessoa={(p) => { setSelPastor(null); setSel(p); }}
+      />
     </div>
+  );
+}
+
+// Atendimentos de UM pastor/líder. Clicar numa linha abre a trilha da PESSOA —
+// as duas visões se encontram aqui, então ninguém precisa voltar e trocar de aba
+// pra ler o histórico completo de quem foi atendido.
+function TrilhaPastorDialog({ grupo, onClose, onAbrirPessoa }: {
+  grupo: any | null; onClose: () => void; onAbrirPessoa: (p: any) => void;
+}) {
+  return (
+    <Dialog open={!!grupo} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-2xl flex flex-col max-h-[85vh]">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <UserRound className="h-4 w-4 text-primary" />
+            {grupo?.nome || 'Atendimentos'}
+          </DialogTitle>
+          {grupo && (
+            <p className="text-xs text-muted-foreground">
+              Participou de {grupo.total} atendimento{grupo.total > 1 ? 's' : ''} · {grupo.pessoasCount} pessoa{grupo.pessoasCount > 1 ? 's' : ''} atendida{grupo.pessoasCount > 1 ? 's' : ''}
+              {grupo.ultimo ? ` · último em ${fmtDataBR(grupo.ultimo)}` : ''}
+              {grupo.temConjunto && ' · inclui atendimento feito em dupla'}
+            </p>
+          )}
+        </DialogHeader>
+        {/* min-h-0 é obrigatório pro corpo encolher e rolar (convenção do repo:
+            DialogContent flex + corpo flex-1 overflow-y-auto min-h-0). */}
+        <div className="flex-1 overflow-y-auto min-h-0 space-y-2">
+          {(grupo?.itens || []).map((a: any) => {
+            const cor = ATEND_TIPO_COR[a.tipo] || '#64748b';
+            return (
+              <button
+                key={`${a.fonte || 'a'}-${a.id}`}
+                type="button"
+                onClick={() => a.pessoa && onAbrirPessoa(a.pessoa)}
+                className="w-full text-left rounded-lg border border-border p-2.5 hover:border-primary/50 transition-colors"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium text-sm truncate">{a.pessoa?.nome || 'Sem nome'}</span>
+                  <span className="text-[11px] text-muted-foreground shrink-0">{a.data ? fmtDataBR(a.data) : '—'}</span>
+                </div>
+                <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: cor + '20', color: cor }}>
+                    {ATEND_TIPO_LABEL[a.tipo] || a.tipo || 'Atendimento'}
+                  </span>
+                  {a.status && <span className="text-[11px] text-muted-foreground capitalize">{a.status}</span>}
+                  {a.pessoa?.telefone && <span className="text-[11px] text-muted-foreground">{a.pessoa.telefone}</span>}
+                  {/* Atendimento em dupla: mostra o campo original, pra ficar claro
+                      que não foi só esta pessoa. */}
+                  {grupo && String(a.responsavel || '').trim() !== grupo.nome && a.responsavel && (
+                    <span className="text-[11px] text-muted-foreground italic">com: {a.responsavel}</span>
+                  )}
+                </div>
+                {a.texto && <p className="text-xs text-muted-foreground mt-1.5 line-clamp-2">{a.texto}</p>}
+              </button>
+            );
+          })}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 

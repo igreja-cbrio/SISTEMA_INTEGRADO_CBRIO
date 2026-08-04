@@ -1,5 +1,6 @@
 import { supabase } from './supabaseClient';
 import { resolveApiBaseUrl } from './lib/api-base';
+import { captureApiError } from './lib/sentry';
 
 // Configure this to point to your Vercel backend
 const API = resolveApiBaseUrl(import.meta.env.VITE_API_URL);
@@ -100,23 +101,29 @@ async function request(path, opts = {}) {
   // Timeout (default 30s · configurável por opts.timeout) pra um backend/rede
   // lento não deixar a UI "carregando pra sempre". requestFile já usa esse padrão.
   const { timeout = 30000, ...rest } = opts;
+  const method = String(rest.method || 'GET').toUpperCase();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
   let res;
   try {
     res = await fetch(`${API}${path}`, { ...rest, headers: { ...h, ...rest.headers }, signal: controller.signal });
-  } catch (e) {
-    if (e?.name === 'AbortError') {
-      throw new Error('Tempo esgotado ao falar com o servidor. Recarregue a página ou tente de novo.');
+  } catch (cause) {
+    if (cause?.name === 'AbortError') {
+      const error = Object.assign(new Error('Tempo esgotado ao falar com o servidor. Recarregue a página ou tente de novo.'), { code: 'API_TIMEOUT' });
+      captureApiError(error, { path, method, kind: 'timeout', code: error.code });
+      throw error;
     }
-    throw e;
+    captureApiError(cause, { path, method, kind: 'network', code: 'API_NETWORK_ERROR' });
+    throw cause;
   } finally {
     clearTimeout(timer);
   }
 
   const contentType = res.headers.get('content-type') || '';
   if (contentType.includes('text/html')) {
-    throw new Error('Backend não disponível. Os módulos funcionam apenas com o servidor rodando.');
+    const error = Object.assign(new Error('Backend não disponível. Os módulos funcionam apenas com o servidor rodando.'), { code: 'API_INVALID_RESPONSE', status: res.status });
+    captureApiError(error, { path, method, kind: 'protocol', status: res.status, code: error.code });
+    throw error;
   }
 
   if (res.status === 401) {
@@ -144,9 +151,23 @@ async function request(path, opts = {}) {
     Object.assign(error, err);
     error.status = res.status;
     error.requestId = res.headers.get('x-request-id') || err.request_id || null;
+    captureApiError(error, {
+      path,
+      method,
+      kind: 'response',
+      status: res.status,
+      requestId: error.requestId,
+      code: error.code,
+    });
     throw error;
   }
-  return res.json();
+  try {
+    return await res.json();
+  } catch (cause) {
+    const error = Object.assign(new Error('Resposta inválida recebida do servidor.'), { code: 'API_INVALID_JSON', status: res.status, cause });
+    captureApiError(error, { path, method, kind: 'protocol', status: res.status, code: error.code });
+    throw error;
+  }
 }
 
 const get = (path, opts) => request(path, { ...opts });
@@ -1750,6 +1771,8 @@ export const appAnalytics = {
 // Command center técnico · somente super-admin.
 export const sistema = {
   fundacao: () => get('/sistema/fundacao'),
+  observabilityStatus: () => get('/sistema/observabilidade/status'),
+  runBackendObservabilityCanary: () => post('/sistema/observabilidade/canary', { confirm: 'SENTRY_CANARY' }),
   overview: (hours = 24) => get(`/sistema/overview?hours=${hours}`),
   runs: (params = {}) => get('/sistema/jobs/runs?' + new URLSearchParams(
     Object.entries(params).filter(([, value]) => value != null && value !== '')
@@ -2390,6 +2413,9 @@ export const membresia = {
   censo: {
     cobertura: (params) => get('/membresia/censo/cobertura' + (params ? '?' + new URLSearchParams(params) : '')),
     faltantes: (params) => get('/membresia/censo/faltantes' + (params ? '?' + new URLSearchParams(params) : '')),
+    // Convite de atualização cadastral (WhatsApp + e-mail) pra quem está sem CPF.
+    disparoPreview: (params) => get('/membresia/censo/disparo/preview' + (params ? '?' + new URLSearchParams(params) : '')),
+    disparar: (body) => post('/membresia/censo/disparo', body),
   },
   cadastros: {
     list: (params) => get('/membresia/cadastros' + (params ? '?' + new URLSearchParams(params) : '')),
@@ -2397,6 +2423,16 @@ export const membresia = {
     podeAprovar: () => get('/membresia/cadastros/pode-aprovar'),
     confirmarWhatsapp: (id) => post(`/membresia/cadastros/${id}/confirmar-whatsapp`, {}),
     aprovar: (id, data) => post(`/membresia/cadastros/${id}/aprovar`, data || {}),
+    // Aprovação em massa: só passa quem tem os dados obrigatórios (o servidor
+    // reavalia cada linha; o resto volta em `ignorados` pra aprovação manual).
+    //
+    // ⚠️ Timeout PRÓPRIO de 90s (o padrão é 30s): cada aprovação passa pelo
+    // matcher canônico e escreve em várias tabelas, então até um lote pequeno
+    // passa dos 30s. Em 04/08 um lote de 49 CONCLUIU no servidor e o cliente
+    // abortou em 30s — a tela disse "tempo esgotado" para um trabalho que tinha
+    // dado certo, e o Matheus achou que nada aconteceu. Quem chunkifica é a
+    // tela (TabCadastros); este teto é a rede de segurança.
+    aprovarLote: (ids) => post('/membresia/cadastros/aprovar-lote', { ids }, { timeout: 90000 }),
     rejeitar: (id, motivo) => post(`/membresia/cadastros/${id}/rejeitar`, { motivo }),
     update: (id, data) => patch(`/membresia/cadastros/${id}`, data),
     remove: (id) => del(`/membresia/cadastros/${id}`),
@@ -2693,6 +2729,15 @@ export const cadastroPublico = {
     if (!res.ok) return { familias: [] };
     return res.json();
   },
+  // Atualização cadastral pelo link PESSOAL do convite do censo (?t=<token>).
+  // ⚠️ É o único caminho público que devolve os dados da pessoa — a prova de
+  // identidade é o token ter chegado no contato dela. Falha silenciosa de
+  // propósito: link ruim cai no cadastro normal, nunca numa tela de erro.
+  censoMeusDados: async (token) => {
+    const res = await fetch(`${API}/public/membresia/censo/meus-dados?t=${encodeURIComponent(token)}`);
+    if (!res.ok) return { ok: false };
+    return res.json();
+  },
   lookupCpf: async (cpf) => {
     const res = await fetch(`${API}/public/membresia/lookup-cpf?cpf=${encodeURIComponent(cpf)}`);
     if (!res.ok) return { found: false };
@@ -2804,15 +2849,37 @@ async function requestFile(path, formData, { timeoutMs = 60_000 } = {}) {
       body: formData,
       signal: controller.signal,
     });
-  } catch (err) {
-    if (err?.name === 'AbortError') throw new Error('Tempo esgotado ao enviar arquivo (60s). Tente novamente.');
-    throw err;
+  } catch (cause) {
+    if (cause?.name === 'AbortError') {
+      const error = Object.assign(new Error('Tempo esgotado ao enviar arquivo (60s). Tente novamente.'), { code: 'API_UPLOAD_TIMEOUT' });
+      captureApiError(error, { path, method: 'POST', kind: 'timeout', code: error.code });
+      throw error;
+    }
+    captureApiError(cause, { path, method: 'POST', kind: 'network', code: 'API_UPLOAD_NETWORK_ERROR' });
+    throw cause;
   } finally {
     clearTimeout(timer);
   }
   if (res.status === 401) { if (supabase) await supabase.auth.signOut(); window.location.href = '/login'; throw new Error('Sessão expirada'); }
-  if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error || `HTTP ${res.status}`); }
-  return res.json();
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    const error = Object.assign(new Error(body.error || `HTTP ${res.status}`), body, {
+      status: res.status,
+      requestId: res.headers.get('x-request-id') || body.request_id || null,
+    });
+    captureApiError(error, {
+      path, method: 'POST', kind: 'response', status: res.status,
+      requestId: error.requestId, code: error.code,
+    });
+    throw error;
+  }
+  try {
+    return await res.json();
+  } catch (cause) {
+    const error = Object.assign(new Error('Resposta inválida recebida após o upload.'), { code: 'API_INVALID_JSON', status: res.status, cause });
+    captureApiError(error, { path, method: 'POST', kind: 'protocol', status: res.status, code: error.code });
+    throw error;
+  }
 }
 
 export const attachments = {

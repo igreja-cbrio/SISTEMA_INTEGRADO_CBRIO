@@ -99,13 +99,66 @@ export default function IdentidadePendenciasPanel({ statusFixo = null, ocultarFi
     refetchOnReconnect: false,
   });
 
-  const items = data?.items || [];
+  const todosItens = data?.items || [];
+
+  // Filtro por CPF (pedido do Matheus 2026-08-04: "se tiver cpf, eu vou ligar o
+  // cadastro dela"). São DUAS coisas diferentes, e a distinção é de risco:
+  //  · CPF na INSCRIÇÃO (`origem_id` = 'cpf:...') → o vínculo é pela chave mais
+  //    forte que existe. Ligar é seguro. Medido em 04/08: 16 casos.
+  //  · CPF só no CADASTRO candidato → a inscrição casou por telefone+nome, e o
+  //    próprio aviso da tela lembra que telefone é compartilhado em família.
+  //    Aqui ligar exige conferir nome antes. Medido: ~108 casos.
+  // Por isso são chips separados em vez de um "tem CPF" que junta os dois.
+  const cpfDaInscricao = (p) => String(p?.origem_id || '').startsWith('cpf:');
+  const cpfDoCadastro = (p) => !!String(p?.membro?.cpf || '').trim();
+  const temCpf = (p) => cpfDaInscricao(p) || cpfDoCadastro(p);
+  const [filtroCpf, setFiltroCpf] = useState('todos'); // todos | com | inscricao | sem
+
+  const contagemCpf = useMemo(() => ({
+    com: todosItens.filter(temCpf).length,
+    inscricao: todosItens.filter(cpfDaInscricao).length,
+    sem: todosItens.filter((p) => !temCpf(p)).length,
+  }), [todosItens]);
+
+  const items = useMemo(() => todosItens.filter((p) => {
+    if (filtroCpf === 'com') return temCpf(p);
+    if (filtroCpf === 'inscricao') return cpfDaInscricao(p);
+    if (filtroCpf === 'sem') return !temCpf(p);
+    return true;
+  }), [todosItens, filtroCpf]);
+
   const resumo = data?.resumo || {};
   const podeAgir = !!data?.pode_agir;
   const pendentesPorTipo = resumo.pendente || {};
   const totalPendentes = useMemo(() => Object.values(pendentesPorTipo).reduce((a, b) => a + b, 0), [pendentesPorTipo]);
 
-  const invalidar = () => qc.invalidateQueries({ queryKey: ['identidade-pendencias'] });
+  // ⚠️ Ação NÃO refaz a busca. `invalidateQueries` aqui obrigava a lista inteira a
+  // voltar do servidor a cada clique, e a tela levava segundos pra responder — a
+  // reclamação do Matheus em 04/08 ("demora pra atualizar, quero algo fluido").
+  // A ação já foi confirmada pelo servidor: a linha só precisa SAIR da lista.
+  // As outras chaves (status/tipo) ficam marcadas como stale SEM refetch, então
+  // recalculam só quando a pessoa realmente abrir aquela aba.
+  const removerLocal = (id) => {
+    qc.setQueryData(['identidade-pendencias', status, tipo], (old) => {
+      if (!old?.items) return old;
+      const items = old.items.filter((x) => x.id !== id);
+      if (items.length === old.items.length) return old;
+      // O resumo alimenta os contadores por tipo — desconta o que saiu.
+      const saiu = old.items.find((x) => x.id === id);
+      let resumoNovo = old.resumo;
+      if (saiu && old.resumo?.[saiu.status]?.[saiu.tipo]) {
+        resumoNovo = {
+          ...old.resumo,
+          [saiu.status]: {
+            ...old.resumo[saiu.status],
+            [saiu.tipo]: Math.max(0, old.resumo[saiu.status][saiu.tipo] - 1),
+          },
+        };
+      }
+      return { ...old, items, resumo: resumoNovo };
+    });
+    qc.invalidateQueries({ queryKey: ['identidade-pendencias'], refetchType: 'none' });
+  };
 
   // `okMsg` pode ser função da resposta: a ligação de inscrição resolve N linhas
   // e dizer "1 inscrição ligada" quando foram 4 esconde o que aconteceu.
@@ -114,7 +167,7 @@ export default function IdentidadePendenciasPanel({ statusFixo = null, ocultarFi
     try {
       const r = await fn();
       toast.success(typeof okMsg === 'function' ? okMsg(r) : okMsg);
-      invalidar();
+      removerLocal(id);
     } catch (e) {
       toast.error(e?.message || 'Erro ao atualizar a pendência');
     } finally {
@@ -129,7 +182,10 @@ export default function IdentidadePendenciasPanel({ statusFixo = null, ocultarFi
       if (r.acao === 'cpf_preenchido') toast.success('CPF consolidado no cadastro');
       else if (r.acao === 'ja_tinha') toast.success('O cadastro já tinha este CPF');
       else toast.warning('Um conflito foi detectado agora — uma nova pendência foi aberta com o par certo');
-      invalidar();
+      // ⚠️ No caminho de conflito o servidor ABRE uma pendência nova — essa a
+      // lista não tem. Aí a busca é necessária, senão o par certo não aparece.
+      if (r.acao === 'cpf_preenchido' || r.acao === 'ja_tinha') removerLocal(p.id);
+      else qc.invalidateQueries({ queryKey: ['identidade-pendencias'] });
     } catch (e) {
       toast.error(e?.message || 'Erro ao confirmar o CPF');
     } finally {
@@ -150,7 +206,15 @@ export default function IdentidadePendenciasPanel({ statusFixo = null, ocultarFi
       });
       await membresiaApi.identidade.setStatus(p.id, 'resolvida');
       toast.success('Cadastros fundidos');
-      invalidar();
+      // Fundir some com um cadastro: qualquer OUTRA pendência que o cite ficou
+      // órfã, então elas saem junto — clicar numa delas daria erro.
+      qc.setQueryData(['identidade-pendencias', status, tipo], (old) => {
+        if (!old?.items) return old;
+        const items = old.items.filter((x) => x.id !== p.id
+          && x.membro_id !== mergeId && x.membro_conflito_id !== mergeId);
+        return items.length === old.items.length ? old : { ...old, items };
+      });
+      qc.invalidateQueries({ queryKey: ['identidade-pendencias'], refetchType: 'none' });
     } catch (e) {
       toast.error(e?.message || 'Erro ao fundir os cadastros');
     } finally {
@@ -184,6 +248,34 @@ export default function IdentidadePendenciasPanel({ statusFixo = null, ocultarFi
           <span className="ml-1.5">Atualizar</span>
         </Button>
       </div>}
+
+      {/* Filtro por CPF.
+          ⚠️ NÃO fica atrás de `ocultarFiltros`: essa prop existe pra esconder os
+          chips de status/tipo quando a ABA já define o contexto (é o caso do
+          /entradas), e na 1ª tentativa eu pendurei este filtro na mesma condição —
+          resultado: ele não aparecia justamente na tela onde foi pedido. */}
+      {todosItens.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1 mb-4">
+          <span className="text-[11px] text-muted-foreground mr-1">CPF:</span>
+          {[
+            ['todos', `Todos (${todosItens.length})`, 'Sem filtrar por CPF'],
+            ['com', `Só com CPF (${contagemCpf.com})`, 'Tem CPF na inscrição ou no cadastro candidato — são esses que vale ligar'],
+            ['inscricao', `CPF na inscrição (${contagemCpf.inscricao})`, 'A inscrição trouxe CPF — chave mais forte que existe, ligar é seguro sem conferir nome'],
+            ['sem', `Sem CPF (${contagemCpf.sem})`, 'Nenhum dos lados tem CPF — não dá pra ligar com segurança'],
+          ].map(([k, label, dica]) => (
+            <Button
+              key={k}
+              size="sm"
+              variant={filtroCpf === k ? 'secondary' : 'ghost'}
+              className="h-8 text-xs"
+              title={dica}
+              onClick={() => setFiltroCpf(k)}
+            >
+              {label}
+            </Button>
+          ))}
+        </div>
+      )}
 
       {!podeAgir && !isLoading && (
         <div className="text-xs text-muted-foreground mb-3 flex items-center gap-1.5">

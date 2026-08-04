@@ -8,6 +8,8 @@ const { uploadModuleFile, SHAREPOINT_CONFIGURED } = require('../services/storage
 const { acharMembroGuardado, ehNomeDerivadoDeEmail } = require('../services/membroMatch');
 const { registrarObservacaoSegura } = require('../services/identidadeProgressiva');
 const { cpfValido, emailValido } = require('../services/inscricaoContrato');
+const { verificarTokenCenso } = require('../utils/censoToken');
+const { avaliarProntidao } = require('../utils/prontidaoCadastro');
 
 const uploadMw = multer({
   storage: multer.memoryStorage(),
@@ -227,6 +229,72 @@ router.get('/lookup-nome-telefone', lookupLimiter, async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
+// GET /api/public/membresia/censo/meus-dados?t=<token>
+//
+// Atualização cadastral pelo link PESSOAL do convite do censo. Devolve os
+// dados da própria pessoa pra o formulário abrir preenchido, marcando o que
+// falta.
+//
+// ⚠️ É o ÚNICO endpoint público desta rota que devolve dado de pessoa. Pode,
+//    porque a prova de identidade é o token ter chegado no WhatsApp/e-mail
+//    DELA — o mesmo nível do comprovante de inscrição. Os lookups por CPF/nome
+//    continuam devolvendo só nome + iniciais + telefone mascarado, e é assim
+//    que tem que ficar: CPF vaza e se compra, então CPF não é prova.
+//
+// ⚠️ NUNCA aceitar identificação por `membro_id` cru na query aqui. Seria
+//    enumerável (UUID vaza em log, em print, no histórico do navegador) e
+//    transformaria este endpoint num extrator da base inteira. Quem decide é
+//    sempre a assinatura.
+// ─────────────────────────────────────────────────────────────────────────
+router.get('/censo/meus-dados', lookupLimiter, async (req, res) => {
+  try {
+    const membroId = verificarTokenCenso(req.query.t);
+    // Resposta NEUTRA: não diz se o token é malformado, se o segredo falta ou
+    // se a pessoa não existe. Distinguir isso é dar ao atacante a régua.
+    if (!membroId) return res.status(404).json({ ok: false, error: 'Link inválido ou expirado.' });
+
+    const { data: m, error } = await supabase
+      .from('mem_membros')
+      .select('id, nome, cpf, email, telefone, data_nascimento, genero, estado_civil, endereco, bairro, cidade, cep, profissao, foto_url, censo_respondido_em')
+      .eq('id', membroId)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (error) throw error;
+    if (!m) return res.status(404).json({ ok: false, error: 'Link inválido ou expirado.' });
+
+    // Reusa a MESMA régua de obrigatórios da aprovação em massa, para a pessoa
+    // completar exatamente o que a fila cobraria dela depois.
+    const prontidao = avaliarProntidao({
+      ...m, status: 'pendente', aceita_termos: true, duplicado_de_id: null,
+    });
+
+    res.json({
+      ok: true,
+      ja_respondeu: !!m.censo_respondido_em,
+      faltando: prontidao.faltando,
+      dados: {
+        nome: m.nome || '',
+        cpf: m.cpf || '',
+        email: m.email || '',
+        telefone: m.telefone || '',
+        data_nascimento: m.data_nascimento || '',
+        genero: m.genero || '',
+        estado_civil: m.estado_civil || '',
+        endereco: m.endereco || '',
+        bairro: m.bairro || '',
+        cidade: m.cidade || '',
+        cep: m.cep || '',
+        profissao: m.profissao || '',
+        foto_url: m.foto_url || '',
+      },
+    });
+  } catch (e) {
+    console.error('[PUBLIC] censo/meus-dados error:', e.message);
+    res.status(500).json({ ok: false, error: 'Erro ao carregar seus dados' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
 // GET /api/public/membresia/lookup-cpf?cpf=...
 //
 // Lookup proativo enquanto o usuário digita CPF no formulário público.
@@ -306,6 +374,9 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
       email,
       telefone,
       data_nascimento,
+      // Sexo canônico `masculino|feminino` (o form passou a coletar em 04/08).
+      // Sem ele o cadastro nunca ficava completo pela régua da fila.
+      genero,
       estado_civil,
       endereco,
       bairro,
@@ -324,6 +395,9 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
       // mem_membros.status — quem é membro é decisão da igreja.
       vinculo_declarado,
       censo,
+      // Token do link PESSOAL do convite (?t=). Identifica a pessoa sem
+      // depender de CPF — ver utils/censoToken.js.
+      censo_token,
       familia_sugerida_id,
       foto_url,
       // grupo de conexão opcional — cria pedido após cadastro
@@ -396,9 +470,25 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
     const telefoneLimpo = soDigitos(telefone);
     const cpfLimpo = soDigitos(cpf);
 
+    // ⚠️ TOKEN do convite do censo vence tudo: é o link pessoal que o sistema
+    // emitiu e entregou no contato DELA (assinado com o membro_id dentro), então
+    // não há dúvida de identidade — nem depende de a pessoa ter CPF cadastrado,
+    // que é exatamente o público da campanha. Confere-se contra o banco antes de
+    // confiar (token de cadastro apagado não vale).
+    const membroIdToken = verificarTokenCenso(censo_token);
+    if (membroIdToken) {
+      const { data: alvo } = await supabase
+        .from('mem_membros').select('id').eq('id', membroIdToken)
+        .is('deleted_at', null).maybeSingle();
+      if (alvo) {
+        duplicadoDeId = alvo.id;
+        matchedBy = 'token_censo';   // chave FORTE (ver censoReconciliar)
+      }
+    }
+
     // Se o usuário confirmou um match via lookup-nome-telefone, usa direto
     // (e valida que o id existe e o telefone bate — defesa contra forja).
-    if (match_membro_id && typeof match_membro_id === 'string') {
+    if (!duplicadoDeId && match_membro_id && typeof match_membro_id === 'string') {
       const { data: confirmado } = await supabase
         .from('mem_membros')
         .select('id, telefone')
@@ -437,6 +527,10 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
       email: emailLimpo,
       telefone: telefone || null,
       data_nascimento: data_nascimento || null,
+      // Aceita só o canônico: "outro" e variações não entram (a coluna e os
+      // KPIs por sexo não os aceitam — lei do Contrato de Inscrição).
+      genero: ['masculino', 'feminino'].includes(String(genero || '').toLowerCase())
+        ? String(genero).toLowerCase() : null,
       estado_civil: estado_civil || null,
       endereco: endereco || null,
       bairro: bairro || null,
