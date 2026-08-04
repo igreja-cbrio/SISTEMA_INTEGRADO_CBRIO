@@ -3212,9 +3212,15 @@ export default function Membresia() {
 }
 
 function ShareCadastroLinkDialog({ open, onOpenChange }) {
-  const publicUrl = typeof window !== 'undefined'
-    ? `${window.location.origin}/cadastro-membresia`
-    : '/cadastro-membresia';
+  // ⚠️ O QR do CENSO precisa do `?censo=1`. Sem o parâmetro o formulário
+  // funciona igual e o cadastro entra — mas a submissão não é marcada como
+  // censo: não conta na cobertura e o reconciliador não roda (a pessoa que já
+  // existe volta a virar 'duplicado' na fila, um por um). Por isso a escolha é
+  // um botão aqui, e não um parâmetro que alguém precisa lembrar de digitar.
+  const [modo, setModo] = useState('cadastro'); // 'cadastro' | 'censo'
+  const ehCenso = modo === 'censo';
+  const origem = typeof window !== 'undefined' ? window.location.origin : '';
+  const publicUrl = `${origem}/cadastro-membresia${ehCenso ? '?censo=1' : ''}`;
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=280x280&margin=8&data=${encodeURIComponent(publicUrl)}`;
 
   const copyLink = async () => {
@@ -3228,8 +3234,10 @@ function ShareCadastroLinkDialog({ open, onOpenChange }) {
 
   const shareLink = async () => {
     const shareData = {
-      title: 'Cadastro de Membresia - CBRio',
-      text: 'Preencha seu cadastro de membresia:',
+      title: ehCenso ? 'Censo da Membresia - CBRio' : 'Cadastro de Membresia - CBRio',
+      text: ehCenso
+        ? 'Participe do censo da CBRio preenchendo seus dados:'
+        : 'Preencha seu cadastro de membresia:',
       url: publicUrl,
     };
     try {
@@ -3250,7 +3258,7 @@ function ShareCadastroLinkDialog({ open, onOpenChange }) {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'cadastro-membresia-qrcode.png';
+      a.download = ehCenso ? 'censo-membresia-qrcode.png' : 'cadastro-membresia-qrcode.png';
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -3266,14 +3274,49 @@ function ShareCadastroLinkDialog({ open, onOpenChange }) {
         <DialogHeader>
           <DialogTitle style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <QrCode style={{ width: 18, height: 18, color: '#00B39D' }} />
-            Link público de cadastro
+            {ehCenso ? 'Link do censo' : 'Link público de cadastro'}
           </DialogTitle>
         </DialogHeader>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16, alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 6, width: '100%' }}>
+            {[
+              { id: 'cadastro', label: 'Cadastro' },
+              { id: 'censo', label: 'Censo' },
+            ].map((op) => (
+              <button
+                key={op.id}
+                type="button"
+                onClick={() => setModo(op.id)}
+                style={{
+                  flex: 1, padding: '8px 10px', fontSize: 13, fontWeight: 600,
+                  borderRadius: 10, cursor: 'pointer',
+                  border: `1px solid ${modo === op.id ? '#00B39D' : 'var(--cbrio-border)'}`,
+                  background: modo === op.id ? '#00B39D18' : 'transparent',
+                  color: modo === op.id ? '#00B39D' : 'var(--cbrio-text2)',
+                }}
+              >
+                {op.label}
+              </button>
+            ))}
+          </div>
+
           <p style={{ fontSize: 13, color: 'var(--cbrio-text2)', textAlign: 'center', margin: 0 }}>
-            Compartilhe este link ou QR Code para que novos membros preencham o formulário público.
+            {ehCenso
+              ? 'QR do censo — é este que vai no telão e no material impresso. Quem já está na base tem os dados atualizados automaticamente e entra na contagem de cobertura.'
+              : 'Compartilhe este link ou QR Code para que novos membros preencham o formulário público.'}
           </p>
+
+          {ehCenso && (
+            <p style={{
+              fontSize: 11.5, color: 'var(--cbrio-text3)', textAlign: 'center',
+              margin: 0, padding: '8px 10px', borderRadius: 8,
+              background: '#f59e0b14', border: '1px solid #f59e0b33', lineHeight: 1.5,
+            }}>
+              Use exatamente este link. Sem o <code>?censo=1</code> o formulário
+              funciona, mas a resposta não conta no censo.
+            </p>
+          )}
 
           <div style={{
             padding: 12,
