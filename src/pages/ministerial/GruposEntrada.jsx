@@ -144,6 +144,10 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
   const [soContatoRuim, setSoContatoRuim] = useState(false);
   const [painelAberto, setPainelAberto] = useState(false);
   const [cobertura, setCobertura] = useState(null); // lazy: só quando abre o painel
+  // "Líderes · quem falta responder" (pedido da Naná/Nélio 04/08): conferência
+  // da lista (quem respondeu × quem não) + pedidos parados aguardando o líder.
+  const [lideresAberto, setLideresAberto] = useState(false);
+  const [confPainel, setConfPainel] = useState(null); // lazy: só quando abre o bloco
 
   const [expandedId, setExpandedId] = useState(null);
   // Sub-painéis da linha de PEDIDO (mesma máquina do fluxo aprovar/recusar/sugerir)
@@ -251,6 +255,18 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
     return () => { vivo = false; };
   }, [painelAberto, janela.desdeMs]);
 
+  // Painel da conferência (quem respondeu × quem falta) — reusa o MESMO
+  // endpoint do card da aba Envios; lazy, só quando o bloco de líderes abre.
+  useEffect(() => {
+    if (!lideresAberto || confPainel) return;
+    let vivo = true;
+    api.grupos.confira.painel()
+      .then(r => { if (vivo) setConfPainel(r || { disponivel: false }); })
+      .catch(() => { if (vivo) setConfPainel({ disponivel: false }); });
+    return () => { vivo = false; };
+  }, [lideresAberto, confPainel]);
+
+
   const depois = () => { setEventosCache({}); load(); onMudou?.(); };
 
   // ── Normalização: pedido + direcionado do Next viram linhas da MESMA lista ──
@@ -325,6 +341,33 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
       })
       .sort((a, b) => new Date(b.data) - new Date(a.data));
   }, [pedidos, encs, lideresInsc, renovacoes, busca, fOrigem, janela.desdeMs]);
+
+  // Pedidos parados aguardando o LÍDER decidir — derivado das mesmas linhas da
+  // tela (segue origem/período/busca · "não existirem duas verdades"). O nome
+  // do líder já vem no pedido (mem_grupos → mem_membros!lider_id). ⚠️ Declarado
+  // DEPOIS de rowsBase (deps de hook avaliam no render — lição TDZ de 28/07).
+  const aprovacoesParadas = useMemo(() => {
+    const porGrupo = new Map();
+    for (const r of rowsBase) {
+      if (r.tipo !== 'pedido' || r.statusKey !== 'pendente') continue;
+      const p = r.raw;
+      const gid = p.grupo_id || p.mem_grupos?.id;
+      if (!gid) continue;
+      const g = porGrupo.get(gid) || {
+        grupoId: gid,
+        grupo: p.mem_grupos?.nome || 'Grupo',
+        codigo: p.mem_grupos?.codigo || null,
+        lider: p.mem_grupos?.mem_membros?.nome || null,
+        n: 0, maisAntigoMs: Infinity,
+      };
+      g.n += 1;
+      const t = new Date(r.data).getTime();
+      if (t < g.maisAntigoMs) g.maisAntigoMs = t;
+      porGrupo.set(gid, g);
+    }
+    // Mais antigo primeiro — é onde a coordenação precisa cutucar.
+    return [...porGrupo.values()].sort((a, b) => a.maisAntigoMs - b.maisAntigoMs);
+  }, [rowsBase]);
 
   const rows = useMemo(() => {
     const bucket = FILTRO_STATUS.find(f => f.key === fStatus)?.casa || null;
@@ -768,6 +811,110 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
                   <PorDiaBarras dados={estat.porDia} />
                 </PainelBloco>
               )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Líderes · quem falta responder (pedido da Naná/Nélio · 04/08) ──
+          Conferência da lista (respondeu × não respondeu · MESMO endpoint do
+          card da aba Envios) + pedidos parados aguardando o líder aprovar. */}
+      {!loading && (
+        <div style={{ background: C.card, border: '1px solid var(--hairline)', borderRadius: 14, marginBottom: 14, overflow: 'hidden' }}>
+          <button
+            onClick={() => setLideresAberto(v => !v)}
+            style={{
+              width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px',
+              background: 'transparent', border: 0, cursor: 'pointer', color: C.text,
+              fontSize: 13, fontWeight: 700, textAlign: 'left',
+            }}
+          >
+            {lideresAberto ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+            <span>Líderes · quem falta responder</span>
+            <span style={{ fontWeight: 400, color: C.t3, fontSize: 12 }}>
+              · conferência da lista + aprovações paradas
+              {aprovacoesParadas.length > 0 && (
+                <span style={{ color: C.amber, fontWeight: 700 }}>
+                  {' '}· {aprovacoesParadas.length} grupo{aprovacoesParadas.length === 1 ? '' : 's'} com pedido parado
+                </span>
+              )}
+            </span>
+          </button>
+
+          {lideresAberto && (
+            <div style={{ padding: '0 14px 14px', display: 'grid', gap: 14 }}>
+              <PainelBloco titulo="Conferência da lista — atualização cadastral">
+                {confPainel === null ? (
+                  <div style={{ fontSize: 12, color: C.t3 }}>Carregando…</div>
+                ) : confPainel.disponivel === false ? (
+                  <div style={{ fontSize: 12, color: C.amber }}>{confPainel.aviso || 'Painel indisponível.'}</div>
+                ) : (() => {
+                  const rowsC = confPainel.rows || [];
+                  const responderam = rowsC.filter(r => ['respondida', 'triada'].includes(r.conferencia?.status));
+                  const semResposta = rowsC.filter(r => r.conferencia?.status === 'enviada');
+                  const nuncaReceberam = rowsC.filter(r => !r.conferencia);
+                  const dias = (iso) => Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 864e5));
+                  return (
+                    <>
+                      <PainelLinha rotulo="Responderam (cadastro atualizado)" valor={responderam.length} cor={C.green} />
+                      <PainelLinha rotulo="Receberam e ainda não responderam" valor={semResposta.length} cor={semResposta.length > 0 ? C.amber : undefined} />
+                      <PainelLinha rotulo="Ainda não receberam o link" valor={nuncaReceberam.length} cor={C.t3} nota="disparo no card da aba Envios" />
+                      {semResposta.length > 0 && (
+                        <div style={{ fontSize: 11.5, color: C.t2, lineHeight: 1.7, marginTop: 6, paddingTop: 6, borderTop: '1px dashed var(--hairline)' }}>
+                          <div style={{ fontWeight: 700, color: C.amber, marginBottom: 2 }}>Faltam responder:</div>
+                          {semResposta.slice(0, 30).map(r => (
+                            <div key={r.grupo_id}>
+                              {r.lider_nome || 'Sem líder'} <span style={{ color: C.t3 }}>· {r.grupo_nome}</span>
+                              {r.conferencia?.enviado_em && <span style={{ color: C.t3 }}> · enviado há {dias(r.conferencia.enviado_em)}d</span>}
+                            </div>
+                          ))}
+                          {semResposta.length > 30 && <div style={{ color: C.t3 }}>+{semResposta.length - 30}…</div>}
+                        </div>
+                      )}
+                      {responderam.length > 0 && (
+                        <div style={{ fontSize: 11.5, color: C.t2, lineHeight: 1.7, marginTop: 6, paddingTop: 6, borderTop: '1px dashed var(--hairline)' }}>
+                          <div style={{ fontWeight: 700, color: C.green, marginBottom: 2 }}>Já atualizaram:</div>
+                          {responderam.slice(0, 30).map(r => (
+                            <div key={r.grupo_id}>
+                              {r.lider_nome || 'Líder'} <span style={{ color: C.t3 }}>· {r.grupo_nome}</span>
+                              {' '}<span style={{ color: (r.conferencia?.removidos_count || 0) > 0 ? C.amber : C.t3 }}>
+                                ({r.conferencia?.removidos_count || 0} saíram)
+                              </span>
+                              {r.conferencia?.ultima_resposta_em && <span style={{ color: C.t3 }}> · há {dias(r.conferencia.ultima_resposta_em)}d</span>}
+                            </div>
+                          ))}
+                          {responderam.length > 30 && <div style={{ color: C.t3 }}>+{responderam.length - 30}…</div>}
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+              </PainelBloco>
+
+              <PainelBloco titulo="Aprovações paradas — pedidos aguardando o líder">
+                {aprovacoesParadas.length === 0 ? (
+                  <div style={{ fontSize: 12, color: C.t3 }}>Nenhum pedido parado — tudo decidido. ✓</div>
+                ) : (
+                  <div style={{ fontSize: 11.5, color: C.t2, lineHeight: 1.7 }}>
+                    {aprovacoesParadas.slice(0, 30).map(g => {
+                      const h = (Date.now() - g.maisAntigoMs) / 36e5;
+                      const idade = h >= 48 ? `${Math.floor(h / 24)}d` : `${Math.max(1, Math.floor(h))}h`;
+                      const cor = h >= 72 ? C.red : h >= 24 ? C.amber : C.t3;
+                      return (
+                        <div key={g.grupoId}>
+                          {g.lider || 'Sem líder'} <span style={{ color: C.t3 }}>· {g.grupo}</span>
+                          {' '}· {g.n} pedido{g.n === 1 ? '' : 's'}
+                          {' '}<span style={{ color: cor, fontWeight: 700 }}>· mais antigo há {idade}</span>
+                        </div>
+                      );
+                    })}
+                    {aprovacoesParadas.length > 30 && <div style={{ color: C.t3 }}>+{aprovacoesParadas.length - 30}…</div>}
+                    <div style={{ fontSize: 11, color: C.t3, marginTop: 4 }}>
+                      Segue os filtros da tela (origem, período e busca).
+                    </div>
+                  </div>
+                )}
+              </PainelBloco>
             </div>
           )}
         </div>

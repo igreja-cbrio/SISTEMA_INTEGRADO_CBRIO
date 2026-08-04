@@ -2430,6 +2430,19 @@ SERVIDOR** (payload é do cliente), então bundle antigo aberto não fura.
   (`grupos_confira_lista` aprovado 03/08 — 1 template pras 2 ocasiões, o
   contexto vive na tela; o {{3}} segue contando pessoas do roster).
 
+**Feedback Naná/Nélio (04/08 · teste real — os 2 responderam em minutos):**
+(1) intro da tela virou 2 parágrafos curtos, SEM a explicação "quem sair
+continua cadastrado…" no topo (as instruções curtas vivem no título de cada
+seção; o modal de confirmação mantém a explicação completa). (2) A caixa de
+entrada (`GruposEntrada.jsx`) ganhou o bloco recolhível **"Líderes · quem
+falta responder"**: conferência da lista (responderam × receberam-e-não ×
+nunca receberam · reusa `GET /grupos/confira/painel`, o MESMO endpoint do
+card da aba Envios — lazy ao abrir) + **"Aprovações paradas"** (pedidos
+`pendente` agrupados por grupo/líder com idade do mais antigo, client-side
+sobre as linhas já carregadas — o nome do líder vem no próprio pedido via
+`mem_grupos → mem_membros!lider_id`; segue os filtros da tela). ⚠️
+`aprovacoesParadas` é useMemo declarado DEPOIS de `rowsBase` (lição TDZ).
+
 ⚠️ **Aplicar a migration antes do merge.** O fluxo NOVO tolera a ausência dela
 (`schemaAusente()` → **503 com aviso claro** no público, `{disponivel:false, aviso}`
 no painel), e **nenhum fluxo existente lê a tabela/coluna nova** — frequência e
