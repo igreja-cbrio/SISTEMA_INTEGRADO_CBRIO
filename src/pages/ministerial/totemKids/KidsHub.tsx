@@ -8,9 +8,10 @@ import { MeshGradient } from '../../../components/ui/mesh-gradient-shader';
 import { Card } from '../../../components/ui/card';
 import { Badge } from '../../../components/ui/badge';
 import { toast } from 'sonner';
+import { imprimirAniversariantesKids } from '../../../lib/imprimirAniversariantesKids';
 import {
   Baby, ScanLine, Users, Settings, Monitor, Printer,
-  Cake, DoorOpen, Loader2, MessageCircle,
+  Cake, DoorOpen, Loader2, MessageCircle, BarChart3,
 } from 'lucide-react';
 
 // Reorganização 2026-07-06 (pedido do Matheus): o hub fica só com a OPERAÇÃO
@@ -24,7 +25,15 @@ const ACESSOS = [
   { titulo: 'Painel ao vivo', desc: 'Quem está em cada sala agora', icon: Monitor, path: '/ministerial/totem-kids/painel', cor: '#f59e0b' },
   { titulo: 'Etiqueta', desc: 'Testar impressão da etiqueta', icon: Printer, path: '/ministerial/totem-kids/teste-etiqueta', cor: '#64748b' },
   { titulo: 'Configurações', desc: 'Sessões, salas e auditoria (overrides + portão)', icon: Settings, path: '/ministerial/totem-kids/configuracoes', cor: '#64748b' },
+  // Porta pro gerencial (2026-08-03 · pedido do Matheus: voluntário do Kids
+  // também precisa dos indicadores). É o ÚNICO caminho pra lá numa conta travada
+  // em quiosque — a trava esconde o menu inteiro, então sem este card o /kids
+  // fica inalcançável mesmo com permissão.
+  { titulo: 'Indicadores e gestão', desc: 'Frequência, equipe, estoque, batismos e indicadores da área', icon: BarChart3, path: '/kids', cor: '#7C3AED' },
 ];
+
+const MESES_NOME = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+                    'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
 
 const fmtDiaMes = (d?: string | null) => (d ? `${String(d).slice(8, 10)}/${String(d).slice(5, 7)}` : '');
 const idade = (d?: string | null) => {
@@ -94,6 +103,30 @@ export default function KidsHub() {
   const [d, setD] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [enviandoResumo, setEnviandoResumo] = useState(false);
+  const [mesImp, setMesImp] = useState(new Date().getMonth() + 1);
+  const [agrupImp, setAgrupImp] = useState<'dia' | 'sala'>('dia');
+  const [carregandoMes, setCarregandoMes] = useState(false);
+
+  async function imprimirMes() {
+    setCarregandoMes(true);
+    try {
+      const r: any = await api.aniversariantesMes(mesImp);
+      const lista = r?.aniversariantes || [];
+      if (!lista.length) {
+        toast.info(`Nenhuma criança faz aniversário em ${MESES_NOME[mesImp - 1]}.`);
+        return;
+      }
+      // window.open bloqueado por popup blocker é o caso comum aqui — avisa em vez
+      // de deixar o clique sem resposta nenhuma.
+      const ok = imprimirAniversariantesKids(lista, { mes: mesImp, agrupamento: agrupImp });
+      if (!ok) toast.error('O navegador bloqueou a janela de impressão. Libere o popup e tente de novo.');
+    } catch (e: any) {
+      toast.error(e?.message || 'Não consegui montar a lista do mês.');
+    } finally {
+      setCarregandoMes(false);
+    }
+  }
+
   async function testarResumo() {
     setEnviandoResumo(true);
     try {
@@ -136,7 +169,7 @@ export default function KidsHub() {
           <Card
             key={s.label}
             onClick={() => s.path && navigate(s.path)}
-            className={`glass-solid p-3 ${s.path ? 'cursor-pointer hover:border-primary/40' : ''} transition-colors ${s.destaque ? 'ring-1 ring-blue-400/50' : ''}`}
+            className={`glass-solid p-3 ${s.path ? 'cursor-pointer hover:border-primary/40' : ''} transition-colors`}
           >
             <div className="flex items-center gap-2">
               <div className="h-8 w-8 rounded-lg flex items-center justify-center shrink-0" style={{ background: `${s.cor}1a` }}>
@@ -157,9 +190,41 @@ export default function KidsHub() {
             {(d?.aniversariantes || []).length > 0 && (
               <button onClick={() => imprimirAniversariantes(d.aniversariantes)}
                 className="ml-auto inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:opacity-80">
-                <Printer className="h-3.5 w-3.5" /> Imprimir lista
+                <Printer className="h-3.5 w-3.5" /> Imprimir a semana
               </button>
             )}
+          </div>
+
+          {/* Lista do MÊS pra impressão · escolhe o mês e como agrupar (pedido do
+              Matheus 2026-08-03). Busca sob demanda: o mês inteiro é bem maior que
+              a semana e não faz sentido carregar a cada abertura do hub. */}
+          <div className="flex flex-wrap items-center gap-2 mb-3 rounded-lg border border-border bg-muted/30 p-2">
+            <span className="text-xs font-medium text-muted-foreground">Imprimir o mês:</span>
+            <select
+              value={mesImp}
+              onChange={(e) => setMesImp(Number(e.target.value))}
+              className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+            >
+              {MESES_NOME.map((nome, i) => (
+                <option key={i} value={i + 1}>{nome}</option>
+              ))}
+            </select>
+            <select
+              value={agrupImp}
+              onChange={(e) => setAgrupImp(e.target.value as 'dia' | 'sala')}
+              className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+            >
+              <option value="dia">Agrupado por dia</option>
+              <option value="sala">Agrupado por sala</option>
+            </select>
+            <button
+              onClick={imprimirMes}
+              disabled={carregandoMes}
+              className="inline-flex items-center gap-1.5 rounded-md bg-primary px-2.5 py-1.5 text-xs font-medium text-white disabled:opacity-60"
+            >
+              {carregandoMes ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Printer className="h-3.5 w-3.5" />}
+              Gerar lista
+            </button>
           </div>
           {loading ? (
             <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-primary" /></div>

@@ -429,6 +429,149 @@ censo escrever o endereço de uma pessoa no cadastro de outra.
 **Pendências operacionais (não são código):** regra no Firewall do Vercel pra rota
 do censo · `vinculo_declarado` validado com o Arthur · gerar/imprimir o QR com
 `?censo=1` · teto da Meta se quiserem cobrar por WhatsApp quem falta.
+## ⚠️ LEI · trocar a KEY de um campo de formulário ORFANA resposta (2026-08-03)
+
+Incidente: o Matheus abriu uma inscrição do Patrocinadores do Celebra e o modal
+mostrou **"—" em todas as 7 respostas**. O dado estava intacto em
+`inscricoes.dados` — o que quebrou foi o VÍNCULO pergunta↔resposta.
+
+**Causa:** `sanitizeCampos` (routes/inscricoes.js) testava
+`/^c_[a-z0-9_]+$/` e, para toda chave que não casasse, chamava `novaKeyCampo()`.
+Os eventos migrados do Celebra guardam a pergunta com chave em **formato slug do
+rótulo** (`nome_da_empresa_negocio`), que não casa com aquele padrão. Então, na
+PRIMEIRA vez que alguém abriu e **salvou** o evento no construtor (30/07 11:58),
+as 7 chaves foram trocadas de uma vez e as 15 respostas ficaram órfãs.
+
+⚠️ **O mesmo estava ARMADO para o "Celebra 2026"** (114 inscrições · evento em
+29/08): a chave dele (`em_qual_ministerio_voce_serve`) também é slug, e as
+respostas só continuavam casando porque **ninguém havia salvado aquele evento
+pelo construtor**. Um clique em Salvar teria orfanado as 113.
+
+- **A lei:** chave existente é **PRESERVADA byte a byte**. Chave nova só quando
+  não existe nenhuma. **NUNCA derivar/normalizar a chave a partir do label** — o
+  comentário do `novaKeyCampo` já dizia isso; a régua é que estava estreita demais
+  e regenerava o que devia preservar.
+- **`backend/utils/campoKey.js`** é a fonte única: `keyCampoPreservada()` aceita
+  qualquer chave em `[a-z0-9_]{1,60}` (charset conferido contra o banco vivo — as
+  **15** chaves de formulário de `insc_eventos`+`ext_eventos` e as **10** chaves
+  presentes em respostas de `inscricoes`+`ext_inscricoes` passam todas).
+  `src/test/campoKey.test.ts` (7 casos) é **mutation-test explícito**: voltar a
+  exigir prefixo `c_` deixa o gate vermelho.
+- **Reparo de dado aplicado** no evento Patrocinadores: as 7 chaves voltaram às
+  ORIGINAIS, lidas de `ext_eventos.campos` (a tabela de origem NÃO foi dropada) e
+  casadas por rótulo — derivado, não adivinhado. Dry-run antes: 7/7 acharam a
+  original e 7/7 tinham resposta gravada. Depois: **15/15 inscrições casam** (era
+  0/15). Backup do estado anterior em
+  `scratchpad/backup_campos_patrocinadores_20260803.json` (não versionado).
+- ⚠️ Se aparecer outro evento com respostas em "—", o diagnóstico é comparar
+  `insc_eventos.campos->>'key'` com `jsonb_object_keys(inscricoes.dados)`; a cura
+  é buscar a chave original em `ext_eventos`, nunca reescrever `dados`.
+
+## ⚠️ Propostas · `/:id` engolia `/avaliar` e `/mural` (2026-08-03 · SEM migration)
+
+As abas **Avaliar** e **Mural da reunião** não abriam: `GET /:id` é declarado na
+linha ~248 de `routes/propostas.js` e as duas rotas LITERAIS vêm depois (~411 e
+~468). No Express o primeiro match vence, então `GET /propostas/avaliar` caía no
+handler de detalhe com `id='avaliar'`, o PostgREST recusava a comparação contra a
+coluna `uuid` (22P02) e a resposta era **400**. Em cascata, nada chegava a
+`APROVADO`/`CONSOLIDADO`, então **deliberação, ressalvas, recurso, pós-evento e a
+consolidação do ciclo ficavam inalcançáveis** — com o backend inteiro pronto.
+Mesma armadilha já registrada aqui para o Grupos ("rota `/kpis` declarada ANTES
+de `/:id`").
+
+- **Correção: guarda de UUID no `/:id`** (`if (!UUID_RE.test(id)) return next()`),
+  não reordenação. Resolve E **previne recaída**: rota literal acrescentada depois
+  passa a ser alcançada sozinha, sem depender de alguém lembrar de declará-la
+  acima. Também evita mover um bloco de 60 linhas, que é onde o erro nasce.
+- Comportamento provado em app Express mínimo (5.2.1): `/avaliar` → handler de
+  avaliar · `/mural` → mural · uuid → detalhe · path desconhecido → 404.
+- ⚠️ Só `GET /:id` tinha o problema. `PUT /:id` e `DELETE /:id` não têm rota
+  literal declarada depois deles (`DELETE /anexos/:anexoId` vem ANTES).
+
+## Kids · lista mensal de aniversariantes impressa (2026-08-03 · SEM migration)
+
+`GET /totem-kids/aniversariantes?mes=1..12` + seletor de mês/agrupamento no
+`KidsHub` + gerador A4 em `src/lib/imprimirAniversariantesKids.ts` (molde do
+`imprimirListaPresencaBatismo`: thead repetido por folha, `page-break-inside`).
+
+- **Agrupamento à escolha: por DIA ou por SALA** (decisão do Matheus). A sala é
+  DERIVADA da idade em meses (`salaDaIdade`, mesma régua do `sugerirSala`), com o
+  catálogo carregado 1× em vez de uma consulta por criança.
+- ⚠️ **As faixas de `kids_salas` têm BURACOS** — Berçário acaba em 21 meses e
+  Maternal começa em 24, e nada cobre 0–5. Medido em agosto/2026: 68
+  aniversariantes, **5 sem sala nenhuma**. Por isso o agrupamento por sala tem o
+  grupo "Sem sala definida pela idade" no fim: criança sem faixa não pode
+  desaparecer da folha.
+- **A lista impressa SAI COM TELEFONE** do responsável (decisão explícita dele —
+  quem imprime vai ligar parabenizando). É a ÚNICA lista do sistema que imprime
+  PII por padrão: a folha leva aviso âmbar pra não circular e descartar depois.
+  Contraste proposital com `imprimirListaInscritos`, onde contato só sai marcando
+  a caixa. Mudar isso é mexer só neste arquivo.
+- **Idade que a criança COMPLETA**, não a idade de hoje: se o dia já passou no ano
+  corrente, o próximo aniversário é no ano que vem. É o número que vai no bolo.
+- ⚠️ **Bug de truncamento consertado junto**: o `/dashboard` lia as crianças com
+  `.range(0, 999)` e a base passou de mil (**1.023 ativas com nascimento** em
+  03/08) — **23 crianças ficavam de fora da lista da semana, em silêncio**. Virou
+  `fetchCriancasPaginado`. É a lição do cap de 1000 do PostgREST outra vez: o
+  código só quebra quando a base cresce, e sem aviso.
+- Idade passou a aparecer **ao lado do nome** na lista de Crianças (antes estava
+  na 2ª linha, misturada com o nome do responsável).
+
+## Kids · idade exata, WhatsApp pessoal e gerencial dentro da trava (2026-08-03 · SEM migration)
+
+Três pedidos do Matheus no mesmo dia, todos no Kids.
+
+**1 · Filtro de idade EXATA** em `GestaoCriancas.tsx` (`/ministerial/totem-kids/criancas`).
+Eram faixas fixas (`0-2 / 3-5 / 6-8 / 9-12`, em MESES), que não respondem "quantas
+crianças de 4 anos eu tenho?". Agora o seletor lista as **idades que existem na
+base**, com a contagem de cada uma, derivadas do `idade_meses` que o backend já
+manda (`floor(meses/12)`).
+- ⚠️ **Não recalcular a idade no cliente a partir de `data_nascimento`**: o filtro
+  discordaria da coluna "Idade" da linha, e no dia do aniversário a diferença é de
+  um ano inteiro. A fonte é `idade_meses` (`calcIdadeMeses` em routes/totemKids.js).
+- ⚠️ Abaixo de 24 meses o `formatIdade` do backend mostra **meses** ("14 meses"),
+  então filtrar "1 ano" traz linhas cuja coluna diz "12…23 meses". Está correto; é
+  o único ponto em que rótulo do filtro e texto da linha não são idênticos.
+- Criança **sem data de nascimento** ganhou opção PRÓPRIA no seletor. Antes ela
+  desaparecia em silêncio de qualquer faixa — e é justamente a que a equipe precisa
+  achar pra completar o cadastro.
+- Segue 100% client-side (o único param que vai ao servidor é `ativo`).
+
+**2 · O botão de WhatsApp da Apresentação de Crianças agora abre o WhatsApp DE QUEM
+CLICA**, não o inbox institucional. Era `hrefConversa` (→ `/conversas`); virou
+`hrefWhatsapp` (→ `wa.me`), helper NOVO no mesmo `src/lib/conversas.ts`. Decisão do
+Matheus: quem fala com a família é a voluntária, pelo aparelho dela.
+- ⚠️ **Isto é exceção consciente ao padrão da casa**, que é mandar pro inbox
+  interno (`hrefConversa`, usado em Cuidados e afins). Só a Apresentação mudou —
+  não replicar sem pedido, senão a conversa deixa de ficar registrada no
+  /conversas.
+- ⚠️ **`hrefWhatsapp` tem gap conhecido e DOCUMENTADO**: o `55` é condicional (≤11
+  dígitos), então **estrangeiro de 11 dígitos leva 55** — o suíço `41765764538` do
+  lançamento dos grupos vira `5541765764538`. **Nem lista de DDD desambigua**,
+  porque `41` é DDD legítimo de Curitiba; resolver exige guardar o código de país
+  separado na entrada. `src/test/hrefWhatsapp.test.ts` (10 casos) **fixa esse gap
+  num teste** pra que mudá-lo seja consciente, não acidental.
+
+**3 · Voluntário do Kids alcança o gerencial `/kids` dentro da trava de quiosque.**
+`MODULO_TRAVA_PREFIXOS.kids` ganhou `/kids` (antes ficava fora de propósito) + card
+"Indicadores e gestão" no `KidsHub`.
+- ⚠️ **NÃO é mudança de permissão.** O cargo `voluntario-kids` já tinha `kids`
+  nível 3, e `authorizeModule('painel-area', 1)` — o guard dos indicadores — usa
+  `ROUTE_MODULE_MAP['painel-area'] = ['kids','ami','bridge','online','producao']`:
+  **`painel-area` é routeKey, não slug de módulo** (não existe em `modulos`), então
+  quem tem `kids` já passava. O que bloqueava era só a trava de rota.
+- ⚠️ **O card no hub é obrigatório, não enfeite**: a trava esconde o menu inteiro
+  (`AppShell` não renderiza MegaMenu nem MobileNavSheet quando `rotaTravada`), então
+  sem ele o `/kids` fica inalcançável mesmo com permissão. De brinde, conserta o
+  "Voltar ao Kids" do `ApresentacaoCriancas.tsx`, que já apontava pra `/kids` e
+  ricocheteava em conta travada.
+- ⚠️ **NÃO desligar `is_membro_only`** pra resolver isso. Além de derrubar a trava
+  (que exige EXATAMENTE 1 módulo), faria aparecer o menu com **Painel CBRio e
+  Dashboard Semanal**, que `menuAccess.PUBLICO_TODOS` marca como visíveis a
+  qualquer logado. Voluntário do Kids passaria a ver os painéis macro da igreja.
+- ⚠️ Corolário do mesmo mecanismo: **dar um 2º módulo a um cargo de quiosque
+  DESLIGA a trava** (`slugsComAcesso.length === 1`). Quem precisar ampliar acesso
+  de conta travada tem que mexer nos PREFIXOS, não na matriz.
 
 ## Dashboard Semanal · acumulado do ano até hoje × anos anteriores (2026-08-03 · SEM migration)
 
@@ -4099,6 +4242,29 @@ via `window.print` na Brother QL-820NWB default do Windows).
   com a LRS; teste num culto pequeno. Estado/dados: 660 famílias + 894 crianças
   importadas (56% com responsável · resto via auto-cadastro no 1º check-in).
   Diário completo no legado.
+
+## Next · renomear turma pelo lápis (2026-08-03 · SEM migration)
+
+Pedido do Marcos: lápis pra mudar o nome de uma turma do Next. Edição inline no
+título do modal da turma (`TurmaDetalheModal` em `NextTurmas.tsx`): lápis →
+`Input` + Salvar/Cancelar (Enter salva · Esc cancela). Grava por
+`nextApi.turmas.update(id, { nome })` — **o `PATCH /next/turmas/:id` já aceitava
+`nome`** na whitelist `['nome','status','responsavel_id','observacoes']`; só não
+havia caminho na UI (a tela nascia com o nome sugerido `nomeMesAtual()` e ele
+ficava imutável). Sem backend, sem migration, sem endpoint novo.
+
+- Atualização otimista do nome no `det` + `onChanged()` → o card da grade reflete
+  na hora, sem refetch do detalhe inteiro.
+- ⚠️ **O lápis fica SÓ no modal, não no card da grade**: o card é um `<button>`
+  (abre o detalhe) e botão dentro de botão é HTML inválido — o clique no lápis
+  seria capturado pelo card em parte dos navegadores.
+- ⚠️ **Não mexe em `next_turmas.origem_mes`**, que é a chave real usada pela
+  série derivada da view unificada (`serie_chave`/`edicao_rotulo`) e pelo
+  `origem_mes_key` do espelho de matrícula. Renomear é rótulo de exibição; a
+  identidade da turma segue sendo `origem_mes`. Não "melhorar" isso derivando
+  `origem_mes` do nome novo — o UNIQUE dela quebraria as turmas "/02" do mesmo mês.
+- Sem gate de permissão próprio, igual a Encerrar/Reabrir que já existiam ali (a
+  rota é `authenticate` + `ModuleGuard` do módulo `next` na tela).
 
 ## ⚠️ Next · backfill de 13/05, contagem dupla e identidades (2026-07-29)
 

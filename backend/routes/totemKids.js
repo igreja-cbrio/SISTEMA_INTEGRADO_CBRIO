@@ -144,6 +144,37 @@ function cpfValido(cpf) {
   return dig(d.slice(0, 9), 10) === +d[9] && dig(d.slice(0, 10), 11) === +d[10];
 }
 
+// Lê TODAS as crianças que casam com o filtro, respeitando o cap de 1000 do
+// PostgREST (que é server-side e trunca em SILÊNCIO).
+// ⚠️ Motivo real: em 03/08 havia 1.023 crianças ativas com data de nascimento, e o
+// `/dashboard` lia com `.range(0, 999)` — 23 crianças simplesmente não entravam na
+// lista de aniversariantes da semana, sem nenhum sinal.
+async function fetchCriancasPaginado(select, aplicarFiltros) {
+  const PAGINA = 1000;
+  const tudo = [];
+  for (let offset = 0; ; offset += PAGINA) {
+    let q = supabase.from('kids_criancas').select(select);
+    q = aplicarFiltros(q);
+    const { data, error } = await q.order('nome').range(offset, offset + PAGINA - 1);
+    if (error) throw error;
+    if (!data || !data.length) break;
+    tudo.push(...data);
+    if (data.length < PAGINA) break;
+  }
+  return tudo;
+}
+
+// Sala pela idade em meses, a partir de um catálogo JÁ carregado — mesma régua do
+// `sugerirSala` (min <= meses <= max, primeira por `ordem`), mas sem uma consulta
+// por criança. ⚠️ As faixas têm BURACOS (Berçário acaba em 21 meses e Maternal
+// começa em 24), então devolver null é resultado NORMAL, não erro: quem chama tem
+// que ter um grupo "sem sala".
+function salaDaIdade(salas, idadeMeses) {
+  if (idadeMeses == null) return null;
+  return (salas || []).find(s =>
+    Number(s.faixa_etaria_min_meses) <= idadeMeses && Number(s.faixa_etaria_max_meses) >= idadeMeses) || null;
+}
+
 // Sala sugerida pra idade em meses
 async function sugerirSala(idadeMeses) {
   if (idadeMeses == null) return null;
@@ -2177,9 +2208,10 @@ router.get('/dashboard', authorizeModule('kids', 1), async (req, res) => {
       .select('id, crianca_nome, solicitante_nome, solicitante_parentesco, created_at')
       .eq('status', 'pendente').is('deleted_at', null)
       .order('created_at', { ascending: false }).limit(8);
-    const { data: kids } = await supabase.from('kids_criancas')
-      .select('id, nome, data_nascimento, foto_url')
-      .eq('ativo', true).is('deleted_at', null).not('data_nascimento', 'is', null).range(0, 999);
+    // ⚠️ Era `.range(0, 999)` e a base passou de 1000 (1.023 ativas com nascimento
+    // em 03/08): 23 crianças ficavam de fora da lista da semana, em silêncio.
+    const kids = await fetchCriancasPaginado('id, nome, data_nascimento, foto_url', q => q
+      .eq('ativo', true).is('deleted_at', null).not('data_nascimento', 'is', null));
     const hoje = new Date();
     const dias = [];
     for (let i = 0; i < 7; i++) {
@@ -2597,11 +2629,33 @@ router.get('/ausentes', authorizeModule('kids', 1), async (req, res) => {
     if (error) throw error;
     const ids = (ausentes || []).map(a => a.crianca_id);
     let respPorCrianca = {};
+    // Idade e sexo NÃO vêm da fn_kids_ausentes_consecutivos (ela devolve só
+    // crianca_id/nome/ultima_presenca/cultos_perdidos) — enriquecemos aqui, do
+    // mesmo jeito que já era feito com os responsáveis.
+    let dadosPorCrianca = {};
+    // "Contatado" reusa kids_atendimentos tipo='contato' (a ficha da criança já
+    // registra contato assim) — sem coluna nem tabela nova. Só conta contato
+    // FEITO DEPOIS da última presença: um telefonema de três meses atrás não
+    // resolve a ausência de agora.
+    let contatoPorCrianca = {};
     if (ids.length) {
-      const { data: resps } = await supabase
-        .from('kids_responsaveis')
-        .select('crianca_id, parentesco, autorizado_buscar, membro:mem_membros(nome, telefone)')
-        .in('crianca_id', ids);
+      const [{ data: resps }, { data: cris }, { data: contatos }] = await Promise.all([
+        supabase
+          .from('kids_responsaveis')
+          .select('crianca_id, parentesco, autorizado_buscar, membro:mem_membros(nome, telefone)')
+          .in('crianca_id', ids),
+        supabase
+          .from('kids_criancas')
+          .select('id, data_nascimento, sexo')
+          .in('id', ids),
+        supabase
+          .from('kids_atendimentos')
+          .select('crianca_id, data, registrado_por_nome')
+          .eq('tipo', 'contato')
+          .is('deleted_at', null)
+          .in('crianca_id', ids)
+          .order('data', { ascending: false }),
+      ]);
       for (const r of resps || []) {
         (respPorCrianca[r.crianca_id] = respPorCrianca[r.crianca_id] || []).push({
           nome: r.membro?.nome || null,
@@ -2610,14 +2664,159 @@ router.get('/ausentes', authorizeModule('kids', 1), async (req, res) => {
           autorizado_buscar: r.autorizado_buscar || false,
         });
       }
+      for (const c of cris || []) dadosPorCrianca[c.id] = c;
+      // Ordenado por data desc → o primeiro de cada criança é o contato mais recente
+      for (const ct of contatos || []) {
+        if (!contatoPorCrianca[ct.crianca_id]) contatoPorCrianca[ct.crianca_id] = ct;
+      }
     }
-    res.json((ausentes || []).map(a => ({
-      ...a,
-      responsaveis: respPorCrianca[a.crianca_id] || [],
-    })));
+    res.json((ausentes || []).map(a => {
+      const c = dadosPorCrianca[a.crianca_id] || {};
+      const meses = calcIdadeMeses(c.data_nascimento);
+      const ct = contatoPorCrianca[a.crianca_id];
+      // Contato só vale se for igual ou posterior à última presença. Sem última
+      // presença registrada, qualquer contato conta.
+      const contatoValido = !!ct && (!a.ultima_presenca || String(ct.data) >= String(a.ultima_presenca));
+      return {
+        ...a,
+        data_nascimento: c.data_nascimento || null,
+        sexo: c.sexo || null,
+        idade_meses: meses,
+        idade_label: formatIdade(meses),
+        contatado: contatoValido,
+        contatado_em: contatoValido ? ct.data : null,
+        contatado_por: contatoValido ? (ct.registrado_por_nome || null) : null,
+        responsaveis: respPorCrianca[a.crianca_id] || [],
+      };
+    }));
   } catch (e) {
     console.error('[totemKids/ausentes]', e.message);
     res.status(500).json({ error: 'Erro ao listar crianças faltantes' });
+  }
+});
+
+// GET /api/totem-kids/aniversariantes?mes=1..12 · lista do MÊS inteiro, pra impressão.
+// Devolve por criança: idade atual, idade que COMPLETA no mês, sala pela faixa de
+// idade e o contato dos responsáveis (nome + telefone), ordenada por dia.
+router.get('/aniversariantes', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const hoje = new Date();
+    const mes = Math.min(12, Math.max(1, Number(req.query.mes) || (hoje.getMonth() + 1)));
+    const mm = String(mes).padStart(2, '0');
+
+    const [kids, { data: salas }] = await Promise.all([
+      fetchCriancasPaginado('id, nome, data_nascimento, sexo', q => q
+        .eq('ativo', true).is('deleted_at', null).not('data_nascimento', 'is', null)),
+      supabase.from('kids_salas')
+        .select('id, nome, faixa_etaria_min_meses, faixa_etaria_max_meses, ordem')
+        .eq('ativo', true).order('ordem'),
+    ]);
+
+    const doMes = (kids || []).filter(k => String(k.data_nascimento).slice(5, 7) === mm);
+
+    // Contato dos responsáveis · mãe → pai → demais (é o que vai pro papel).
+    // .in() em lotes de 200: URL do PostgREST estoura com lista grande.
+    const porCrianca = {};
+    const ids = doMes.map(k => k.id);
+    for (let i = 0; i < ids.length; i += 200) {
+      const lote = ids.slice(i, i + 200);
+      const { data: resps } = await supabase.from('kids_responsaveis')
+        .select('crianca_id, parentesco, membro:mem_membros(nome, telefone)')
+        .in('crianca_id', lote);
+      for (const r of resps || []) {
+        (porCrianca[r.crianca_id] = porCrianca[r.crianca_id] || []).push({
+          nome: r.membro?.nome || null,
+          telefone: r.membro?.telefone || null,
+          parentesco: r.parentesco || null,
+        });
+      }
+    }
+    const PESO = { mae: 0, pai: 1 };
+    for (const k of Object.keys(porCrianca)) {
+      porCrianca[k].sort((a, b) => (PESO[a.parentesco] ?? 9) - (PESO[b.parentesco] ?? 9));
+    }
+
+    const lista = doMes.map(k => {
+      const meses = calcIdadeMeses(k.data_nascimento);
+      const sala = salaDaIdade(salas, meses);
+      const dia = Number(String(k.data_nascimento).slice(8, 10));
+      // Idade que COMPLETA neste aniversário. Se o dia já passou no ano corrente,
+      // a próxima vez que ela faz aniversário é no ano que vem — é isso que a
+      // equipe precisa escrever no bolo, não a idade de hoje.
+      const anoBase = (mes < hoje.getMonth() + 1 || (mes === hoje.getMonth() + 1 && dia < hoje.getDate()))
+        ? hoje.getFullYear() + 1
+        : hoje.getFullYear();
+      return {
+        id: k.id,
+        nome: k.nome,
+        sexo: k.sexo || null,
+        data_nascimento: k.data_nascimento,
+        dia,
+        idade_meses: meses,
+        idade_label: formatIdade(meses),
+        completa_anos: anoBase - Number(String(k.data_nascimento).slice(0, 4)),
+        sala_id: sala?.id || null,
+        sala_nome: sala?.nome || null,
+        sala_ordem: sala?.ordem ?? 999,
+        responsaveis: porCrianca[k.id] || [],
+      };
+    }).sort((a, b) => a.dia - b.dia || a.nome.localeCompare(b.nome, 'pt-BR'));
+
+    res.json({ mes, total: lista.length, aniversariantes: lista });
+  } catch (e) {
+    console.error('[totemKids/aniversariantes]', e.message);
+    res.status(500).json({ error: 'Erro ao listar aniversariantes do mês' });
+  }
+});
+
+// POST/DELETE /api/totem-kids/ausentes/:criancaId/contato · marca/desmarca
+// "família contatada" na lista de faltantes.
+//
+// ⚠️ Grava em `kids_atendimentos` tipo='contato' de propósito — é a MESMA tabela
+// que a ficha da criança usa. Coluna `contatada` em kids_criancas seria um 2º
+// lugar guardando o mesmo fato, e a ficha deixaria de mostrar o contato feito
+// aqui. Efeito colateral desejado: o contato aparece no histórico da criança.
+router.post('/ausentes/:criancaId/contato', authorizeModule('kids', 2), async (req, res) => {
+  try {
+    const hoje = new Date().toISOString().slice(0, 10);
+    const descricao = String(req.body?.descricao || '').trim()
+      || 'Família contatada sobre as faltas seguidas (marcado na lista de faltantes).';
+    const { data: criado, error } = await supabase
+      .from('kids_atendimentos')
+      .insert({
+        crianca_id: req.params.criancaId,
+        tipo: 'contato',
+        descricao: descricao.slice(0, 2000),
+        data: hoje,
+        registrado_por: req.user?.userId || null,
+        registrado_por_nome: req.user?.name || req.user?.email || null,
+      })
+      .select('id, data, registrado_por_nome').single();
+    if (error) throw error;
+    res.status(201).json({ ok: true, contatado: true, contatado_em: criado.data, contatado_por: criado.registrado_por_nome });
+  } catch (e) {
+    console.error('[totemKids/ausentes/contato]', e.message);
+    res.status(500).json({ error: 'Erro ao marcar contato' });
+  }
+});
+
+// Desmarcar = soft-delete dos contatos DESTA ausência (a partir da última
+// presença). Não apaga histórico antigo — desfaz só o clique errado de agora.
+router.delete('/ausentes/:criancaId/contato', authorizeModule('kids', 2), async (req, res) => {
+  try {
+    const desde = /^\d{4}-\d{2}-\d{2}$/.test(req.query?.desde || '') ? req.query.desde : null;
+    let q = supabase.from('kids_atendimentos')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('crianca_id', req.params.criancaId)
+      .eq('tipo', 'contato')
+      .is('deleted_at', null);
+    if (desde) q = q.gte('data', desde);
+    const { error } = await q;
+    if (error) throw error;
+    res.json({ ok: true, contatado: false });
+  } catch (e) {
+    console.error('[totemKids/ausentes/contato del]', e.message);
+    res.status(500).json({ error: 'Erro ao desmarcar contato' });
   }
 });
 
