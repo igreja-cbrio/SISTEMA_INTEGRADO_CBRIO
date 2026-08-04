@@ -497,6 +497,56 @@ para ~4 pessoas** e o total real dele (12) fica partido.
     sucesso quando ela roda, então derrubar a resposta ali esconderia o trabalho
     feito.
 
+## ⚠️ Entradas · ação de fila NÃO refaz a busca (2026-08-04 · SEM migration)
+
+Reclamação do Matheus: "quando faço qualquer ação, demora pra atualizar, quero
+algo fluido". Eram **~10s por clique** em Possíveis duplicidades.
+
+**Causa:** cada ação (fundir / não é a mesma pessoa / adiar / reativar) chamava
+`invalidateQueries` em `['next-batismo','duplicados']`, e o `GET /duplicados`
+**RECALCULA a fila inteira** — pagina a base viva, forma candidatos por CPF,
+telefone, e-mail, nascimento e blocos de nome, e aplica a `duplicidadePolicy`.
+Pior: as ações de resolução invalidam também o **cache de 10 min do backend**,
+então nem o `/resumo` voltava barato (ele recomputa `dup` também).
+
+- **A régua:** a ação já foi confirmada pelo servidor — o par só precisa **SAIR da
+  lista** (`setQueryData`) e o contador descer 1. **Nenhum refetch.** Recálculo de
+  verdade continua no botão "Recarregar", que é explícito. De ~10s pra ~300ms.
+- ⚠️ **Fundir remove MAIS de um par**: fundir A em B faz A deixar de existir, então
+  todo outro par que cite A ficou órfão e sai junto — clicar num deles daria erro
+  no servidor. Por isso `removerPares` filtra por `merge_ids`, não pelo `par_id`.
+- ⚠️ **Fila oposta usa `refetchType: 'none'`**: marcar stale sem buscar. Recalcular
+  a fila que a pessoa não está vendo pagaria exatamente os 10s que estamos
+  evitando; ela recomputa quando a aba abrir.
+- No `IdentidadePendenciasPanel` a mesma régua vale, com uma exceção: quando o
+  `confirmarCpf` devolve conflito o servidor **abre uma pendência nova**, que a
+  lista local não tem — só nesse caminho o refetch é necessário.
+- **Filtro por CPF na fila de identidade** (pedido do mesmo dia): são chips
+  separados de propósito, porque a distinção é de RISCO — `origem_id` começando
+  com `cpf:` significa que a INSCRIÇÃO trouxe CPF (chave mais forte, ligar é
+  seguro · 16 casos em 04/08); "só no cadastro" (~108) casou por telefone+nome, e
+  telefone é compartilhado em família. Juntar os dois num "tem CPF" esconderia
+  justamente a diferença que decide se pode ligar sem conferir.
+
+## ⚠️ Inscrições · `null` em coluna NOT NULL derruba o UPDATE inteiro (2026-08-04)
+
+A Ariel não conseguia salvar edição de evento. Erro real no runtime da Vercel:
+`null value in column "pagamento_expira_horas" violates not-null constraint`.
+O form mandava `null` nesse campo sempre que o pagamento estava DESLIGADO — logo
+**a edição de qualquer evento sem pagamento falhava com 500**, e levava embora
+todos os outros campos que a pessoa havia editado (UPDATE é atômico).
+
+- **A régua:** em coluna NOT NULL, `null` do cliente significa "não informado",
+  **nunca "apagar"** — apagar é impossível. `CAMPOS_EVENTO_NAO_NULO` (6 colunas:
+  `tem_sorteio`, `premios`, `checkin_ativo`, `pagamento_ativo`,
+  `pagamento_expira_horas`, `juros_repassados`) descarta o null no POST e no PUT.
+  Coluna nullable segue aceitando null, porque limpar é edição legítima.
+- Lista conferida no catálogo (`is_nullable='NO'`), não decorada. Coluna NOT NULL
+  nova entrando na whitelist tem que entrar nesse Set também.
+- ⚠️ Diagnóstico veio do `get_runtime_errors` da Vercel, não de tentativa e erro:
+  o handler devolve 500 genérico ("Erro ao atualizar evento") e o motivo real só
+  existe no log. Para bug de save relatado por usuário, olhar lá primeiro.
+
 ## ⚠️ LEI · trocar a KEY de um campo de formulário ORFANA resposta (2026-08-03)
 
 Incidente: o Matheus abriu uma inscrição do Patrocinadores do Celebra e o modal
