@@ -2336,6 +2336,38 @@ Sai pela fila `whatsapp_envios` (retry/backoff), como todos os outros.
 `pages/public/GrupoConfiraLista.jsx` + rota `/g/c/:token` · `api.js`
 (`grupos.confira.*` + `gruposPublic.confiraPorToken/responderConfira`).
 
+### Confira v2 · 4 categorias + pedidos pendentes (2026-08-04 · SEM migration)
+
+Decisão do Marcos (a Naná preferiu o link WhatsApp ao app): a tela `/g/c/`
+passou a separar o roster em **4 situações** — **Liderança** 🔒 · **Inscritos
+nesta temporada** 🔒 (vínculo `created_at >= data_inicio` da temporada com
+`inscricoes_abertas`) · **Renovações confirmadas** 🔒 (vínculo com linha em
+`inscricao_consentimentos` porta `grupos` e `ref_id` = id do VÍNCULO — só a
+renovação grava assim; é a derivação-remendo do handoff, o campo "confirmado
+pra temporada X" segue pendência estrutural) · **Sem confirmação** (o ÚNICO
+removível pela tela). Travar inscrito/renovado protege a evidência de quem
+acabou de entrar/renovar — **o POST re-deriva as categorias e blinda no
+SERVIDOR** (payload é do cliente), então bundle antigo aberto não fura.
+
+- **+ Aguardando aprovação**: os `mem_grupo_pedidos` pendentes do grupo entram
+  na tela; desmarcar = **DEVOLVE pra triagem** (`status='devolvido'` · lei de
+  14/07 · motivo fixo · `decidido_por_nome = "<líder> (confira a lista)"` ·
+  `registrarEventoPedido('recusado_lider', {origem:'confira_lista',
+  conferencia_id})` awaited). O ✓ NÃO aprova (aprovação segue no link
+  individual /g/a/ — evita aprovação em massa acidental + gasto de tier).
+  Devolução é **one-way** pela tela (reedição não re-pendentifica — a triagem
+  pode já ter realocado; o GET lista os já-devolvidos read-only via evento
+  `detalhe->>conferencia_id`). Guardas no UPDATE: `.eq(grupo_id)` +
+  `.eq(status,'pendente')` (ids alheios no payload não fazem nada).
+- Notificação à coordenação ganhou a contagem de devolvidos e aponta
+  `?tab=entrada` quando houve devolução. Resposta do POST +=
+  `pedidos_devolvidos`. GET += `temporada` (label), `pedidos_pendentes`,
+  `pedidos_devolvidos`.
+- ⚠️ Sem temporada aberta a categoria 'inscrito' não existe e o fluxo segue
+  funcionando (desenho original). Template Meta continua o MESMO
+  (`grupos_confira_lista` aprovado 03/08 — 1 template pras 2 ocasiões, o
+  contexto vive na tela; o {{3}} segue contando pessoas do roster).
+
 ⚠️ **Aplicar a migration antes do merge.** O fluxo NOVO tolera a ausência dela
 (`schemaAusente()` → **503 com aviso claro** no público, `{disponivel:false, aviso}`
 no painel), e **nenhum fluxo existente lê a tabela/coluna nova** — frequência e
