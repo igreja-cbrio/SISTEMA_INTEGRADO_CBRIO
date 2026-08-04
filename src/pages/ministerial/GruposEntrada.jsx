@@ -260,7 +260,9 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
   useEffect(() => {
     if (!lideresAberto || confPainel) return;
     let vivo = true;
-    api.grupos.confira.painel()
+    // ⚠️ `api` AQUI já É o namespace grupos (import { grupos as api }) — chamar
+    // api.grupos.confira quebrou em prod ("reading 'confira'") no 1º clique.
+    api.confira.painel()
       .then(r => { if (vivo) setConfPainel(r || { disponivel: false }); })
       .catch(() => { if (vivo) setConfPainel({ disponivel: false }); });
     return () => { vivo = false; };
