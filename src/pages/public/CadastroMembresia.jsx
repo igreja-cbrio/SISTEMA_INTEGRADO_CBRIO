@@ -182,6 +182,14 @@ const ESTADO_CIVIL_OPTS = [
   { value: 'uniao_estavel', label: 'União estável' },
 ];
 
+// ⚠️ Sexo: só `masculino|feminino`, NUNCA "outro" — é a lei do Contrato de
+// Inscrição desta casa (a opção "Outro" foi removida das outras portas de
+// propósito, porque a coluna do banco e os KPIs por sexo não a aceitam).
+const SEXO_OPTS = [
+  { value: 'masculino', label: 'Masculino' },
+  { value: 'feminino', label: 'Feminino' },
+];
+
 // Vínculo AUTODECLARADO do censo. ⚠️ Os `value` espelham o CHECK da migration
 // 20260803160000 e são identificadores persistidos — NÃO acentuar (a regra de
 // acentuação vale pro `label`, que é o texto exibido).
@@ -267,6 +275,12 @@ export default function CadastroMembresia() {
   // dividir em duas etapas), com duas diferenças: marca a submissão como censo
   // e pede o vínculo declarado.
   const ehCenso = searchParams.get('censo') === '1';
+  // ── Link PESSOAL do convite do censo (?t=<token>) ──
+  // Resolve a pergunta "como o sistema acha a pessoa se ela não tem CPF?": não
+  // acha — o link foi emitido pra ela, com o membro_id assinado dentro. O
+  // formulário abre PREENCHIDO e marca o que falta. Sem token, segue cadastro
+  // normal (é o caso do QR impresso, que não sabe quem vai escanear).
+  const censoToken = (searchParams.get('t') || '').trim();
   // "Completar cadastro" vindo do totem já traz CPF + nascimento (a pessoa
   // digitou no totem e não achamos o cadastro) — pré-preenche pra não redigitar.
   const prefCpf = fromTotem ? soDigitos(searchParams.get('cpf')) : '';
@@ -276,6 +290,12 @@ export default function CadastroMembresia() {
   const [form, setForm] = useState({
     nome: '', sobrenome: '', cpf: prefCpf ? mascaraCpf(prefCpf) : '', email: '', confirmar_email: '', telefone: '',
     senha: '', confirmar_senha: '',
+    // ⚠️ `genero` passou a ser coletado aqui em 04/08. Estava faltando: o
+    // Contrato de Inscrição exige sexo em toda porta de pessoa, e sem ele um
+    // cadastro novo por este formulário nunca ficava completo — então nunca
+    // entrava na aprovação em massa e voltava pra fila humana pra sempre.
+    // Canônico `masculino|feminino`, NUNCA "outro" (lei do contrato).
+    genero: '',
     data_nascimento: prefNasc || '', estado_civil: '', bairro: '',
     cep: '', profissao: '', como_conheceu: '',
     website: '', // honeypot
@@ -299,6 +319,56 @@ export default function CadastroMembresia() {
   // pra quem só confirmou os próprios dados.
   const [censoAtualizado, setCensoAtualizado] = useState(false);
   const [walletDialogOpen, setWalletDialogOpen] = useState(false);
+
+  // ── Modo ATUALIZAÇÃO (link pessoal do convite) ──
+  // `faltando` vem do servidor pela MESMA régua da fila de aprovação
+  // (utils/prontidaoCadastro.js), então a pessoa completa exatamente o que a
+  // equipe cobraria dela depois — não uma lista inventada aqui.
+  const [modoAtualizacao, setModoAtualizacao] = useState(false);
+  const [faltando, setFaltando] = useState([]);
+  const [carregandoMeusDados, setCarregandoMeusDados] = useState(!!censoToken);
+
+  // Marca no PRÓPRIO rótulo o que está faltando (o pedido era "aparecer marcado
+  // os campos que estão incompletos"). Só no modo atualização: num cadastro novo
+  // tudo está vazio e marcar tudo não informa nada.
+  const rotulo = useCallback((texto, chave) => (
+    modoAtualizacao && faltando.includes(chave) ? `${texto} · falta preencher` : texto
+  ), [modoAtualizacao, faltando]);
+
+  useEffect(() => {
+    if (!censoToken) return;
+    let vivo = true;
+    (async () => {
+      try {
+        const r = await cadastroPublico.censoMeusDados(censoToken);
+        if (!vivo || !r?.ok) return;
+        const d = r.dados || {};
+        // Nome vem inteiro do banco e o formulário tem dois campos: 1º token vai
+        // pra `nome`, o resto pra `sobrenome` (mesma régua do split do servidor).
+        const partes = String(d.nome || '').trim().split(/\s+/);
+        setForm((f) => ({
+          ...f,
+          nome: partes[0] || '',
+          sobrenome: partes.slice(1).join(' '),
+          cpf: d.cpf ? mascaraCpf(d.cpf) : f.cpf,
+          email: d.email || '',
+          confirmar_email: d.email || '',
+          telefone: d.telefone ? mascaraTelefone(d.telefone) : '',
+          data_nascimento: d.data_nascimento || '',
+          genero: d.genero || '',
+          estado_civil: d.estado_civil || '',
+          cep: d.cep || '',
+          profissao: d.profissao || '',
+        }));
+        if (d.bairro) setBairroSel(d.bairro);
+        if (d.foto_url) setFotoPreview(d.foto_url);
+        setFaltando(Array.isArray(r.faltando) ? r.faltando : []);
+        setModoAtualizacao(true);
+      } catch { /* link ruim cai no cadastro normal, sem tela de erro */ }
+      finally { if (vivo) setCarregandoMeusDados(false); }
+    })();
+    return () => { vivo = false; };
+  }, [censoToken]);
 
   // ── Loop com o totem (from=totem) ──
   // O QR do membro sai NA HORA (o form já tem CPF + nascimento) e a volta pro
@@ -576,6 +646,10 @@ export default function CadastroMembresia() {
         whatsapp_optin: aceitaComunicacao,
         converteu_na_cbrio: converteuCbrio || undefined,
         censo: ehCenso || undefined,
+        // Identifica a pessoa no servidor sem depender de CPF (chave FORTE no
+        // censoReconciliar) — é o que faz a submissão ATUALIZAR o cadastro dela
+        // em vez de virar cadastro novo.
+        censo_token: censoToken || undefined,
         vinculo_declarado: (ehCenso && vinculoDeclarado) || undefined,
         consentimento_texto: aceitaComunicacao
           ? `${TEXTO_CONSENTIMENTO}\n\n${TEXTO_COMUNICACAO}`
@@ -665,11 +739,33 @@ export default function CadastroMembresia() {
             alt="CBRio"
             style={{ width: 72, height: 72, marginBottom: 12, display: 'inline-block' }}
           />
-          <h1 style={{ fontSize: 24, fontWeight: 800, margin: 0, letterSpacing: -0.5, background: 'linear-gradient(90deg, #00B39D, #00d9bd)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' }}>Cadastro de Membresia</h1>
+          <h1 style={{ fontSize: 24, fontWeight: 800, margin: 0, letterSpacing: -0.5, background: 'linear-gradient(90deg, #00B39D, #00d9bd)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' }}>
+            {modoAtualizacao ? 'Atualize seu cadastro' : 'Cadastro de Membresia'}
+          </h1>
           <p style={{ fontSize: 13, color: C.text3, marginTop: 6, lineHeight: 1.5 }}>
-            Preencha seus dados para que nossa equipe de acolhimento entre em contato.
+            {modoAtualizacao
+              ? (faltando.length
+                // Diz QUANTOS campos faltam, não quais: a lista completa está
+                // marcada campo a campo no formulário, e repetir aqui só
+                // assusta ("faltam 5 coisas") antes de a pessoa ver que é rápido.
+                ? 'Confira o que já temos e complete o que está faltando — leva 2 minutos.'
+                : 'Seus dados já estão completos. Confira e corrija o que quiser.')
+              : 'Preencha seus dados para que nossa equipe de acolhimento entre em contato.'}
           </p>
         </div>
+
+        {/* Enquanto o link pessoal carrega, não mostrar o formulário vazio: a
+            pessoa começaria a digitar e o prefill sobrescreveria o que ela
+            escreveu. */}
+        {carregandoMeusDados && (
+          <div style={{
+            padding: '28px 20px', textAlign: 'center', fontSize: 13,
+            color: C.text3, background: '#00B39D0d',
+            border: `1px solid ${C.cardBorder}`, borderRadius: 14, marginBottom: 16,
+          }}>
+            Carregando seus dados…
+          </div>
+        )}
 
         {sent ? (
           <div style={{
@@ -796,7 +892,7 @@ export default function CadastroMembresia() {
               </button>
             </div>
           </div>
-        ) : (
+        ) : carregandoMeusDados ? null : (
           <>
             {error && (
               <div style={{
@@ -873,12 +969,12 @@ export default function CadastroMembresia() {
                   </div>
 
                   <Row>
-                    <Field id="nome" label="Nome" value={form.nome} onChange={set('nome')} required autoComplete="given-name" maxLength={100} />
-                    <Field id="sobrenome" label="Sobrenome" value={form.sobrenome} onChange={set('sobrenome')} required autoComplete="family-name" maxLength={100} />
+                    <Field id="nome" label={rotulo('Nome', 'nome')} value={form.nome} onChange={set('nome')} required autoComplete="given-name" maxLength={100} />
+                    <Field id="sobrenome" label={rotulo('Sobrenome', 'nome')} value={form.sobrenome} onChange={set('sobrenome')} required autoComplete="family-name" maxLength={100} />
                   </Row>
                   <Row>
-                    <Field id="cpf" label="CPF" value={form.cpf} onChange={setMasked('cpf', mascaraCpf)} required inputMode="numeric" maxLength={14} />
-                    <Field id="telefone" label="Celular / WhatsApp" value={form.telefone} onChange={setMasked('telefone', mascaraTelefone)} required autoComplete="tel" inputMode="tel" maxLength={16} />
+                    <Field id="cpf" label={rotulo('CPF', 'cpf')} value={form.cpf} onChange={setMasked('cpf', mascaraCpf)} required inputMode="numeric" maxLength={14} />
+                    <Field id="telefone" label={rotulo('Celular / WhatsApp', 'telefone')} value={form.telefone} onChange={setMasked('telefone', mascaraTelefone)} required autoComplete="tel" inputMode="tel" maxLength={16} />
                   </Row>
                   {cpfChecando && (
                     <div style={{ marginTop: -10, marginBottom: 14, fontSize: 12, color: 'var(--cbrio-text3)' }}>
@@ -1021,20 +1117,32 @@ export default function CadastroMembresia() {
                   <Row>
                     <div style={{ marginBottom: 20, flex: 1 }}>
                       <label style={{ display: 'block', fontSize: 11, color: 'var(--cbrio-text3)', marginBottom: 6 }}>
-                        Data de nascimento <span style={{ color: '#ef4444' }}>*</span>
+                        {rotulo('Data de nascimento', 'nascimento')} <span style={{ color: '#ef4444' }}>*</span>
                       </label>
                       <BirthDatePicker value={form.data_nascimento} onChange={(v) => setForm((f) => ({ ...f, data_nascimento: v }))} />
                     </div>
                     <Field
                       id="email"
                       type="email"
-                      label="E-mail *"
+                      label={`${rotulo('E-mail', 'email')} *`}
                       value={form.email}
                       onChange={set('email')}
                       autoComplete="email"
                       maxLength={200}
                       required
                     />
+                  </Row>
+
+                  <Row>
+                    <SelectField
+                      id="genero"
+                      label={`${rotulo('Sexo', 'genero')} *`}
+                      value={form.genero}
+                      onChange={set('genero')}
+                      options={SEXO_OPTS}
+                      required
+                    />
+                    <div style={{ flex: 1 }} />
                   </Row>
 
                   {fromDevocional && (
@@ -1159,25 +1267,11 @@ export default function CadastroMembresia() {
               )}
             </MultistepFormShell>
 
-            {/* "Já fiz meu cadastro e quero meu QR de membro" */}
-            <div style={{
-              marginTop: 20, padding: '16px 0 0',
-              borderTop: `1px solid ${C.cardBorder}`,
-              textAlign: 'center',
-            }}>
-              <button
-                type="button"
-                onClick={() => setWalletDialogOpen(true)}
-                style={{
-                  background: 'transparent', border: 'none',
-                  color: '#00B39D', fontSize: 13, fontWeight: 600,
-                  cursor: 'pointer', textDecoration: 'underline',
-                  padding: 4,
-                }}
-              >
-                Já fiz meu cadastro e quero meu QR de membro
-              </button>
-            </div>
+            {/* ⚠️ O atalho "Já fiz meu cadastro e quero meu QR de membro" SAIU
+                daqui (decisão do Matheus · 04/08): a carteirinha/QR de membro
+                vive no APP de membros. Numa página cuja tarefa é completar
+                cadastro, o atalho competia com a tarefa. O `MemberWalletDialog`
+                e as rotas /wallet/* seguem existindo (o app usa) — não apagar. */}
           </>
         )}
       </div>

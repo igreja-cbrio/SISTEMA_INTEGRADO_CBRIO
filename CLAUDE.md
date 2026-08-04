@@ -501,6 +501,95 @@ do dia), reenvio é **rodada nova**, e o que ficou de fora é **declarado**
   e-mail funciona sozinho**. ⚠️ Não editar template aprovado: se precisar mudar
   texto, criar `_v2` (edição volta pra revisão da Meta e o envio para).
 
+## ⚠️ Censo · o link do convite é PESSOAL, e é isso que dispensa o CPF (2026-08-04 · SEM migration)
+
+Furo achado pelo Matheus horas depois do disparo entrar: *"se estou disparando mensagens para a
+pessoa pedindo para ela completar o cadastro dela, como o sistema vai achar ela se ela não tiver
+CPF cadastrado???"*. Não vai — e o link genérico `?censo=1` abria um **formulário em BRANCO de
+cadastro novo**. Pedir "atualize seus dados" e entregar folha vazia não atualiza nada.
+
+**A resposta: o sistema não precisa achar ninguém.** Quem manda a mensagem é ele, e ele já sabe
+para quem está mandando. O link vai **pessoal**: `?censo=1&t=<token assinado com o membro_id>`.
+Cobre as ~2.000 pessoas sem CPF — que são exatamente o público da campanha — com zero busca.
+
+- **`backend/utils/censoToken.js`** — HMAC-SHA256 do `membro_id`, espelho da técnica do
+  `inscricaoComprovante.js`. Segredo `CENSO_TOKEN_SECRET` com fallback no `CRON_SECRET`,
+  **fail-closed**, **nunca literal** (lição do `MEM_QR_SALT`). **Namespace próprio**
+  (`censo-atualizacao:`) — sem ele, um token do comprovante de inscrição (mesmo segredo!) seria
+  aceito aqui e quem tem comprovante leria cadastro de membro. Há teste específico pra isso.
+- **`GET /api/public/membresia/censo/meus-dados?t=`** é o **ÚNICO** endpoint público desta rota
+  que devolve dado de pessoa. ⚠️ **Pode, porque a prova é o token ter chegado no contato DELA.**
+  Os `lookup-cpf`/`lookup-nome-telefone` continuam devolvendo só primeiro nome + iniciais +
+  telefone mascarado, e **é assim que tem que ficar**: CPF vaza e se compra, então CPF não é
+  prova. ⚠️ **NUNCA aceitar `membro_id` cru na query** — seria enumerável (UUID vaza em log, em
+  print, no histórico do navegador) e viraria extrator da base. Resposta de recusa é **neutra**:
+  não distingue token malformado de segredo ausente de pessoa inexistente.
+- **`token_censo` é chave FORTE no `censoReconciliar`** (entrou em `CHAVES_FORTES`, ao lado de
+  `cpf`). Motivo diferente do CPF: não é dado que a pessoa digitou (e que poderia ser de outra
+  pessoa da família) — é o link que o sistema emitiu e entregou. Tratá-lo como fraco jogaria na
+  fila humana justamente o caminho criado pra resolver os cadastros sem CPF, e exigir CPF forte
+  seria **circular** (é o CPF que eles estão vindo buscar).
+- **Modo atualização no formulário**: abre preenchido, com `· falta preencher` **no próprio
+  rótulo** dos campos incompletos (a lista vem do servidor pela MESMA
+  `avaliarProntidao` da fila — a pessoa completa exatamente o que a equipe cobraria depois),
+  tudo editável, foto. ⚠️ O formulário fica **escondido enquanto carrega**: renderizar vazio
+  fazia a pessoa começar a digitar e o prefill sobrescrever o que ela escreveu.
+- ⚠️ **Link ruim NÃO vira tela de erro** — degrada pro cadastro normal. E sem segredo o
+  `montarLinkCenso` devolve o link genérico em vez de falhar: a campanha não para, só perde o
+  preenchimento (a prévia avisa via `link_pessoal: false`).
+- **O atalho "Já fiz meu cadastro e quero meu QR de membro" SAIU do formulário** (decisão dele):
+  a carteirinha vive no app de membros, e numa página cuja tarefa é completar cadastro o atalho
+  competia com a tarefa. `MemberWalletDialog` e as rotas `/wallet/*` **seguem existindo** (o app
+  usa) — não apagar.
+
+### ⚠️ O formulário de membresia não coletava SEXO — e isso travava a fila inteira
+
+Achado ao construir a régua de obrigatórios: os 50 pendentes tinham `genero` preenchido (vêm de
+outra porta), mas **`CadastroMembresia.jsx` nunca perguntou sexo** e o `POST /cadastro` nem
+aceitava o campo. Consequência silenciosa: todo cadastro novo por essa porta nasce sem sexo, logo
+**nunca fica "completo"** pela régua — ficaria na fila humana para sempre, e ninguém saberia por
+quê. Contrato de Inscrição exige sexo em toda porta de pessoa; esta era a que faltava.
+Corrigido nas 3 camadas: campo no form (`masculino|feminino`, **nunca "outro"**), whitelist no
+backend, e `genero` entrou em `CAMPOS_CENSO` do reconciliador — sem isso o dado chegava do censo
+e era **descartado em silêncio**.
+
+## ⚠️ Membresia · aprovação em massa da fila de cadastros (2026-08-04 · SEM migration)
+
+Pedido do Matheus: selecionar alguns ou todos e aprovar de uma vez, *"mas o sistema deve ter uma
+inteligência para ver se a pessoa está com esses dados obrigatórios preenchidos; se caso alguém
+não estiver, não vai aprovar essas pessoas e fica para aprovação manual mesmo"*.
+
+- **`backend/utils/prontidaoCadastro.js`** = régua PURA (testada no gate), espelhando o Contrato
+  de Inscrição: nome completo **sem abreviação**, CPF com DV, telefone alcançável, e-mail,
+  nascimento plausível (`hoje` injetado, parse local), sexo, e `aceita_termos` (a prova legal).
+  Separa **`faltando`** (campo) de **`bloqueios`** (decisão humana). ⚠️ **Não inventar exigência
+  aqui**: se o formulário público aceitou, a fila não pode exigir mais — senão o cadastro entra e
+  nunca sai (foi exatamente o que o sexo ausente causava).
+- **`aprovarCadastroCore()` foi EXTRAÍDO** do handler de 170 linhas, no padrão do
+  `aprovarPedidoCore` dos Grupos; a rota individual virou casca fina. Duas cópias dessa lógica
+  divergiriam, e o que ela faz é **criar pessoa** (matcher canônico, opt-in, histórico).
+- **`POST /cadastros/aprovar-lote`** (teto 200): relê as linhas do banco e **reavalia a prontidão
+  no SERVIDOR** — o payload diz *quais*, nunca *se pode*. ⚠️ **Sequencial de propósito**: cada
+  aprovação passa pelo matcher e pode criar pessoa; em paralelo, dois cadastros da mesma família
+  (telefone compartilhado) correriam no matcher ao mesmo tempo e poderiam gerar a duplicata que
+  a fila de Entradas existe pra limpar.
+- ⚠️ **`duplicado_de_id` preenchido NUNCA entra em lote**, mesmo com todos os dados: ali aprovar
+  é o caminho de ATUALIZAÇÃO, que reaplica o formulário inteiro sobre o cadastro existente —
+  inclusive por cima de valor que a equipe corrigiu depois (mesma razão pela qual o censo bloqueia
+  reaprovar linha `aplicado`). É decisão humana, sempre.
+- ⚠️ **O lote manda UM aviso com o resumo**, não um por pessoa: sem regra configurada o
+  `notificar` cai no fallback de todos os admin/diretor (16), então 50 aprovações gerariam ~800
+  linhas e enterrariam o sino. Lição do censo — aviso é pra trabalho PENDENTE, e lote aprovado é
+  trabalho FEITO.
+- **Não é mais permissivo que o manual**: o que o lote recusa continua aprovável na tela, com a
+  pessoa vendo os dados. Nada fica inalcançável — fica pendente de gente, que era o pedido.
+- Na tela: coluna de checkbox, "Selecionar os N completos", contagem de quantos precisam de
+  aprovação manual, `Falta: CPF válido · sexo` **na linha da pessoa**, e diálogo de resultado com
+  quem ficou de fora e por quê. `GET /cadastros` passou a anexar `prontidao` por linha
+  (informativo — quem decide é o servidor).
+- **Medição de 04/08**: os **50 pendentes estavam 100% completos** (CPF, telefone, e-mail,
+  nascimento, sexo, termos, nome completo, nenhum duplicado) — o lote resolve os 50 num clique.
+
 ## Membresia · limpeza dos nomes que não são pessoa (2026-08-04 · SEM migration)
 
 Pedido do Matheus: *"preciso fazer uma limpa nesses nomes, por exemplo ali que

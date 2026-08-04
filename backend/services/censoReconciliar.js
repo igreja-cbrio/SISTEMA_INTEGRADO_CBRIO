@@ -43,8 +43,11 @@ const {
 //    público é irreversível na prática e o nome é chave de match.
 // ⚠️ `cpf` está FORA porque tem serviço próprio (cpfReconciliar), que trata
 //    conflito de identidade e CPF já pertencente a outro membro.
+// ⚠️ `genero` entrou em 04/08, quando o formulário passou a coletar sexo: sem
+//    ele o campo chegava do censo e era DESCARTADO em silêncio, então a pessoa
+//    respondia e o cadastro continuava incompleto pela régua da fila.
 const CAMPOS_CENSO = [
-  'email', 'telefone', 'data_nascimento', 'estado_civil',
+  'email', 'telefone', 'data_nascimento', 'estado_civil', 'genero',
   'endereco', 'bairro', 'cidade', 'cep', 'profissao',
 ];
 
@@ -104,8 +107,18 @@ function decidirCampos(atual = {}, informado = {}) {
 
 // ── Confiança do vínculo (espelha cpfReconciliar) ────────────────────────────
 // 'cpf' é a única chave que identifica pessoa sozinha (peso 100 no membroMatch).
+//
+// ⚠️ `token_censo` também é FORTE, e por um motivo diferente: não é um dado que
+// a pessoa digitou (e que poderia ser de outra pessoa da família) — é o link
+// PESSOAL que o sistema emitiu e entregou no WhatsApp/e-mail DELA, assinado com
+// o `membro_id` dentro (utils/censoToken.js). Não há a que outro cadastro ele
+// possa apontar. Tratá-lo como fraco jogaria na fila humana justamente o caminho
+// que o disparo criou pra resolver ~2.000 cadastros sem CPF — e é o CPF que
+// esses cadastros estão vindo buscar, então exigir CPF forte aqui seria circular.
+const CHAVES_FORTES = new Set(['cpf', 'token_censo']);
+
 function confiancaDoMatch(matchedBy) {
-  return matchedBy === 'cpf' ? 'forte' : 'fraca';
+  return CHAVES_FORTES.has(matchedBy) ? 'forte' : 'fraca';
 }
 
 // Com sinal fraco, exige nascimento conferível E IGUAL dos dois lados. Sem isso
