@@ -1290,6 +1290,44 @@ também é conhecido como **"Tuninho"**, e não havia busca por apelido.
   apelido); a ficha da pessoa da aba Pessoas do /grupos ainda não edita apelido;
   a Membresia não exibe o apelido no cabeçalho do membro (só no form).
 
+## ⚠️ Página lida por verificador EXTERNO tem que ser HTML estático (2026-08-04)
+
+A verificação da marca no **Google Auth Platform** (projeto `crm-cbrio` — o que
+autoriza o "Entrar com Google" do app de membros) foi recusada com dois motivos,
+ambos sobre a página inicial declarada no consentimento: *"your home page does
+not explain the purpose of your app"* e *"the app name 'CBRio' does not match
+the app name on your home page"*. **Verificada ✅ na tentativa seguinte**, com o
+conserto abaixo (levou ~3h, não dias).
+
+**A causa não era o texto — era o JavaScript.** O campo apontava para o ERP, que
+é SPA: o verificador busca a página **sem executar JS**, recebe o shell vazio do
+`index.html` e lê o `<title>` global (`CBRio · Comunidade Batista do Rio de
+Janeiro`). Isso é, ao mesmo tempo, "não explica propósito" e "o nome não bate".
+
+- **`public/aplicativo.html`** + rewrite em `vercel.json` (`/aplicativo →
+  /aplicativo.html`, **antes** do catch-all do SPA) é a home page do app. Mesmo
+  padrão do **`public/privacidade.html`**, que já existia e que o Google sempre
+  aceitou — foi justamente essa diferença que revelou o mecanismo.
+- ⚠️ **NÃO converter para rota React.** Já foi tentado (PR #2261) e é a versão
+  que falha: o conteúdo precisa existir na resposta HTTP. Mesma régua vale para
+  qualquer página que um robô de terceiro (Google, Apple, Meta) precise LER.
+- ⚠️ **O `<title>` e o `<h1>` são exatamente `CBRio`** — o mesmo string do campo
+  *App name* do consentimento e do `expo.name` do `app.json`. **Renomear o app no
+  console exige renomear aqui**, senão o motivo 2 volta. O acoplamento está
+  escrito no comentário do topo do arquivo.
+- Rotas públicas servidas por rewrite estático hoje: `/privacidade`,
+  `/aplicativo`. As por rota React: `/suporte`, `/politica-reembolso`.
+- ⚠️ **Lição de método (erro meu, registrado):** procurei `"/privacidade"` no
+  bundle de produção, não achei e concluí que a página não existia — ela existe,
+  como arquivo estático. **Ausência de rota no bundle não prova ausência de
+  página**: rewrite e arquivo em `public/` não passam pelo React Router. Para
+  saber se uma URL pública existe, olhar `public/` e os `rewrites` do
+  `vercel.json` também.
+- Pendência conhecida (não bloqueou esta verificação): `cbrio.org`/`cbrio.com.br`
+  estão verificados no **Search Console por outra conta Google** ("Play Console
+  org"). Se uma verificação futura falhar por propriedade de domínio, é isso — e
+  o conserto é adicionar a conta do console como proprietária, não é código.
+
 ## ⚠️ Google Tag Manager · SÓ no domínio público, nunca no ERP (2026-07-29)
 
 Gustavo (tráfego pago, parceiro externo) precisava medir anúncio → o site não
