@@ -8,6 +8,7 @@
 // ════════════════════════════════════════════════════════════════════════════
 
 const { telefoneAlcancavel, digitos } = require('../services/contatoPessoa');
+const { gerarTokenCenso } = require('./censoToken');
 
 // ⚠️⚠️ Teto do TIER_250 da Meta (250 destinatários ÚNICOS por 24h), com folga
 // pros avisos operacionais que dividem a mesma cota no dia. NÃO é um número
@@ -84,10 +85,24 @@ function limitarPorTeto(lista, teto) {
   return { envia: arr.slice(0, teto), adiados: Math.max(0, arr.length - teto) };
 }
 
-/** Link do censo. `?censo=1` é o MESMO parâmetro do QR impresso do culto. */
-function montarLinkCenso(baseUrl) {
+/**
+ * Link do censo. `?censo=1` é o MESMO parâmetro do QR impresso do culto.
+ *
+ * ⚠️ Com `membroId` o link vai PESSOAL (`&t=<token assinado>`) e o formulário
+ * abre COM OS DADOS DELA, marcando o que falta. É isso que responde "como o
+ * sistema vai achar a pessoa se ela não tem CPF?" — não precisa achar: o link
+ * foi emitido para ela. Sem token o link é genérico e cai no cadastro normal
+ * (é o caso do QR impresso, que não sabe quem vai escanear).
+ *
+ * ⚠️ Fail-closed: sem segredo configurado `gerarTokenCenso` devolve null e o
+ * link degrada pro genérico — a campanha não para, só perde o preenchimento.
+ */
+function montarLinkCenso(baseUrl, membroId = null) {
   const base = String(baseUrl || 'https://cbrio.org').replace(/\/+$/, '');
-  return `${base}/cadastro-membresia?censo=1`;
+  const generico = `${base}/cadastro-membresia?censo=1`;
+  if (!membroId) return generico;
+  const token = gerarTokenCenso(membroId);
+  return token ? `${generico}&t=${token}` : generico;
 }
 
 module.exports = {

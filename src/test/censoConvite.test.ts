@@ -150,4 +150,28 @@ describe('montarLinkCenso', () => {
       .toBe('https://cbrio.org/cadastro-membresia?censo=1');
     expect(montarLinkCenso(null)).toContain('https://cbrio.org/cadastro-membresia');
   });
+
+  // ⚠️ É o link PESSOAL que responde "como o sistema acha a pessoa sem CPF?".
+  // Sem o token o formulário abriria em branco — o furo achado em 04/08.
+  it('com membroId anexa o token assinado', () => {
+    process.env.CRON_SECRET = 'segredo-de-teste';
+    const link = montarLinkCenso('https://cbrio.org', '5211a14f-3f5d-4225-96ef-81fb49af961c');
+    expect(link).toMatch(/^https:\/\/cbrio\.org\/cadastro-membresia\?censo=1&t=[0-9a-f]{32}\.[0-9a-f]{20}$/);
+  });
+
+  it('pessoas diferentes recebem links diferentes', () => {
+    process.env.CRON_SECRET = 'segredo-de-teste';
+    expect(montarLinkCenso('https://cbrio.org', '5211a14f-3f5d-4225-96ef-81fb49af961c'))
+      .not.toBe(montarLinkCenso('https://cbrio.org', '44c2ee91-e7e2-486e-8406-045102c8b0af'));
+  });
+
+  // Fail-closed sem virar campanha quebrada: degrada pro link genérico.
+  it('sem segredo cai no link genérico, não em erro', () => {
+    const antes = process.env.CRON_SECRET;
+    delete process.env.CRON_SECRET;
+    delete process.env.CENSO_TOKEN_SECRET;
+    expect(montarLinkCenso('https://cbrio.org', '5211a14f-3f5d-4225-96ef-81fb49af961c'))
+      .toBe('https://cbrio.org/cadastro-membresia?censo=1');
+    if (antes) process.env.CRON_SECRET = antes;
+  });
 });

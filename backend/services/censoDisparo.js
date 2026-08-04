@@ -39,6 +39,7 @@ const {
   limitarPorTeto,
   montarLinkCenso,
 } = require('../utils/censoConvite');
+const { gerarTokenCenso } = require('../utils/censoToken');
 
 // ⚠️ Orçamento de TEMPO, além do teto de quantidade: o `enviarEmail` faz 3
 // tentativas com backoff (1,5s + 3s) em falha transitória, então uma rodada com
@@ -200,6 +201,11 @@ async function previewCenso({ status, canais = ['whatsapp', 'email'], reenviar =
       ? { nome: primeiroNome((alvoWhats[0] || alvoEmail[0]).nome) }
       : null,
     link: montarLinkCenso(process.env.FRONTEND_URL),
+    // Cada pessoa recebe o link com um token próprio (abre o cadastro DELA
+    // preenchido). Se o segredo não estiver configurado, o link degrada pro
+    // genérico e a tela avisa — senão a equipe acharia que mandou o
+    // personalizado e a pessoa receberia uma folha em branco.
+    link_pessoal: !!gerarTokenCenso('00000000-0000-0000-0000-000000000000'),
   };
 }
 
@@ -268,7 +274,12 @@ async function dispararCenso({ status, canais = ['whatsapp', 'email'], reenviar 
   const prev = await previewCenso({ status, canais, reenviar });
   if (!prev.disponivel) return { ok: false, aviso: prev.aviso };
 
-  const link = prev.link;
+  // ⚠️ O link é POR PESSOA (token assinado com o membro_id dentro): é o que faz
+  // o formulário abrir com os dados dela e marcar o que falta, SEM depender de
+  // ela ter CPF cadastrado. Um link único para todos devolveria a folha em
+  // branco — o furo que o Matheus achou em 04/08.
+  const base = process.env.FRONTEND_URL;
+  const linkDe = (membroId) => montarLinkCenso(base, membroId);
   const optinObrigatorio = process.env.WHATSAPP_OPTIN_OBRIGATORIO === '1';
   const { pessoas } = await lerPublicoSemCpf({ status });
   const convites = await lerConvitesEnviados();
@@ -297,7 +308,7 @@ async function dispararCenso({ status, canais = ['whatsapp', 'email'], reenviar 
     const r = await fila.enfileirarLote(whats.envia.map(p => ({
       telefone: p.telefone,
       template: nomeTemplate(),
-      params: [primeiroNome(p.nome), link],
+      params: [primeiroNome(p.nome), linkDe(p.id)],
       contexto: CONTEXTO,
       refId: p.id,
     })));
@@ -325,7 +336,7 @@ async function dispararCenso({ status, canais = ['whatsapp', 'email'], reenviar 
           break;
         }
         const p = mail.envia[i];
-        const { subject, text, html } = corpoEmail({ nome: p.nome, link });
+        const { subject, text, html } = corpoEmail({ nome: p.nome, link: linkDe(p.id) });
         let ok = false;
         let erro = null;
         try {

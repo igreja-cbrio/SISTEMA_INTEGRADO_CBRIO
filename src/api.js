@@ -2423,6 +2423,9 @@ export const membresia = {
     podeAprovar: () => get('/membresia/cadastros/pode-aprovar'),
     confirmarWhatsapp: (id) => post(`/membresia/cadastros/${id}/confirmar-whatsapp`, {}),
     aprovar: (id, data) => post(`/membresia/cadastros/${id}/aprovar`, data || {}),
+    // Aprovação em massa: só passa quem tem os dados obrigatórios (o servidor
+    // reavalia cada linha; o resto volta em `ignorados` pra aprovação manual).
+    aprovarLote: (ids) => post('/membresia/cadastros/aprovar-lote', { ids }),
     rejeitar: (id, motivo) => post(`/membresia/cadastros/${id}/rejeitar`, { motivo }),
     update: (id, data) => patch(`/membresia/cadastros/${id}`, data),
     remove: (id) => del(`/membresia/cadastros/${id}`),
@@ -2717,6 +2720,15 @@ export const cadastroPublico = {
   verificarFamilia: async (sobrenome) => {
     const res = await fetch(`${API}/public/membresia/verificar-familia?sobrenome=${encodeURIComponent(sobrenome)}`);
     if (!res.ok) return { familias: [] };
+    return res.json();
+  },
+  // Atualização cadastral pelo link PESSOAL do convite do censo (?t=<token>).
+  // ⚠️ É o único caminho público que devolve os dados da pessoa — a prova de
+  // identidade é o token ter chegado no contato dela. Falha silenciosa de
+  // propósito: link ruim cai no cadastro normal, nunca numa tela de erro.
+  censoMeusDados: async (token) => {
+    const res = await fetch(`${API}/public/membresia/censo/meus-dados?t=${encodeURIComponent(token)}`);
+    if (!res.ok) return { ok: false };
     return res.json();
   },
   lookupCpf: async (cpf) => {
