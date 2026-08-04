@@ -20,6 +20,7 @@ const { espelharMatriculaDoEncontro } = require('../services/nextMatricula');
 // notificação) já validado no módulo web de grupos.
 const { aprovarPedidoCore } = require('./grupos');
 const { registrarEventoPedido } = require('../services/grupoPedidoEventos');
+const appIdentidade = require('../services/appIdentidade');
 // Reuso dos helpers de permissão granular pra resolver o nível do módulo
 // "grupos" do usuário do app (authApp é leve e não computa permissões).
 const { getModulos, getCargoMatrix, resolveEffectivePerms } = require('../middleware/auth');
@@ -113,6 +114,96 @@ router.post('/checkin', authApp, limiterNormal, async (req, res) => {
   } catch (e) {
     console.error('[APP] checkin:', e.message);
     res.status(500).json({ error: 'Erro ao registrar check-in' });
+  }
+});
+
+// ── Identidade da conta do app · vincular ao cadastro REAL ────────────────
+// Contrato de porta aplicado à entrada do APP (Marcos · 04/08): o gatilho de
+// auth.users cria a pessoa sem matcher e sem campo nenhum (21 cadastros assim,
+// 13 com nome = prefixo do e-mail, 1 duplicata confirmada). Estes 3 endpoints
+// são o caminho CERTO: caminho rápido por CPF com prova de posse do celular, ou
+// formulário completo pelo matcher canônico. Ver services/appIdentidade.js.
+//
+// ⚠️ limiterStrict (10/15min por IP) no caminho do CPF: é sonda de existência
+// de cadastro. O teto por TELEFONE/dia está no serviço (o dono do número não
+// pediu nada e não pode ser metralhado).
+router.post('/identidade/por-cpf', authApp, limiterStrict, async (req, res) => {
+  try {
+    const r = await appIdentidade.identificarPorCpf({
+      cpf: req.body?.cpf,
+      authUserId: req.user.id,
+      email: req.user.email || null,
+      ip: req.ip || null,
+    });
+    if (!r.ok) return res.status(r.status || 400).json({ error: r.error, codigo: r.codigo });
+    res.json(r);
+  } catch (e) {
+    console.error('[APP] identidade/por-cpf:', e.message);
+    res.status(500).json({ error: 'Não foi possível verificar seu CPF agora.' });
+  }
+});
+
+router.post('/identidade/confirmar', authApp, limiterStrict, async (req, res) => {
+  try {
+    const r = await appIdentidade.confirmarCodigo({
+      verificacaoId: req.body?.verificacao_id,
+      codigo: req.body?.codigo,
+      authUserId: req.user.id,
+      email: req.user.email || null,
+    });
+    if (!r.ok) return res.status(r.status || 400).json({ error: r.error, codigo: r.codigo });
+    res.json(r);
+  } catch (e) {
+    console.error('[APP] identidade/confirmar:', e.message);
+    res.status(500).json({ error: 'Não foi possível confirmar o código agora.' });
+  }
+});
+
+router.post('/identidade/completar', authApp, limiterNormal, async (req, res) => {
+  try {
+    const r = await appIdentidade.completarCadastro({
+      payload: req.body || {},
+      authUserId: req.user.id,
+      email: req.user.email || null,
+      ip: req.ip || null,
+      userAgent: req.get('user-agent') || null,
+    });
+    if (!r.ok) return res.status(r.status || 400).json({ error: r.error, codigo: r.codigo, campo: r.campo, erros: r.erros });
+    res.json(r);
+  } catch (e) {
+    console.error('[APP] identidade/completar:', e.message);
+    res.status(500).json({ error: 'Não foi possível salvar seus dados agora.' });
+  }
+});
+
+// GET /api/app/identidade/status — a tela de abertura pergunta "preciso
+// completar meu cadastro?". Devolve o que falta (sem PII de terceiro).
+router.get('/identidade/status', authApp, limiterNormal, async (req, res) => {
+  try {
+    const membro = await resolveMembroApp(req).catch(() => null);
+    if (!membro) {
+      return res.json({ vinculado: false, completo: false, falta: ['nome', 'telefone', 'nascimento'] });
+    }
+    const falta = [];
+    if (!membro.telefone) falta.push('telefone');
+    if (!membro.cpf) falta.push('cpf'); // informativo — CPF não é exigido
+    const { data: m } = await supabase.from('mem_membros')
+      .select('nome, data_nascimento').eq('id', membro.id).maybeSingle();
+    if (!m?.data_nascimento) falta.push('nascimento');
+    const nomeFraco = require('../services/membroMatch')
+      .ehNomeDerivadoDeEmail(m?.nome, req.user.email || '');
+    if (nomeFraco) falta.push('nome');
+    res.json({
+      vinculado: true,
+      // "completo" = dá pro matcher reconhecer a pessoa depois (nome de gente +
+      // telefone + nascimento). CPF entra como recomendado, não obrigatório.
+      completo: !falta.some(f => f !== 'cpf'),
+      falta,
+      nome: m?.nome || membro.nome || null,
+    });
+  } catch (e) {
+    console.error('[APP] identidade/status:', e.message);
+    res.status(500).json({ error: 'Erro ao verificar seu cadastro' });
   }
 });
 
