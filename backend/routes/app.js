@@ -2342,16 +2342,81 @@ router.get('/pense-ultimo', authApp, async (req, res) => {
   }
 });
 
+/**
+ * Minutos desde a meia-noite **em BRT** (mesma convenção do `hojeBRT()`:
+ * offset fixo −3h, que o Brasil não muda desde 2019).
+ */
+function agoraMinutosBRT() {
+  const d = new Date(Date.now() - 3 * 3600 * 1000);
+  return d.getUTCHours() * 60 + d.getUTCMinutes();
+}
+function minutosDaHora(hora) {
+  const [hh, mm] = String(hora || '').split(':');
+  const h = Number(hh), m = Number(mm || 0);
+  return Number.isFinite(h) ? h * 60 + (Number.isFinite(m) ? m : 0) : null;
+}
+
+/**
+ * O culto que a pessoa está VIVENDO agora.
+ *
+ * ⚠️ Isto era `order('hora', desc).limit(1)` do dia em UTC, e os dois pedaços
+ * estavam errados (achado 04/08/2026):
+ *  1. `new Date().toISOString()` é UTC → das 21h BRT em diante o "hoje" já é
+ *     AMANHÃ. No culto de domingo 19h (que passa das 21h) o `culto` vinha nulo
+ *     e a decisão de fé era gravada com o dia seguinte — o dedup de 1/dia e a
+ *     fila da Integração ficavam desencontrados.
+ *  2. Pegar a MAIOR hora do dia significa que, no culto das 08:30, a decisão
+ *     era carimbada no culto das 19:00. Atribuição errada de culto na NSM.
+ *
+ * `ao_vivo` = existe culto cuja janela [hora − 30min, hora + 3h] contém o
+ * agora. É o que o app usa pra mostrar (ou não) o "No culto" na Home: fora da
+ * janela a tela não tem propósito. Sem janela ativa devolve o PRÓXIMO de hoje
+ * (a tela consegue dizer "começa às 19h") com `ao_vivo: false`.
+ */
+async function cultoDeAgora() {
+  const hoje = hojeBRT();
+  const { data } = await supabase
+    .from('cultos')
+    .select('id, nome, data, hora')
+    .eq('data', hoje).is('deleted_at', null)
+    .order('hora', { ascending: true });
+  const lista = data || [];
+  if (!lista.length) return { culto: null, ao_vivo: false };
+
+  const agora = agoraMinutosBRT();
+
+  // ⚠️ Os cultos de domingo saem de 90 em 90 min, então uma janela de 3h
+  // SOBREPÕE dois ou três. Por isso: (1) entre os que JÁ COMEÇARAM e ainda
+  // estão na janela, vale o MAIS RECENTE (às 10:30 é o das 10:00, não o das
+  // 08:30 — `find` simples pegava o primeiro e errava a atribuição do culto);
+  // (2) só quando nada começou é que a antecedência de 30 min conta (às 08:15
+  // é o das 08:30). Sem essa ordem, às 09:40 — 08:30 ainda rolando — a decisão
+  // iria pro culto das 10:00.
+  const iniciados = lista.filter((c) => {
+    const ini = minutosDaHora(c.hora);
+    return ini != null && agora >= ini && agora <= ini + 180;
+  });
+  if (iniciados.length) return { culto: iniciados[iniciados.length - 1], ao_vivo: true };
+
+  const chegando = lista.find((c) => {
+    const ini = minutosDaHora(c.hora);
+    return ini != null && agora >= ini - 30 && agora < ini;
+  });
+  if (chegando) return { culto: chegando, ao_vivo: true };
+
+  const proximo = lista.find((c) => {
+    const ini = minutosDaHora(c.hora);
+    return ini != null && ini > agora;
+  });
+  return { culto: proximo || lista[lista.length - 1], ao_vivo: false };
+}
+
 // GET /api/app/culto/agora — Modo Culto: culto de hoje + link ao vivo + se já registrou decisão.
 router.get('/culto/agora', authApp, async (req, res) => {
   try {
     const channelId = process.env.YOUTUBE_CHANNEL_ID || 'UCfjMVzaYlCS_VE3JuEJj2vQ';
-    const hoje = new Date().toISOString().slice(0, 10);
-    const { data: culto } = await supabase
-      .from('cultos')
-      .select('id, nome, data, hora')
-      .eq('data', hoje).is('deleted_at', null)
-      .order('hora', { ascending: false }).limit(1).maybeSingle();
+    const hoje = hojeBRT();
+    const { culto, ao_vivo } = await cultoDeAgora();
 
     let jaRegistrou = false;
     const membro = await resolveMembroApp(req).catch(() => null);
@@ -2362,7 +2427,12 @@ router.get('/culto/agora', authApp, async (req, res) => {
         .gte('criada_em', `${hoje}T00:00:00`).limit(1);
       jaRegistrou = (pend || []).length > 0;
     }
-    res.json({ culto: culto || null, canal_live: `https://www.youtube.com/channel/${channelId}/live`, jaRegistrou });
+    res.json({
+      culto: culto || null,
+      ao_vivo,
+      canal_live: `https://www.youtube.com/channel/${channelId}/live`,
+      jaRegistrou,
+    });
   } catch (e) {
     console.error('[APP] culto/agora:', e.message);
     res.status(500).json({ error: 'Erro ao carregar o culto' });
@@ -2379,7 +2449,7 @@ router.post('/culto/decisao', authApp, limiterNormal, async (req, res) => {
     const ambiente = ['presencial', 'online'].includes(req.body?.ambiente) ? req.body.ambiente : 'presencial';
     const tipo = ['aceitar', 'reconciliacao', 'rededicacao', 'batismo', 'outro'].includes(req.body?.tipo) ? req.body.tipo : null;
     const observacao = (req.body?.observacao || '').toString().trim().slice(0, 500) || null;
-    const hoje = new Date().toISOString().slice(0, 10);
+    const hoje = hojeBRT();
 
     // Dedup: 1 decisão pendente por membro por dia.
     const { data: pend } = await supabase
@@ -2388,9 +2458,11 @@ router.post('/culto/decisao', authApp, limiterNormal, async (req, res) => {
       .gte('criada_em', `${hoje}T00:00:00`).limit(1);
     if ((pend || []).length) return res.json({ ok: true, jaRegistrou: true });
 
-    const { data: culto } = await supabase
-      .from('cultos').select('id').eq('data', hoje).is('deleted_at', null)
-      .order('hora', { ascending: false }).limit(1).maybeSingle();
+    // ⚠️ MESMA régua do /culto/agora: a decisão é carimbada no culto que a
+    // pessoa está vivendo, não no de maior hora do dia (antes, decisão das
+    // 08:30 ia pro culto das 19:00) — e o dia é BRT (antes, das 21h em diante
+    // o UTC já era o dia seguinte e o culto_id vinha nulo).
+    const { culto } = await cultoDeAgora();
 
     const { error } = await supabase.from('app_decisoes').insert({
       membro_id: membro.id, culto_id: culto?.id || null, ambiente, tipo, observacao, status: 'pendente',

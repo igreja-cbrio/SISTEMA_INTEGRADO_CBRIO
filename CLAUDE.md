@@ -6338,8 +6338,37 @@ revisão** (decisão da liderança: NADA do app entra direto na NSM). Migration
 culto_id + ambiente presencial/online + tipo aceitar/reconciliacao/rededicacao/
 batismo/outro + status pendente/confirmada/descartada + decisao_id · deleted_at +
 whitelist + RLS contextual) e libera `fonte='app'` em `cultos_decisoes_pessoas`.
-- **App**: `GET /app/culto/agora` (culto de hoje + link ao vivo + jaRegistrou),
-  `POST /app/culto/decisao` (insere pendente · dedup 1/dia · notifica Integração).
+- **App**: `GET /app/culto/agora` (culto de agora + `ao_vivo` + link ao vivo +
+  jaRegistrou), `POST /app/culto/decisao` (insere pendente · dedup 1/dia ·
+  notifica Integração).
+
+### ⚠️ Qual culto é "agora" · dia em BRT e o mais recente que COMEÇOU (2026-08-04)
+
+Os dois endpoints acima resolviam o culto com
+`data = new Date().toISOString().slice(0,10)` + `order('hora', desc).limit(1)`.
+**Os dois pedaços estavam errados**, e o efeito era atribuição de culto errada
+na fila da Integração (que alimenta a NSM):
+
+1. **`toISOString()` é UTC.** Das 21h BRT em diante o "hoje" já é o dia
+   SEGUINTE — ou seja, **no culto de domingo 19h** (que passa das 21h) o
+   `culto` vinha nulo, a decisão era gravada sem `culto_id` e o dedup de
+   1-por-dia olhava a janela do dia errado. Mesma classe de bug do dia da
+   curva do censo e do check-in do Kids: **dia de operação da igreja é BRT**.
+2. **"maior hora do dia" ≠ "culto de agora".** Às 08:30 o endpoint dizia que o
+   culto era o das 19:00 → decisão do culto da manhã carimbada no da noite.
+
+Agora existe `cultoDeAgora()` (helper único, usado pelos DOIS endpoints —
+duplicar a régua era o que deixava o GET e o POST discordarem):
+`hojeBRT()` + entre os cultos que **já começaram** e estão dentro de 3h vale o
+**mais recente**; só quando nada começou é que a antecedência de 30 min conta.
+⚠️ A ordem importa porque os cultos de domingo saem de 90 em 90 min e uma
+janela de 3h sobrepõe dois ou três: `find` simples (o primeiro que casa) diria
+"08:30" às 10:30, e "10:00" às 09:40 com o das 08:30 ainda rolando.
+`ao_vivo` é o que o app usa pra mostrar o "No culto" **só durante o culto** —
+fora da janela aquela tela não tem propósito (pedido do Marcos, 04/08).
+Conferido em BRT nos horários reais de domingo (06:00 → fora · 08:05/08:15 →
+08:30 · 09:40 → 08:30 · 10:30 → 10:00 · 12:15 e 13:00 → 11:30 · 15:00 → fora ·
+18:45–21:30 → 19:00 · 22:10 e 23:40 → fora, com o dia BRT correto).
 - **Integração**: `GET /integracao/decisoes-app` + `/:id/confirmar` (cria a
   decisão oficial em `cultos_decisoes_pessoas` com `fonte='app'` → entra na NSM
   via trigger) + `/:id/descartar`. UI: `DecisoesApp.tsx` no topo da aba Decisões
