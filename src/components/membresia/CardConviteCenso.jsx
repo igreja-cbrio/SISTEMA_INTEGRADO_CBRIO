@@ -3,6 +3,9 @@ import { membresia } from '../../api';
 import { Send, AlertTriangle, RefreshCw, Mail, MessageSquare } from 'lucide-react';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+} from '../ui/dialog';
 
 const C = {
   primary: '#00B39D', text: 'var(--cbrio-text)', text2: 'var(--cbrio-text2)',
@@ -38,6 +41,22 @@ export default function CardConviteCenso() {
   const [confirmar, setConfirmar] = useState('');
   const [disparando, setDisparando] = useState(false);
   const [resultado, setResultado] = useState(null);
+
+  // Prévia do e-mail (HTML real, renderizado pelo servidor com a mesma função
+  // do disparo). Carregada sob demanda: ninguém precisa dela pra disparar.
+  const [amostraEmail, setAmostraEmail] = useState(null);
+  const [carregandoAmostra, setCarregandoAmostra] = useState(false);
+
+  const verComoChega = async () => {
+    setCarregandoAmostra(true);
+    try {
+      setAmostraEmail(await membresia.censo.disparoPreviewEmail(prev?.exemplo?.nome));
+    } catch (e) {
+      setErro(e.message || 'Erro ao carregar a prévia do e-mail');
+    } finally {
+      setCarregandoAmostra(false);
+    }
+  };
 
   const statusParam = incluirVisitantes ? 'membro_ativo,visitante' : 'membro_ativo';
 
@@ -128,10 +147,18 @@ export default function CardConviteCenso() {
         </button>
       </div>
 
-      <Button variant="outline" size="sm" onClick={carregarPrevia} disabled={carregando || !canais.length}>
-        <RefreshCw style={{ width: 13, height: 13, marginRight: 6 }} />
-        {carregando ? 'Calculando…' : 'Ver prévia'}
-      </Button>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <Button variant="outline" size="sm" onClick={carregarPrevia} disabled={carregando || !canais.length}>
+          <RefreshCw style={{ width: 13, height: 13, marginRight: 6 }} />
+          {carregando ? 'Calculando…' : 'Ver prévia'}
+        </Button>
+        {canais.includes('email') && (
+          <Button variant="outline" size="sm" onClick={verComoChega} disabled={carregandoAmostra}>
+            <Mail style={{ width: 13, height: 13, marginRight: 6 }} />
+            {carregandoAmostra ? 'Carregando…' : 'Ver como o e-mail chega'}
+          </Button>
+        )}
+      </div>
 
       {erro && (
         <p style={{ fontSize: 12, color: C.red, marginTop: 10 }}>{erro}</p>
@@ -230,6 +257,51 @@ export default function CardConviteCenso() {
           )}
         </div>
       )}
+
+      {/* Prévia do e-mail · caixa de entrada simulada.
+          ⚠️ O HTML vai num <iframe srcDoc>, não injetado na página: o e-mail
+          tem estilo próprio e cor de fundo clara fixa, e injetado direto ele
+          brigaria com o tema (e ficaria ilegível no modo escuro). O iframe é
+          também o que faz a prévia ser FIEL — o e-mail renderiza isolado, como
+          renderiza no Gmail. `sandbox` sem allow-scripts: é conteúdo pra olhar. */}
+      <Dialog open={!!amostraEmail} onOpenChange={(v) => !v && setAmostraEmail(null)}>
+        <DialogContent className="max-w-2xl flex flex-col max-h-[90vh]">
+          <DialogHeader>
+            <DialogTitle>Como o e-mail chega</DialogTitle>
+          </DialogHeader>
+          <div className="flex-1 overflow-y-auto min-h-0">
+            <div style={{
+              border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden',
+              background: '#fff',
+            }}>
+              {/* Cabeçalho no formato de caixa de entrada, pra conferir remetente
+                  e assunto — que é metade do que decide se a pessoa abre. */}
+              <div style={{ padding: '12px 14px', borderBottom: '1px solid #e5e7eb', background: '#f9fafb' }}>
+                <div style={{ fontSize: 11, color: '#6b7280' }}>
+                  De: <strong style={{ color: '#374151' }}>CBRio</strong> &lt;noreply@cbrio.org&gt;
+                </div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: '#111827', marginTop: 3 }}>
+                  {amostraEmail?.assunto}
+                </div>
+              </div>
+              <iframe
+                title="Prévia do e-mail"
+                srcDoc={`<!doctype html><meta charset="utf-8"><body style="margin:0;padding:20px;background:#fff">${amostraEmail?.html || ''}</body>`}
+                sandbox=""
+                style={{ width: '100%', height: 460, border: 'none', display: 'block', background: '#fff' }}
+              />
+            </div>
+            <p style={{ fontSize: 11.5, color: C.text3, marginTop: 10 }}>
+              O nome e o link acima são exemplo. No envio real, cada pessoa recebe
+              o primeiro nome dela e um link próprio, que abre o cadastro dela já
+              preenchido.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAmostraEmail(null)}>Fechar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {resultado && (
         <div style={{

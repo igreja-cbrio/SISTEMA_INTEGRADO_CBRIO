@@ -2416,6 +2416,8 @@ export const membresia = {
     // Convite de atualização cadastral (WhatsApp + e-mail) pra quem está sem CPF.
     disparoPreview: (params) => get('/membresia/censo/disparo/preview' + (params ? '?' + new URLSearchParams(params) : '')),
     disparar: (body) => post('/membresia/censo/disparo', body),
+    // Prévia do e-mail: HTML renderizado pela MESMA função do disparo.
+    disparoPreviewEmail: (nome) => get('/membresia/censo/disparo/preview-email' + (nome ? `?nome=${encodeURIComponent(nome)}` : '')),
   },
   cadastros: {
     list: (params) => get('/membresia/cadastros' + (params ? '?' + new URLSearchParams(params) : '')),

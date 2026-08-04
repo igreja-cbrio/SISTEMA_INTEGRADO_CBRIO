@@ -2980,6 +2980,29 @@ router.get('/censo/disparo/preview', authorizeModule('membresia', 2), async (req
   }
 });
 
+// GET /api/membresia/censo/disparo/preview-email
+// Renderiza o e-mail EXATAMENTE como ele sai (mesma função `corpoEmail` do
+// disparo — não uma imitação, senão a prévia mente).
+//
+// ⚠️ O link do exemplo leva um token FALSO de propósito. Devolver um token
+//    válido de alguém real transformaria a prévia num vazamento: quem abrisse a
+//    tela veria um link que abre o cadastro daquela pessoa.
+router.get('/censo/disparo/preview-email', authorizeModule('membresia', 2), async (req, res) => {
+  try {
+    const nome = String(req.query.nome || 'Maria').trim() || 'Maria';
+    const base = String(process.env.FRONTEND_URL || 'https://cbrio.org').replace(/\/+$/, '');
+    const { subject, html, text } = censoDisparo.corpoEmail({
+      nome,
+      link: `${base}/cadastro-membresia?censo=1&t=exemplo0000000000000000000000000.00000000000000000000`,
+      destinatario: 'pessoa@exemplo.com',
+    });
+    res.json({ assunto: subject, html, texto: text });
+  } catch (e) {
+    console.error('[CENSO preview-email]', e.message);
+    res.status(500).json({ error: 'Erro ao montar a prévia do e-mail' });
+  }
+});
+
 // POST /api/membresia/censo/disparo
 // ⚠️ Nível 4 (não 3): é envio em MASSA para fora, no número institucional da
 //    igreja, e cada destinatário consome cota do TIER_250 da Meta. Editar

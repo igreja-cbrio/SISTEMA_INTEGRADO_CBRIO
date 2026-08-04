@@ -212,30 +212,47 @@ async function previewCenso({ status, canais = ['whatsapp', 'email'], reenviar =
 
 // ── Disparo ────────────────────────────────────────────────────────────────
 
-function corpoEmail({ nome, link }) {
+function corpoEmail({ nome, link, destinatario = null }) {
   const primeiro = primeiroNome(nome);
   const texto = [
     `Olá ${primeiro}!`,
     '',
     'Estamos atualizando o cadastro da nossa igreja e o seu está incompleto.',
-    'Levou 2 minutos para preencher — é só abrir o link abaixo:',
+    'Leva 2 minutos para preencher — é só abrir o link abaixo:',
     '',
     link,
     '',
+    'O link é pessoal e já abre com os seus dados.',
+    '',
     'Obrigado por ajudar a manter nossos dados em ordem.',
-    'Equipe CBRio',
+    'Comunidade Batista do Rio',
   ].join('\n');
 
-  const html = `<div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;font-size:15px;line-height:1.6;color:#111">
-  <p>Olá ${escapeHtml(primeiro)}!</p>
-  <p>Estamos atualizando o cadastro da nossa igreja e o seu está incompleto.<br>
+  // ⚠️ HTML de E-MAIL, não de página: estilo INLINE em tudo (Gmail e Outlook
+  // descartam <style> e classes), largura fixa em px, e nada de flex/grid — o
+  // Outlook desktop renderiza com o motor do Word. A logo é URL ABSOLUTA em
+  // https://cbrio.org (caminho relativo não existe dentro de um e-mail) e leva
+  // `alt`, porque a maioria dos clientes abre com imagem BLOQUEADA por padrão:
+  // sem o alt, a assinatura vira um retângulo vazio.
+  const html = `<div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;font-size:15px;line-height:1.6;color:#111827;max-width:560px">
+  <p style="margin:0 0 16px">Olá ${escapeHtml(primeiro)}!</p>
+  <p style="margin:0 0 16px">Estamos atualizando o cadastro da nossa igreja e o seu está incompleto.<br>
      Leva 2 minutos para preencher.</p>
-  <p style="margin:24px 0">
-    <a href="${escapeHtml(link)}" style="background:#00B39D;color:#fff;text-decoration:none;padding:12px 22px;border-radius:8px;display:inline-block;font-weight:600">Atualizar meu cadastro</a>
+  <p style="margin:0 0 24px">
+    <a href="${escapeHtml(link)}" style="background:#00B39D;color:#ffffff;text-decoration:none;padding:13px 24px;border-radius:8px;display:inline-block;font-weight:700;font-size:15px">Atualizar meu cadastro</a>
   </p>
-  <p style="font-size:13px;color:#555">Se o botão não abrir, use este endereço:<br>
-     <a href="${escapeHtml(link)}">${escapeHtml(link)}</a></p>
-  <p style="font-size:13px;color:#555">Obrigado por ajudar a manter nossos dados em ordem.<br>Equipe CBRio</p>
+  <p style="margin:0 0 16px;font-size:13px;color:#6b7280">Se o botão não abrir, use este endereço:<br>
+     <a href="${escapeHtml(link)}" style="color:#00B39D;word-break:break-all">${escapeHtml(link)}</a></p>
+  <p style="margin:0 0 24px;font-size:13px;color:#6b7280">
+     Este link é <strong>pessoal</strong> e já abre com os seus dados — não encaminhe para outra pessoa.</p>
+
+  <div style="border-top:1px solid #e5e7eb;padding-top:18px;margin-top:8px">
+    <img src="https://cbrio.org/logo-cbrio-text.png" alt="CBRio · Comunidade Batista do Rio" width="132" style="display:block;width:132px;max-width:132px;height:auto;border:0;margin-bottom:10px">
+    <p style="margin:0;font-size:13px;color:#374151"><strong>Comunidade Batista do Rio</strong></p>
+    <p style="margin:2px 0 0;font-size:12px;color:#9ca3af">
+      Você recebeu este e-mail porque tem cadastro na CBRio.${destinatario ? `<br>Enviado para ${escapeHtml(destinatario)}.` : ''}
+    </p>
+  </div>
 </div>`;
 
   return { subject: 'Atualize seu cadastro na CBRio', text: texto, html };
@@ -343,7 +360,9 @@ async function dispararCenso({ status, canais = ['whatsapp', 'email'], reenviar 
           break;
         }
         const p = mail.envia[i];
-        const { subject, text, html } = corpoEmail({ nome: p.nome, link: linkDe(p.id) });
+        const { subject, text, html } = corpoEmail({
+          nome: p.nome, link: linkDe(p.id), destinatario: String(p.email).trim(),
+        });
         let ok = false;
         let erro = null;
         try {
