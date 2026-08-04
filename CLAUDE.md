@@ -2428,6 +2428,32 @@ avise a coordenação quando o destinatário não for líder do roster. Sem ela,
 incoerência volta silenciosamente na próxima troca de liderança — porque a aba
 Pessoas muda `mem_grupo_membros.funcao` e o `lider_id` do grupo é outro campo.
 
+## ⚠️ Grupos × APP · temporada e lista de inscrição vêm do BACKEND (2026-08-04)
+
+Item 1 da auditoria do app (03/08): o app mobile (`igreja-cbrio/Aplicativo-CBRio`)
+lia DUAS fontes erradas — a tabela paralela **`app_grupos_temporada`** (1 linha ·
+`aberta:false` desde 11/06 · nenhuma tela do web escrevia nela) pra decidir
+"inscrições abertas?", e **`mem_grupos` cru** (só `ativo` + `deleted_at`) pra
+listar grupos — ignorando `modo_inscricao='fechado'`, `aceitando_inscricoes`,
+status e temporada. Resultado: o app dizia "temporada fechada" com a T2 aberta
+e, se a flag paralela fosse virada, listaria grupo fechado/pausado.
+
+- **`GET /api/public/grupos/app-inscricao`** (publicGrupos.js · sem auth, herda
+  o limiter do router) devolve `{ aberta, titulo, grupos[] }`. `aberta` deriva
+  da LISTA (`grupos.length > 0`), não de flag: grupo `sempre_aberto` mantém a
+  inscrição possível mesmo fora de temporada. `titulo` = label da temporada com
+  `inscricoes_abertas` (maior ano/numero).
+- **Régua ÚNICA**: o filtro do `/buscar` virou o helper `buscarGruposInscriveis
+  ({categoria, bairro, temporada})` e os DOIS endpoints o usam. Mudou a regra de
+  "grupo inscritível"? Muda no helper — nunca criar cópia (foi a cópia que
+  gerou a divergência app×web).
+- ⚠️ A rota é declarada **ANTES de `GET /:id`** (Express casa na ordem — depois
+  dela, `/app-inscricao` viraria `req.params.id`).
+- **`app_grupos_temporada` ficou SEM leitor** (o app novo lê o endpoint) — não
+  reintroduzir; dropar a tabela numa limpeza futura com aval do Marcos.
+- No app: `lib/temporadaGrupos.ts` chama o endpoint (falha ⇒ `aberta:false`,
+  fail-closed) e `inscricao-grupos.tsx` lista os grupos vindos dele.
+
 ## Grupos · contagens (vínculo × pessoa) + nova régua visitante/frequentador (2026-07-23)
 
 Auditoria (4 agentes) das divergências que o Marcos pegou entre as abas. **Régua de
