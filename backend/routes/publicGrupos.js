@@ -118,34 +118,77 @@ router.get('/temporadas', async (req, res) => {
   } catch { res.status(500).json({ error: 'Erro' }); }
 });
 
+// Régua ÚNICA de "grupo aberto pra inscrição" — form público (/buscar) E app
+// mobile (/app-inscricao · auditoria do app 03/08, item 1). Mudou a regra?
+// Muda AQUI, nunca numa cópia: era uma régua duplicada (o app lia mem_grupos
+// cru + a tabela paralela app_grupos_temporada) que fazia o app listar grupo
+// fechado e dizer "temporada fechada" com a temporada aberta.
+async function buscarGruposInscriveis({ categoria, bairro, temporada } = {}) {
+  let query = supabase.from('mem_grupos')
+    .select('id, codigo, nome, categoria, faixa_etaria, idade_min, idade_max, dia_semana, horario, recorrencia, local, descricao, bairro, lat, lng, lider_id, status_temporada, temporada, foto_url, modo_inscricao')
+    .eq('ativo', true)
+    .is('deleted_at', null) // soft-deletado some do form (a temporada aberta não o esconde)
+    .eq('aceitando_inscricoes', true) // líder pode ter parado de receber pedidos
+    .neq('modo_inscricao', 'fechado'); // por convite do líder — nunca aparece
+  // Por padrão mostra so grupos com status que aceitam novos (ativo + novo + a_confirmar)
+  query = query.in('status_temporada', ['ativo', 'novo', 'a_confirmar']);
+  if (categoria) query = query.eq('categoria', categoria);
+  if (bairro) query = query.eq('bairro', bairro);
+  if (temporada) query = query.eq('temporada', temporada);
+  query = query.order('nome');
+
+  const { data: gruposCrus, error } = await query;
+  if (error) throw error;
+
+  // Visibilidade por modo (Marcos · 15/07): 'temporada' aparece só com as
+  // inscrições da temporada abertas; 'sempre_aberto' aparece o ano todo.
+  const { data: temporadasAll } = await supabase.from('mem_temporadas')
+    .select('id, label, ano, numero, inscricoes_abertas');
+  const abertas = new Set((temporadasAll || []).filter(t => t.inscricoes_abertas).map(t => t.id));
+  const grupos = (gruposCrus || []).filter(g =>
+    g.modo_inscricao === 'sempre_aberto'
+    || (g.modo_inscricao !== 'fechado' && (!g.temporada || abertas.has(g.temporada))));
+  return { grupos, temporadas: temporadasAll || [] };
+}
+
+// GET /api/public/grupos/app-inscricao — fonte ÚNICA da tela de inscrição do
+// APP mobile. Substitui a leitura da tabela paralela `app_grupos_temporada`
+// (2 camadas pro mesmo fato: nenhuma tela do web escrevia nela, e o app dizia
+// "temporada fechada" com a T2 aberta). `aberta` deriva da LISTA — grupo
+// sempre_aberto mantém a inscrição possível mesmo fora de temporada.
+// ⚠️ Declarada ANTES de GET /:id (senão o Express casa como id).
+router.get('/app-inscricao', async (_req, res) => {
+  try {
+    const { grupos, temporadas } = await buscarGruposInscriveis();
+    const atual = temporadas
+      .filter(t => t.inscricoes_abertas)
+      .sort((a, b) => (b.ano - a.ano) || (b.numero - a.numero))[0] || null;
+    res.json({
+      aberta: grupos.length > 0,
+      titulo: atual?.label || null,
+      grupos: grupos.map(g => ({
+        id: g.id,
+        codigo: g.codigo,
+        nome: g.nome,
+        categoria: g.categoria,
+        bairro: g.bairro,
+        dia_semana: g.dia_semana,
+        horario: g.horario,
+        recorrencia: g.recorrencia,
+        modo_inscricao: g.modo_inscricao,
+      })),
+    });
+  } catch (e) {
+    console.error('[public grupos app-inscricao]', e.message);
+    res.status(500).json({ error: 'Erro ao carregar grupos' });
+  }
+});
+
 // GET /api/public/grupos/buscar
 router.get('/buscar', async (req, res) => {
   try {
     const { lider_nome, categoria, bairro, cep, raio_km, temporada, q } = req.query;
-
-    let query = supabase.from('mem_grupos')
-      .select('id, codigo, nome, categoria, faixa_etaria, idade_min, idade_max, dia_semana, horario, recorrencia, local, descricao, bairro, lat, lng, lider_id, status_temporada, temporada, foto_url, modo_inscricao')
-      .eq('ativo', true)
-      .is('deleted_at', null) // soft-deletado some do form (a temporada aberta não o esconde)
-      .eq('aceitando_inscricoes', true) // líder pode ter parado de receber pedidos
-      .neq('modo_inscricao', 'fechado'); // por convite do líder — nunca aparece
-    // Por padrão mostra so grupos com status que aceitam novos (ativo + novo + a_confirmar)
-    query = query.in('status_temporada', ['ativo', 'novo', 'a_confirmar']);
-    if (categoria) query = query.eq('categoria', categoria);
-    if (bairro) query = query.eq('bairro', bairro);
-    if (temporada) query = query.eq('temporada', temporada);
-    query = query.order('nome');
-
-    const { data: gruposCrus, error } = await query;
-    if (error) throw error;
-
-    // Visibilidade por modo (Marcos · 15/07): 'temporada' aparece só com as
-    // inscrições da temporada abertas; 'sempre_aberto' aparece o ano todo.
-    const { data: temporadasAll } = await supabase.from('mem_temporadas').select('id, inscricoes_abertas');
-    const abertas = new Set((temporadasAll || []).filter(t => t.inscricoes_abertas).map(t => t.id));
-    const grupos = (gruposCrus || []).filter(g =>
-      g.modo_inscricao === 'sempre_aberto'
-      || (g.modo_inscricao !== 'fechado' && (!g.temporada || abertas.has(g.temporada))));
+    const { grupos } = await buscarGruposInscriveis({ categoria, bairro, temporada });
 
     // Enriquecer com líder principal (mem_grupos.lider_id — é quem recebe a
     // aprovação por WhatsApp) + líderes ADICIONAIS do roster (funcao lider/

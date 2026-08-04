@@ -19,6 +19,7 @@ const { espelharMatriculaDoEncontro } = require('../services/nextMatricula');
 // Reuso: núcleo de aprovação de pedidos de grupo (claim atômico + vínculo +
 // notificação) já validado no módulo web de grupos.
 const { aprovarPedidoCore } = require('./grupos');
+const { registrarEventoPedido } = require('../services/grupoPedidoEventos');
 // Reuso dos helpers de permissão granular pra resolver o nível do módulo
 // "grupos" do usuário do app (authApp é leve e não computa permissões).
 const { getModulos, getCargoMatrix, resolveEffectivePerms } = require('../middleware/auth');
@@ -2558,60 +2559,62 @@ router.post('/grupos/pedidos/:id/aprovar', authApp, limiterNormal, async (req, r
 });
 
 // POST /api/app/grupos/pedidos/:id/rejeitar — body: { motivo? }
-// Replica o essencial de POST /pedidos/:id/rejeitar do módulo web (claim
-// atômico + motivo + decisor + notifica a pessoa).
+// Recusa do LÍDER não é terminal (lei de 14/07): o pedido volta pra TRIAGEM
+// (status 'devolvido') — a equipe, acima do líder, sugere outro grupo pra
+// pessoa ou rejeita de vez. A pessoa NÃO é notificada (o aviso de recusa era
+// exclusivo deste caminho — o link do WhatsApp nunca mandou; item 3 da
+// auditoria do app 03/08). Mesma semântica do ramo de recusa do
+// POST /public/grupos/aprovar.
 router.post('/grupos/pedidos/:id/rejeitar', authApp, limiterNormal, async (req, res) => {
   try {
     const ctx = await autorizarDecisaoPedido(req, res);
     if (!ctx) return;
-    const motivo = (req.body && req.body.motivo) || null;
+    const motivoInterno = req.body?.motivo ? String(req.body.motivo).trim().slice(0, 500) : null;
     const { data: pedido } = await supabase.from('mem_grupo_pedidos')
       .select('id, status, grupo_id, membro_id, nome').eq('id', req.params.id).single();
     if (!pedido) return res.status(404).json({ error: 'Pedido não encontrado' });
     if (pedido.status !== 'pendente') {
       return res.status(409).json({ error: `Pedido já foi ${pedido.status}` });
     }
-    // Guarda de corrida: só rejeita se AINDA está pendente.
+    const decididoPorNome = ctx.membro?.nome || req.user.email || 'Líder';
+    // Guarda de corrida: só devolve se AINDA está pendente.
     const { data: claimed } = await supabase.from('mem_grupo_pedidos').update({
-      status: 'rejeitado',
-      motivo_rejeicao: motivo,
+      status: 'devolvido',
+      motivo_rejeicao: motivoInterno,
       decidido_por: req.user.id,
-      decidido_por_nome: ctx.membro?.nome || req.user.email || 'Líder',
+      decidido_por_nome: decididoPorNome,
       decidido_em: new Date().toISOString(),
     }).eq('id', pedido.id).eq('status', 'pendente').select('id');
     if (!claimed || !claimed.length) {
       return res.status(409).json({ error: 'Pedido já foi decidido por outra pessoa' });
     }
+    // Linha do tempo (nunca lança) — awaited: serverless descarta trabalho
+    // pendente depois do res.json.
+    await registrarEventoPedido(pedido.id, 'recusado_lider',
+      { motivo_interno: motivoInterno, origem: 'app' }, decididoPorNome);
 
-    // Notifica a pessoa (só se tiver login vinculado).
+    // Avisa a TRIAGEM (módulo grupos) — mesma notificação do link do WhatsApp.
+    // Fire-and-forget de propósito: a Caixa de entrada é o caminho garantido
+    // (o pedido devolvido já está na fila).
     (async () => {
       try {
         const { data: grupo } = await supabase.from('mem_grupos').select('nome').eq('id', pedido.grupo_id).single();
-        if (pedido.membro_id) {
-          const { data: prof } = await supabase.from('vol_profiles')
-            .select('auth_user_id').eq('membresia_id', pedido.membro_id).maybeSingle();
-          if (prof?.auth_user_id) {
-            await notificar({
-              modulo: 'grupos',
-              tipo: 'pedido_rejeitado',
-              titulo: `Pedido para ${grupo?.nome || 'grupo'} não foi aceito`,
-              mensagem: motivo
-                ? `Seu pedido foi recusado: ${motivo}. Você pode tentar outro grupo.`
-                : `Seu pedido foi recusado pelo líder. Você pode tentar outro grupo.`,
-              link: '/grupos',
-              severidade: 'info',
-              chaveDedup: `pedido_rejeitado_${pedido.id}`,
-              targetIds: [prof.auth_user_id],
-            });
-          }
-        }
-      } catch (e) { console.error('[APP grupos/pedidos rejeitar notify]', e.message); }
+        await notificar({
+          modulo: 'grupos',
+          tipo: 'pedido_devolvido',
+          titulo: `Pedido devolvido pra triagem: ${pedido.nome}`,
+          mensagem: `O líder de ${grupo?.nome || 'um grupo'} recusou o pedido pelo app${motivoInterno ? ` (motivo interno: ${motivoInterno.slice(0, 200)})` : ''}. Sugira outro grupo pra pessoa ou rejeite de vez.`,
+          link: '/grupos?tab=entrada',
+          severidade: 'aviso',
+          chaveDedup: `pedido_devolvido_${pedido.id}`,
+        });
+      } catch (e) { console.error('[APP grupos/pedidos devolver notify]', e.message); }
     })();
 
-    res.json({ ok: true });
+    res.json({ ok: true, acao: 'devolvido' });
   } catch (e) {
     console.error('[APP] grupos/pedidos rejeitar:', e.message);
-    res.status(500).json({ error: 'Erro ao rejeitar pedido' });
+    res.status(500).json({ error: 'Erro ao recusar pedido' });
   }
 });
 
