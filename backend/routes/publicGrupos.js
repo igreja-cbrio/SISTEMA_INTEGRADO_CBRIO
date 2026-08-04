@@ -2268,6 +2268,45 @@ async function contextoConferencia(token) {
 // mapa, sem ninguém ser avisado. Trocar liderança é ato de gestão (aba Pessoas
 // do /grupos · PUT /membros/:id/funcao), não efeito colateral de conferir lista.
 const FUNCOES_PROTEGIDAS = new Set(['lider', 'co_lider']);
+
+// ── 4 categorias da conferência (Marcos · 04/08, fechamento com a Naná) ──
+// lideranca 🔒 · inscrito (entrou NESTA temporada) 🔒 · renovado (confirmou na
+// renovação) 🔒 · sem_confirmacao (roster herdado · ÚNICO removível pela tela).
+// Inscrito e renovado são somente leitura de propósito: é o que protege a
+// evidência de quem acabou de entrar/renovar. A decisão é SEMPRE re-derivada
+// no SERVIDOR (payload é do cliente).
+
+// Temporada "atual" = a com inscrições abertas (maior ano/numero). Sem
+// temporada aberta, a categoria 'inscrito' simplesmente não existe (a
+// conferência continua funcionando fora de temporada — desenho original).
+async function temporadaAtualInfo() {
+  const { data } = await supabase.from('mem_temporadas')
+    .select('id, label, data_inicio').eq('inscricoes_abertas', true)
+    .order('ano', { ascending: false }).order('numero', { ascending: false }).limit(1);
+  return (data && data[0]) || null;
+}
+
+// Vínculos que vieram da RENOVAÇÃO: a resposta de renovação registra o aceite
+// em inscricao_consentimentos com ref_id = id do VÍNCULO (porta 'grupos') —
+// só aquele fluxo usa vínculo como ref (pedido novo usa ref = pedido.id), então
+// "tem consentimento apontando pro vínculo" = renovou. É a derivação-remendo
+// documentada no handoff (o campo definitivo "confirmado pra temporada X" no
+// vínculo segue como pendência estrutural).
+async function vinculosRenovados(vincIds) {
+  const renovados = new Set();
+  for (let i = 0; i < vincIds.length; i += 150) {
+    const { data, error } = await supabase.from('inscricao_consentimentos')
+      .select('ref_id').eq('porta', 'grupos').in('ref_id', vincIds.slice(i, i + 150));
+    if (error) throw error;
+    (data || []).forEach(r => { if (r.ref_id) renovados.add(r.ref_id); });
+  }
+  return renovados;
+}
+
+// created_at (timestamptz ISO) >= data_inicio (date): comparação de string
+// funciona porque ISO ordena lexicograficamente e o date é prefixo.
+const vincNaTemporada = (createdAt, temporada) =>
+  !!(temporada?.data_inicio && createdAt && String(createdAt) >= temporada.data_inicio);
 const RANK_FUNCAO = { coordenador: 7, supervisor: 6, lider: 5, co_lider: 4, lider_treinamento: 3, frequentador: 2, visitante: 1 };
 const rotuloFuncao = (f) => ({
   coordenador: 'Coordenador', supervisor: 'Supervisor', lider: 'Líder',
@@ -2277,14 +2316,23 @@ const rotuloFuncao = (f) => ({
 // Roster pra tela: vínculos ATIVOS (marcados = "faz parte") + os que ESTA
 // conferência removeu (desmarcados · pra reedição). 1 linha por pessoa, com o
 // papel de MAIOR nível entre os vínculos dela no grupo (multi-vínculo é real).
+// Cada linha sai com `categoria` (lideranca/renovado/inscrito/sem_confirmacao)
+// e `travado` (categoria ≠ sem_confirmacao ⇒ a tela não deixa desmarcar; o
+// POST re-deriva e blinda de qualquer jeito).
 async function rosterConferencia(conf) {
-  const linhas = new Map(); // membro_id → { id, nome, foto_url, marcado, funcao, papel, protegido }
+  const temporada = await temporadaAtualInfo();
+  const linhas = new Map(); // membro_id → { id, nome, foto_url, marcado, funcao, papel, protegido, categoria, travado }
   const { data: ativos, error: eA } = await supabase.from('mem_grupo_membros')
-    .select('membro_id, funcao, mem_membros!inner(id, nome, foto_url)')
+    .select('id, membro_id, funcao, created_at, mem_membros!inner(id, nome, foto_url)')
     .eq('grupo_id', conf.grupo_id).is('saiu_em', null).is('deleted_at', null)
     .limit(1000);
   if (eA) throw eA;
+  const renovadosVinc = await vinculosRenovados((ativos || []).map(v => v.id));
+  const renovadoMembro = new Set();
+  const novoMembro = new Set();
   for (const v of (ativos || [])) {
+    if (renovadosVinc.has(v.id)) renovadoMembro.add(v.membro_id);
+    if (vincNaTemporada(v.created_at, temporada)) novoMembro.add(v.membro_id);
     const atual = linhas.get(v.membro_id);
     if (!atual) {
       linhas.set(v.membro_id, {
@@ -2321,7 +2369,18 @@ async function rosterConferencia(conf) {
       });
     }
   }
-  return [...linhas.values()].sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt-BR'));
+  for (const linha of linhas.values()) {
+    // Prioridade: liderança > renovado > inscrito > sem confirmação. Quem esta
+    // conferência já removeu só pode ter sido sem_confirmacao (as outras são
+    // blindadas), então a classificação por membro segue valendo na reedição.
+    linha.categoria = linha.protegido ? 'lideranca'
+      : renovadoMembro.has(linha.id) ? 'renovado'
+        : novoMembro.has(linha.id) ? 'inscrito'
+          : 'sem_confirmacao';
+    linha.travado = linha.categoria !== 'sem_confirmacao';
+  }
+  const membros = [...linhas.values()].sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt-BR'));
+  return { membros, temporada };
 }
 
 // GET /api/public/grupos/grupo/confira?token=...
@@ -2330,13 +2389,41 @@ router.get('/grupo/confira', async (req, res) => {
     const ctx = await contextoConferencia(req.query.token);
     if (ctx.erro) return res.status(ctx.erro.status).json({ error: ctx.erro.msg });
     const { conf, grupo } = ctx;
-    const membros = await rosterConferencia(conf);
+    const { membros, temporada } = await rosterConferencia(conf);
+
+    // Pedidos AGUARDANDO APROVAÇÃO do grupo: o líder pode devolvê-los pra
+    // triagem por aqui (X). Marcado = "segue aguardando" (o ✓ NÃO aprova —
+    // aprovação continua pelo link individual que o líder já recebeu).
+    const { data: pendentes, error: ePen } = await supabase.from('mem_grupo_pedidos')
+      .select('id, nome, created_at').eq('grupo_id', grupo.id)
+      .eq('status', 'pendente').is('deleted_at', null)
+      .order('created_at', { ascending: true }).limit(500);
+    if (ePen) throw ePen;
+
+    // Pedidos que ESTA conferência devolveu (reedição mostra read-only — a
+    // devolução é one-way: a triagem pode já ter realocado). Best-effort.
+    let pedidosDevolvidos = [];
+    try {
+      const { data: evs } = await supabase.from('mem_grupo_pedido_eventos')
+        .select('pedido_id').eq('tipo', 'recusado_lider')
+        .eq('detalhe->>conferencia_id', conf.id).limit(300);
+      const ids = [...new Set((evs || []).map(e => e.pedido_id).filter(Boolean))];
+      if (ids.length) {
+        const { data: peds } = await supabase.from('mem_grupo_pedidos')
+          .select('id, nome').in('id', ids).eq('status', 'devolvido').is('deleted_at', null);
+        pedidosDevolvidos = (peds || []).map(p => ({ id: p.id, nome: p.nome }));
+      }
+    } catch (eDev) { console.warn('[public grupos confira get] devolvidos:', eDev.message); }
+
     res.json({
       grupo: { nome: grupo.nome },
       status: conf.status,                 // enviada | respondida
       ja_respondeu: conf.status !== 'enviada',
       observacao: conf.observacao || null,
+      temporada: temporada?.label || null,
       membros,
+      pedidos_pendentes: (pendentes || []).map(p => ({ id: p.id, nome: p.nome, criado_em: p.created_at })),
+      pedidos_devolvidos: pedidosDevolvidos,
     });
   } catch (e) {
     if (schemaAusente(e)) {
@@ -2370,23 +2457,30 @@ router.post('/grupo/confira', async (req, res) => {
 
     // Roster ativo ATUAL (vínculos linha a linha — pode haver mais de um por pessoa)
     const { data: ativos, error: eAt } = await supabase.from('mem_grupo_membros')
-      .select('id, membro_id, funcao')
+      .select('id, membro_id, funcao, created_at')
       .eq('grupo_id', grupo.id).is('saiu_em', null).is('deleted_at', null)
       .limit(1000);
     if (eAt) throw eAt;
+    // Travas re-derivadas AQUI (payload é do cliente): liderança + renovados +
+    // inscritos desta temporada NUNCA saem por este fluxo — são as 3 categorias
+    // somente-leitura da tela (Marcos · 04/08).
+    const renovadosVinc = await vinculosRenovados((ativos || []).map(v => v.id));
+    const temporadaAtual = await temporadaAtualInfo();
     const ativosPorMembro = new Map();
-    const protegidos = new Set(); // liderança do grupo — nunca sai por este fluxo
+    const travados = new Set(); // liderança/renovado/inscrito — nunca saem por aqui
     for (const v of (ativos || [])) {
       if (!ativosPorMembro.has(v.membro_id)) ativosPorMembro.set(v.membro_id, []);
       ativosPorMembro.get(v.membro_id).push(v.id);
-      if (FUNCOES_PROTEGIDAS.has(v.funcao)) protegidos.add(v.membro_id);
+      if (FUNCOES_PROTEGIDAS.has(v.funcao)
+        || renovadosVinc.has(v.id)
+        || vincNaTemporada(v.created_at, temporadaAtual)) travados.add(v.membro_id);
     }
 
     const setExibidos = new Set(exibidos);
     const setMantem = new Set(mantem.filter(id => setExibidos.has(id)));
-    // A tela já bloqueia desmarcar liderança, mas a decisão é do SERVIDOR
-    // (payload é do cliente): líder/co-líder exibido conta SEMPRE como mantido.
-    for (const membroId of protegidos) {
+    // A tela já bloqueia desmarcar as categorias travadas, mas a decisão é do
+    // SERVIDOR: travado exibido conta SEMPRE como mantido.
+    for (const membroId of travados) {
       if (setExibidos.has(membroId)) setMantem.add(membroId);
     }
     const obsLimpa = String(observacao || '').trim().slice(0, 2000) || null;
@@ -2447,6 +2541,40 @@ router.post('/grupo/confira', async (req, res) => {
       }
     }
 
+    // 2b) Pedidos AGUARDANDO APROVAÇÃO que o líder devolveu (X na tela): voltam
+    //     pra TRIAGEM (status 'devolvido' · lei de 14/07 — recusa de líder nunca
+    //     é final). Guardas: só pedido do PRÓPRIO grupo, ainda pendente e
+    //     exibido na tela (payload é do cliente). A devolução é one-way por
+    //     aqui — reedição NÃO re-pendentifica (a triagem pode já ter agido).
+    const pedExibidos = Array.isArray(req.body?.pedidos_exibidos) ? req.body.pedidos_exibidos : [];
+    const pedDevolver = Array.isArray(req.body?.pedidos_devolver) ? req.body.pedidos_devolver : [];
+    let pedidosDevolvidos = [];
+    if (pedDevolver.length) {
+      const setPedExib = new Set(pedExibidos);
+      const alvo = [...new Set(pedDevolver.filter(id => setPedExib.has(id)))].slice(0, 500);
+      if (alvo.length) {
+        const quemDevolveu = `${conf.lider_nome || 'Líder'} (confira a lista)`;
+        const { data: claimed, error: eDev } = await supabase.from('mem_grupo_pedidos')
+          .update({
+            status: 'devolvido',
+            motivo_rejeicao: 'Devolvido pelo líder na conferência da lista do grupo',
+            decidido_por: null,
+            decidido_por_nome: quemDevolveu,
+            decidido_em: agora,
+          })
+          .in('id', alvo).eq('grupo_id', grupo.id)
+          .eq('status', 'pendente').is('deleted_at', null)
+          .select('id, nome');
+        if (eDev) throw eDev;
+        pedidosDevolvidos = claimed || [];
+        // Linha do tempo por pedido (nunca lança) — awaited: serverless
+        // descarta trabalho pendente depois do res.json.
+        await Promise.all(pedidosDevolvidos.map(p => registrarEventoPedido(
+          p.id, 'recusado_lider',
+          { origem: 'confira_lista', conferencia_id: conf.id }, quemDevolveu)));
+      }
+    }
+
     // 3) Resumo na linha (cache de exibição — a fonte auditável é o audit log de
     //    mem_grupo_membros + conferencia_id). Contadores refletem o estado APÓS
     //    a operação (reedição inclui quem já estava fora e continuou fora).
@@ -2469,16 +2597,18 @@ router.post('/grupo/confira', async (req, res) => {
     if (eUp) throw eUp;
 
     // A pessoa removida NÃO é notificada (decisão pastoral vigente na
-    // renovação). A COORDENAÇÃO é — o roster mudou e ela precisa saber.
-    if (foraAgoraMembros.size > 0) {
+    // renovação) e o pedido devolvido também não avisa a pessoa. A COORDENAÇÃO
+    // é — o roster mudou / tem pedido pra realocar e ela precisa saber.
+    if (foraAgoraMembros.size > 0 || pedidosDevolvidos.length > 0) {
       try {
         await notificar({
           modulo: 'grupos',
           tipo: 'confira_lista_respondida',
           titulo: `Lista conferida: ${grupo.nome}`,
           mensagem: `O líder do grupo ${grupo.nome} conferiu a lista: ${mantidosFinal.length} continua(m) e ${foraAgoraMembros.size} saiu(ram).`
+            + (pedidosDevolvidos.length ? ` ${pedidosDevolvidos.length} pedido(s) aguardando aprovação devolvido(s) pra triagem — sugira outro grupo ou rejeite de vez.` : '')
             + (obsLimpa ? ` Observação: ${obsLimpa.slice(0, 200)}` : ''),
-          link: '/grupos?tab=envios',
+          link: pedidosDevolvidos.length ? '/grupos?tab=entrada' : '/grupos?tab=envios',
           severidade: 'info',
           chaveDedup: `confira_lista_${conf.id}_${hoje}`,
         });
@@ -2490,6 +2620,7 @@ router.post('/grupo/confira', async (req, res) => {
       mantidos: mantidosFinal.length,
       removidos: foraAgoraMembros.size,
       reativados: reativarIds.length,
+      pedidos_devolvidos: pedidosDevolvidos.length,
     });
   } catch (e) {
     if (schemaAusente(e)) {
