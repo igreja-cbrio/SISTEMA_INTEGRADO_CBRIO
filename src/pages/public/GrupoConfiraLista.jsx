@@ -280,15 +280,15 @@ export default function GrupoConfiraLista() {
             {dados.temporada && (
               <p style={{ fontSize: 12, color: C.textDim, margin: '0 0 8px' }}>{dados.temporada}</p>
             )}
+            {/* Redação ajustada a pedido da coordenação (Naná/Nélio · 04/08):
+                dois parágrafos, sem a explicação longa no topo — as instruções
+                curtas vivem no título de cada seção. */}
+            <p style={{ fontSize: 13.5, color: C.text3, margin: '0 0 8px', lineHeight: 1.6 }}>
+              Esta é a lista que o sistema tem hoje, separada por situação.
+            </p>
             <p style={{ fontSize: 13.5, color: C.text3, margin: '0 0 14px', lineHeight: 1.6 }}>
-              Esta é a lista que o sistema tem hoje, separada por situação.{' '}
               <strong style={{ color: C.text2 }}>Inscritos desta temporada e renovações já estão confirmados</strong> (aparecem
-              travados). Em <strong style={{ color: C.text2 }}>Sem confirmação</strong>, desmarque quem não faz mais parte —
-              quem sair continua cadastrado na igreja e pode voltar depois.
-              {pendentes.length > 0 && (
-                <> Em <strong style={{ color: C.text2 }}>Aguardando aprovação</strong>, desmarque o pedido que você quer
-                devolver pra coordenação.</>
-              )}
+              travados). Em <strong style={{ color: C.text2 }}>Sem confirmação</strong>, desmarque quem não faz mais parte.
               {dados.ja_respondeu && (
                 <> <strong style={{ color: AMBAR }}>Você já respondeu</strong> — pode ajustar abaixo se algo mudou.</>
               )}
