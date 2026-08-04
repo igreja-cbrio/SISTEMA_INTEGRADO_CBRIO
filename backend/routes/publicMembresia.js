@@ -65,7 +65,8 @@ function soDigitos(v) {
 // 20260803160000). Sem acento: é identificador persistido.
 const VINCULOS_DECLARADOS = ['membro', 'congregado', 'visitante'];
 
-// Colunas que só existem depois da migration do censo (20260803160000).
+// Colunas que só existem depois da PARTE 1 da migration do censo
+// (20260803160000_censo_recadastramento.sql · mem_cadastros_pendentes).
 const COLUNAS_CENSO = ['censo', 'vinculo_declarado', 'censo_conflitos'];
 
 // 42703 = undefined_column. O PostgREST recusa a query INTEIRA quando uma
@@ -469,7 +470,7 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
       .single();
 
     if (error && ehColunaAusente(error)) {
-      console.warn('[PUBLIC CADASTRO] colunas do censo ausentes (migration 20260803160000 não aplicada) — gravando sem elas');
+      console.warn('[PUBLIC CADASTRO] colunas do censo ausentes (parte 1 da migration, 20260803160000, não aplicada) — gravando sem elas');
       ({ data, error } = await supabase
         .from('mem_cadastros_pendentes')
         .insert(semColunasDoCenso(payload))

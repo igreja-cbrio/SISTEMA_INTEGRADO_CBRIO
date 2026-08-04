@@ -272,7 +272,7 @@ Celebra com só nome+telefone continuam válidas para sempre).
   submit quando há horários; `status='rejeitado'` segue FORA do CHECK
   (referências defensivas no código são vocabulário morto — não legalizar).
 
-## ⚠️ CENSO / recadastramento da membresia (2026-08-03 · migration `20260803160000`)
+## ⚠️ CENSO / recadastramento da membresia (2026-08-03 · migrations `20260803160000` + `20260803160100`)
 
 Demanda do **Arthur Serpa**: por um mês, 1 minuto de cada culto pra igreja
 escanear um QR e preencher o cadastro. Decisão do Marcos: **formulário ÚNICO**
@@ -394,6 +394,23 @@ entrada dos Grupos já provou que separar em aba faz ninguém achar.
 - ⚠️ Aprovar linha `aplicado` é **bloqueado** (400): o caminho de atualização
   reaplicaria o formulário inteiro sobre o cadastro, inclusive por cima de valor
   que a equipe corrigiu depois.
+
+### ⚠️ DUAS colagens — uma tabela cada (deadlock 40P01)
+
+A mudança mexe em **duas tabelas vivas** (`mem_cadastros_pendentes` e
+`mem_membros`), então virou **duas migrations**, aplicadas em colagens
+SEPARADAS: `20260803160000` (pendentes) e `20260803160100` (membros). O SQL
+Editor roda a colagem inteira numa transação só; DDL que trava duas tabelas
+pode se abraçar com uma consulta de produção que as toca na ordem inversa →
+`40P01 deadlock detected`, e a vítima é a migração (rollback total). Foi o que
+aconteceu na `20260728150000`. `mem_membros` é a tabela mais quente do sistema
+(toda porta de pessoa a toca), por isso vai sozinha. As duas partes são
+INDEPENDENTES e idempotentes — qualquer ordem, re-rodar sem medo — e os avisos
+do backend dizem **qual parte** falta.
+
+⚠️ Conferir no **catálogo** (`information_schema` / `pg_constraint` /
+`pg_indexes`), nunca por `RAISE NOTICE`: o SQL Editor do Supabase não mostra
+notice. As queries de conferência estão comentadas no fim de cada arquivo.
 
 ### Tolerância à migration ausente (deploy em 2 etapas)
 

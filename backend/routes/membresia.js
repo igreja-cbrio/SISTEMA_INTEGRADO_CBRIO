@@ -2841,7 +2841,7 @@ router.get('/censo/cobertura', authorizeModule('membresia', 1), async (req, res)
     if (!schemaOk) {
       return res.json({
         disponivel: false,
-        aviso: 'A migration do censo (20260803160000) ainda não foi aplicada — o painel de cobertura fica indisponível até lá. O formulário público continua funcionando.',
+        aviso: 'A parte 1 da migration do censo (20260803160000 · mem_cadastros_pendentes) ainda não foi aplicada — o painel de cobertura fica indisponível até lá. O formulário público continua funcionando.',
       });
     }
 
@@ -2856,7 +2856,7 @@ router.get('/censo/cobertura', authorizeModule('membresia', 1), async (req, res)
     if (censoSchemaAusente(rBase.error) || censoSchemaAusente(rResp.error)) {
       return res.json({
         disponivel: false,
-        aviso: 'A migration do censo (20260803160000) foi aplicada só em parte — faltam as colunas de cobertura em mem_membros.',
+        aviso: 'Falta a parte 2 da migration do censo (20260803160100 · mem_membros) — as colunas de cobertura ainda não existem. Aplique-a numa colagem separada da parte 1.',
       });
     }
     if (rBase.error) throw rBase.error;
@@ -2943,7 +2943,7 @@ router.get('/censo/faltantes', authorizeModule('membresia', 2), async (req, res)
       if (censoSchemaAusente(error)) {
         return res.json({
           disponivel: false, items: [], total: 0,
-          aviso: 'A migration do censo (20260803160000) ainda não foi aplicada.',
+          aviso: 'Falta a parte 2 da migration do censo (20260803160100 · mem_membros).',
         });
       }
       throw error;
