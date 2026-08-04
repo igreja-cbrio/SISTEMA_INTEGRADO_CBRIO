@@ -20,6 +20,7 @@ const { espelharMatriculaDoEncontro } = require('../services/nextMatricula');
 // notificação) já validado no módulo web de grupos.
 const { aprovarPedidoCore } = require('./grupos');
 const { registrarEventoPedido } = require('../services/grupoPedidoEventos');
+const appIdentidade = require('../services/appIdentidade');
 // Reuso dos helpers de permissão granular pra resolver o nível do módulo
 // "grupos" do usuário do app (authApp é leve e não computa permissões).
 const { getModulos, getCargoMatrix, resolveEffectivePerms } = require('../middleware/auth');
@@ -113,6 +114,96 @@ router.post('/checkin', authApp, limiterNormal, async (req, res) => {
   } catch (e) {
     console.error('[APP] checkin:', e.message);
     res.status(500).json({ error: 'Erro ao registrar check-in' });
+  }
+});
+
+// ── Identidade da conta do app · vincular ao cadastro REAL ────────────────
+// Contrato de porta aplicado à entrada do APP (Marcos · 04/08): o gatilho de
+// auth.users cria a pessoa sem matcher e sem campo nenhum (21 cadastros assim,
+// 13 com nome = prefixo do e-mail, 1 duplicata confirmada). Estes 3 endpoints
+// são o caminho CERTO: caminho rápido por CPF com prova de posse do celular, ou
+// formulário completo pelo matcher canônico. Ver services/appIdentidade.js.
+//
+// ⚠️ limiterStrict (10/15min por IP) no caminho do CPF: é sonda de existência
+// de cadastro. O teto por TELEFONE/dia está no serviço (o dono do número não
+// pediu nada e não pode ser metralhado).
+router.post('/identidade/por-cpf', authApp, limiterStrict, async (req, res) => {
+  try {
+    const r = await appIdentidade.identificarPorCpf({
+      cpf: req.body?.cpf,
+      authUserId: req.user.id,
+      email: req.user.email || null,
+      ip: req.ip || null,
+    });
+    if (!r.ok) return res.status(r.status || 400).json({ error: r.error, codigo: r.codigo });
+    res.json(r);
+  } catch (e) {
+    console.error('[APP] identidade/por-cpf:', e.message);
+    res.status(500).json({ error: 'Não foi possível verificar seu CPF agora.' });
+  }
+});
+
+router.post('/identidade/confirmar', authApp, limiterStrict, async (req, res) => {
+  try {
+    const r = await appIdentidade.confirmarCodigo({
+      verificacaoId: req.body?.verificacao_id,
+      codigo: req.body?.codigo,
+      authUserId: req.user.id,
+      email: req.user.email || null,
+    });
+    if (!r.ok) return res.status(r.status || 400).json({ error: r.error, codigo: r.codigo });
+    res.json(r);
+  } catch (e) {
+    console.error('[APP] identidade/confirmar:', e.message);
+    res.status(500).json({ error: 'Não foi possível confirmar o código agora.' });
+  }
+});
+
+router.post('/identidade/completar', authApp, limiterNormal, async (req, res) => {
+  try {
+    const r = await appIdentidade.completarCadastro({
+      payload: req.body || {},
+      authUserId: req.user.id,
+      email: req.user.email || null,
+      ip: req.ip || null,
+      userAgent: req.get('user-agent') || null,
+    });
+    if (!r.ok) return res.status(r.status || 400).json({ error: r.error, codigo: r.codigo, campo: r.campo, erros: r.erros });
+    res.json(r);
+  } catch (e) {
+    console.error('[APP] identidade/completar:', e.message);
+    res.status(500).json({ error: 'Não foi possível salvar seus dados agora.' });
+  }
+});
+
+// GET /api/app/identidade/status — a tela de abertura pergunta "preciso
+// completar meu cadastro?". Devolve o que falta (sem PII de terceiro).
+router.get('/identidade/status', authApp, limiterNormal, async (req, res) => {
+  try {
+    const membro = await resolveMembroApp(req).catch(() => null);
+    if (!membro) {
+      return res.json({ vinculado: false, completo: false, falta: ['nome', 'telefone', 'nascimento'] });
+    }
+    const falta = [];
+    if (!membro.telefone) falta.push('telefone');
+    if (!membro.cpf) falta.push('cpf'); // informativo — CPF não é exigido
+    const { data: m } = await supabase.from('mem_membros')
+      .select('nome, data_nascimento').eq('id', membro.id).maybeSingle();
+    if (!m?.data_nascimento) falta.push('nascimento');
+    const nomeFraco = require('../services/membroMatch')
+      .ehNomeDerivadoDeEmail(m?.nome, req.user.email || '');
+    if (nomeFraco) falta.push('nome');
+    res.json({
+      vinculado: true,
+      // "completo" = dá pro matcher reconhecer a pessoa depois (nome de gente +
+      // telefone + nascimento). CPF entra como recomendado, não obrigatório.
+      completo: !falta.some(f => f !== 'cpf'),
+      falta,
+      nome: m?.nome || membro.nome || null,
+    });
+  } catch (e) {
+    console.error('[APP] identidade/status:', e.message);
+    res.status(500).json({ error: 'Erro ao verificar seu cadastro' });
   }
 });
 
@@ -2251,16 +2342,81 @@ router.get('/pense-ultimo', authApp, async (req, res) => {
   }
 });
 
+/**
+ * Minutos desde a meia-noite **em BRT** (mesma convenção do `hojeBRT()`:
+ * offset fixo −3h, que o Brasil não muda desde 2019).
+ */
+function agoraMinutosBRT() {
+  const d = new Date(Date.now() - 3 * 3600 * 1000);
+  return d.getUTCHours() * 60 + d.getUTCMinutes();
+}
+function minutosDaHora(hora) {
+  const [hh, mm] = String(hora || '').split(':');
+  const h = Number(hh), m = Number(mm || 0);
+  return Number.isFinite(h) ? h * 60 + (Number.isFinite(m) ? m : 0) : null;
+}
+
+/**
+ * O culto que a pessoa está VIVENDO agora.
+ *
+ * ⚠️ Isto era `order('hora', desc).limit(1)` do dia em UTC, e os dois pedaços
+ * estavam errados (achado 04/08/2026):
+ *  1. `new Date().toISOString()` é UTC → das 21h BRT em diante o "hoje" já é
+ *     AMANHÃ. No culto de domingo 19h (que passa das 21h) o `culto` vinha nulo
+ *     e a decisão de fé era gravada com o dia seguinte — o dedup de 1/dia e a
+ *     fila da Integração ficavam desencontrados.
+ *  2. Pegar a MAIOR hora do dia significa que, no culto das 08:30, a decisão
+ *     era carimbada no culto das 19:00. Atribuição errada de culto na NSM.
+ *
+ * `ao_vivo` = existe culto cuja janela [hora − 30min, hora + 3h] contém o
+ * agora. É o que o app usa pra mostrar (ou não) o "No culto" na Home: fora da
+ * janela a tela não tem propósito. Sem janela ativa devolve o PRÓXIMO de hoje
+ * (a tela consegue dizer "começa às 19h") com `ao_vivo: false`.
+ */
+async function cultoDeAgora() {
+  const hoje = hojeBRT();
+  const { data } = await supabase
+    .from('cultos')
+    .select('id, nome, data, hora')
+    .eq('data', hoje).is('deleted_at', null)
+    .order('hora', { ascending: true });
+  const lista = data || [];
+  if (!lista.length) return { culto: null, ao_vivo: false };
+
+  const agora = agoraMinutosBRT();
+
+  // ⚠️ Os cultos de domingo saem de 90 em 90 min, então uma janela de 3h
+  // SOBREPÕE dois ou três. Por isso: (1) entre os que JÁ COMEÇARAM e ainda
+  // estão na janela, vale o MAIS RECENTE (às 10:30 é o das 10:00, não o das
+  // 08:30 — `find` simples pegava o primeiro e errava a atribuição do culto);
+  // (2) só quando nada começou é que a antecedência de 30 min conta (às 08:15
+  // é o das 08:30). Sem essa ordem, às 09:40 — 08:30 ainda rolando — a decisão
+  // iria pro culto das 10:00.
+  const iniciados = lista.filter((c) => {
+    const ini = minutosDaHora(c.hora);
+    return ini != null && agora >= ini && agora <= ini + 180;
+  });
+  if (iniciados.length) return { culto: iniciados[iniciados.length - 1], ao_vivo: true };
+
+  const chegando = lista.find((c) => {
+    const ini = minutosDaHora(c.hora);
+    return ini != null && agora >= ini - 30 && agora < ini;
+  });
+  if (chegando) return { culto: chegando, ao_vivo: true };
+
+  const proximo = lista.find((c) => {
+    const ini = minutosDaHora(c.hora);
+    return ini != null && ini > agora;
+  });
+  return { culto: proximo || lista[lista.length - 1], ao_vivo: false };
+}
+
 // GET /api/app/culto/agora — Modo Culto: culto de hoje + link ao vivo + se já registrou decisão.
 router.get('/culto/agora', authApp, async (req, res) => {
   try {
     const channelId = process.env.YOUTUBE_CHANNEL_ID || 'UCfjMVzaYlCS_VE3JuEJj2vQ';
-    const hoje = new Date().toISOString().slice(0, 10);
-    const { data: culto } = await supabase
-      .from('cultos')
-      .select('id, nome, data, hora')
-      .eq('data', hoje).is('deleted_at', null)
-      .order('hora', { ascending: false }).limit(1).maybeSingle();
+    const hoje = hojeBRT();
+    const { culto, ao_vivo } = await cultoDeAgora();
 
     let jaRegistrou = false;
     const membro = await resolveMembroApp(req).catch(() => null);
@@ -2271,7 +2427,12 @@ router.get('/culto/agora', authApp, async (req, res) => {
         .gte('criada_em', `${hoje}T00:00:00`).limit(1);
       jaRegistrou = (pend || []).length > 0;
     }
-    res.json({ culto: culto || null, canal_live: `https://www.youtube.com/channel/${channelId}/live`, jaRegistrou });
+    res.json({
+      culto: culto || null,
+      ao_vivo,
+      canal_live: `https://www.youtube.com/channel/${channelId}/live`,
+      jaRegistrou,
+    });
   } catch (e) {
     console.error('[APP] culto/agora:', e.message);
     res.status(500).json({ error: 'Erro ao carregar o culto' });
@@ -2288,7 +2449,7 @@ router.post('/culto/decisao', authApp, limiterNormal, async (req, res) => {
     const ambiente = ['presencial', 'online'].includes(req.body?.ambiente) ? req.body.ambiente : 'presencial';
     const tipo = ['aceitar', 'reconciliacao', 'rededicacao', 'batismo', 'outro'].includes(req.body?.tipo) ? req.body.tipo : null;
     const observacao = (req.body?.observacao || '').toString().trim().slice(0, 500) || null;
-    const hoje = new Date().toISOString().slice(0, 10);
+    const hoje = hojeBRT();
 
     // Dedup: 1 decisão pendente por membro por dia.
     const { data: pend } = await supabase
@@ -2297,9 +2458,11 @@ router.post('/culto/decisao', authApp, limiterNormal, async (req, res) => {
       .gte('criada_em', `${hoje}T00:00:00`).limit(1);
     if ((pend || []).length) return res.json({ ok: true, jaRegistrou: true });
 
-    const { data: culto } = await supabase
-      .from('cultos').select('id').eq('data', hoje).is('deleted_at', null)
-      .order('hora', { ascending: false }).limit(1).maybeSingle();
+    // ⚠️ MESMA régua do /culto/agora: a decisão é carimbada no culto que a
+    // pessoa está vivendo, não no de maior hora do dia (antes, decisão das
+    // 08:30 ia pro culto das 19:00) — e o dia é BRT (antes, das 21h em diante
+    // o UTC já era o dia seguinte e o culto_id vinha nulo).
+    const { culto } = await cultoDeAgora();
 
     const { error } = await supabase.from('app_decisoes').insert({
       membro_id: membro.id, culto_id: culto?.id || null, ambiente, tipo, observacao, status: 'pendente',
