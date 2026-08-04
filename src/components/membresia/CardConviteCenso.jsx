@@ -93,7 +93,13 @@ export default function CardConviteCenso() {
       setPrev(null);
       setConfirmar('');
     } catch (e) {
-      setErro(e.message || 'Erro ao disparar');
+      // ⚠️ Timeout aqui NÃO significa que nada saiu — o envio continua no
+      // servidor e o registro é gravado em blocos durante o percurso. Dizer
+      // "tente de novo" (a mensagem genérica) foi o que fez o Matheus achar,
+      // em 04/08, que 200 e-mails enviados não tinham sido enviados.
+      setErro(e.code === 'API_TIMEOUT'
+        ? 'O envio passou do tempo de espera da tela, mas provavelmente CONTINUOU no servidor. NÃO dispare de novo: clique em "Ver prévia" — quem já recebeu sai da contagem de elegíveis.'
+        : (e.message || 'Erro ao disparar'));
     } finally {
       setDisparando(false);
     }
