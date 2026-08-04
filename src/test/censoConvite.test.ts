@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 
 import {
   TETO_RODADA_WHATSAPP,
+  whatsappPronto,
   semCpf,
   primeiroNome,
   emailUtilizavel,
@@ -136,6 +137,28 @@ describe('teto da rodada', () => {
   it('não passa de 250 por rodada', () => {
     expect(TETO_RODADA_WHATSAPP).toBeLessThanOrEqual(250);
     expect(TETO_RODADA_WHATSAPP).toBeGreaterThan(0);
+  });
+});
+
+describe('whatsappPronto · semáforo do canal', () => {
+  // ⚠️ Guarda do estrago silencioso e PERMANENTE: template "em análise" na Meta
+  // não envia, mas o disparo registraria as pessoas como convidadas em
+  // mem_censo_convites — a mensagem nunca chegaria e a próxima rodada as
+  // pularia. 200 pessoas perdidas sem erro na tela.
+  it('sem a env o canal está FECHADO', () => {
+    expect(whatsappPronto({})).toBe(false);
+    expect(whatsappPronto({ WHATSAPP_TEMPLATE_CENSO_ATUALIZACAO: '' })).toBe(false);
+    expect(whatsappPronto({ WHATSAPP_TEMPLATE_CENSO_ATUALIZACAO: '   ' })).toBe(false);
+  });
+
+  it('com a env preenchida o canal abre', () => {
+    expect(whatsappPronto({ WHATSAPP_TEMPLATE_CENSO_ATUALIZACAO: 'atualizacao_cadastro' })).toBe(true);
+  });
+
+  // O nome do template tem default no código; ter default NÃO pode significar
+  // "pode enviar", senão a guarda não serve pra nada.
+  it('o default do nome do template não abre o canal sozinho', () => {
+    expect(whatsappPronto({ WHATSAPP_TEMPLATE_LANG: 'pt_BR' })).toBe(false);
   });
 });
 

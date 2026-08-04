@@ -2425,7 +2425,14 @@ export const membresia = {
     aprovar: (id, data) => post(`/membresia/cadastros/${id}/aprovar`, data || {}),
     // Aprovação em massa: só passa quem tem os dados obrigatórios (o servidor
     // reavalia cada linha; o resto volta em `ignorados` pra aprovação manual).
-    aprovarLote: (ids) => post('/membresia/cadastros/aprovar-lote', { ids }),
+    //
+    // ⚠️ Timeout PRÓPRIO de 90s (o padrão é 30s): cada aprovação passa pelo
+    // matcher canônico e escreve em várias tabelas, então até um lote pequeno
+    // passa dos 30s. Em 04/08 um lote de 49 CONCLUIU no servidor e o cliente
+    // abortou em 30s — a tela disse "tempo esgotado" para um trabalho que tinha
+    // dado certo, e o Matheus achou que nada aconteceu. Quem chunkifica é a
+    // tela (TabCadastros); este teto é a rede de segurança.
+    aprovarLote: (ids) => post('/membresia/cadastros/aprovar-lote', { ids }, { timeout: 90000 }),
     rejeitar: (id, motivo) => post(`/membresia/cadastros/${id}/rejeitar`, { motivo }),
     update: (id, data) => patch(`/membresia/cadastros/${id}`, data),
     remove: (id) => del(`/membresia/cadastros/${id}`),

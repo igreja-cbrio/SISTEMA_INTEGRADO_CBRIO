@@ -127,7 +127,18 @@ export default function TabCadastros({ onMembrosChange }) {
   const [selecionados, setSelecionados] = useState(() => new Set());
   const [aprovandoLote, setAprovandoLote] = useState(false);
   const [resultadoLote, setResultadoLote] = useState(null);
+  const [progressoLote, setProgressoLote] = useState(null); // {feitos, total}
   useEffect(() => { setSelecionados(new Set()); }, [filterStatus, busca]);
+
+  // ⚠️ LOTE VAI EM PEDAÇOS DE 8, e isso não é otimização — é correção de bug.
+  // Em 04/08 um lote de 49 rodou até o fim NO SERVIDOR (49 aprovados no banco)
+  // e o cliente abortou em 30s: a tela disse "Tempo esgotado, nada aconteceu"
+  // para um trabalho que tinha dado certo, e a lista ficou mostrando os 50
+  // pendentes que já não existiam. Cada aprovação passa pelo matcher canônico e
+  // escreve em várias tabelas (~1-2s), então o lote inteiro nunca cabe numa
+  // requisição confortável. Em pedaços: cada chamada volta rápido, o progresso
+  // aparece, e uma falha no meio não apaga o que já foi gravado.
+  const TAMANHO_PEDACO = 8;
 
   const alternarSelecao = (id) => {
     setSelecionados((atual) => {
@@ -142,21 +153,44 @@ export default function TabCadastros({ onMembrosChange }) {
     if (!ids.length) return;
     setAprovandoLote(true);
     setError('');
+    setProgressoLote({ feitos: 0, total: ids.length });
+
+    // Acumula o resultado dos pedaços num só, pra tela mostrar uma resposta.
+    const acc = { ok: true, aprovados: 0, ignorados: [], falhas: [] };
+    let interrompido = null;
+
     try {
-      const r = await membresia.cadastros.aprovarLote(ids);
-      setResultadoLote(r);
+      for (let i = 0; i < ids.length; i += TAMANHO_PEDACO) {
+        const pedaco = ids.slice(i, i + TAMANHO_PEDACO);
+        try {
+          const r = await membresia.cadastros.aprovarLote(pedaco);
+          acc.aprovados += r.aprovados || 0;
+          if (r.ignorados?.length) acc.ignorados.push(...r.ignorados);
+          if (r.falhas?.length) acc.falhas.push(...r.falhas);
+        } catch (e) {
+          // ⚠️ Para no primeiro pedaço que falha, mas PRESERVA o que já foi
+          // aprovado: o servidor já gravou, e sumir com esse número faria a
+          // pessoa reaprovar por cima (e achar que nada aconteceu, que foi
+          // exatamente o susto de 04/08).
+          interrompido = e.message || 'Erro ao aprovar em lote';
+          break;
+        }
+        setProgressoLote({ feitos: Math.min(i + TAMANHO_PEDACO, ids.length), total: ids.length });
+      }
+
+      setResultadoLote({ ...acc, interrompido, total_selecionado: ids.length });
       setSelecionados(new Set());
-      if (r.aprovados > 0) {
-        toast.success(`${r.aprovados} cadastro(s) aprovados`);
+      if (acc.aprovados > 0) {
+        toast.success(`${acc.aprovados} cadastro(s) aprovados`);
         onMembrosChange?.();
-      } else {
+      } else if (!interrompido) {
         toast.warning('Nenhum cadastro foi aprovado — veja os motivos.');
       }
+      if (interrompido) setError(`${interrompido} (${acc.aprovados} já foram aprovados antes da falha.)`);
       load();
-    } catch (e) {
-      setError(e.message || 'Erro ao aprovar em lote');
     } finally {
       setAprovandoLote(false);
+      setProgressoLote(null);
     }
   }
 
@@ -420,7 +454,13 @@ export default function TabCadastros({ onMembrosChange }) {
             onClick={handleAprovarLote}
           >
             <Check style={{ width: 13, height: 13, marginRight: 6 }} />
-            {aprovandoLote ? 'Aprovando…' : `Aprovar ${selecionados.size || ''} selecionado(s)`}
+            {aprovandoLote
+              ? (progressoLote
+                // Progresso REAL, não spinner sem número: o lote leva ~1-2s por
+                // pessoa e sem contagem parece travado (foi o susto de 04/08).
+                ? `Aprovando ${progressoLote.feitos} de ${progressoLote.total}…`
+                : 'Aprovando…')
+              : `Aprovar ${selecionados.size || ''} selecionado(s)`}
           </Button>
         </div>
       )}
@@ -767,6 +807,23 @@ export default function TabCadastros({ onMembrosChange }) {
             <p style={{ color: C.green, fontWeight: 600 }}>
               {resultadoLote?.aprovados || 0} cadastro(s) aprovados.
             </p>
+
+            {resultadoLote?.interrompido && (
+              <p style={{ color: C.red, fontSize: 12.5 }}>
+                O lote parou no meio: {resultadoLote.interrompido} Os aprovados acima
+                <strong> já estão gravados</strong> — selecione o que sobrou e rode de novo.
+              </p>
+            )}
+
+            {/* Quando o matcher reconhece a mesma pessoa em 2+ cadastros, o número
+                de pessoas é menor que o de cadastros. Dizer isso evita a leitura
+                errada de que "faltou aprovar alguém". */}
+            {!!resultadoLote?.aprovados && (
+              <p style={{ color: C.text3, fontSize: 11.5 }}>
+                Cadastros da mesma pessoa são consolidados num cadastro só, então o
+                número de pessoas pode ser menor que o de aprovações.
+              </p>
+            )}
 
             {!!resultadoLote?.ignorados?.length && (
               <div style={{ marginTop: 12 }}>
