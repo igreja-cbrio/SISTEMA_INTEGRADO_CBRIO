@@ -313,7 +313,8 @@ async function dispararCenso({ status, canais = ['whatsapp', 'email'], reenviar 
   const whats = limitarPorTeto(alvoWhats, TETO_RODADA_WHATSAPP);
   const mail = limitarPorTeto(alvoEmail, TETO_RODADA_EMAIL);
 
-  const registros = [];
+  let gravados = 0;
+  let erroRegistro = null;
   const resultado = {
     ok: true,
     rodada,
@@ -339,9 +340,13 @@ async function dispararCenso({ status, canais = ['whatsapp', 'email'], reenviar 
     resultado.whatsapp.enfileirados = r.queued || 0;
     resultado.whatsapp.motivo = r.motivo || null;
     if (r.queued) {
-      for (const p of whats.envia) {
-        registros.push({ membro_id: p.id, canal: 'whatsapp', rodada, enviado_por: por, ok: true });
-      }
+      // Grava JÁ: o enfileiramento aconteceu, e o registro não pode depender de
+      // o resto da função chegar ao fim.
+      const regWhats = await registrarConvites(whats.envia.map(p => ({
+        membro_id: p.id, canal: 'whatsapp', rodada, enviado_por: por, ok: true,
+      })));
+      gravados += regWhats.gravados;
+      if (regWhats.erro) erroRegistro = regWhats.erro;
     }
   }
 
@@ -350,11 +355,26 @@ async function dispararCenso({ status, canais = ['whatsapp', 'email'], reenviar 
     if (!emailConfigurado()) {
       resultado.email.motivo = 'canal_nao_configurado';
     } else {
+      // ⚠️⚠️ GRAVA EM BLOCOS, DURANTE o envio — não no fim.
+      // Incidente de 04/08: 200 e-mails saíram e o registro (que era um único
+      // insert no FIM) falhou por um bug no ON CONFLICT. Ninguém ficou marcado
+      // como convidado e a rodada seguinte teria reenviado pras mesmas 200
+      // pessoas. Gravando durante o laço, qualquer morte no meio — timeout da
+      // função, erro de rede, deploy — deixa registrado tudo o que JÁ saiu, e a
+      // próxima rodada continua de onde parou em vez de duplicar.
+      const BLOCO_REGISTRO = 20;
+      let pendentes = [];
+      const flush = async () => {
+        if (!pendentes.length) return;
+        const r = await registrarConvites(pendentes);
+        gravados += r.gravados;
+        if (r.erro) erroRegistro = r.erro;
+        pendentes = [];
+      };
+
       const comecou = Date.now();
       for (let i = 0; i < mail.envia.length; i += 1) {
         if (Date.now() - comecou > ORCAMENTO_EMAIL_MS) {
-          // Para aqui e devolve o resto pra próxima rodada: o que já saiu é
-          // gravado logo abaixo, então ninguém recebe duas vezes.
           resultado.email.adiados += mail.envia.length - i;
           resultado.email.motivo = 'orcamento_de_tempo';
           break;
@@ -376,18 +396,19 @@ async function dispararCenso({ status, canais = ['whatsapp', 'email'], reenviar 
         }
         if (ok) resultado.email.enviados += 1;
         else resultado.email.falhas += 1;
-        registros.push({
+        pendentes.push({
           membro_id: p.id, canal: 'email', rodada, enviado_por: por,
           ok, erro: erro ? String(erro).slice(0, 400) : null,
         });
+        if (pendentes.length >= BLOCO_REGISTRO) await flush();
       }
+      await flush();
     }
   }
 
-  const reg = await registrarConvites(registros);
-  resultado.registrados = reg.gravados;
-  if (reg.erro) {
-    resultado.aviso_registro = 'Os convites saíram, mas o registro de quem foi convidado falhou — NÃO dispare a próxima rodada antes de conferir, porque ela repetiria a mensagem para as mesmas pessoas.';
+  resultado.registrados = gravados;
+  if (erroRegistro) {
+    resultado.aviso_registro = `Os convites saíram, mas o registro de quem foi convidado falhou (${erroRegistro}) — NÃO dispare a próxima rodada antes de conferir, porque ela repetiria a mensagem para as mesmas pessoas.`;
   }
   return resultado;
 }
