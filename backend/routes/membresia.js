@@ -3251,6 +3251,44 @@ async function aprovarCadastroCore({
       if (eHist) console.warn('[CADASTROS] histórico não gravado:', eHist.message);
     } catch (_) { /* histórico é opcional */ }
 
+    // ── Status pela ATIVIDADE (regra do Matheus · 04/08) ────────────────────
+    // "Membro ativo se tiver qualquer ação na igreja em 1 ano; sem ação, fica
+    // frequentador." Participar de grupo conta; ter filho com check-in no Kids
+    // conta. A régua é a função `fn_membro_tem_atividade` — a MESMA da varredura
+    // da base, pra o status não depender de por onde a pessoa entrou.
+    //
+    // ⚠️ Aqui só PROMOVE (ou define no ato da criação). NUNCA rebaixa quem já é
+    //    membro_ativo: aprovar um cadastro não pode ter como efeito colateral
+    //    tirar a membresia de alguém — e o sistema não tem presença nominal de
+    //    culto, então "sem ação" pode ser falta de DADO, não falta de igreja.
+    //    Rebaixar é varredura deliberada, com a lista na mão.
+    try {
+      const { data: temAtividade, error: eAtiv } = await supabase
+        .rpc('fn_membro_tem_atividade', { p_membro_id: membro.id, p_dias: 365 });
+      if (eAtiv) {
+        // Função ausente (deploy em 2 etapas) não pode derrubar a aprovação: o
+        // membro já existe e o cadastro já está sendo aprovado.
+        console.warn('[CADASTROS] fn_membro_tem_atividade indisponível:', eAtiv.message);
+      } else {
+        // `foiAtualizacao` é false só quando o cadastro CRIOU a pessoa agora
+        // (nos dois ramos: duplicado_de_id sempre atualiza; o outro usa
+        // `!resultado.created`). Pessoa recém-criada sem sinal nasce
+        // frequentador; pessoa que já existia sem sinal não é tocada.
+        const novoStatus = temAtividade
+          ? 'membro_ativo'
+          : (foiAtualizacao ? null : 'frequentador');
+        if (novoStatus && membro.status !== novoStatus && membro.status !== 'membro_ativo') {
+          const { data: ajustado } = await supabase.from('mem_membros')
+            .update({ status: novoStatus })
+            .eq('id', membro.id).is('deleted_at', null)
+            .select().single();
+          if (ajustado) membro = ajustado;
+        }
+      }
+    } catch (e) {
+      console.warn('[CADASTROS] status por atividade:', e.message);
+    }
+
     // ⚠️ No LOTE isto vem desligado e o chamador manda UM aviso com o resumo.
     // Sem regra configurada, `notificar` cai no fallback de todos os
     // admin/diretor (16 pessoas): aprovar 50 cadastros geraria ~800 linhas de
@@ -3261,7 +3299,11 @@ async function aprovarCadastroCore({
         modulo: 'membresia',
         tipo: 'cadastro_aprovado',
         titulo: `Cadastro aprovado: ${cad.nome}`,
-        mensagem: `O cadastro de ${cad.nome} foi ${foiAtualizacao ? 'atualizado' : 'aprovado'} e o membro está ativo no sistema.`,
+        // Diz o status REAL: com a regra de atividade, aprovar não significa
+        // mais "está ativo" em todo caso (sem sinal, a pessoa nasce
+        // frequentador) — e aviso que afirma o que não aconteceu é pior que
+        // aviso genérico.
+        mensagem: `O cadastro de ${cad.nome} foi ${foiAtualizacao ? 'atualizado' : 'aprovado'} (status: ${membro.status}).`,
         link: `/ministerial/membresia`,
         severidade: 'info',
         chaveDedup: `cadastro_aprovado_${id}`,
