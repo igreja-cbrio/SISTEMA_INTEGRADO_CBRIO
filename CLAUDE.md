@@ -962,6 +962,62 @@ de `/:id`").
 - Idade passou a aparecer **ao lado do nome** na lista de Crianças (antes estava
   na 2ª linha, misturada com o nome do responsável).
 
+## ⚠️ App · entrada de PESSOA sob o Contrato de porta (2026-08-04 · migration `20260804200000`)
+
+Decisão do Marcos: os LÍDERES de grupo são os primeiros a usar o app e é a
+chance de fechar o cadastro de quem falta — então **entrar no app passa a
+exigir cadastro de gente**, com um **caminho rápido por CPF** pra quem já está
+na base. Fecha (na entrada do app) o furo do
+`## ⚠️ LEI · o gatilho de auth.users`: medido em 04/08 · **21 cadastros**
+`origem_cadastro='auth'` (20 sem CPF/telefone/nascimento · **13 com nome =
+prefixo do e-mail** · **1 duplicata confirmada**: Victória Lannes × Maria
+Victória Lannes Campos) e **26 das 43 contas do app** apontando pra cadastro
+sem CPF.
+
+**⚠️ LEI DESTE FLUXO · CPF IDENTIFICA, NÃO AUTENTICA.** CPF está em nota
+fiscal, cadastro de loja, planilha — não é segredo. Vincular a conta só porque
+alguém digitou um CPF entregaria a essa pessoa o grupo, os **filhos no Kids** e
+o **histórico de contribuição** do dono do CPF. Então: CPF acha o cadastro → o
+código vai pro **telefone QUE JÁ ESTÁ NO CADASTRO** (NUNCA pra número digitado
+na hora) → quem prova posse é vinculado. Mesma régua de "prova de posse" dos
+links do WhatsApp dos líderes.
+
+- **`services/appIdentidade.js`** · `identificarPorCpf` (busca SÓ por CPF —
+  aqui não vale o "achou por telefone/nome" do matcher, senão o CPF deixa de
+  ser a régua) · `confirmarCodigo` · `completarCadastro` (formulário → matcher
+  canônico `acharOuCriarGuardado`, origem `app_onboarding`).
+- **Resposta MASCARADA** (`mascararNome`/`mascararTelefone`): quem digita um
+  CPF vê "Marcos P. D. de A." e "(21) *****-8249" — nunca nome/telefone
+  completo de terceiro. Guarda em `src/test/appIdentidade.test.ts` (8 casos):
+  aumentar o que a máscara revela transforma o endpoint em coletor de dados
+  com uma lista de CPFs.
+- **Tetos**: `limiterStrict` (10/15min por IP) nas rotas de CPF/código +
+  **5 envios por telefone/dia** no serviço (o dono do número não pediu nada) +
+  6 tentativas de código + TTL 10 min + 1 verificação aberta por conta
+  (UNIQUE parcial).
+- **Código nunca em claro**: `app_verificacoes.codigo_hash` = sha256(código +
+  id da linha como sal). Tabela **só service_role** (nenhuma policy pra
+  authenticated — SELECT ali deixaria a anon key ler o alvo de vínculo alheio).
+- **Envio direto, NÃO pela fila `whatsapp_envios`**: a fila guarda params em
+  texto (código legível no banco) e faz retry/backoff — entrega atrasada de
+  código de 10 min é inútil.
+- **Fantasma é FUNDIDO**: se a conta estava pendurada num cadastro do gatilho
+  (sem CPF/telefone/nascimento **e** nome placeholder/derivado do e-mail), o
+  vínculo novo dispara `merge_membros` (⚠️ params com prefixo `p_`) e loga em
+  `mem_merge_log`. Falha do merge não desfaz o vínculo — a duplicata sobra pra
+  fila das Entradas, que é onde humano decide.
+- **`GET /app/identidade/status`** diz o que falta; **`completo` ignora o CPF**
+  (recomendado, não obrigatório — ninguém fica fora do app por não ter o
+  documento em mãos). No app, `CadastroGate` só redireciona quando o servidor
+  RESPONDE que falta algo: falha de rede não prende ninguém na tela.
+- ⚠️ **Pré-requisito operacional**: template de **AUTENTICAÇÃO** na Meta
+  (`WHATSAPP_TEMPLATE_APP_CODIGO`, 1 variável = o código). Sem a env o
+  endpoint devolve `motivo:'sem_canal'` e a tela cai no formulário completo —
+  nunca promete um código que não vai chegar.
+- ⚠️ Não substitui o gatilho de auth.users (que segue criando cadastro no
+  signup) — este fluxo **reconcilia** depois. Trocar o gatilho continua
+  dependendo da query no SQL Editor + alinhamento com o Matheus.
+
 ## Kids · idade exata, WhatsApp pessoal e gerencial dentro da trava (2026-08-03 · SEM migration)
 
 Três pedidos do Matheus no mesmo dia, todos no Kids.
