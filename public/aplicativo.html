@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!--
+    Home page do aplicativo CBRio · servida em https://www.cbrio.org/aplicativo
+    (rewrite em vercel.json → /aplicativo.html).
+
+    ⚠️ ESTA PÁGINA É HTML ESTÁTICO DE PROPÓSITO — não converter para rota React.
+    Ela é a "Application home page" declarada na tela de consentimento OAuth do
+    Google (projeto crm-cbrio). A verificação da marca foi recusada em 04/08/2026
+    com dois motivos: "your home page does not explain the purpose of your app" e
+    "the app name 'CBRio' does not match the app name on your home page". A causa
+    provável é que o verificador busca a página SEM executar JavaScript: numa rota
+    do SPA ele receberia o shell vazio do index.html e leria o <title> global
+    ("CBRio · Comunidade Batista do Rio de Janeiro"), que não explica propósito e
+    não bate com "CBRio". Em HTML estático o texto e o nome existem na resposta.
+    É o mesmo padrão do /privacidade, que o Google já aceita como link válido.
+
+    ⚠️ O <title> e o <h1> são exatamente "CBRio" — o MESMO string do campo
+    "App name" do consentimento e do expo.name do app.json. Renomeou o app no
+    console? Renomeie aqui também, senão o motivo 2 volta.
+  -->
+  <title>CBRio</title>
+  <meta name="description" content="CBRio é o aplicativo de membros da Igreja Comunidade Batista do Rio de Janeiro: cartão de membro, inscrições em cursos e eventos, devocional diário, avisos da igreja, grupo de conexão, check-in do ministério infantil, contribuições e pregações." />
+  <link rel="canonical" href="https://www.cbrio.org/aplicativo" />
+  <style>
+    :root {
+      --teal: #408097;
+      --teal-mid: #70a8b0;
+      --teal-pale: #d5e4e6;
+      --bg: #fbfaf7;
+      --text: #1a2b32;
+      --muted: #5c6c73;
+      --border: #e6e1d8;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 48px 20px 80px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+        "Helvetica Neue", Arial, sans-serif;
+      color: var(--text);
+      background: var(--bg);
+      line-height: 1.65;
+    }
+    main { max-width: 760px; margin: 0 auto; }
+    header { margin-bottom: 32px; padding-bottom: 24px; border-bottom: 1px solid var(--border); }
+    .tag {
+      display: inline-block; background: var(--teal-pale); color: var(--teal);
+      font-size: 12px; font-weight: 700; letter-spacing: 0.6px; text-transform: uppercase;
+      padding: 5px 12px; border-radius: 20px; margin-bottom: 14px;
+    }
+    h1 { font-size: 34px; margin: 0 0 10px; color: var(--teal); font-weight: 800; letter-spacing: -0.6px; }
+    h2 { font-size: 20px; margin: 32px 0 12px; color: var(--text); font-weight: 700; }
+    p, li { font-size: 15px; color: var(--text); }
+    .lead { font-size: 17px; color: var(--muted); margin: 0; }
+    .meta { color: var(--muted); font-size: 14px; }
+    ul { padding-left: 22px; }
+    a { color: var(--teal); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .card {
+      background: #fff; border: 1px solid var(--border);
+      border-radius: 12px; padding: 20px 22px; margin: 18px 0;
+    }
+    .card h3 { font-size: 16px; margin: 0 0 6px; font-weight: 700; }
+    .card p { margin: 0; color: var(--muted); font-size: 14.5px; }
+    .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); margin: 18px 0; }
+    .grid .card { margin: 0; }
+    .destaque { border-left: 4px solid var(--teal); background: #fff; }
+    footer {
+      margin-top: 44px; padding-top: 22px; border-top: 1px solid var(--border);
+      color: var(--muted); font-size: 13.5px; text-align: center;
+    }
+    footer a { margin: 0 8px; }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <span class="tag">Aplicativo oficial da igreja</span>
+      <h1>CBRio</h1>
+      <p class="lead">
+        O aplicativo de membros da Igreja Comunidade Batista do Rio de Janeiro.
+      </p>
+    </header>
+
+    <h2>Para que serve o CBRio</h2>
+    <p>
+      O <strong>CBRio</strong> é o aplicativo da nossa igreja para quem faz parte da comunidade. Por
+      ele, cada pessoa acompanha a própria caminhada na igreja: acessa o cartão de membro, se inscreve
+      nos cursos e eventos, acompanha o devocional diário, recebe os avisos da igreja, vê as
+      informações do seu grupo de conexão, prepara o check-in dos filhos no ministério infantil,
+      contribui com dízimos e ofertas e assiste às pregações.
+    </p>
+    <p>
+      O aplicativo é oferecido gratuitamente pela igreja aos seus membros e frequentadores. Não
+      exibimos publicidade e não vendemos dados.
+    </p>
+
+    <h2>O que você faz no aplicativo</h2>
+    <div class="grid">
+      <div class="card">
+        <h3>Cartão de membro</h3>
+        <p>O seu cartão digital com QR, para se identificar nos cultos e eventos.</p>
+      </div>
+      <div class="card">
+        <h3>Inscrições</h3>
+        <p>Batismo, grupos de conexão, Next e eventos, direto pelo aplicativo.</p>
+      </div>
+      <div class="card">
+        <h3>Devocional diário</h3>
+        <p>O plano de leitura da igreja, com marcação de leitura e sequência de dias.</p>
+      </div>
+      <div class="card">
+        <h3>Avisos da igreja</h3>
+        <p>Comunicados e notificações do que está acontecendo na comunidade.</p>
+      </div>
+      <div class="card">
+        <h3>Meu grupo de conexão</h3>
+        <p>Informações do seu grupo, contato do líder e materiais de estudo.</p>
+      </div>
+      <div class="card">
+        <h3>Check-in do Kids</h3>
+        <p>Pais e responsáveis preparam o check-in dos filhos antes de chegar na igreja.</p>
+      </div>
+      <div class="card">
+        <h3>Generosidade</h3>
+        <p>Dízimos e ofertas, com comprovante anual para o imposto de renda.</p>
+      </div>
+      <div class="card">
+        <h3>Pregações</h3>
+        <p>As mensagens e séries da igreja para assistir quando quiser.</p>
+      </div>
+    </div>
+
+    <h2>Como você entra na sua conta</h2>
+    <p>
+      Você pode criar a conta com e-mail e senha, ou entrar com Google ou Apple — o que for mais
+      simples para você.
+    </p>
+    <div class="card destaque">
+      <h3>Ao entrar com Google</h3>
+      <p>
+        Recebemos apenas o seu <strong>nome</strong>, o seu <strong>endereço de e-mail</strong> e a
+        <strong>foto do seu perfil</strong>. Usamos esses dados só para criar e identificar a sua conta
+        no aplicativo, para que você não precise preencher tudo de novo nem lembrar de mais uma senha.
+      </p>
+      <p style="margin-top:10px">
+        O login <strong>não pede acesso</strong> aos seus contatos, ao Gmail, ao Google Drive, à sua
+        agenda ou ao seu canal do YouTube. Não usamos esses dados para publicidade e não os vendemos.
+        Os detalhes estão na nossa <a href="/privacidade">Política de Privacidade</a>.
+      </p>
+    </div>
+
+    <h2>Quem oferece o aplicativo</h2>
+    <p>
+      O CBRio é desenvolvido e mantido pela <strong>Igreja Comunidade Batista do Rio de Janeiro</strong>,
+      no Rio de Janeiro, Brasil. Para dúvidas, problemas de acesso ou pedidos sobre os seus dados, fale
+      com a gente em <a href="mailto:gestao@cbrio.com.br">gestao@cbrio.com.br</a> ou pela
+      <a href="/suporte">central de suporte</a>.
+    </p>
+
+    <footer>
+      <p class="meta" style="margin:0 0 8px">
+        <a href="/privacidade">Política de Privacidade</a>·<a href="/suporte">Suporte</a>
+      </p>
+      <p class="meta" style="margin:0">
+        Igreja Comunidade Batista do Rio de Janeiro · CBRio
+      </p>
+    </footer>
+  </main>
+</body>
+</html>

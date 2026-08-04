@@ -276,10 +276,6 @@ const Motion = lazyWithRetry(() => import('./pages/public/Motion'));
 const NovoSite = lazyWithRetry(() => import('./pages/public/NovoSite'));
 const QuemSomos = lazyWithRetry(() => import('./pages/public/QuemSomos'));
 const Suporte = lazyWithRetry(() => import('./pages/public/Suporte'));
-// /aplicativo · home page do app declarada na tela de consentimento OAuth do
-// Google. Mudar a URL aqui exige mudar no console do Google (ver o cabeçalho do
-// arquivo — a verificação já foi recusada uma vez por causa dessa página).
-const AppCBRio = lazyWithRetry(() => import('./pages/public/AppCBRio'));
 // /atlas · atlas operacional do sistema (manual + auditoria) · standalone, autenticado, fora do menu.
 const Atlas = lazyWithRetry(() => import('./pages/atlas/Atlas'));
 const Voluntariado = lazyWithRetry(() => import('./pages/ministerial/voluntariado'));
@@ -573,8 +569,6 @@ function AppRoutes() {
       <Route path="/novosite/quem-somos" element={<Suspense fallback={<Loading />}><QuemSomos /></Suspense>} />
       {/* Página pública de suporte dos apps (Apple Guideline 1.5 · Support URL) */}
       <Route path="/suporte" element={<Suspense fallback={<Loading />}><Suporte /></Suspense>} />
-      {/* Home page do app declarada no consentimento OAuth do Google */}
-      <Route path="/aplicativo" element={<Suspense fallback={<Loading />}><AppCBRio /></Suspense>} />
       <Route path="/nps/publica/:token" element={<Suspense fallback={<Loading />}><NpsPublica /></Suspense>} />
       {/* Retirada do Kids · QR aberto pelo link do WhatsApp · público, sem PII */}
       <Route path="/kids/retirada/:codigo" element={<Suspense fallback={<Loading />}><KidsRetirada /></Suspense>} />
@@ -788,9 +782,6 @@ function SitePublicoRoutes() {
       <Route path="/novosite" element={<Navigate to="/" replace />} />
       <Route path="/novosite/quem-somos" element={<Navigate to="/quem-somos" replace />} />
       <Route path="/suporte" element={<Suspense fallback={<Loading />}><Suporte /></Suspense>} />
-      {/* Mesma home page do app aqui: a URL do consentimento pode estar em
-          qualquer um dos dois domínios, e não pode cair no catch-all abaixo. */}
-      <Route path="/aplicativo" element={<Suspense fallback={<Loading />}><AppCBRio /></Suspense>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
