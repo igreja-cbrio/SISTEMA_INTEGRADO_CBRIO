@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const { AppError, ERROR_CODES, normalizeError } = require('../utils/appError');
 const { createCorsOriginValidator, isAllowedOrigin } = require('../utils/corsPolicy');
-const { shouldCaptureException } = require('../utils/sentry');
+const { sanitizeSentryEvent, shouldCaptureException } = require('../utils/sentry');
 const {
   createErrorHandler,
   normalizeRoutePath,
@@ -45,6 +45,23 @@ assert.equal(corsError.status, 403);
 assert.equal(shouldCaptureException(corsError), false);
 assert.equal(shouldCaptureException(Object.assign(new SyntaxError('JSON ruim'), { type: 'entity.parse.failed' })), false);
 assert.equal(shouldCaptureException(new Error('bug inesperado')), true);
+
+const sentryEvent = sanitizeSentryEvent({
+  message: 'Falha para admin@cbrio.org CPF 123.456.789-09 token=segredo',
+  user: { email: 'admin@cbrio.org' },
+  extra: { payload: 'privado' },
+  request: {
+    url: '/api/pessoas/123?token=segredo',
+    data: { cpf: '123' },
+    headers: { Authorization: 'Bearer abc.def', Cookie: 'session=x' },
+  },
+});
+assert.equal(sentryEvent.user, undefined);
+assert.equal(sentryEvent.extra, undefined);
+assert.equal(sentryEvent.request.data, undefined);
+assert.equal(sentryEvent.request.headers.Authorization, undefined);
+assert.equal(sentryEvent.request.url, '/api/pessoas/:id');
+assert.doesNotMatch(sentryEvent.message, /admin@cbrio\.org|123\.456\.789-09|token=segredo/);
 
 
 const recorded = [];
