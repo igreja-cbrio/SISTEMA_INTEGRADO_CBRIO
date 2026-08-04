@@ -2611,6 +2611,20 @@ e, se a flag paralela fosse virada, listaria grupo fechado/pausado.
 - No app: `lib/temporadaGrupos.ts` chama o endpoint (falha ⇒ `aberta:false`,
   fail-closed) e `inscricao-grupos.tsx` lista os grupos vindos dele.
 
+**Item 2 (mesma leva) · recusa do líder pelo APP agora DEVOLVE (não rejeita):**
+`POST /app/grupos/pedidos/:id/rejeitar` (app.js) gravava `rejeitado` (final) e
+**notificava a pessoa** — aviso que o fluxo do líder deliberadamente não manda
+(lei de 14/07: líder recusa → `devolvido`, triagem realoca; `rejeitado` é só da
+equipe). Agora espelha o ramo de recusa do `POST /public/grupos/aprovar`:
+`status='devolvido'` + motivo interno (trim/500) + `registrarEventoPedido
+('recusado_lider', {origem:'app'})` **awaited** (serverless descarta trabalho
+pendente pós-res.json; o serviço nunca lança) + notificação pra TRIAGEM
+(`pedido_devolvido`, fire-and-forget — a Caixa de entrada é o caminho
+garantido). A pessoa não recebe nada e continua na fila de realocação da Naná.
+Medido antes do fix: **0 recusas reais** tinham passado pelo caminho errado
+(os 16 `rejeitado` vivos eram teste de julho). A aprovação pelo app já era
+correta (`aprovarPedidoCore` = regra única, registra evento).
+
 ## Grupos · contagens (vínculo × pessoa) + nova régua visitante/frequentador (2026-07-23)
 
 Auditoria (4 agentes) das divergências que o Marcos pegou entre as abas. **Régua de
