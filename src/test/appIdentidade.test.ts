@@ -58,6 +58,30 @@ describe('mascararNome', () => {
   });
 });
 
+describe('mascararEmail', () => {
+  it('mostra pontas + domínio, esconde o miolo', () => {
+    expect(svc.mascararEmail('marcospaulo.da@gmail.com')).toBe('mar***da@gmail.com');
+    expect(svc.mascararEmail('ana@cbrio.org')).toBe('a***@cbrio.org');
+  });
+
+  it('nunca devolve o endereço completo', () => {
+    const alvos = ['victoria.lannes@gmail.com', 'natasha@cbrio.org', 'jose@hotmail.com'];
+    for (const e of alvos) {
+      const m = svc.mascararEmail(e) as string;
+      expect(m).not.toBe(e);
+      expect(m).toContain('***');
+      // O local-part inteiro não pode aparecer.
+      expect(m).not.toContain(e.split('@')[0]);
+    }
+  });
+
+  it('tolera lixo', () => {
+    expect(svc.mascararEmail('')).toBeNull();
+    expect(svc.mascararEmail('sem-arroba')).toBeNull();
+    expect(svc.mascararEmail(null)).toBeNull();
+  });
+});
+
 describe('janela do código', () => {
   it('expira em poucos minutos (código de acesso não é link de 30 dias)', () => {
     expect(svc.CODIGO_TTL_MIN).toBeGreaterThan(0);

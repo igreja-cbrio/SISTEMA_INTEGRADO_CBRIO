@@ -29,18 +29,19 @@ const {
 } = require('./membroMatch');
 const { cpfValido, validarCamposPadrao } = require('./inscricaoContrato');
 const { notificar } = require('./notificar');
-const wpp = require('./whatsappService');
+const { enviarEmail, isConfigured: emailConfigurado } = require('./email');
 
 const CODIGO_TTL_MIN = 10;
 const MAX_TENTATIVAS = 5;
-// Teto por telefone/dia — um CPF vazado não vira metralhadora de mensagens no
-// número de outra pessoa (o dono nem pediu nada).
-const MAX_ENVIOS_DIA_POR_TELEFONE = 5;
-// Template de AUTENTICAÇÃO na Meta (categoria authentication é a exigida pra
-// código). Sem a env, o envio por WhatsApp fica no-op e o endpoint devolve
-// `canal: null` — a tela cai no formulário completo em vez de prometer um
-// código que nunca chega.
-const TPL_CODIGO = process.env.WHATSAPP_TEMPLATE_APP_CODIGO || null;
+// Teto por DESTINO/dia — um CPF vazado não vira metralhadora de mensagens na
+// caixa de outra pessoa (o dono nem pediu nada).
+const MAX_ENVIOS_DIA_POR_DESTINO = 5;
+
+// ⚠️ CANAL = E-MAIL (04/08/2026). A Meta RECUSOU a categoria "Autenticação"
+// pra nossa conta do WhatsApp Business, e código de uso único não pode ir em
+// template utility (violação de política + derruba a nota de qualidade do
+// número que fala com os 87 líderes). A LEI do fluxo não mudou: o código vai
+// pro contato QUE JÁ ESTÁ NO CADASTRO, nunca pra um endereço digitado agora.
 
 // Deploy em 2 etapas: se a migration 20260804200000 ainda não foi aplicada, o
 // PostgREST recusa a query da tabela nova. Nesse caso o caminho RÁPIDO se
@@ -66,6 +67,19 @@ function mascararTelefone(raw) {
   const ddd = d.length >= 10 ? d.slice(-11, -9) || d.slice(0, 2) : null;
   const fim = d.slice(-4);
   return ddd ? `(${ddd}) *****-${fim}` : `*****-${fim}`;
+}
+
+// "marcospaulo.da@gmail.com" → "mar***.da@gmail.com": a pessoa reconhece a
+// própria caixa sem que o endereço de terceiro seja entregue a quem digitou um
+// CPF alheio (o domínio fica visível porque é o que ajuda a reconhecer).
+function mascararEmail(raw) {
+  const email = String(raw || '').trim().toLowerCase();
+  const at = email.lastIndexOf('@');
+  if (at < 1) return null;
+  const local = email.slice(0, at);
+  const dominio = email.slice(at);
+  if (local.length <= 4) return `${local[0]}***${dominio}`;
+  return `${local.slice(0, 3)}***${local.slice(-2)}${dominio}`;
 }
 
 // "Marcos Paulo Domingues de Almeida" → "Marcos P. D. de A." (mesma razão do
@@ -147,32 +161,39 @@ async function identificarPorCpf({ cpf, authUserId, email, ip }) {
   if (!membro) {
     return { ok: true, encontrado: false, motivo: 'nao_encontrado' };
   }
-  const tel = normalizarTelefone(membro.telefone);
-  if (!tel) {
-    return { ok: true, encontrado: true, pode_confirmar: false, motivo: 'sem_telefone',
-      nome_mascarado: mascararNome(membro.nome) };
-  }
-  if (!TPL_CODIGO || !wpp.configurado?.()) {
-    return { ok: true, encontrado: true, pode_confirmar: false, motivo: 'sem_canal',
-      nome_mascarado: mascararNome(membro.nome) };
-  }
+  const semCanal = (motivo) => ({
+    ok: true, encontrado: true, pode_confirmar: false, motivo,
+    nome_mascarado: mascararNome(membro.nome),
+  });
 
-  // Teto por telefone/dia (o dono do número não pediu nada).
+  const emailCadastro = String(membro.email || '').trim().toLowerCase();
+  if (!emailCadastro) return semCanal('sem_email');
+  if (!emailConfigurado()) return semCanal('sem_canal');
+
+  // ⚠️ E-MAIL COMPARTILHADO EM FAMÍLIA não serve como prova de posse: mãe e
+  // filho na mesma caixa significaria o filho digitando o CPF da mãe, lendo o
+  // código e vendo as CONTRIBUIÇÕES dela. Nesse caso o caminho rápido se
+  // recusa e a pessoa vai pro formulário — que passa pelo matcher (nome+e-mail)
+  // e cai no cadastro DELA, não no da mãe.
+  const { data: mesmoEmail } = await supabase.from('mem_membros')
+    .select('id').ilike('email', emailCadastro).is('deleted_at', null).neq('id', membro.id).limit(1);
+  if (mesmoEmail && mesmoEmail.length) return semCanal('email_compartilhado');
+
+  // Teto por destino/dia (o dono da caixa não pediu nada).
   const desde = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
   const { count, error: eCount } = await supabase.from('app_verificacoes')
     .select('*', { count: 'exact', head: true })
-    .eq('telefone', tel).gte('created_at', desde);
+    .eq('email', emailCadastro).gte('created_at', desde);
   if (eCount) {
     if (schemaAusente(eCount)) {
       console.error('[appIdentidade] migration pendente — caminho rápido off');
-      return { ok: true, encontrado: true, pode_confirmar: false, motivo: 'sem_canal',
-        nome_mascarado: mascararNome(membro.nome) };
+      return semCanal('sem_canal');
     }
     throw eCount;
   }
-  if ((count || 0) >= MAX_ENVIOS_DIA_POR_TELEFONE) {
+  if ((count || 0) >= MAX_ENVIOS_DIA_POR_DESTINO) {
     return { ok: false, status: 429, codigo: 'muitos_envios',
-      error: 'Já enviamos vários códigos pra este número hoje. Tente amanhã ou preencha seus dados.' };
+      error: 'Já enviamos vários códigos pra este e-mail hoje. Tente amanhã ou preencha seus dados.' };
   }
 
   // Uma verificação aberta por conta: fecha a anterior (UNIQUE parcial).
@@ -182,24 +203,37 @@ async function identificarPorCpf({ cpf, authUserId, email, ip }) {
 
   const codigo = gerarCodigo();
   const { data: linha, error: eIns } = await supabase.from('app_verificacoes').insert({
-    auth_user_id: authUserId, membro_id: membro.id, telefone: tel,
+    auth_user_id: authUserId, membro_id: membro.id,
+    email: emailCadastro,
+    telefone: normalizarTelefone(membro.telefone) || null, // snapshot, não é destino
     codigo_hash: 'pendente',
     expira_em: new Date(Date.now() + CODIGO_TTL_MIN * 60 * 1000).toISOString(),
-    canal: 'whatsapp', ip: ip || null,
+    canal: 'email', ip: ip || null,
   }).select('id').single();
   if (eIns) throw eIns;
   // O hash usa o id da linha como sal → grava depois do insert.
   await supabase.from('app_verificacoes')
     .update({ codigo_hash: hashCodigo(codigo, linha.id) }).eq('id', linha.id);
 
-  // ⚠️ sendTemplate devolve { sent, reason } (não { ok }) — checar `sent`.
-  // Código NUNCA vai pela fila `whatsapp_envios`: ela guarda os params em
-  // texto (o código ficaria legível no banco) e faz retry/backoff, que pra
-  // código de 10 min é entrega atrasada e inútil. Envio direto, na hora.
-  const envio = await wpp.sendTemplate(tel, TPL_CODIGO, 'pt_BR', [codigo])
-    .catch(e => ({ sent: false, reason: e.message }));
-  if (!envio || envio.sent === false) {
-    console.error('[appIdentidade] envio do código falhou:', envio?.reason);
+  // Envio DIRETO (e-mail não tem fila neste projeto) e sem log do código.
+  const envio = await enviarEmail({
+    to: emailCadastro,
+    subject: `${codigo} é seu código de acesso · CBRio`,
+    text: `Seu código de verificação é ${codigo}.\n\n`
+      + `Use no app da CBRio pra confirmar que é você. Por segurança, não compartilhe este código.\n`
+      + `Expira em ${CODIGO_TTL_MIN} minutos.\n\n`
+      + `Se você não pediu, ignore este e-mail — nada muda na sua conta.`,
+    html: `<div style="font-family:system-ui,Segoe UI,Roboto,sans-serif;max-width:480px">
+      <p style="font-size:15px;color:#334">Seu código de verificação é:</p>
+      <p style="font-size:34px;font-weight:800;letter-spacing:6px;color:#00839D;margin:12px 0">${codigo}</p>
+      <p style="font-size:14px;color:#556">Use no app da CBRio pra confirmar que é você.
+      Por segurança, não compartilhe este código. Expira em ${CODIGO_TTL_MIN} minutos.</p>
+      <p style="font-size:12px;color:#889">Se você não pediu, ignore este e-mail — nada muda na sua conta.</p>
+    </div>`,
+    fromName: 'CBRio',
+  }).catch(e => ({ ok: false, error: e.message }));
+  if (!envio?.ok) {
+    console.error('[appIdentidade] envio do código falhou:', envio?.error);
     return { ok: false, status: 502, codigo: 'envio_falhou',
       error: 'Não conseguimos enviar o código agora. Tente de novo ou preencha seus dados.' };
   }
@@ -208,9 +242,9 @@ async function identificarPorCpf({ cpf, authUserId, email, ip }) {
     ok: true, encontrado: true, pode_confirmar: true,
     verificacao_id: linha.id,
     nome_mascarado: mascararNome(membro.nome),
-    telefone_mascarado: mascararTelefone(tel),
+    email_mascarado: mascararEmail(emailCadastro),
     expira_em_min: CODIGO_TTL_MIN,
-    canal: 'whatsapp',
+    canal: 'email',
   };
 }
 
@@ -312,6 +346,7 @@ module.exports = {
   completarCadastro,
   // exportados pra teste
   mascararTelefone,
+  mascararEmail,
   mascararNome,
   CODIGO_TTL_MIN,
 };

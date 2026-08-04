@@ -1010,10 +1010,23 @@ links do WhatsApp dos líderes.
   (recomendado, não obrigatório — ninguém fica fora do app por não ter o
   documento em mãos). No app, `CadastroGate` só redireciona quando o servidor
   RESPONDE que falta algo: falha de rede não prende ninguém na tela.
-- ⚠️ **Pré-requisito operacional**: template de **AUTENTICAÇÃO** na Meta
-  (`WHATSAPP_TEMPLATE_APP_CODIGO`, 1 variável = o código). Sem a env o
-  endpoint devolve `motivo:'sem_canal'` e a tela cai no formulário completo —
-  nunca promete um código que não vai chegar.
+- ⚠️⚠️ **O CÓDIGO VAI POR E-MAIL, não por WhatsApp** (migration
+  `20260804210000`): a Meta **RECUSOU a categoria Autenticação** pra nossa
+  conta do WhatsApp Business ("sua conta não pode usar esse tipo de mensagem")
+  — e código de uso único NÃO pode ir em template utility (violação de política
+  + derruba a nota de qualidade do número que fala com os 87 líderes). Canal =
+  `services/email.js` (Graph; Resend só com `RESEND_FALLBACK=1`). Sem canal
+  configurado o endpoint devolve `motivo:'sem_canal'` e a tela cai no
+  formulário — nunca promete um código que não vai chegar.
+  ⚠️ **E-mail COMPARTILHADO em família não serve de prova** (`motivo:
+  'email_compartilhado'`): mãe e filho na mesma caixa significaria o filho
+  digitar o CPF da mãe, ler o código e ver as CONTRIBUIÇÕES dela. Nesse caso o
+  caminho rápido se recusa e a pessoa vai pro formulário, que resolve pelo
+  matcher (nome+e-mail) e cai no cadastro DELA.
+  ⚠️ Se algum dia a Meta liberar autenticação: o botão "Preenchimento
+  automático" exige **nome do pacote + hash de assinatura de 11 chars**
+  derivado do certificado do **Play App Signing** (não do keystore do EAS) —
+  usar "Copiar código" evita isso e funciona no iOS também.
 - ⚠️ Não substitui o gatilho de auth.users (que segue criando cadastro no
   signup) — este fluxo **reconcilia** depois. Trocar o gatilho continua
   dependendo da query no SQL Editor + alinhamento com o Matheus.
