@@ -429,6 +429,41 @@ censo escrever o endereço de uma pessoa no cadastro de outra.
 **Pendências operacionais (não são código):** regra no Firewall do Vercel pra rota
 do censo · `vinculo_declarado` validado com o Arthur · gerar/imprimir o QR com
 `?censo=1` · teto da Meta se quiserem cobrar por WhatsApp quem falta.
+## Cuidados · Visitas e Atendimentos ganhou visão POR PASTOR (2026-08-04 · SEM migration)
+
+Pedido do Matheus: "clicar no pastor e ver os atendimentos dele" + melhorar o
+filtro de data. Toggle **Por pessoa | Por pastor** no `TrilhaPessoas`; as duas
+visões leem o MESMO `pessoas` já carregado (`GET /cuidados/trilha`), então trocar
+não faz round-trip e as contagens não podem divergir — a condição de filtro virou
+uma função só (`casaFiltros`), usada pelos dois lados.
+
+- Na visão por pastor o filtro **"Quem atendeu" é escondido**: ali o recorte por
+  responsável É a própria lista, e deixá-lo ligado mostraria um card só sem
+  explicar por quê.
+- **Fix de layout do período**: eram dois blocos "De"/"Até" soltos e as labels
+  apareciam COLADAS ao lado do calendário. Causa: `Label` do shadcn é `<label>`
+  (inline) e o `DatePicker` é um `Button` inline-flex — o `space-y-1` não empilha
+  dois inline, eles fluem na mesma linha. Viraram **um grupo "Período do
+  atendimento"** com `até` no meio, X pra limpar e aviso quando a data inicial
+  passa da final. ⚠️ Label ao lado de DatePicker precisa de `block`.
+
+⚠️ **`responsavel` é TEXTO LIVRE e isso limita a feature.** O form usa `<Input>`,
+não select do catálogo `cui_responsaveis` — que EXISTE, é gerenciável na UI e tem
+"Wesley Ramos" cadastrado. Resultado medido em 04/08: o mesmo pastor em **4
+grafias** ("Pr. Wesley B. Ramos" 6 · "Pr. Wesley Barros" 2 · "Wesley Barros"
+dentro de duplas · "Wesley Ramos" no catálogo), então a visão mostra **6 cards
+para ~4 pessoas** e o total real dele (12) fica partido.
+- **NÃO fundimos grafias** — casar "Wesley B. Ramos" com "Wesley Barros" é
+  adivinhar identidade, o que a lei do Contrato de porta proíbe.
+- O que É mecânico e foi feito: **separar DUPLA** (`X e Y`, `X, Y`, `X / Y`,
+  `X & Y`) em pastores distintos. Visita conjunta conta pros dois, por isso o card
+  diz **"participou de N"**, não "fez N" — e a soma dos cards (19) fica MAIOR que
+  o total de atendimentos (15) de propósito. O dialog mostra "com: <campo
+  original>" na linha do atendimento conjunto.
+- **Correção de raiz pendente** (não feita aqui, é decisão do Matheus): trocar o
+  Input por Select de `cui_responsaveis` no form de visita/atendimento + consolidar
+  as grafias existentes. Sem isso a divergência volta a cada registro novo.
+
 ## ⚠️ LEI · trocar a KEY de um campo de formulário ORFANA resposta (2026-08-03)
 
 Incidente: o Matheus abriu uma inscrição do Patrocinadores do Celebra e o modal
