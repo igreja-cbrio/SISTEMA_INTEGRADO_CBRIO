@@ -2413,6 +2413,9 @@ export const membresia = {
   censo: {
     cobertura: (params) => get('/membresia/censo/cobertura' + (params ? '?' + new URLSearchParams(params) : '')),
     faltantes: (params) => get('/membresia/censo/faltantes' + (params ? '?' + new URLSearchParams(params) : '')),
+    // Convite de atualização cadastral (WhatsApp + e-mail) pra quem está sem CPF.
+    disparoPreview: (params) => get('/membresia/censo/disparo/preview' + (params ? '?' + new URLSearchParams(params) : '')),
+    disparar: (body) => post('/membresia/censo/disparo', body),
   },
   cadastros: {
     list: (params) => get('/membresia/cadastros' + (params ? '?' + new URLSearchParams(params) : '')),

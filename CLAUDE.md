@@ -429,6 +429,122 @@ censo escrever o endereço de uma pessoa no cadastro de outra.
 **Pendências operacionais (não são código):** regra no Firewall do Vercel pra rota
 do censo · `vinculo_declarado` validado com o Arthur · gerar/imprimir o QR com
 `?censo=1` · teto da Meta se quiserem cobrar por WhatsApp quem falta.
+## ⚠️ Censo · convite de atualização cadastral p/ quem está SEM CPF (2026-08-04 · migration `20260804120000`)
+
+Pedido do Matheus: *"disparar um WhatsApp e um e-mail para todas as pessoas que
+não têm CPF cadastrado, mas que tenham o celular ou e-mail, pedindo bem
+objetivamente para atualizar seus dados cadastrais, clicando no link (deve ir
+junto o link de cadastro de membresia)"*.
+
+⚠️ **NÃO é campanha nova — é o CANAL do censo que já existe.** O link é o mesmo
+`/cadastro-membresia?censo=1` do QR impresso do culto, então a resposta cai no
+`censoReconciliar` (preenche campo vazio · conflito vai pra fila humana · nunca
+sobrescreve edição da equipe) e a cobertura conta sozinha em
+`censo_respondido_em`. Criar um formulário próprio pra isso teria duas verdades
+sobre "quem respondeu o censo". Card **"Convidar quem está sem CPF"** dentro do
+`PainelCenso` (aba Cadastros da Membresia), não tela nova.
+
+**⚠️⚠️ A LEI: o teto da Meta manda no tamanho da rodada, e furá-lo DESCARTA
+convite em silêncio.** A conta está em **TIER_250** (250 destinatários únicos/24h)
+e a fila **desiste de uma mensagem 36h depois de criada**
+(`whatsappFila.IDADE_MIN_DESISTIR_H`). Enfileirar as ~2.000 pessoas de uma vez
+não entrega 2.000 devagar: entrega ~250 e as outras ~1.750 **morrem na fila em
+dois dias**, sem erro, e a pessoa nunca soube do censo. Por isso:
+`TETO_RODADA_WHATSAPP = 200` (folga pros avisos operacionais que dividem a cota
+do dia), reenvio é **rodada nova**, e o que ficou de fora é **declarado**
+(`adiados`) na tela. Subir esse número sem o tier ter subido é regressão —
+`src/test/censoConvite.test.ts` trava em 250.
+
+- **`backend/utils/censoConvite.js`** = régua PURA (quem recebe, quantos saem),
+  em `utils/` pra ser testável no gate de deploy. O serviço
+  (`services/censoDisparo.js`) lê o banco e envia; **não duplicar régua lá**.
+- **`mem_censo_convites`** (migration aplicada 04/08 · conferida no catálogo):
+  1 linha por (membro, canal, rodada), UNIQUE parcial. É o que faz o reenvio
+  pegar **só quem não respondeu** — sem ela o 2º disparo manda de novo pra todo
+  mundo, que é como campanha legítima vira spam e derruba a nota da conta.
+  ⚠️ **Não guarda telefone nem e-mail**: o contato vive em `mem_membros` e muda
+  quando a pessoa corrige; copiar aqui criaria uma segunda verdade que envelhece.
+  Sem PII própria ⇒ fora da whitelist de soft-delete. `enviado_por` é **snapshot
+  sem FK**; a FK de `membro_id` existe (lei nº 10 — é ela que faz `merge_membros`
+  repontar a tabela) e foi **conferida no `pg_constraint`**, não no arquivo.
+- **Números medidos em 04/08** (vivos, sem CPF, nome de gente): **2.658 sem CPF**
+  = 2.086 visitante + 571 membro_ativo. Alcançáveis: **2.358** (2.026 por
+  telefone · 1.055 por e-mail). ⚠️ **Só 33 têm `whatsapp_optin = true`** — a
+  campanha inteira depende de o template ser aceito como **UTILITY** (opt-in é
+  exigido só em Marketing, e o gate é a env `WHATSAPP_OPTIN_OBRIGATORIO`). Se a
+  Meta reclassificar pra Marketing, o público cai de 2.026 pra 33 e o caminho
+  passa a ser o e-mail.
+- **Default é `membro_ativo` (517 pessoas), não a base toda.** Visitante entra só
+  marcando o chip: são ~1.800 pessoas ⇒ **9 rodadas/dias** no tier atual, e é
+  gente que não pediu contato. O default responde a pergunta certa ("a membresia
+  está com CPF?") numa semana em vez de num mês.
+- **E-mail sai pelo Microsoft Graph** (decisão do Matheus em 04/08: *"não usamos
+  o resend para disparo, usamos o microsoft"*) — `services/email.js` já tem Graph
+  como primário, e o `Mail.Send` do app Azure **passou a estar configurado** (a
+  pendência registrada em 02/07 caiu). ⚠️ O laço de e-mail tem **orçamento de
+  tempo** (`ORCAMENTO_EMAIL_MS = 200s`) além do teto de quantidade: o
+  `enviarEmail` faz 3 tentativas com backoff (1,5s + 3s), então uma rodada com
+  muitos endereços ruins passaria de 300s de `maxDuration` — e função morta no
+  meio **não registra o que já enviou**, fazendo a próxima rodada repetir.
+- **Disparo SEMPRE manual, sem cron** (lei dos envios de Grupos, 20/07), com
+  prévia + **confirmação digitando o número** — é o freio mais forte do sistema e
+  cabe aqui porque é o único disparo que fala com centenas de pessoas que não
+  pediram nada. Rota do POST é **nível 4**, não 3: editar cadastro é uma coisa,
+  falar com 200 pessoas no número institucional é outra.
+- **Relay do "Entrar com Apple" (`@privaterelay.appleid.com`) NÃO recebe e-mail**:
+  é caixa técnica que a pessoa não lê, e mandar ali a marcaria como convidada.
+- **PENDENTE (é ação do Matheus, bloqueia o WhatsApp):** criar o template
+  **`atualizacao_cadastro`** na Meta (**UTILITY · pt_BR · 2 variáveis**: {{1}}
+  primeiro nome, {{2}} o link **como variável de body**, não botão — é a técnica
+  do `grupos_renovacao_temporada` que mantém a categoria) e setar a env
+  **`WHATSAPP_TEMPLATE_CENSO_ATUALIZACAO`**. Até lá o card avisa na tela e **o
+  e-mail funciona sozinho**. ⚠️ Não editar template aprovado: se precisar mudar
+  texto, criar `_v2` (edição volta pra revisão da Meta e o envio para).
+
+## Membresia · limpeza dos nomes que não são pessoa (2026-08-04 · SEM migration)
+
+Pedido do Matheus: *"preciso fazer uma limpa nesses nomes, por exemplo ali que
+está escrito nome riscado, claramente não é uma pessoa e veio de importação"*.
+Medido antes de tocar: a base tinha **3.924 vivos** e o lixo era **24 nomes**,
+dos quais **1** era lixo puro. A limpeza é pequena; o valor foi a triagem.
+
+**⚠️ 5 dos 24 eram PESSOAS REAIS que o meu próprio padrão pegou** — o regex
+`pessoa` casa com **sobrenome "Pessoa"**, comum no Brasil: `RENATA ANDRADE
+PESSOA DE MIRANDA` (4 grupos, **69 contribuições**), `Carolina Pessoa`
+(responsável por 4 crianças no Kids), `Maria Rosa De Oliveira pessoa`,
+`Tatiana Pessoa`, e `Vivian … (certo)` (o "(certo)" é anotação da equipe, não
+sujeira). **Régua: antes de apagar por padrão de nome, contar os vínculos
+operacionais** (vol, next, grupos, batismo, contribuição, kids_resp) — foi isso
+que separou pessoa de lixo, não a aparência do nome.
+
+**8 são contas de sistema e NÃO foram apagadas** (decisão: esconder, não apagar):
+`totem1-3` e `totem.kids1-4` têm **profile de login `@cbrio.org` apontando pra
+elas** — apagar o cadastro quebra o vínculo do login do totem; e
+`Apple Review (Demo)` é a conta proposital de revisão da App Store.
+⚠️ **Follow-up em aberto**: elas contam como pessoa na lista de Membresia e nos
+totais da base. O conserto certo é um filtro de exibição, não `deleted_at`.
+
+**11 apagados** com `app_soft_delete` (backup em
+`scratchpad/backup_membresia_sem_nome_20260804.json` · desfaz com
+`app_restore`): `. f` · `Anônimo 1/2/3` · `(nome riscado - Guadelupe)` ·
+`Josm... (ilegível)` · `Dianevieira26@gmail.com` (o nome era o e-mail) ·
+`22 pessoas -` · e os 3 do app sem nome preenchido (`5rr9697fp4`,
+`sy9p84mryx`, `pollyekley7788`).
+- ⚠️ **Os 3 do app têm login e 2 têm push token ativo** (um criado no mesmo dia).
+  O Matheus autorizou apagar sabendo disso; se alguém reclamar de acesso,
+  `select app_restore('mem_membros','<id>')` resolve.
+- ⚠️ **O histórico do Next sobreviveu de propósito**: `next_matriculas.nome` e
+  `next_inscricoes.nome` são **NOT NULL**, então as 6 matrículas do backfill de
+  listas manuscritas continuam existindo com o nome próprio. Apagar o cadastro
+  **não** apagou a presença — conferido depois.
+- ⚠️ **`22 pessoas -` era linha de planilha que o import virou pessoa**: ligada a
+  um `batismo_inscricoes` cujo nome é literalmente "22 pessoas", realizado em
+  26/01/2025. Decisão do Matheus: *"o número de batismo você mantém"* — então
+  **só o cadastro de pessoa foi apagado** e a linha do batismo ficou intacta
+  (`batismo_inscricoes.deleted_at` não foi tocado). Conferido: **226 batismos
+  realizados em 2025**, o mesmo de antes. A contagem de batismo não faz join com
+  `mem_membros`, então soft-delete de pessoa não a afeta.
+
 ## Cuidados · Visitas e Atendimentos ganhou visão POR PASTOR (2026-08-04 · SEM migration)
 
 Pedido do Matheus: "clicar no pastor e ver os atendimentos dele" + melhorar o
