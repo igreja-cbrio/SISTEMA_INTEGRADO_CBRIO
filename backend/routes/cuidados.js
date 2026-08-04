@@ -983,6 +983,7 @@ router.patch('/responsaveis/:id', authorizeModule('cuidados', 3), async (req, re
     if (error) throw error;
 
     let renomeados = 0;
+    let renomeadosVisitas = 0;
     if (renomeando) {
       const { count, error: e3 } = await supabase
         .from('cui_convertidos')
@@ -995,9 +996,37 @@ router.patch('/responsaveis/:id', authorizeModule('cuidados', 3), async (req, re
         throw e3;
       }
       renomeados = count || 0;
+
+      // ⚠️ `cui_visitas.responsavel` guarda LISTA separada por vírgula (visita em
+      // dupla), então não dá pra fazer `.eq()` como no convertido: "Wesley Ramos"
+      // aparece dentro de "Wesley Ramos, Nélio Paiva". A troca é por TOKEN exato,
+      // read-modify-write — `replace()` de substring renomearia "Léia" dentro de
+      // "Léia Serpa", que é outra pessoa.
+      try {
+        const { data: visitas } = await supabase
+          .from('cui_visitas')
+          .select('id, responsavel')
+          .is('deleted_at', null)
+          .ilike('responsavel', `%${atual.nome}%`);
+        for (const v of visitas || []) {
+          const partes = String(v.responsavel || '').split(/\s*,\s*/).map(s => s.trim()).filter(Boolean);
+          if (!partes.includes(atual.nome)) continue; // só substring, não é a pessoa
+          const novos = [...new Set(partes.map(p => (p === atual.nome ? nomeNovo : p)))];
+          const { error: eV } = await supabase
+            .from('cui_visitas')
+            .update({ responsavel: novos.join(', ') })
+            .eq('id', v.id);
+          if (!eV) renomeadosVisitas += 1;
+        }
+      } catch (eV) {
+        // Best-effort: o catálogo e os convertidos já foram renomeados com sucesso.
+        // Derrubar aqui deixaria a resposta em erro com a maior parte do trabalho
+        // feita; o número devolvido diz o que de fato mudou.
+        console.error('[CUIDADOS] rename cascade visitas:', eV.message);
+      }
     }
 
-    res.json({ ...data, renomeados });
+    res.json({ ...data, renomeados, renomeados_visitas: renomeadosVisitas });
   } catch (e) {
     console.error('[CUIDADOS] responsaveis update:', e.message);
     res.status(500).json({ error: e.message });

@@ -460,9 +460,30 @@ para ~4 pessoas** e o total real dele (12) fica partido.
   diz **"participou de N"**, não "fez N" — e a soma dos cards (19) fica MAIOR que
   o total de atendimentos (15) de propósito. O dialog mostra "com: <campo
   original>" na linha do atendimento conjunto.
-- **Correção de raiz pendente** (não feita aqui, é decisão do Matheus): trocar o
-  Input por Select de `cui_responsaveis` no form de visita/atendimento + consolidar
-  as grafias existentes. Sem isso a divergência volta a cada registro novo.
+- **Correção de raiz FEITA no mesmo dia** (decisões do Matheus em 04/08):
+  - **Campo virou seleção MÚLTIPLA do catálogo** (`RespSelector`, pílulas) — texto
+    livre acabou, grafia nova não nasce mais. Marcar 2+ é suportado: visita em dupla
+    conta pros dois. Guarda o NOME em lista `", "`-separada, **não id**: é o padrão
+    do módulo (essas pessoas não logam, o catálogo é por nome, e renomear propaga).
+    Trocar pra id exigiria satélite polimórfica (visita × acompanhamento) e deixaria
+    os dois lados do módulo com réguas diferentes.
+  - **Nome legado fora do catálogo é PRESERVADO** e aparece como pílula marcada com
+    `*` (caso da "Léia Serpa"). Sumir com o nome de quem já atendeu seria perder
+    histórico pra ganhar arrumação.
+  - **Grafias do Wesley consolidadas** — "Sim, tudo Wesley Ramos", confirmado por
+    ele; eu NÃO decidi isso. Resultado: de 6 cards pra **4 cards / 4 pessoas**, com
+    os 12 atendimentos dele juntos. Backup em
+    `scratchpad/backup_cui_visitas_responsavel_20260804.json`. "Marcelo Soares"
+    entrou no catálogo (pessoa distinta e real — supervisor-jornada, não variação de
+    grafia). **"Léia Serpa" NÃO foi tocada**: pode ou não ser a "Léia" inativa do
+    catálogo, e isso é identidade — fica pendente de confirmação dele.
+  - ⚠️ **Cascata de rename estendida a `cui_visitas`** (antes só `cui_convertidos`).
+    Não dá pra usar `.eq()` como no convertido, porque o campo guarda LISTA: a troca
+    é por **token exato**, read-modify-write. `replace()` de substring renomearia
+    "Léia" dentro de "Léia Serpa", que é outra pessoa. É best-effort e devolve
+    `renomeados_visitas` — o catálogo e os convertidos já foram renomeados com
+    sucesso quando ela roda, então derrubar a resposta ali esconderia o trabalho
+    feito.
 
 ## ⚠️ LEI · trocar a KEY de um campo de formulário ORFANA resposta (2026-08-03)
 
