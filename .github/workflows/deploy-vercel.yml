@@ -41,6 +41,9 @@ jobs:
       - name: Inscrições QR signature and inventory hash
         run: npm run test:inscricao-qr
 
+      - name: Contrato do censo (politica de recadastramento)
+        run: npm run test:censo
+
       - name: Install Vercel CLI
         run: npm install -g vercel@latest
 

@@ -2775,6 +2775,186 @@ router.delete('/checkins/:id', authorize('admin', 'diretor'), async (req, res) =
   }
 });
 
+// ══════════════════════════════════════════════════════════════════════════
+//  CENSO · cobertura (quem já respondeu / quem falta)
+//
+// É a pergunta que DEFINE um censo e que nenhuma tela respondia: o módulo de
+// Inscrições conta inscrições e o formulário de membresia conta submissões —
+// nenhum dos dois sabe dizer quantas pessoas da base ainda faltam.
+//
+// ⚠️ TODO número sai com a JANELA colada nele (payload e rótulo da tela). Já
+//    reportei "176 pessoas" sem dizer o período uma vez e o número correto
+//    pareceu errado — a janela é parte do número, não um detalhe.
+// ══════════════════════════════════════════════════════════════════════════
+
+// Nome-placeholder do import financeiro ("Contribuinte 059412...") — espelha
+// `ehNomePlaceholder` do membroMatch. Não é pessoa, então não entra no
+// denominador do censo (senão a cobertura nasce artificialmente baixa).
+const CENSO_PLACEHOLDER = 'contribuinte%';
+
+// Base viva do censo: pessoa ativa, não deletada e com nome de gente.
+function queryBaseCenso(select, opts) {
+  return supabase
+    .from('mem_membros')
+    .select(select, opts)
+    .eq('active', true)
+    .is('deleted_at', null)
+    .not('nome', 'ilike', CENSO_PLACEHOLDER);
+}
+
+function censoSchemaAusente(error) {
+  if (!error) return false;
+  return error.code === '42703'
+    || /column .* does not exist/i.test(error.message || '')
+    || /could not find the .* column/i.test(error.message || '');
+}
+
+// GET /api/membresia/censo/cobertura?desde=YYYY-MM-DD
+router.get('/censo/cobertura', authorizeModule('membresia', 1), async (req, res) => {
+  try {
+    // ── Submissões do censo (colunas pequenas · paginado pelo cap de 1000) ──
+    // Uma leitura paginada em vez de 6 COUNTs: com os mesmos bytes sai também o
+    // recorte por vínculo e a curva por dia.
+    const PAGE = 1000;
+    const linhas = [];
+    let offset = 0;
+    let schemaOk = true;
+    for (;;) {
+      let q = supabase
+        .from('mem_cadastros_pendentes')
+        .select('created_at, status, duplicado_de_id, vinculo_declarado, censo_conflitos')
+        .eq('censo', true)
+        .order('created_at', { ascending: true })
+        .range(offset, offset + PAGE - 1);
+      if (req.query.desde) q = q.gte('created_at', req.query.desde);
+
+      const { data, error } = await q;
+      if (error) {
+        if (censoSchemaAusente(error)) { schemaOk = false; break; }
+        throw error;
+      }
+      linhas.push(...(data || []));
+      if (!data || data.length < PAGE) break;
+      offset += PAGE;
+    }
+
+    if (!schemaOk) {
+      return res.json({
+        disponivel: false,
+        aviso: 'A parte 1 da migration do censo (20260803160000 · mem_cadastros_pendentes) ainda não foi aplicada — o painel de cobertura fica indisponível até lá. O formulário público continua funcionando.',
+      });
+    }
+
+    // ── Base e respondentes (COUNT no banco · nenhuma linha transferida) ──
+    const [rBase, rResp] = await Promise.all([
+      queryBaseCenso('id', { count: 'exact', head: true }),
+      queryBaseCenso('id', { count: 'exact', head: true }).not('censo_respondido_em', 'is', null),
+    ]);
+    // As colunas de mem_membros vêm da MESMA migration das de pendentes, mas
+    // uma aplicação parcial não pode virar "0% de cobertura" (número errado é
+    // pior que número ausente).
+    if (censoSchemaAusente(rBase.error) || censoSchemaAusente(rResp.error)) {
+      return res.json({
+        disponivel: false,
+        aviso: 'Falta a parte 2 da migration do censo (20260803160100 · mem_membros) — as colunas de cobertura ainda não existem. Aplique-a numa colagem separada da parte 1.',
+      });
+    }
+    if (rBase.error) throw rBase.error;
+    if (rResp.error) throw rResp.error;
+
+    const total = rBase.count || 0;
+    const jaResponderam = rResp.count || 0;
+
+    let novos = 0, comConflito = 0, aplicados = 0, aRevisar = 0;
+    const porVinculo = { membro: 0, congregado: 0, visitante: 0, nao_informado: 0 };
+    const porDia = new Map();
+    const pessoasCasadas = new Set();
+
+    for (const l of linhas) {
+      if (l.duplicado_de_id) pessoasCasadas.add(l.duplicado_de_id);
+      else novos += 1;
+
+      if (Array.isArray(l.censo_conflitos) && l.censo_conflitos.length) comConflito += 1;
+      if (l.status === 'aplicado') aplicados += 1;
+      // Fila humana de verdade: o que ainda espera decisão.
+      if (l.status === 'pendente' || l.status === 'duplicado') aRevisar += 1;
+
+      const v = l.vinculo_declarado || 'nao_informado';
+      if (porVinculo[v] === undefined) porVinculo[v] = 0;
+      porVinculo[v] += 1;
+
+      // Dia em BRT: `created_at` é UTC e às 21h do Rio o dia UTC já virou —
+      // sem o deslocamento a curva joga o culto da noite pro dia seguinte.
+      const dia = new Date(new Date(l.created_at).getTime() - 3 * 3600 * 1000)
+        .toISOString().slice(0, 10);
+      porDia.set(dia, (porDia.get(dia) || 0) + 1);
+    }
+
+    const desde = req.query.desde
+      || (linhas.length ? String(linhas[0].created_at).slice(0, 10) : null);
+
+    res.json({
+      disponivel: true,
+      // A janela vai NO PAYLOAD pra tela poder rotular o número.
+      janela: { desde, ate: new Date().toISOString().slice(0, 10) },
+      base: {
+        total,
+        respondidos: jaResponderam,
+        faltando: Math.max(0, total - jaResponderam),
+        pct: total ? Math.round((jaResponderam / total) * 1000) / 10 : 0,
+      },
+      submissoes: {
+        // pedidos × PESSOAS: quem preenche 2× conta 1 pessoa (a mesma régua de
+        // vínculo × pessoa dos Grupos). Sem isso o total infla e não bate com a
+        // cobertura.
+        total: linhas.length,
+        pessoas_ja_cadastradas: pessoasCasadas.size,
+        novos,
+        aplicados,
+        com_conflito: comConflito,
+        a_revisar: aRevisar,
+      },
+      por_vinculo: porVinculo,
+      por_dia: [...porDia.entries()].map(([dia, total_dia]) => ({ dia, total: total_dia })),
+    });
+  } catch (e) {
+    console.error('[CENSO cobertura]', e.message);
+    res.status(500).json({ error: 'Erro ao calcular a cobertura do censo' });
+  }
+});
+
+// GET /api/membresia/censo/faltantes?q=&limit=&offset=
+// Lista nominal de quem ainda NÃO respondeu — é a fila de cobrança.
+// Nível 2: carrega nome + telefone (a cobertura agregada é nível 1).
+router.get('/censo/faltantes', authorizeModule('membresia', 2), async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit) || 100, 500);
+    const offset = Math.max(parseInt(req.query.offset) || 0, 0);
+    const q = (req.query.q || '').toString().trim();
+
+    let query = queryBaseCenso('id, nome, telefone, email, status', { count: 'exact' })
+      .is('censo_respondido_em', null)
+      .order('nome', { ascending: true })
+      .range(offset, offset + limit - 1);
+    if (q.length >= 2) query = query.ilike('nome', `%${escapePostgrestValue(q)}%`);
+
+    const { data, error, count } = await query;
+    if (error) {
+      if (censoSchemaAusente(error)) {
+        return res.json({
+          disponivel: false, items: [], total: 0,
+          aviso: 'Falta a parte 2 da migration do censo (20260803160100 · mem_membros).',
+        });
+      }
+      throw error;
+    }
+    res.json({ disponivel: true, items: data || [], total: count || 0, limit, offset });
+  } catch (e) {
+    console.error('[CENSO faltantes]', e.message);
+    res.status(500).json({ error: 'Erro ao listar quem falta responder' });
+  }
+});
+
 // ── Cadastros pendentes (fila de aprovação do formulário público) ──
 
 // GET /api/membresia/cadastros — lista cadastros pendentes (filtro por status)
@@ -2797,16 +2977,28 @@ router.get('/cadastros', async (req, res) => {
 });
 
 // GET /api/membresia/cadastros/kpis — contadores por status
+// ⚠️ COUNT no banco (head: true), um por status. Era `.select('status')` sem
+// paginação: o PostgREST capa em 1000 linhas server-side, então a partir da
+// 1001ª submissão os contadores CONGELAVAM em silêncio — e o censo passa de
+// 1000 no primeiro domingo. Nenhuma linha é transferida aqui.
+const STATUS_CADASTRO = ['pendente', 'aprovado', 'rejeitado', 'duplicado', 'aplicado'];
 router.get('/cadastros/kpis', async (req, res) => {
   try {
-    const { data, error } = await supabase
-      .from('mem_cadastros_pendentes')
-      .select('status');
-    if (error) throw error;
-    const counts = { pendente: 0, aprovado: 0, rejeitado: 0, duplicado: 0 };
-    (data || []).forEach((c) => {
-      counts[c.status] = (counts[c.status] || 0) + 1;
-    });
+    const counts = {};
+    const resultados = await Promise.all(STATUS_CADASTRO.map(async (status) => {
+      const { count, error } = await supabase
+        .from('mem_cadastros_pendentes')
+        .select('id', { count: 'exact', head: true })
+        .eq('status', status);
+      // 'aplicado' só existe no CHECK depois da migration do censo — status
+      // inexistente devolve 0, não derruba o painel.
+      if (error) {
+        console.warn('[CADASTROS kpis]', status, error.message);
+        return [status, 0];
+      }
+      return [status, count || 0];
+    }));
+    for (const [status, n] of resultados) counts[status] = n;
     res.json(counts);
   } catch (e) {
     res.status(500).json({ error: 'Erro ao buscar KPIs de cadastros' });
@@ -2827,6 +3019,15 @@ router.post('/cadastros/:id/aprovar', podeAprovarMembresia, async (req, res) => 
     if (e1 || !cad) return res.status(404).json({ error: 'Cadastro não encontrado' });
     if (cad.status === 'aprovado') {
       return res.status(400).json({ error: 'Cadastro já foi aprovado.' });
+    }
+    // Censo já reconciliado: o reconciliador preencheu os campos vazios e não
+    // sobrou divergência. Aprovar de novo faria o caminho de ATUALIZAÇÃO
+    // reaplicar o formulário inteiro sobre o cadastro — inclusive por cima de
+    // valor que a equipe pode ter corrigido depois. A linha fica só como prova.
+    if (cad.status === 'aplicado') {
+      return res.status(400).json({
+        error: 'Este cadastro do censo já foi aplicado automaticamente ao cadastro existente. Não há nada a aprovar.',
+      });
     }
 
     // Família: prioriza a escolhida no modal, senão usa sugestão do formulário público

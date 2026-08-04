@@ -58,6 +58,7 @@ app.use(rateLimit({
     || req.path.startsWith('/api/public/nps')
     || req.path.startsWith('/api/public/grupos')
     || req.path.startsWith('/api/public/evento')
+    || req.path.startsWith('/api/public/membresia')
     || req.path.startsWith('/api/pagamentos-webhook'),
 }));
 app.use(hpp());
@@ -171,10 +172,16 @@ app.use('/api/public/voluntariado', require('./routes/publicVoluntariado'));
 app.use('/api/public/next', require('./routes/publicNext'));
 app.use('/api/public/batismo', require('./routes/publicBatismo'));
 app.use('/api/public/apresentacao-criancas', require('./routes/publicApresentacao'));
+// Membresia entrou no mesmo padrão no sweep do CENSO (2026-08-03): é a porta de
+// PESSOA e o censo é escaneado pela igreja inteira no MESMO minuto do culto, por
+// 1 IP só (WiFi/NAT). Ficava DEPOIS do publicLimiter (30/15min) somado ao teto
+// próprio de 10/15min — que era compartilhado com os lookups do formulário, ou
+// seja, o form morria por volta da 3ª pessoa. Limiters próprios (generoso na
+// submissão · dedicado no probing) em routes/publicMembresia.js.
+app.use('/api/public/membresia', require('./routes/publicMembresia'));
 app.use('/api/public', publicLimiter);
 
 app.use('/api/public/rh-onboarding', require('./routes/publicRhOnboarding'));
-app.use('/api/public/membresia', require('./routes/publicMembresia'));
 app.use('/api/public/decisao-online', require('./routes/publicDecisaoOnline'));
 // Webhook de pagamento (público · sem auth). Montado FORA de /api/public
 // (escapa o publicLimiter de 30/15min) e isento do limiter global no skip()

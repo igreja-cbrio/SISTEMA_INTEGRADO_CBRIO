@@ -272,6 +272,163 @@ Celebra com só nome+telefone continuam válidas para sempre).
   submit quando há horários; `status='rejeitado'` segue FORA do CHECK
   (referências defensivas no código são vocabulário morto — não legalizar).
 
+## ⚠️ CENSO / recadastramento da membresia (2026-08-03 · migrations `20260803160000` + `20260803160100`)
+
+Demanda do **Arthur Serpa**: por um mês, 1 minuto de cada culto pra igreja
+escanear um QR e preencher o cadastro. Decisão do Marcos: **formulário ÚNICO**
+(não dividir em duas etapas — "prefiro aumentar o tempo de preenchimento"), então
+o censo é o próprio `/cadastro-membresia`, com `?censo=1` no QR.
+
+**Decisão de arquitetura: NÃO é evento no módulo de Inscrições.** `inscricoes` é
+tronco PARALELO ao de pessoas — `membro_id` é nullable e nada o preenche, então um
+"evento censo" daria milhares de linhas numa tabela que **não é a membresia**, e a
+promoção inscrição→membro teria que ser construída do zero. O formulário de
+membresia já escreve na espinha de identidade (matcher canônico +
+`duplicado_de_id` + `registrarObservacaoSegura` + consentimento LGPD + fila de
+aprovação). De quebra, `chk_inscricoes_contrato` exige
+telefone+CPF+email+nascimento+sexo — Inscrições é *mais* exigente que a porta de
+pessoa, não menos.
+
+### ⚠️ O censo é UPDATE pra maioria — e era aí que ele morria
+
+Toda pessoa que já existe gerava `mem_cadastros_pendentes` com
+`status='duplicado'` pra resolver **UMA POR UMA** (`aprovar`/`rejeitar` são por
+registro; `membros/merge` é por grupo de duplicata — **não existe endpoint em
+lote**). Com base viva na casa dos **3.900**, é trabalho humano que ninguém vaza
+em um mês: a campanha morreria na fila, não na coleta.
+
+**`services/censoReconciliar.js`** generaliza a política do `cpfReconciliar`
+(cujo cabeçalho, aliás, já citava "censo") de um campo pra nove:
+
+- campo **VAZIO** no cadastro → **preenche** (enriquecimento)
+- valor **igual** (tolerando caixa/espaço/máscara/timestamp) → no-op
+- valor **diferente** num campo que já tinha → **CONFLITO**: não grava, vai pra
+  decisão humana com **os dois lados à vista**
+  (`mem_cadastros_pendentes.censo_conflitos`)
+- sem conflito → linha vira **`status='aplicado'`**: sai da fila mas continua
+  existindo como prova do que a pessoa enviou e do que ela consentiu
+
+⚠️ **Telefone e e-mail divergentes NÃO são conflito** — a decisão de 2026-07-17
+(Contrato de porta, item 3) é **ACUMULAR** em `mem_contatos` via
+`registrarContatoDaPorta` (a MESMA função do matcher, importada — não duplicada).
+Tratar contato como conflito jogaria na fila humana o caso mais comum do censo
+(trocou de número) e o principal continuaria velho.
+
+⚠️ **Gate de confiança: só `matched_by='cpf'` aplica sozinho.** Match por
+telefone+nome / e-mail+nome / nascimento+nome são sinais que a **família
+compartilha** — mãe e filha com o telefone da casa casam por telefone+nome, e o
+único sinal de que erramos é o nascimento. Com sinal fraco só aplica se o
+nascimento confere **dos dois lados**; senão não toca em nada e a linha segue pra
+fila. **O "sou eu" do lookup também é FRACO**: é validado só contra o telefone,
+então quem clica pode estar reconhecendo o cadastro do cônjuge.
+
+⚠️ **Guarda de corrida tudo-ou-nada**: o UPDATE leva `.is(campo, null)` em cada
+coluna que escreve. Entre o read e o write alguém da equipe pode ter preenchido na
+tela de Membresia, e **sobrescrever edição humana com dado de formulário é
+exatamente o que esta política existe pra não fazer**. 0 linhas → relê, reavalia e
+o que foi preenchido vira conflito. UMA retentativa, sem laço.
+
+⚠️ **Efeito colateral bom**: telefone que **não normaliza** (os 9 dígitos sem DDD
+da auditoria de 31/07, tipo `996013179`) conta como destino vazio → o censo
+**conserta** em vez de abrir conflito com um número inutilizável.
+
+⚠️ **O censo NÃO promove ninguém a membro.** `vinculo_declarado`
+(`membro|congregado|visitante`) é **autodeclarado** e nunca encosta em
+`mem_membros.status` — mesma política do `converteu_na_cbrio`. Quem é membro
+continua sendo decisão da igreja (batismo, curso, carta), e esse número alimenta
+OKR/KPI. Foi o ponto levantado com o Arthur antes de codar: o QR do culto é
+escaneado por membro, congregado, visitante e pai de criança.
+
+### ⚠️ Rate limit: a membresia era a única porta pública fora do sweep
+
+Achado que **quebrava o censo na 3ª pessoa**: `/api/public/membresia` era montada
+**depois** de `app.use('/api/public', publicLimiter)` (30/15min) e tinha teto
+próprio de **10/15min COMPARTILHADO** entre submissão e os lookups que o
+formulário dispara enquanto a pessoa digita (`lookup-cpf`,
+`lookup-nome-telefone`, `verificar-familia`). Cada pessoa gasta 3-5 requisições e
+no WiFi da igreja todas saem por **1 IP** (NAT) — o autocomplete queimava a cota
+antes de alguém conseguir enviar. Corrigido no padrão do sweep de 28/07:
+
+- mount **antes** do `publicLimiter` + entrada no `skip()` do limiter global
+- **dois baldes separados**: submissão `PUBLIC_MEMBRESIA_RATE_LIMIT_MAX`
+  (10000/15min · calibragem já validada em multidão real do NPS e dos grupos) ·
+  probing `PUBLIC_MEMBRESIA_LOOKUP_RATE_LIMIT_MAX` (3000/15min · teto menor
+  porque esses endpoints respondem "esta pessoa existe na base?"). **NÃO
+  unificar** — foi a cota compartilhada que quebrava o formulário.
+- ⚠️ limiter fica **só nas rotas**, nunca em `router.use` **e** na rota (conta 2×
+  a mesma requisição · lição do sweep de 28/07)
+- ⚠️ A borda do Vercel é separada: **regra no Firewall antes do primeiro
+  domingo**, como no NPS.
+
+### ⚠️ Dois contadores que iam mentir em silêncio no primeiro domingo
+
+- **`GET /cadastros/kpis`** fazia `.select('status')` sem paginação → o PostgREST
+  capa em **1000 linhas** server-side, então a partir da 1001ª submissão os
+  contadores **congelavam sem erro**. Virou COUNT no banco por status
+  (`head: true`, zero linhas transferidas).
+- **`notificar()` de cada submissão**: sem regra configurada o fallback é **TODOS
+  os admin/diretor**, então 700 respostas × 16 admins ≈ 11 mil linhas por
+  domingo. Agora submissão que o reconciliador RESOLVEU **não notifica** — aviso
+  é pra trabalho pendente; volume se acompanha pelo painel, não pelo sino.
+
+### Cobertura · a pergunta que define um censo
+
+`GET /membresia/censo/cobertura` (nível 1) e `/censo/faltantes` (nível 2 · carrega
+telefone). Marcadores em `mem_membros`: `censo_respondido_em` +
+`censo_vinculo_declarado`. Painel = **bloco recolhível acima da lista** na aba
+Cadastros (`components/membresia/PainelCenso.jsx`) — não aba nova: a Caixa de
+entrada dos Grupos já provou que separar em aba faz ninguém achar.
+
+- ⚠️ **A JANELA vai colada no número**, no payload e no título ("de 03/08 até
+  hoje"). Reportar "176 pessoas" sem dizer o período fez um número **correto**
+  parecer errado uma vez.
+- ⚠️ **Pedidos × PESSOAS**: quem responde 2× conta 1 pessoa (mesma régua de
+  vínculo × pessoa dos Grupos). Repetir **não é erro**, e a tela diz isso.
+- ⚠️ **Nome-placeholder fica FORA do denominador** (`nome NOT ILIKE
+  'contribuinte%'` · espelha `ehNomePlaceholder`): descrição de extrato não é
+  pessoa a censar, e incluí-la faz a cobertura nascer artificialmente baixa.
+- ⚠️ Dia da curva é calculado **em BRT**: `created_at` é UTC e às 21h do Rio o dia
+  UTC já virou — sem o deslocamento o culto da noite cai no dia seguinte.
+- **Marcado como respondido mesmo com conflito**: coberta é quem RESPONDEU, não
+  quem teve os campos aplicados.
+- ⚠️ Aprovar linha `aplicado` é **bloqueado** (400): o caminho de atualização
+  reaplicaria o formulário inteiro sobre o cadastro, inclusive por cima de valor
+  que a equipe corrigiu depois.
+
+### ⚠️ DUAS colagens — uma tabela cada (deadlock 40P01)
+
+A mudança mexe em **duas tabelas vivas** (`mem_cadastros_pendentes` e
+`mem_membros`), então virou **duas migrations**, aplicadas em colagens
+SEPARADAS: `20260803160000` (pendentes) e `20260803160100` (membros). O SQL
+Editor roda a colagem inteira numa transação só; DDL que trava duas tabelas
+pode se abraçar com uma consulta de produção que as toca na ordem inversa →
+`40P01 deadlock detected`, e a vítima é a migração (rollback total). Foi o que
+aconteceu na `20260728150000`. `mem_membros` é a tabela mais quente do sistema
+(toda porta de pessoa a toca), por isso vai sozinha. As duas partes são
+INDEPENDENTES e idempotentes — qualquer ordem, re-rodar sem medo — e os avisos
+do backend dizem **qual parte** falta.
+
+⚠️ Conferir no **catálogo** (`information_schema` / `pg_constraint` /
+`pg_indexes`), nunca por `RAISE NOTICE`: o SQL Editor do Supabase não mostra
+notice. As queries de conferência estão comentadas no fim de cada arquivo.
+
+### Tolerância à migration ausente (deploy em 2 etapas)
+
+O formulário funciona **com ou sem** a migration: o insert tenta com as colunas do
+censo e, em `42703`, repete **sem elas** (a submissão é o que não pode se perder —
+lição do `parcelas_max`, agora numa porta pública). O painel responde **aviso**,
+nunca 500, e cobre também aplicação **parcial** (número errado é pior que número
+ausente). O reconciliador roda **depois** do insert de propósito: se estourar, a
+linha continua `duplicado` e vai pra fila — que era o comportamento de sempre.
+
+Teste: `npm run test:censo` (`backend/services/censoReconciliar.test.js` · 10
+blocos, sem banco/rede/relógio, **no gate de deploy**). Mutation-testados: tratar
+contato como conflito, e o gate de nascimento divergente — é ele que impede o
+censo escrever o endereço de uma pessoa no cadastro de outra.
+
+**Pendências operacionais (não são código):** regra no Firewall do Vercel pra rota
+do censo · `vinculo_declarado` validado com o Arthur · gerar/imprimir o QR com
+`?censo=1` · teto da Meta se quiserem cobrar por WhatsApp quem falta.
 ## ⚠️ LEI · trocar a KEY de um campo de formulário ORFANA resposta (2026-08-03)
 
 Incidente: o Matheus abriu uma inscrição do Patrocinadores do Celebra e o modal

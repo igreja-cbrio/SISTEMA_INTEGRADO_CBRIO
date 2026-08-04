@@ -2386,6 +2386,11 @@ export const membresia = {
     create: (data) => post('/membresia/checkins', data),
     remove: (id) => del(`/membresia/checkins/${id}`),
   },
+  // Censo / recadastramento (2026-08-03) — cobertura e fila de cobrança.
+  censo: {
+    cobertura: (params) => get('/membresia/censo/cobertura' + (params ? '?' + new URLSearchParams(params) : '')),
+    faltantes: (params) => get('/membresia/censo/faltantes' + (params ? '?' + new URLSearchParams(params) : '')),
+  },
   cadastros: {
     list: (params) => get('/membresia/cadastros' + (params ? '?' + new URLSearchParams(params) : '')),
     kpis: () => get('/membresia/cadastros/kpis'),
