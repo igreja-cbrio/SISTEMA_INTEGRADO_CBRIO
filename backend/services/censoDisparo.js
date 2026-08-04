@@ -38,6 +38,7 @@ const {
   canaisDaPessoa,
   limitarPorTeto,
   montarLinkCenso,
+  whatsappPronto,
 } = require('../utils/censoConvite');
 const { gerarTokenCenso } = require('../utils/censoToken');
 
@@ -186,7 +187,7 @@ async function previewCenso({ status, canais = ['whatsapp', 'email'], reenviar =
       adiados: whats.adiados,
       teto: TETO_RODADA_WHATSAPP,
       template: nomeTemplate(),
-      configurado: !!process.env.WHATSAPP_TEMPLATE_CENSO_ATUALIZACAO,
+      configurado: whatsappPronto(),
     },
     email: {
       elegiveis: alvoEmail.length,
@@ -304,7 +305,13 @@ async function dispararCenso({ status, canais = ['whatsapp', 'email'], reenviar 
   };
 
   // ── WhatsApp (fila) ──
-  if (whats.envia.length) {
+  // ⚠️ Template não aprovado ainda = canal FECHADO. Enfileirar aqui marcaria as
+  // pessoas como convidadas (`mem_censo_convites`), a Meta recusaria o envio, e
+  // a próxima rodada as pularia — convite perdido para sempre, sem erro na tela.
+  if (whats.envia.length && !whatsappPronto()) {
+    resultado.whatsapp.motivo = 'template_nao_configurado';
+    resultado.whatsapp.adiados = alvoWhats.length;
+  } else if (whats.envia.length) {
     const r = await fila.enfileirarLote(whats.envia.map(p => ({
       telefone: p.telefone,
       template: nomeTemplate(),

@@ -21,6 +21,23 @@ const TETO_RODADA_WHATSAPP = 200;
 // Graph estrangula em ~30/min e o envio é sequencial dentro de uma requisição.
 const TETO_RODADA_EMAIL = 200;
 
+/**
+ * O canal de WhatsApp está pronto para disparar?
+ *
+ * ⚠️ A env `WHATSAPP_TEMPLATE_CENSO_ATUALIZACAO` é o SEMÁFORO: ela só é setada
+ * depois de a Meta APROVAR o template. Enquanto o template está "em análise" o
+ * envio falha (a Meta recusa template não aprovado), e o estrago é silencioso e
+ * permanente: o disparo registraria as pessoas como CONVIDADAS
+ * (`mem_censo_convites`), a mensagem nunca chegaria, e a próxima rodada as
+ * pularia por já estarem convidadas. 200 pessoas perdidas sem erro na tela.
+ *
+ * Por isso NÃO basta o nome do template ter um default no código: sem a env, o
+ * canal fica fechado e só o e-mail sai.
+ */
+function whatsappPronto(env = process.env) {
+  return !!String(env.WHATSAPP_TEMPLATE_CENSO_ATUALIZACAO || '').trim();
+}
+
 /** CPF ausente ou fora dos 11 dígitos = "sem CPF" para efeito do censo. */
 function semCpf(cpf) {
   return digitos(cpf).length !== 11;
@@ -108,6 +125,7 @@ function montarLinkCenso(baseUrl, membroId = null) {
 module.exports = {
   TETO_RODADA_WHATSAPP,
   TETO_RODADA_EMAIL,
+  whatsappPronto,
   semCpf,
   primeiroNome,
   emailUtilizavel,
