@@ -101,6 +101,35 @@ const CAMPOS_EVENTO = [
   'parcelas_max', 'juros_repassados',
 ];
 
+// ⚠️ INCIDENTE 2026-08-04 · colunas NOT NULL da whitelist acima.
+// A Ariel não conseguia salvar edição de evento: 500 com
+// `null value in column "pagamento_expira_horas" violates not-null constraint`
+// (5 ocorrências no runtime, 11:46–11:51 BRT). O form mandava `null` nesse campo
+// sempre que o pagamento estava desligado ou o campo estava vazio — então a edição
+// de QUALQUER evento sem pagamento quebrava, não era caso dela.
+//
+// A regra: nestas colunas `null` do cliente significa "não informado", NUNCA
+// "apagar" — apagar é impossível, o banco recusa e derruba o UPDATE inteiro, com
+// todos os outros campos que a pessoa editou. Então o null é DESCARTADO e o valor
+// atual permanece. Coluna nullable (valor_centavos, parcelas_max, vagas, data…)
+// segue aceitando null, porque ali limpar é uma edição legítima.
+//
+// Lista conferida no catálogo (is_nullable='NO'), não decorada.
+const CAMPOS_EVENTO_NAO_NULO = new Set([
+  'tem_sorteio', 'premios', 'checkin_ativo',
+  'pagamento_ativo', 'pagamento_expira_horas', 'juros_repassados',
+]);
+
+// Copia a whitelist pro patch, descartando null onde o banco não aceita.
+function aplicarCamposEvento(b, patch) {
+  for (const k of CAMPOS_EVENTO) {
+    if (b[k] === undefined) continue;
+    if (b[k] === null && CAMPOS_EVENTO_NAO_NULO.has(k)) continue;
+    patch[k] = b[k];
+  }
+  return patch;
+}
+
 // `pagamento_metodos` é TEXT[] e fica FORA do loop de whitelist de propósito:
 // string crua no lugar de array quebra o insert. Só os métodos que o checkout
 // público oferece — dinheiro/transferência são lançamento manual, não opção da
@@ -1908,7 +1937,12 @@ router.post('/eventos', authorizeModule('inscricoes', 3), async (req, res) => {
       status: 'rascunho',
       created_by: req.user?.id || null,
     };
-    for (const k of CAMPOS_EVENTO) if (b[k] !== undefined && k !== 'nome') payload[k] = b[k];
+    // Descarta null onde o banco é NOT NULL (ver CAMPOS_EVENTO_NAO_NULO).
+    for (const k of CAMPOS_EVENTO) {
+      if (k === 'nome' || b[k] === undefined) continue;
+      if (b[k] === null && CAMPOS_EVENTO_NAO_NULO.has(k)) continue;
+      payload[k] = b[k];
+    }
     const metodos = sanitizeMetodos(b.pagamento_metodos);
     if (metodos) payload.pagamento_metodos = metodos;
 
@@ -1945,7 +1979,7 @@ router.put('/eventos/:id', authorizeModule('inscricoes', 3), async (req, res) =>
   try {
     const b = req.body || {};
     const patch = {};
-    for (const k of CAMPOS_EVENTO) if (b[k] !== undefined) patch[k] = b[k];
+    aplicarCamposEvento(b, patch);
     if (b.nome !== undefined) {
       const nome = String(b.nome).trim();
       if (nome.length < 2) return res.status(400).json({ error: 'Informe o nome do evento' });

@@ -191,8 +191,15 @@ export function EventoModal({ evento, areas, onClose, onSaved }: {
         valor_centavos: f.pagamento_ativo && f.valor_centavos !== '' ? Math.round(Number(String(f.valor_centavos).replace(',', '.')) * 100) : null,
         pagamento_metodos: f.pagamento_ativo ? f.pagamento_metodos : [],
         parcelas_max: f.pagamento_ativo && f.parcelas_max !== '' ? Number(f.parcelas_max) : null,
-        pagamento_expira_horas: f.pagamento_ativo && f.pagamento_expira_horas !== '' ? Number(f.pagamento_expira_horas) : null,
       };
+      // ⚠️ `pagamento_expira_horas` é NOT NULL no banco (default 48), então mandar
+      // `null` — o que acontecia com o pagamento desligado ou o campo vazio —
+      // derrubava o UPDATE inteiro e a edição de QUALQUER evento sem pagamento
+      // falhava com 500. `parcelas_max` e `valor_centavos` são nullable, esses
+      // seguem podendo ser limpos.
+      if (f.pagamento_ativo && String(f.pagamento_expira_horas) !== '') {
+        payload.pagamento_expira_horas = Number(f.pagamento_expira_horas);
+      }
       if (ed) { payload.status = f.status; await api.atualizarEvento(evento.id, payload); }
       else {
         payload.periodicidade = f.periodicidade;
