@@ -838,6 +838,87 @@ function emptyVisitaForm() {
 }
 
 // Registrar/editar uma visita pastoral ou atendimento avulso (fora dos convertidos).
+// "Quem visitou / atendeu" · seleção MÚLTIPLA do catálogo `cui_responsaveis`
+// (decisão do Matheus 04/08). Era `<Input>` de texto livre, e foi assim que o
+// mesmo pastor virou 4 grafias ("Pr. Wesley B. Ramos", "Pr. Wesley Barros",
+// "Wesley Barros", "Wesley Ramos") — a visão por pastor mostrava 6 cards pra 4
+// pessoas. Com o catálogo, grafia nova não nasce mais.
+//
+// ⚠️ Guarda o NOME (lista separada por ", "), não id. É o padrão do módulo de
+// propósito: essas pessoas não logam no sistema, `cui_responsaveis` é catálogo por
+// nome, e renomear no catálogo PROPAGA pro histórico (ver PATCH /responsaveis/:id).
+// Trocar pra id aqui exigiria satélite polimórfica (visita × acompanhamento) e
+// deixaria os dois lados do módulo com réguas diferentes.
+//
+// ⚠️ Valor legado fora do catálogo (ex.: "Léia Serpa", que pode ou não ser a
+// "Léia" inativa) é PRESERVADO e mostrado como pílula própria — sumir com o nome
+// de quem já atendeu seria perder histórico pra ganhar arrumação.
+function RespSelector({ valor, onChange }: { valor: string; onChange: (v: string) => void }) {
+  const [lista, setLista] = useState<any[]>([]);
+  useEffect(() => {
+    cuidadosApi.responsaveis.list()
+      .then((r: any[]) => setLista(Array.isArray(r) ? r : []))
+      .catch(() => setLista([]));
+  }, []);
+
+  const selecionados = useMemo(
+    () => String(valor || '').split(/\s*,\s*|\s+e\s+/i).map(s => s.trim()).filter(Boolean),
+    [valor],
+  );
+  const doCatalogo = useMemo(
+    () => lista.filter(r => r.ativo || selecionados.includes(r.nome)).map(r => r.nome),
+    [lista, selecionados],
+  );
+  // Nome que está no registro mas não no catálogo (histórico) entra como opção
+  const opcoes = useMemo(
+    () => [...new Set([...doCatalogo, ...selecionados])].sort((a, b) => a.localeCompare(b, 'pt-BR')),
+    [doCatalogo, selecionados],
+  );
+
+  const toggle = (nome: string) => {
+    const novo = selecionados.includes(nome)
+      ? selecionados.filter(n => n !== nome)
+      : [...selecionados, nome];
+    onChange(novo.join(', '));
+  };
+
+  return (
+    <div>
+      <Label>Quem visitou / atendeu</Label>
+      <p className="text-[11px] text-muted-foreground mb-1.5">
+        Pode marcar mais de um — visita em dupla conta para os dois.
+      </p>
+      {opcoes.length === 0 ? (
+        <p className="text-xs text-muted-foreground">
+          Nenhum responsável cadastrado. Cadastre em Próximos passos → Gerenciar responsáveis.
+        </p>
+      ) : (
+        <div className="flex flex-wrap gap-1.5">
+          {opcoes.map(nome => {
+            const on = selecionados.includes(nome);
+            const foraDoCatalogo = !doCatalogo.includes(nome);
+            return (
+              <button
+                key={nome}
+                type="button"
+                onClick={() => toggle(nome)}
+                title={foraDoCatalogo ? 'Nome do histórico, fora do catálogo atual' : undefined}
+                className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
+                  on
+                    ? 'bg-[#00B39D]/10 border-[#00B39D] text-[#00B39D]'
+                    : 'border-border text-muted-foreground hover:border-foreground/30'
+                }`}
+              >
+                {nome}{foraDoCatalogo ? ' *' : ''}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function VisitaModal({ open, onClose, onSaved, initial }: {
   open: boolean; onClose: () => void; onSaved: () => void; initial?: any | null;
 }) {
@@ -912,7 +993,10 @@ function VisitaModal({ open, onClose, onSaved, initial }: {
           {form.tipo === 'outro' && (
             <div><Label>Qual? *</Label><Input value={form.tipo_outro} onChange={e => setForm({ ...form, tipo_outro: e.target.value })} placeholder="Escreva o tipo de visita / atendimento" /></div>
           )}
-          <div><Label>Quem visitou / atendeu</Label><Input value={form.responsavel} onChange={e => setForm({ ...form, responsavel: e.target.value })} placeholder="Pastor / líder" /></div>
+          <RespSelector
+            valor={form.responsavel}
+            onChange={(v) => setForm({ ...form, responsavel: v })}
+          />
           <div>
             <Label>Observação</Label>
             <textarea className="w-full min-h-[80px] rounded-md border border-border p-2 text-sm" style={{ background: 'var(--cbrio-input-bg)' }}
