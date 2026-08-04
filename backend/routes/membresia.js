@@ -3648,10 +3648,13 @@ router.get('/identidade-pendencias', async (req, res) => {
   try {
     if (nivelFilaIdentidade(req) < 1) return res.status(403).json({ error: 'Sem permissão' });
     const status = req.query.status || 'pendente';
+    // ⚠️ Teto era 500 e em 04/08 havia 495 pendentes — a 5 de truncar em SILÊNCIO
+    // (a fila some do fim sem erro nenhum). 1000 é o cap do PostgREST; passando
+    // disso, paginar é obrigatório.
     let q = supabase.from('identidade_pendencias')
       .select('*')
       .order('created_at', { ascending: false })
-      .limit(500);
+      .limit(1000);
     if (status !== 'todas') q = q.eq('status', status);
     if (req.query.tipo) q = q.eq('tipo', req.query.tipo);
     const { data: pend, error } = await q;

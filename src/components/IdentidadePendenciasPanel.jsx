@@ -111,18 +111,19 @@ export default function IdentidadePendenciasPanel({ statusFixo = null, ocultarFi
   // Por isso são chips separados em vez de um "tem CPF" que junta os dois.
   const cpfDaInscricao = (p) => String(p?.origem_id || '').startsWith('cpf:');
   const cpfDoCadastro = (p) => !!String(p?.membro?.cpf || '').trim();
-  const [filtroCpf, setFiltroCpf] = useState('todos'); // todos | inscricao | cadastro | sem
+  const temCpf = (p) => cpfDaInscricao(p) || cpfDoCadastro(p);
+  const [filtroCpf, setFiltroCpf] = useState('todos'); // todos | com | inscricao | sem
 
   const contagemCpf = useMemo(() => ({
+    com: todosItens.filter(temCpf).length,
     inscricao: todosItens.filter(cpfDaInscricao).length,
-    cadastro: todosItens.filter((p) => !cpfDaInscricao(p) && cpfDoCadastro(p)).length,
-    sem: todosItens.filter((p) => !cpfDaInscricao(p) && !cpfDoCadastro(p)).length,
+    sem: todosItens.filter((p) => !temCpf(p)).length,
   }), [todosItens]);
 
   const items = useMemo(() => todosItens.filter((p) => {
+    if (filtroCpf === 'com') return temCpf(p);
     if (filtroCpf === 'inscricao') return cpfDaInscricao(p);
-    if (filtroCpf === 'cadastro') return !cpfDaInscricao(p) && cpfDoCadastro(p);
-    if (filtroCpf === 'sem') return !cpfDaInscricao(p) && !cpfDoCadastro(p);
+    if (filtroCpf === 'sem') return !temCpf(p);
     return true;
   }), [todosItens, filtroCpf]);
 
@@ -248,15 +249,19 @@ export default function IdentidadePendenciasPanel({ statusFixo = null, ocultarFi
         </Button>
       </div>}
 
-      {/* Filtro por CPF · separa por RISCO de ligar, não só por "tem/não tem" */}
-      {!ocultarFiltros && todosItens.length > 0 && (
+      {/* Filtro por CPF.
+          ⚠️ NÃO fica atrás de `ocultarFiltros`: essa prop existe pra esconder os
+          chips de status/tipo quando a ABA já define o contexto (é o caso do
+          /entradas), e na 1ª tentativa eu pendurei este filtro na mesma condição —
+          resultado: ele não aparecia justamente na tela onde foi pedido. */}
+      {todosItens.length > 0 && (
         <div className="flex flex-wrap items-center gap-1 mb-4">
           <span className="text-[11px] text-muted-foreground mr-1">CPF:</span>
           {[
             ['todos', `Todos (${todosItens.length})`, 'Sem filtrar por CPF'],
-            ['inscricao', `Na inscrição (${contagemCpf.inscricao})`, 'A inscrição trouxe CPF — é a chave mais forte, ligar é seguro'],
-            ['cadastro', `Só no cadastro (${contagemCpf.cadastro})`, 'A inscrição casou por telefone+nome. Confira o nome antes de ligar'],
-            ['sem', `Sem CPF (${contagemCpf.sem})`, 'Nenhum dos lados tem CPF'],
+            ['com', `Só com CPF (${contagemCpf.com})`, 'Tem CPF na inscrição ou no cadastro candidato — são esses que vale ligar'],
+            ['inscricao', `CPF na inscrição (${contagemCpf.inscricao})`, 'A inscrição trouxe CPF — chave mais forte que existe, ligar é seguro sem conferir nome'],
+            ['sem', `Sem CPF (${contagemCpf.sem})`, 'Nenhum dos lados tem CPF — não dá pra ligar com segurança'],
           ].map(([k, label, dica]) => (
             <Button
               key={k}
