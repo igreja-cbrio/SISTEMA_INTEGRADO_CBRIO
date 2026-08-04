@@ -18,6 +18,7 @@ import { toast } from 'sonner';
 import { sistema as sistemaApi } from '@/api';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { captureFrontendCanary, isSentryEnabled } from '@/lib/sentry';
 
 const METRIC_META = {
   LCP: { label: 'Carregamento', good: '≤ 2,5s', unit: 'ms' },
@@ -278,6 +279,37 @@ function ReleasesBoard({ source }) {
 function SentryBoard({ source }) {
   const sentry = source?.data;
   const issues = sentry?.issues || [];
+  const [status, setStatus] = useState(null);
+  const [testing, setTesting] = useState(null);
+
+  useEffect(() => {
+    sistemaApi.observabilityStatus().then(setStatus).catch(() => setStatus(null));
+  }, []);
+
+  const testFrontend = () => {
+    if (!isSentryEnabled()) return toast.error('Sentry frontend ainda não está configurado.');
+    setTesting('frontend');
+    const eventId = captureFrontendCanary();
+    setTesting(null);
+    if (eventId) toast.success(`Canário frontend enviado: ${eventId}`);
+    else toast.error('O canário frontend não pôde ser enviado.');
+  };
+
+  const testBackend = async () => {
+    setTesting('backend');
+    try {
+      await sistemaApi.runBackendObservabilityCanary();
+      toast.error('O backend não produziu o erro canário esperado.');
+    } catch (error) {
+      if (error?.code === 'SENTRY_CANARY') {
+        toast.success(`Canário backend enviado · rastreio ${error.requestId || 'gerado'}`);
+      } else {
+        toast.error(error?.message || 'Não foi possível executar o canário backend.');
+      }
+    } finally {
+      setTesting(null);
+    }
+  };
   return (
     <section className="rounded-2xl border bg-card p-5">
       <div className="flex items-center gap-2">
@@ -285,6 +317,29 @@ function SentryBoard({ source }) {
         <h2 className="font-semibold">Sentry · problemas não resolvidos</h2>
       </div>
       <p className="mt-1 text-sm text-muted-foreground">Leitura resumida; eventos completos e replays continuam no fornecedor.</p>
+      <div className="mt-4 grid gap-3 sm:grid-cols-3">
+        {[
+          ['Captura web', status?.frontendCapture],
+          ['Captura API', status?.backendCapture],
+          ['Source maps', status?.sourceMaps],
+        ].map(([label, ready]) => (
+          <div key={label} className="flex items-center justify-between rounded-lg border px-3 py-2 text-sm">
+            <span>{label}</span>
+            <Badge variant={ready ? 'default' : 'secondary'}>{ready ? 'Ativo' : 'Pendente'}</Badge>
+          </div>
+        ))}
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Button type="button" size="sm" variant="outline" onClick={testFrontend} disabled={!status?.frontendCapture || testing !== null}>
+          {testing === 'frontend' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}
+          Testar frontend
+        </Button>
+        <Button type="button" size="sm" variant="outline" onClick={testBackend} disabled={!status?.backendCapture || testing !== null}>
+          {testing === 'backend' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}
+          Testar backend
+        </Button>
+        {status?.release && <code className="self-center text-xs text-muted-foreground">release {String(status.release).slice(0, 8)}</code>}
+      </div>
       {!source?.available || !sentry?.available ? (
         <div className="mt-5">
           <SourceUnavailable>
