@@ -440,12 +440,24 @@ uma função só (`casaFiltros`), usada pelos dois lados.
 - Na visão por pastor o filtro **"Quem atendeu" é escondido**: ali o recorte por
   responsável É a própria lista, e deixá-lo ligado mostraria um card só sem
   explicar por quê.
-- **Fix de layout do período**: eram dois blocos "De"/"Até" soltos e as labels
-  apareciam COLADAS ao lado do calendário. Causa: `Label` do shadcn é `<label>`
-  (inline) e o `DatePicker` é um `Button` inline-flex — o `space-y-1` não empilha
-  dois inline, eles fluem na mesma linha. Viraram **um grupo "Período do
-  atendimento"** com `até` no meio, X pra limpar e aviso quando a data inicial
-  passa da final. ⚠️ Label ao lado de DatePicker precisa de `block`.
+- **Visão por PASTOR é o DEFAULT da aba** (2ª rodada · 04/08): o uso real é a
+  liderança olhando o próprio acompanhamento; achar uma pessoa específica tem o
+  campo de busca, e a trilha dela fica a um clique dentro do card do pastor.
+- **⚠️ Layout do período · foram DUAS causas, e a 1ª correção só pegou uma.**
+  1. `Label` do shadcn é `<label>` (inline) e o `DatePicker` é um `Button`
+     inline-flex — `space-y-1` não empilha dois inline, eles fluem na mesma linha.
+     Daí as labels "De"/"Até" aparecerem COLADAS ao lado do calendário. Resolvido
+     com `block` na label.
+  2. **O que sobrou depois disso**: o Button do DatePicker tem `whitespace-nowrap`
+     e o span do placeholder é `flex-1` **sem `truncate`**, então texto que não cabe
+     **transborda pra fora do botão** e passa por cima do vizinho — o "até" ficava
+     escrito por dentro do "Selecione a data". Com `w-[142px]`, sobravam ~94px de
+     texto pra uma frase de ~110px.
+  **Régua:** ao encaixar `DatePicker` em espaço estreito, encurtar o `placeholder`
+  (aqui virou "Início"/"Fim", já que o grupo tem label própria) **e** medir a
+  largura contra `w − px − (ícone + mr-2) − (X de limpar, quando há data)`. O
+  `overflow-hidden` no botão é só cinto de segurança: ele CLIPA em vez de invadir o
+  vizinho, mas não faz o texto caber.
 
 ⚠️ **`responsavel` é TEXTO LIVRE e isso limita a feature.** O form usa `<Input>`,
 não select do catálogo `cui_responsaveis` — que EXISTE, é gerenciável na UI e tem
