@@ -328,30 +328,73 @@ function DuplicadosTab({ onVerFicha }) {
     onError: (e) => toast.error(e?.message || 'Erro ao recarregar'),
   });
 
-  const invalida = () => {
-    qc.invalidateQueries({ queryKey: ['next-batismo', 'duplicados'] });
-    qc.invalidateQueries({ queryKey: ['next-batismo', 'duplicados-adiados'] });
-    qc.invalidateQueries({ queryKey: ['next-batismo', 'resumo'] });
+  // ⚠️ AÇÃO NÃO REFAZ A BUSCA. Era `invalidateQueries` nas três chaves, e cada
+  // clique custava ~10s: o GET /duplicados RECALCULA a fila inteira (pagina a base
+  // viva, forma candidatos por CPF/telefone/e-mail/nascimento/blocos de nome e
+  // aplica a duplicidadePolicy), e as ações de resolução invalidam também o cache
+  // de 10 min do backend — então nem o /resumo voltava barato. Reclamação do
+  // Matheus em 04/08: "demora pra atualizar, quero algo fluido".
+  //
+  // A ação já foi confirmada pelo servidor. O par só precisa SAIR da lista, e o
+  // contador do topo desce 1. Recálculo de verdade continua existindo no botão
+  // "Recarregar", que é explícito.
+  const removerPares = (chave, deveSair) => {
+    let removidos = 0;
+    qc.setQueryData(['next-batismo', chave], (old) => {
+      if (!old?.items) return old;
+      const items = old.items.filter((it) => !deveSair(it));
+      removidos = old.items.length - items.length;
+      return removidos ? { ...old, items, total: items.length } : old;
+    });
+    return removidos;
   };
+  const ajustarContador = (delta) => {
+    if (!delta) return;
+    qc.setQueryData(['next-batismo', 'resumo'], (old) => (
+      old ? { ...old, duplicatas: Math.max(0, (old.duplicatas || 0) + delta) } : old
+    ));
+  };
+  // A fila OPOSTA pode ter mudado, mas recalcular agora pagaria os ~10s que
+  // estamos evitando: marca stale e deixa o refetch pro momento em que ela abrir.
+  const marcarStale = (chave) => qc.invalidateQueries({
+    queryKey: ['next-batismo', chave], refetchType: 'none',
+  });
 
   const ignorarMut = useMutation({
     mutationFn: (par) => api.ignorarDuplicata({ membro_a_id: par.membro_a_id, membro_b_id: par.membro_b_id }),
-    onSuccess: () => { toast.success('Marcado como pessoas distintas · não aparece mais'); invalida(); },
+    onSuccess: (_r, par) => {
+      toast.success('Marcado como pessoas distintas · não aparece mais');
+      ajustarContador(-removerPares('duplicados', (it) => it.par_id === par.par_id));
+    },
     onError: (e) => toast.error(e?.message || 'Erro ao ignorar'),
   });
   const adiarMut = useMutation({
     mutationFn: (par) => api.adiarDuplicata({ membro_a_id: par.membro_a_id, membro_b_id: par.membro_b_id, confianca: par.confianca, prioridade: par.prioridade }),
-    onSuccess: () => { toast.success('Adiada · volta sozinha quando aparecer um cadastro completo'); invalida(); },
+    onSuccess: (_r, par) => {
+      toast.success('Adiada · volta sozinha quando aparecer um cadastro completo');
+      ajustarContador(-removerPares('duplicados', (it) => it.par_id === par.par_id));
+      marcarStale('duplicados-adiados');
+    },
     onError: (e) => toast.error(e?.message || 'Erro ao adiar'),
   });
   const reativarMut = useMutation({
     mutationFn: (par) => api.reativarDuplicata({ membro_a_id: par.membro_a_id, membro_b_id: par.membro_b_id }),
-    onSuccess: () => { toast.success('De volta pra fila'); invalida(); },
+    onSuccess: (_r, par) => {
+      toast.success('De volta pra fila');
+      removerPares('duplicados-adiados', (it) => it.par_id === par.par_id);
+      ajustarContador(+1);
+      marcarStale('duplicados');
+    },
     onError: (e) => toast.error(e?.message || 'Erro ao trazer de volta'),
   });
   const adiarLoteMut = useMutation({
     mutationFn: () => api.adiarEmLote({ criterio: 'nome_apenas' }),
-    onSuccess: (r) => { toast.success(`${r?.total || 0} par(es) adiados · voltam quando um cadastro completo confirmar`); setLoteDialog(false); setVista('adiados'); setPrioridade('todas'); setBusca(''); setLimiteVisivel(100); invalida(); },
+    onSuccess: (r) => { toast.success(`${r?.total || 0} par(es) adiados · voltam quando um cadastro completo confirmar`); setLoteDialog(false); setVista('adiados'); setPrioridade('todas'); setBusca(''); setLimiteVisivel(100);
+      // Move ~91 pares de uma vez: remove localmente os "só nome" da fila e busca
+      // os adiados de verdade (a tela acabou de trocar pra essa aba).
+      ajustarContador(-removerPares('duplicados', soNome));
+      qc.invalidateQueries({ queryKey: ['next-batismo', 'duplicados-adiados'] });
+    },
     onError: (e) => toast.error(e?.message || 'Erro ao adiar em lote'),
   });
   const mergeMut = useMutation({
@@ -366,7 +409,13 @@ function DuplicadosTab({ onVerFicha }) {
       } else {
         toast.success(`Fundido · ${res?.merged || 1} cadastro(s) absorvido(s)${aplicados.length ? ` · ${aplicados.length} campo(s) do melhor de cada` : ''}`);
       }
-      invalida(); setMergeDialog(null); setMergeCampos({});
+      // ⚠️ Fundir A em B faz A DEIXAR DE EXISTIR: todo outro par que cite A ficou
+      // órfão e tem que sair junto — clicar num deles daria erro no servidor.
+      const absorvidos = new Set(vars?.merge_ids || []);
+      const citaAbsorvido = (it) => absorvidos.has(it.membro_a_id) || absorvidos.has(it.membro_b_id);
+      ajustarContador(-removerPares('duplicados', citaAbsorvido));
+      removerPares('duplicados-adiados', citaAbsorvido);
+      setMergeDialog(null); setMergeCampos({});
     },
     onError: (e) => toast.error(e?.message || 'Erro ao fundir'),
   });
