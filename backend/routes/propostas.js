@@ -315,7 +315,8 @@ router.post('/:id/transicao', authorizeModule('propostas', 2), async (req, res) 
     if (!p) return res.status(404).json({ error: 'Proposta não encontrada' });
     const me = meuId(req); const admin = nivelProp(req) >= 5;
     const souAutorOuLider = p.criado_por_usuario_id === me || p.lider_usuario_id === me;
-    const souDiretor = admin || (await diretorDaArea(p.area_id)) === me;
+    const diretorArea = await diretorDaArea(p.area_id);
+    const souDiretor = admin || diretorArea === me;
 
     const autoriza = {
       enviar: souAutorOuLider || admin, reenviar: souAutorOuLider || admin, descartar: souAutorOuLider || admin,
@@ -336,9 +337,24 @@ router.post('/:id/transicao', authorizeModule('propostas', 2), async (req, res) 
       if (hoje > p.ciclo.data_corte_submissao) return res.status(409).json({ error: 'Janela de submissão encerrada (após o corte).' });
     }
 
-    const { data: r, error } = await supabase.rpc('fn_prop_transicionar', { p_id: p.id, p_acao: acao, p_comentario: comentario || null, p_ator: me });
+    const { data: r0, error } = await supabase.rpc('fn_prop_transicionar', { p_id: p.id, p_acao: acao, p_comentario: comentario || null, p_ator: me });
     if (error) return res.status(400).json({ error: error.message });
-    if (!r?.ok) return res.status(409).json(r);
+    if (!r0?.ok) return res.status(409).json(r0);
+
+    let r = r0;
+    // Auto-aprovação do próprio portão de área: quando quem CRIOU a proposta é
+    // o diretor da área, o "clique de si mesmo" em AGUARDANDO_DIRETOR_AREA é
+    // dispensado — ele ainda se autoavalia normalmente na fase EM_AVALIACAO
+    // (quórum exige todos os diretores, ele incluso). A transição real
+    // acontece (fica no log com ator+comentário), só não exige o clique.
+    if (r.para === 'AGUARDANDO_DIRETOR_AREA' && diretorArea && diretorArea === p.criado_por_usuario_id) {
+      const { data: r2, error: err2 } = await supabase.rpc('fn_prop_transicionar', {
+        p_id: p.id, p_acao: 'aprovar',
+        p_comentario: 'Auto-aprovado: autor é o diretor da área',
+        p_ator: diretorArea,
+      });
+      if (!err2 && r2?.ok) r = r2;
+    }
 
     // Proposta aprovada → materializa em projects/events (best-effort · idempotente)
     if (r.para === 'APROVADO') { try { await materializarProposta(p.id); } catch (e) { console.warn('[propostas] materializar:', e.message); } }
@@ -347,7 +363,7 @@ router.post('/:id/transicao', authorizeModule('propostas', 2), async (req, res) 
     const alvo = [];
     if (p.criado_por_usuario_id) alvo.push(p.criado_por_usuario_id);
     if (r.para === 'AGUARDANDO_VALIDACAO_LIDER' && p.lider_usuario_id) alvo.push(p.lider_usuario_id);
-    if (['AGUARDANDO_DIRETOR_AREA', 'EM_VERIFICACAO_RESSALVAS'].includes(r.para)) { const d = await diretorDaArea(p.area_id); if (d) alvo.push(d); }
+    if (['AGUARDANDO_DIRETOR_AREA', 'EM_VERIFICACAO_RESSALVAS'].includes(r.para) && diretorArea) alvo.push(diretorArea);
     if (['EM_ADEQUACAO', 'AGUARDANDO_RECURSO'].includes(r.para) && p.lider_usuario_id) alvo.push(p.lider_usuario_id);
     if (alvo.length) {
       notificar({ modulo: 'propostas', tipo: 'proposta_transicao', titulo: `Proposta ${p.codigo || ''} · ${r.para}`,
