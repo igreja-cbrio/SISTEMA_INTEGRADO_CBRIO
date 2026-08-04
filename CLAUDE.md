@@ -2411,6 +2411,45 @@ mesmo, até que o convertido entre em outro valor"). Auditoria completa em
   estrutura pronta pra unificação financeira. Conectar/Investir seguem "—"
   nas pétalas (grupos/devocionais não têm dimensão de área de culto).
 
+## ⚠️ LEI · guarda de idempotência tem que ser na MESMA chave do índice único (2026-08-04)
+
+Incidente: o Marcelo cadastrava os dados de um convertido na aba Decisões da
+Integração, apertava **Registrar** e recebia erro do servidor
+(`POST /api/kpis/cultos/:id/decisoes-pessoas 500` · 3 tentativas seguidas às
+17:54/17:55/17:56 no culto de 02/08). Nos logs:
+`duplicate key value violates unique constraint "nsm_eventos_pessoa_valor_uq"`.
+
+`tg_cultos_dec_pessoas_jornada` (AFTER INSERT ROW em
+`cultos_decisoes_pessoas`) guardava o insert com
+`NOT EXISTS (origem='culto_decisao' AND origem_id = NEW.id)` — idempotência por
+**DECISÃO**. Mas o índice é por **PESSOA**:
+`nsm_eventos_pessoa_valor_uq ON (COALESCE(membro_id::text, visitante_id::text, cpf), valor_engajado)`.
+Quem já tinha evento `'seguir'` (decidiu num culto anterior) passava pela guarda
+— `NEW.id` é outro —, o INSERT violava o índice, e **exceção em trigger AFTER
+aborta o statement inteiro**: a decisão não era gravada e a pessoa ficava fora
+do sistema. Raio: **386 pessoas** já têm evento `'seguir'`, então toda
+re-decisão de qualquer uma delas era um 500 sem saída pela tela.
+
+Migration `20260804180000`: `ON CONFLICT ... DO NOTHING` com o **mesmo alvo** que
+`nsm_inserir_evento` (o outro escritor da tabela) já usava — a semântica do
+índice é "primeiro engajamento por valor conta". Validado em produção com
+INSERT real dentro de transação revertida: decisão gravada, evento `'seguir'`
+segue **1**, zero resíduo.
+
+- ⚠️ **NÃO afrouxar o índice**: é ele que faz a NSM contar PESSOAS engajadas, e
+  não eventos. Removê-lo duplicaria gente no numerador.
+- ⚠️ **A expressão do `ON CONFLICT` tem que ser IDÊNTICA à do índice** (mesma
+  lição do índice funcional da Onda 2), senão o Postgres recusa a inferência.
+- ⚠️ A migration foi escrita sobre a definição **VIVA** do banco, não sobre o
+  arquivo `20260518150000`: prod tinha um `SET search_path` que o arquivo não
+  tem, e replicar do arquivo teria apagado essa proteção em silêncio.
+- **Nenhum número mudou**: a linha duplicada que agora é ignorada nunca chegou a
+  existir (o INSERT falhava). Resíduo consciente: re-decisão não atualiza
+  `data_decisao` do evento já existente.
+- Régua que fica: **guarda `NOT EXISTS` só protege se checar a mesma chave que o
+  índice**. Guarda numa chave e UNIQUE em outra = 500 que ninguém entende, e no
+  fluxo de pessoa isso significa cadastro perdido.
+
 ## Planejamento Estratégico × Gestão Anual · virada conceitual (2026-06-10)
 
 Reorganização por **horizonte de tempo** (Marcos). Dois módulos distintos — não
