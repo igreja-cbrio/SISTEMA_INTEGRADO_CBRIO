@@ -5,7 +5,7 @@ const rateLimit = require('express-rate-limit');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const { uploadModuleFile, SHAREPOINT_CONFIGURED } = require('../services/storageService');
-const { acharMembroGuardado } = require('../services/membroMatch');
+const { acharMembroGuardado, ehNomeDerivadoDeEmail } = require('../services/membroMatch');
 const { registrarObservacaoSegura } = require('../services/identidadeProgressiva');
 const { cpfValido, emailValido } = require('../services/inscricaoContrato');
 const { verificarTokenCenso } = require('../utils/censoToken');
@@ -725,7 +725,18 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
             email: emailLimpo,
             password: senha,
             email_confirm: true,
-            user_metadata: { source: 'membresia_publica', cadastro_pendente_id: data.id },
+            // ⚠️ `full_name` é OBRIGATÓRIO aqui. O gatilho de signup em auth.users
+            // faz COALESCE(full_name, name, split_part(email,'@',1)) — sem ele, o
+            // PREFIXO DO E-MAIL vira o nome da pessoa no profile E no cadastro que
+            // o gatilho cria (15 casos medidos em 04/08, ~1/dia). A pessoa acabou
+            // de digitar o nome completo neste formulário; não há motivo pra
+            // chutar.
+            user_metadata: {
+              full_name: nome.trim(),
+              name: nome.trim(),
+              source: 'membresia_publica',
+              cadastro_pendente_id: data.id,
+            },
           });
           if (createErr) {
             console.error('[PUBLIC CADASTRO] createUser:', createErr.message);
@@ -738,7 +749,7 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
         if (authUserId) {
           const { data: profileExistente } = await supabase
             .from('profiles')
-            .select('id, membro_id')
+            .select('id, membro_id, name')
             .eq('id', authUserId)
             .maybeSingle();
 
@@ -752,10 +763,31 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
               is_membro_only: true,
               active: true,
             });
-          } else if (duplicadoDeId && !profileExistente.membro_id) {
-            await supabase.from('profiles')
-              .update({ membro_id: duplicadoDeId })
-              .eq('id', authUserId);
+          } else {
+            // O gatilho de auth.users cria o profile ANTES daqui, então este ramo
+            // é o caminho normal — e era onde o nome ruim ficava para sempre.
+            const patch = {};
+            if (duplicadoDeId && !profileExistente.membro_id) patch.membro_id = duplicadoDeId;
+            if (ehNomeDerivadoDeEmail(profileExistente.name, emailLimpo)) patch.name = nome.trim();
+            if (Object.keys(patch).length) {
+              await supabase.from('profiles').update(patch).eq('id', authUserId);
+            }
+
+            // E conserta o CADASTRO que o gatilho criou com o prefixo do e-mail.
+            // É o caso da pessoa que preencheu este formulário corretamente e
+            // ganhou um segundo registro vazio minutos depois. Guarda estreita:
+            // só reescreve quando o nome atual É PROVADAMENTE derivado do e-mail.
+            const membroDoLogin = profileExistente.membro_id || duplicadoDeId;
+            if (membroDoLogin) {
+              const { data: mem } = await supabase.from('mem_membros')
+                .select('id, nome, email').eq('id', membroDoLogin).maybeSingle();
+              if (mem && ehNomeDerivadoDeEmail(mem.nome, mem.email || emailLimpo)) {
+                const { error: eNome } = await supabase.from('mem_membros')
+                  .update({ nome: nome.trim() }).eq('id', mem.id).eq('nome', mem.nome);
+                if (eNome) console.error('[PUBLIC CADASTRO] corrigir nome do membro:', eNome.message);
+                else console.log(`[PUBLIC CADASTRO] nome derivado do e-mail corrigido: ${mem.nome} -> ${nome.trim()}`);
+              }
+            }
           }
           accountCreated = true;
           canLoginDevocional = !!duplicadoDeId; // so quem já e membro entra no devocional na hora

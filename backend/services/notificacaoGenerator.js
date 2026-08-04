@@ -643,6 +643,61 @@ async function gerarNotificacoesMembresia() {
     }
   } catch { /* tabela ausente · silencioso */ }
 
+  // 4. ⚠️ Cadastro cujo NOME é o prefixo do próprio e-mail.
+  //
+  // Vem do gatilho de signup em auth.users (`COALESCE(full_name, name,
+  // split_part(email,'@',1))`): quando o provedor OAuth não manda nome, o prefixo
+  // do e-mail vira o nome da pessoa. Pior caso: Apple Sign-In com "Ocultar meu
+  // e-mail", em que o prefixo é um identificador aleatório ("sy9p84mryx").
+  //
+  // ⚠️ Este aviso NÃO conserta a causa — ele existe pra o problema parar de
+  // crescer em SILÊNCIO enquanto o gatilho não é corrigido. Foram 15 cadastros
+  // assim (medição de 04/08), todos com origem_cadastro='auth', em ritmo de ~1
+  // por dia. Um deles duplicou uma pessoa que havia preenchido o formulário
+  // público CORRETAMENTE 8 minutos antes.
+  //
+  // Aviso AGREGADO (1 por dia), nunca 1 por pessoa: o volume aqui é fila de
+  // trabalho, não evento — e sem regra configurada o notificar cai no fallback
+  // de TODOS os admin/diretor.
+  try {
+    const { ehNomeDerivadoDeEmail } = require('./membroMatch');
+    const suspeitos = [];
+    const PAGE = 1000;
+    let offset = 0;
+    for (;;) {
+      const { data, error } = await supabase
+        .from('mem_membros')
+        .select('id, nome, email, created_at')
+        .not('email', 'is', null)
+        .eq('active', true)
+        .is('deleted_at', null)
+        .range(offset, offset + PAGE - 1);
+      if (error) throw error;
+      for (const m of data || []) {
+        if (ehNomeDerivadoDeEmail(m.nome, m.email)) suspeitos.push(m);
+      }
+      if (!data || data.length < PAGE) break;
+      offset += PAGE;
+    }
+    if (suspeitos.length) {
+      const hoje = new Date().toISOString().slice(0, 10);
+      const novos7d = suspeitos.filter(
+        (m) => new Date(m.created_at).getTime() > Date.now() - 7 * 86400000,
+      ).length;
+      count += await notificar({
+        modulo: 'membresia',
+        tipo: 'cadastro_sem_nome_real',
+        titulo: `${suspeitos.length} cadastro(s) com o e-mail no lugar do nome`,
+        mensagem: `${suspeitos.length} pessoa(s) estão cadastradas com o prefixo do e-mail como nome (ex.: ${JSON.stringify(suspeitos[0].nome)})${novos7d ? ` — ${novos7d} nos últimos 7 dias` : ''}. Vem do login quando o provedor não informa o nome. Corrigir o nome na Membresia; NÃO apagar (são pessoas reais e apagar quebra o matcher).`,
+        link: '/ministerial/membresia',
+        severidade: novos7d ? 'aviso' : 'info',
+        chaveDedup: `cadastro_sem_nome_real_${hoje}`,
+      });
+    }
+  } catch (e) {
+    console.error('[Notificações] cadastro sem nome real:', e.message);
+  }
+
   return count;
 }
 

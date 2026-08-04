@@ -15,6 +15,7 @@
     "test:inscricao-orfas": "node backend/services/inscricaoOrfas.test.js",
     "test:inscricao-qr": "node backend/services/inscricaoComprovante.test.js",
     "test:censo": "node backend/services/censoReconciliar.test.js",
+    "test:nome-email": "node backend/services/nomeDerivadoEmail.test.js",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
