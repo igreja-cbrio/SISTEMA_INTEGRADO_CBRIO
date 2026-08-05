@@ -458,6 +458,19 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
       return res.status(400).json({ error: 'Informe seu vínculo com a igreja.' });
     }
 
+    // ⚠️ SEXO OBRIGATÓRIO (Matheus · 05/08: "em todos os formulários"). Era a
+    // ÚNICA porta de pessoa que não exigia — as outras 7 já validam no servidor
+    // (batismo, apresentação, grupos + cônjuge, eventos, voluntariado, next,
+    // totem do bebê). Ontem o campo entrou na tela mas o servidor só
+    // sanitizava para `null`: quem postasse direto, ou abrisse com bundle
+    // antigo, gravava sem sexo — e cadastro sem sexo nunca fica completo pela
+    // régua da fila, então ficaria preso em aprovação manual pra sempre.
+    // Vocabulário canônico, NUNCA "outro" (lei do Contrato de Inscrição).
+    const generoNorm = String(genero || '').trim().toLowerCase();
+    if (!['masculino', 'feminino'].includes(generoNorm)) {
+      return res.status(400).json({ error: 'Selecione o sexo (masculino ou feminino).', campo: 'genero' });
+    }
+
     const origemValida = ['site', 'qr_code', 'evento', 'importacao'];
     const origemFinal = origemValida.includes(origem) ? origem : 'site';
 
@@ -527,10 +540,7 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
       email: emailLimpo,
       telefone: telefone || null,
       data_nascimento: data_nascimento || null,
-      // Aceita só o canônico: "outro" e variações não entram (a coluna e os
-      // KPIs por sexo não os aceitam — lei do Contrato de Inscrição).
-      genero: ['masculino', 'feminino'].includes(String(genero || '').toLowerCase())
-        ? String(genero).toLowerCase() : null,
+      genero: generoNorm,   // já validado acima — só o canônico chega aqui
       estado_civil: estado_civil || null,
       endereco: endereco || null,
       bairro: bairro || null,

@@ -557,6 +557,10 @@ export default function CadastroMembresia() {
         // (2026-07-23 · antes o e-mail só era exigido no devocional). Bairro,
         // estado civil e profissão são opcionais.
         if (!form.data_nascimento) return false;
+        // ⚠️ Sexo OBRIGATÓRIO (Matheus · 05/08: "em todos os formulários").
+        // Ontem o campo entrou na tela mas não travava nada — `required` no
+        // SelectField é decoração, quem bloqueia é esta função.
+        if (!['masculino', 'feminino'].includes(form.genero)) return false;
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) return false;
         if (fromDevocional) {
           if (form.email.trim().toLowerCase() !== form.confirmar_email.trim().toLowerCase()) return false;
@@ -577,6 +581,7 @@ export default function CadastroMembresia() {
     if (soDigitos(form.telefone).length < 10) return 'Informe um celular válido com DDD.';
     if (!cpfValido(form.cpf)) return 'CPF inválido.';
     if (!form.data_nascimento) return 'Informe sua data de nascimento.';
+    if (!['masculino', 'feminino'].includes(form.genero)) return 'Selecione o sexo.';
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) return 'Informe um e-mail válido.';
     if (fromDevocional) {
       if (form.email.trim().toLowerCase() !== form.confirmar_email.trim().toLowerCase()) {
