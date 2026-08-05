@@ -99,6 +99,9 @@ const CAMPOS_EVENTO = [
   // Teto de parcelas e quem paga os juros — por EVENTO, porque quem define é a
   // data em que a igreja paga o local (migration 20260729040000).
   'parcelas_max', 'juros_repassados',
+  // Aparece na lista do totem do lounge? Default false no banco: publicar um
+  // evento NÃO o expõe no hall (migration 20260805150000).
+  'no_totem',
 ];
 
 // ⚠️ INCIDENTE 2026-08-04 · colunas NOT NULL da whitelist acima.
@@ -118,6 +121,7 @@ const CAMPOS_EVENTO = [
 const CAMPOS_EVENTO_NAO_NULO = new Set([
   'tem_sorteio', 'premios', 'checkin_ativo',
   'pagamento_ativo', 'pagamento_expira_horas', 'juros_repassados',
+  'no_totem',
 ]);
 
 // Copia a whitelist pro patch, descartando null onde o banco não aceita.
@@ -752,7 +756,7 @@ router.patch('/qrs/:id/reativar', authorizeModule('inscricoes', 3), async (req, 
 router.get('/eventos', authorizeModule('inscricoes', 1), async (_req, res) => {
   try {
     const { data, error } = await supabase.from('insc_eventos')
-      .select('id, nome, slug, area, tipo, data, hora, local, capa_url, status, vagas, tem_sorteio, checkin_ativo, pagamento_ativo, valor_centavos, edicao_rotulo, serie_id, serie:insc_series(id, nome, periodicidade, recorre_ate, slug_base), inscritos:inscricoes(count)')
+      .select('id, nome, slug, area, tipo, data, hora, local, capa_url, status, vagas, tem_sorteio, checkin_ativo, no_totem, pagamento_ativo, valor_centavos, edicao_rotulo, serie_id, serie:insc_series(id, nome, periodicidade, recorre_ate, slug_base), inscritos:inscricoes(count)')
       .is('deleted_at', null)
       .order('data', { ascending: false, nullsFirst: false });
     if (error) throw error;
@@ -2278,6 +2282,90 @@ router.post('/email-templates/teste', authorizeModule('inscricoes', 5), async (r
 });
 
 // ============================================================================
+// TOTEM · inscrição em evento pelo quiosque (2026-08-05 · Fase 1)
+//
+// As inscrições de evento vivem DENTRO do Totem Membro (`/totem`), ao lado de
+// grupos/batismo/Next/apresentação — decisão do Matheus. O quiosque já está
+// autenticado por conta de quiosque, então:
+//
+//  · o guard é `inscricoes-totem` (routeKey que inclui `totem-membro`, senão a
+//    conta de quiosque — que só tem esse módulo — seria bloqueada);
+//  · a ESTAÇÃO sai da conta logada (`estacaoDaConta`), nunca do corpo do
+//    request. É isso que faz a cobrança saber qual totem cobrou.
+//
+// ⚠️ Inscrever roda a MESMA `inscreverEspinha` da porta pública e do app —
+// vaga sob advisory lock, dedup por CPF, benefício por CPF, cobrança
+// idempotente, consentimentos, e-mail e WhatsApp. Reimplementar aqui é como um
+// dos caminhos para de honrar `insc_beneficios` seis meses depois.
+// ============================================================================
+const { inscreverEspinha, eventoEspinhaPorId, ocupacaoEspinha } = require('./publicEventoExterno');
+const totemEstacao = require('../services/totemEstacao');
+
+// GET /inscricoes/totem/eventos — o que o totem pode oferecer AGORA.
+// `no_totem` é o filtro que impede a tela do hall de anunciar retiro de
+// liderança: publicar um evento NÃO o expõe no totem (default false).
+router.get('/totem/eventos', authorizeModule('inscricoes-totem', 1), async (req, res) => {
+  try {
+    const hoje = new Date().toISOString().slice(0, 10);
+    const { data, error } = await supabase.from('insc_eventos')
+      .select('id, nome, slug, area, data, hora, local, descricao, campos, capa_url, vagas, valor_centavos, pagamento_ativo, pagamento_metodos, parcelas_max, tem_sorteio, inscricoes_abrem_em, inscricoes_encerram_em')
+      .eq('status', 'publicado').eq('no_totem', true).is('deleted_at', null)
+      // Evento que já passou não fica no hall. `data` nula = sem data marcada
+      // (série em aberto), então entra — filtrar por `>= hoje` sumiria com ela.
+      .or(`data.is.null,data.gte.${hoje}`)
+      .order('data', { ascending: true, nullsFirst: false });
+    if (error) throw error;
+
+    const agora = Date.now();
+    const abertos = (data || []).filter((ev) => {
+      // Mesma régua de janela da porta pública (`espinhaEncerrada`): abrir a
+      // inscrição no totem antes/depois da janela seria oferecer o que a RPC
+      // vai recusar — a pessoa preencheria o formulário pra levar um 403.
+      if (ev.inscricoes_abrem_em && new Date(ev.inscricoes_abrem_em).getTime() > agora) return false;
+      if (ev.inscricoes_encerram_em && new Date(ev.inscricoes_encerram_em).getTime() < agora) return false;
+      return true;
+    });
+
+    // Vagas pela MESMA RPC da porta pública. Lista curta (só os do totem), e
+    // falha degrada pra "sem contagem" em vez de derrubar a tela.
+    const comVagas = await Promise.all(abertos.map(async (ev) => {
+      const ocup = ev.vagas ? await ocupacaoEspinha(ev.id) : null;
+      return { ...ev, vagas_restantes: ocup ? ocup.restantes : null };
+    }));
+
+    // Esgotado sai da lista: no hall, card que só serve pra dizer "acabou"
+    // ocupa o lugar do evento que ainda tem vaga.
+    res.json({ eventos: comVagas.filter((ev) => ev.vagas_restantes === null || ev.vagas_restantes > 0) });
+  } catch (e) {
+    console.error('[inscricoes] totem eventos:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar os eventos' });
+  }
+});
+
+// POST /inscricoes/totem/eventos/:id/inscrever
+router.post('/totem/eventos/:id/inscrever', authorizeModule('inscricoes-totem', 1), async (req, res) => {
+  try {
+    const ev = await eventoEspinhaPorId(req.params.id);
+    if (!ev) return res.status(404).json({ error: 'Evento não encontrado' });
+    // ⚠️ Só o que está liberado pro totem — senão bastaria alguém saber o id de
+    // um evento fechado pra inscrever por aqui.
+    if (!ev.no_totem) return res.status(403).json({ error: 'Este evento não está disponível no totem.' });
+
+    const estacao = await totemEstacao.estacaoDaConta(req.user?.id);
+    // Estação ausente NÃO bloqueia: a inscrição vale, só nasce sem origem — o
+    // mesmo estado de quem se inscreve pela web. Travar aqui faria um vínculo
+    // de cadastro esquecido virar totem que não inscreve ninguém no domingo.
+    return await inscreverEspinha(req, res, ev, {
+      origem: 'totem',
+      estacaoId: estacao?.id || null,
+    });
+  } catch (e) {
+    console.error('[inscricoes] totem inscrever:', e.message);
+    res.status(500).json({ error: 'Erro ao concluir a inscrição' });
+  }
+});
+
+// ============================================================================
 // TOTENS · estações de autoatendimento (2026-08-05 · Fase 0)
 //
 // Gestão fica AQUI e não num módulo novo: quem gerencia eventos é quem gerencia
@@ -2287,7 +2375,6 @@ router.post('/email-templates/teste', authorizeModule('inscricoes', 5), async (r
 // Ver = nível 1 · criar/parear/revogar = nível 4. Nível 4 e não 3 de propósito:
 // aqui se decide qual equipamento pode receber dinheiro em nome da igreja.
 // ============================================================================
-const totemEstacao = require('../services/totemEstacao');
 // Régua PURA do cerco de rede (mesma que o middleware usa pra decidir se o
 // token vale). Importada, nunca copiada — cópia divergente aqui faria a tela
 // salvar um cerco que o middleware não reconhece.

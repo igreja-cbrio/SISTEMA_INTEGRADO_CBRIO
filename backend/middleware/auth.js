@@ -53,6 +53,13 @@ const ROUTE_MODULE_MAP = {
   // endpoints do fluxo do totem (ex.: cpf-lookup).
   'membros-totem': ['membresia','grupos','cuidados','integracao','next','next-batismo','voluntariado','kids','ami','bridge','online','face','totem-membro'],
   'totem-membro': ['totem-membro'],
+  // Fluxo de inscrição em evento DENTRO do Totem Membro. A conta de quiosque só
+  // tem `totem-membro` (matriz zerada + override), então `authorizeModule
+  // ('inscricoes')` a bloquearia — e é o próprio totem que precisa inscrever.
+  // Mesmo padrão de `membros-totem`. ⚠️ Usar SÓ nos endpoints `/inscricoes/totem/*`:
+  // o que essas rotas fazem é o equivalente da porta pública (a pessoa se
+  // inscreve), não gestão do módulo.
+  'inscricoes-totem': ['inscricoes','totem-membro'],
   'face':         ['face'],
   'grupos':       ['grupos'],
   'kids':         ['kids'],

@@ -429,6 +429,15 @@ export const inscricoesApi = {
   // Envia o rascunho pro e-mail de quem está logado (destinatário é do servidor).
   testarEmailTemplate: (data) => post('/inscricoes/email-templates/teste', data),
 
+  // ── Fluxo do TOTEM (dentro do Totem Membro · conta de quiosque) ──
+  // Só eventos publicados E marcados como "aparece no totem". Inscrever roda a
+  // MESMA `inscreverEspinha` da porta pública e do app; a estação sai da conta
+  // logada, no servidor. O status do pagamento depois é lido pelos endpoints
+  // públicos (`eventoPublico.pagamento`/`pagamentoMetodo`), que já têm limiter
+  // generoso e não devolvem PII.
+  totemEventos: () => get('/inscricoes/totem/eventos'),
+  totemInscrever: (eventoId, data) => post(`/inscricoes/totem/eventos/${eventoId}/inscrever`, data),
+
   // ── Totens (estações de autoatendimento) ──
   // Ver = nível 1 · criar/parear/revogar = nível 4 (é quem decide qual
   // equipamento pode receber dinheiro em nome da igreja).
