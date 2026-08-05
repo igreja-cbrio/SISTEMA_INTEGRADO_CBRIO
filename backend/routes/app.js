@@ -3040,7 +3040,7 @@ router.get('/grupos/:grupoId/membros', authApp, limiterNormal, async (req, res) 
 
     const [rosterRes, pendRes] = await Promise.all([
       supabase.from('mem_grupo_membros')
-        .select('id, funcao, entrou_em, presencas, membro:mem_membros(id, nome, telefone)')
+        .select('id, membro_id, funcao, entrou_em, presencas, membro:mem_membros(id, nome, telefone)')
         .eq('grupo_id', gid).is('saiu_em', null).is('deleted_at', null)
         .order('created_at', { ascending: true }),
       supabase.from('mem_grupo_pedidos')
@@ -3052,6 +3052,10 @@ router.get('/grupos/:grupoId/membros', authApp, limiterNormal, async (req, res) 
       const m = Array.isArray(r.membro) ? r.membro[0] : r.membro;
       return {
         id: r.id, funcao: r.funcao, entrou_em: r.entrou_em, presencas: r.presencas,
+        // ⚠️ `membro_id` é necessário pra chamada de frequência (a RPC
+        // `registrar_encontro_grupo` recebe ids de MEMBRO, não da linha do
+        // roster). O líder já vê nome e telefone dessa pessoa.
+        membro_id: r.membro_id || m?.id || null,
         nome: m?.nome || '—', telefone: m?.telefone || null,
       };
     });
@@ -3063,6 +3067,306 @@ router.get('/grupos/:grupoId/membros', authApp, limiterNormal, async (req, res) 
   } catch (e) {
     console.error('[APP] grupos/membros:', e.message);
     res.status(500).json({ error: 'Erro ao carregar o grupo' });
+  }
+});
+
+// ── Grupos · GERENCIAR (tudo o que o líder faz, num lugar só) ───────────────
+// Pedido do Marcos (05/08/2026): "ao apertar gerenciar grupo, ali devem ter
+// TODAS as opções para se fazer em um grupo" — membros (com quem é líder ou em
+// treinamento), registro de frequência (com comentário do líder e pedido de
+// ajuda), aprovação de pedidos, saídas e transferências, estudos e editar.
+//
+// ⚠️ Todos gateados por `gruposPapelApp` (gere o grupo OU admin de grupos) — a
+// MESMA régua do GET /grupos/:grupoId/membros que já existia.
+// ⚠️ Reusa os escritores canônicos: `registrar_encontro_grupo` (RPC) pra
+// frequência e `aprovarPedidoCore` pra aprovação. Não existe segundo caminho.
+
+/** Gate comum: devolve `{ ok }` ou responde 403/404 e devolve `{ ok:false }`. */
+async function gateGrupoApp(req, res, gid) {
+  const { adminGrupos, gruposGeridos, membro } = await gruposPapelApp(req);
+  if (!adminGrupos && !gruposGeridos.some(g => g.id === gid)) {
+    res.status(403).json({ error: 'Você não gerencia este grupo' });
+    return { ok: false };
+  }
+  const { data: grupo } = await supabase.from('mem_grupos')
+    .select('id, nome, lider_id').eq('id', gid).is('deleted_at', null).maybeSingle();
+  if (!grupo) {
+    res.status(404).json({ error: 'Grupo não encontrado' });
+    return { ok: false };
+  }
+  return { ok: true, grupo, membro, adminGrupos };
+}
+
+// ⚠️⚠️ FUNÇÕES QUE O APP PODE DAR. `lider`, `supervisor` e `coordenador` estão
+// FORA de propósito: quem lidera o grupo é `mem_grupos.lider_id`, e esse campo
+// decide **quem recebe o WhatsApp do grupo** (a lei de 31/07 — o destinatário é
+// um só e tem que ser líder do roster). Trocar liderança é ato de gestão, na
+// coordenação; deixar isso no app abriria caminho pra um líder se remover e o
+// grupo ficar sem destinatário de aviso.
+const FUNCOES_APP = ['frequentador', 'lider_treinamento', 'co_lider'];
+
+// PUT /api/app/grupos/:grupoId/membros/:rowId/funcao — body { funcao }
+router.put('/grupos/:grupoId/membros/:rowId/funcao', authApp, limiterNormal, async (req, res) => {
+  try {
+    const gid = req.params.grupoId;
+    const g = await gateGrupoApp(req, res, gid);
+    if (!g.ok) return;
+    const funcao = String(req.body?.funcao || '').trim();
+    if (!FUNCOES_APP.includes(funcao)) {
+      return res.status(400).json({
+        error: 'Função inválida. Pelo app dá pra marcar frequentador, em treinamento ou co-líder — trocar o líder do grupo é com a coordenação.',
+      });
+    }
+    // A linha tem que ser DESTE grupo (id de outro grupo no corpo não faz nada).
+    const { data: linha } = await supabase.from('mem_grupo_membros')
+      .select('id, grupo_id, membro_id, funcao').eq('id', req.params.rowId)
+      .eq('grupo_id', gid).is('saiu_em', null).is('deleted_at', null).maybeSingle();
+    if (!linha) return res.status(404).json({ error: 'Participante não encontrado neste grupo' });
+    // ⚠️ Não deixa mexer em quem É o líder do grupo (lider_id) — ver FUNCOES_APP.
+    if (linha.membro_id && linha.membro_id === g.grupo.lider_id) {
+      return res.status(400).json({ error: 'Esta pessoa é a líder do grupo. Mudar isso é com a coordenação.' });
+    }
+    const { error } = await supabase.from('mem_grupo_membros')
+      .update({ funcao }).eq('id', linha.id);
+    if (error) throw error;
+    res.json({ ok: true, funcao });
+  } catch (e) {
+    console.error('[APP] grupos/funcao:', e.message);
+    res.status(500).json({ error: 'Erro ao mudar a função' });
+  }
+});
+
+// POST /api/app/grupos/:grupoId/membros/:rowId/sair — body { motivo }
+// Saída = soft (`saiu_em` + `motivo_saida`). A pessoa continua no sistema e pode
+// voltar — é a mesma semântica do "confira a lista" (lei de 31/07).
+router.post('/grupos/:grupoId/membros/:rowId/sair', authApp, limiterNormal, async (req, res) => {
+  try {
+    const gid = req.params.grupoId;
+    const g = await gateGrupoApp(req, res, gid);
+    if (!g.ok) return;
+    const { data: linha } = await supabase.from('mem_grupo_membros')
+      .select('id, membro_id').eq('id', req.params.rowId)
+      .eq('grupo_id', gid).is('saiu_em', null).is('deleted_at', null).maybeSingle();
+    if (!linha) return res.status(404).json({ error: 'Participante não encontrado neste grupo' });
+    if (linha.membro_id && linha.membro_id === g.grupo.lider_id) {
+      return res.status(400).json({ error: 'Não dá pra remover a pessoa que lidera o grupo. Fale com a coordenação.' });
+    }
+    const motivo = String(req.body?.motivo || '').trim().slice(0, 300) || 'Saída registrada pelo líder no app';
+    const { error } = await supabase.from('mem_grupo_membros')
+      .update({ saiu_em: new Date().toISOString().slice(0, 10), motivo_saida: motivo })
+      .eq('id', linha.id).is('saiu_em', null); // guarda de corrida
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[APP] grupos/sair:', e.message);
+    res.status(500).json({ error: 'Erro ao registrar a saída' });
+  }
+});
+
+// POST /api/app/grupos/:grupoId/membros/:rowId/transferir — body { destino_grupo_id }
+// ⚠️ Transferência NÃO empurra ninguém pra dentro de outro grupo: cria um PEDIDO
+// no grupo de destino, pra o líder de lá aprovar (é o mesmo fluxo de quem se
+// inscreve). Um líder colocando gente no grupo do outro sem aprovação é
+// exatamente o tipo de atalho que a Caixa de entrada existe pra evitar.
+// A SAÍDA do grupo atual é um passo separado (o líder decide).
+router.post('/grupos/:grupoId/membros/:rowId/transferir', authApp, limiterNormal, async (req, res) => {
+  try {
+    const gid = req.params.grupoId;
+    const g = await gateGrupoApp(req, res, gid);
+    if (!g.ok) return;
+    const destinoId = String(req.body?.destino_grupo_id || '').trim();
+    if (!destinoId || destinoId === gid) {
+      return res.status(400).json({ error: 'Escolha um grupo de destino diferente.' });
+    }
+    const { data: destino } = await supabase.from('mem_grupos')
+      .select('id, nome, ativo').eq('id', destinoId).is('deleted_at', null).maybeSingle();
+    if (!destino || destino.ativo === false) {
+      return res.status(404).json({ error: 'Grupo de destino não encontrado' });
+    }
+    const { data: linha } = await supabase.from('mem_grupo_membros')
+      .select('id, membro_id').eq('id', req.params.rowId)
+      .eq('grupo_id', gid).is('saiu_em', null).is('deleted_at', null).maybeSingle();
+    if (!linha?.membro_id) return res.status(404).json({ error: 'Participante não encontrado neste grupo' });
+
+    // Já está no destino? Então não há o que pedir.
+    const { data: jaLa } = await supabase.from('mem_grupo_membros')
+      .select('id').eq('grupo_id', destinoId).eq('membro_id', linha.membro_id)
+      .is('saiu_em', null).is('deleted_at', null).limit(1).maybeSingle();
+    if (jaLa) return res.json({ ok: true, ja_no_destino: true, destino: destino.nome });
+
+    const { data: jaPediu } = await supabase.from('mem_grupo_pedidos')
+      .select('id').eq('grupo_id', destinoId).eq('membro_id', linha.membro_id)
+      .eq('status', 'pendente').is('deleted_at', null).limit(1).maybeSingle();
+    if (jaPediu) return res.json({ ok: true, ja_pedido: true, destino: destino.nome });
+
+    const { data: pessoa } = await supabase.from('mem_membros')
+      .select('nome, telefone, email').eq('id', linha.membro_id).is('deleted_at', null).maybeSingle();
+    const { data: novo, error } = await supabase.from('mem_grupo_pedidos').insert({
+      grupo_id: destinoId,
+      membro_id: linha.membro_id,
+      nome: pessoa?.nome || 'Participante',
+      telefone: pessoa?.telefone || null,
+      email: pessoa?.email || null,
+      status: 'pendente',
+      origem: 'app',
+      // ⚠️ A coluna é `observacao` (SINGULAR) — conferido no banco em 05/08/2026.
+      // Pedir `observacoes` faria o PostgREST recusar o INSERT inteiro.
+      observacao: `Transferência pedida pelo líder de "${g.grupo.nome}" no app.`,
+    }).select('id').single();
+    if (error) throw error;
+
+    notificar({
+      modulo: 'grupos',
+      tipo: 'grupo_transferencia_pedida',
+      titulo: 'Transferência pedida entre grupos',
+      mensagem: `${pessoa?.nome || 'Alguém'} foi indicada de "${g.grupo.nome}" para "${destino.nome}" pelo app. O pedido está na fila do grupo de destino.`,
+      link: '/grupos?tab=entrada',
+      chaveDedup: `grupo_transf_${novo?.id}`,
+    }).catch(e => console.warn('[APP] transferir · notificar:', e.message));
+
+    res.status(201).json({ ok: true, destino: destino.nome, pedido_id: novo?.id || null });
+  } catch (e) {
+    console.error('[APP] grupos/transferir:', e.message);
+    res.status(500).json({ error: 'Erro ao pedir a transferência' });
+  }
+});
+
+// GET /api/app/grupos/:grupoId/encontros — histórico de frequência
+router.get('/grupos/:grupoId/encontros', authApp, limiterNormal, async (req, res) => {
+  try {
+    const gid = req.params.grupoId;
+    const g = await gateGrupoApp(req, res, gid);
+    if (!g.ok) return;
+    const { data: encontros, error } = await supabase.from('mem_grupo_encontros')
+      .select('id, data, tema, observacoes, registrado_por_nome, created_at')
+      .eq('grupo_id', gid).is('deleted_at', null)
+      .order('data', { ascending: false }).limit(24);
+    if (error) throw error;
+    const ids = (encontros || []).map(e => e.id);
+    const presentes = {};
+    if (ids.length) {
+      const { data: pres } = await supabase.from('mem_grupo_encontro_presencas')
+        .select('encontro_id, presente').in('encontro_id', ids);
+      (pres || []).forEach(p => { if (p.presente) presentes[p.encontro_id] = (presentes[p.encontro_id] || 0) + 1; });
+    }
+    res.json({
+      encontros: (encontros || []).map(e => ({ ...e, presentes: presentes[e.id] || 0 })),
+    });
+  } catch (e) {
+    console.error('[APP] grupos/encontros:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar os encontros' });
+  }
+});
+
+// POST /api/app/grupos/:grupoId/encontros — registra a frequência do encontro
+// body { data, tema?, observacoes?, presentes: [membro_id] }
+// ⚠️ Usa a RPC `registrar_encontro_grupo` — o MESMO escritor do web e do fluxo do
+// WhatsApp (ela cria o encontro, grava as presenças e incrementa o contador de
+// cada participante). Inserir na mão aqui criaria uma segunda régua de presença.
+router.post('/grupos/:grupoId/encontros', authApp, limiterNormal, async (req, res) => {
+  try {
+    const gid = req.params.grupoId;
+    const g = await gateGrupoApp(req, res, gid);
+    if (!g.ok) return;
+    const hoje = hojeBRT();
+    const data = /^\d{4}-\d{2}-\d{2}$/.test(String(req.body?.data || '')) ? req.body.data : hoje;
+    if (data > hoje) return res.status(400).json({ error: 'Não dá pra registrar encontro no futuro.' });
+
+    // Só quem está no roster ATIVO conta como presente (id vindo do app não
+    // pode inserir presença de gente de outro grupo).
+    const { data: roster } = await supabase.from('mem_grupo_membros')
+      .select('membro_id').eq('grupo_id', gid).is('saiu_em', null).is('deleted_at', null);
+    const validos = new Set((roster || []).map(r => r.membro_id).filter(Boolean));
+    const presentes = (Array.isArray(req.body?.presentes) ? req.body.presentes : [])
+      .filter(id => validos.has(id));
+
+    const { data: encontroId, error } = await supabase.rpc('registrar_encontro_grupo', {
+      p_grupo_id: gid,
+      p_data: data,
+      p_tema: req.body?.tema ? String(req.body.tema).trim().slice(0, 200) : null,
+      p_observacoes: req.body?.observacoes ? String(req.body.observacoes).trim().slice(0, 2000) : null,
+      p_registrado_por: req.user?.id || null,
+      p_registrado_por_nome: g.membro?.nome || req.user?.email || 'Líder (app)',
+      p_membros_presentes: presentes,
+    });
+    if (error) throw error;
+
+    notificar({
+      modulo: 'grupos',
+      tipo: 'grupo_encontro_registrado',
+      titulo: 'Encontro registrado pelo app',
+      mensagem: `${g.grupo.nome}: ${presentes.length} presente(s) em ${data.split('-').reverse().join('/')}${req.body?.observacoes ? ' · com comentário do líder' : ''}.`,
+      link: '/grupos',
+      chaveDedup: `grupo_enc_${encontroId}`,
+    }).catch(e => console.warn('[APP] encontro · notificar:', e.message));
+
+    res.status(201).json({ ok: true, encontro_id: encontroId, presentes: presentes.length });
+  } catch (e) {
+    console.error('[APP] grupos/encontros POST:', e.message);
+    res.status(500).json({ error: 'Erro ao registrar a frequência' });
+  }
+});
+
+// POST /api/app/grupos/:grupoId/ajuda — o líder pede ajuda à coordenação
+// ⚠️ Hoje o pedido chega como NOTIFICAÇÃO (persistida em `app_notificacoes` pros
+// destinatários do módulo grupos) + push. NÃO existe fila com "resolvido" — isso
+// pediria tabela nova, e a decisão de criar fila é da coordenação. Está dito na
+// tela: "a coordenação recebe seu pedido", não "abrimos um ticket".
+router.post('/grupos/:grupoId/ajuda', authApp, limiterStrict, async (req, res) => {
+  try {
+    const gid = req.params.grupoId;
+    const g = await gateGrupoApp(req, res, gid);
+    if (!g.ok) return;
+    const msg = String(req.body?.mensagem || '').trim();
+    if (msg.length < 5) return res.status(400).json({ error: 'Escreva o que você precisa (pelo menos uma frase).' });
+    const quem = g.membro?.nome || req.user?.email || 'Líder';
+    await notificar({
+      modulo: 'grupos',
+      tipo: 'grupo_pedido_ajuda',
+      titulo: `Pedido de ajuda · ${g.grupo.nome}`,
+      mensagem: `${quem} (líder de "${g.grupo.nome}") pediu ajuda pelo app: "${msg.slice(0, 400)}"`,
+      link: '/grupos?tab=entrada',
+      severidade: 'aviso',
+      // Sem dedup por dia: se o líder pedir 2× é porque precisa 2×.
+      chaveDedup: `grupo_ajuda_${gid}_${Date.now()}`,
+    });
+    res.status(201).json({ ok: true });
+  } catch (e) {
+    console.error('[APP] grupos/ajuda:', e.message);
+    res.status(500).json({ error: 'Erro ao enviar seu pedido' });
+  }
+});
+
+// GET /api/app/grupos/:grupoId/materiais — estudos do grupo (e os de "Todos")
+router.get('/grupos/:grupoId/materiais', authApp, limiterNormal, async (req, res) => {
+  try {
+    const gid = req.params.grupoId;
+    const g = await gateGrupoApp(req, res, gid);
+    if (!g.ok) return;
+    const { data, error } = await supabase.from('mem_grupo_documentos')
+      // ⚠️ NÃO existe coluna `url` — os campos reais são `sharepoint_url` e
+      // `storage_path` (conferido no banco). Pedir coluna inexistente faz o
+      // PostgREST recusar a query INTEIRA e a aba de estudos apareceria vazia.
+      .select('id, nome, tipo, sharepoint_url, storage_path, etiquetas, grupo_ids, estudo_semana, created_at')
+      .order('created_at', { ascending: false }).limit(200);
+    if (error) throw error;
+    // Material é do grupo quando cita o id, ou quando é geral (sem grupo_ids).
+    const BUCKET = `${process.env.SUPABASE_URL || ''}/storage/v1/object/public/eventos-anexos/`;
+    const materiais = (data || [])
+      .filter(d => !Array.isArray(d.grupo_ids) || d.grupo_ids.length === 0 || d.grupo_ids.includes(gid))
+      .slice(0, 60)
+      .map(d => ({
+        id: d.id, nome: d.nome, tipo: d.tipo,
+        estudo_semana: !!d.estudo_semana, etiquetas: d.etiquetas || [],
+        created_at: d.created_at,
+        // Link pra abrir: SharePoint quando houver, senão o arquivo do bucket
+        // público (é onde o fluxo de fotos/materiais de grupos guarda).
+        url: d.sharepoint_url || (d.storage_path ? BUCKET + d.storage_path : null),
+      }));
+    res.json({ materiais });
+  } catch (e) {
+    console.error('[APP] grupos/materiais:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar os estudos' });
   }
 });
 
