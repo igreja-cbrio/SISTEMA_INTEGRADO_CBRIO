@@ -353,35 +353,55 @@ manda o nome na **primeira** autorização. Resultado: pessoa cadastrada como
    a causa** — existe pra o problema parar de crescer em silêncio enquanto o
    gatilho não é corrigido. A mensagem diz explicitamente **não apagar**.
 
-### ⚠️ PENDENTE — precisa da definição viva do gatilho
+### ✅ O gatilho ENTROU NO CONTRATO (migration `20260804140000`)
 
-Não substituí o gatilho porque **não consigo ler o que ele faz hoje**: o
-`DATABASE_URL` do `backend/.env` está com senha recusada (`password
-authentication failed for user "postgres"`, testado também no formato de pooler
-`postgres.<ref>` e na porta 6543) e **nenhum dos 182 RPCs expostos lê o catálogo**.
-Substituir às cegas quebraria o devocional (o `resolveMembro` exige
-`profile.membro_id` ou match por e-mail, senão diz "você não é membro" — foi
-por isso que o gatilho ganhou essa responsabilidade) e perderia a validação de
-`frequenta_area` que só existe lá.
+Marcos rodou o `pg_get_functiondef` em 04/08 e a definição viva foi commitada —
+**este é o primeiro registro dele em git**. A migration substitui o corpo e:
 
-Pra destravar, rodar no SQL Editor e colar a saída:
+- **normaliza** cpf/telefone (digits) e **valida o DV do CPF**: CPF inválido é
+  DESCARTADO em vez de virar identidade errada. ⚠️ Antes entrava CRU do metadata,
+  e CPF mascarado não casa com `uniq_mem_membros_cpf_ativo` (digits-only) nem com
+  o lookup de dedup — fábrica silenciosa de duplicata.
+- **delega o match a `fn_link_or_create_membro`** (canônico · CPF → telefone+NOME
+  → e-mail+NOME): fecha o buraco do `email = new.email` sozinho (família
+  compartilha endereço) e passa a **acumular contato divergente em
+  `mem_contatos`**, que antes era descartado no ramo "membro já existe".
+- ⚠️ Passa **`v_nome_meta` (o nome REAL, que pode ser NULL)** ao matcher, não o
+  efetivo. Sem nome real ele cai no ramo legado de e-mail sozinho — seguro aqui,
+  porque o e-mail É o da conta que autenticou — e então RECUSA criar, e o gatilho
+  cria o stub. Passar o prefixo do e-mail como se fosse nome faria o ramo
+  "e-mail + nome compatível" falhar contra o nome real já cadastrado e criar
+  DUPLICATA: seria pior que o comportamento antigo.
+- **completa só campo VAZIO** (nascimento, `frequenta_area`, `origem_cadastro`) —
+  mesma política do censo e do CPF tardio. Sobrescrever é decisão humana.
+- **liga cadastro pendente órfão**: CPF liga sozinho; por e-mail exige NOME
+  compatível e respeita `nao_vincular_fraco`. É o conserto do caso da Maria
+  Victória — a fila passa a mostrar "atualização cadastral" em vez de criar uma
+  segunda pessoa.
+- **melhora o nome** (no profile E no membro) quando o guardado é o prefixo do
+  e-mail e chegou um real — era isso que deixava `andre.texeira`/`kevyn.ricardo`
+  com profile certo e membro errado.
 
-```sql
-SELECT p.proname, pg_get_functiondef(p.oid)
-  FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
- WHERE p.proname LIKE 'handle_new_user%';
+⚠️⚠️ **E desarma um risco que JÁ EXISTIA: o corpo antigo não tinha tratamento de
+exceção.** Como o gatilho é AFTER INSERT em `auth.users`, qualquer erro ao gravar
+`mem_membros`/`profiles` aborta o INSERT do usuário — **a pessoa não consegue
+criar conta**. Duas pessoas com o mesmo CPF já bastavam (23505). Agora a
+escrituração roda em bloco protegido: falha vira WARNING e o profile mínimo é
+garantido. **Signup nunca deve falhar por causa da nossa escrituração.**
 
-SELECT tgname, pg_get_triggerdef(oid) FROM pg_trigger
- WHERE NOT tgisinternal AND tgrelid = 'auth.users'::regclass;
-```
+⚠️ **O que NÃO foi resolvido, e não é resolvível no banco:** sem nome do provedor,
+o nome continua sendo o prefixo do e-mail — o banco não inventa nome de pessoa. O
+conserto real é **o app pedir o nome na primeira tela** (repo do app, fora deste).
+Até lá quem cobre é o aviso diário `cadastro_sem_nome_real`.
 
-Com isso: (a) commitar o gatilho — **entrada de PII fora do git é a causa-raiz**,
-o contrato foi desenhado sobre o que estava visível; (b) trocar o INSERT cru por
-`fn_link_or_create_membro` (o matcher SQL canônico da `20260716160000`), que
-resolve a duplicata da Victória; (c) parar de gravar o prefixo do e-mail — o app
-pede o nome na primeira tela. ⚠️ A ordem importa: o app pedir o nome vem ANTES de
-apertar o gatilho, senão o devocional quebra pra quem entra pela primeira vez.
-⚠️ O gatilho é do módulo do Matheus (app/devocional) — alinhar com ele.
+⚠️ Dependências conferidas AO VIVO antes de escrever (`fn_cpf_dv_valido`,
+`fn_identidade_nomes_compativeis` chamadas por RPC; `fn_link_or_create_membro` e
+`fn_registrar_contato` conferidos no catálogo do PostgREST — o matcher **não** foi
+chamado em teste porque ele ESCREVE).
+
+⚠️ **Teste funcional obrigatório após aplicar**: criar UMA conta nova e conferir
+que (a) a conta é criada, (b) nasce 1 membro só, (c) o profile tem `membro_id`.
+Rollback = colar a definição antiga (está no corpo do PR).
 
 ### Alarmes meus que NÃO se sustentaram (registrados de propósito)
 
