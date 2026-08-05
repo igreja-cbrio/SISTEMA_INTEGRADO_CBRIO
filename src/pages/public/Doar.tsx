@@ -415,6 +415,22 @@ export default function DoarPage() {
             O pagamento é processado por um provedor certificado — dados do seu cartão não passam
             pelos nossos servidores.
           </p>
+
+          {/* Direito de arrependimento de 7 dias (CDC art. 49) vale pra doação feita
+              pela internet — o link tem que estar visível ANTES de pagar, não só
+              depois. O item 10 da política é o que trata de doação. */}
+          <p style={{ fontSize: 11.5, color: C.textDim, marginTop: 8, lineHeight: 1.5 }}>
+            Mudou de ideia? Você tem 7 dias para pedir a devolução —{' '}
+            <a
+              href="/politica-reembolso"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: '#00B39D', textDecoration: 'underline' }}
+            >
+              política de reembolso
+            </a>
+            .
+          </p>
         </form>
       )}
     </Shell>
