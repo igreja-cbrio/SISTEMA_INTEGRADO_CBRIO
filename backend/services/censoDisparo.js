@@ -190,8 +190,20 @@ async function previewCenso({ status, canais = ['whatsapp', 'email'], reenviar =
     const novoEmail = reenviar || (!convites.jaConvidado.has(`${p.id}:email`) && !cruzado);
     if (c.whatsapp && novoWhats) alvoWhats.push(p);
     if (c.email && novoEmail) alvoEmail.push(p);
-    if ((c.whatsapp && !novoWhats) || (c.email && !novoEmail)) jaConvidadas += 1;
-    if (cruzado && (c.whatsapp || c.email)) jaConvidadasOutroCanal += 1;
+
+    // ⚠️ Os dois contadores são MUTUAMENTE EXCLUSIVOS. Antes, quem já tinha
+    // recebido e-mail entrava nos DOIS e a tela mostrava o MESMO número duas
+    // vezes ("570 já convidadas em rodada anterior" + "570 já convidadas por
+    // outro canal") — parecia 1.140 pessoas excluídas, e a segunda linha dizia
+    // "outro canal" pra quem foi convidado pelo MESMO canal. O Matheus leu a
+    // tela e perguntou se ia repetir; ambiguidade em número de disparo é o
+    // tipo de coisa que faz alguém mandar mensagem repetida por engano.
+    // `canaisDaPessoa` já responde "é alcançável por um canal selecionado?" —
+    // ela olha contato e opt-in, e não sabe nada de convite anterior.
+    const jaNesteCanal = canais.some(k => convites.jaConvidado.has(`${p.id}:${k}`));
+    const alcancavel = c.whatsapp || c.email || jaNesteCanal || cruzado;
+    if (alcancavel && jaNesteCanal) jaConvidadas += 1;
+    else if (alcancavel && cruzado) jaConvidadasOutroCanal += 1;
   }
 
   const whats = limitarPorTeto(alvoWhats, TETO_RODADA_WHATSAPP);
