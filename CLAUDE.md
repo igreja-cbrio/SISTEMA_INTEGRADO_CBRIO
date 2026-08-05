@@ -3910,6 +3910,81 @@ as contas de revisão da Apple na tela de cadastro (o revisor não tem CPF
 brasileiro), que é a rejeição clássica de "não passamos do registro". Ligar junto,
 depois da aprovação do build iOS.
 
+## ⚠️ EVENTOS no app · a inscrição roda a MESMA função do site (2026-08-05)
+
+Pedido do Marcos: *"ao clicar em inscrições, aparecem todos os eventos da igreja,
+com um seletor de todos os eventos e eventos inscritos; nessa aba, ao clicar deve
+aparecer minha inscrição naquele evento — e eu quero que os outros eventos tenham
+inscrições PELO APP também, sem link externo como é o caso do celebra."*
+
+**O que existia:** o app abria `cbrio.org/evento/<slug>` no navegador (WebBrowser)
+e **não lia a tabela `inscricoes`** — então confirmar, cancelar, dar bolsa ou
+marcar pago no web **não tinha onde aparecer**. Medido em 05/08: `GET /app/eventos`
+devolvia só o CATÁLOGO.
+
+**⚠️⚠️ LEI DESTE FLUXO: o app é um CLIENTE novo da porta, não uma porta nova.**
+`POST /api/app/eventos/:id/inscrever` importa e executa **`inscreverEspinha`** de
+`publicEventoExterno.js` — a mesma função do formulário público. Contrato de
+campos (`validarCamposPadrao`), benefício pré-autorizado por CPF, **RPC atômica de
+vaga** (`fn_insc_inscrever`, com o advisory lock), consentimentos
+(`inscricao_consentimentos`), cobrança e WhatsApp rodam **idênticos**.
+Reimplementar no app seria o "segundo caminho de escrita de pessoa" que o Contrato
+de porta existe pra impedir. A única diferença é `p_origem`, que virou parâmetro:
+`'app'` em vez de `'formulario_publico'` (a coluna é TEXT **sem CHECK**, conferido
+no banco).
+
+- **`GET /app/eventos`** ganhou `campos` (form-builder), `inscrito` (por pessoa) e
+  os `textos` canônicos do consentimento — o app **exibe** o texto que o servidor
+  manda; o snapshot gravado continua sendo o do servidor.
+- **`GET /app/eventos/minhas`** = o que faltava: status, número da sorte, bolsa,
+  respostas, **comprovante** (`/i/c/<token>` HMAC — o MESMO QR que a portaria lê)
+  e o estado do pagamento pela `vw_insc_pagamento_estado`.
+- **PAGAMENTO fica na página hospedada** (`/pagamento/<public_token>` da COBRANÇA,
+  nunca o uuid): é lá que vivem Pix/boleto/cartão e o escopo PCI (lei nº 5 do
+  núcleo de pagamentos). O app só abre o link que a resposta devolve.
+- **Evento com campo `imagem` cai no form público** — o app não sobe arquivo pro
+  pipeline daquele formulário, e é melhor mandar pro caminho que funciona do que
+  mostrar um campo que não envia. Caso real: "Patrocinadores - Celebra 2026" (7
+  campos, 1 deles `imagem`).
+
+**⚠️ Dois erros meus que o probe pegou antes de subir** (e é por isso que a régua
+é rodar a query contra produção, não ler o arquivo):
+1. `vw_insc_pagamento_estado.status` **não existe** — a coluna é
+   **`status_pagamento`** (a view também já entrega `checkout_url`, `pix_payload`
+   e `boleto_linha_digitavel`). Pedir coluna inexistente faz o PostgREST recusar a
+   query INTEIRA: o pagamento sairia **vazio em silêncio**.
+2. `insc_pagamentos` **não tem `deleted_at`** (é razão financeira — "financeiro não
+   se apaga", decisão da espinha) e eu havia filtrado por ele.
+3. A resposta de `inscreverEspinha` tem **`pagamento` BOOLEAN**, não objeto: o link
+   se monta do `public_token`. Eu havia tipado como objeto no app — a tela nunca
+   acharia o link de pagamento.
+
+**Conferido em produção antes do merge:** 3 eventos publicados (Celebra 2026 ·
+Patrocinadores · RETIRO pago), `GET /eventos/minhas` devolvendo
+`confirmada · Celebra 2026 · nº da sorte 1817 · comprovante` para um membro real.
+As 2 inscrições pagas de "Retiro AMI 2027" **não** aparecem na view porque estão
+soft-deletadas (teste de 30/07) — e o endpoint filtra `deleted_at` igual, então
+os dois lados concordam. ⚠️ **Não há hoje nenhuma inscrição paga VIVA em
+produção**, então o caminho "Pagar agora" não pôde ser exercitado com dado real —
+ele usa a mesma view e o mesmo `public_token` do site, mas isso é construção, não
+teste.
+
+### Régua web × app · onde tinha que bater e não batia
+
+- **`useAdminGrupo` do app decidia por `profiles.role`** (esquema APOSENTADO) +
+  comparação com `lider_id` no cliente. Quem tem grupos ≥ 3 **pela matriz** (a
+  coordenação de Grupos, por boost de área, tem role `assistente`) editava no web
+  e **não** no app. Agora o app pergunta ao servidor: `GET /app/grupos/papel`, que
+  já calcula `admin_grupos` pela matriz + `grupos_liderados`. Uma régua, no
+  servidor — e mudança de cargo/área no web passa a valer na próxima abertura.
+- **`resolveMembroApp`**: ver a rodada 2 acima (cadastro apagado servia o app).
+- **6 telas do app passaram a recarregar ao FOCAR** (batismo, grupo-detalhe,
+  buscador de grupos, devocional, culto-detalhe, escala do supervisor): o web e o
+  app leem o MESMO banco, mas o que o web muda só aparecia se a tela fosse
+  remontada. ⚠️ Formulário NÃO recarrega ao focar (perfil, grupo-editar,
+  completar-cadastro) — refetch em cima do que a pessoa está digitando é pior que
+  dado velho.
+
 ## Grupos · contagens (vínculo × pessoa) + nova régua visitante/frequentador (2026-07-23)
 
 Auditoria (4 agentes) das divergências que o Marcos pegou entre as abas. **Régua de

@@ -16,6 +16,11 @@ const { baseUrl } = require('../services/gruposWhatsapp');
 // Espelho da matrícula do Next (o app inscreve por ENCONTRO; a gestão vive em
 // TURMA/MATRÍCULA desde o cutover de 17/06) — ver services/nextMatricula.js.
 const { chaveMesMembro } = require('../services/nextMatricula');
+// ⚠️ Reuso da porta pública de eventos (espinha): a inscrição pelo app roda a
+// MESMA função do site. Ver o cabeçalho do bloco de eventos mais abaixo.
+const { inscreverEspinha, eventoEspinhaPorId } = require('./publicEventoExterno');
+const { TEXTOS: TEXTOS_INSCRICAO } = require('../services/inscricaoContrato');
+const { gerarTokenComprovante } = require('../services/inscricaoComprovante');
 // Reuso: núcleo de aprovação de pedidos de grupo (claim atômico + vínculo +
 // notificação) já validado no módulo web de grupos.
 const { aprovarPedidoCore } = require('./grupos');
@@ -3350,37 +3355,175 @@ router.delete('/familia/vinculo/:outroId', authApp, limiterNormal, async (req, r
   }
 });
 
-// ── Inscrições · eventos publicados abertos (espinha /inscricoes) ────────────
-// Lista os eventos que a equipe publicou no módulo /inscricoes pra aparecer na
-// aba Inscrições do app. O membro toca → abre o formulário público
-// /evento/<slug> (mesmo fluxo do site · trata gratuito e pago→checkout Asaas).
+// ── Inscrições · EVENTOS no app (espinha /inscricoes) ────────────────────────
+// Pedido do Marcos (05/08/2026): "ao clicar em inscrições, aparecem todos os
+// eventos da igreja, com um seletor de todos os eventos e eventos inscritos... e
+// eu quero que os outros eventos tenham inscrições PELO APP também, sem link
+// externo como é o caso do celebra."
+//
+// ⚠️⚠️ A INSCRIÇÃO PELO APP REUSA A FUNÇÃO DA PORTA PÚBLICA
+// (`inscreverEspinha` de publicEventoExterno.js). O app é um CLIENTE novo da
+// mesma régua — validação do Contrato de Inscrição, benefício por CPF, RPC
+// atômica de vaga (`fn_insc_inscrever`), consentimentos, cobrança e WhatsApp
+// rodam idênticos. Reimplementar no app seria o "segundo caminho de escrita de
+// pessoa" que o Contrato de porta existe pra impedir.
+// ⚠️ O PAGAMENTO continua na página hospedada (`/pagamento/<token>`): é lá que
+// vivem Pix/boleto/cartão e o escopo PCI (lei nº 5 do núcleo de pagamentos —
+// dado de cartão não entra no nosso Express, muito menos no app). O app manda a
+// pessoa pra lá com o link que a própria resposta da inscrição devolve.
 router.get('/eventos', authApp, limiterNormal, async (req, res) => {
   try {
     const nowIso = new Date().toISOString();
     const { data, error } = await supabase.from('insc_eventos')
-      .select('id, nome, slug, descricao, area, tipo, data, hora, local, capa_url, vagas, valor_centavos, pagamento_ativo, inscricoes_abrem_em, inscricoes_encerram_em, tem_sorteio, created_at')
+      .select('id, nome, slug, descricao, area, tipo, data, hora, local, capa_url, vagas, valor_centavos, pagamento_ativo, inscricoes_abrem_em, inscricoes_encerram_em, tem_sorteio, campos, msg_sucesso_titulo, msg_sucesso_texto, created_at')
       .eq('status', 'publicado').is('deleted_at', null)
       .order('data', { ascending: true, nullsFirst: false })
       .limit(100);
     if (error) throw error;
-    const eventos = (data || [])
-      .filter((e) => {
-        if (e.inscricoes_abrem_em && e.inscricoes_abrem_em > nowIso) return false;
-        if (e.inscricoes_encerram_em && e.inscricoes_encerram_em < nowIso) return false;
-        return true;
-      })
-      .map((e) => ({
-        id: e.id, nome: e.nome, slug: e.slug, descricao: e.descricao,
-        area: e.area, tipo: e.tipo, data: e.data, hora: e.hora, local: e.local,
-        capa_url: e.capa_url, vagas: e.vagas, tem_sorteio: e.tem_sorteio,
-        pago: !!e.pagamento_ativo,
-        valor_centavos: e.pagamento_ativo ? (e.valor_centavos || null) : null,
-        url: `https://www.cbrio.org/evento/${e.slug}`,
-      }));
-    res.json({ eventos });
+    const abertos = (data || []).filter((e) => {
+      if (e.inscricoes_abrem_em && e.inscricoes_abrem_em > nowIso) return false;
+      if (e.inscricoes_encerram_em && e.inscricoes_encerram_em < nowIso) return false;
+      return true;
+    });
+
+    // Quais desses a pessoa já tem inscrição viva? É o que o seletor
+    // "Todos | Meus eventos" usa, e o que decide form × minha inscrição.
+    const membro = await resolveMembroApp(req).catch(() => null);
+    const inscritos = new Set();
+    if (membro && abertos.length) {
+      const { data: minhas } = await supabase.from('inscricoes')
+        .select('evento_id, status')
+        .eq('membro_id', membro.id)
+        .in('evento_id', abertos.map((e) => e.id))
+        .neq('status', 'cancelada')
+        .is('deleted_at', null);
+      (minhas || []).forEach((i) => inscritos.add(i.evento_id));
+    }
+
+    const eventos = abertos.map((e) => ({
+      id: e.id, nome: e.nome, slug: e.slug, descricao: e.descricao,
+      area: e.area, tipo: e.tipo, data: e.data, hora: e.hora, local: e.local,
+      capa_url: e.capa_url, vagas: e.vagas, tem_sorteio: e.tem_sorteio,
+      pago: !!e.pagamento_ativo,
+      valor_centavos: e.pagamento_ativo ? (e.valor_centavos || null) : null,
+      // Campos EXTRA do form-builder (os padrão o app já tem do cadastro).
+      campos: Array.isArray(e.campos) ? e.campos : [],
+      msg_sucesso_titulo: e.msg_sucesso_titulo || null,
+      msg_sucesso_texto: e.msg_sucesso_texto || null,
+      inscrito: inscritos.has(e.id),
+      // Link do form público — fallback (build antigo do app) e compartilhamento.
+      url: `https://www.cbrio.org/evento/${e.slug}`,
+    }));
+    res.json({
+      eventos,
+      // Textos canônicos do consentimento: o snapshot gravado é sempre o do
+      // servidor (services/inscricaoContrato), o app só EXIBE o que vem daqui.
+      textos: { termos_lgpd: TEXTOS_INSCRICAO.termos_lgpd, aviso_optin: TEXTOS_INSCRICAO.aviso_optin },
+    });
   } catch (e) {
     console.error('[APP] eventos abertos:', e.message);
     res.status(500).json({ error: 'Erro ao carregar eventos' });
+  }
+});
+
+// GET /api/app/eventos/minhas — as inscrições da pessoa (aba "Meus eventos")
+// ⚠️ Declarada ANTES de qualquer `/eventos/:id` (o Express casa na ordem).
+router.get('/eventos/minhas', authApp, limiterNormal, async (req, res) => {
+  try {
+    const membro = await resolveMembroApp(req).catch(() => null);
+    if (!membro) return res.json({ inscricoes: [] });
+
+    const { data, error } = await supabase.from('inscricoes')
+      .select('id, evento_id, status, created_at, numero_sorte, valor_cobrado_centavos, bolsa_tipo, dados, insc_eventos(id, nome, slug, data, hora, local, capa_url, tem_sorteio, pagamento_ativo, valor_centavos, checkin_ativo)')
+      .eq('membro_id', membro.id).is('deleted_at', null)
+      .order('created_at', { ascending: false }).limit(50);
+    if (error) throw error;
+
+    const ids = (data || []).map((i) => i.id);
+    // Estado do pagamento pela view canônica (o motor manda; o espelho só cobre
+    // pagamento manual) — best-effort: a lista não cai se a view faltar.
+    const pagos = {};
+    if (ids.length) {
+      const { data: pg, error: ePg } = await supabase
+        .from('vw_insc_pagamento_estado')
+        // ⚠️ A coluna é `status_pagamento` (conferido no banco em 05/08/2026);
+        // `status` não existe nesta view e pedir uma coluna inexistente faz o
+        // PostgREST recusar a query INTEIRA — o pagamento sairia vazio em
+        // silêncio, que é exatamente a armadilha que a gente já pagou antes.
+        .select('inscricao_id, status_pagamento, metodo, valor_centavos, pago_em, expira_em, checkout_url')
+        .in('inscricao_id', ids);
+      if (ePg) console.warn('[APP] eventos/minhas pagamento:', ePg.message);
+      (pg || []).forEach((pp) => { pagos[pp.inscricao_id] = pp; });
+    }
+    // Link de pagamento: é a MESMA página hospedada do site, pelo public_token
+    // da COBRANÇA (nunca pelo uuid — uuid vaza em log/print).
+    const cobrancas = {};
+    if (ids.length) {
+      const { data: cb } = await supabase.from('insc_pagamentos')
+        // ⚠️ `insc_pagamentos` NÃO tem `deleted_at` — é razão financeira, e
+        // financeiro não se apaga (decisão da espinha, 20260729000100).
+        .select('inscricao_id, pag_cobrancas(public_token)')
+        .in('inscricao_id', ids);
+      (cb || []).forEach((c) => {
+        const tk = c.pag_cobrancas && c.pag_cobrancas.public_token;
+        if (tk) cobrancas[c.inscricao_id] = tk;
+      });
+    }
+
+    const inscricoes = (data || []).map((i) => {
+      const ev = i.insc_eventos || {};
+      const pg = pagos[i.id] || null;
+      const tk = cobrancas[i.id] || null;
+      return {
+        id: i.id,
+        status: i.status,
+        criado_em: i.created_at,
+        numero_sorte: ev.tem_sorteio ? i.numero_sorte : null,
+        bolsa_tipo: i.bolsa_tipo || null,
+        valor_cobrado_centavos: i.valor_cobrado_centavos,
+        respostas: i.dados && typeof i.dados === 'object' ? i.dados : {},
+        // Comprovante (QR da portaria) — token HMAC derivado do id, vale
+        // retroativo pra inscrição migrada, sem coluna nova.
+        comprovante_url: `${baseUrl()}/i/c/${gerarTokenComprovante(i.id)}`,
+        pagamento: pg ? {
+          status: pg.status_pagamento, metodo: pg.metodo,
+          valor_centavos: pg.valor_centavos, pago_em: pg.pago_em, expira_em: pg.expira_em,
+          // Página HOSPEDADA (escolhe Pix/boleto/cartão) pelo public_token da
+          // cobrança. `checkout_url` do provider é só último recurso.
+          url: tk ? `${baseUrl()}/pagamento/${tk}` : (pg.checkout_url || null),
+        } : null,
+        evento: {
+          id: ev.id, nome: ev.nome, slug: ev.slug, data: ev.data, hora: ev.hora,
+          local: ev.local, capa_url: ev.capa_url, tem_sorteio: ev.tem_sorteio,
+          pago: !!ev.pagamento_ativo, checkin_ativo: !!ev.checkin_ativo,
+        },
+      };
+    });
+    res.json({ inscricoes });
+  } catch (e) {
+    console.error('[APP] eventos/minhas:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar suas inscrições' });
+  }
+});
+
+// POST /api/app/eventos/:id/inscrever — inscrição DENTRO do app
+// Body = o MESMO do form público (nome_completo, telefone, cpf, email,
+// data_nascimento, sexo, endereco?, dados{campos extra}, aceita_termos,
+// whatsapp_optin). O app pré-preenche do cadastro; a régua é do servidor.
+router.post('/eventos/:id/inscrever', authApp, limiterStrict, async (req, res) => {
+  try {
+    const ev = await eventoEspinhaPorId(req.params.id);
+    if (!ev) return res.status(404).json({ error: 'Evento não encontrado' });
+    if (ev.status !== 'publicado') {
+      return res.status(403).json({ error: 'As inscrições deste evento não estão abertas.' });
+    }
+    // Vincula ao cadastro do app quando o matcher não achar por CPF/telefone.
+    const membro = await resolveMembroApp(req).catch(() => null);
+    if (membro && !req.body?.membro_id) req.body = { ...(req.body || {}), membro_id: membro.id };
+    return await inscreverEspinha(req, res, ev, { origem: 'app' });
+  } catch (e) {
+    console.error('[APP] eventos/inscrever:', e.message);
+    res.status(500).json({ error: 'Erro ao inscrever no evento' });
   }
 });
 
