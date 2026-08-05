@@ -708,13 +708,60 @@ do dia), reenvio é **rodada nova**, e o que ficou de fora é **declarado**
   falar com 200 pessoas no número institucional é outra.
 - **Relay do "Entrar com Apple" (`@privaterelay.appleid.com`) NÃO recebe e-mail**:
   é caixa técnica que a pessoa não lê, e mandar ali a marcaria como convidada.
-- **PENDENTE (é ação do Matheus, bloqueia o WhatsApp):** criar o template
-  **`atualizacao_cadastro`** na Meta (**UTILITY · pt_BR · 2 variáveis**: {{1}}
-  primeiro nome, {{2}} o link **como variável de body**, não botão — é a técnica
-  do `grupos_renovacao_temporada` que mantém a categoria) e setar a env
-  **`WHATSAPP_TEMPLATE_CENSO_ATUALIZACAO`**. Até lá o card avisa na tela e **o
-  e-mail funciona sozinho**. ⚠️ Não editar template aprovado: se precisar mudar
-  texto, criar `_v2` (edição volta pra revisão da Meta e o envio para).
+- **✅ CANAL DE WHATSAPP ABERTO (05/08/2026):** template **`atualizacao_cadastro`**
+  aprovado pela Meta (**UTILITY · pt_BR · 2 variáveis**: {{1}} primeiro nome,
+  {{2}} o link **como variável de body**, não botão — técnica do
+  `grupos_renovacao_temporada` que mantém a categoria) e a env
+  **`WHATSAPP_TEMPLATE_CENSO_ATUALIZACAO=atualizacao_cadastro`** setada em
+  Production + Preview, **com redeploy** (`vercel redeploy` do deployment de
+  produção · conferido no `vercel inspect` que `cbrio.org` e `www.cbrio.org`
+  foram realiasados — o log do redeploy só cita `cbrio.com.br`, e acreditar nele
+  faria a gente concluir que o ERP tinha ficado no deploy velho).
+  ⚠️ Não editar template aprovado: se precisar mudar texto, criar `_v2` (edição
+  volta pra revisão da Meta e o envio para).
+
+### ⚠️⚠️ "Aprovar o template" NÃO liga o canal — e a tela dizia que ligou (05/08)
+
+Incidente: o Matheus aprovou o template, apertou disparar **duas vezes** (18:42 e
+18:43) e veio perguntar quem havia respondido pelo WhatsApp. **Nada tinha saído**
+— a env não existia, então `whatsappPronto()` mantinha o canal fechado. A guarda
+funcionou (zero linhas de WhatsApp em `mem_censo_convites`, audiência intacta),
+mas a TELA mostrava caixa **verde** com *"Rodada N disparada"* e o motivo real
+(`template_nao_configurado`) como **slug cru** no fim da linha.
+
+- **Régua: envio que não enviou ninguém NÃO pode aparecer como sucesso.** Sem
+  nenhum envio a caixa fica âmbar, diz "Nada foi enviado — nenhuma pessoa foi
+  convidada" e o motivo vem como frase inteira (incluindo o lembrete de que **a
+  Vercel só aplica env nova em deployment novo**). A dica de "rode a próxima
+  rodada amanhã" desaparece quando não houve rodada.
+- **Diagnóstico com evidência, não suposição:** `mem_censo_convites` (6 rodadas,
+  todas e-mail) + `whatsapp_envios` (zero do censo) + `vercel env ls` (nenhuma
+  env de template do censo, sob nenhum nome) + runtime logs (os dois POST com
+  200). "Ele disse que disparou" não é dado.
+
+### ⚠️⚠️ CANÁRIO · a env existir não prova que o template funciona
+
+`whatsappPronto()` só olha se a env está **setada**. Nome com um caractere errado,
+template não aprovado ou com nº de variáveis diferente **passa pela guarda** — e
+`enfileirarLote` **INSERE sem tentar enviar**. O estrago: as ~200 pessoas viram
+`mem_censo_convites` (convidadas), a Meta recusa tudo depois (**132001 é falha
+PERMANENTE, sem retry**) e a rodada seguinte as pula. **Convite perdido pra
+sempre** — o mesmo dano que o semáforo evita, entrando pela porta do lado.
+
+Agora a **primeira mensagem vai sozinha e SÍNCRONA** (`fila.enfileirar`, que tenta
+na hora). Recusa **permanente** ⇒ rodada abortada, `motivo: 'template_recusado'`,
+**ninguém registrado** (nem a primeira, que não foi entregue). Falha
+**passageira** (teto do TIER_250) segue enfileirando normal — ali a fila é dona da
+entrega e o convite conta. Custo do canário: 1 mensagem.
+
+⚠️ A distinção usa o `permanente` que a fila já expõe (`falhaPermanente`), não uma
+régua nova — duas réguas pra decidir "isso é definitivo?" divergiriam.
+
+**Audiência medida em 05/08 (o que a rodada de WhatsApp pega):** sem CPF, com
+telefone alcançável e **ainda não convidada em nenhum canal** — **118**
+`membro_ativo` (cabe numa rodada só) e **1.202** visitantes (≈7 rodadas no teto
+de 200/dia). Os outros 449 `membro_ativo` já receberam e-mail, então só entram
+marcando **canal cruzado** (reforço deliberado).
 
 ## ⚠️ Censo · o link do convite é PESSOAL, e é isso que dispensa o CPF (2026-08-04 · SEM migration)
 
