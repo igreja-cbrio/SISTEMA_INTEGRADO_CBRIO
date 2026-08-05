@@ -216,16 +216,41 @@ router.get('/identidade/status', authApp, limiterNormal, async (req, res) => {
     const nomeFraco = require('../services/membroMatch')
       .ehNomeDerivadoDeEmail(m?.nome, req.user.email || '');
     if (nomeFraco) falta.push('nome');
+
+    // ⚠️⚠️ DADO HERDADO NÃO É PROVA (Marcos · 05/08): "mesmo que o sistema ache
+    // que alguém é igual, não deve liberar acesso; depois de preencher todos os
+    // dados aí sim pode se ter 100% de certeza". O gatilho de `auth.users` liga
+    // por e-mail + nome, então quem caía num cadastro já completo entrava SEM
+    // nunca ter provado nada — herdando CPF, nascimento e sexo de um import.
+    // Medido antes de ligar: 9 das 89 contas passavam, TODAS por herança.
+    // ⚠️ FAIL OPEN se a coluna não existir (deploy em 2 etapas): pedir coluna
+    // inexistente faz o PostgREST recusar a query inteira, e tratar isso como
+    // "não confirmou" prenderia TODO MUNDO na tela — inclusive depois de
+    // preencher, porque a gravação da marca falharia igual. Sem a migration, o
+    // comportamento é o de antes; com ela, o portão liga. Select ISOLADO.
+    let confirmouFicha = true;
+    if (exigirFicha) {
+      const { data: prof, error: eProf } = await supabase.from('profiles')
+        .select('app_ficha_confirmada_em').eq('id', req.user.id).maybeSingle();
+      if (eProf) console.warn('[APP] app_ficha_confirmada_em ausente?', eProf.message);
+      else confirmouFicha = !!prof?.app_ficha_confirmada_em;
+    }
+
     // Conta de revisão: CPF e sexo continuam aparecendo em `falta` (informativo),
     // mas não impedem o acesso.
     const bloqueiam = exigirFicha ? falta : falta.filter(f => f !== 'cpf' && f !== 'sexo');
     res.json({
       vinculado: true,
-      completo: bloqueiam.length === 0,
+      completo: bloqueiam.length === 0 && confirmouFicha,
       falta,
       // O app pergunta ao SERVIDOR se tem que exigir CPF — nunca decide sozinho
       // (é a mesma lei do resto: quem decide o que é válido é o backend).
       exige_cpf: exigirFicha,
+      // ⚠️ `false` = a pessoa nunca confirmou por esta conta ⇒ o formulário NÃO
+      // pré-preenche CPF/nascimento/sexo/telefone do cadastro encontrado. Deixar
+      // pré-preenchido faria ela "confirmar" dado que ela não forneceu, que é
+      // justamente a herança que este bloco fecha.
+      pode_preencher_com_vinculo: confirmouFicha,
       nome: m?.nome || membro.nome || null,
     });
   } catch (e) {

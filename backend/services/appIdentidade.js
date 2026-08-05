@@ -318,13 +318,11 @@ function contaDeRevisaoLoja(email) {
 
 // ── B · formulário completo (Contrato de porta) ─────────────────────────────
 async function completarCadastro({ payload, authUserId, email, ip, userAgent }) {
-  // CPF NÃO é exigido (decisão antiga: o app não pode travar a entrada de quem
-  // não tem o CPF em mãos) — o campo é pedido, mas não bloqueia.
-  // ⚠️ SEXO ainda NÃO é exigido aqui, de propósito: a tela `/completar-cadastro`
-  // JÁ ESTÁ VIVA e não manda o campo. Exigir agora daria 400 nela e prenderia a
-  // pessoa no portão sem saída. Ligar só depois do release com o campo.
-  // (Eu havia escrito que "nenhum cliente antigo usa o endpoint" — estava
-  // errado: o CadastroGate do Marcos usa desde 04/08.)
+  // ⚠️ CPF e SEXO **SÃO exigidos** (gate ligado por decisão do Marcos em 05/08 ·
+  // a tela já manda os dois campos). A única isenção é conta de revisão de loja —
+  // o revisor não tem CPF brasileiro e travaria no portão, o que recusa o build.
+  // (Este comentário dizia o contrário até 05/08, descrevendo o estado antigo:
+  // comentário desatualizado engana a próxima sessão mais do que ajuda.)
   const { erros, valores } = validarCamposPadrao({
     nome_completo: payload?.nome_completo,
     telefone: payload?.telefone,
@@ -384,6 +382,18 @@ async function completarCadastro({ payload, authUserId, email, ip, userAgent }) 
       chaveDedup: `cadastro_app_${membroId}`,
     }).catch(() => {});
   }
+  // ⚠️⚠️ A MARCA DA CONFIRMAÇÃO (Marcos · 05/08): daqui pra frente o gate do app
+  // só libera quem PASSOU POR AQUI. Sem esta linha, o `/identidade/status`
+  // continuaria pedindo a ficha pra sempre — a pessoa preencheria em loop.
+  // ⚠️ Fica em `profiles` (a CONTA), não em `mem_membros`: duas contas ligadas ao
+  // mesmo cadastro não herdam a confirmação uma da outra.
+  // ⚠️ Se a coluna não existir (migration não aplicada), o status também falha
+  // OPEN — os dois lados degradam juntos pro comportamento antigo, sem loop.
+  const { error: eMarca } = await supabase.from('profiles')
+    .update({ app_ficha_confirmada_em: new Date().toISOString() })
+    .eq('id', authUserId);
+  if (eMarca) console.warn('[appIdentidade] marcar app_ficha_confirmada_em:', eMarca.message);
+
   const { data: m } = await supabase.from('mem_membros')
     .select('id, nome, telefone, email, cpf, data_nascimento').eq('id', membroId).maybeSingle();
   return { ok: true, membro: m || null, criado: !!r.created, fantasma_fundido: !!fusao.fundido };
