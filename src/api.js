@@ -2304,6 +2304,7 @@ export const membresia = {
     },
     confirmarCpf: (id) => post(`/membresia/identidade-pendencias/${id}/confirmar-cpf`, {}),
     ligarInscricao: (id) => post(`/membresia/identidade-pendencias/${id}/ligar-inscricao`, {}),
+    ligarLote: (ids) => post('/membresia/identidade-pendencias/ligar-lote', { ids }),
     setStatus: (id, status) => post(`/membresia/identidade-pendencias/${id}/status`, { status }),
   },
   // Detecção e merge de duplicados
