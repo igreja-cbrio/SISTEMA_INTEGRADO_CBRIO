@@ -942,6 +942,62 @@ não é tratado por ninguém.
 - O aviso **nomeia a pessoa** quando dá (`ref_id` é o membro nos contextos de
   `notificarMembro`) — "o telefone 21…" não diz a quem avisar.
 
+## Comunicação · aba "Automáticas" · quem recebe o que o sistema manda sozinho (2026-08-05)
+
+Pedido do Matheus: *"queria conseguir saber quem são as pessoas que recebem as
+mensagens automáticas."* Até aqui a resposta só existia LENDO CÓDIGO — cada
+disparo tem a régua de público dentro do seu cron, e nada no sistema dizia quem
+se encaixa nela hoje.
+
+Aba nova em `/comunicacao?tab=automaticas` (`GET /comunicacao/automaticas` ·
+`services/comunicacaoAutomaticas.js`). Por disparo: a regra em português,
+**quantas pessoas se encaixam agora**, **os nomes**, o que saiu de fato em 30
+dias, e — o que faz a tela não mentir — **as travas**.
+
+- ⚠️ **100% SOMENTE LEITURA.** Descreve o que os crons disparam; não envia, não
+  agenda, não desliga. Mesma decisão do inventário de portas do /inscricoes:
+  cada disparo tem lógica-satélite no módulo dono, e um 2º caminho de escrita é
+  a classe de bug que o desenho evita.
+- ⚠️ **`?pessoas=1` exige nível 2**: a lista carrega nome + telefone. "Quantos
+  recebem" é gestão; "quem recebe, com telefone" é cadastro de gente. Sem nível,
+  a resposta traz `pessoas_ocultas: true` — dizer que não veio, porque "nenhuma
+  pessoa" é a leitura errada de "sem permissão".
+- ⚠️⚠️ **PÚBLICO SEM A TRAVA AO LADO É NÚMERO QUE MENTE.** A chamada do mês
+  mostraria **"95 líderes recebem"** enquanto o **kill-switch central dos envios
+  automáticos de grupos está DESLIGADO** (`whatsapp_config.grupos_auto_envios`,
+  default false desde o susto de 20/07) e o envio real é ZERO. Com trava ativa o
+  card troca o rótulo pra **"se encaixam na regra"**, apaga a cor do número e
+  abre uma faixa âmbar dizendo *por que* nada sai. Travas espelhadas:
+  kill-switch, temporada em curso, e template sem env.
+- ⚠️ **Público × enviados medem coisas diferentes** e a divergência é o
+  diagnóstico: público é quem se ENCAIXA hoje, enviados é o que SAIU. Foi assim
+  que o devocional apareceu como 22 no público, 0 entregues e 187 erros.
+- ⚠️ **A régua daqui é ESPELHO do cron, não a fonte** — se o cron mudar, esta
+  tela passa a mentir. Cada item declara o `fonte` (arquivo/rota que manda de
+  verdade) e o resolver diz de qual função é espelho. Disparo automático NOVO
+  tem que entrar no `CATALOGO`: o que não está no inventário fica invisível, e
+  mensagem automática invisível é a que ninguém descobre que está errada.
+- Público que falha **não derruba o inventário** (o item mostra o erro e os
+  outros aparecem): esconder 3 disparos por causa de 1 seria trocar informação
+  por silêncio.
+
+### ⚠️ Achado ao construir: o "Estudo da semana" NÃO é automático
+
+O CLAUDE.md dizia que o cron diário manda o estudo no `WHATSAPP_ESTUDO_DIA`.
+**Não manda:** `whatsappGrupos.enviarEstudoSemanal` **não tem nenhum chamador**
+(`grep` em todo o backend) e `/whatsapp-grupos/cron/diario` só executa
+`sincronizarLideresGrupos()`. Ele saiu do catálogo — listar ali um automático
+que não existe é o oposto do propósito da aba. O envio do estudo é MANUAL.
+
+### Estado medido em 05/08 (o que a aba mostra)
+
+| Disparo | Público | Situação |
+|---|---|---|
+| Parabéns de aniversário | **36** de 178 voluntários | funcionando |
+| Lembrete de batismo | 0 (sem batismo amanhã) | funcionando |
+| Chamada do mês (grupos) | 95 líderes | **travado** · kill-switch desligado |
+| Devocional do dia | 22 (14 sem opt-in) | **quebrado** · 187 erros, 0 entregas |
+
 ## ⚠️ Folha por pessoa · o coordenador estratégico VÊ (decisão de 2026-08-05)
 
 Registrado pra não ser re-sinalizado como problema: **o coordenador estratégico

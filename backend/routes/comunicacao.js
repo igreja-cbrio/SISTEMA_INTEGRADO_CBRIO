@@ -278,6 +278,32 @@ router.get('/envios', async (req, res) => {
 });
 
 // Resumo pro topo do histórico (e semente do dashboard do C5)
+// ── AUTOMÁTICAS · quem recebe as mensagens que o sistema manda sozinho ──────
+// Pedido do Matheus (05/08): "queria conseguir saber quem são as pessoas que
+// recebem as mensagens automáticas". 100% SOMENTE LEITURA — descreve o que os
+// crons disparam, nunca envia/agenda/desliga (a lógica de cada disparo vive no
+// módulo dono; um 2º caminho de escrita aqui é a classe de bug que o inventário
+// de portas do /inscricoes evita de propósito).
+//
+// ⚠️ `?pessoas=1` exige nível 2: a lista carrega NOME e TELEFONE. "Quantos
+// recebem" é gestão; "quem recebe, com telefone" é cadastro de gente.
+router.get('/automaticas', async (req, res) => {
+  try {
+    const dias = Math.min(parseInt(req.query.dias, 10) || 30, 120);
+    const querPessoas = req.query.pessoas === '1' || req.query.pessoas === 'true';
+    const nivel = req.user?.granular?.modulePerms?.comunicacao?.leitura || 0;
+    const comPessoas = querPessoas && nivel >= 2;
+    const { listar } = require('../services/comunicacaoAutomaticas');
+    const r = await listar({ comPessoas, dias });
+    // Se pediu a lista e não tem nível, DIZ que não veio (silêncio faria a tela
+    // parecer vazia — "nenhuma pessoa" é a leitura errada de "sem permissão").
+    res.json({ ...r, pessoas_ocultas: querPessoas && !comPessoas });
+  } catch (e) {
+    console.error('[comunicacao] automaticas', e.message);
+    res.status(500).json({ error: 'Erro ao carregar os disparos automáticos' });
+  }
+});
+
 router.get('/envios/resumo', async (req, res) => {
   try {
     const dias = Math.min(parseInt(req.query.dias, 10) || 30, 120);
