@@ -310,6 +310,13 @@ const InscricaoEventoCheckin = lazyWithRetry(() => import('./pages/InscricaoEven
 const Inscricoes = lazyWithRetry(() => import('./pages/Inscricoes'));
 const Propostas = lazyWithRetry(() => import('./pages/Propostas'));
 const InscricaoEventoDetalhe = lazyWithRetry(() => import('./pages/InscricaoEventoDetalhe'));
+const InscricaoTotens = lazyWithRetry(() => import('./pages/InscricaoTotens'));
+// Totem de inscrições · rota PÚBLICA de propósito: quem se autentica é o
+// EQUIPAMENTO (credencial de dispositivo), não uma conta de e-mail/senha
+// compartilhada num PC de hall. Divergência consciente do /totem e do
+// /voluntariado/totem — e é uma redução de risco: a conta de quiosque atual
+// carrega `membros-totem` no ROUTE_MODULE_MAP, ou seja, lê PII de membro.
+const TotemInscricoes = lazyWithRetry(() => import('./pages/totem/TotemInscricoes'));
 const NextDirecionar = lazyWithRetry(() => import('./pages/public/NextDirecionar'));
 const DecisaoOnline = lazyWithRetry(() => import('./pages/public/DecisaoOnline'));
 const InscricaoVoluntariado = lazyWithRetry(() => import('./pages/public/InscricaoVoluntariado'));
@@ -541,6 +548,9 @@ function AppRoutes() {
       <Route path="/pagamento/:token" element={<Suspense fallback={<Loading />}><PagamentoInscricao /></Suspense>} />
       {/* Comprovante da inscrição (SPEC-06) · público, token ASSINADO — é a URL do QR do check-in */}
       <Route path="/i/c/:token" element={<Suspense fallback={<Loading />}><InscricaoComprovante /></Suspense>} />
+      {/* Totem de inscrições · autenticado por credencial de DISPOSITIVO
+          (header x-totem-token), não por sessão de pessoa. Fora do AppShell. */}
+      <Route path="/totem/inscricoes" element={<Suspense fallback={<Loading />}><TotemInscricoes /></Suspense>} />
       {/* Política de reembolso · o CDC exige informação PRÉVIA e clara, então
           precisa ser alcançável antes da compra, sem login. */}
       <Route path="/politica-reembolso" element={<Suspense fallback={<Loading />}><PoliticaReembolso /></Suspense>} />
@@ -689,6 +699,8 @@ function AppRoutes() {
         <Route path="/inscricoes/evento/:id" element={<ModuleGuard moduleSlug="inscricoes" nivelMinimo={1}><Suspense fallback={<Loading />}><InscricaoEventoDetalhe /></Suspense></ModuleGuard>} />
         {/* Check-in do evento (SPEC-06) · nível 2 = operar check-in (SPEC-08) */}
         <Route path="/inscricoes/evento/:id/checkin" element={<ModuleGuard moduleSlug="inscricoes" nivelMinimo={2}><Suspense fallback={<Loading />}><InscricaoEventoCheckin /></Suspense></ModuleGuard>} />
+        {/* Totens · ver = 1 · criar/parear/revogar = 4 (gate no backend) */}
+        <Route path="/inscricoes/totens" element={<ModuleGuard moduleSlug="inscricoes" nivelMinimo={1}><Suspense fallback={<Loading />}><InscricaoTotens /></Suspense></ModuleGuard>} />
         <Route path="/governanca" element={<ModuleGuard moduleSlug="governanca" nivelMinimo={1}><Suspense fallback={<Loading />}><Governanca /></Suspense></ModuleGuard>} />
         <Route path="/governanca/:sigla" element={<ModuleGuard moduleSlug="governanca" nivelMinimo={1}><Suspense fallback={<Loading />}><GovernancaRitual /></Suspense></ModuleGuard>} />
         <Route path="/next-batismo" element={<Navigate to="/entradas" replace />} />
