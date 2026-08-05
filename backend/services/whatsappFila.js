@@ -106,13 +106,18 @@ function falhaPermanente(r) {
 // links de aprovação e ninguém soube até olhar a fila na mão.
 async function avisarFalhaTerminal(e, razao) {
   try {
-    const modulo = String(e.contexto || '').split('.')[0] || 'integracao';
+    // ⚠️ Era `contexto.split('.')[0]`, que resolvia 'app' pro aniversário e pros
+    // demais disparos do app — módulo inexistente ⇒ fallback de TODOS os
+    // admin/diretor. A régua vive em whatsappContexto (compartilhada com o
+    // webhook, que trata a recusa de entrega REPORTADA depois do envio).
+    const { moduloDoContexto } = require('./whatsappContexto');
+    const { modulo, link } = moduloDoContexto(e.contexto);
     await notificar({
       modulo,
       tipo: 'whatsapp_envio_falhou',
       titulo: 'Mensagem de WhatsApp não entregue',
       mensagem: `${e.tipo === 'texto' ? 'A mensagem de texto' : `O template "${e.template}"`} para o telefone ${e.telefone} falhou de vez (${String(razao).slice(0, 140)}). Contexto: ${e.contexto || '—'}. Confira o telefone no cadastro e reenvie.`,
-      link: modulo === 'grupos' ? '/grupos' : null,
+      link,
       severidade: 'aviso',
       chaveDedup: `wpp_envio_falha_${e.id}`,
     });

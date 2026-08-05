@@ -141,8 +141,11 @@ async function processarStatuses(statuses) {
         ? String(s.errors?.[0]?.title || s.errors?.[0]?.message || s.errors?.[0]?.code || 'failed').slice(0, 300)
         : null;
 
+      // contexto/telefone/ref_id vêm junto porque o `failed` agora AVISA gente
+      // (antes só gravava a coluna e a falha morria em silêncio).
       const { data: envio } = await supabase.from('whatsapp_envios')
-        .select('id').eq('message_id', messageId).maybeSingle();
+        .select('id, contexto, telefone, ref_id, template')
+        .eq('message_id', messageId).maybeSingle();
 
       if (envio) {
         if (st === 'delivered') {
@@ -155,8 +158,25 @@ async function processarStatuses(statuses) {
           await supabase.from('whatsapp_envios').update({ delivered_at: ts })
             .eq('message_id', messageId).is('delivered_at', null);
         } else if (st === 'failed') {
-          await supabase.from('whatsapp_envios').update({ failed_at: ts, erro_status: erroTxt })
-            .eq('message_id', messageId).is('failed_at', null);
+          // ⚠️ O `.select('id')` NÃO é enfeite: é ele que diz se ESTA entrega do
+          // webhook foi a que transicionou a linha. O `.is('failed_at', null)`
+          // torna o UPDATE idempotente, mas sem saber quantas linhas mudaram a
+          // reentrega da Meta (que é normal, e ela reentrega muitas vezes)
+          // avisaria de novo a cada vez. Mesma lição da guarda de idempotência:
+          // o efeito colateral tem que estar amarrado à transição real.
+          const { data: mudou } = await supabase.from('whatsapp_envios')
+            .update({ failed_at: ts, erro_status: erroTxt })
+            .eq('message_id', messageId).is('failed_at', null)
+            .select('id');
+
+          // ⚠️ AQUI cai o "número brasileiro válido SEM WhatsApp": a Meta ACEITA
+          // o envio (200, message_id emitido) e só depois reporta `failed`. Era
+          // o furo registrado no CLAUDE.md — a falha ficava só na tabela e
+          // ninguém sabia que a pessoa não recebeu.
+          if (mudou?.length) {
+            const { avisarNaoEntregue } = require('../services/whatsappContexto');
+            await avisarNaoEntregue(envio, erroTxt);
+          }
         }
         continue;
       }
