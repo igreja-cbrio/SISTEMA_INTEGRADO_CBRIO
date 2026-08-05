@@ -14,6 +14,13 @@
 // Esta página é a FONTE do texto publicado. O documento em
 // docs/politica-reembolso-inscricoes.md guarda as decisões e o porquê — não
 // duplicar o texto lá.
+//
+// ⚠️ DOAÇÃO (item 10 · 2026-08-05): a página `/doar` cobra pelo mesmo provedor de
+// pagamento das inscrições, e venda pela internet tem o direito de arrependimento
+// de 7 dias (CDC art. 49) INDEPENDENTE de a doação ser voluntária. Por isso o item
+// existe e diz o prazo, o canal e QUEM ABSORVE A TAXA do provedor (a igreja, mesma
+// regra do item 4). Não remover: página de doação sem política de devolução é
+// exigência do provedor e do próprio CDC.
 import { useEffect } from 'react';
 
 const C = {
@@ -45,7 +52,13 @@ export default function PoliticaReembolso() {
           Política de Reembolso e Cancelamento
         </h1>
         <p style={{ ...p, color: C.text3, fontSize: 13 }}>
-          Válida para inscrições em eventos pagos. Atualizada em 31/07/2026.
+          Válida para inscrições em eventos pagos e para doações feitas pelo site
+          (dízimos, ofertas e campanhas). Atualizada em 05/08/2026.
+        </p>
+
+        <p style={{ ...p, color: C.text3, fontSize: 13, marginTop: -4 }}>
+          Os itens <b>1 a 9</b> tratam de <b>inscrições em eventos</b>. O item{' '}
+          <b>10</b> trata de <b>doações</b>.
         </p>
 
         <h2 style={h2}>1. Desistência em até 7 dias — devolução integral</h2>
@@ -145,6 +158,51 @@ export default function PoliticaReembolso() {
           Inscrição gratuita, ou liberada por bolsa, não gera devolução porque
           não houve pagamento. Se você não vai mais, avise — a vaga vai para
           outra pessoa que está esperando.
+        </p>
+
+        <h2 style={h2}>10. Doações (dízimos, ofertas e campanhas)</h2>
+        <p style={p}>
+          Doação é <b>voluntária e não gera contrapartida</b> — não é a compra de
+          um produto ou de uma vaga. Mesmo assim, como a doação pelo site é feita
+          pela internet, você tem os mesmos <b>7 dias corridos</b> do{' '}
+          <b>artigo 49 do Código de Defesa do Consumidor</b> para desistir e
+          receber de volta <b>100% do valor doado</b>, sem precisar justificar.
+        </p>
+        <p style={p}>
+          Também devolvemos, a qualquer momento, quando houver <b>erro
+          comprovado</b>: valor digitado errado, cobrança em duplicidade ou
+          cobrança que você não reconhece.
+        </p>
+        <div style={{ border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden', margin: '0 0 12px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '10px 14px', borderBottom: `1px solid ${C.border}` }}>
+            <span style={{ color: C.text2, fontSize: 14 }}>Pedido em <b>até 7 dias</b> da doação</span>
+            <b style={{ color: C.primary, whiteSpace: 'nowrap' }}>Devolução de 100%</b>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '10px 14px', borderBottom: `1px solid ${C.border}` }}>
+            <span style={{ color: C.text2, fontSize: 14 }}><b>Erro</b> de valor, duplicidade ou cobrança não reconhecida</span>
+            <b style={{ color: C.primary, whiteSpace: 'nowrap' }}>Devolução de 100%</b>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '10px 14px' }}>
+            <span style={{ color: C.text2, fontSize: 14 }}>Depois dos 7 dias, sem erro envolvido</span>
+            <b style={{ color: C.text3, whiteSpace: 'nowrap' }}>Analisamos caso a caso</b>
+          </div>
+        </div>
+        <p style={p}>
+          A <b>taxa cobrada pelo provedor de pagamento é assumida pela igreja</b>,
+          como no item 4: você recebe de volta o valor cheio que doou, sem
+          desconto de nenhuma espécie.
+        </p>
+        <p style={p}>
+          Para pedir, escreva para{' '}
+          <a href="mailto:financeiro@cbrio.com.br" style={{ color: C.primary }}>financeiro@cbrio.com.br</a>{' '}
+          informando o <b>valor</b>, a <b>data</b> e a <b>forma de pagamento</b> da
+          doação. Respondemos em até <b>5 dias úteis</b>, e os prazos para o
+          dinheiro voltar são os mesmos do item 6.
+        </p>
+        <p style={p}>
+          Se você emitiu <b>recibo para dedução no imposto de renda</b> com essa
+          doação, avise no pedido: a devolução cancela o recibo, e é preciso
+          corrigir isso antes da sua declaração.
         </p>
 
         <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 26, paddingTop: 14 }}>
