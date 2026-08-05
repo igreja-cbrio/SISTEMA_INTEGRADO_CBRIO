@@ -182,22 +182,29 @@ router.get('/identidade/status', authApp, limiterNormal, async (req, res) => {
   try {
     const membro = await resolveMembroApp(req).catch(() => null);
     if (!membro) {
-      return res.json({ vinculado: false, completo: false, falta: ['nome', 'telefone', 'nascimento'] });
+      return res.json({ vinculado: false, completo: false, falta: ['nome', 'telefone', 'nascimento', 'cpf', 'sexo'] });
     }
     const falta = [];
     if (!membro.telefone) falta.push('telefone');
-    if (!membro.cpf) falta.push('cpf'); // informativo — CPF não é exigido
+    // ⚠️ CPF É EXIGIDO desde 05/08/2026 (decisão do Marcos): sem ele o
+    // `POST /app/inscricoes` recusa QUALQUER inscrição (Contrato de porta), e
+    // 50 das 75 contas entravam "completas" pra serem barradas depois.
+    if (!membro.cpf) falta.push('cpf');
     const { data: m } = await supabase.from('mem_membros')
-      .select('nome, data_nascimento').eq('id', membro.id).maybeSingle();
+      .select('nome, data_nascimento, genero').eq('id', membro.id).maybeSingle();
     if (!m?.data_nascimento) falta.push('nascimento');
+    // Sexo faz parte da ficha padrão (Contrato de Inscrição) — sem ele a
+    // inscrição de batismo/apresentação teria que perguntar de novo.
+    if (!m?.genero) falta.push('sexo');
     const nomeFraco = require('../services/membroMatch')
       .ehNomeDerivadoDeEmail(m?.nome, req.user.email || '');
     if (nomeFraco) falta.push('nome');
     res.json({
       vinculado: true,
-      // "completo" = dá pro matcher reconhecer a pessoa depois (nome de gente +
-      // telefone + nascimento). CPF entra como recomendado, não obrigatório.
-      completo: !falta.some(f => f !== 'cpf'),
+      // "completo" = a FICHA PADRÃO está fechada (nome de gente + telefone +
+      // nascimento + CPF + sexo). É o que permite as inscrições pedirem só
+      // campos EXTRA, nunca os padrão (regra do Marcos · 05/08/2026).
+      completo: falta.length === 0,
       falta,
       nome: m?.nome || membro.nome || null,
     });

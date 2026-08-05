@@ -289,9 +289,13 @@ async function confirmarCodigo({ verificacaoId, codigo, authUserId, email }) {
 
 // ── B · formulário completo (Contrato de porta) ─────────────────────────────
 async function completarCadastro({ payload, authUserId, email, ip, userAgent }) {
-  // CPF e sexo NÃO são exigidos aqui (decisão: o app não pode travar a entrada
-  // de quem não tem o CPF em mãos); nome completo, telefone, e-mail e
-  // nascimento sim — é o mínimo que faz o matcher reconhecer a pessoa depois.
+  // ⚠️ FICHA COMPLETA (Marcos · 05/08/2026): CPF e SEXO passaram a ser
+  // EXIGIDOS. Antes eram opcionais "pra não travar a entrada de quem não tem o
+  // CPF em mãos" — mas o efeito medido foi pior: `POST /app/inscricoes` recusa
+  // inscrição sem CPF, então 50 das 75 contas do app entravam "completas" e
+  // eram barradas na hora de pedir grupo/batismo/next. A decisão dele foi
+  // fechar a ficha na ENTRADA: "ela já deve ter preenchido a ficha de cadastro,
+  // e nas inscrições só preenche campos a mais".
   const { erros, valores } = validarCamposPadrao({
     nome_completo: payload?.nome_completo,
     telefone: payload?.telefone,
@@ -299,7 +303,7 @@ async function completarCadastro({ payload, authUserId, email, ip, userAgent }) 
     cpf: payload?.cpf,
     data_nascimento: payload?.data_nascimento,
     sexo: payload?.sexo,
-  }, { exigirCpf: false, exigirSexo: false, exigirEmail: true, exigirNascimento: true });
+  }, { exigirCpf: true, exigirSexo: true, exigirEmail: true, exigirNascimento: true });
   const campos = Object.keys(erros || {});
   if (campos.length) {
     return { ok: false, status: 400, codigo: 'campos', campo: campos[0], error: erros[campos[0]], erros };
@@ -321,6 +325,19 @@ async function completarCadastro({ payload, authUserId, email, ip, userAgent }) 
     return { ok: false, status: 500, codigo: 'sem_membro', error: 'Não foi possível salvar seus dados agora.' };
   }
   const { fusao } = await vincularProfile({ authUserId, email, membroId });
+
+  // ⚠️ O matcher canônico (membroMatch) não conhece `genero` — então o sexo
+  // precisa ser gravado aqui, e SÓ ONDE ESTÁ VAZIO (`.is('genero', null)`):
+  // dado que a equipe já preencheu na Membresia não é sobrescrito por
+  // formulário (mesma política do censo). `mem_membros.genero` guarda o
+  // canônico 'masculino'/'feminino' (conferido no banco), não M/F.
+  if (d.sexo) {
+    await supabase.from('mem_membros')
+      .update({ genero: d.sexo })
+      .eq('id', membroId)
+      .is('genero', null)
+      .then(({ error }) => { if (error) console.warn('[app identidade] genero:', error.message); });
+  }
 
   // Cadastro NOVO pelo app é o que o Marcos quer aproveitar ("pegar o cadastro
   // de quem não temos") — avisa a equipe pra conferir/enriquecer. Conflito de
