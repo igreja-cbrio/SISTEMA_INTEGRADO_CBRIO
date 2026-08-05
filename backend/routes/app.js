@@ -3033,8 +3033,12 @@ router.get('/grupos/:grupoId/membros', authApp, limiterNormal, async (req, res) 
     if (!adminGrupos && !ehGerido) {
       return res.status(403).json({ error: 'Você não gerencia este grupo' });
     }
+    // ⚠️ `lider_id` vai pro app porque é ele que decide QUEM é a líder principal
+    // (a que recebe o WhatsApp do grupo · lei de 31/07). Sem esse campo, a tela
+    // não conseguia distinguir `funcao='lider'` (cadastro, pode ter vários) da
+    // pessoa protegida — e escondia o menu de ações de TODOS os líderes.
     const { data: grupo } = await supabase.from('mem_grupos')
-      .select('id, nome, dia_semana, horario, local, endereco, bairro, descricao, categoria, aceitando_inscricoes')
+      .select('id, nome, dia_semana, horario, local, endereco, bairro, descricao, categoria, aceitando_inscricoes, lider_id')
       .eq('id', gid).is('deleted_at', null).maybeSingle();
     if (!grupo) return res.status(404).json({ error: 'Grupo não encontrado' });
 
@@ -3097,13 +3101,21 @@ async function gateGrupoApp(req, res, gid) {
   return { ok: true, grupo, membro, adminGrupos };
 }
 
-// ⚠️⚠️ FUNÇÕES QUE O APP PODE DAR. `lider`, `supervisor` e `coordenador` estão
-// FORA de propósito: quem lidera o grupo é `mem_grupos.lider_id`, e esse campo
-// decide **quem recebe o WhatsApp do grupo** (a lei de 31/07 — o destinatário é
-// um só e tem que ser líder do roster). Trocar liderança é ato de gestão, na
-// coordenação; deixar isso no app abriria caminho pra um líder se remover e o
-// grupo ficar sem destinatário de aviso.
-const FUNCOES_APP = ['frequentador', 'lider_treinamento', 'co_lider'];
+// ⚠️⚠️ DUAS COISAS DIFERENTES, e eu tinha confundido as duas (corrigido 05/08 por
+// esclarecimento do Marcos):
+//
+//   · `mem_grupo_membros.funcao = 'lider'` é **CADASTRO**: registra que a pessoa
+//     lidera junto. Pode haver vários, e nenhum deles recebe mensagem por isso.
+//   · `mem_grupos.lider_id` é o **LÍDER PRINCIPAL**: é ELE que recebe o WhatsApp
+//     do grupo (lei de 31/07 — um destinatário só) e **não pode se remover**.
+//
+// Palavras dele: "só o líder principal recebe mensagem e ele não pode remover a
+// si mesmo; os outros seria apenas para sabermos no cadastro, mas não receberia
+// mensagem nenhum". Então `lider` ENTRA na lista do app (é cadastro) e o que
+// continua protegido é a PESSOA que é `lider_id`.
+// ⚠️ `supervisor` e `coordenador` seguem fora: são papéis da hierarquia de
+// supervisão (grupo_supervisao_*), não do roster do grupo.
+const FUNCOES_APP = ['frequentador', 'lider_treinamento', 'co_lider', 'lider'];
 
 // PUT /api/app/grupos/:grupoId/membros/:rowId/funcao — body { funcao }
 router.put('/grupos/:grupoId/membros/:rowId/funcao', authApp, limiterNormal, async (req, res) => {
@@ -3114,7 +3126,7 @@ router.put('/grupos/:grupoId/membros/:rowId/funcao', authApp, limiterNormal, asy
     const funcao = String(req.body?.funcao || '').trim();
     if (!FUNCOES_APP.includes(funcao)) {
       return res.status(400).json({
-        error: 'Função inválida. Pelo app dá pra marcar frequentador, em treinamento ou co-líder — trocar o líder do grupo é com a coordenação.',
+        error: 'Função inválida. Pelo app dá pra marcar frequentador, em treinamento, co-líder ou líder (cadastro) — supervisor e coordenador são da hierarquia de supervisão.',
       });
     }
     // A linha tem que ser DESTE grupo (id de outro grupo no corpo não faz nada).
@@ -3122,9 +3134,14 @@ router.put('/grupos/:grupoId/membros/:rowId/funcao', authApp, limiterNormal, asy
       .select('id, grupo_id, membro_id, funcao').eq('id', req.params.rowId)
       .eq('grupo_id', gid).is('saiu_em', null).is('deleted_at', null).maybeSingle();
     if (!linha) return res.status(404).json({ error: 'Participante não encontrado neste grupo' });
-    // ⚠️ Não deixa mexer em quem É o líder do grupo (lider_id) — ver FUNCOES_APP.
+    // ⚠️ O LÍDER PRINCIPAL (`lider_id`) não muda de função pelo app: ele é quem
+    // recebe o WhatsApp do grupo, e a régua de 31/07 exige que o destinatário
+    // seja líder do roster — rebaixá-lo aqui deixaria o grupo com destinatário
+    // que não é líder. Trocar quem é o principal é ato da coordenação.
     if (linha.membro_id && linha.membro_id === g.grupo.lider_id) {
-      return res.status(400).json({ error: 'Esta pessoa é a líder do grupo. Mudar isso é com a coordenação.' });
+      return res.status(400).json({
+        error: 'Esta é a líder principal do grupo (é quem recebe os avisos no WhatsApp). Trocar o principal é com a coordenação.',
+      });
     }
     const { error } = await supabase.from('mem_grupo_membros')
       .update({ funcao }).eq('id', linha.id);
@@ -3148,8 +3165,10 @@ router.post('/grupos/:grupoId/membros/:rowId/sair', authApp, limiterNormal, asyn
       .select('id, membro_id').eq('id', req.params.rowId)
       .eq('grupo_id', gid).is('saiu_em', null).is('deleted_at', null).maybeSingle();
     if (!linha) return res.status(404).json({ error: 'Participante não encontrado neste grupo' });
+    // ⚠️ "ele não pode remover a si mesmo" (Marcos · 05/08): o líder PRINCIPAL não
+    // sai do grupo pelo app — sem ele o grupo fica sem destinatário de aviso.
     if (linha.membro_id && linha.membro_id === g.grupo.lider_id) {
-      return res.status(400).json({ error: 'Não dá pra remover a pessoa que lidera o grupo. Fale com a coordenação.' });
+      return res.status(400).json({ error: 'A líder principal não pode sair do grupo pelo app — fale com a coordenação.' });
     }
     const motivo = String(req.body?.motivo || '').trim().slice(0, 300) || 'Saída registrada pelo líder no app';
     const { error } = await supabase.from('mem_grupo_membros')

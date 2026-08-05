@@ -4182,13 +4182,25 @@ grupos), e reusando os escritores canônicos:
 
 ### ⚠️⚠️ O que o app NÃO pode fazer, e por quê
 
-- **Não dá `lider`** (nem supervisor/coordenador): `FUNCOES_APP` é
-  `frequentador · lider_treinamento · co_lider`. Quem lidera é
-  **`mem_grupos.lider_id`**, e esse campo decide **quem recebe o WhatsApp do
-  grupo** (lei de 31/07: um destinatário só, e tem que ser líder do roster).
-  Deixar isso no app abriria caminho pra um líder se remover e o grupo ficar sem
-  destinatário de aviso. Também **bloqueia** mudar função ou registrar saída de
-  quem é o `lider_id`.
+- ⚠️⚠️ **`funcao='lider'` é CADASTRO · `mem_grupos.lider_id` é a LÍDER
+  PRINCIPAL** (corrigido 05/08 por esclarecimento do Marcos — eu tinha
+  confundido as duas e bloqueado o app de marcar os outros líderes). Palavras
+  dele: *"só o líder principal recebe mensagem e ele não pode remover a si
+  mesmo, os outros seria apenas para sabermos no cadastro, mas não receberia
+  mensagem nenhum"*. Então `FUNCOES_APP` é
+  `frequentador · lider_treinamento · co_lider · **lider**`, e o que segue
+  protegido é a **PESSOA** que é `lider_id`: o servidor recusa mudar a função
+  dela e recusa registrar a saída dela (é ela que recebe o WhatsApp do grupo ·
+  lei de 31/07: um destinatário só, e tem que ser líder do roster).
+  ⚠️ `supervisor`/`coordenador` seguem FORA: são papéis da hierarquia de
+  supervisão (`grupo_supervisao_*`), não do roster.
+  ⚠️ O roster do app passou a devolver **`lider_id`** — sem ele a tela não
+  distinguia as duas coisas e escondia o menu de ações de TODOS os líderes.
+  A principal ganha badge "Líder principal" e é a única sem menu.
+  ⚠️ Medido em 05/08: **30 dos 97 grupos ativos têm a principal FORA do roster
+  ativo** — nesses ela não aparece na aba Membros (o bloqueio do servidor
+  continua valendo). É o follow-up de 31/07 (avisar a coordenação quando o
+  destinatário não é líder do roster), ainda aberto.
 - **Transferência NÃO empurra ninguém pra dentro de outro grupo**: cria
   `mem_grupo_pedidos` no destino, `origem='app'`, pro líder de lá aprovar — o
   mesmo fluxo de quem se inscreve. E os destinos oferecidos são só os grupos que
@@ -4207,6 +4219,29 @@ grupos), e reusando os escritores canônicos:
 `storage_path` (o link é montado no backend). Nos dois casos, pedir coluna
 inexistente faria o PostgREST recusar a operação INTEIRA — o INSERT da
 transferência falharia e a aba de estudos apareceria vazia, em silêncio.
+
+### Entradas e saídas · histórico discreto no web (2026-08-05 · SEM migration)
+
+Pedido do Marcos sobre a transferência: *"ali eu pensei em ser apenas um
+histórico de pessoas e no máximo um pedido que fica na tela do gerenciador do
+sistema web pra aprovar — deve ser uma tela pequena, com pouco destaque, como se
+fosse uma tela de histórico de entradas e saídas sem muita interação"*.
+
+`GET /api/grupos/:id/entradas-saidas` (leitura pura · nível 1) devolve
+`eventos[]` de entrada/saída derivados de `mem_grupo_membros` (a saída é soft, em
+`saiu_em`, então a MESMA linha rende entrada e — se a pessoa saiu — saída, com
+`motivo_saida`), ordenado desc e capado em 60. No `Grupos.jsx` é um bloco
+**recolhido por padrão** logo acima de "Encontros recentes", sem nenhuma ação.
+
+- ⚠️ **A transferência vinda do app NÃO aparece aqui como ação a aprovar** — ela
+  entra como **PEDIDO na Caixa de entrada**, que é onde a triagem já decide. Duas
+  portas pra aprovar a mesma coisa era o que fazia parecer que existiam dois
+  lugares (a mesma razão pela qual "Inscrições do grupo" saiu do `/meu-grupo`).
+- ⚠️ **Os relatórios de frequência do app JÁ aparecem no web** — o Marcos ofereceu
+  construir a tela e não é preciso: `Grupos.jsx` tem "Encontros recentes" lendo
+  `api.encontros(id, {limit:10})`, que mostra data, nº de presentes, tema e **o
+  comentário do líder** (`observacoes`), porque o app grava pela RPC canônica
+  `registrar_encontro_grupo`. A aba Relatórios agrega o resto.
 
 **No app**: `grupo-membros.tsx` virou **Gerenciar grupo** com 4 abas (Membros ·
 Frequência · Pedidos · Estudos) + **Editar** no cabeçalho (abre

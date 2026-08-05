@@ -739,6 +739,10 @@ export const grupos = {
   removeMaterial: (docId) => del(`/grupos/materiais/${docId}`),
   encontros: (grupoId, params) => get(`/grupos/${grupoId}/encontros` + (params ? '?' + new URLSearchParams(params) : '')),
   encontro: (encontroId) => get(`/grupos/encontros/${encontroId}`),
+  // Histórico simples de quem entrou e saiu do grupo (leitura pura · o formato
+  // foi pedido pelo Marcos: "tela pequena, com pouco destaque, sem muita
+  // interação"). Aprovar pedido segue na Caixa de entrada.
+  entradasSaidas: (grupoId) => get(`/grupos/${grupoId}/entradas-saidas`),
   registrarEncontro: (grupoId, data) => post(`/grupos/${grupoId}/encontros`, data),
   atualizarEncontro: (encontroId, data) => patch(`/grupos/encontros/${encontroId}`, data),
   removerEncontro: (encontroId) => del(`/grupos/encontros/${encontroId}`),

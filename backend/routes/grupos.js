@@ -317,6 +317,46 @@ router.get('/:id/encontros', async (req, res) => {
   } catch (e) { console.error('[Grupos encontros list]', e.message); res.status(500).json({ error: 'Erro ao buscar encontros' }); }
 });
 
+// GET /api/grupos/:id/entradas-saidas — histórico simples de quem entrou e saiu
+// ⚠️ Pedido do Marcos (05/08/2026), com o formato definido por ele: "deve ser uma
+// tela pequena, com pouco destaque, como se fosse uma tela de histórico de
+// entradas e saídas SEM MUITA INTERAÇÃO". Então é leitura pura — nenhuma ação
+// aqui. Aprovar pedido (inclusive transferência vinda do app) continua onde
+// sempre foi: a Caixa de entrada.
+// Saída é soft (`saiu_em`), então a MESMA linha do roster aparece como entrada e,
+// se a pessoa saiu, também como saída.
+router.get('/:id/entradas-saidas', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('mem_grupo_membros')
+      .select('id, entrou_em, saiu_em, motivo_saida, funcao, created_at, membro:mem_membros(id, nome)')
+      .eq('grupo_id', req.params.id).is('deleted_at', null)
+      .order('created_at', { ascending: false }).limit(200);
+    if (error) throw error;
+
+    const eventos = [];
+    for (const r of data || []) {
+      const m = Array.isArray(r.membro) ? r.membro[0] : r.membro;
+      const nome = m?.nome || '—';
+      eventos.push({
+        tipo: 'entrada', nome, membro_id: m?.id || null, funcao: r.funcao || null,
+        data: r.entrou_em || (r.created_at ? String(r.created_at).slice(0, 10) : null),
+        motivo: null,
+      });
+      if (r.saiu_em) {
+        eventos.push({
+          tipo: 'saida', nome, membro_id: m?.id || null, funcao: r.funcao || null,
+          data: String(r.saiu_em).slice(0, 10), motivo: r.motivo_saida || null,
+        });
+      }
+    }
+    eventos.sort((a, b) => String(b.data || '').localeCompare(String(a.data || '')));
+    res.json({ eventos: eventos.slice(0, 60) });
+  } catch (e) {
+    console.error('[Grupos entradas-saidas]', e.message);
+    res.status(500).json({ error: 'Erro ao buscar o histórico' });
+  }
+});
+
 // POST /api/grupos/:id/encontros — registrar encontro com chamada
 router.post('/:id/encontros', authorizeModule('grupos', 2), async (req, res) => {
   try {

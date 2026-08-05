@@ -14,7 +14,7 @@ import { Textarea } from '../../components/ui/textarea';
 import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog';
 import { toast } from 'sonner';
-import { Users, MapPin, Clock, Plus, Search, ChevronLeft, UserPlus, X, ArrowRightLeft, FileUp, Trash2, FileText, Image, File as FileIcon, Map as MapIcon, CalendarCheck, CalendarPlus, ClipboardCheck, Calendar, Activity, TrendingUp, TrendingDown, Minus, AlertTriangle, Inbox, QrCode, Send, Compass, Copy, Check, Download, ExternalLink, Lock, BarChart3, GraduationCap, Star, UserCog, Eye, Settings, HeartHandshake, BookOpen } from 'lucide-react';
+import { Users, MapPin, Clock, Plus, Search, ChevronLeft, ChevronDown, UserPlus, X, ArrowRightLeft, FileUp, Trash2, FileText, Image, File as FileIcon, Map as MapIcon, CalendarCheck, CalendarPlus, ClipboardCheck, Calendar, Activity, TrendingUp, TrendingDown, Minus, AlertTriangle, Inbox, QrCode, Send, Compass, Copy, Check, Download, ExternalLink, Lock, BarChart3, GraduationCap, Star, UserCog, Eye, Settings, HeartHandshake, BookOpen } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import GruposEntrada from './GruposEntrada';
 import InscricaoGruposQRCode from '../admin/InscricaoGruposQRCode';
@@ -258,6 +258,8 @@ export default function Grupos() {
   const [chamadaOpen, setChamadaOpen] = useState(false);
   const [encontroEdit, setEncontroEdit] = useState(null);
   const [encontros, setEncontros] = useState([]);
+  const [entradasSaidas, setEntradasSaidas] = useState([]);
+  const [histAberto, setHistAberto] = useState(false);
   const [mostrarArquivados, setMostrarArquivados] = useState(false);
   const [metricas, setMetricas] = useState(null);
   const [saudeAgregada, setSaudeAgregada] = useState(null);
@@ -354,6 +356,8 @@ export default function Grupos() {
   const loadEncontros = useCallback(async (id) => {
     try {
       const data = await api.encontros(id, { limit: 10 });
+      // Histórico de entradas/saídas — mesma carga, painel discreto (ver abaixo).
+      api.entradasSaidas(id).then(r => setEntradasSaidas(r.eventos || [])).catch(() => setEntradasSaidas([]));
       setEncontros(data || []);
     } catch { setEncontros([]); }
   }, []);
@@ -1058,6 +1062,52 @@ export default function Grupos() {
             </div>
           )}
         </div>
+
+        {/* ⚠️ HISTÓRICO DE ENTRADAS E SAÍDAS · formato pedido pelo Marcos
+            (05/08/2026): "deve ser uma tela pequena, com pouco destaque, como se
+            fosse uma tela de histórico de entradas e saídas sem muita interação".
+            Então: recolhido por padrão, leitura pura, nenhuma ação aqui.
+            A transferência vinda do APP não aparece como ação — ela entra como
+            PEDIDO na Caixa de entrada, que é onde a Natasha aprova. */}
+        {!isOptimistic && (
+          <div style={{ background: C.card, borderRadius: 16, border: '1px solid var(--hairline)', marginTop: 16, overflow: 'hidden' }}>
+            <div
+              onClick={() => setHistAberto(v => !v)}
+              style={{ padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}
+              title="Histórico de entradas e saídas"
+            >
+              <ArrowRightLeft size={13} style={{ color: C.t3 }} />
+              <span style={{ fontSize: 12, fontWeight: 600, color: C.t2, flex: 1 }}>
+                Entradas e saídas ({entradasSaidas.length})
+              </span>
+              <ChevronDown size={14} style={{ color: C.t3, transform: histAberto ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }} />
+            </div>
+            {histAberto && (
+              entradasSaidas.length === 0 ? (
+                <div style={{ padding: '8px 16px 14px', fontSize: 12, color: C.t3 }}>Sem movimentação registrada.</div>
+              ) : (
+                <div style={{ borderTop: `1px solid ${C.border}` }}>
+                  {entradasSaidas.map((ev, i) => (
+                    <div key={i} style={{ padding: '8px 16px', display: 'flex', alignItems: 'center', gap: 10, borderBottom: `1px solid ${C.border}` }}>
+                      <span style={{
+                        fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 999,
+                        color: ev.tipo === 'entrada' ? C.green : C.red,
+                        background: ev.tipo === 'entrada' ? 'rgba(16,185,129,.12)' : 'rgba(239,68,68,.12)',
+                      }}>
+                        {ev.tipo === 'entrada' ? 'entrou' : 'saiu'}
+                      </span>
+                      <span style={{ fontSize: 12, color: C.text, flex: 1, minWidth: 0 }}>{ev.nome}</span>
+                      {ev.motivo && <span style={{ fontSize: 11, color: C.t3, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={ev.motivo}>{ev.motivo}</span>}
+                      <span style={{ fontSize: 11, color: C.t3 }}>
+                        {ev.data ? new Date(ev.data + 'T12:00:00').toLocaleDateString('pt-BR') : '—'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )
+            )}
+          </div>
+        )}
 
         {/* Encontros recentes */}
         {!isOptimistic && (
