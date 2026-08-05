@@ -214,6 +214,20 @@ function ehNomeDerivadoDeEmail(nome, email) {
   return /@privaterelay\.appleid\.com$/i.test(em) && norm(n) === norm(prefixo);
 }
 
+// nomeEhEnderecoDeEmail · o campo NOME contém um endereço de e-mail inteiro.
+// Forma DIFERENTE do ehNomeDerivadoDeEmail: aqui não há e-mail na coluna própria
+// pra comparar — a pessoa (ou o transcritor do import) digitou o e-mail no lugar
+// do nome. 3 casos medidos em 04/08, dois vindos do
+// `import_next_historico_2025_2026` (lista de presença transcrita) e um do wifi.
+// ⚠️ Também é sinal de CONTATO PERDIDO: em 2 dos 3 a coluna `email` está vazia,
+// então o sistema tem um e-mail que não usa. Vira trabalho humano (o nome real
+// não é derivável do endereço), NUNCA exclusão.
+function nomeEhEnderecoDeEmail(nome) {
+  const n = String(nome || '').trim();
+  if (!n || /\s/.test(n)) return false;   // nome com espaço não é um endereço
+  return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(n);
+}
+
 // _consolidarCpfNoMatch · quando a pessoa entrou COM CPF mas ligou por sinal
 // fraco (e-mail/telefone+nome/nascimento+nome), consolida o CPF no membro
 // ligado — é o "CPF tardio" (pessoa converteu antes sem CPF, voltou com CPF).
@@ -410,6 +424,7 @@ module.exports = {
   nomesMesmaPessoa,
   ehNomePlaceholder,
   ehNomeDerivadoDeEmail,
+  nomeEhEnderecoDeEmail,
   buscarCandidatos,
   acharOuCriar,
   acharOuCriarGuardado,

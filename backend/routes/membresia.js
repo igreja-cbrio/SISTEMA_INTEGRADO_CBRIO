@@ -2795,13 +2795,22 @@ router.delete('/checkins/:id', authorize('admin', 'diretor'), async (req, res) =
 const CENSO_PLACEHOLDER = 'contribuinte%';
 
 // Base viva do censo: pessoa ativa, não deletada e com nome de gente.
-function queryBaseCenso(select, opts) {
-  return supabase
+// `soMembros` recorta em `status='membro_ativo'`.
+// ⚠️ Os DOIS recortes vão no payload de propósito. "Cobertura de quem?" não é
+// pergunta técnica: a base viva inclui ~2.9 mil `visitante` (gente que responde
+// o censo no culto, e deve responder) e a membresia formal é bem menor. Escolher
+// um só faria o painel afirmar uma definição que é da liderança, não minha — e
+// "quem falta" com 3 mil visitantes é lista de cobrança inútil, enquanto só-
+// membros esconde metade de quem respondeu.
+function queryBaseCenso(select, opts, soMembros = false) {
+  let q = supabase
     .from('mem_membros')
     .select(select, opts)
     .eq('active', true)
     .is('deleted_at', null)
     .not('nome', 'ilike', CENSO_PLACEHOLDER);
+  if (soMembros) q = q.eq('status', 'membro_ativo');
+  return q;
 }
 
 function censoSchemaAusente(error) {
@@ -2848,9 +2857,11 @@ router.get('/censo/cobertura', authorizeModule('membresia', 1), async (req, res)
     }
 
     // ── Base e respondentes (COUNT no banco · nenhuma linha transferida) ──
-    const [rBase, rResp] = await Promise.all([
+    const [rBase, rResp, rMemb, rMembResp] = await Promise.all([
       queryBaseCenso('id', { count: 'exact', head: true }),
       queryBaseCenso('id', { count: 'exact', head: true }).not('censo_respondido_em', 'is', null),
+      queryBaseCenso('id', { count: 'exact', head: true }, true),
+      queryBaseCenso('id', { count: 'exact', head: true }, true).not('censo_respondido_em', 'is', null),
     ]);
     // As colunas de mem_membros vêm da MESMA migration das de pendentes, mas
     // uma aplicação parcial não pode virar "0% de cobertura" (número errado é
@@ -2866,6 +2877,12 @@ router.get('/censo/cobertura', authorizeModule('membresia', 1), async (req, res)
 
     const total = rBase.count || 0;
     const jaResponderam = rResp.count || 0;
+    const totalMembros = rMemb.count || 0;
+    const respMembros = rMembResp.count || 0;
+    const recorte = (t, r) => ({
+      total: t, respondidos: r, faltando: Math.max(0, t - r),
+      pct: t ? Math.round((r / t) * 1000) / 10 : 0,
+    });
 
     let novos = 0, comConflito = 0, aplicados = 0, aRevisar = 0;
     const porVinculo = { membro: 0, congregado: 0, visitante: 0, nao_informado: 0 };
@@ -2899,12 +2916,9 @@ router.get('/censo/cobertura', authorizeModule('membresia', 1), async (req, res)
       disponivel: true,
       // A janela vai NO PAYLOAD pra tela poder rotular o número.
       janela: { desde, ate: new Date().toISOString().slice(0, 10) },
-      base: {
-        total,
-        respondidos: jaResponderam,
-        faltando: Math.max(0, total - jaResponderam),
-        pct: total ? Math.round((jaResponderam / total) * 1000) / 10 : 0,
-      },
+      // `base` = todo mundo ativo (inclui visitante) · `membros` = só membro_ativo
+      base: recorte(total, jaResponderam),
+      membros: recorte(totalMembros, respMembros),
       submissoes: {
         // pedidos × PESSOAS: quem preenche 2× conta 1 pessoa (a mesma régua de
         // vínculo × pessoa dos Grupos). Sem isso o total infla e não bate com a
@@ -2934,7 +2948,10 @@ router.get('/censo/faltantes', authorizeModule('membresia', 2), async (req, res)
     const offset = Math.max(parseInt(req.query.offset) || 0, 0);
     const q = (req.query.q || '').toString().trim();
 
-    let query = queryBaseCenso('id, nome, telefone, email, status', { count: 'exact' })
+    // `recorte=membros` restringe a fila de cobrança à membresia formal — é o
+    // uso real ("quem da membresia ainda não respondeu"), sem os visitantes.
+    const soMembros = req.query.recorte === 'membros';
+    let query = queryBaseCenso('id, nome, telefone, email, status', { count: 'exact' }, soMembros)
       .is('censo_respondido_em', null)
       .order('nome', { ascending: true })
       .range(offset, offset + limit - 1);

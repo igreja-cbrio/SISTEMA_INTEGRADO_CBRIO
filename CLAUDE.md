@@ -403,6 +403,79 @@ chamado em teste porque ele ESCREVE).
 que (a) a conta é criada, (b) nasce 1 membro só, (c) o profile tem `membro_id`.
 Rollback = colar a definição antiga (está no corpo do PR).
 
+### ⚠️ O gatilho novo NÃO fecha o caso do nome ABREVIADO (05/08)
+
+Aplicado e conferido ao vivo (o espelho SQL `fn_nome_derivado_de_email` bate com
+o JS nos 8 casos, inclusive acento e relay da Apple). Mas sobra um furo que o
+matcher não pode fechar: quando o provedor manda o nome **abreviado**, o ramo
+"e-mail + NOME compatível" recusa e um fantasma nasce de novo.
+
+Caso real medido: **Maria Victória existia DUAS vezes** —
+`"Victória Lannes"` (auth, sem chave) e `"Maria Victória Lannes Campos"`
+(`membresia_aprovacao`, com cpf+tel+nascimento). Os 2 pendentes dela foram
+aprovados, então a aprovação criou um SEGUNDO membro em vez de ligar no fantasma.
+
+⚠️ E a fila de Duplicatas **não enxergava o par**: `duplicidadePolicy` exige o
+mesmo PRIMEIRO nome (`ta[0] !== tb[0]` → recusa), e o nome legal dela é *Maria*
+enquanto ela usa *Victória*. Veredito medido antes do fix:
+`{"incluir":false,"contradicoes":["Nomes incompatíveis"]}`.
+
+**Ramo novo em `duplicidadePolicy`** (não afrouxei `nomesPodemSerMesmaPessoa`, que
+tem casos-regressão documentados): e-mail EXATAMENTE igual + **exatamente um lado
+é stub de login** (`origem_cadastro='auth'` sem cpf e sem telefone) + tokens do
+nome menor **TODOS** contidos no maior → entra com prioridade **alta**.
+⚠️ 100% de containment, não 75%: com 75% cônjuges no mesmo e-mail com sobrenome em
+comum entrariam ("Ana Souza Lima" × "João Souza Lima" = 2 de 3 tokens). Está
+mutation-testado. Aqui o e-mail não é o endereço da família — é a credencial que
+autenticou, e é por isso que ele pesa mais que no caso geral.
+⚠️ Os vetos de identidade (CPF/nascimento/gênero divergentes) rodam ANTES e
+continuam mandando.
+
+**`nomeEhEnderecoDeEmail`** — forma DIFERENTE do derivado-do-prefixo: o e-mail
+está no campo do NOME (3 casos · 2 do `import_next_historico_2025_2026`, 1 do
+wifi). Em 2 dos 3 a coluna `email` está VAZIA, então é também contato perdido. O
+nome real não é derivável do endereço → aviso próprio pra humano, nunca exclusão.
+
+**Cobertura do censo com DOIS recortes.** `/censo/cobertura` devolve `base` (todos
+os ativos · inclui ~2.9 mil `visitante`) e `membros` (`status='membro_ativo'`), e o
+painel virou um botão. ⚠️ Não é indecisão: "cobertura de quem?" é definição da
+liderança, e escolher um faria o painel afirmar algo que não é nosso — além de
+"quem falta" com 3 mil visitantes ser lista de cobrança inútil. `/censo/faltantes`
+aceita `recorte=membros`.
+
+**Testes no gate:** `test:duplicidade` (que existia e **não estava no gate**) e
+`test:nome-email`.
+
+### ✅ Pendências que a medição fechou (05/08)
+
+- **pool-pg em `projects.js`/`patrimonio.js`**: `grep` não acha nenhum consumidor
+  de `query()`/`pool` em `backend/` — `patrimonio.js:70` diz explicitamente que o
+  fallback foi removido. A senha recusada do `DATABASE_URL` afeta **só script
+  local**, nenhum endpoint de produção. Levantei como suspeita; a medição fechou.
+- **Cadastros pendentes órfãos**: `status='pendente'` = **0** (a aprovação em lote
+  de 04/08 drenou a fila). Não há backfill a fazer.
+- **FKs pra `mem_membros`**: `profiles.membro_id`, `vol_profiles.membresia_id`,
+  `next_matriculas.membro_id`, `mem_cadastros_pendentes.duplicado_de_id`,
+  `mem_contribuicoes.membro_id`, `kids_responsaveis.membro_id` — **todas existem**
+  (testadas pelo embed do PostgREST, que só funciona com FK) e **0 profiles
+  apontando pra membro inexistente**. Fundir é seguro: `merge_membros` reaponta.
+  ⚠️ Eu havia suspeitado do contrário pela lei nº 10; verifiquei em vez de assumir.
+
+### ⏳ Em aberto, dependendo de DECISÃO (não de código)
+
+- **`"22 pessoas -"`** — não é pessoa, é uma CONTAGEM: virou membro `membro_ativo`
+  + batismo `realizado` de 26/01/2025 + trilha concluída. Apagar perde a
+  informação de que 22 pessoas foram batizadas; manter infla membresia em 1 e
+  sub-conta batismos em 21. Opções: (a) deixar e documentar; (b) soft-delete do
+  membro + trilha, preservando o registro de batismo com observação.
+- **O par da Maria Victória** — agora VISÍVEL na fila de Duplicatas com prioridade
+  alta. Fundir é 1 clique da Naná (keep = o cadastro completo). Não fundi: hard
+  delete de pessoa é "ok caso a caso".
+- **Nome real da mãe do MURILO Mendes** (`Juliafuncionalfight@gmail.com`) — não
+  vou adivinhar num registro de responsável Kids.
+- **O app pedir o nome na primeira tela** — é o único conserto real do nome
+  derivado do e-mail, e é no repo do app.
+
 ### Alarmes meus que NÃO se sustentaram (registrados de propósito)
 
 - **`pco_import_2026` = 292 "nos últimos 30 dias"**: é **um import único de
