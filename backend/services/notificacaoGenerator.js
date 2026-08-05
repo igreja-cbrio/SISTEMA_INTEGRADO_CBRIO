@@ -615,7 +615,7 @@ async function gerarNotificacoesMembresia() {
       mensagem: dias === 1
         ? `${c.nome} enviou cadastro de membresia ontem e aguarda aprovação.`
         : `${c.nome} aguarda aprovação de membresia há ${dias} dias.`,
-      link: '/ministerial/membresia',
+      link: '/ministerial/membresia?tab=cadastros&status=pendente',
       severidade,
       chaveDedup: `cadastro_pendente_${c.id}`,
     });

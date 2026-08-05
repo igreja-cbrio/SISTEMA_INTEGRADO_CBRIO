@@ -689,7 +689,14 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
         mensagem: ehCenso
           ? `${nome.trim()} respondeu o censo e o cadastro precisa de revisão${censoResultado?.conflitos?.length ? ` (${censoResultado.conflitos.length} campo(s) em conflito)` : ''}.`
           : `${nome.trim()} enviou um cadastro pelo formulário público.`,
-        link: '/ministerial/membresia',
+        // ⚠️ Deep link até a ABA e o STATUS certos. Antes ia pra
+        // `/ministerial/membresia` e caía na lista de 3.973 membros, sem pista
+        // de onde estava o cadastro a revisar. Conflito do censo mantém o
+        // status `duplicado` (a submissão tem `duplicado_de_id`), então é esse
+        // o filtro — chegar na aba com "pendente" esconderia a própria linha.
+        link: ehCenso
+          ? `/ministerial/membresia?tab=cadastros&status=${data.status === 'duplicado' ? 'duplicado' : 'pendente'}`
+          : '/ministerial/membresia?tab=cadastros&status=pendente',
         severidade: 'info',
         chaveDedup: `novo_cadastro_${data.id}`,
       }).catch(err => console.error('[PUBLIC CADASTRO] notificação falhou:', err.message));
