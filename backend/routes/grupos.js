@@ -2937,6 +2937,65 @@ router.post('/pedidos/:pedidoId/aprovar', authorizeModule('grupos', 3), async (r
   } catch (e) { console.error('[Pedido aprovar]', e.message); res.status(500).json({ error: 'Erro ao aprovar pedido' }); }
 });
 
+// POST /api/grupos/pedidos/:pedidoId/aprovar-direto — body: { grupo_id? }
+// A TRIAGEM decide por cima (Marcos · 2026-08-05): erro humano de recusa é
+// frequente (caso real: 4 mulheres devolvidas por engano na "Confira a lista"
+// do MULHER ÚNICA), então a equipe pode aprovar um pedido rejeitado/devolvido/
+// encaminhado E, opcionalmente, mudar o grupo ali mesmo — sem depender do link
+// do líder nem do aceite da pessoa (diferente do "Sugerir outro grupo").
+// O pedido é reaberto pra 'pendente' e passa pelo aprovarPedidoCore canônico
+// (cria vínculo, avisa líder e pessoa, registra evento) — nada de 2º caminho
+// de aprovação com regras próprias.
+router.post('/pedidos/:pedidoId/aprovar-direto', authorizeModule('grupos', 3), async (req, res) => {
+  try {
+    const grupoNovoId = typeof req.body?.grupo_id === 'string' && req.body.grupo_id ? req.body.grupo_id : null;
+    const { data: pedido, error: ePed } = await supabase.from('mem_grupo_pedidos')
+      .select('id, status, grupo_id, nome').eq('id', req.params.pedidoId).is('deleted_at', null).maybeSingle();
+    if (ePed) throw ePed;
+    if (!pedido) return res.status(404).json({ error: 'Pedido não encontrado' });
+    if (!['pendente', 'devolvido', 'rejeitado', 'encaminhado'].includes(pedido.status)) {
+      return res.status(409).json({ error: `Pedido já foi ${pedido.status}` });
+    }
+
+    // Realocação opcional: valida o grupo de destino contra o catálogo vivo.
+    let grupoDestinoNome = null;
+    const vaiRealocar = grupoNovoId && grupoNovoId !== pedido.grupo_id;
+    if (vaiRealocar) {
+      const { data: gNovo } = await supabase.from('mem_grupos')
+        .select('id, nome, ativo').eq('id', grupoNovoId).is('deleted_at', null).maybeSingle();
+      if (!gNovo || gNovo.ativo === false) {
+        return res.status(400).json({ error: 'Grupo de destino inválido ou inativo' });
+      }
+      grupoDestinoNome = gNovo.nome;
+    }
+
+    // Reabre + realoca num UPDATE só, com guarda de corrida no status atual
+    // (uma aprovação/recusa simultânea não é sobrescrita — quem perde vê 409).
+    const statusAntes = pedido.status;
+    if (statusAntes !== 'pendente' || vaiRealocar) {
+      const upd = { status: 'pendente', decidido_por: null, decidido_por_nome: null, decidido_em: null };
+      if (vaiRealocar) upd.grupo_id = grupoNovoId;
+      const { data: claimed, error: eUpd } = await supabase.from('mem_grupo_pedidos')
+        .update(upd).eq('id', pedido.id).eq('status', statusAntes).select('id');
+      if (eUpd) throw eUpd;
+      if (!claimed || !claimed.length) {
+        return res.status(409).json({ error: 'Pedido mudou de status — recarregue a lista' });
+      }
+      // Linha do tempo: a decisão "por cima" fica registrada com quem fez e de
+      // onde veio (o core registra o 'aprovado' logo em seguida). Awaited de
+      // propósito (serverless descarta trabalho pendente pós-res.json).
+      await registrarEventoPedido(pedido.id, 'aprovado_triagem', {
+        status_anterior: statusAntes,
+        ...(grupoDestinoNome ? { realocado_para: grupoDestinoNome } : {}),
+      }, req.user.name);
+    }
+
+    const r = await aprovarPedidoCore(pedido.id, req.user);
+    if (!r.ok) return res.status(r.code).json({ error: r.error });
+    res.json({ success: true, grupo_id: r.grupo_id || null });
+  } catch (e) { console.error('[Pedido aprovar-direto]', e.message); res.status(500).json({ error: 'Erro ao aprovar pedido' }); }
+});
+
 // POST /api/grupos/pedidos/:pedidoId/rejeitar — body: { motivo? }
 // Quem recusa AQUI é a EQUIPE da triagem (Naná/Nélio — o líder não usa a
 // plataforma: ele decide pelo link do WhatsApp, e a recusa dele DEVOLVE o

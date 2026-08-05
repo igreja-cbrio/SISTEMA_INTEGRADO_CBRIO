@@ -506,6 +506,21 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
     } catch (e) { toast.error(e.message || 'Erro ao rejeitar'); }
   };
 
+  // Aprovação "por cima" da triagem (Marcos · 05/08): aceita a pessoa mesmo com
+  // o pedido recusado/devolvido (erro humano de recusa é frequente) e permite
+  // trocar o grupo na mesma ação, sem passar pelo link do líder nem pelo aceite
+  // da pessoa. Devolve true pro painel fechar o formulário embutido.
+  const aprovarDireto = async (p, grupoId) => {
+    try {
+      await api.aprovarPedidoDireto(p.id, grupoId || null);
+      toast.success(grupoId && grupoId !== p.grupo_id
+        ? 'Pessoa aprovada no grupo escolhido'
+        : 'Pedido aprovado');
+      depois();
+      return true;
+    } catch (e) { toast.error(e.message || 'Erro ao aprovar'); return false; }
+  };
+
   const carregarGrupos = async () => {
     if (gruposAtivos !== null) return;
     try {
@@ -1121,6 +1136,7 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
                                   gruposAtivos={gruposAtivos}
                                   enviandoSugestao={enviandoSugestao}
                                   aprovar={aprovar} rejeitar={rejeitar} sugerir={sugerir}
+                                  aprovarDireto={aprovarDireto} carregarGrupos={carregarGrupos}
                                   pausarInscricoes={pausarInscricoes}
                                   fecharSugestao={() => { setSugerindoId(null); setGrupoSugestao(''); setMotivoSel(''); setMotivoLivre(''); }}
                                 />
@@ -1260,13 +1276,32 @@ function PainelPedido({
   rejectingId, setRejectingId, motivoRej, setMotivoRej,
   sugerindoId, abrirSugestao, grupoSugestao, setGrupoSugestao,
   motivoSel, setMotivoSel, motivoLivre, setMotivoLivre, motivoSugestaoFinal,
-  gruposAtivos, enviandoSugestao, aprovar, rejeitar, sugerir, pausarInscricoes, fecharSugestao,
+  gruposAtivos, enviandoSugestao, aprovar, rejeitar, sugerir, aprovarDireto, carregarGrupos,
+  pausarInscricoes, fecharSugestao,
 }) {
   const grupo = p.mem_grupos;
   const lider = grupo?.mem_membros;
   const cap = capacidadeInfo(grupo);
   const isRejecting = rejectingId === p.id;
   const isSugerindo = sugerindoId === p.id;
+  // Painel local da aprovação direta da triagem (aceitar mesmo recusado e/ou
+  // trocar o grupo ali mesmo). Estado local: só um card usa por vez na prática
+  // e não disputa com os painéis compartilhados de rejeitar/sugerir.
+  const [aprovandoDireto, setAprovandoDireto] = useState(false);
+  const [grupoAprovacao, setGrupoAprovacao] = useState('');
+  const [salvandoAprovacao, setSalvandoAprovacao] = useState(false);
+  const foiRecusado = ['devolvido', 'rejeitado'].includes(p.status);
+  const abrirAprovacaoDireta = () => {
+    setAprovandoDireto(true); setGrupoAprovacao('');
+    setRejectingId(null);
+    carregarGrupos?.();
+  };
+  const confirmarAprovacaoDireta = async () => {
+    setSalvandoAprovacao(true);
+    const ok = await aprovarDireto(p, grupoAprovacao || null);
+    setSalvandoAprovacao(false);
+    if (ok) { setAprovandoDireto(false); setGrupoAprovacao(''); }
+  };
 
   return (
     <div style={{ background: C.bg, borderRadius: 10, padding: 12 }}>
@@ -1296,7 +1331,8 @@ function PainelPedido({
         <div style={{ fontSize: 11.5, color: C.t2, marginBottom: 10, padding: '6px 10px', background: C.violetBg, borderRadius: 6, lineHeight: 1.5 }}>
           Recusado pelo líder{p.decidido_por_nome ? <> <strong>{String(p.decidido_por_nome).replace(' (link WhatsApp)', '')}</strong></> : ''}
           {p.motivo_rejeicao ? <> — motivo interno: <em>{p.motivo_rejeicao}</em></> : ''}. A pessoa
-          ainda não foi comunicada: sugira outro grupo (o motivo que você escolher vai junto no WhatsApp) ou rejeite de vez.
+          ainda não foi comunicada: se a recusa foi engano, use «Aprovar mesmo assim» (dá pra trocar o
+          grupo ali); ou sugira outro grupo (a pessoa decide pelo WhatsApp) ou rejeite de vez.
         </div>
       )}
       {p.status === 'encaminhado' && (
@@ -1313,7 +1349,8 @@ function PainelPedido({
       {p.status === 'rejeitado' && (
         <div style={{ fontSize: 11.5, color: C.t2, marginBottom: 10, padding: '6px 10px', background: C.redBg, borderRadius: 6, lineHeight: 1.5 }}>
           Rejeitado{p.motivo_rejeicao ? <> — motivo interno: <em>{p.motivo_rejeicao}</em></> : ''}. Se ainda houver
-          caminho pra pessoa, «Sugerir outro grupo» reabre o pedido como encaminhado.
+          caminho pra pessoa: «Aprovar mesmo assim» reabre e aprova na hora (dá pra trocar o grupo),
+          «Sugerir outro grupo» reabre o pedido como encaminhado (a pessoa decide pelo link).
         </div>
       )}
       {p.decidido_por_nome && p.decidido_em && (
@@ -1323,8 +1360,10 @@ function PainelPedido({
       )}
 
       {/* 'rejeitado' também mostra ação (Marcos · 14/07): encaminhar pra outro
-          grupo fica sempre disponível, independente de quem recusou. */}
-      {podeEditar && ['pendente', 'devolvido', 'encaminhado', 'rejeitado'].includes(p.status) && !isRejecting && !isSugerindo && (
+          grupo fica sempre disponível, independente de quem recusou. E desde
+          05/08 a triagem pode APROVAR por cima de qualquer status não-final
+          (recusa por engano é frequente), inclusive trocando o grupo. */}
+      {podeEditar && ['pendente', 'devolvido', 'encaminhado', 'rejeitado'].includes(p.status) && !isRejecting && !isSugerindo && !aprovandoDireto && (
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', alignItems: 'center', flexWrap: 'wrap' }}>
           {cap?.cheio && grupo?.aceitando_inscricoes !== false && (
             <Button size="sm" variant="ghost" onClick={() => pausarInscricoes(grupo)} style={{ marginRight: 'auto', color: C.amber }}>
@@ -1334,6 +1373,11 @@ function PainelPedido({
           <Button size="sm" variant="ghost" onClick={() => abrirSugestao(p)} style={{ color: C.t2 }}>
             Sugerir outro grupo
           </Button>
+          {p.status === 'pendente' && (
+            <Button size="sm" variant="ghost" onClick={abrirAprovacaoDireta} style={{ color: C.t2 }}>
+              Aprovar em outro grupo
+            </Button>
+          )}
           {p.status !== 'rejeitado' && (
             <Button size="sm" variant="outline" onClick={() => { setRejectingId(p.id); setMotivoRej(''); }}>
               <X size={14} style={{ marginRight: 4 }} /> Rejeitar de vez
@@ -1344,6 +1388,42 @@ function PainelPedido({
               <Check size={14} style={{ marginRight: 4 }} /> Aprovar
             </Button>
           )}
+          {['devolvido', 'rejeitado', 'encaminhado'].includes(p.status) && (
+            <Button size="sm" onClick={abrirAprovacaoDireta}>
+              <Check size={14} style={{ marginRight: 4 }} /> Aprovar mesmo assim
+            </Button>
+          )}
+        </div>
+      )}
+
+      {aprovandoDireto && (
+        <div style={{ background: C.card, borderRadius: 8, padding: 10, marginTop: 8, border: `1px solid ${C.border}` }}>
+          <div style={{ fontSize: 12, color: C.t2, marginBottom: 8, lineHeight: 1.5 }}>
+            Aprovar <strong>{p.nome}</strong> agora — a pessoa entra direto no grupo, sem passar pelo líder
+            nem esperar aceite.
+            {foiRecusado && <> Esta aprovação passa <strong>por cima da recusa</strong> registrada.</>}
+            {' '}Se quiser, escolha outro grupo abaixo.
+          </div>
+          {gruposAtivos === null ? (
+            <div style={{ fontSize: 12, color: C.t3, padding: '6px 0' }}>Carregando grupos...</div>
+          ) : (
+            <select
+              value={grupoAprovacao}
+              onChange={e => setGrupoAprovacao(e.target.value)}
+              style={{ width: '100%', padding: '8px 10px', borderRadius: 8, fontSize: 13, border: `1px solid ${C.border}`, background: C.card, color: C.text }}
+            >
+              <option value="">Manter: {grupo?.nome || 'grupo do pedido'}</option>
+              {(gruposAtivos || []).filter(g => g.id !== p.grupo_id).map(g => (
+                <option key={g.id} value={g.id}>{g.nome}{g.bairro ? ` · ${g.bairro}` : ''}</option>
+              ))}
+            </select>
+          )}
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
+            <Button size="sm" variant="outline" onClick={() => { setAprovandoDireto(false); setGrupoAprovacao(''); }}>Cancelar</Button>
+            <Button size="sm" disabled={salvandoAprovacao} onClick={confirmarAprovacaoDireta}>
+              <Check size={14} style={{ marginRight: 4 }} /> {salvandoAprovacao ? 'Aprovando...' : 'Aprovar agora'}
+            </Button>
+          </div>
         </div>
       )}
 
@@ -1435,6 +1515,7 @@ const EVENTO_META = {
   recusado_lider: { label: 'Recusado pelo líder', cor: C.red },
   encaminhado: { label: 'Encaminhado pra outro grupo', cor: C.blue },
   aprovado: { label: 'Aprovado', cor: C.green },
+  aprovado_triagem: { label: 'Aprovado pela triagem (por cima da recusa)', cor: C.green },
   rejeitado_final: { label: 'Rejeitado (final)', cor: C.red },
   resolvido_outro_grupo: { label: 'Aprovada em outro grupo', cor: C.green },
   cancelado: { label: 'Cancelado', cor: C.t3 },
@@ -1457,6 +1538,8 @@ function Timeline({ eventos }) {
           const partes = [];
           if (d.grupo) partes.push(`grupo ${d.grupo}`);
           if (d.grupo_sugerido) partes.push(`sugerido: ${d.grupo_sugerido}`);
+          if (d.realocado_para) partes.push(`movido para: ${d.realocado_para}`);
+          if (d.status_anterior) partes.push(`estava ${d.status_anterior}`);
           if (d.motivo) partes.push(`motivo enviado à pessoa: “${d.motivo}”`);
           if (d.motivo_interno) partes.push(`motivo interno: “${d.motivo_interno}”`);
           if (d.origem) partes.push(d.origem === 'formulario_publico' ? 'via QR/formulário' : d.origem === 'cadastro_interno' ? 'via cadastro' : d.origem);
