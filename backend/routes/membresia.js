@@ -3018,6 +3018,21 @@ router.get('/censo/disparo/resultado', authorizeModule('membresia', 2), async (r
       if (data.length < PAGE) break;
     }
 
+    // Quem está com CPF em CONFLITO: informou, e o CPF pertence a outro
+    // cadastro. ⚠️ Sem isso a tela dizia só "sem CPF" e lia-se "a pessoa não
+    // preencheu" — quando o CPF é obrigatório no formulário e ela preencheu.
+    // Confundir "não informou" com "informamos e seguramos de propósito" faz a
+    // equipe procurar problema no lugar errado (e duvidar do formulário).
+    const emConflito = new Set();
+    {
+      const { data: pend } = await supabase
+        .from('identidade_pendencias')
+        .select('membro_id')
+        .eq('status', 'pendente')
+        .in('origem', ['censo_link_pessoal', 'censo_formulario']);
+      for (const p of pend || []) if (p.membro_id) emConflito.add(p.membro_id);
+    }
+
     const responderam = [];
     for (let i = 0; i < convites.length; i += 200) {
       const lote = convites.slice(i, i + 200);
@@ -3030,13 +3045,17 @@ router.get('/censo/disparo/resultado', authorizeModule('membresia', 2), async (r
       for (const m of membros || []) {
         const c = lote.find(x => x.membro_id === m.id);
         if (!c || !(m.censo_respondido_em >= c.enviado_em)) continue;
+        const temCpf = String(m.cpf || '').replace(/\D/g, '').length === 11;
         responderam.push({
           nome: m.nome,
           email: m.email,
           rodada: c.rodada,
           canal: c.canal,
           respondeu_em: m.censo_respondido_em,
-          tem_cpf: String(m.cpf || '').replace(/\D/g, '').length === 11,
+          tem_cpf: temCpf,
+          // 'com_cpf' | 'conflito' (informou, CPF é de outro cadastro) |
+          // 'sem_cpf' (não veio CPF — não deveria acontecer, é obrigatório)
+          cpf_situacao: temCpf ? 'com_cpf' : (emConflito.has(m.id) ? 'conflito' : 'sem_cpf'),
         });
       }
     }
