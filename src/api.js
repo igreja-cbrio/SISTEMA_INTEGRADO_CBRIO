@@ -435,8 +435,13 @@ export const inscricoesApi = {
   // ⚠️ `pareamento` devolve o código UMA vez e ele não é recuperável depois —
   // a tela tem que mostrar na hora. Gerar outro revoga o anterior.
   totens: () => get('/inscricoes/totens'),
+  // Contas de quiosque candidatas a SER um totem (o vínculo é o que faz o
+  // servidor resolver a estação pelo usuário logado).
+  totensContas: () => get('/inscricoes/totens/contas'),
   criarTotem: (data) => post('/inscricoes/totens', data),
   atualizarTotem: (id, data) => patch(`/inscricoes/totens/${id}`, data),
+  // ⚠️ Código do AGENTE DO PINPAD (Fase 3), não do navegador: o totem de
+  // inscrições vive dentro do Totem Membro e a estação sai da conta logada.
   parearTotem: (id, rotulo) => post(`/inscricoes/totens/${id}/pareamento`, { rotulo }),
   revogarTotem: (id, motivo) => post(`/inscricoes/totens/${id}/revogar`, { motivo }),
   revogarCredencialTotem: (tokenId, motivo) => post(`/inscricoes/totens/tokens/${tokenId}/revogar`, { motivo }),
@@ -3491,6 +3496,18 @@ export const waInbox = {
 
 // Módulo Comunicação (central de WhatsApp · C3 backend · rotas /comunicacao/*)
 export const comunicacao = {
+  // Inventário dos disparos automáticos + o público de cada um. `pessoas=1`
+  // carrega nome/telefone e o servidor só devolve com nível >= 2.
+  // ⚠️ Timeout maior: cada item resolve o próprio público paginando a base
+  // (voluntários, grupos, membros do app) — no timeout padrão de 30s a tela
+  // diria "tempo esgotado" num trabalho que deu certo.
+  automaticas: (params = {}) => {
+    const p = new URLSearchParams();
+    if (params.dias) p.set('dias', String(params.dias));
+    if (params.pessoas) p.set('pessoas', '1');
+    const qs = p.toString();
+    return get(`/comunicacao/automaticas${qs ? `?${qs}` : ''}`, { timeout: 90_000 });
+  },
   numeros: {
     list: () => get('/comunicacao/numeros'),
     criar: (body) => post('/comunicacao/numeros', body),

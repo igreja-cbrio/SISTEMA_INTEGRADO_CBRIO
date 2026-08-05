@@ -1,5 +1,12 @@
 // ============================================================================
-// Middleware · autenticação por ESTAÇÃO de totem (2026-08-05)
+// Middleware · autenticação do AGENTE DO PINPAD por estação (2026-08-05)
+//
+// ⚠️ SEM CHAMADOR HOJE, de propósito: ele existe pro agente do pinpad (serviço
+// Windows · Fase 2/3), que é o único cliente sem sessão de usuário. O totem de
+// inscrições NÃO passa por aqui — ele vive dentro do Totem Membro, já logado na
+// conta de quiosque, e a estação sai de `totemEstacao.estacaoDaConta`.
+// Se em algum momento isto continuar sem chamador e a Fase 2 tiver sido
+// descartada, apagar em vez de deixar middleware de auth órfão no repo.
 //
 // ⚠️ Header DEDICADO (`x-totem-token`), NUNCA `Authorization`. O token de
 // estação não pode encostar no caminho de `authenticate`/`authorizeModule`
