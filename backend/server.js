@@ -59,6 +59,8 @@ app.use(rateLimit({
     || req.path.startsWith('/api/public/grupos')
     || req.path.startsWith('/api/public/evento')
     || req.path.startsWith('/api/public/membresia')
+    // Doação: a tela de pagamento faz polling e a igreja inteira sai por 1 IP.
+    || req.path.startsWith('/api/public/generosidade')
     || req.path.startsWith('/api/pagamentos-webhook'),
 }));
 app.use(hpp());
@@ -179,6 +181,10 @@ app.use('/api/public/apresentacao-criancas', require('./routes/publicApresentaca
 // seja, o form morria por volta da 3ª pessoa. Limiters próprios (generoso na
 // submissão · dedicado no probing) em routes/publicMembresia.js.
 app.use('/api/public/membresia', require('./routes/publicMembresia'));
+// Doação (Generosidade) montada ANTES do publicLimiter estrito: a página de
+// pagamento faz POLLING do status, então sob o teto de 30/15min a pessoa tomaria
+// 429 no meio do próprio pagamento. Limiter próprio generoso no router.
+app.use('/api/public/generosidade', require('./routes/publicGenerosidade'));
 app.use('/api/public', publicLimiter);
 
 app.use('/api/public/rh-onboarding', require('./routes/publicRhOnboarding'));

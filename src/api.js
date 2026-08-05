@@ -485,6 +485,35 @@ export const eventoPublico = {
   },
 };
 
+// Generosidade · página pública de doação (/doar · sem auth)
+//
+// ⚠️ Esta é a página que o APP abre no NAVEGADOR EXTERNO. A guideline 3.2.2(iv)
+// da App Store proíbe coletar doação dentro do app de quem não é nonprofit
+// aprovado pela Apple, e permite arrecadar fora dele ("via Safari"). Não
+// consumir estes endpoints de dentro de WebView do app.
+export const generosidadePublica = {
+  config: () => fetch(`${API}/public/generosidade/config`)
+    .then(async r => { const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j; }),
+  doar: (dados) => fetch(`${API}/public/generosidade/doacao`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(dados),
+  }).then(async r => {
+    const j = await r.json();
+    if (!r.ok) { const e = new Error(j.error || 'Erro'); e.campo = j.campo || null; throw e; }
+    return j;
+  }),
+  status: (token) => fetch(`${API}/public/generosidade/${encodeURIComponent(token)}`)
+    .then(async r => { const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j; }),
+  // Em erro do provedor o corpo traz `pagamento` com o estado ATUAL, pra a tela
+  // não regredir pra vazio e poder voltar a aba pra forma que existe.
+  metodo: (token, metodo, parcelas = 1) => fetch(`${API}/public/generosidade/${encodeURIComponent(token)}/metodo`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ metodo, parcelas }),
+  }).then(async r => {
+    const j = await r.json();
+    if (!r.ok) { const e = new Error(j.error || 'Erro'); e.pagamento = j.pagamento || null; throw e; }
+    return j;
+  }),
+};
+
 // Decisão online · formulário público "Eu aceito Jesus" (sem auth)
 export const decisaoOnline = {
   ativo: () => fetch(`${API}/public/decisao-online/ativo`).then(r => r.json()),

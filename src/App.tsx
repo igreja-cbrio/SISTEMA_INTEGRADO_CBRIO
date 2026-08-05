@@ -301,6 +301,11 @@ const GovernancaRitual = lazyWithRetry(() => import('./pages/governanca/RitualPa
 const InscricaoNext = lazyWithRetry(() => import('./pages/public/InscricaoNext'));
 const EventoExterno = lazyWithRetry(() => import('./pages/public/EventoExterno'));
 const PagamentoInscricao = lazyWithRetry(() => import('./pages/public/PagamentoInscricao'));
+// Doação (Generosidade) · página PÚBLICA. ⚠️ É esta página que o app de membros
+// abre no NAVEGADOR EXTERNO — a guideline 3.2.2(iv) da App Store proíbe coletar
+// doação dentro do app de quem não é nonprofit aprovado pela Apple, e permite
+// arrecadar fora dele ("via Safari"). Não replicar o fluxo dentro do app.
+const Doar = lazyWithRetry(() => import('./pages/public/Doar'));
 const InscricaoComprovante = lazyWithRetry(() => import('./pages/public/InscricaoComprovante'));
 const PoliticaReembolso = lazyWithRetry(() => import('./pages/public/PoliticaReembolso'));
 const InscricaoEventoCheckin = lazyWithRetry(() => import('./pages/InscricaoEventoCheckin'));
@@ -539,6 +544,10 @@ function AppRoutes() {
       <Route path="/evento/:slug" element={<Suspense fallback={<Loading />}><EventoExterno /></Suspense>} />
       {/* Status do pagamento da inscrição · público, pelo public_token da cobrança */}
       <Route path="/pagamento/:token" element={<Suspense fallback={<Loading />}><PagamentoInscricao /></Suspense>} />
+      {/* Doação · público. `/doar` é o formulário; `/doar/:token` é a tela do
+          pagamento (a pessoa pode voltar nela pelo link). */}
+      <Route path="/doar" element={<Suspense fallback={<Loading />}><Doar /></Suspense>} />
+      <Route path="/doar/:token" element={<Suspense fallback={<Loading />}><Doar /></Suspense>} />
       {/* Comprovante da inscrição (SPEC-06) · público, token ASSINADO — é a URL do QR do check-in */}
       <Route path="/i/c/:token" element={<Suspense fallback={<Loading />}><InscricaoComprovante /></Suspense>} />
       {/* Política de reembolso · o CDC exige informação PRÉVIA e clara, então

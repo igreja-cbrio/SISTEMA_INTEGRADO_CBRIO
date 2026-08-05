@@ -36,6 +36,12 @@ const {
 // Fachada do núcleo de pagamentos. ⚠️ NUNCA importar `providers/*` aqui — é o
 // que faz trocar de PSP custar 1 arquivo + 1 env (ver services/pagamentos/tipos.js).
 const pagamentos = require('../services/pagamentos');
+// Régua ÚNICA da tela pública de pagamento (compartilhada com a doação). É onde
+// vivem as leis do parcelado e da forma que o provedor CONFIRMOU — uma segunda
+// cópia dessa lógica seria a garantia de que uma das duas telas ia divergir.
+const {
+  estadoBasePagamento, escolherFormaPagamento, sincronizarSeParada,
+} = require('../services/pagamentos/telaPublica');
 
 // Limiter próprio generoso (mesma lógica do publicGrupos/publicNps): o evento
 // inteiro sai por 1 IP de Wi-Fi — sem teto prático de inscrições (D9).
@@ -430,23 +436,11 @@ async function respostaPagamento(cobranca) {
   const comprovantes = daInscricao ? await comprovantesDaInscricao(daInscricao) : [];
   const ofertados = Array.isArray(cobranca.metodos_ofertados) ? cobranca.metodos_ofertados : [];
   return {
-    status: cobranca.status,
-    pago: cobranca.status === 'pago',
-    valor_centavos: cobranca.valor_centavos,
-    valor_pago_centavos: cobranca.valor_pago_centavos,
-    metodo: cobranca.metodo || null,
-    parcelas: cobranca.parcelas_total || null,
-    // Quais formas a tela deve oferecer. Config do evento cruzada com a
-    // capacidade do provider — não é PII. Sem isto a página teria que chutar
-    // os três e poderia oferecer boleto num evento que não aceita boleto.
-    metodos: ofertados,
-    parcelas_max: cobranca.parcelas_max || null,
-    checkout_url: cobranca.checkout_url || null,
-    pix_payload: cobranca.pix_payload || null,
-    boleto_linha_digitavel: cobranca.boleto_linha_digitavel || null,
-    boleto_url: cobranca.boleto_url || null,
-    expira_em: cobranca.expira_em || null,
-    pago_em: cobranca.pago_em || null,
+    // Campos comuns a TODA tela pública de pagamento (status, valor, forma,
+    // formas ofertadas, artefatos, prazos) vêm da régua única em
+    // `services/pagamentos/telaPublica.js` — a doação usa a MESMA. Só o que é
+    // específico de INSCRIÇÃO fica aqui embaixo.
+    ...estadoBasePagamento(cobranca),
     evento_nome: cobranca.metadata?.evento_nome || null,
     evento_slug: cobranca.metadata?.evento_slug || null,
     // Código legível da inscrição (CBR-AAAA-NNNNNN) — é o que a pessoa cita
@@ -573,49 +567,15 @@ router.post('/pagamento/:token/metodo', async (req, res) => {
     const cobranca = await pagamentos.consultarPorToken(req.params.token);
     if (!cobranca) return res.status(404).json({ error: 'Cobrança não encontrada' });
 
-    const metodo = String(req.body?.metodo || '').trim();
-    const ofertados = Array.isArray(cobranca.metodos_ofertados) ? cobranca.metodos_ofertados : [];
-    // Respeita a configuração do EVENTO: forma fora da lista não é oferecida
-    // nem por chamada direta. Lista vazia = cobrança antiga, antes do seletor.
-    if (ofertados.length && !ofertados.includes(metodo)) {
-      return res.status(400).json({ error: 'Esta forma de pagamento não está disponível para este evento.' });
-    }
-    if (cobranca.status === 'pago') return res.json(await respostaPagamento(cobranca));
-
-    // Parcelas: teto validado NO SERVIDOR contra o do evento. Confiar no número
-    // que vem da tela deixaria alguém parcelar em 21x um retiro configurado
-    // para 3x — e o teto existe porque ele é a data em que a igreja paga o local.
-    // `parcelas_max` NULL = vale o teto da conta do PSP (decisão registrada), e
-    // não 1 — tratar NULL como 1x tiraria o parcelado de todo evento que não
-    // configurou teto.
-    const tetoEvento = Number(cobranca.parcelas_max) > 0
-      ? Number(cobranca.parcelas_max)
-      : (pagamentos.capacidades(cobranca.provider)?.parcelas_max || 1);
-    const pedidas = Math.floor(Number(req.body?.parcelas) || 1);
-    const parcelas = metodo === 'cartao' && pedidas > 1
-      ? Math.min(pedidas, tetoEvento) : 1;
-
-    try {
-      const r = await pagamentos.definirMetodo(cobranca, metodo, { parcelas });
-      // `alterada: false` = a cobrança não aceita mais troca de forma (já tem
-      // dinheiro dentro ou está terminal). Era um 200 SILENCIOSO: a aba mudava,
-      // o servidor não, e a tela ficava mostrando duas verdades sem dizer nada.
-      if (r.alterada === false) {
-        return res.status(409).json({
-          error: 'Esta cobrança não aceita mais troca de forma de pagamento.',
-          pagamento: await respostaPagamento(r.cobranca),
-        });
-      }
-      return res.json(await respostaPagamento(r.cobranca));
-    } catch (e) {
-      console.error('[publicEvento] definir forma de pagamento:', e.message);
-      // 502: o problema é do outro lado (conta do provedor sem aquele meio
-      // habilitado, por exemplo). A tela mostra a alternativa que existe.
-      return res.status(502).json({
-        error: 'Não conseguimos preparar esta forma de pagamento agora.',
-        pagamento: await respostaPagamento(cobranca),
-      });
-    }
+    // Validação da forma, teto de parcelas no SERVIDOR, `definirMetodo` e o
+    // mapeamento de erro (400 forma indisponível · 409 cobrança travada · 502
+    // provedor recusou) vivem em `telaPublica.escolherFormaPagamento`.
+    const r = await escolherFormaPagamento(cobranca, {
+      metodo: req.body?.metodo, parcelas: req.body?.parcelas,
+    });
+    const pagamento = await respostaPagamento(r.cobranca);
+    if (r.error) return res.status(r.status).json({ error: r.error, pagamento });
+    return res.json(pagamento);
   } catch (e) {
     console.error('[publicEvento] metodo do pagamento:', e.message);
     res.status(500).json({ error: 'Erro ao escolher a forma de pagamento.' });
@@ -629,16 +589,9 @@ router.get('/pagamento/:token', async (req, res) => {
 
     // Rede de segurança nº 1: parado há mais de 2 min sem resolver → consulta o
     // PSP na hora. O webhook é otimização de latência; ninguém deve ficar
-    // olhando "aguardando" porque uma entrega se perdeu.
-    const paradaHa = Date.now() - new Date(cobranca.updated_at).getTime();
-    if (['criada', 'aguardando_pagamento'].includes(cobranca.status) && paradaHa > 120000) {
-      try {
-        const r = await pagamentos.sincronizar(cobranca);
-        if (r?.cobranca) cobranca = r.cobranca;
-      } catch (e) {
-        console.error('[publicEvento] sincronizar cobrança:', e.message);
-      }
-    }
+    // olhando "aguardando" porque uma entrega se perdeu. Régua compartilhada com
+    // a doação (`telaPublica.sincronizarSeParada`).
+    cobranca = await sincronizarSeParada(cobranca);
 
     res.json(await respostaPagamento(cobranca));
   } catch (e) {

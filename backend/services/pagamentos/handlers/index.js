@@ -26,6 +26,7 @@
 // lançar — aí a reentrega é desejável.
 
 const inscricao = require('./inscricao');
+const generosidade = require('./generosidade');
 
 const REGISTRO = new Map();
 
@@ -35,6 +36,7 @@ function registrar(handler) {
 }
 
 registrar(inscricao);
+registrar(generosidade);
 
 /**
  * Handler da origem, ou null. Ausência é legítima (`origem_tipo:'manual'` =
