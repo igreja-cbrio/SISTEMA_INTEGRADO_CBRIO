@@ -4072,6 +4072,47 @@ teste.
   completar-cadastro) — refetch em cima do que a pessoa está digitando é pior que
   dado velho.
 
+## ⚠️⚠️ GATE DA FICHA no app · entrar exige cadastro completo (2026-08-05)
+
+Decisão do Marcos, depois de eu apontar o risco e ele reafirmar: *"o gate de CPF
+precisa ter, todas as pessoas que entrarem no sistema devem pedir para
+completarem o cadastro antes, após completar elas acessam normalmente."*
+
+**Ligado.** `GET /app/identidade/status` passou a exigir a ficha FECHADA (nome de
+gente + telefone + nascimento + **CPF** + **sexo**) e `completarCadastro` roda com
+`exigirCpf: true, exigirSexo: true`. Antes o CPF era só informativo, e o efeito
+medido era pior: a pessoa entrava "completa" e levava **400 na primeira
+inscrição** (`POST /app/inscricoes` exige CPF) — 50 das 75 contas.
+
+**Impacto medido em produção antes de subir** (88 contas do app): **12 entram
+direto** · **71 vão ver a tela de cadastro** · 5 sem cadastro vivo (os
+soft-deletados de 04/08 — o matcher cria/religa quando elas completarem). O que
+falta nelas: **sexo em 70** (a coluna `genero` só começou a ser gravada hoje),
+CPF em 49, nascimento em 44, telefone em 43.
+
+### ⚠️ A ÚNICA isenção: contas de REVISÃO DE LOJA
+
+`CONTAS_REVISAO_LOJA` em `services/appIdentidade.js` (3 e-mails declarados à
+Apple/Google). Motivo: **o revisor não tem CPF brasileiro** — com o gate sem
+isenção ele trava na tela de cadastro e o build é recusado com "não conseguimos
+completar o registro", a rejeição mais comum de app com login. Isso não é bug de
+usuário: **bloqueia o release inteiro**.
+
+⚠️ **E por que não é só pôr um CPF nessas contas:** CPF com DV válido PERTENCE A
+ALGUÉM REAL e é a chave mais forte do matcher — na primeira vez que essa pessoa
+preenchesse um formulário, seria ligada à conta de revisão. Uma delas já teve um
+CPF DV-válido, e ele foi anulado por isso.
+⚠️ **Não acrescentar e-mail de gente nessa lista** — seria criar uma porta pra
+entrar no app sem cadastro, exatamente o que o gate existe pra impedir.
+✅ Conferido com a régua real: as 3 contas mostram `falta=[cpf]` e **PASSAM**.
+
+### O app pergunta, não decide
+
+`/identidade/status` devolve **`exige_cpf`** e a tela `completar-cadastro` só
+bloqueia o CPF quando o servidor diz que sim. Falha de rede mantém o default
+**true (fail-closed)**: sem isso, ficar offline viraria porta pra entrar sem
+cadastro. É a mesma lei do resto — quem define o que é válido é o backend.
+
 ## Grupos · contagens (vínculo × pessoa) + nova régua visitante/frequentador (2026-07-23)
 
 Auditoria (4 agentes) das divergências que o Marcos pegou entre as abas. **Régua de
