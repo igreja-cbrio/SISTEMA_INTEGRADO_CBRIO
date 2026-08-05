@@ -368,23 +368,59 @@ async function dispararCenso({ status, canais = ['whatsapp', 'email'], reenviar 
     resultado.whatsapp.motivo = 'template_nao_configurado';
     resultado.whatsapp.adiados = alvoWhats.length;
   } else if (whats.envia.length) {
-    const r = await fila.enfileirarLote(whats.envia.map(p => ({
+    const montar = p => ({
       telefone: p.telefone,
       template: nomeTemplate(),
       params: [primeiroNome(p.nome), linkDe(p.id)],
       contexto: CONTEXTO,
       refId: p.id,
-    })));
-    resultado.whatsapp.enfileirados = r.queued || 0;
-    resultado.whatsapp.motivo = r.motivo || null;
-    if (r.queued) {
-      // Grava JÁ: o enfileiramento aconteceu, e o registro não pode depender de
-      // o resto da função chegar ao fim.
-      const regWhats = await registrarConvites(whats.envia.map(p => ({
-        membro_id: p.id, canal: 'whatsapp', rodada, enviado_por: por, ok: true,
-      })));
-      gravados += regWhats.gravados;
-      if (regWhats.erro) erroRegistro = regWhats.erro;
+    });
+
+    // ⚠️⚠️ CANÁRIO · a env existir NÃO prova que o template funciona.
+    // `whatsappPronto()` só olha se a env está setada; um nome com UM caractere
+    // errado (ou template ainda não aprovado / com nº de variáveis diferente)
+    // passa pela guarda. E `enfileirarLote` INSERE sem tentar enviar, então o
+    // disparo marcaria as ~200 pessoas como convidadas, a Meta recusaria tudo
+    // depois (132001 é falha PERMANENTE, sem retry) e a rodada seguinte as
+    // pularia: convite perdido pra sempre, o mesmo estrago que o semáforo
+    // existe pra evitar — só que entrando pela porta do lado.
+    //
+    // Então a PRIMEIRA vai sozinha e SÍNCRONA (`enfileirar` tenta na hora). Só
+    // depois de a Meta aceitar é que as outras entram em lote. Custo: 1
+    // mensagem. Evita: a audiência inteira queimada em silêncio.
+    const [primeira, ...resto] = whats.envia;
+    const r0 = await fila.enfileirar(montar(primeira));
+
+    if (r0?.permanente === true) {
+      // Recusa permanente da Meta = o template não serve. Aborta a rodada e
+      // NÃO registra ninguém (nem a primeira, que não foi entregue).
+      resultado.whatsapp.motivo = 'template_recusado';
+      resultado.whatsapp.detalhe = r0.reason || null;
+      resultado.whatsapp.adiados = alvoWhats.length;
+    } else {
+      // Aceito (enviado agora) ou pendente por falha PASSAGEIRA (ex.: teto
+      // diário) — nos dois casos a fila é dona da entrega e o convite conta.
+      const regPrimeira = await registrarConvites([
+        { membro_id: primeira.id, canal: 'whatsapp', rodada, enviado_por: por, ok: true },
+      ]);
+      gravados += regPrimeira.gravados;
+      if (regPrimeira.erro) erroRegistro = regPrimeira.erro;
+      resultado.whatsapp.enfileirados = 1;
+
+      if (resto.length) {
+        const r = await fila.enfileirarLote(resto.map(montar));
+        resultado.whatsapp.enfileirados += r.queued || 0;
+        resultado.whatsapp.motivo = r.motivo || null;
+        if (r.queued) {
+          // Grava JÁ: o enfileiramento aconteceu, e o registro não pode depender
+          // de o resto da função chegar ao fim.
+          const regWhats = await registrarConvites(resto.map(p => ({
+            membro_id: p.id, canal: 'whatsapp', rodada, enviado_por: por, ok: true,
+          })));
+          gravados += regWhats.gravados;
+          if (regWhats.erro) erroRegistro = regWhats.erro;
+        }
+      }
     }
   }
 
