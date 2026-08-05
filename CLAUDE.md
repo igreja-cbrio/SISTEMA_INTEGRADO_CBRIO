@@ -675,6 +675,80 @@ Corrigido nas 3 camadas: campo no form (`masculino|feminino`, **nunca "outro"**)
 backend, e `genero` entrou em `CAMPOS_CENSO` do reconciliador — sem isso o dado chegava do censo
 e era **descartado em silêncio**.
 
+## ⚠️⚠️ LEI · em operação LONGA, gravar o efeito DURANTE, não no fim (2026-08-04)
+
+Três incidentes no mesmo dia, todos da mesma família. A lei que sai deles vale
+pra qualquer coisa que faça N ações externas numa requisição:
+
+**1 · Aprovação em massa (49 cadastros).** O servidor concluiu; o cliente abortou
+em 30s (`request()` tem timeout padrão de 30s) e a tela disse *"Tempo esgotado ao
+falar com o servidor. Recarregue a página ou tente de novo."* — para um trabalho
+que **deu certo**. A lista continuou mostrando os 50 pendentes que já não
+existiam. O caminho que a mensagem sugeria (tentar de novo) reprocessaria 49
+cadastros. Correção: **pedaços de 8 com progresso real no botão**
+("Aprovando 16 de 49…").
+
+**2 · Disparo do censo (200 e-mails).** Mesma coisa, com prejuízo real: os 200
+e-mails **saíram** e o registro em `mem_censo_convites` — que era **um único
+insert no FIM** — falhou. Ninguém ficou marcado como convidado, e a rodada
+seguinte teria reenviado pras mesmas 200 pessoas. Diagnóstico veio do
+`get_runtime_logs` da Vercel (POST 200 + a mensagem do erro), **não** de
+suposição: pelo que a tela mostrava, a conclusão natural era "nada saiu".
+
+⇒ **A LEI: o registro do que já aconteceu vai em BLOCOS, durante o laço.** Morte
+no meio (timeout da função, rede, deploy) deixa gravado o que já saiu, e a
+próxima execução continua de onde parou em vez de duplicar. Registro no fim
+transforma qualquer interrupção num bug com prejuízo externo.
+
+⇒ **Corolário na UI: timeout de cliente NÃO é prova de que nada aconteceu.** A
+mensagem nesses fluxos não pode dizer "tente de novo" — a do disparo agora diz
+que o envio provavelmente continuou e manda conferir pela prévia. Em envio pra
+fora, "tente de novo" é a instrução mais cara que a tela pode dar.
+
+**3 · `ON CONFLICT` não usa índice PARCIAL.** A UNIQUE de `mem_censo_convites`
+nasceu com `where membro_id is not null` e o upsert do PostgREST estourava
+*"there is no unique or exclusion constraint matching the ON CONFLICT
+specification"* — o Postgres exige que o statement repita o predicado do índice,
+coisa que o `upsert()` do supabase-js não expressa. Índice recriado **sem
+predicado** (`NULL` não conflita de qualquer forma: `NULLS DISTINCT` é o padrão).
+Régua: **índice usado por `ON CONFLICT` nunca é parcial.**
+
+⚠️ Os 200 convites foram **reconstruídos** com a MESMA ordem do disparo
+(`created_at asc`, primeiros 200 elegíveis), com **deriva zero conferida** antes
+(ninguém respondeu, ganhou CPF ou foi criado no intervalo). Verificação
+independente que fechou: a prévia dizia "451 ficam para a próxima" e o sistema
+recalculou **451** depois do reparo. Coluna `observacao` marca as linhas como
+reconstrução — **não** usar `erro` pra isso (`erro` significa "o canal recusou",
+e sujá-lo faz a contagem de falhas mentir).
+
+## ⚠️ Censo · o CPF era DESCARTADO, e o painel dizia que estava tudo bem (2026-08-04)
+
+O pior bug do dia, e o mais silencioso. `CAMPOS_CENSO` do `censoReconciliar`
+exclui `cpf` **de propósito** (CPF tem serviço próprio, `cpfReconciliar`, que
+trata conflito de identidade e CPF já pertencente a outro membro) — mas esse
+serviço **nunca era chamado** no `publicMembresia.js`. Medido em produção: as
+primeiras 4 pessoas do disparo preencheram o CPF, a submissão foi marcada
+`aplicado` (sem conflito, tudo "certo"), e **o CPF não chegou a nenhum cadastro**.
+A campanha existe pra coletar CPF de ~2.000 pessoas que não têm.
+
+- Corrigido: o caminho do censo chama `reconciliarCpfTardio`, com `confianca`
+  espelhando a força do vínculo — `cpf` e `token_censo` são fortes; sinal fraco
+  exige nascimento conferível e vai pra fila humana se divergir (é o que impede
+  gravar o CPF de uma pessoa no cadastro de outra da mesma família).
+- Reparo: 4 CPFs consolidados. **2 casos NÃO foram gravados** porque o CPF
+  informado já pertencia a outro cadastro — viraram `identidade_pendencias`
+  (`cpf_conflito`). ⚠️ **Isso é GANHO, não erro:** é a pessoa duplicada se
+  identificando: o convite foi pro cadastro sem CPF e ela respondeu com o CPF do
+  outro. A campanha revela duplicata que ninguém achava.
+
+**⚠️ A lição que passa do bug: o painel de cobertura NÃO mede a campanha.** Ele
+tem a base inteira no denominador (200 convites com 8 respostas = "0,1%") e conta
+**RESPOSTA, não CPF** — então as respostas subiam enquanto todos os CPFs eram
+descartados, e **nada na tela denunciava**. Daí a `vw_censo_campanha` e o bloco
+"O que as rodadas já trouxeram" no card: convidados → responderam → **passaram a
+ter CPF** → viraram conflito. Métrica de campanha mede o OBJETIVO, não a
+atividade; quando as duas divergem, é a atividade que engana.
+
 ## ⚠️ Membresia · aprovação em massa da fila de cadastros (2026-08-04 · SEM migration)
 
 Pedido do Matheus: selecionar alguns ou todos e aprovar de uma vez, *"mas o sistema deve ter uma
