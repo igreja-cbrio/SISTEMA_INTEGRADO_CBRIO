@@ -2421,6 +2421,8 @@ export const membresia = {
     // agora é gravado em blocos DURANTE o envio, então um timeout aqui não
     // duplica nada; este teto existe pra pessoa ver o resultado.
     disparar: (body) => post('/membresia/censo/disparo', body, { timeout: 300000 }),
+    // Resultado da CAMPANHA (convidados → responderam → com CPF), por rodada.
+    disparoResultado: () => get('/membresia/censo/disparo/resultado'),
     // Prévia do e-mail: HTML renderizado pela MESMA função do disparo.
     disparoPreviewEmail: (nome) => get('/membresia/censo/disparo/preview-email' + (nome ? `?nome=${encodeURIComponent(nome)}` : '')),
   },

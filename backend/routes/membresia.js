@@ -2980,6 +2980,75 @@ router.get('/censo/disparo/preview', authorizeModule('membresia', 2), async (req
   }
 });
 
+// GET /api/membresia/censo/disparo/resultado
+// Resultado da CAMPANHA por rodada + quem respondeu (nominal).
+//
+// ⚠️ Mede a campanha, NÃO a igreja. O painel de cobertura tem a base inteira no
+//    denominador (uma rodada de 200 com 7 respostas aparece como 0,1%) e conta
+//    RESPOSTA, não CPF — foi por isso que o CPF ficou sendo descartado por um
+//    bug sem ninguém perceber: o número que a tela mostrava subia igual.
+//
+// Nível 2: a lista carrega nome e e-mail. ⚠️ CPF NÃO viaja — só o booleano de
+// "tem CPF agora", que é o que a tela precisa saber.
+router.get('/censo/disparo/resultado', authorizeModule('membresia', 2), async (req, res) => {
+  try {
+    const { data: rodadas, error } = await supabase
+      .from('vw_censo_campanha')
+      .select('*')
+      .order('rodada', { ascending: false });
+    if (error) {
+      if (censoSchemaAusente(error) || error.code === '42P01') {
+        return res.json({ disponivel: false, rodadas: [], responderam: [], aviso: 'A view vw_censo_campanha ainda não foi criada.' });
+      }
+      throw error;
+    }
+
+    // Quem respondeu, para a tela poder mostrar nome. Paginado pelo cap de 1000.
+    const PAGE = 1000;
+    const convites = [];
+    for (let off = 0; ; off += PAGE) {
+      const { data, error: eC } = await supabase
+        .from('mem_censo_convites')
+        .select('membro_id, canal, rodada, enviado_em, ok')
+        .eq('ok', true)
+        .range(off, off + PAGE - 1);
+      if (eC) throw eC;
+      if (!data?.length) break;
+      convites.push(...data);
+      if (data.length < PAGE) break;
+    }
+
+    const responderam = [];
+    for (let i = 0; i < convites.length; i += 200) {
+      const lote = convites.slice(i, i + 200);
+      const { data: membros } = await supabase
+        .from('mem_membros')
+        .select('id, nome, email, cpf, censo_respondido_em')
+        .in('id', lote.map(c => c.membro_id))
+        .is('deleted_at', null)
+        .not('censo_respondido_em', 'is', null);
+      for (const m of membros || []) {
+        const c = lote.find(x => x.membro_id === m.id);
+        if (!c || !(m.censo_respondido_em >= c.enviado_em)) continue;
+        responderam.push({
+          nome: m.nome,
+          email: m.email,
+          rodada: c.rodada,
+          canal: c.canal,
+          respondeu_em: m.censo_respondido_em,
+          tem_cpf: String(m.cpf || '').replace(/\D/g, '').length === 11,
+        });
+      }
+    }
+    responderam.sort((a, b) => String(b.respondeu_em).localeCompare(String(a.respondeu_em)));
+
+    res.json({ disponivel: true, rodadas: rodadas || [], responderam });
+  } catch (e) {
+    console.error('[CENSO resultado]', e.message);
+    res.status(500).json({ error: 'Erro ao carregar o resultado da campanha' });
+  }
+});
+
 // GET /api/membresia/censo/disparo/preview-email
 // Renderiza o e-mail EXATAMENTE como ele sai (mesma função `corpoEmail` do
 // disparo — não uma imitação, senão a prévia mente).

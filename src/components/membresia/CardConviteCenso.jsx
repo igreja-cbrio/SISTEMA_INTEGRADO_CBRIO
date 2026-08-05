@@ -1,6 +1,8 @@
-import { useState, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { membresia } from '../../api';
-import { Send, AlertTriangle, RefreshCw, Mail, MessageSquare } from 'lucide-react';
+import {
+  Send, AlertTriangle, RefreshCw, Mail, MessageSquare, CheckCircle2, Users,
+} from 'lucide-react';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import {
@@ -47,6 +49,19 @@ export default function CardConviteCenso() {
   const [amostraEmail, setAmostraEmail] = useState(null);
   const [carregandoAmostra, setCarregandoAmostra] = useState(false);
 
+  // Resultado da CAMPANHA. Carrega sozinho, porque é o número que responde
+  // "está funcionando?" — o painel de cobertura acima mede a igreja inteira e
+  // faz uma rodada boa parecer 0,1%.
+  const [resultadoCampanha, setResultadoCampanha] = useState(null);
+  const [verQuemRespondeu, setVerQuemRespondeu] = useState(false);
+
+  const carregarResultado = useCallback(async () => {
+    try {
+      setResultadoCampanha(await membresia.censo.disparoResultado());
+    } catch { /* silencioso: é acompanhamento, não pode atrapalhar o disparo */ }
+  }, []);
+  useEffect(() => { carregarResultado(); }, [carregarResultado]);
+
   const verComoChega = async () => {
     setCarregandoAmostra(true);
     try {
@@ -92,6 +107,7 @@ export default function CardConviteCenso() {
       setResultado(r);
       setPrev(null);
       setConfirmar('');
+      carregarResultado();   // o bloco de rodadas reflete o disparo na hora
     } catch (e) {
       // ⚠️ Timeout aqui NÃO significa que nada saiu — o envio continua no
       // servidor e o registro é gravado em blocos durante o percurso. Dizer
@@ -152,6 +168,80 @@ export default function CardConviteCenso() {
           {incluirVisitantes ? 'Membros + visitantes' : 'Só membros ativos'}
         </button>
       </div>
+
+      {/* ── RESULTADO DAS RODADAS JÁ DISPARADAS ──
+          ⚠️ Este bloco mede a CAMPANHA. O painel de cobertura logo acima mede a
+          IGREJA (denominador ~3.973), então 200 convites com 8 respostas
+          aparecem lá como 0,1% — lê-se fracasso quando foi 4% de conversão. E
+          o painel conta RESPOSTA, não CPF: em 04/08 as respostas subiam
+          enquanto um bug descartava todos os CPFs, e nada na tela denunciava. */}
+      {!!resultadoCampanha?.rodadas?.length && (
+        <div style={{
+          marginBottom: 14, padding: 12, borderRadius: 10,
+          border: `1px solid ${C.border}`, background: '#00B39D0d',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+            <CheckCircle2 style={{ width: 13, height: 13, color: C.primary }} />
+            <strong style={{ fontSize: 12, color: C.text }}>O que as rodadas já trouxeram</strong>
+          </div>
+
+          {resultadoCampanha.rodadas.map((r) => {
+            const pct = r.convidados ? Math.round(1000 * r.responderam / r.convidados) / 10 : 0;
+            return (
+              <div key={`${r.rodada}-${r.canal}`} style={{ fontSize: 12, color: C.text2, lineHeight: 1.8 }}>
+                <strong>Rodada {r.rodada}</strong> ({r.canal}):{' '}
+                {r.convidados} convidados ·{' '}
+                <span style={{ color: C.primary, fontWeight: 700 }}>{r.responderam} responderam ({pct}%)</span> ·{' '}
+                {/* O número que É o objetivo da campanha. */}
+                <span style={{ color: C.green, fontWeight: 700 }}>{r.com_cpf} passaram a ter CPF</span>
+                {r.em_conflito_identidade > 0 && (
+                  <> · <span style={{ color: C.amber }}>{r.em_conflito_identidade} viraram conflito de identidade</span></>
+                )}
+                {r.falhas_no_envio > 0 && (
+                  <> · <span style={{ color: C.red }}>{r.falhas_no_envio} falharam no envio</span></>
+                )}
+              </div>
+            );
+          })}
+
+          <p style={{ fontSize: 11, color: C.text3, margin: '6px 0 0' }}>
+            Conflito de identidade não é erro: é alguém que informou um CPF já
+            usado por outro cadastro — duplicata revelada, para fundir em Entradas.
+          </p>
+
+          {!!resultadoCampanha.responderam?.length && (
+            <>
+              <Button
+                variant="outline" size="sm" style={{ marginTop: 10 }}
+                onClick={() => setVerQuemRespondeu((v) => !v)}
+              >
+                <Users style={{ width: 13, height: 13, marginRight: 6 }} />
+                {verQuemRespondeu ? 'Esconder quem respondeu' : `Ver quem respondeu (${resultadoCampanha.responderam.length})`}
+              </Button>
+              {verQuemRespondeu && (
+                <div style={{ marginTop: 8, maxHeight: 220, overflowY: 'auto' }}>
+                  {resultadoCampanha.responderam.map((p, i) => (
+                    <div key={`${p.email}-${i}`} style={{
+                      display: 'flex', alignItems: 'center', gap: 8,
+                      padding: '6px 0', borderBottom: `1px solid ${C.border}`, fontSize: 12,
+                    }}>
+                      <span style={{ flex: 1, color: C.text }}>{p.nome}</span>
+                      <span style={{ color: C.text3, fontSize: 11 }}>{p.email}</span>
+                      <span style={{
+                        fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 999,
+                        color: p.tem_cpf ? C.green : C.amber,
+                        background: p.tem_cpf ? '#10b98118' : '#f59e0b18',
+                      }}>
+                        {p.tem_cpf ? 'com CPF' : 'sem CPF'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         <Button variant="outline" size="sm" onClick={carregarPrevia} disabled={carregando || !canais.length}>
