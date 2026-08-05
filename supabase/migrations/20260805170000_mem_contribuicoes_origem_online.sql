@@ -19,6 +19,22 @@
 --
 -- ⚠️ O nome do CHECK é descoberto no CATÁLOGO antes de dropar (nunca decorado):
 -- o banco vivo pode ter constraint com nome diferente do arquivo original.
+--
+-- ⚠️⚠️ DRIFT REAL, medido antes de aplicar (05/08): o CHECK VIVO é
+--   ('manual','banco','pix','importacao','app')
+-- — tem **`app`**, que NÃO existe no arquivo `20260413170000` que criou a tabela.
+-- Alguém o acrescentou direto em produção (é o caminho de doação pelo app, das
+-- Edge Functions `generosidade-*`) e **há 1 linha usando** (10/06/2026).
+-- A 1ª versão desta migration recriava a lista a partir do ARQUIVO e teria
+-- DERRUBADO o `app`: `ADD CONSTRAINT` numa tabela que viola falha com 23514, e a
+-- migration morreria no meio. Por isso a lista abaixo é a do banco VIVO + o valor
+-- novo. Régua: escrever migration sobre `pg_get_constraintdef`, não sobre o
+-- arquivo que "deveria" descrever o estado.
+--
+-- ⚠️ `app` e `online` são canais DIFERENTES e os dois ficam: `app` = doação
+-- nativa dentro do aplicativo (Stripe/Apple Pay, hoje desligada até a Benevity);
+-- `online` = a porta pública `/doar` (Asaas), que o app abre no navegador. Fundir
+-- os dois faria "de onde veio essa doação?" perder a resposta.
 -- ============================================================================
 
 DO $$
@@ -49,15 +65,18 @@ BEGIN
     EXECUTE format('ALTER TABLE public.mem_contribuicoes DROP CONSTRAINT %I', v_nome);
   END IF;
 
+  -- ⚠️ `app` está aqui porque está no CHECK VIVO e TEM linha usando — ver o
+  -- bloco de DRIFT no topo. Removê-lo faz este ADD CONSTRAINT falhar (23514).
   ALTER TABLE public.mem_contribuicoes
     ADD CONSTRAINT mem_contribuicoes_origem_check
-    CHECK (origem IN ('manual', 'banco', 'pix', 'importacao', 'online'));
+    CHECK (origem IN ('manual', 'banco', 'pix', 'importacao', 'app', 'online'));
 END $$;
 
 COMMENT ON COLUMN public.mem_contribuicoes.origem IS
   'Como a contribuição chegou: manual (lançada no painel) · banco (conciliação de extrato) · '
-  'pix (chave da igreja) · importacao (planilha nominal) · online (doação pela porta pública '
-  '/doar, com cobrança em pag_cobrancas — a forma real fica em forma_pagamento).';
+  'pix (chave da igreja) · importacao (planilha nominal) · app (doação nativa dentro do '
+  'aplicativo) · online (doação pela porta pública /doar, com cobrança em pag_cobrancas — a '
+  'forma real fica em forma_pagamento).';
 
 -- ⚠️ NENHUMA tabela nova para a doação, de propósito. A "linha de domínio" da
 -- doação É a cobrança (`pag_cobrancas` com origem_tipo='generosidade'): uma
