@@ -3641,6 +3641,113 @@ Medido antes do fix: **0 recusas reais** tinham passado pelo caminho errado
 (os 16 `rejeitado` vivos eram teste de julho). A aprovação pelo app já era
 correta (`aprovarPedidoCore` = regra única, registra evento).
 
+## ⚠️⚠️ APP × ERP · varredura de tabelas e variáveis (2026-08-05)
+
+Pedido do Marcos: *"quero que você avalie todos as variáveis e tabelas dentro do
+nosso sistema mobile, pois algumas coisas acho que não fica alinhado, vi um caso
+aqui do next que diz que nao tem turma aberta, mas tem no sistema... isso é só um
+exemplo, mas provavelmente tem outras"*. Tinha. Inventário: **22 tabelas lidas
+DIRETO pelo app** (anon key + RLS) + **~30 pelas rotas `/api/app/*`**. O padrão
+que gera divergência é sempre o mesmo — **o app reproduz a régua do ERP em vez de
+consumi-la**, e quando a régua muda de um lado, o outro não sabe.
+
+**⚠️ LEI que sai daqui: quem decide o que é "válido" é o BACKEND, não o app.**
+O app lê tabela direto pelo que é dado DELE (perfil, devocional, cartão). Régua
+de negócio — o que está aberto, quem pode se inscrever, qual status vale — vem de
+endpoint. Foi assim que grupos (04/08) e Next (hoje) foram consertados.
+
+### 1 · NEXT lia a camada APOSENTADA (o caso que ele reportou) — CORRIGIDO
+
+Medido em 05/08: `next_eventos` tem **8 'agendado' cuja data máxima é 21/06**
+(todos no passado) e o app filtrava `.gte('data', hoje)` → lista vazia → *"não há
+encontros do NEXT agendados"*. No mesmo instante, `next_turmas` tinha **2 turmas
+ABERTAS**: "Agosto/01 2026" (encontros 02 e 09/08 · 35 matrículas) e "Agosto/02
+2026" (16 e 23/08 · 3). Os 3 endpoints de MEMBRO do app estavam no modelo antigo
+enquanto os de RESPONSÁVEL (escritos depois) já estavam no vivo — dois modelos no
+mesmo arquivo. Agora `/next/me`, `/next/inscrever` e `/next/encontros/:id/checkin`
+leem **turma → encontro → matrícula → presença**. Simulado contra produção antes
+de mergear: de `[]` para **3 encontros** (09, 16 e 23/08).
+- ⚠️ **De brinde, conserta o KPI**: `frequencia_next` passou a ler `next_presencas`
+  em 22/07 (migration 20260722250000) e o check-in do app carimbava
+  `next_inscricoes.check_in_at` — **check-in pelo celular não contava** desde
+  então. Agora grava presença no modelo vivo.
+- ⚠️ **`next_turmas.origem_mes` é NULL nas turmas de 2026** (só a de dez/2024 tem),
+  então `resolverTurma(mes)` do espelho nunca casava por mês e caía na "turma
+  aberta mais recente" = Agosto/02 (16/08), não a em curso. Por isso o
+  `/next/inscrever` escolhe a turma do **próximo encontro**, não a mais nova.
+- ⚠️ `espelharMatriculaDoEncontro` (services/nextMatricula.js) ficou **dormente** —
+  só `chaveMesMembro` é importado. Não apagar: o serviço documenta a chave
+  `origem_mes_key` e o porquê do espelho.
+- ⚠️ 1 Next por mês por pessoa é regra do banco (UNIQUE `origem_mes_key`): quem já
+  tem matrícula em agosto e tenta a 2ª turma recebe `jaInscrito`, não erro.
+
+### 2 · Status que NÃO EXISTE no banco (grupos) — CORRIGIDO no app
+
+`grupo-detalhe.tsx` decidia se a pessoa podia pedir entrada com
+`pedido.status !== "recusado"` — e **"recusado" nunca existiu**: o CHECK é
+`pendente|aprovado|rejeitado|devolvido|encaminhado`. Quem levou recusa ficava com
+"aguardando aprovação" **pra sempre**, em qualquer grupo. Medido: 20 pedidos vivos
+rejeitados/devolvidos (14 pessoas · 1 com conta no app). Comparação de string
+contra enum do banco sem fonte única é a mesma classe do `"recusado"`: **listar os
+status que valem, e comentar de onde vêm**.
+
+### 3 · Filtros que o ERP aplica e o app não (RLS não cobre) — CORRIGIDOS
+
+- **`mem_grupos`**: a policy é `FOR SELECT USING (true)` (catálogo) — não filtra
+  nada. O app abria grupo por id sem `deleted_at`/`ativo`: **137 soft-deletados +
+  38 `ativo=false` vivos** eram abríveis por deep link, com botão "Quero
+  participar".
+- **`mem_contribuicoes`** (comprovante de IR) e **`vol_inscricoes`** (soft-delete
+  LIBERADO em 28/07 pela M6b): sem `deleted_at IS NULL`. Hoje 0 apagadas nas duas
+  → **gatilho armado, não estrago**; o filtro é o que impede o dia em que houver.
+- ✅ **`app_destaques` NÃO tem esse problema** (alarme meu que caiu): a policy
+  `destaques_publicos` filtra `ativo` + janela `publica_em/expira_em` no banco. O
+  arquivo vive no repo do APP (`supabase/destaques.sql`), não nas migrations do
+  ERP — ver o item 5.
+
+### 4 · Dia em UTC no app (a mesma armadilha do `/culto/agora`)
+
+`lib/cultos.ts` calculava "hoje" com `toISOString()`. Das 21h BRT em diante o dia
+UTC já virou, então **o culto de quarta (20h) saía da lista de "próximos" durante
+o próprio culto**. Corrigido com a régua do `hojeBRT()` do backend. ⚠️ Toda data
+de operação da igreja é BRT — vale pro app como já valia pro censo, pro Kids e pro
+`cultoDeAgora`.
+
+### 5 · O app tem 4 portas de inscrição; o sistema tem 7
+
+O hub `/inscricoes` do app oferecia Batismo · Grupos · NEXT · Voluntariado (+
+"Eventos abertos"). Faltava **Apresentação de crianças** — o "apresentação de
+bebês" que ele viu na aba do sistema. Entrou como **porta WEB** (abre
+`cbrio.org/apresentacao-criancas` no navegador in-app, como os eventos): a porta
+exige dado de CRIANÇA e consentimento de MENOR (art. 14 §1º) com snapshot do
+texto, e uma 2ª implementação seria um segundo caminho de escrita de pessoa —
+exatamente o que o Contrato de porta existe pra impedir. Seguem fora do app (por
+serem de gestão, não de membro): líderes/anfitriões e o totem de bebês.
+
+⚠️ **O SCHEMA DO APP VIVE NO REPO DO APP**, não nas migrations do ERP:
+`app_destaques`, `app_notificacoes`, `app_push_tokens`, `app_grupos_temporada`,
+`app_solicitacoes_exclusao`, `handle_new_user_membro` e cia. estão em
+`igreja-cbrio/Aplicativo-CBRio/supabase/*.sql`. **É por isso que a lei do gatilho
+de `auth.users` (04/08) registrou "nunca foi commitado"** — não estava neste repo;
+está no outro. Auditoria de tabela `app_*` que só olhe `supabase/migrations/`
+daqui conclui que a tabela não existe.
+
+### Alarmes meus que NÃO se sustentaram (registrados de propósito)
+
+- **"o sexo do app está sendo descartado"**: a gravação de `mem_membros.genero`
+  **já está na main** (`appIdentidade.js` · e melhor que a minha versão: filtra
+  `deleted_at`). Ia "consertar" o que funciona.
+- **"`app_destaques` ignora `ativo`/janela"**: a RLS filtra (item 3).
+- Números que corrigi na 2ª medição: os "113 rejeitados" de grupos eram **20
+  vivos** (o resto é teste de julho soft-deletado) e `vol_inscricoes`
+  soft-deletadas são **0**, não "várias".
+
+**Fica em aberto (não é código):** o `/completar-cadastro` do app **exige** sexo e
+CPF no cabeçalho do arquivo mas o CPF **não bloqueia** no código (decisão da
+revisão da Apple) — o cabeçalho mente pra próxima sessão e foi corrigido no repo
+do app. E os gates `exigirCpf: true` / `completo: falta.length === 0` seguem
+represados até o build iOS ser aprovado.
+
 ## Grupos · contagens (vínculo × pessoa) + nova régua visitante/frequentador (2026-07-23)
 
 Auditoria (4 agentes) das divergências que o Marcos pegou entre as abas. **Régua de
