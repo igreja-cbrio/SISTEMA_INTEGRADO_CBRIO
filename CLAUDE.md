@@ -891,6 +891,57 @@ campanha: de **178 voluntários** com nascimento + telefone, os que podem recebe
 foram de **21 → 36** só com o reparo acima. Nada enviado até 05/08 porque o cron
 depende de cair no dia de alguém com opt-in.
 
+## ⚠️ WhatsApp · falha de entrega AVISA GENTE, e o módulo vem do contexto (2026-08-05)
+
+Autorizado pelo Matheus ao ligar o aniversário dos voluntários. Duas coisas
+erradas no mesmo caminho, as duas silenciosas:
+
+**1 · O `failed` do webhook não avisava ninguém.** A falha de entrega tem DOIS
+caminhos e só um deles notificava:
+
+| caminho | quando | antes |
+|---|---|---|
+| `whatsappFila.avisarFalhaTerminal` | a Meta **recusa na hora** (telefone inválido, código permanente) | ✅ notificava |
+| `publicWhatsapp.processarStatuses` | a Meta **aceita** (200 + message_id) e depois reporta `failed` | 🔴 só gravava `failed_at` |
+
+É no segundo que cai **"Message undeliverable" — número brasileiro válido SEM
+WhatsApp**, o caso que o próprio CLAUDE.md registrava como "não avisa ninguém".
+
+⚠️ **O `.select('id')` no UPDATE não é enfeite**: o `.is('failed_at', null)` faz
+o UPDATE ser idempotente, mas sem saber **quantas linhas mudaram** a reentrega
+da Meta (normal, e ela reentrega muitas vezes) avisaria de novo a cada entrega.
+Mesma lição da guarda de idempotência: **o efeito colateral tem que estar
+amarrado à transição real**, não à execução do handler.
+
+⚠️ **Dedup por (MÓDULO, DIA)** neste caminho, diferente do por-envio da fila, e
+de propósito: é aqui que caem os DISPAROS EM MASSA (aceito pra 200, `failed`
+chegando um por um). Um aviso por mensagem × fallback de 16 admin/diretor =
+centenas de linhas enterrando o sino — lição do censo e do lote de aprovação. O
+detalhe fica em `whatsapp_envios.failed_at/erro_status`. E como o dedup do
+`notificar` só vale enquanto **não lida**, falha nova depois de tratada volta a
+avisar (desejado).
+
+**2 · ⚠️ O PREFIXO DO CONTEXTO NÃO É UM MÓDULO.** `avisarFalhaTerminal` fazia
+`contexto.split('.')[0]`, e o contexto do aniversário é **`app.aniversario`** —
+o `app.` diz que o disparo nasceu de um evento do app, **não** que exista módulo
+"app" (conferido no catálogo: não existe). Resultado: `resolverDestinatarios`
+não achava regra e **todo** aviso de falha dos disparos do app caía no fallback
+de TODOS os admin/diretor. Aviso que chega pra 16 pessoas e não é de nenhuma
+não é tratado por ninguém.
+
+- **`backend/utils/whatsappModulo.js`** = régua PURA (em `utils/` pra entrar no
+  gate) mapeando contexto → `{modulo, link}`; `services/whatsappContexto.js` lê
+  o banco e notifica. **Os dois caminhos usam a MESMA régua** — o mapa duplicado
+  era garantia de divergirem.
+- ⚠️ Os 9 slugs do mapa foram conferidos no catálogo `modulos` (todos existem e
+  ativos). `voluntariado` tem 3 regras em `notificacao_regras`, então o aviso do
+  aniversário vai pros responsáveis, não pro fallback.
+- `src/test/whatsappModulo.test.ts` (9 casos · **no gate**) é **mutation-test da
+  causa raiz**: voltar pro `split('.')[0]` fica vermelho, e há uma asserção de
+  que todo módulo do mapa existe entre os slugs reais.
+- O aviso **nomeia a pessoa** quando dá (`ref_id` é o membro nos contextos de
+  `notificarMembro`) — "o telefone 21…" não diz a quem avisar.
+
 ## ⚠️ Folha por pessoa · o coordenador estratégico VÊ (decisão de 2026-08-05)
 
 Registrado pra não ser re-sinalizado como problema: **o coordenador estratégico
