@@ -109,6 +109,9 @@ const EVENTO_VAZIO = {
   vagas: '', inscricoes_encerram_em: '', recorre_ate: '',
   msg_sucesso_titulo: '', msg_sucesso_texto: '', msg_whatsapp: '',
   tem_sorteio: false, checkin_ativo: false,
+  // Aparece na lista do totem do lounge. false por padrão: o totem fica no hall,
+  // à vista de visitante, e publicar um evento não deve expô-lo ali por acidente.
+  no_totem: false,
   pagamento_ativo: false, valor_centavos: '',
   // Formas que ESTE evento aceita. Não é enfeite: a escolha da pessoa é o que
   // faz o provedor preparar o meio de pagamento (QR do Pix, boleto), e o que
@@ -188,6 +191,7 @@ export function EventoModal({ evento, areas, onClose, onSaved }: {
         msg_sucesso_texto: f.msg_sucesso_texto || null,
         msg_whatsapp: f.msg_whatsapp || null,
         tem_sorteio: !!f.tem_sorteio, checkin_ativo: !!f.checkin_ativo,
+        no_totem: !!f.no_totem,
         pagamento_ativo: !!f.pagamento_ativo,
         valor_centavos: f.pagamento_ativo && f.valor_centavos !== '' ? Math.round(Number(String(f.valor_centavos).replace(',', '.')) * 100) : null,
         pagamento_metodos: f.pagamento_ativo ? f.pagamento_metodos : [],
@@ -293,6 +297,9 @@ export function EventoModal({ evento, areas, onClose, onSaved }: {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!f.tem_sorteio} onChange={e => setF((s: any) => ({ ...s, tem_sorteio: e.target.checked }))} /> Sorteio (número da sorte)</label>
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!f.checkin_ativo} onChange={e => setF((s: any) => ({ ...s, checkin_ativo: e.target.checked }))} /> Check-in no dia</label>
+            <label className="flex items-center gap-2 text-sm" title="Mostra este evento na lista do totem do lounge. O totem fica no hall, à vista de qualquer pessoa que passa.">
+              <input type="checkbox" checked={!!f.no_totem} onChange={e => setF((s: any) => ({ ...s, no_totem: e.target.checked }))} /> Aparece no totem
+            </label>
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!f.pagamento_ativo} onChange={e => setF((s: any) => ({ ...s, pagamento_ativo: e.target.checked }))} /> Inscrição paga</label>
             {f.pagamento_ativo && (
               <div>

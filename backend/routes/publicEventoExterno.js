@@ -95,7 +95,7 @@ async function eventoEspinhaPorSlug(slug) {
 // evento que a página pública — rascunho/arquivado não abrem em lugar nenhum.
 async function eventoEspinhaPorId(id) {
   const { data } = await supabase.from('insc_eventos')
-    .select('id, nome, slug, area, data, hora, local, descricao, campos, capa_url, vagas, inscricoes_abrem_em, inscricoes_encerram_em, msg_sucesso_titulo, msg_sucesso_texto, tem_sorteio, pagamento_ativo, valor_centavos, pagamento_metodos, pagamento_expira_horas, parcelas_max, juros_repassados, status')
+    .select('id, nome, slug, area, data, hora, local, descricao, campos, capa_url, vagas, inscricoes_abrem_em, inscricoes_encerram_em, msg_sucesso_titulo, msg_sucesso_texto, tem_sorteio, pagamento_ativo, valor_centavos, pagamento_metodos, pagamento_expira_horas, parcelas_max, juros_repassados, status, no_totem')
     .eq('id', id).is('deleted_at', null).maybeSingle();
   if (!data || data.status === 'rascunho' || data.status === 'arquivado') return null;
   return data;
@@ -274,7 +274,7 @@ async function aplicarBeneficio(beneficio, inscricaoId) {
  * Cria (ou recupera) a cobrança da inscrição e espelha em `insc_pagamentos`,
  * que é a linha que a UI de inscrições lê. O estado canônico vive no motor.
  */
-async function cobrarInscricao({ ev, inscricaoId, val, membroId, valorCentavos }) {
+async function cobrarInscricao({ ev, inscricaoId, val, membroId, valorCentavos, estacaoId }) {
   const horas = Number(ev.pagamento_expira_horas) > 0 ? Number(ev.pagamento_expira_horas) : 48;
   const { cobranca } = await pagamentos.criarCobranca({
     origem_tipo: pagamentos.ORIGENS.INSCRICAO,
@@ -296,6 +296,9 @@ async function cobrarInscricao({ ev, inscricaoId, val, membroId, valorCentavos }
     pagador_email: val.email,
     pagador_telefone: val.telefone,
     membro_id: membroId || null,
+    // Totem: atribuído pelo SERVIDOR a partir da conta de quiosque logada.
+    // NULL = veio da web (o caso normal).
+    estacao_id: estacaoId || null,
     metadata: { evento_id: ev.id, evento_slug: ev.slug, evento_nome: ev.nome },
   });
 
@@ -727,6 +730,9 @@ router.get('/:slug', async (req, res) => {
 async function inscreverEspinha(req, res, ev, opts = {}) {
   const body = req.body || {};
   const origemInscricao = opts.origem || 'formulario_publico';
+  // Estação do totem (quando a inscrição vem do quiosque). Chega SEMPRE do
+  // servidor — ver routes/inscricoes.js `/totem/eventos/:id/inscrever`.
+  const estacaoId = opts.estacaoId || null;
   if (await espinhaEncerrada(ev)) {
     return res.status(403).json({ error: 'As inscrições deste evento estão encerradas.' });
   }
@@ -885,7 +891,7 @@ async function inscreverEspinha(req, res, ev, opts = {}) {
       // da cobrança que já existe (a `referencia` idempotente garante que é a
       // mesma, então ninguém paga duas vezes).
       if (ehPago && rpc.id) {
-        const cobranca = await cobrarInscricao({ ev, inscricaoId: rpc.id, val, membroId: null });
+        const cobranca = await cobrarInscricao({ ev, inscricaoId: rpc.id, val, membroId: null, estacaoId });
         return res.json({ ...respostaCobranca(cobranca, ev), ja_inscrito: true });
       }
       // Busca a linha vencedora pra devolver o número da sorte — sem isso a
@@ -914,6 +920,21 @@ async function inscreverEspinha(req, res, ev, opts = {}) {
     return res.status(409).json({ error: 'Não foi possível concluir a inscrição. Tente de novo.' });
   }
   const ins = { id: rpc.id, numero_sorte: rpc.numero_sorte };
+
+  // Estação do totem na própria inscrição. Separado da cobrança de propósito:
+  // evento GRATUITO não tem cobrança e a gente ainda quer saber onde a pessoa
+  // se inscreveu (e onde o consentimento foi colhido).
+  // ⚠️ Best-effort e DEPOIS do insert: a `fn_insc_inscrever` não tem parâmetro
+  // pra isso (acrescentar exigiria DROP+CREATE da função, que é o caminho de
+  // risco pra uma coluna de atribuição). Falhar aqui deixa a inscrição sem
+  // origem — exatamente o estado de quem se inscreve pela web —, nunca sem
+  // inscrição.
+  if (estacaoId) {
+    supabase.from('inscricoes').update({ totem_estacao_id: estacaoId }).eq('id', ins.id)
+      .then(({ error: eEst }) => {
+        if (eEst) console.error('[publicEvento espinha] estacao na inscricao:', eEst.message);
+      });
+  }
 
   // Benefício autorizado pra este CPF: grava o preço DESTA inscrição e queima a
   // autorização. Antes da cobrança, porque é ele que define o valor cobrado.
@@ -965,6 +986,7 @@ async function inscreverEspinha(req, res, ev, opts = {}) {
     try {
       const cobranca = await cobrarInscricao({
         ev, inscricaoId: ins.id, val, membroId: null, valorCentavos: valorComBeneficio,
+        estacaoId,
       });
       return res.status(201).json({ ...respostaCobranca(cobranca, ev), beneficio: beneficio ? 'parcial' : null });
     } catch (e) {

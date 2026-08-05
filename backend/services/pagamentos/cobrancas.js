@@ -27,6 +27,7 @@ const SELECT_COBRANCA = `
   checkout_url, pix_payload, pix_qrcode_base64, boleto_linha_digitavel, boleto_url,
   vencimento, status, expira_em, pago_em,
   pagador_nome, pagador_cpf, pagador_email, pagador_telefone, membro_id,
+  estacao_id,
   cartao_brand, cartao_last4, descricao, metadata, ultimo_erro,
   criado_por, created_at, updated_at
 `.replace(/\s+/g, ' ').trim();
@@ -88,6 +89,11 @@ async function criarCobranca({
   expira_em, vencimento,
   pagador_nome, pagador_cpf, pagador_email, pagador_telefone, membro_id,
   metadata, criado_por,
+  // Estação de autoatendimento que originou a cobrança (NULL = veio da web).
+  // ⚠️ Quem preenche é o SERVIDOR, a partir da conta de quiosque logada
+  // (`totemEstacao.estacaoDaConta`) — nunca o corpo do request. É o que faz a
+  // conciliação do presencial saber qual totem/maquininha cobrou.
+  estacao_id,
 }) {
   if (!origem_tipo) throw new Error('origem_tipo é obrigatório');
   const valor = centavos(valor_centavos);
@@ -127,6 +133,7 @@ async function criarCobranca({
     pagador_email: pagador_email || null,
     pagador_telefone: pagador_telefone || null,
     membro_id: membro_id || null,
+    estacao_id: estacao_id || null,
     metadata: metadata || {},
     criado_por: criado_por || null,
     status: STATUS.CRIADA,
