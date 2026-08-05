@@ -341,7 +341,9 @@ export default function CardConviteCenso() {
             </div>
           )}
 
-          {/* O número que responde "vou repetir contato com quem já avisei?" */}
+          {/* ⚠️ Só aparece quando é REALMENTE outro canal. Os dois contadores são
+              mutuamente exclusivos no servidor — antes mostravam o mesmo número
+              duas vezes e a soma parecia o dobro de gente excluída. */}
           {prev.ja_convidadas_outro_canal > 0 && (
             <div style={{ color: reforcar ? C.amber : C.text3 }}>
               {prev.ja_convidadas_outro_canal} já foram convidadas por <strong>outro canal</strong>
@@ -350,6 +352,14 @@ export default function CardConviteCenso() {
                 : ' e ficam de fora — ligue "Reforçando" se quiser insistir com quem não respondeu.'}
             </div>
           )}
+
+          {/* Fecha a conta pra quem lê a tela decidindo: elegíveis + já
+              convidados + sem contato = o recorte inteiro. Sem isso o número de
+              elegíveis parece pequeno demais e dá medo de estar errado. */}
+          <div style={{ color: C.text3, fontSize: 11.5, marginTop: 2 }}>
+            Os {prev[canais.includes('email') ? 'email' : 'whatsapp']?.elegiveis || 0} elegíveis são
+            pessoas que <strong>ainda não receberam</strong> este convite — ninguém recebe duas vezes.
+          </div>
 
           {!!Object.keys(prev.nao_recebem || {}).length && (
             <div style={{ color: C.text3 }}>
