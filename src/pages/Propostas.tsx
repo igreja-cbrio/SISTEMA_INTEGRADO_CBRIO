@@ -13,7 +13,7 @@ import { DatePicker } from '@/components/ui/date-picker';
 import { toast } from 'sonner';
 import { Plus, Trash2, Save, ClipboardCheck, Settings2, Loader2, Send, ArrowLeft, Check, X, RotateCcw, Paperclip, History, FileText } from 'lucide-react';
 
-type Aux = { ciclos: any[]; areas: { id: number; nome: string }[]; lideres: { id: string; name: string }[]; diretor_de: number[]; me: string; nivel: number };
+type Aux = { ciclos: any[]; areas: { id: number; nome: string }[]; lideresPorArea: Record<string, { id: string; name: string }>; diretor_de: number[]; me: string; nivel: number };
 const money = (v: number) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const ESTADO_LABEL: Record<string, string> = {
   RASCUNHO: 'Rascunho',
@@ -135,7 +135,7 @@ const OBRIG: Record<string, string[]> = {
   comum: ['titulo', 'area_id', 'descricao_motivacao', 'publico_alvo', 'relevancia', 'pertencimento', 'transformacao', 'impacto_esperado', 'participantes_estimados', 'espacos_necessarios', 'equipes_necessarias', 'custo_total'],
   projeto: ['data_inicio_prevista', 'data_termino_prevista'],
   evento: ['data_realizacao_prevista'],
-  rotina: ['frequencia'],
+  rotina: ['frequencia', 'periodo_do_ano'],
 };
 const FORM0 = () => ({
   tipo: 'projeto', area_id: '', lider_usuario_id: '', titulo: '',
@@ -160,6 +160,15 @@ function PropostaForm({ aux, cicloId, propostaId, onVoltar }: { aux: Aux; cicloI
         participantes_estimados: p.participantes_estimados ?? '', custo_total: p.custo_total ?? '', arrecadacao_prevista: p.arrecadacao_prevista ?? '' });
     }).catch((e: any) => toast.error(e?.message || 'Erro')).finally(() => setLoading(false));
   }, [propostaId]);
+
+  // Líder da área é sempre derivado da área escolhida (usuario_areas.is_principal)
+  // — não é mais um select manual. Reacopla sempre que a área mudar.
+  useEffect(() => {
+    const lider = f.area_id ? aux.lideresPorArea[f.area_id] : null;
+    const novoId = lider?.id || '';
+    if (f.lider_usuario_id !== novoId) set('lider_usuario_id', novoId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [f.area_id, aux.lideresPorArea]);
 
   const custoLiquido = Number(f.custo_total || 0) - Number(f.arrecadacao_prevista || 0);
   const pendentes = useMemo(() => {
@@ -218,10 +227,7 @@ function PropostaForm({ aux, cicloId, propostaId, onVoltar }: { aux: Aux; cicloI
               </Select>
             </Campo>
             <Campo label="Líder da área" cls="flex-1 min-w-[180px]">
-              <Select value={f.lider_usuario_id || '__none__'} onValueChange={v => set('lider_usuario_id', v === '__none__' ? '' : v)}>
-                <SelectTrigger><SelectValue placeholder="Líder" /></SelectTrigger>
-                <SelectContent className="z-[1001]"><SelectItem value="__none__">—</SelectItem>{aux.lideres.map(l => <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>)}</SelectContent>
-              </Select>
+              <Input disabled value={f.area_id ? (aux.lideresPorArea[f.area_id]?.name || 'Nenhum líder definido pra esta área') : 'Escolha a área primeiro'} />
             </Campo>
           </div>
           {isP && <div className="flex gap-3 flex-wrap">
@@ -236,7 +242,7 @@ function PropostaForm({ aux, cicloId, propostaId, onVoltar }: { aux: Aux; cicloI
                 <SelectContent className="z-[1001]"><SelectItem value="__none__">—</SelectItem>{['mensal', 'bimestral', 'trimestral', 'semestral', 'anual', 'durante o ano todo'].map(x => <SelectItem key={x} value={x}>{x}</SelectItem>)}</SelectContent>
               </Select>
             </Campo>
-            <Campo label="Período do ano" cls="flex-1 min-w-[150px]"><Input value={f.periodo_do_ano} onChange={e => set('periodo_do_ano', e.target.value)} placeholder="Ex.: março a novembro" /></Campo>
+            <Campo label="Período do ano *" cls="flex-1 min-w-[150px]"><Input value={f.periodo_do_ano} onChange={e => set('periodo_do_ano', e.target.value)} placeholder="Ex.: março a novembro" /></Campo>
           </div>}
           <Campo label="Conte sobre o projeto"><Textarea rows={3} value={f.descricao_motivacao} onChange={e => set('descricao_motivacao', e.target.value)} /></Campo>
           <Campo label="Público-alvo"><Input value={f.publico_alvo} onChange={e => set('publico_alvo', e.target.value)} /></Campo>
@@ -260,7 +266,7 @@ function PropostaForm({ aux, cicloId, propostaId, onVoltar }: { aux: Aux; cicloI
             <Campo label="Impacto" cls="flex-1 min-w-[150px]">
               <Select value={f.impacto_esperado || '__none__'} onValueChange={v => set('impacto_esperado', v === '__none__' ? '' : v)}>
                 <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
-                <SelectContent className="z-[1001]"><SelectItem value="__none__">—</SelectItem>{['baixo', 'medio', 'alto'].map(x => <SelectItem key={x} value={x}>{x}</SelectItem>)}</SelectContent>
+                <SelectContent className="z-[1001]"><SelectItem value="__none__">—</SelectItem>{[['baixo', 'Baixo'], ['medio', 'Médio'], ['alto', 'Alto']].map(([v, l]) => <SelectItem key={v} value={v}>{l}</SelectItem>)}</SelectContent>
               </Select>
             </Campo>
             <Campo label="Público esperado" cls="flex-1 min-w-[150px]"><Input value={f.participantes_estimados} onChange={e => set('participantes_estimados', e.target.value.replace(/\D/g, ''))} /></Campo>
@@ -626,8 +632,8 @@ function MuralTab({ cicloId }: { cicloId: string }) {
     catch (e: any) { toast.error(e?.message || 'Erro'); } finally { setBusy(''); }
   };
   const exportCsv = () => {
-    const head = ['Pos', 'Codigo', 'Titulo', 'Area', 'Tipo', 'CustoLiquido', 'Classificacao', 'NotaOutros', 'NotaDiretorArea', 'Avaliadores', 'Complexidade', 'Impacto', 'Ourico', 'Estado'];
-    const rows = d.propostas.map((p: any) => [p.posicao ?? '', p.codigo ?? '', (p.titulo || '').replace(/;/g, ','), p.area || '', p.tipo, p.custo_liquido, p.classificacao_custo || '', p.nota_outros ?? '', p.nota_area ?? '', p.n_avaliadores, p.complexidade || '', p.impacto || '', p.passa_no_ourico ? 'sim' : 'nao', p.estado]);
+    const head = ['Pos', 'Código', 'Título', 'Área', 'Tipo', 'CustoLíquido', 'Classificação', 'NotaOutros', 'NotaDiretorÁrea', 'Avaliadores', 'Complexidade', 'Impacto', 'Ouriço', 'Estado'];
+    const rows = d.propostas.map((p: any) => [p.posicao ?? '', p.codigo ?? '', (p.titulo || '').replace(/;/g, ','), p.area || '', p.tipo, p.custo_liquido, p.classificacao_custo || '', p.nota_outros ?? '', p.nota_area ?? '', p.n_avaliadores, p.complexidade || '', p.impacto || '', p.passa_no_ourico ? 'sim' : 'não', p.estado]);
     const csv = [head, ...rows].map(r => r.join(';')).join('\n');
     const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `mural-propostas-${cicloId}.csv`; a.click();

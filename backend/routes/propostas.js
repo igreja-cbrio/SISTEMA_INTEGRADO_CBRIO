@@ -203,17 +203,24 @@ async function salvarFilhas(propostaId, body) {
   }
 }
 
-// Contexto do usuário (ciclos abertos, áreas, líderes possíveis, minhas áreas de diretor)
+// Contexto do usuário (ciclos abertos, áreas, líder de cada área, minhas áreas de diretor)
 router.get('/aux', authorizeModule('propostas', 1), async (req, res) => {
   const me = meuId(req);
-  const [ciclos, areas, lideres, dirAreas] = await Promise.all([
+  const [ciclos, areas, principais, dirAreas] = await Promise.all([
     supabase.from('prop_ciclo').select('*').order('ano', { ascending: false }),
     supabase.from('areas').select('id, nome').eq('ativo', true).order('nome'),
-    supabase.from('profiles').select('id, name').eq('active', true).order('name'),
+    // Líder da área = quem tem usuario_areas.is_principal=true naquela área
+    // (mesmo padrão de resolverLiderArea em agentePrimeiroContato/agenteBatismoNext).
+    // Preenche automaticamente o campo "Líder da área" do formulário — não é
+    // mais um select manual (não confundir com prop_area_diretor, que é o
+    // DIRETOR da área, papel de avaliação/aprovação, conceito distinto).
+    supabase.from('usuario_areas').select('area_id, profiles:usuario_id(id, name)').eq('is_principal', true),
     supabase.from('prop_area_diretor').select('area_id').eq('diretor_usuario_id', me),
   ]);
+  const lideresPorArea = {};
+  (principais.data || []).forEach(r => { if (r.profiles) lideresPorArea[r.area_id] = { id: r.profiles.id, name: r.profiles.name }; });
   res.json({
-    ciclos: ciclos.data || [], areas: areas.data || [], lideres: lideres.data || [],
+    ciclos: ciclos.data || [], areas: areas.data || [], lideresPorArea,
     diretor_de: (dirAreas.data || []).map(d => d.area_id),
     me, nivel: nivelProp(req),
   });
