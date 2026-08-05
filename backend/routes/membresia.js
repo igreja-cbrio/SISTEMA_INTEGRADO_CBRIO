@@ -2972,6 +2972,8 @@ router.get('/censo/disparo/preview', authorizeModule('membresia', 2), async (req
       status: parseStatusCenso(req.query.status),
       canais: parseCanaisCenso(req.query.canais),
       reenviar: req.query.reenviar === '1' || req.query.reenviar === 'true',
+      // Reforço deliberado: manda pelo 2º canal pra quem já foi convidado no 1º.
+      permitirCanalCruzado: req.query.cruzado === '1' || req.query.cruzado === 'true',
     });
     res.json(prev);
   } catch (e) {
@@ -3101,6 +3103,7 @@ router.post('/censo/disparo', authorizeModule('membresia', 4), async (req, res) 
       status: parseStatusCenso(req.body?.status),
       canais: parseCanaisCenso(req.body?.canais),
       reenviar: req.body?.reenviar === true,
+      permitirCanalCruzado: req.body?.permitirCanalCruzado === true,
       por: req.user?.id || null,
     });
     if (r.ok === false) return res.status(409).json(r);

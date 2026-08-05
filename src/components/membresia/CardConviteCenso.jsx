@@ -40,6 +40,10 @@ export default function CardConviteCenso() {
   const [erro, setErro] = useState('');
   const [canais, setCanais] = useState(['whatsapp', 'email']);
   const [incluirVisitantes, setIncluirVisitantes] = useState(false);
+  // ⚠️ Reforço pelo 2º canal: DESLIGADO por padrão. Regra do Matheus (04/08) —
+  // não mandar WhatsApp pra quem já recebeu o e-mail. Ligar é escolha explícita,
+  // pra quem ignorou o 1º canal.
+  const [reforcar, setReforcar] = useState(false);
   const [confirmar, setConfirmar] = useState('');
   const [disparando, setDisparando] = useState(false);
   const [resultado, setResultado] = useState(null);
@@ -83,13 +87,14 @@ export default function CardConviteCenso() {
     try {
       setPrev(await membresia.censo.disparoPreview({
         status: statusParam, canais: canais.join(','),
+        ...(reforcar ? { cruzado: '1' } : {}),
       }));
     } catch (e) {
       setErro(e.message || 'Erro ao montar a prévia');
     } finally {
       setCarregando(false);
     }
-  }, [statusParam, canais]);
+  }, [statusParam, canais, reforcar]);
 
   const toggleCanal = (c) => {
     setCanais((atual) => (atual.includes(c) ? atual.filter(x => x !== c) : [...atual, c]));
@@ -103,7 +108,9 @@ export default function CardConviteCenso() {
     setDisparando(true);
     setErro('');
     try {
-      const r = await membresia.censo.disparar({ status: statusParam, canais });
+      const r = await membresia.censo.disparar({
+        status: statusParam, canais, permitirCanalCruzado: reforcar,
+      });
       setResultado(r);
       setPrev(null);
       setConfirmar('');
@@ -155,6 +162,27 @@ export default function CardConviteCenso() {
             {label}
           </button>
         ))}
+        {/* ⚠️ Reforço pelo 2º canal · DESLIGADO por padrão.
+            Sem isso, o disparo de WhatsApp seria quase todo contato repetido
+            (508 dos 627 alcançáveis já tinham recebido o e-mail). Ligar é
+            escolha deliberada, pra quem ignorou o 1º canal — e é legítimo,
+            porque a maioria dos convidados por e-mail não respondeu. */}
+        <button
+          type="button"
+          onClick={() => { setReforcar(v => !v); setPrev(null); setConfirmar(''); }}
+          title={reforcar
+            ? 'Vai mandar TAMBÉM para quem já foi convidado pelo outro canal (ex.: já recebeu o e-mail).'
+            : 'Quem já foi convidado por outro canal fica de fora. Ligue para reforçar com quem ignorou o primeiro convite.'}
+          style={{
+            padding: '5px 11px', borderRadius: 999, fontSize: 11.5, cursor: 'pointer',
+            border: `1px solid ${reforcar ? C.amber : C.border}`,
+            background: reforcar ? '#f59e0b18' : 'transparent',
+            color: reforcar ? C.amber : C.text2, fontWeight: 600,
+          }}
+        >
+          {reforcar ? 'Reforçando quem já foi convidado' : 'Não repetir quem já foi convidado'}
+        </button>
+
         <button
           type="button"
           onClick={() => { setIncluirVisitantes(v => !v); setPrev(null); setConfirmar(''); }}
@@ -310,6 +338,16 @@ export default function CardConviteCenso() {
           {prev.ja_convidadas > 0 && (
             <div style={{ color: C.text3 }}>
               {prev.ja_convidadas} já foram convidadas em rodada anterior e não recebem de novo.
+            </div>
+          )}
+
+          {/* O número que responde "vou repetir contato com quem já avisei?" */}
+          {prev.ja_convidadas_outro_canal > 0 && (
+            <div style={{ color: reforcar ? C.amber : C.text3 }}>
+              {prev.ja_convidadas_outro_canal} já foram convidadas por <strong>outro canal</strong>
+              {reforcar
+                ? ' e VÃO receber de novo (reforço ligado).'
+                : ' e ficam de fora — ligue "Reforçando" se quiser insistir com quem não respondeu.'}
             </div>
           )}
 

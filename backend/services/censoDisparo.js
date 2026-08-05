@@ -39,6 +39,7 @@ const {
   limitarPorTeto,
   montarLinkCenso,
   whatsappPronto,
+  jaConvidadoEmQualquerCanal,
 } = require('../utils/censoConvite');
 const { gerarTokenCenso } = require('../utils/censoToken');
 
@@ -115,10 +116,16 @@ function avisoSchemaCenso() {
   return 'As colunas do censo em mem_membros (migration 20260803160100) ainda não foram aplicadas — o disparo fica indisponível até lá.';
 }
 
-/** Quem já foi convidado, por canal. Chave: `${membro_id}:${canal}`. */
+/**
+ * Quem já foi convidado. Duas visões:
+ *  - `jaConvidado`: `${membro_id}:${canal}` — o mesmo canal não repete.
+ *  - `jaConvidadoQualquer`: só `membro_id` — usada pra NÃO mandar WhatsApp pra
+ *    quem já recebeu e-mail (regra do Matheus · 04/08).
+ */
 async function lerConvitesEnviados() {
   const PAGE = 1000;
   const jaConvidado = new Set();
+  const jaConvidadoQualquer = new Set();
   const porRodada = new Map();
   let offset = 0;
   for (;;) {
@@ -128,23 +135,26 @@ async function lerConvitesEnviados() {
       .order('enviado_em', { ascending: true })
       .range(offset, offset + PAGE - 1);
     if (error) {
-      if (schemaAusente(error)) return { indisponivel: true, jaConvidado, porRodada };
+      if (schemaAusente(error)) return { indisponivel: true, jaConvidado, jaConvidadoQualquer, porRodada };
       throw error;
     }
     if (!data || !data.length) break;
     for (const c of data) {
-      if (c.ok && c.membro_id) jaConvidado.add(`${c.membro_id}:${c.canal}`);
+      if (c.ok && c.membro_id) {
+        jaConvidado.add(`${c.membro_id}:${c.canal}`);
+        jaConvidadoQualquer.add(c.membro_id);
+      }
       porRodada.set(c.rodada, (porRodada.get(c.rodada) || 0) + 1);
     }
     if (data.length < PAGE) break;
     offset += PAGE;
   }
-  return { indisponivel: false, jaConvidado, porRodada };
+  return { indisponivel: false, jaConvidado, jaConvidadoQualquer, porRodada };
 }
 
 // ── Prévia ─────────────────────────────────────────────────────────────────
 
-async function previewCenso({ status, canais = ['whatsapp', 'email'], reenviar = false } = {}) {
+async function previewCenso({ status, canais = ['whatsapp', 'email'], reenviar = false, permitirCanalCruzado = false } = {}) {
   const optinObrigatorio = process.env.WHATSAPP_OPTIN_OBRIGATORIO === '1';
   const { pessoas, aviso } = await lerPublicoSemCpf({ status });
   if (aviso) return { disponivel: false, aviso };
@@ -161,16 +171,27 @@ async function previewCenso({ status, canais = ['whatsapp', 'email'], reenviar =
   const alvoEmail = [];
   const motivos = {};
   let jaConvidadas = 0;
+  let jaConvidadasOutroCanal = 0;
 
   for (const p of pessoas) {
     const c = canaisDaPessoa(p, { canais, optinObrigatorio });
     for (const m of c.motivos) motivos[m] = (motivos[m] || 0) + 1;
 
-    const novoWhats = reenviar || !convites.jaConvidado.has(`${p.id}:whatsapp`);
-    const novoEmail = reenviar || !convites.jaConvidado.has(`${p.id}:email`);
+    // ⚠️ Já foi convidada por OUTRO canal → por padrão NÃO recebe de novo.
+    // Regra do Matheus (04/08): "quando for disparar pelo wpp, não é legal
+    // enviar para quem já enviou por email". Medido na decisão: 508 dos 627
+    // alcançáveis por WhatsApp já tinham recebido o e-mail — sem esta guarda o
+    // disparo seria 81% contato repetido, gastando cota do TIER_250 em quem já
+    // foi avisado. `permitirCanalCruzado` é o reforço DELIBERADO.
+    const cruzado = !permitirCanalCruzado
+      && jaConvidadoEmQualquerCanal(p.id, convites.jaConvidadoQualquer);
+
+    const novoWhats = reenviar || (!convites.jaConvidado.has(`${p.id}:whatsapp`) && !cruzado);
+    const novoEmail = reenviar || (!convites.jaConvidado.has(`${p.id}:email`) && !cruzado);
     if (c.whatsapp && novoWhats) alvoWhats.push(p);
     if (c.email && novoEmail) alvoEmail.push(p);
     if ((c.whatsapp && !novoWhats) || (c.email && !novoEmail)) jaConvidadas += 1;
+    if (cruzado && (c.whatsapp || c.email)) jaConvidadasOutroCanal += 1;
   }
 
   const whats = limitarPorTeto(alvoWhats, TETO_RODADA_WHATSAPP);
@@ -197,6 +218,7 @@ async function previewCenso({ status, canais = ['whatsapp', 'email'], reenviar =
       configurado: emailConfigurado(),
     },
     ja_convidadas: jaConvidadas,
+    ja_convidadas_outro_canal: jaConvidadasOutroCanal,
     nao_recebem: motivos,
     exemplo: alvoWhats[0] || alvoEmail[0]
       ? { nome: primeiroNome((alvoWhats[0] || alvoEmail[0]).nome) }
@@ -288,8 +310,8 @@ async function registrarConvites(linhas) {
  *    a resposta diz — porque a alternativa (achar que registrou) faria o
  *    próximo disparo repetir a mensagem para as mesmas pessoas.
  */
-async function dispararCenso({ status, canais = ['whatsapp', 'email'], reenviar = false, por = null } = {}) {
-  const prev = await previewCenso({ status, canais, reenviar });
+async function dispararCenso({ status, canais = ['whatsapp', 'email'], reenviar = false, por = null, permitirCanalCruzado = false } = {}) {
+  const prev = await previewCenso({ status, canais, reenviar, permitirCanalCruzado });
   if (!prev.disponivel) return { ok: false, aviso: prev.aviso };
 
   // ⚠️ O link é POR PESSOA (token assinado com o membro_id dentro): é o que faz
@@ -307,8 +329,12 @@ async function dispararCenso({ status, canais = ['whatsapp', 'email'], reenviar 
   const alvoEmail = [];
   for (const p of pessoas) {
     const c = canaisDaPessoa(p, { canais, optinObrigatorio });
-    if (c.whatsapp && (reenviar || !convites.jaConvidado.has(`${p.id}:whatsapp`))) alvoWhats.push(p);
-    if (c.email && (reenviar || !convites.jaConvidado.has(`${p.id}:email`))) alvoEmail.push(p);
+    // MESMA régua da prévia — se divergir, o disparo manda pra quem a tela
+    // disse que não receberia.
+    const cruzado = !permitirCanalCruzado
+      && jaConvidadoEmQualquerCanal(p.id, convites.jaConvidadoQualquer);
+    if (c.whatsapp && (reenviar || (!convites.jaConvidado.has(`${p.id}:whatsapp`) && !cruzado))) alvoWhats.push(p);
+    if (c.email && (reenviar || (!convites.jaConvidado.has(`${p.id}:email`) && !cruzado))) alvoEmail.push(p);
   }
   const whats = limitarPorTeto(alvoWhats, TETO_RODADA_WHATSAPP);
   const mail = limitarPorTeto(alvoEmail, TETO_RODADA_EMAIL);
