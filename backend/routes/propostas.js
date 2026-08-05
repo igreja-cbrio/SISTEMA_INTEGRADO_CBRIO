@@ -154,7 +154,10 @@ const CAMPOS = ['tipo', 'area_id', 'lider_usuario_id', 'titulo', 'equipe_envolvi
   'como_gera_unidade', 'objetivo_geral', 'objetivos_especificos', 'publico_alvo', 'participantes_estimados',
   'complexidade', 'impacto_esperado', 'custo_total', 'arrecadacao_prevista', 'recursos_materiais',
   'recursos_patrimoniais', 'suporte_equipes', 'retorno_esperado', 'centro_de_custo', 'informacoes_contabeis',
-  'passa_no_ourico', 'justificativa_ourico', 'observacoes'];
+  'passa_no_ourico', 'justificativa_ourico', 'observacoes',
+  // Critérios de avaliação (reformulação do formulário · 2026-08-05)
+  'relevancia', 'pertencimento', 'transformacao', 'contribui_visao_cbrio', 'explicacao_visao_cbrio',
+  'espacos_necessarios', 'equipes_necessarias'];
 const DATA_FIELDS = ['data_inicio_prevista', 'data_termino_prevista', 'data_realizacao_prevista'];
 const NUM_FIELDS = ['ano_execucao', 'participantes_estimados', 'custo_total', 'arrecadacao_prevista'];
 const FILHAS = {
@@ -221,23 +224,14 @@ router.get('/', authorizeModule('propostas', 1), async (req, res) => {
   try {
     const me = meuId(req);
     const admin = nivelProp(req) >= 5;
-    const { ciclo_id, estado, fila } = req.query;
+    const { ciclo_id, estado } = req.query;
     let q = supabase.from('prop_proposta')
       .select('id, codigo, tipo, area_id, titulo, estado, versao, custo_liquido, classificacao_custo, lider_usuario_id, criado_por_usuario_id, updated_at, ' +
               'area:areas(id, nome)')
       .is('deleted_at', null).order('updated_at', { ascending: false });
     if (ciclo_id) q = q.eq('ciclo_id', ciclo_id);
     if (estado) q = q.eq('estado', estado);
-    if (fila === 'lider') q = q.eq('estado', 'AGUARDANDO_VALIDACAO_LIDER').eq('lider_usuario_id', me);
-    else if (fila === 'diretor') {
-      const { data: minhas } = await supabase.from('prop_area_diretor').select('area_id').eq('diretor_usuario_id', me);
-      const ids = (minhas || []).map(m => m.area_id);
-      if (!ids.length && !admin) return res.json([]);
-      q = q.eq('estado', 'AGUARDANDO_DIRETOR_AREA');
-      if (!admin) q = q.in('area_id', ids);
-    } else if (!admin) {
-      q = q.or(`criado_por_usuario_id.eq.${me},lider_usuario_id.eq.${me}`);
-    }
+    if (!admin) q = q.or(`criado_por_usuario_id.eq.${me},lider_usuario_id.eq.${me}`);
     const { data, error } = await q.limit(1000);
     if (error) return res.status(400).json({ error: error.message });
     res.json(data || []);
@@ -320,8 +314,6 @@ router.post('/:id/transicao', authorizeModule('propostas', 2), async (req, res) 
 
     const autoriza = {
       enviar: souAutorOuLider || admin, reenviar: souAutorOuLider || admin, descartar: souAutorOuLider || admin,
-      validar: p.lider_usuario_id === me || admin, devolver_lider: p.lider_usuario_id === me || admin,
-      aprovar: souDiretor, devolver_area: souDiretor, negar: souDiretor,
       // Fase 3 · ressalvas (líder/autor envia adequação; diretor da área verifica)
       enviar_adequacao: souAutorOuLider || admin,
       ressalvas_atendidas: souDiretor, ressalvas_nao_atendidas: souDiretor,
@@ -337,24 +329,9 @@ router.post('/:id/transicao', authorizeModule('propostas', 2), async (req, res) 
       if (hoje > p.ciclo.data_corte_submissao) return res.status(409).json({ error: 'Janela de submissão encerrada (após o corte).' });
     }
 
-    const { data: r0, error } = await supabase.rpc('fn_prop_transicionar', { p_id: p.id, p_acao: acao, p_comentario: comentario || null, p_ator: me });
+    const { data: r, error } = await supabase.rpc('fn_prop_transicionar', { p_id: p.id, p_acao: acao, p_comentario: comentario || null, p_ator: me });
     if (error) return res.status(400).json({ error: error.message });
-    if (!r0?.ok) return res.status(409).json(r0);
-
-    let r = r0;
-    // Auto-aprovação do próprio portão de área: quando quem CRIOU a proposta é
-    // o diretor da área, o "clique de si mesmo" em AGUARDANDO_DIRETOR_AREA é
-    // dispensado — ele ainda se autoavalia normalmente na fase EM_AVALIACAO
-    // (quórum exige todos os diretores, ele incluso). A transição real
-    // acontece (fica no log com ator+comentário), só não exige o clique.
-    if (r.para === 'AGUARDANDO_DIRETOR_AREA' && diretorArea && diretorArea === p.criado_por_usuario_id) {
-      const { data: r2, error: err2 } = await supabase.rpc('fn_prop_transicionar', {
-        p_id: p.id, p_acao: 'aprovar',
-        p_comentario: 'Auto-aprovado: autor é o diretor da área',
-        p_ator: diretorArea,
-      });
-      if (!err2 && r2?.ok) r = r2;
-    }
+    if (!r?.ok) return res.status(409).json(r);
 
     // Proposta aprovada → materializa em projects/events (best-effort · idempotente)
     if (r.para === 'APROVADO') { try { await materializarProposta(p.id); } catch (e) { console.warn('[propostas] materializar:', e.message); } }
@@ -362,8 +339,7 @@ router.post('/:id/transicao', authorizeModule('propostas', 2), async (req, res) 
     // Notifica o próximo responsável + autor (best-effort · RN22)
     const alvo = [];
     if (p.criado_por_usuario_id) alvo.push(p.criado_por_usuario_id);
-    if (r.para === 'AGUARDANDO_VALIDACAO_LIDER' && p.lider_usuario_id) alvo.push(p.lider_usuario_id);
-    if (['AGUARDANDO_DIRETOR_AREA', 'EM_VERIFICACAO_RESSALVAS'].includes(r.para) && diretorArea) alvo.push(diretorArea);
+    if (r.para === 'EM_VERIFICACAO_RESSALVAS' && diretorArea) alvo.push(diretorArea);
     if (['EM_ADEQUACAO', 'AGUARDANDO_RECURSO'].includes(r.para) && p.lider_usuario_id) alvo.push(p.lider_usuario_id);
     if (alvo.length) {
       notificar({ modulo: 'propostas', tipo: 'proposta_transicao', titulo: `Proposta ${p.codigo || ''} · ${r.para}`,
