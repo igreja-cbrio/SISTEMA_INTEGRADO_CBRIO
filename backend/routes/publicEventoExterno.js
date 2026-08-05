@@ -89,6 +89,18 @@ async function eventoEspinhaPorSlug(slug) {
   return data;
 }
 
+// Mesmo SELECT/régua do por-slug, mas por ID: o app de membros já tem o id do
+// evento (veio do catálogo `GET /api/app/eventos`) e não precisa do slug.
+// ⚠️ Reusar este loader é o que garante que o app veja EXATAMENTE o mesmo
+// evento que a página pública — rascunho/arquivado não abrem em lugar nenhum.
+async function eventoEspinhaPorId(id) {
+  const { data } = await supabase.from('insc_eventos')
+    .select('id, nome, slug, area, data, hora, local, descricao, campos, capa_url, vagas, inscricoes_abrem_em, inscricoes_encerram_em, msg_sucesso_titulo, msg_sucesso_texto, tem_sorteio, pagamento_ativo, valor_centavos, pagamento_metodos, pagamento_expira_horas, parcelas_max, juros_repassados, status')
+    .eq('id', id).is('deleted_at', null).maybeSingle();
+  if (!data || data.status === 'rascunho' || data.status === 'arquivado') return null;
+  return data;
+}
+
 // Ocupação pela MESMA régua da fn_insc_inscrever (só `cancelada` devolve vaga).
 // Usada pra EXIBIR e pra decidir o 403 antecipado; a decisão que vale é a de
 // dentro do lock, na RPC. NUNCA derruba a página: falha aqui degrada pra
@@ -702,8 +714,19 @@ router.get('/:slug', async (req, res) => {
 });
 
 // ── POST /:slug/inscrever · ESPINHA ────────────────────────────────────────
-async function inscreverEspinha(req, res, ev) {
+/**
+ * ⚠️ FUNÇÃO ÚNICA de inscrição na espinha — usada pela porta pública E pelo app
+ * de membros (`POST /api/app/eventos/:id/inscrever`, que a importa). O app é um
+ * CLIENTE novo desta régua, não uma porta nova: validação do contrato, benefício
+ * por CPF, RPC atômica de vaga, consentimentos, cobrança e WhatsApp são os
+ * MESMOS. Duplicar isso no app seria o "segundo caminho de escrita de pessoa"
+ * que o Contrato de porta existe pra impedir.
+ * @param opts.origem  rótulo gravado em `inscricoes.origem` ('app' quando vem do
+ *   app · a coluna é TEXT sem CHECK, conferido no banco).
+ */
+async function inscreverEspinha(req, res, ev, opts = {}) {
   const body = req.body || {};
+  const origemInscricao = opts.origem || 'formulario_publico';
   if (await espinhaEncerrada(ev)) {
     return res.status(403).json({ error: 'As inscrições deste evento estão encerradas.' });
   }
@@ -848,7 +871,7 @@ async function inscreverEspinha(req, res, ev) {
     // pagamento a esperar, e deixá-la `recebida` faria o cron de expiração
     // tirar a vaga de quem a igreja decidiu isentar.
     p_status: vaiCobrar ? 'recebida' : 'confirmada',
-    p_origem: 'formulario_publico',
+    p_origem: origemInscricao,
     p_com_sorteio: !!ev.tem_sorteio,
     p_whatsapp_optin: optin,
   });
@@ -1139,3 +1162,7 @@ router.post('/:slug/upload-imagem', uploadImg.single('arquivo'), async (req, res
 });
 
 module.exports = router;
+// Reuso pelo app de membros (routes/app.js) — ver o cabeçalho de inscreverEspinha.
+module.exports.inscreverEspinha = inscreverEspinha;
+module.exports.eventoEspinhaPorId = eventoEspinhaPorId;
+module.exports.ocupacaoEspinha = ocupacaoEspinha;
