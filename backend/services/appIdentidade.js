@@ -289,9 +289,13 @@ async function confirmarCodigo({ verificacaoId, codigo, authUserId, email }) {
 
 // ── B · formulário completo (Contrato de porta) ─────────────────────────────
 async function completarCadastro({ payload, authUserId, email, ip, userAgent }) {
-  // CPF e sexo NÃO são exigidos aqui (decisão: o app não pode travar a entrada
-  // de quem não tem o CPF em mãos); nome completo, telefone, e-mail e
-  // nascimento sim — é o mínimo que faz o matcher reconhecer a pessoa depois.
+  // CPF NÃO é exigido (decisão antiga: o app não pode travar a entrada de quem
+  // não tem o CPF em mãos) — o campo é pedido, mas não bloqueia.
+  // ⚠️ SEXO ainda NÃO é exigido aqui, de propósito: a tela `/completar-cadastro`
+  // JÁ ESTÁ VIVA e não manda o campo. Exigir agora daria 400 nela e prenderia a
+  // pessoa no portão sem saída. Ligar só depois do release com o campo.
+  // (Eu havia escrito que "nenhum cliente antigo usa o endpoint" — estava
+  // errado: o CadastroGate do Marcos usa desde 04/08.)
   const { erros, valores } = validarCamposPadrao({
     nome_completo: payload?.nome_completo,
     telefone: payload?.telefone,
@@ -321,6 +325,22 @@ async function completarCadastro({ payload, authUserId, email, ip, userAgent }) 
     return { ok: false, status: 500, codigo: 'sem_membro', error: 'Não foi possível salvar seus dados agora.' };
   }
   const { fusao } = await vincularProfile({ authUserId, email, membroId });
+
+  // ⚠️ O matcher (`acharOuCriarGuardado`) não escreve `genero` — ele resolve
+  // IDENTIDADE, não preenche cadastro. Sem este UPDATE o sexo seria validado e
+  // DESCARTADO: a pessoa preencheria, o endpoint responderia ok, e o
+  // `/identidade/status` continuaria dizendo que falta sexo — ela cairia na tela
+  // de completar cadastro pra sempre. É exatamente o bug que o CPF do censo teve
+  // em 04/08 (validado, aceito, nunca gravado).
+  // Preenche SÓ ONDE ESTÁ VAZIO: o app não sobrescreve o que a equipe corrigiu.
+  if (d.sexo) {
+    const { error: eSexo } = await supabase.from('mem_membros')
+      .update({ genero: d.sexo })
+      .eq('id', membroId)
+      .is('genero', null)
+      .is('deleted_at', null);
+    if (eSexo) console.warn('[appIdentidade] gravar genero:', eSexo.message);
+  }
 
   // Cadastro NOVO pelo app é o que o Marcos quer aproveitar ("pegar o cadastro
   // de quem não temos") — avisa a equipe pra conferir/enriquecer. Conflito de

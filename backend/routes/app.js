@@ -190,6 +190,10 @@ router.get('/identidade/status', authApp, limiterNormal, async (req, res) => {
     const { data: m } = await supabase.from('mem_membros')
       .select('nome, data_nascimento').eq('id', membro.id).maybeSingle();
     if (!m?.data_nascimento) falta.push('nascimento');
+    // ⚠️ 'sexo' NÃO entra no `falta` ainda: a tela publicada não coleta o campo,
+    // então marcar incompleto criaria LOOP (portão manda pra tela → salva sem
+    // sexo → status segue incompleto). Ligar junto com o `exigirSexo`, depois do
+    // release do app.
     const nomeFraco = require('../services/membroMatch')
       .ehNomeDerivadoDeEmail(m?.nome, req.user.email || '');
     if (nomeFraco) falta.push('nome');
