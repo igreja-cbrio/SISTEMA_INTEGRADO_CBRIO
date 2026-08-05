@@ -3375,7 +3375,7 @@ router.get('/eventos', authApp, limiterNormal, async (req, res) => {
   try {
     const nowIso = new Date().toISOString();
     const { data, error } = await supabase.from('insc_eventos')
-      .select('id, nome, slug, descricao, area, tipo, data, hora, local, capa_url, vagas, valor_centavos, pagamento_ativo, inscricoes_abrem_em, inscricoes_encerram_em, tem_sorteio, campos, msg_sucesso_titulo, msg_sucesso_texto, created_at')
+      .select('id, nome, slug, descricao, area, tipo, data, hora, local, capa_url, vagas, valor_centavos, pagamento_ativo, parcelas_max, inscricoes_abrem_em, inscricoes_encerram_em, tem_sorteio, campos, msg_sucesso_titulo, msg_sucesso_texto, created_at')
       .eq('status', 'publicado').is('deleted_at', null)
       .order('data', { ascending: true, nullsFirst: false })
       .limit(100);
@@ -3400,12 +3400,33 @@ router.get('/eventos', authApp, limiterNormal, async (req, res) => {
       (minhas || []).forEach((i) => inscritos.add(i.evento_id));
     }
 
+    // Vagas RESTANTES pela régua canônica (`fn_insc_vagas`, a MESMA do lock de
+    // inscrição) — nunca recontando aqui, senão a tela e o servidor discordam.
+    // ⚠️ Só chamamos pros eventos que TÊM vagas definidas: hoje são 0 dos 3, então
+    // o custo real é zero. Best-effort: falha vira null, e o app omite a linha.
+    const restantes = new Map();
+    await Promise.all(abertos.filter((e) => e.vagas != null).map(async (e) => {
+      try {
+        const { data: v } = await supabase.rpc('fn_insc_vagas', { p_evento_id: e.id });
+        const n = Array.isArray(v) ? v[0] : v;
+        if (n && n.restantes != null) restantes.set(e.id, Number(n.restantes));
+      } catch { /* aviso ausente é melhor que número errado */ }
+    }));
+
     const eventos = abertos.map((e) => ({
       id: e.id, nome: e.nome, slug: e.slug, descricao: e.descricao,
       area: e.area, tipo: e.tipo, data: e.data, hora: e.hora, local: e.local,
       capa_url: e.capa_url, vagas: e.vagas, tem_sorteio: e.tem_sorteio,
+      // Prazo e vagas restantes: o app precisa DIZER a urgência, não só o preço.
+      // `inscricoes_encerram_em` já era selecionado (o filtro `abertos` usa) e
+      // simplesmente não era devolvido.
+      inscricoes_encerram_em: e.inscricoes_encerram_em || null,
+      vagas_restantes: restantes.has(e.id) ? restantes.get(e.id) : null,
       pago: !!e.pagamento_ativo,
       valor_centavos: e.pagamento_ativo ? (e.valor_centavos || null) : null,
+      // Teto de parcelas do EVENTO (null = teto da conta do PSP). Só faz sentido
+      // exibir em evento pago — a escolha das parcelas continua na página hospedada.
+      parcelas_max: e.pagamento_ativo ? (e.parcelas_max || null) : null,
       // Campos EXTRA do form-builder (os padrão o app já tem do cadastro).
       campos: Array.isArray(e.campos) ? e.campos : [],
       msg_sucesso_titulo: e.msg_sucesso_titulo || null,
