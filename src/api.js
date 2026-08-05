@@ -3491,6 +3491,18 @@ export const waInbox = {
 
 // Módulo Comunicação (central de WhatsApp · C3 backend · rotas /comunicacao/*)
 export const comunicacao = {
+  // Inventário dos disparos automáticos + o público de cada um. `pessoas=1`
+  // carrega nome/telefone e o servidor só devolve com nível >= 2.
+  // ⚠️ Timeout maior: cada item resolve o próprio público paginando a base
+  // (voluntários, grupos, membros do app) — no timeout padrão de 30s a tela
+  // diria "tempo esgotado" num trabalho que deu certo.
+  automaticas: (params = {}) => {
+    const p = new URLSearchParams();
+    if (params.dias) p.set('dias', String(params.dias));
+    if (params.pessoas) p.set('pessoas', '1');
+    const qs = p.toString();
+    return get(`/comunicacao/automaticas${qs ? `?${qs}` : ''}`, { timeout: 90_000 });
+  },
   numeros: {
     list: () => get('/comunicacao/numeros'),
     criar: (body) => post('/comunicacao/numeros', body),

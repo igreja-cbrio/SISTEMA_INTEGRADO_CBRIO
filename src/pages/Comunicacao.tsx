@@ -19,7 +19,7 @@ import {
 import { toast } from 'sonner';
 import {
   Loader2, BarChart3, Inbox, Send, CalendarClock, FileText, Phone, Users,
-  Bot, AlertTriangle, RefreshCw, Plus, Trash2, Pencil, Power, Save, X, MessageSquare,
+  Bot, AlertTriangle, RefreshCw, Plus, Trash2, Pencil, Power, Save, X, MessageSquare, Repeat,
 } from 'lucide-react';
 import Conversas from './Conversas';
 import WhatsappAdmin from './admin/Whatsapp';
@@ -880,8 +880,180 @@ function Erros({ podeReenviar }: { podeReenviar: boolean }) {
   );
 }
 
+// ═══ AUTOMÁTICAS ═════════════════════════════════════════════════════
+// "Quem recebe as mensagens que o sistema manda sozinho?" (pedido do Matheus ·
+// 05/08). Somente leitura: descreve o que os crons disparam. Não liga/desliga
+// nada — cada disparo é operado no módulo dono.
+type PessoaAuto = { nome: string; telefone: string | null; quando: string; hoje?: boolean; optin?: boolean };
+type ItemAuto = {
+  id: string; nome: string; quando: string; regra: string; fonte: string;
+  contexto: string | null; template_configurado: boolean | null; env_template: string | null;
+  total: number | null; universo?: { rotulo: string; qtd: number };
+  bloqueios?: string[];
+  fora?: { motivo: string; qtd: number }[];
+  pessoas?: PessoaAuto[]; pessoas_truncadas?: boolean;
+  enviados?: number | null; nao_entregues?: number | null;
+  fora_do_historico?: boolean; motivo_falha?: string | null; erro?: string;
+};
+
+function CardAutomatica({ item }: { item: ItemAuto }) {
+  const [abrir, setAbrir] = useState(false);
+  // "Encaixa na regra" × "saiu de fato" medem coisas diferentes. Divergir muito
+  // é sinal de envio quebrado — foi assim que o devocional ficou 187 dias
+  // falhando sem ninguém notar.
+  const quebrado = (item.total || 0) > 0 && item.enviados === 0 && (item.nao_entregues || 0) > 0;
+  const travado = !!item.bloqueios?.length;
+
+  return (
+    <Card className="overflow-hidden p-0">
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border p-4">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="font-semibold">{item.nome}</span>
+            {travado && <Badge variant="outline" className="border-amber-500 text-amber-600">não está enviando</Badge>}
+            {quebrado && <Badge variant="destructive">não está entregando</Badge>}
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">{item.quando}</div>
+          <p className="mt-2 max-w-2xl text-[13px] leading-snug">{item.regra}</p>
+        </div>
+        <div className="text-right">
+          <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+            {travado ? 'Se encaixam na regra' : 'Recebem hoje'}
+          </div>
+          {/* ⚠️ Com trava ativa o número fica CINZA e o rótulo muda: ele deixa de
+              ser "quem recebe" e passa a ser "quem receberia" — pintar de verde
+              faria ler como envio acontecendo. */}
+          <div
+            className="text-3xl font-bold tabular-nums"
+            style={{ color: travado ? undefined : C.primary, opacity: travado ? 0.55 : 1 }}
+          >
+            {item.total ?? '—'}
+          </div>
+          {item.universo && (
+            <div className="text-[11px] text-muted-foreground">de {item.universo.qtd} {item.universo.rotulo}</div>
+          )}
+        </div>
+      </div>
+
+      {travado && (
+        <div className="border-b border-amber-500/30 bg-amber-500/10 px-4 py-2.5">
+          <div className="text-xs font-semibold text-amber-700 dark:text-amber-500">
+            Por que nada está saindo:
+          </div>
+          <ul className="mt-1 space-y-0.5">
+            {item.bloqueios!.map((b) => (
+              <li key={b} className="text-xs text-amber-700 dark:text-amber-500">• {b}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 px-4 py-2.5 text-xs">
+        <span className="text-muted-foreground">
+          Enviadas (30d): <b className="tabular-nums text-foreground">{item.enviados ?? '—'}</b>
+        </span>
+        <span className="text-muted-foreground">
+          Não entregues: <b className={`tabular-nums ${(item.nao_entregues || 0) > 0 ? 'text-red-600' : 'text-foreground'}`}>{item.nao_entregues ?? '—'}</b>
+        </span>
+        {item.fora_do_historico && (
+          <span className="text-amber-600">⚠️ não passa pela fila — fica fora do histórico de envios</span>
+        )}
+        {item.motivo_falha && <span className="text-red-600">erro: {item.motivo_falha}</span>}
+      </div>
+
+      {!!item.fora?.length && (
+        <div className="flex flex-wrap gap-1.5 px-4 pb-2.5">
+          {item.fora.map((f) => (
+            <Badge key={f.motivo} variant="secondary" className="font-normal">
+              {f.qtd} — {f.motivo}
+            </Badge>
+          ))}
+        </div>
+      )}
+
+      {item.erro && (
+        <div className="px-4 pb-3 text-xs text-red-600">Não foi possível calcular o público: {item.erro}</div>
+      )}
+
+      {!!item.pessoas?.length && (
+        <div className="border-t border-border">
+          <button
+            onClick={() => setAbrir((v) => !v)}
+            className="w-full px-4 py-2.5 text-left text-xs font-medium text-muted-foreground hover:bg-muted/40"
+          >
+            {abrir ? 'Esconder' : 'Ver'} quem recebe ({item.pessoas.length}{item.pessoas_truncadas ? ' primeiras' : ''})
+          </button>
+          {abrir && (
+            <div className="max-h-72 overflow-y-auto border-t border-border">
+              <table className="w-full text-sm">
+                <tbody>
+                  {item.pessoas.map((p, i) => (
+                    <tr key={`${p.nome}-${i}`} className="border-b border-border/60 last:border-0">
+                      <td className="px-4 py-1.5">{p.nome}</td>
+                      <td className="px-3 py-1.5 tabular-nums text-muted-foreground">{p.telefone || '—'}</td>
+                      <td className="px-3 py-1.5 text-right text-xs text-muted-foreground">
+                        {p.hoje && p.quando !== 'todo dia' ? <b className="text-foreground">{p.quando}</b> : p.quando}
+                        {p.optin === false && <span className="ml-2 text-amber-600">sem opt-in</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {item.pessoas_truncadas && (
+                <div className="px-4 py-2 text-[11px] text-muted-foreground">
+                  Lista cortada pra não pesar a tela — a contagem acima é o total real.
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="border-t border-border bg-muted/30 px-4 py-2 text-[11px] text-muted-foreground">
+        Quem dispara: <code>{item.fonte}</code>
+      </div>
+    </Card>
+  );
+}
+
+function Automaticas() {
+  const [dados, setDados] = useState<{ itens: ItemAuto[]; pessoas_ocultas?: boolean } | null>(null);
+  const [erro, setErro] = useState(false);
+
+  const carregar = useCallback(() => {
+    setErro(false); setDados(null);
+    comunicacao.automaticas({ pessoas: true, dias: 30 })
+      .then((r: { itens: ItemAuto[] }) => setDados(r)).catch(() => setErro(true));
+  }, []);
+  useEffect(() => { carregar(); }, [carregar]);
+
+  if (erro) return <ErroBox msg="Falha ao carregar os disparos automáticos." onRetry={carregar} />;
+  if (!dados) return <Spinner />;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-start justify-between gap-3">
+        <p className="max-w-3xl text-sm text-muted-foreground">
+          Mensagens que o sistema manda <b>sozinho</b>, sem ninguém apertar nada. Cada card mostra a regra
+          de quem entra, quantas pessoas se encaixam hoje e o que saiu de fato nos últimos 30 dias.
+          Esta tela é só de leitura — cada disparo é operado no módulo dono.
+        </p>
+        <Button variant="outline" size="sm" onClick={carregar}><RefreshCw className="h-4 w-4" /></Button>
+      </div>
+      {dados.pessoas_ocultas && (
+        <Card className="p-3 text-xs text-amber-600">
+          Você vê as contagens, mas a lista de nomes e telefones exige nível 2 no módulo.
+        </Card>
+      )}
+      <div className="space-y-3">
+        {dados.itens.map((i) => <CardAutomatica key={i.id} item={i} />)}
+      </div>
+    </div>
+  );
+}
+
 // ═══ PÁGINA ══════════════════════════════════════════════════════════
-const TABS = ['dashboard', 'conversas', 'envios', 'programadas', 'templates', 'numeros', 'atendentes', 'bot', 'erros'];
+const TABS = ['dashboard', 'conversas', 'envios', 'programadas', 'automaticas', 'templates', 'numeros', 'atendentes', 'bot', 'erros'];
 
 export default function Comunicacao() {
   const { getAccessLevel } = useAuth();
@@ -912,6 +1084,7 @@ export default function Comunicacao() {
           <TabsTrigger value="conversas"><Inbox className="mr-1.5 h-3.5 w-3.5" />Conversas</TabsTrigger>
           <TabsTrigger value="envios"><Send className="mr-1.5 h-3.5 w-3.5" />Envios</TabsTrigger>
           <TabsTrigger value="programadas"><CalendarClock className="mr-1.5 h-3.5 w-3.5" />Programadas</TabsTrigger>
+          <TabsTrigger value="automaticas"><Repeat className="mr-1.5 h-3.5 w-3.5" />Automáticas</TabsTrigger>
           <TabsTrigger value="templates"><FileText className="mr-1.5 h-3.5 w-3.5" />Templates</TabsTrigger>
           <TabsTrigger value="numeros"><Phone className="mr-1.5 h-3.5 w-3.5" />Números</TabsTrigger>
           <TabsTrigger value="atendentes"><Users className="mr-1.5 h-3.5 w-3.5" />Atendentes</TabsTrigger>
@@ -924,6 +1097,7 @@ export default function Comunicacao() {
         <TabsContent value="conversas"><Conversas /></TabsContent>
         <TabsContent value="envios"><Envios /></TabsContent>
         <TabsContent value="programadas"><Programadas podeEscrever={podeNvl3} podeExcluir={podeNvl4} /></TabsContent>
+        <TabsContent value="automaticas"><Automaticas /></TabsContent>
         <TabsContent value="templates"><Templates podeSync={podeNvl3} podeEditar={podeNvl3} /></TabsContent>
         <TabsContent value="numeros"><Numeros podeEscrever={podeNvl5} /></TabsContent>
         <TabsContent value="atendentes"><Atendentes podeEscrever={podeNvl3} /></TabsContent>
