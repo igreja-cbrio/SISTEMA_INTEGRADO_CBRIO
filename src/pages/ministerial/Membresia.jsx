@@ -859,7 +859,11 @@ export default function Membresia() {
   const [loading, setLoading] = useState(true);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState('');
-  const [busca, setBusca] = useState('');
+  // `?q=` pré-preenche a busca de membros: é o que faz o link "atualizou o
+  // cadastro de X" da aba Cadastros cair na pessoa, em vez de na lista inteira.
+  const [busca, setBusca] = useState(
+    () => new URLSearchParams(window.location.search).get('q') || '',
+  );
   const [filterStatus, setFilterStatus] = useState('');
   const [filterPapel, setFilterPapel] = useState('');
   const [filterFaixa, setFilterFaixa] = useState('');
