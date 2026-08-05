@@ -2552,12 +2552,12 @@ function ComboboxContabil({ items, value, onChange, placeholder = 'Selecione…'
 
 // Cotação (compras/serviço) · o Amaury (logística) registra VÁRIAS cotações de
 // fornecedores e, com um botão dedicado reenviável, dispara um e-mail rico ao
-// financeiro (Yago) com todas as cotações + a sugerida + total, pra aprovar o
+// financeiro com todas as cotações + a sugerida + total, pra aprovar o
 // pagamento. Marcos (2026-06-16): "primeiro vem a cotação, depois a aprovação
 // do financeiro". Compatível com a cotação inline antiga (valor_cotado) quando
 // ainda não há linhas na tabela nova.
 function CotacaoBlock({ item, canCotar, onChanged }) {
-  // Amaury pode gerenciar/reenviar cotações enquanto o financeiro (Yago) ainda
+  // Amaury pode gerenciar/reenviar cotações enquanto o financeiro ainda
   // não aprovou e a solicitação não é terminal — não só durante em_cotacao.
   const podeEditar = canCotar
     && !item.aprovado_financeiro_em

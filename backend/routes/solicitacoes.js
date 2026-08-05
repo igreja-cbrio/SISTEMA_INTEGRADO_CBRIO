@@ -442,7 +442,7 @@ const CATEGORIA_MODULO = {
   compras: 'logistica',
   servico: 'logistica',     // contratação de fornecedor · logística negocia (Amaury)
   reembolso: 'financeiro',
-  pagamento: 'financeiro',  // pagar boleto/NF de fornecedor · contas a pagar (Yago)
+  pagamento: 'financeiro',  // pagar boleto/NF de fornecedor · contas a pagar
   reserva_espaco: 'administrativo',
   espaco: 'administrativo', // legado
   infraestrutura: 'administrativo',
@@ -483,7 +483,7 @@ function linkFilaFinanceira(solicitacaoId) {
 // ORIGEM é do diretor do Criativo (Pedro Paulo), por CATEGORIA — não pelo setor
 // de quem pede (pula Arthur Serpa/diretor do setor). Também pula o 2º carimbo de
 // Gestão (Eduardo/Juliana) e o julgamento de mérito. COM custo (valor>0) o pedido
-// vira uma compra cotada pela logística (Amaury) → financeiro (Yago); sem custo
+// vira uma compra cotada pela logística (Amaury) → financeiro; sem custo
 // segue direto pra execução do criativo.
 const CRIATIVO_CATEGORIAS = ['marketing', 'producao'];
 
@@ -647,7 +647,7 @@ const SETOR_GESTAO = 'Gestao';
 // Compra de até R$ 1.000 vai DIRETO pra cotação (decisão do Matheus · 2026-07-15):
 // dispensa aprovação de origem, carimbo de Gestão e mérito, planejada ou não.
 // O controle acontece DEPOIS, sobre o valor REAL: a logística (Amaury) cota e o
-// financeiro (Yago) aprova sobre o valor cotado (registrar-cotacao/enviar-cotacoes).
+// o financeiro aprova sobre o valor cotado (registrar-cotacao/enviar-cotacoes).
 // Valor nulo/zero NÃO é elegível (fail-closed · segue o fluxo normal).
 const COMPRA_COTACAO_DIRETA_LIMITE = 1000;
 const COMPRA_COTACAO_DIRETA_MOTIVO = 'Compra de até R$ 1.000 · direto para cotação';
@@ -741,7 +741,7 @@ async function aprovadoresMeritoIds() {
 
 // Próximo status quando os portões liberam (carimbos completos e/ou mérito
 // aprovado) · mesma régua histórica do aprovar-origem:
-//   compras/servico → em_cotacao (logística cota antes do Yago)
+//   compras/servico → em_cotacao (logística cota antes do financeiro)
 //   precisa financeira → aguardando_aprovacao_financeira
 //   senão → pendente (fila da área alvo)
 function proximoStatusPosAprovacao(sol) {
@@ -1443,7 +1443,7 @@ router.post('/', async (req, res) => {
 
     // Criativo (marketing/producao): origem aprova o diretor do Criativo (Pedro
     // Paulo) por CATEGORIA. COM custo (valor>0) vira compra cotada pela logística
-    // (Amaury) → financeiro (Yago); SEM custo segue pra execução do criativo.
+    // (Amaury) → financeiro; SEM custo segue pra execução do criativo.
     const ehCriativo = CRIATIVO_CATEGORIAS.includes(categoria);
     const criativoComCusto = ehCriativo && Number(valorEstimadoFinal) > 0;
 
@@ -1613,7 +1613,7 @@ router.post('/', async (req, res) => {
         // Fluxo BPMN · origem SEMPRE (inclusive planejado); Gestão só no não-planejado.
         eh_planejado: planejado,
         ...(planejado && { planejado_por: userId }),
-        // Criativo COM custo precisa do financeiro (Yago) depois da cotação do
+        // Criativo COM custo precisa do financeiro depois da cotação do
         // Amaury. O trigger não marca marketing/producao, então setamos aqui (ele
         // nunca desmarca). O status vem de 'aguardando_aprovacao_origem' no insert,
         // então o trigger de SLA não mexe no status.
@@ -1978,7 +1978,7 @@ async function aprovarOrigemHandler(req, res) {
     // Próximo passo quando completo:
     //   TEM CUSTO (não-planejado do fluxo novo) → julgamento de mérito.
     //   Sem custo → fluxo normal: compras/servico → EM_COTACAO (a logística
-    //   levanta valor+fornecedor ANTES do Yago) · precisa financeira →
+    //   levanta valor+fornecedor ANTES do financeiro) · precisa financeira →
     //   aguardando_aprovacao_financeira · resto → fila da área (pendente).
     const vaiPraMerito = completo && precisaMerito(atual);
     const ehCotacao = ['compras', 'servico'].includes(atual.categoria);
@@ -2116,7 +2116,7 @@ router.patch('/:id/aprovar-origem', aprovarOrigemHandler);
 
 // ── COTACAO (compras/servico) · a logistica levanta valor+fornecedor ANTES do ──
 // financeiro. Marcos (2026-06-16): "primeiro vem a cotacao, depois a aprovacao do
-// financeiro" · o Yago decide sobre o valor real, nao sobre uma estimativa cega.
+// financeiro" · o financeiro decide sobre o valor real, nao sobre uma estimativa cega.
 async function podeCotar(req, sol) {
   if (['admin', 'diretor'].includes(req.user.role)) return true;
   const mp = req.user.granular?.modulePerms || {};
@@ -2150,7 +2150,7 @@ router.post('/:id/registrar-cotacao', async (req, res) => {
       return res.status(403).json({ error: 'Apenas a logística (ou admin) pode registrar a cotação.' });
     }
 
-    // Grava a cotacao e manda pro financeiro · o Yago aprova sobre o valor cotado.
+    // Grava a cotacao e manda pro financeiro, que aprova sobre o valor cotado.
     // valor_estimado passa a refletir o cotado (alcada/relatorios usam o valor real).
     const updates = {
       valor_cotado: valor,
@@ -2175,7 +2175,7 @@ router.post('/:id/registrar-cotacao', async (req, res) => {
 
     // A dispensa ≤ R$ 1.000 foi decidida sobre a ESTIMATIVA — se a cotação real
     // estourou o limite, o financeiro precisa saber que o pedido pulou os
-    // carimbos (a aprovação segue com o Yago, sobre o valor cotado).
+    // carimbos (a aprovação segue com o financeiro, sobre o valor cotado).
     const dispensadaPorBaixoValor = atual.aprovacao_origem_motivo === COMPRA_COTACAO_DIRETA_MOTIVO;
     const cotacaoAcimaDaDispensa = dispensadaPorBaixoValor && valor > COMPRA_COTACAO_DIRETA_LIMITE;
     if (cotacaoAcimaDaDispensa) {
@@ -2222,7 +2222,7 @@ router.post('/:id/registrar-cotacao', async (req, res) => {
 // ══════════════════════════════════════════════════════════════════════════
 // COTAÇÕES MÚLTIPLAS (compras/serviço) · o Amaury registra VÁRIAS cotações de
 // fornecedores e, com um botão reenviável, dispara um e-mail rico ao financeiro
-// (Yago) com todas as cotações separadas + a sugerida + total, pra aprovar o
+// com todas as cotações separadas + a sugerida + total, pra aprovar o
 // pagamento. Tabela `solicitacao_cotacoes`. A cotação inline antiga segue
 // preenchida com a de referência (retrocompat com telas/KPIs que a leem).
 // ══════════════════════════════════════════════════════════════════════════
@@ -4102,7 +4102,7 @@ router.post('/:id/atualizar-ml', async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════════════════
-// APROVAÇÃO FINANCEIRA · Yago aprova compras/reembolsos antes de virar pra
+// APROVAÇÃO FINANCEIRA · o financeiro aprova compras/reembolsos antes de virar pra
 // logística comprar / financeiro pagar
 // ══════════════════════════════════════════════════════════════════════════
 
