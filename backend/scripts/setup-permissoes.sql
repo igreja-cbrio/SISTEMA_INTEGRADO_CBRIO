@@ -74,7 +74,7 @@ WHERE u.ativo = true
 
 -- ----------------------------------------------------------------
 -- PASSO 5: Acesso líder com área → módulo correspondente, nível 3/2
--- (Ex: Yago → área "Financeiro" → módulo "Financeiro", leitura 3)
+-- (Ex: pessoa da área "Financeiro" → módulo "Financeiro", leitura 3)
 -- ----------------------------------------------------------------
 INSERT INTO permissoes_modulo (usuario_id, modulo_id, nivel_leitura, nivel_escrita)
 SELECT DISTINCT ua.usuario_id, m.id, 3, 2

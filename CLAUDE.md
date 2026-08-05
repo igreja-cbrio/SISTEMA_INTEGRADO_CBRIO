@@ -1813,6 +1813,33 @@ da Anthropic → atualizar `ANTHROPIC_API_KEY` (Production) na Vercel → **rede
 qualquer commit na main serve). Diagnóstico rápido: `get_runtime_errors` da Vercel
 agrupa por `authentication_error`.
 
+## ⚠️ LEI · NUNCA nomear pessoa como dono de fluxo neste arquivo (2026-08-05)
+
+Reclamação do Matheus: *"que portão financeiro do Yago?? Yago já saiu do
+financeiro faz tempo, agora é Alberto e Sonia Cristina. Nós já tínhamos resolvido
+isso, se você tiver qualquer lixo no contexto, remova, nós já mudamos isso e toda
+vez você traz isso."* Ele estava certo: o **banco já estava correto** (Yago em
+`Gestao`, fora de todas as filas) e era ESTE ARQUIVO que carregava o nome antigo
+em 7 lugares — e como ele é lido a cada sessão, o erro se repetia toda vez.
+
+**A regra:** ao descrever fluxo de aprovação/roteamento, escrever o **PAPEL**
+("o financeiro aprova", "o responsável da área"), nunca a pessoa. Quem é a pessoa
+vive no BANCO e muda sem PR:
+
+| Pergunta | Fonte de verdade |
+|---|---|
+| Quem aprova/atende por área? | `area_solicitacoes_responsaveis` |
+| Quem é o diretor do setor (portão de origem)? | `setor_diretor` (+ `setor_coaprovadores`) |
+| Responsável padrão de tarefa do ciclo criativo? | `area_responsaveis` |
+
+Nome de pessoa só é aceitável aqui em **registro histórico datado** ("decisão do
+Yago em 31/07", "spec do Yago") — que é fato passado e não vira instrução.
+
+⚠️ Estado em 05/08, conferido no banco: **financeiro = Alberto Luiz Stassen da
+Silva**. **Sonia Cristina Barreto Litwinczuk** (`cristina@cbrio.com.br`) é da área
+Financeiro mas **NÃO está** em `area_solicitacoes_responsaveis` — então não vê a
+fila de aprovação financeira. Pendente de decisão do Matheus.
+
 ## Contexto do projeto
 
 Sistema ERP interno da CBRio (Igreja). Stack: React 18 + Vite +
@@ -1940,7 +1967,7 @@ sistema inteiro: **a operação dos módulos ministeriais alimenta a NSM e os
   formulário/texto; institucional responde dúvidas · líderes cadastrados ·
   **vira fila de revisão — nada entra direto no banco**.
 - **Agente Executor Financeiro** (Railway) · propõe categorizações/pagamentos
-  → fila de aprovação humana em `/assistente-ia` · Yago/financeiro aprova.
+  → fila de aprovação humana em `/assistente-ia` · o financeiro aprova.
 - `/cerebro` · SharePoint → notas Obsidian classificadas por Haiku · todos via
   OneDrive · memória institucional de documentos.
 - `/admin/*` · permissões (matriz cargo×módulo), usuários, WhatsApp, regras de
@@ -3801,7 +3828,7 @@ lançar — rastreabilidade de cada compra ponta a ponta.
   despesa → nota nasce `status='registrada'` já preenchida → compras revisa no
   modal (categoria sugerida editável · `GET /logistica/notas/aux/categorias`) →
   **"Enviar pro financeiro"** (`status='enviada_financeiro'` + `notificar()`
-  módulo financeiro) → Yago vê em **Operacional → Notas de compras**
+  módulo financeiro) → o financeiro vê em **Operacional → Notas de compras**
   (`NotasCompras.jsx` · `GET /financeiro-v2/notas-compras`) → **Lançar**
   (`POST /notas-compras/:id/lancar`) cria `fin_transacoes` (despesa) e
   **concilia com o extrato**: se existe exatamente 1 débito OFX não
@@ -3837,7 +3864,7 @@ lançar — rastreabilidade de cada compra ponta a ponta.
 
 Pedido do Matheus: a aba **Compras** da Logística substitui a planilha manual
 "CONTROLE DE COMPRAS FIXOS E VARIÁVEIS" que o Pery alimentava à mão. NÃO confundir
-com a aba **Notas Fiscais** (fluxo Amaury→Yago que CRIA `fin_transacoes`): aqui a
+com a aba **Notas Fiscais** (fluxo Amaury→financeiro que CRIA `fin_transacoes`): aqui a
 compra é o registro operacional do Pery e VINCULA com a saída que JÁ existe no
 balanço (sentido inverso).
 
@@ -4642,7 +4669,7 @@ aprovação financeira por alçada.
   (Gestão=Eduardo Gnisci · Criativo=Pedro Menezes · Ministerial=Arthur Serpa ·
   tabela `setor_diretor` + `fn_normalizar_setor()`); diretores/diretoria geral/
   service_role dispensam; rejeitada é IMUTÁVEL (cria nova). (2) **aprovação
-  financeira do Yago**: compras/reembolso/pagamento SEMPRE (sem bypass por
+  financeira**: compras/reembolso/pagamento SEMPRE (sem bypass por
   valor · decisão de 22/05).
 - **⚠️ Lição (service_role × trigger)**: o backend insere com `auth.uid()=NULL`,
   então a regra de roteamento NÃO pode viver só em trigger que lê `auth.uid()`
@@ -4650,10 +4677,10 @@ aprovação financeira por alçada.
   resultado; o trigger fica de rede de segurança. (Bug que marcava tudo
   `dispensada` e esvaziava a aba Aprovar.)
 - **Categorias vigentes no form**: TI · Compras · Reembolso · Reserva de Espaço
-  · Serviços (=manutenção interna → `infraestrutura`, sem Yago) · Pagamento ·
+  · Serviços (=manutenção interna → `infraestrutura`, sem gate financeiro) · Pagamento ·
   Marketing (por dor) · Férias/Licença. `servico` (contratação externa) e
   `outro` saíram do form (slugs seguem na CHECK pra linhas históricas).
-  Roteamento: Compras→Amaury+Yago · Serviços→Amaury · Pagamento/Reembolso→Yago ·
+  Roteamento: Compras→Amaury+financeiro · Serviços→Amaury · Pagamento/Reembolso→financeiro ·
   Reserva→Amaury · TI→TI · Marketing→Pedro · Férias→RH.
 - **`area_cliente` é TEXT derivada de quem preenche** (kpi_areas → usuario_areas
   → profile.area · ignora o body). Lições de CHECK: a constraint de `categoria`
@@ -6016,7 +6043,7 @@ preenche `responsavel_nome` automaticamente com o valor dessa tabela.
 | compras | Amaury |
 | producao | Pedro Fernandes |
 | marketing | Pedro Paiva |
-| financeiro | Yago Torres |
+| financeiro | Alberto Luiz Stassen da Silva |
 | adm | Marcos Paulo |
 | integracao | Alda Lorena |
 

@@ -466,7 +466,8 @@ router.put('/notas/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar nota fiscal' }); }
 });
 
-// Enviar pro financeiro lançar (notifica a equipe do Yago)
+// Enviar pro financeiro lançar (notifica a equipe do financeiro ·
+// area_solicitacoes_responsaveis decide QUEM, não este comentário)
 router.post('/notas/:id/enviar-financeiro', async (req, res) => {
   try {
     const { data: nota, error: errNota } = await supabase.from('log_notas_fiscais')
