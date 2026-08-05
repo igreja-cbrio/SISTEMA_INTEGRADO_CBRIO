@@ -3466,6 +3466,37 @@ renovação não piscam sem a migration (lição `parcelas_max`).
 (`comRoster` virou Map pra alimentar o {{3}} do template) — `.has()` segue
 idêntico pros chamadores antigos.
 
+## Grupos · triagem aprova POR CIMA da recusa + troca o grupo ali (2026-08-05 · SEM migration)
+
+Caso real: **4 mulheres do ONLINE - MULHER ÚNICA devolvidas por engano** pela
+líder na "Confira a lista" de 04/08 — e a Caixa de entrada só oferecia «Sugerir
+outro grupo» (depende de a pessoa aceitar pelo WhatsApp) ou «Rejeitar de vez»:
+o botão Aprovar só existia pra `status='pendente'`. Decisão do Marcos: recusa
+por engano é frequente; a triagem (Naná) decide por cima, inclusive movendo a
+pessoa de grupo, **sem autorização do líder**.
+
+- **`POST /grupos/pedidos/:pedidoId/aprovar-direto`** (nível 3 · body
+  `{ grupo_id? }`): aceita pendente/devolvido/rejeitado/encaminhado (aprovado é
+  409). Reabre pra `pendente` + realoca o `grupo_id` (validado contra grupo
+  vivo/ativo) **num UPDATE só com guarda de corrida** no status atual, registra
+  o evento `aprovado_triagem` ({status_anterior, realocado_para} · **awaited**,
+  serverless descarta trabalho pós-res.json) e delega ao **`aprovarPedidoCore`
+  canônico** — vínculo, WhatsApp ao líder e à pessoa (gate de opt-in), evento
+  'aprovado', tudo pelo caminho único. NÃO é um 2º fluxo de aprovação.
+- **UI (`GruposEntrada.jsx` · PainelPedido)**: botão primário **«Aprovar mesmo
+  assim»** em devolvido/rejeitado/encaminhado + ghost **«Aprovar em outro
+  grupo»** no pendente — os dois abrem o mesmo painel inline com select de
+  grupo (default «Manter: <grupo do pedido>»). Hints de devolvido/rejeitado
+  citam o caminho novo; `EVENTO_META.aprovado_triagem` na timeline.
+- ⚠️ A realocação NÃO passa pela sugestão (`sugerido_grupo_id` fica intocado;
+  link /g/s/ vivo de um encaminhado morre sozinho porque o pedido vira
+  aprovado). `api.aprovarPedidoDireto(id, grupoId)`.
+- Os 6 casos de 05/08 (4 do MULHER ÚNICA + Eliane Rangel Fonseca + Bruno de
+  Mendonca Paiva) foram aprovados por script ANTES desta feature (reabertura +
+  `aprovarPedidoCore` · backup em `scratchpad/backup_pedidos_aprovacao_20260805.json`;
+  confirmação de aprovado enfileirada na `whatsapp_envios` pra quem tem opt-in —
+  Rafaela ficou de fora por `whatsapp_optin=false`).
+
 ## Grupos · Caixa de entrada ganhou o "Retrato do período" + contato impossível (2026-08-03 · SEM migration)
 
 Depois da varredura do lançamento (domingo 02/08), o Marcos pediu: *"eu gostaria

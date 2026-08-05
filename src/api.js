@@ -817,6 +817,9 @@ export const grupos = {
   entradaCobertura: (params) => get('/grupos/entrada/cobertura' + (params ? '?' + new URLSearchParams(params) : '')),
   historicoMembros: (grupoId) => get(`/grupos/${grupoId}/historico-membros`),
   aprovarPedido: (pedidoId) => post(`/grupos/pedidos/${pedidoId}/aprovar`, {}),
+  // Aprovação "por cima" da triagem: reabre pedido recusado/devolvido/encaminhado
+  // e aprova; grupo_id opcional realoca a pessoa pra outro grupo na mesma ação.
+  aprovarPedidoDireto: (pedidoId, grupoId) => post(`/grupos/pedidos/${pedidoId}/aprovar-direto`, { grupo_id: grupoId || null }),
   aprovarPedidosLote: (pedidoIds) => post('/grupos/pedidos/aprovar-lote', { pedido_ids: pedidoIds }),
   rejeitarPedido: (pedidoId, motivo) => post(`/grupos/pedidos/${pedidoId}/rejeitar`, { motivo }),
   sugerirPedido: (pedidoId, grupoSugeridoId, motivo) => post(`/grupos/pedidos/${pedidoId}/sugerir`, { grupo_sugerido_id: grupoSugeridoId, motivo: motivo || null }),
