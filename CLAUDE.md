@@ -942,6 +942,66 @@ não é tratado por ninguém.
 - O aviso **nomeia a pessoa** quando dá (`ref_id` é o membro nos contextos de
   `notificarMembro`) — "o telefone 21…" não diz a quem avisar.
 
+## ⚠️ Aniversário do voluntário · são DOIS caminhos, e eles não se conheciam (2026-08-05)
+
+Achado ao inventariar "quem recebe as mensagens automáticas" (pergunta do
+Matheus). O parabéns tem **dois** caminhos e nenhum olhava o outro:
+
+| caminho | quando | registrava |
+|---|---|---|
+| **manual** · botão "Parabenizar" na tela de aniversariantes | a tela mostra a **SEMANA** (próximos 7 dias) ⇒ o clique costuma vir ANTES do dia | `vol_parabens` |
+| **automático** · cron `/whatsapp-cron/aniversarios` | 9h BRT **no dia** | nada |
+
+**Caso real:** a coordenação parabenizou uma pessoa às 13:30 de 05/08 e o
+aniversário dela era **06/08** — o cron do dia seguinte mandaria o segundo.
+E na direção inversa: o cron não gravava em `vol_parabens`, então a tela mostrava
+**"não parabenizado"** pra quem o automático já tinha alcançado, convidando a
+equipe a mandar o duplicado na mão.
+
+⚠️ Template de **Marketing repetido pra mesma pessoa** é o padrão que a Meta lê
+como spam — e a nota de qualidade do número é o que decide a subida de tier.
+
+- **`backend/services/aniversarioVoluntario.js`** = régua compartilhada
+  (`jaParabenizado` · `registrarParabens` · `anoBrt`), usada pelos DOIS caminhos.
+- ⚠️ **A prova principal é `whatsapp_envios`, não `vol_parabens`**: é a única
+  fonte que os dois alimentam (ambos passam por `notificarMembro`, que enfileira
+  com `ref_id` = membro e contexto `app.aniversario`). `vol_parabens` é por
+  `vol_profile_id`, e **não todo voluntário de `mem_voluntarios` tem perfil no
+  vol_\*** — dedup só por ela deixaria gente descoberta.
+- ⚠️ **Só `status='enviado'` conta.** Tentativa que ERROU não é parabéns dado:
+  bloquear por causa dela deixaria a pessoa sem mensagem no aniversário dela.
+- ⚠️ **`anoBrt`, não `getFullYear()`**: o servidor da Vercel roda em UTC, então
+  na noite de 31/12 o ano já virou e o dedup não acharia o parabéns dado horas
+  antes.
+- O botão manual passou a responder **409** quando já houve parabéns no ano, com
+  o texto explicando que pode ter sido o automático — a decisão de não mandar 2×
+  não pode depender da tela.
+- O cron devolve `ja_parabenizados` no JSON (o que ele PULOU é informação, não
+  silêncio).
+
+### ⚠️ Devocional diário por WhatsApp: tenta todo dia e falha 100% (medido 05/08)
+
+`devocionalSender.enviarDoDia` (cron `/api/devocional-planos/cron/enviar-diario`,
+9h) manda pra **todo membro com login no app e telefone** — e em
+`devocional_envios`: **187 tentativas `api_error`, ZERO entregas**, a última hoje.
+Causa: o template é `WHATSAPP_TEMPLATE_DEVOCIONAL || 'devocional_diario'` e **não
+existe template com esse nome na conta** (a Meta recusa template inexistente).
+
+- ⚠️ **É a lição do semáforo do censo, violada**: nome de template com **default
+  literal no código** faz o canal parecer ligado quando não está. Sem env, o
+  certo é **no-op** (`notificarMembro` faz assim: env vazia ⇒
+  `template_nao_configurado`), não tentar contra um nome chutado.
+- ⚠️ Não passa pela fila `whatsapp_envios` (usa `sendTemplate` direto), então
+  **não aparece no histórico de envios** nem herda retry/aviso de falha. Foi por
+  isso que 187 falhas passaram invisíveis.
+- ⚠️ E **não checa `whatsapp_optin`** — mensagem diária pra todo mundo que logou
+  no app. Se um dia o template for aprovado do jeito que está, começa a enviar
+  sem consentimento. **Decisão pendente do Matheus** (dono do módulo): o lembrete
+  por **push** das 7h30 já funciona e cobre o objetivo.
+- ⚠️ `wa_templates` é **snapshot e pode estar velho**: ali `grupos_pedido_*_v2`
+  aparecem como `PENDING` e no entanto enviaram 331 mensagens com sucesso. Não
+  afirmar status de template só por essa tabela — cruzar com envio real.
+
 ## ⚠️ Folha por pessoa · o coordenador estratégico VÊ (decisão de 2026-08-05)
 
 Registrado pra não ser re-sinalizado como problema: **o coordenador estratégico
