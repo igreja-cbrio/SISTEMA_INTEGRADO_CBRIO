@@ -203,22 +203,50 @@ async function salvarFilhas(propostaId, body) {
   }
 }
 
+// Líder da área = usuario_areas.is_principal=true naquela área, resolvido pra
+// um profile (id/name) pra preencher o formulário de Propostas. NÃO é embed
+// implícito do PostgREST: usuario_areas.usuario_id referencia usuarios(id)
+// (INTEGER legado), não profiles(id) (UUID) — um embed `profiles:usuario_id(...)`
+// erraria com PGRST200 (relação inexistente). A ponte real é por e-mail, igual
+// ao padrão já usado em resolverUsuarioId (routes/permissoes.js): profile → email
+// → usuarios.email → usuario_areas.usuario_id, e de volta.
+async function lideresPorAreaMap() {
+  const { data: principaisRaw, error: err1 } = await supabase
+    .from('usuario_areas').select('area_id, usuario_id').eq('is_principal', true);
+  if (err1) { console.warn('[propostas] usuario_areas:', err1.message); return {}; }
+  const usuarioIds = [...new Set((principaisRaw || []).map(r => r.usuario_id).filter(v => v != null))];
+  if (!usuarioIds.length) return {};
+
+  const { data: usuariosRows, error: err2 } = await supabase.from('usuarios').select('id, email').in('id', usuarioIds);
+  if (err2) { console.warn('[propostas] usuarios:', err2.message); return {}; }
+  const emailPorUsuarioId = {};
+  (usuariosRows || []).forEach(u => { if (u.email) emailPorUsuarioId[u.id] = String(u.email).toLowerCase().trim(); });
+  const emails = [...new Set(Object.values(emailPorUsuarioId))];
+  if (!emails.length) return {};
+
+  const { data: profilesRows, error: err3 } = await supabase.from('profiles').select('id, name, email').in('email', emails);
+  if (err3) { console.warn('[propostas] profiles:', err3.message); return {}; }
+  const profilePorEmail = {};
+  (profilesRows || []).forEach(p => { if (p.email) profilePorEmail[String(p.email).toLowerCase().trim()] = { id: p.id, name: p.name }; });
+
+  const mapa = {};
+  (principaisRaw || []).forEach(r => {
+    const email = emailPorUsuarioId[r.usuario_id];
+    const perfil = email ? profilePorEmail[email] : null;
+    if (perfil) mapa[r.area_id] = perfil;
+  });
+  return mapa;
+}
+
 // Contexto do usuário (ciclos abertos, áreas, líder de cada área, minhas áreas de diretor)
 router.get('/aux', authorizeModule('propostas', 1), async (req, res) => {
   const me = meuId(req);
-  const [ciclos, areas, principais, dirAreas] = await Promise.all([
+  const [ciclos, areas, lideresPorArea, dirAreas] = await Promise.all([
     supabase.from('prop_ciclo').select('*').order('ano', { ascending: false }),
     supabase.from('areas').select('id, nome').eq('ativo', true).order('nome'),
-    // Líder da área = quem tem usuario_areas.is_principal=true naquela área
-    // (mesmo padrão de resolverLiderArea em agentePrimeiroContato/agenteBatismoNext).
-    // Preenche automaticamente o campo "Líder da área" do formulário — não é
-    // mais um select manual (não confundir com prop_area_diretor, que é o
-    // DIRETOR da área, papel de avaliação/aprovação, conceito distinto).
-    supabase.from('usuario_areas').select('area_id, profiles:usuario_id(id, name)').eq('is_principal', true),
+    lideresPorAreaMap(),
     supabase.from('prop_area_diretor').select('area_id').eq('diretor_usuario_id', me),
   ]);
-  const lideresPorArea = {};
-  (principais.data || []).forEach(r => { if (r.profiles) lideresPorArea[r.area_id] = { id: r.profiles.id, name: r.profiles.name }; });
   res.json({
     ciclos: ciclos.data || [], areas: areas.data || [], lideresPorArea,
     diretor_de: (dirAreas.data || []).map(d => d.area_id),
