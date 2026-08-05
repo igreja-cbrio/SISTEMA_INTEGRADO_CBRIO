@@ -3491,6 +3491,23 @@ SERVIDOR** (payload é do cliente), então bundle antigo aberto não fura.
   funcionando (desenho original). Template Meta continua o MESMO
   (`grupos_confira_lista` aprovado 03/08 — 1 template pras 2 ocasiões, o
   contexto vive na tela; o {{3}} segue contando pessoas do roster).
+- **'Inscrito' inclui o PILOTO pré-abertura (Marcos · 05/08 · SEM migration):**
+  vínculo criado até **30 dias ANTES** da `data_inicio` conta como 'inscrito'
+  **se e só se** existe `mem_grupo_pedidos` **aprovado** do mesmo membro no
+  mesmo grupo (`membrosInscritosPreAbertura` em publicGrupos.js · aplicada no
+  GET **e** na re-derivação do POST). Caso real: Nathália Pigatti, pedido
+  aprovado 28/07 no piloto de 26-28/07 com a T2 abrindo 01/08 — caía em "Sem
+  confirmação" removível. Exigir o pedido aprovado é o que separa confirmação
+  real do import de 10/07: medido em 05/08, **8 pessoas em 4 grupos** flipam
+  pra 'inscrito'; os ~380 vínculos restantes da janela (import, sem pedido)
+  seguem removíveis. O `aprovarPedidoCore` sempre grava `membro_id` no claim —
+  é isso que torna a chave (grupo, membro, aprovado) confiável.
+- ⚠️ **Renovação × Confira vão virar UM fluxo** (decisão do Marcos · 05/08):
+  a ideia é um pedido só — "deseja continuar o grupo?" e em seguida "escreva
+  quem fica". **Por enquanto NADA foi disparado nem alterado nos 2 fluxos**
+  ("por enquanto deixa assim, nao dispara nada") — a renovação (`/g/r/`) segue
+  nunca disparada nesta temporada (0 linhas em `mem_grupo_renovacoes`) e o
+  template `grupos_renovacao_temporada` segue aprovado e ocioso.
 
 **Feedback Naná/Nélio (04/08 · teste real — os 2 responderam em minutos):**
 (1) intro da tela virou 2 parágrafos curtos, SEM a explicação "quem sair

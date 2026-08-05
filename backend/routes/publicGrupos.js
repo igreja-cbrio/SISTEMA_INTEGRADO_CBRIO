@@ -2270,7 +2270,8 @@ async function contextoConferencia(token) {
 const FUNCOES_PROTEGIDAS = new Set(['lider', 'co_lider']);
 
 // ── 4 categorias da conferência (Marcos · 04/08, fechamento com a Naná) ──
-// lideranca 🔒 · inscrito (entrou NESTA temporada) 🔒 · renovado (confirmou na
+// lideranca 🔒 · inscrito (entrou NESTA temporada, incluindo o piloto
+// pré-abertura — ver membrosInscritosPreAbertura) 🔒 · renovado (confirmou na
 // renovação) 🔒 · sem_confirmacao (roster herdado · ÚNICO removível pela tela).
 // Inscrito e renovado são somente leitura de propósito: é o que protege a
 // evidência de quem acabou de entrar/renovar. A decisão é SEMPRE re-derivada
@@ -2307,6 +2308,45 @@ async function vinculosRenovados(vincIds) {
 // funciona porque ISO ordena lexicograficamente e o date é prefixo.
 const vincNaTemporada = (createdAt, temporada) =>
   !!(temporada?.data_inicio && createdAt && String(createdAt) >= temporada.data_inicio);
+
+// Piloto pré-abertura (Marcos · 05/08): pedido APROVADO pouco antes da
+// abertura (piloto de 26-28/07 pra T2 que abriu 01/08) é confirmação tão real
+// quanto a inscrição pós-abertura — sem isto a Nathália (pedido aprovado em
+// 28/07, vínculo de 28/07) caía em "Sem confirmação" removível na tela do
+// líder. Regra: vínculo criado na janela de 30 dias ANTES da data_inicio E
+// com pedido 'aprovado' do MESMO membro no MESMO grupo ⇒ categoria 'inscrito'
+// (travada). Exigir o pedido aprovado é o que separa confirmação real de
+// vínculo antigo de import/gestão manual, que segue 'sem_confirmacao' — e o
+// aprovarPedidoCore SEMPRE grava membro_id no claim, então a chave existe.
+const PRE_ABERTURA_DIAS = 30;
+function inicioJanelaPreAbertura(temporada) {
+  if (!temporada?.data_inicio) return null;
+  // Meio-dia UTC evita o dia escorregar na aritmética (data_inicio é DATE).
+  const d = new Date(`${temporada.data_inicio}T12:00:00Z`);
+  if (Number.isNaN(d.getTime())) return null;
+  d.setUTCDate(d.getUTCDate() - PRE_ABERTURA_DIAS);
+  return d.toISOString().slice(0, 10);
+}
+// vincs = linhas do roster ativo ({ membro_id, created_at }). Devolve o Set de
+// membro_id cujo vínculo nasceu na janela pré-abertura E tem pedido aprovado.
+async function membrosInscritosPreAbertura(grupoId, vincs, temporada) {
+  const inscritos = new Set();
+  const desde = inicioJanelaPreAbertura(temporada);
+  if (!desde) return inscritos;
+  const candidatos = [...new Set((vincs || [])
+    .filter(v => v.membro_id && v.created_at
+      && !vincNaTemporada(v.created_at, temporada)
+      && String(v.created_at) >= desde)
+    .map(v => v.membro_id))];
+  for (let i = 0; i < candidatos.length; i += 150) {
+    const { data, error } = await supabase.from('mem_grupo_pedidos')
+      .select('membro_id').eq('grupo_id', grupoId).eq('status', 'aprovado')
+      .is('deleted_at', null).in('membro_id', candidatos.slice(i, i + 150));
+    if (error) throw error;
+    (data || []).forEach(p => { if (p.membro_id) inscritos.add(p.membro_id); });
+  }
+  return inscritos;
+}
 const RANK_FUNCAO = { coordenador: 7, supervisor: 6, lider: 5, co_lider: 4, lider_treinamento: 3, frequentador: 2, visitante: 1 };
 const rotuloFuncao = (f) => ({
   coordenador: 'Coordenador', supervisor: 'Supervisor', lider: 'Líder',
@@ -2328,11 +2368,12 @@ async function rosterConferencia(conf) {
     .limit(1000);
   if (eA) throw eA;
   const renovadosVinc = await vinculosRenovados((ativos || []).map(v => v.id));
+  const preAbertura = await membrosInscritosPreAbertura(conf.grupo_id, ativos || [], temporada);
   const renovadoMembro = new Set();
   const novoMembro = new Set();
   for (const v of (ativos || [])) {
     if (renovadosVinc.has(v.id)) renovadoMembro.add(v.membro_id);
-    if (vincNaTemporada(v.created_at, temporada)) novoMembro.add(v.membro_id);
+    if (vincNaTemporada(v.created_at, temporada) || preAbertura.has(v.membro_id)) novoMembro.add(v.membro_id);
     const atual = linhas.get(v.membro_id);
     if (!atual) {
       linhas.set(v.membro_id, {
@@ -2466,6 +2507,7 @@ router.post('/grupo/confira', async (req, res) => {
     // somente-leitura da tela (Marcos · 04/08).
     const renovadosVinc = await vinculosRenovados((ativos || []).map(v => v.id));
     const temporadaAtual = await temporadaAtualInfo();
+    const preAbertura = await membrosInscritosPreAbertura(grupo.id, ativos || [], temporadaAtual);
     const ativosPorMembro = new Map();
     const travados = new Set(); // liderança/renovado/inscrito — nunca saem por aqui
     for (const v of (ativos || [])) {
@@ -2473,7 +2515,8 @@ router.post('/grupo/confira', async (req, res) => {
       ativosPorMembro.get(v.membro_id).push(v.id);
       if (FUNCOES_PROTEGIDAS.has(v.funcao)
         || renovadosVinc.has(v.id)
-        || vincNaTemporada(v.created_at, temporadaAtual)) travados.add(v.membro_id);
+        || vincNaTemporada(v.created_at, temporadaAtual)
+        || preAbertura.has(v.membro_id)) travados.add(v.membro_id);
     }
 
     const setExibidos = new Set(exibidos);
