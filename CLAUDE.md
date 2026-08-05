@@ -4177,6 +4177,50 @@ bloqueia o CPF quando o servidor diz que sim. Falha de rede mantém o default
 **true (fail-closed)**: sem isso, ficar offline viraria porta pra entrar sem
 cadastro. É a mesma lei do resto — quem define o que é válido é o backend.
 
+## ⚠️⚠️ LEI · no APP, dado HERDADO de vínculo não libera acesso (2026-08-05 · migration `20260805150000`)
+
+Decisão do Marcos, ao ver que o login do Pedro Paiva não pediu cadastro:
+*"qual CPF de Pedro Paiva que cadastrou no app? Data de nascimento, Sexo? Só tem
+email e nome. Se ele pode preencher o cadastro, pra que fundir automaticamente
+entende? O caso do app, mesmo que o sistema ache que alguém é igual, **NÃO deve
+liberar acesso**; depois de preencher todos os dados aí sim pode se ter 100% de
+certeza"*.
+
+**O furo:** `GET /app/identidade/status` calculava o que "falta" **a partir do
+cadastro que o vínculo encontrou**. Como o gatilho de `auth.users` liga por
+e-mail + nome (sinal médio), quem caía num cadastro já completo **entrava no app
+sem nunca ter provado nada** — herdando CPF, nascimento e sexo que um import
+preencheu. **Medido antes de ligar: das 89 contas com cadastro vinculado, 9
+passavam o gate — TODAS as 9 por herança** (confirmações reais pelo app: **0**).
+Dois casos não-staff eram gente que logou com Gmail e caiu num cadastro do
+`grupos_import_2026`.
+
+- **`profiles.app_ficha_confirmada_em`** é a marca: `completo` exige ficha fechada
+  **E** confirmação por ESTA conta. ⚠️ Fica em `profiles` (a CONTA), **não** em
+  `mem_membros` — duas contas ligadas ao mesmo cadastro herdariam a confirmação
+  uma da outra, que é o mesmo furo por outro caminho.
+- **O app não pré-preenche dado herdado**: o status devolve
+  `pode_preencher_com_vinculo`, e enquanto for false o formulário traz **só o
+  nome** (o que veio do provedor do login). Pré-preencher CPF/nascimento seria
+  fazer a pessoa "confirmar" o que ela não forneceu.
+- ⚠️⚠️ **FAIL OPEN quando a coluna não existe** (deploy em 2 etapas): pedir coluna
+  inexistente faz o PostgREST **recusar a query inteira**, e tratar isso como "não
+  confirmou" prenderia TODO MUNDO na tela — inclusive depois de preencher, porque
+  a gravação da marca falharia igual (**loop sem saída**). Sem a migration vale o
+  comportamento antigo; com ela, o portão liga. Os dois lados degradam juntos, de
+  propósito. O `select` da marca é **ISOLADO** pelo mesmo motivo.
+- ⚠️ **O gatilho de `auth.users` NÃO foi alterado.** Ele continua ligando (CPF
+  forte; e-mail+nome médio) — mudá-lo pra não ligar criaria duplicata em TODO
+  login e inundaria a fila humana. O que mudou é que **o vínculo deixou de ser
+  prova de acesso**; o par duplicado segue indo pra fila de /entradas, agora com
+  CPF de verdade pra decidir. É exatamente o que ele pediu ("preencher tudo e
+  depois vá para essa aba").
+- ⚠️ **Efeito conhecido e correto**: as 9 contas (incluindo as do staff) veem a
+  tela de cadastro **uma vez**. Régua aplicada a todo mundo, não regressão.
+- ⚠️ Comentário desatualizado corrigido em `appIdentidade.completarCadastro`: ele
+  dizia que CPF e sexo **não** eram exigidos (estado anterior a 05/08) enquanto o
+  código exigia os dois — comentário que mente engana a próxima sessão.
+
 ## ⚠️ GERENCIAR GRUPO pelo app · tudo do líder num lugar só (2026-08-05)
 
 Pedido do Marcos: *"ao apertar gerenciar grupo, ali devem ter TODAS as opções
