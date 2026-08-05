@@ -1262,6 +1262,20 @@ router.post('/aniversariantes/:volProfileId/parabenizar', async (req, res) => {
     if (!vp) return res.status(404).json({ error: 'Voluntário não encontrado' });
 
     const primeiro = String(vp.full_name || '').trim().split(/\s+/)[0] || '';
+
+    // ⚠️ O cron das 9h já pode ter parabenizado hoje — a tela mostra a SEMANA,
+    // então o clique da coordenação e o automático se cruzam. O `parabenizado`
+    // que a tela exibe vem de `vol_parabens`, e o cron antigo não gravava lá:
+    // quem o automático alcançou aparecia como "não parabenizado". A guarda é no
+    // SERVIDOR porque a decisão de não mandar 2× não pode depender da tela.
+    const { jaParabenizado, registrarParabens } = require('../services/aniversarioVoluntario');
+    if (await jaParabenizado({ membroId: vp.membresia_id, volProfileId: volId })) {
+      return res.status(409).json({
+        ok: false, resultado: 'ja_parabenizado',
+        error: 'Esta pessoa já foi parabenizada este ano (pela equipe ou pelo envio automático do dia). Se quiser falar de novo, use o botão de abrir no WhatsApp.',
+      });
+    }
+
     let resultado = 'sem_cadastro';
     let sent = false;
     if (vp.membresia_id) {
@@ -1272,11 +1286,15 @@ router.post('/aniversariantes/:volProfileId/parabenizar', async (req, res) => {
     }
 
     if (sent) {
-      const ano = new Date().getFullYear();
-      await supabase.from('vol_parabens').upsert({
-        vol_profile_id: volId, ano, enviado_em: new Date().toISOString(),
-        enviado_por: req.user.userId || req.user.id, resultado,
-      }, { onConflict: 'vol_profile_id,ano' });
+      // Registro pelo helper compartilhado: o ano é calculado em BRT nos dois
+      // caminhos (`getFullYear()` no relógio UTC do servidor já virou o ano
+      // seguinte na noite de 31/12, e aí o dedup do ano novo não encontraria o
+      // parabéns dado horas antes).
+      await registrarParabens({
+        volProfileId: volId,
+        porUserId: req.user.userId || req.user.id,
+        resultado,
+      });
       return res.json({ ok: true, resultado });
     }
     return res.status(400).json({ ok: false, resultado, error: MSG_RESULTADO[resultado] || 'Não foi possível enviar pela API. Use o WhatsApp manual.' });
