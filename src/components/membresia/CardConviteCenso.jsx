@@ -227,13 +227,27 @@ export default function CardConviteCenso() {
                     }}>
                       <span style={{ flex: 1, color: C.text }}>{p.nome}</span>
                       <span style={{ color: C.text3, fontSize: 11 }}>{p.email}</span>
-                      <span style={{
-                        fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 999,
-                        color: p.tem_cpf ? C.green : C.amber,
-                        background: p.tem_cpf ? '#10b98118' : '#f59e0b18',
-                      }}>
-                        {p.tem_cpf ? 'com CPF' : 'sem CPF'}
-                      </span>
+                      {/* ⚠️ Três estados, não dois. "sem CPF" para quem
+                          INFORMOU o CPF (e o sistema segurou por conflito) fez o
+                          Matheus achar que a pessoa não preencheu — quando o
+                          campo é obrigatório e ela preencheu. */}
+                      {(() => {
+                        const s = p.cpf_situacao || (p.tem_cpf ? 'com_cpf' : 'sem_cpf');
+                        const meta = {
+                          com_cpf: { txt: 'com CPF', cor: C.green, bg: '#10b98118', dica: 'CPF consolidado no cadastro.' },
+                          conflito: { txt: 'CPF em conflito', cor: C.amber, bg: '#f59e0b18', dica: 'Informou o CPF, mas ele já pertence a outro cadastro — está na fila de Conflitos de CPF, em Entradas, para fundir.' },
+                          sem_cpf: { txt: 'não informou CPF', cor: C.red, bg: '#ef444418', dica: 'Respondeu sem CPF. O campo é obrigatório no formulário, então isto não deveria acontecer — vale investigar.' },
+                        }[s];
+                        return (
+                          <span title={meta.dica} style={{
+                            fontSize: 10.5, fontWeight: 700, padding: '2px 8px',
+                            borderRadius: 999, color: meta.cor, background: meta.bg,
+                            cursor: 'help', whiteSpace: 'nowrap',
+                          }}>
+                            {meta.txt}
+                          </span>
+                        );
+                      })()}
                     </div>
                   ))}
                 </div>
