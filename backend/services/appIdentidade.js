@@ -291,10 +291,11 @@ async function confirmarCodigo({ verificacaoId, codigo, authUserId, email }) {
 async function completarCadastro({ payload, authUserId, email, ip, userAgent }) {
   // CPF NÃO é exigido (decisão antiga: o app não pode travar a entrada de quem
   // não tem o CPF em mãos) — o campo é pedido, mas não bloqueia.
-  // ⚠️ SEXO passou a ser exigido (Matheus · 05/08: "em todos os formulários").
-  // Pode ligar aqui SEM esperar release: este endpoint só é chamado pela tela
-  // nova de completar cadastro; nenhuma versão instalada do app o usa, então
-  // não há cliente antigo pra quebrar (diferente do gate do formulário web).
+  // ⚠️ SEXO ainda NÃO é exigido aqui, de propósito: a tela `/completar-cadastro`
+  // JÁ ESTÁ VIVA e não manda o campo. Exigir agora daria 400 nela e prenderia a
+  // pessoa no portão sem saída. Ligar só depois do release com o campo.
+  // (Eu havia escrito que "nenhum cliente antigo usa o endpoint" — estava
+  // errado: o CadastroGate do Marcos usa desde 04/08.)
   const { erros, valores } = validarCamposPadrao({
     nome_completo: payload?.nome_completo,
     telefone: payload?.telefone,
@@ -302,7 +303,7 @@ async function completarCadastro({ payload, authUserId, email, ip, userAgent }) 
     cpf: payload?.cpf,
     data_nascimento: payload?.data_nascimento,
     sexo: payload?.sexo,
-  }, { exigirCpf: false, exigirSexo: true, exigirEmail: true, exigirNascimento: true });
+  }, { exigirCpf: false, exigirSexo: false, exigirEmail: true, exigirNascimento: true });
   const campos = Object.keys(erros || {});
   if (campos.length) {
     return { ok: false, status: 400, codigo: 'campos', campo: campos[0], error: erros[campos[0]], erros };

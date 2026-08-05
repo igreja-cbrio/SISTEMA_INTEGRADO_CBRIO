@@ -188,12 +188,12 @@ router.get('/identidade/status', authApp, limiterNormal, async (req, res) => {
     if (!membro.telefone) falta.push('telefone');
     if (!membro.cpf) falta.push('cpf'); // informativo — CPF não é exigido
     const { data: m } = await supabase.from('mem_membros')
-      .select('nome, data_nascimento, genero').eq('id', membro.id).maybeSingle();
+      .select('nome, data_nascimento').eq('id', membro.id).maybeSingle();
     if (!m?.data_nascimento) falta.push('nascimento');
-    // Sexo entrou nos obrigatórios (Matheus · 05/08: "em todos os formulários").
-    // ⚠️ Isto faz `completo` virar false pra QUEM JÁ USA o app sem sexo — é o
-    // efeito desejado: na próxima abertura a pessoa cai na tela de completar.
-    if (!m?.genero) falta.push('sexo');
+    // ⚠️ 'sexo' NÃO entra no `falta` ainda: a tela publicada não coleta o campo,
+    // então marcar incompleto criaria LOOP (portão manda pra tela → salva sem
+    // sexo → status segue incompleto). Ligar junto com o `exigirSexo`, depois do
+    // release do app.
     const nomeFraco = require('../services/membroMatch')
       .ehNomeDerivadoDeEmail(m?.nome, req.user.email || '');
     if (nomeFraco) falta.push('nome');
