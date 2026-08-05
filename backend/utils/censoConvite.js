@@ -91,6 +91,27 @@ function canaisDaPessoa(pessoa, { canais = ['whatsapp', 'email'], optinObrigator
 }
 
 /**
+ * A pessoa já foi convidada por ALGUM canal?
+ *
+ * ⚠️ Regra do Matheus (04/08): *"quando for disparar pelo wpp, não é legal
+ * enviar para quem já enviou por email"*. Medido no momento da decisão: 508 dos
+ * 627 alcançáveis por WhatsApp já tinham recebido o e-mail (81%) — sem esta
+ * regra, o disparo de WhatsApp seria quase todo contato repetido, gastando cota
+ * do TIER_250 em quem já foi avisado e irritando quem já respondeu no outro
+ * canal.
+ *
+ * ⚠️ NÃO é "nunca mandar pelo segundo canal": é não mandar POR ACIDENTE. O
+ * reforço deliberado (quem ignorou o e-mail e talvez leia o WhatsApp) existe
+ * como escolha explícita — `permitirCanalCruzado` — porque 626 das 651 pessoas
+ * convidadas por e-mail não responderam, e desistir delas em silêncio seria a
+ * outra forma de errar.
+ */
+function jaConvidadoEmQualquerCanal(membroId, convidadosPorPessoa) {
+  if (!convidadosPorPessoa) return false;
+  return convidadosPorPessoa.has ? convidadosPorPessoa.has(membroId) : false;
+}
+
+/**
  * Corta a lista no teto da rodada.
  * ⚠️ O que ficou de fora é DEVOLVIDO (`adiados`), nunca descartado em silêncio:
  *    "convidei 200" lido como "convidei todo mundo" é a leitura errada que faz
@@ -126,6 +147,7 @@ module.exports = {
   TETO_RODADA_WHATSAPP,
   TETO_RODADA_EMAIL,
   whatsappPronto,
+  jaConvidadoEmQualquerCanal,
   semCpf,
   primeiroNome,
   emailUtilizavel,
