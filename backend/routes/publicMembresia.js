@@ -645,6 +645,31 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
         if (eCob && !ehColunaAusente(eCob)) {
           console.error('[PUBLIC CADASTRO censo cobertura]', eCob.message);
         }
+
+        // ⚠️⚠️ O OPT-IN DE WHATSAPP TAMBÉM ERA DESCARTADO — mesma família do bug
+        // do CPF, e pelo mesmo motivo estrutural: `CAMPOS_CENSO` não inclui
+        // `whatsapp_optin`, e quem propaga consentimento é a APROVAÇÃO
+        // (`aprovarCadastroCore` / `promoverInscricaoLider`). A linha do censo
+        // vira `aplicado` e NUNCA é aprovada ⇒ o consentimento ficava só na
+        // submissão. Medido em 05/08: 70 das 74 respostas marcaram a caixa
+        // (95%) e só 13 tinham chegado ao cadastro — 57 consentimentos válidos
+        // invisíveis pra quem decide se pode enviar.
+        //
+        // ⚠️ SÓ LIGA, NUNCA DESLIGA (mesma política da aprovação): não marcar a
+        // caixa é ausência de consentimento nesta submissão, não revogação do
+        // que a pessoa já autorizou em outra porta. Revogar é ação dela.
+        // ⚠️ `whatsapp_optin_em` é preservado quando já havia consentimento —
+        // é a data da PROVA, e sobrescrevê-la apagaria desde quando ela vale.
+        if (whatsapp_optin) {
+          const { error: eOptin } = await supabase
+            .from('mem_membros')
+            .update({ whatsapp_optin: true, whatsapp_optin_em: new Date().toISOString() })
+            .eq('id', duplicadoDeId)
+            .or('whatsapp_optin.is.null,whatsapp_optin.eq.false');
+          if (eOptin && !ehColunaAusente(eOptin)) {
+            console.error('[PUBLIC CADASTRO censo optin]', eOptin.message);
+          }
+        }
       } catch (censoErr) {
         console.error('[PUBLIC CADASTRO censo]', censoErr.message);
       }
