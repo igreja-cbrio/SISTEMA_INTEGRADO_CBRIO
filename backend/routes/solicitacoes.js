@@ -1487,8 +1487,16 @@ router.post('/', async (req, res) => {
     // caso, o trigger só dispensa. O trigger continua de rede de segurança (só
     // age quando ninguém setou aprovacao_origem_status · ex.: RPC falhou).
     try {
+      // ⚠️ `p_categoria` é o que dispensa serviço/manutenção do diretor de
+      // origem (decisão do Matheus · 05/08: conserto vai direto pro Amaury). A
+      // lista fica em `fn_solicitacoes_categoria_dispensa_origem`, fonte única
+      // compartilhada com o trigger — não repetir a régua aqui em JS, senão o
+      // POST e a rede de segurança podem discordar e a solicitação sai da fila
+      // de alguém sem ninguém notar.
       const { data: r, error: rErr } = await supabase
-        .rpc('fn_solicitacoes_rotear_origem', { p_solicitante_id: userId, p_setor_hint: setorHint });
+        .rpc('fn_solicitacoes_rotear_origem', {
+          p_solicitante_id: userId, p_setor_hint: setorHint, p_categoria: categoria,
+        });
       if (rErr) throw rErr;
       rota = r;
     } catch (rerr) {
