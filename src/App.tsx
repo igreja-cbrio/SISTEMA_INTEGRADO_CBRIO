@@ -316,12 +316,12 @@ const Inscricoes = lazyWithRetry(() => import('./pages/Inscricoes'));
 const Propostas = lazyWithRetry(() => import('./pages/Propostas'));
 const InscricaoEventoDetalhe = lazyWithRetry(() => import('./pages/InscricaoEventoDetalhe'));
 const InscricaoTotens = lazyWithRetry(() => import('./pages/InscricaoTotens'));
-// Totem de inscrições · rota PÚBLICA de propósito: quem se autentica é o
-// EQUIPAMENTO (credencial de dispositivo), não uma conta de e-mail/senha
-// compartilhada num PC de hall. Divergência consciente do /totem e do
-// /voluntariado/totem — e é uma redução de risco: a conta de quiosque atual
-// carrega `membros-totem` no ROUTE_MODULE_MAP, ou seja, lê PII de membro.
-const TotemInscricoes = lazyWithRetry(() => import('./pages/totem/TotemInscricoes'));
+// ⚠️ NÃO criar quiosque separado pra inscrições. As inscrições de evento vivem
+// DENTRO do Totem Membro (`/totem` · MENU_OPTIONS de TotemMembro.tsx), ao lado
+// de grupos/batismo/Next/apresentação — decisão do Matheus em 05/08, e o
+// próprio MENU_OPTIONS registra que a vaga de "Retiro" existia ali e foi podada
+// por falta de implementação. Uma rota `/totem/inscricoes` chegou a existir por
+// algumas horas e foi removida no mesmo dia.
 const NextDirecionar = lazyWithRetry(() => import('./pages/public/NextDirecionar'));
 const DecisaoOnline = lazyWithRetry(() => import('./pages/public/DecisaoOnline'));
 const InscricaoVoluntariado = lazyWithRetry(() => import('./pages/public/InscricaoVoluntariado'));
@@ -557,9 +557,6 @@ function AppRoutes() {
       <Route path="/doar/:token" element={<Suspense fallback={<Loading />}><Doar /></Suspense>} />
       {/* Comprovante da inscrição (SPEC-06) · público, token ASSINADO — é a URL do QR do check-in */}
       <Route path="/i/c/:token" element={<Suspense fallback={<Loading />}><InscricaoComprovante /></Suspense>} />
-      {/* Totem de inscrições · autenticado por credencial de DISPOSITIVO
-          (header x-totem-token), não por sessão de pessoa. Fora do AppShell. */}
-      <Route path="/totem/inscricoes" element={<Suspense fallback={<Loading />}><TotemInscricoes /></Suspense>} />
       {/* Política de reembolso · o CDC exige informação PRÉVIA e clara, então
           precisa ser alcançável antes da compra, sem login. */}
       <Route path="/politica-reembolso" element={<Suspense fallback={<Loading />}><PoliticaReembolso /></Suspense>} />

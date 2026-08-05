@@ -1,29 +1,45 @@
 // ============================================================================
 // Totem · identidade de ESTAÇÃO (2026-08-05)
 //
-// Substitui, no totem de inscrições, a conta de e-mail/senha por computador
-// (20260703160000_totem_membro_kiosk.sql) por uma credencial de DISPOSITIVO,
-// revogável individualmente e com privilégio mínimo.
+// Responde "qual totem fez isso?" — pergunta que passa a ter consequência
+// financeira quando o totem recebe dinheiro (Pix, e depois cartão no pinpad).
+//
+// ⚠️ DOIS CAMINHOS, e não confundir:
+//
+//   1. `estacaoDaConta(req.user.id)` — o caminho REAL do dia a dia. As
+//      inscrições de evento vivem dentro do Totem Membro (`/totem`), que já
+//      está autenticado por conta de quiosque (20260703160000), então a estação
+//      sai da conta logada e NÃO há nada a parear no navegador.
+//
+//   2. `parear` + `resolverToken` — sobrou pro AGENTE DO PINPAD (Fase 3): um
+//      serviço Windows, sem sessão de usuário, que precisa de segredo próprio.
+//      Fora disso, não usar.
+//
+// (Existiu por algumas horas em 05/08 um quiosque `/totem/inscricoes` com
+// pareamento pelo navegador. Foi removido no mesmo dia: as inscrições vão pro
+// Totem Membro, e credencial que não existe não pode ser copiada de um PC de
+// hall.)
 //
 // ═══ REGRAS QUE SÃO LEI NESTE SERVIÇO (não regredir) ═══
 //
-//  1. O SEGREDO NUNCA É GRAVADO. Só `sha256`. Ele é devolvido UMA vez, na
+//  1. `estacao_id` é ATRIBUÍDO PELO SERVIDOR, nunca declarado pelo cliente.
+//     Aceitar `estacao_id` do corpo do request faz qualquer um dizer "sou o
+//     totem 3", e a conciliação do presencial atribui a cobrança ao
+//     equipamento errado — silenciosamente.
+//
+//  2. O SEGREDO NUNCA É GRAVADO. Só `sha256`. Ele é devolvido UMA vez, na
 //     emissão. Se alguém "precisar ver de novo", a resposta é emitir outro.
 //
-//  2. FAIL-CLOSED. Qualquer dúvida na resolução do token (linha ausente,
-//     expirada, revogada, estação inativa, IP fora do cerco) → recusa. E a
-//     recusa é NEUTRA: não distingue token inexistente de estação revogada,
-//     pra não virar oráculo de enumeração.
+//  3. FAIL-CLOSED na resolução do token (linha ausente, expirada, revogada,
+//     estação inativa, IP fora do cerco) → recusa. E a recusa é NEUTRA: não
+//     distingue token inexistente de estação revogada, pra não virar oráculo
+//     de enumeração.
 //
-//  3. O TOKEN NÃO AUTORIZA MÓDULO. Ele não passa por `authenticate` nem por
-//     `authorizeModule` e não popula `req.user` — só `req.estacao`. Nunca
-//     acrescentar aqui rota que leia lista de gente, faça lookup de CPF ou
-//     exporte dado: um PC de hall é fisicamente acessível, e o token é
-//     extraível em 20 segundos por quem senta na frente dele.
+//  4. O TOKEN NÃO AUTORIZA MÓDULO. Não passa por `authenticate` nem por
+//     `authorizeModule` e não popula `req.user`.
 //
-//  4. CÓDIGO DE PAREAMENTO É DE USO ÚNICO E CURTO. 8 caracteres num alfabeto
-//     sem ambiguidade visual, 15 minutos, queimado no primeiro uso. O
-//     voluntário digita em 15 segundos e não existe senha compartilhada.
+//  5. CÓDIGO DE PAREAMENTO É DE USO ÚNICO E CURTO. 8 caracteres num alfabeto
+//     sem ambiguidade visual, 15 minutos, queimado no primeiro uso.
 // ============================================================================
 
 const crypto = require('crypto');
@@ -163,7 +179,7 @@ async function parear({ codigo, tipo = 'dispositivo', ip, userAgent, rotulo }) {
     rotulo: rotulo || (userAgent || '').slice(0, 120) || null,
   });
 
-  cache.clear(); // pareou = trocou credencial; não servir estado velho
+  cache.clear(); cacheConta.clear(); // pareou = trocou credencial; não servir estado velho
   return { ok: true, segredo, token, estacao: publico(est) };
 }
 
@@ -206,6 +222,45 @@ async function resolverToken(segredo, { ip, tipo } = {}) {
   return { ok: true, estacao, token: linha };
 }
 
+// ── Resolução pela CONTA DE QUIOSQUE (o caminho do Totem Membro) ───────────
+// As inscrições de evento vivem dentro do `/totem` (Totem Membro), que JÁ está
+// autenticado por conta de quiosque (`profiles.is_membro_only` + cargo
+// `totem-kiosk` · migration 20260703160000). Então não há nada a parear no
+// navegador: a estação é resolvida no SERVIDOR a partir de `req.user.id`.
+//
+// ⚠️ A propriedade que importa continua valendo: `estacao_id` é ATRIBUÍDO pelo
+// servidor, nunca declarado pelo cliente. Aceitar `estacao_id` do corpo do
+// request faria qualquer pessoa dizer "sou o totem 3" e a conciliação do
+// presencial atribuiria a cobrança ao equipamento errado.
+//
+// Devolve `null` quando a conta não é de nenhuma estação (o caso normal de
+// qualquer usuário comum usando o sistema) — quem chama trata isso como
+// "não veio de totem", não como erro.
+const cacheConta = new Map();
+
+async function estacaoDaConta(contaId) {
+  if (!contaId) return null;
+
+  const agora = Date.now();
+  const cached = cacheConta.get(contaId);
+  if (cached && cached.exp > agora) return cached.estacao;
+
+  const { data, error } = await supabase
+    .from('totem_estacoes').select(SELECT_ESTACAO)
+    .eq('conta_id', contaId).maybeSingle();
+  if (error) {
+    // Best-effort: falha de consulta não pode derrubar uma inscrição. Quem
+    // chama segue sem estação (a cobrança nasce sem `estacao_id`, que é
+    // exatamente o estado de quem se inscreve pela web).
+    console.warn('[totem-estacao] estacaoDaConta:', error.message);
+    return null;
+  }
+
+  const viva = data && data.ativo && !data.revogada_em ? data : null;
+  cacheConta.set(contaId, { estacao: viva, exp: agora + CACHE_TTL_MS });
+  return viva;
+}
+
 // ── Heartbeat ──────────────────────────────────────────────────────────────
 // Throttle: sem ele seria um UPDATE por request na tabela.
 async function heartbeat(estacao, { ip, userAgent, versao } = {}) {
@@ -220,7 +275,7 @@ async function heartbeat(estacao, { ip, userAgent, versao } = {}) {
   }).eq('id', estacao.id);
   if (error) return { ok: false, motivo: error.message };
 
-  cache.clear();
+  cache.clear(); cacheConta.clear();
   return { ok: true };
 }
 
@@ -232,7 +287,7 @@ async function revogarToken(tokenId, { por, motivo }) {
     .update({ revogado_em: new Date().toISOString(), revogado_por: por || null, revogado_motivo: m })
     .eq('id', tokenId).is('revogado_em', null).select('id, estacao_id');
   if (error) throw error;
-  cache.clear();
+  cache.clear(); cacheConta.clear();
   return { ok: true, revogados: data?.length || 0 };
 }
 
@@ -254,7 +309,7 @@ async function revogarEstacao(estacaoId, { por, motivo }) {
     .update({ revogado_em: agora, revogado_por: por || null, revogado_motivo: `estação revogada: ${m}` })
     .eq('estacao_id', estacaoId).is('revogado_em', null);
 
-  cache.clear();
+  cache.clear(); cacheConta.clear();
   return { ok: true };
 }
 
@@ -270,10 +325,13 @@ function publico(est) {
   };
 }
 
-function limparCache() { cache.clear(); }
+function limparCache() { cache.clear(); cacheConta.clear(); }
 
 module.exports = {
   hashToken, gerarPareamento, emitirToken, parear, resolverToken,
+  // `estacaoDaConta` é o caminho do Totem Membro (conta de quiosque logada);
+  // `resolverToken` sobrou pro AGENTE DO PINPAD (Fase 3), que não tem sessão.
+  estacaoDaConta,
   heartbeat, revogarToken, revogarEstacao, publico, limparCache,
   gerarCodigo, // exportado pro teste (distribuição/alfabeto do código)
 };

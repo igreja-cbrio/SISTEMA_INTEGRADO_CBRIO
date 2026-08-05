@@ -2312,12 +2312,24 @@ router.get('/totens', authorizeModule('inscricoes', 1), async (req, res) => {
       tokens = data || [];
     }
 
+    // E-mail da conta vinculada — é o que a tela mostra ("conta totem1@..."),
+    // e sem isso a pessoa veria um uuid. Consulta separada e best-effort: o
+    // embed do PostgREST exigiria FK declarada no schema cache, e falhar aqui
+    // não pode derrubar a lista de totens.
+    const contaIds = [...new Set((estacoes || []).map((e) => e.conta_id).filter(Boolean))];
+    const emailPorConta = new Map();
+    if (contaIds.length) {
+      const { data: profs } = await supabase.from('profiles').select('id, email, name').in('id', contaIds);
+      for (const p of profs || []) emailPorConta.set(p.id, p.email || p.name || null);
+    }
+
     const agora = Date.now();
     const lista = (estacoes || []).map((e) => {
       const meus = tokens.filter((t) => t.estacao_id === e.id);
       const vivo = (t) => !t.revogado_em && (!t.expira_em || new Date(t.expira_em).getTime() > agora);
       return {
         ...e,
+        conta_email: e.conta_id ? (emailPorConta.get(e.conta_id) || null) : null,
         // "online" = bateu ponto nos últimos 2 min. O heartbeat tem throttle de
         // 60s, então 2 min tolera uma batida perdida sem acusar queda falsa.
         online: !!e.ultima_batida_em && (agora - new Date(e.ultima_batida_em).getTime()) < 120000,
@@ -2395,6 +2407,9 @@ router.patch('/totens/:id', authorizeModule('inscricoes', 4), async (req, res) =
       }
     }
     if (req.body?.ativo !== undefined) patch.ativo = !!req.body.ativo;
+    // Conta de quiosque que ESTÁ neste totem — é o que faz o servidor resolver
+    // a estação a partir do usuário logado. `null` desvincula.
+    if (req.body?.conta_id !== undefined) patch.conta_id = req.body.conta_id || null;
     if (req.body?.finalidades !== undefined && Array.isArray(req.body.finalidades)) {
       const f = req.body.finalidades.filter((x) => ['inscricoes', 'kids', 'membro', 'voluntariado'].includes(x));
       if (f.length) patch.finalidades = f;
@@ -2430,7 +2445,11 @@ router.patch('/totens/:id', authorizeModule('inscricoes', 4), async (req, res) =
   }
 });
 
-// POST /inscricoes/totens/:id/pareamento — gera o código que o voluntário digita
+// POST /inscricoes/totens/:id/pareamento — código do AGENTE DO PINPAD.
+// ⚠️ NÃO é pareamento do navegador: o totem de inscrições vive dentro do Totem
+// Membro, que já está logado na conta de quiosque, e a estação sai da conta
+// (`conta_id`). Este código serve só pro agente do pinpad (Fase 3), que é
+// serviço Windows e não tem sessão.
 router.post('/totens/:id/pareamento', authorizeModule('inscricoes', 4), async (req, res) => {
   try {
     const { data: est, error } = await supabase.from('totem_estacoes')
@@ -2452,6 +2471,49 @@ router.post('/totens/:id/pareamento', authorizeModule('inscricoes', 4), async (r
   } catch (e) {
     console.error('[inscricoes] pareamento totem:', e.message);
     res.status(500).json({ error: 'Erro ao gerar o código de pareamento' });
+  }
+});
+
+// GET /inscricoes/totens/contas — contas de quiosque que podem SER um totem.
+// Sem isso a tela pediria pra alguém digitar um uuid de profile na mão.
+// Nível 4 porque a lista é insumo de quem vincula equipamento a dinheiro.
+router.get('/totens/contas', authorizeModule('inscricoes', 4), async (req, res) => {
+  try {
+    // Candidata = conta com cargo de quiosque (`totem-kiosk` do Totem Membro ou
+    // `totem-kids`). O vínculo real é com `profiles.id`, mas o cargo vive em
+    // `usuarios` (id INTEGER legado, casado por e-mail) — mesma costura que o
+    // resto do sistema faz.
+    const { data: cargos, error: e0 } = await supabase.from('cargos')
+      .select('id, slug').in('slug', ['totem-kiosk', 'totem-kids']);
+    if (e0) throw e0;
+    const cargoIds = (cargos || []).map((c) => c.id);
+    if (!cargoIds.length) return res.json({ contas: [] });
+
+    const { data: us, error: e1 } = await supabase.from('usuarios')
+      .select('email, cargo_id').in('cargo_id', cargoIds);
+    if (e1) throw e1;
+    const emails = [...new Set((us || []).map((u) => String(u.email || '').toLowerCase()).filter(Boolean))];
+    if (!emails.length) return res.json({ contas: [] });
+
+    const { data: profs, error: e2 } = await supabase.from('profiles')
+      .select('id, email, name').in('email', emails);
+    if (e2) throw e2;
+
+    // Quais já estão em uso: a tela precisa mostrar isso, senão a pessoa tenta
+    // vincular uma conta ocupada e leva um 409 sem entender.
+    const { data: usadas } = await supabase.from('totem_estacoes')
+      .select('conta_id, codigo').not('conta_id', 'is', null);
+    const porConta = new Map((usadas || []).map((e) => [e.conta_id, e.codigo]));
+
+    res.json({
+      contas: (profs || []).map((p) => ({
+        id: p.id, email: p.email, nome: p.name,
+        em_uso_por: porConta.get(p.id) || null,
+      })).sort((a, b) => String(a.email).localeCompare(String(b.email))),
+    });
+  } catch (e) {
+    console.error('[inscricoes] contas de totem:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar as contas de quiosque' });
   }
 });
 

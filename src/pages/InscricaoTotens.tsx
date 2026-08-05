@@ -32,6 +32,8 @@ type Estacao = {
   ip_permitidos?: string[] | null;
   tef_ativo: boolean; tef_provider?: string | null; tef_terminal_serie?: string | null;
   printer_target?: string | null;
+  conta_id?: string | null;
+  conta_email?: string | null;
   dispositivo: Credencial | null; agente: Credencial | null;
   pareamento_pendente: Credencial | null;
   historico: Credencial[];
@@ -57,6 +59,7 @@ export default function InscricaoTotens() {
   const [estacoes, setEstacoes] = useState<Estacao[]>([]);
   const [novoAberto, setNovoAberto] = useState(false);
   const [codigoPareamento, setCodigoPareamento] = useState<{ codigo: string; expira_em: string; nome: string } | null>(null);
+  const [vinculando, setVinculando] = useState<Estacao | null>(null);
 
   async function carregar() {
     try {
@@ -112,17 +115,6 @@ export default function InscricaoTotens() {
     }
   }
 
-  async function revogarCredencial(c: Credencial, nomeEstacao: string) {
-    const motivo = window.prompt(`Revogar a credencial ${c.prefixo}… de "${nomeEstacao}"?\n\nMotivo:`);
-    if (motivo === null) return;
-    try {
-      await api.revogarCredencialTotem(c.id, motivo || 'revogado pela equipe');
-      toast.success('Credencial revogada');
-      carregar();
-    } catch (err: any) {
-      toast.error(err.message || 'Erro ao revogar');
-    }
-  }
 
   const semCerco = useMemo(
     () => estacoes.filter((e) => e.ativo && !e.revogada_em && (!e.ip_permitidos || e.ip_permitidos.length === 0)),
@@ -138,7 +130,7 @@ export default function InscricaoTotens() {
         <div className="flex-1">
           <h1 className="text-xl font-semibold">Totens</h1>
           <p className="text-sm text-muted-foreground">
-            Computadores de autoatendimento. Cada um se identifica por credencial própria — revogável sem trocar senha de ninguém.
+            Cada computador do lounge é uma estação. É o vínculo com a conta de quiosque que faz o sistema saber <strong>qual totem</strong> registrou cada inscrição e cada pagamento.
           </p>
         </div>
         {podeGerenciar && (
@@ -196,7 +188,7 @@ export default function InscricaoTotens() {
                         </span>
                       ) : (
                         <span className="flex items-center gap-1 rounded bg-foreground/10 px-2 py-0.5 text-xs text-muted-foreground">
-                          <WifiOff className="h-3 w-3" /> {e.dispositivo ? `visto ${quando(e.ultima_batida_em)}` : 'não pareado'}
+                          <WifiOff className="h-3 w-3" /> {e.ultima_batida_em ? `visto ${quando(e.ultima_batida_em)}` : 'nunca usado'}
                         </span>
                       )}
                     </div>
@@ -206,7 +198,7 @@ export default function InscricaoTotens() {
                     <div className="mt-2 flex flex-wrap gap-3 text-xs text-muted-foreground">
                       <span className="flex items-center gap-1">
                         <KeyRound className="h-3.5 w-3.5" />
-                        {e.dispositivo ? `credencial ${e.dispositivo.prefixo}… · pareado ${quando(e.dispositivo.pareado_em)}` : 'sem credencial'}
+                        {e.conta_email ? `conta ${e.conta_email}` : 'sem conta vinculada'}
                       </span>
                       <span className="flex items-center gap-1">
                         <CreditCard className="h-3.5 w-3.5" />
@@ -233,15 +225,10 @@ export default function InscricaoTotens() {
                         </Button>
                       ) : (
                         <>
-                          <Button size="sm" variant="outline" onClick={() => parear(e)}>
+                          <Button size="sm" variant="outline" onClick={() => setVinculando(e)}>
                             <KeyRound className="mr-2 h-4 w-4" />
-                            {e.dispositivo ? 'Parear de novo' : 'Parear dispositivo'}
+                            {e.conta_id ? 'Trocar conta' : 'Vincular conta'}
                           </Button>
-                          {e.dispositivo && (
-                            <Button size="sm" variant="ghost" onClick={() => revogarCredencial(e.dispositivo!, e.nome)}>
-                              Revogar credencial
-                            </Button>
-                          )}
                           <Button size="sm" variant="ghost" className="text-red-600" onClick={() => revogarEstacao(e)}>
                             <ShieldOff className="mr-2 h-4 w-4" /> Revogar totem
                           </Button>
@@ -251,14 +238,24 @@ export default function InscricaoTotens() {
                   )}
                 </div>
 
-                {/* Código pendente: fica visível pra equipe saber que há um
-                    pareamento em curso — e ele expira em 15 min. O CÓDIGO em si
-                    não aparece aqui (não é recuperável, só o prefixo). */}
-                {e.pareamento_pendente && !revogada && (
-                  <p className="mt-3 rounded bg-sky-500/10 px-3 py-2 text-xs text-sky-700 dark:text-sky-300">
-                    Pareamento em andamento (começa com <strong>{e.pareamento_pendente.prefixo}</strong>) — digite o código no totem antes de {new Date(e.pareamento_pendente.expira_em!).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}.
-                    Perdeu o código? Gere outro (o anterior é cancelado).
+                {!e.conta_id && !revogada && (
+                  <p className="mt-3 rounded bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+                    Sem conta vinculada, este totem não aparece como origem das inscrições que fizer — a cobrança nasce sem estação, como se viesse da web.
                   </p>
+                )}
+
+                {/* Código do agente do pinpad: só faz sentido quando o cartão
+                    presencial existir (Fase 3). Fica escondido até lá pra não
+                    oferecer um botão cujo resultado ninguém tem onde usar. */}
+                {e.tef_ativo && !revogada && (
+                  <div className="mt-3 flex items-center gap-2 rounded bg-foreground/5 px-3 py-2 text-xs">
+                    <CreditCard className="h-3.5 w-3.5 shrink-0" />
+                    <span className="flex-1">
+                      Agente do pinpad: {e.agente ? `credencial ${e.agente.prefixo}…` : 'sem credencial'}
+                      {e.pareamento_pendente && ` · código gerado, válido até ${new Date(e.pareamento_pendente.expira_em!).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`}
+                    </span>
+                    <Button size="sm" variant="ghost" onClick={() => parear(e)}>Gerar código</Button>
+                  </div>
                 )}
               </Card>
             );
@@ -268,6 +265,13 @@ export default function InscricaoTotens() {
 
       {codigoPareamento && (
         <CodigoDialog dados={codigoPareamento} onClose={() => setCodigoPareamento(null)} />
+      )}
+      {vinculando && (
+        <VincularContaDialog
+          estacao={vinculando}
+          onClose={() => setVinculando(null)}
+          onSalvo={() => { setVinculando(null); carregar(); }}
+        />
       )}
       {novoAberto && (
         <NovoTotemDialog
@@ -299,9 +303,9 @@ function CodigoDialog({ dados, onClose }: { dados: { codigo: string; expira_em: 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-md">
-        <DialogHeader><DialogTitle>Parear {dados.nome}</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle>Agente do pinpad · {dados.nome}</DialogTitle></DialogHeader>
         <p className="text-sm text-muted-foreground">
-          No totem, abra <code className="rounded bg-foreground/5 px-1">/totem/inscricoes</code> e digite este código:
+          No <strong>agente do pinpad</strong> instalado neste PC, informe este código:
         </p>
         <div className="my-2 rounded-lg border border-dashed p-6 text-center">
           <div className="select-all font-mono text-4xl font-bold tracking-[0.2em]">{dados.codigo}</div>
@@ -392,6 +396,95 @@ function NovoTotemDialog({ onClose, onCriado }: { onClose: () => void; onCriado:
           <Button variant="ghost" onClick={onClose}>Cancelar</Button>
           <Button onClick={salvar} disabled={!valido || salvando}>
             {salvando && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Cadastrar
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Vincular a conta de quiosque à estação. É este vínculo que faz o servidor
+// resolver `estacao_id` a partir do usuário logado no Totem Membro — sem ele o
+// totem funciona, mas as inscrições dele nascem sem origem.
+function VincularContaDialog({
+  estacao, onClose, onSalvo,
+}: { estacao: Estacao; onClose: () => void; onSalvo: () => void }) {
+  const [contas, setContas] = useState<{ id: string; email: string; nome?: string; em_uso_por: string | null }[]>([]);
+  const [sel, setSel] = useState<string>(estacao.conta_id || '');
+  const [carregando, setCarregando] = useState(true);
+  const [salvando, setSalvando] = useState(false);
+
+  useEffect(() => {
+    api.totensContas()
+      .then((r: any) => setContas(r.contas || []))
+      .catch((e: any) => toast.error(e.message || 'Erro ao carregar as contas'))
+      .finally(() => setCarregando(false));
+  }, []);
+
+  async function salvar() {
+    setSalvando(true);
+    try {
+      await api.atualizarTotem(estacao.id, { conta_id: sel || null });
+      toast.success(sel ? 'Conta vinculada' : 'Conta desvinculada');
+      onSalvo();
+    } catch (e: any) {
+      toast.error(e.message || 'Erro ao vincular');
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="flex max-h-[90vh] flex-col sm:max-w-md">
+        <DialogHeader><DialogTitle>Conta de {estacao.nome}</DialogTitle></DialogHeader>
+        <p className="text-sm text-muted-foreground">
+          Escolha a conta de quiosque com que <strong>este computador</strong> faz login no totem. É por ela que o sistema reconhece a origem das inscrições e dos pagamentos.
+        </p>
+        <div className="min-h-0 flex-1 space-y-1 overflow-y-auto py-2">
+          {carregando ? (
+            <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+          ) : contas.length === 0 ? (
+            <p className="py-4 text-sm text-muted-foreground">
+              Nenhuma conta de quiosque encontrada. Elas são criadas por <code className="rounded bg-foreground/5 px-1">backend/scripts/_criar_conta_totem.js</code>.
+            </p>
+          ) : (
+            <>
+              <button
+                onClick={() => setSel('')}
+                className={`w-full rounded-lg border p-3 text-left text-sm ${!sel ? 'border-primary bg-primary/5' : 'border-border'}`}
+              >
+                <span className="font-medium">Nenhuma</span>
+                <span className="block text-xs text-muted-foreground">O totem funciona, mas as inscrições dele não terão origem registrada.</span>
+              </button>
+              {contas.map((c) => {
+                // Conta já usada por OUTRA estação: o índice único no banco
+                // recusaria, então a tela avisa antes em vez de deixar a pessoa
+                // levar um erro que não explica nada.
+                const ocupada = !!c.em_uso_por && c.id !== estacao.conta_id;
+                return (
+                  <button
+                    key={c.id}
+                    disabled={ocupada}
+                    onClick={() => setSel(c.id)}
+                    className={`w-full rounded-lg border p-3 text-left text-sm ${
+                      sel === c.id ? 'border-primary bg-primary/5' : 'border-border'
+                    } ${ocupada ? 'cursor-not-allowed opacity-50' : ''}`}
+                  >
+                    <span className="font-medium">{c.email}</span>
+                    <span className="block text-xs text-muted-foreground">
+                      {ocupada ? `já é o totem "${c.em_uso_por}"` : (c.nome || 'conta de quiosque')}
+                    </span>
+                  </button>
+                );
+              })}
+            </>
+          )}
+        </div>
+        <div className="flex justify-end gap-2 pt-2">
+          <Button variant="ghost" onClick={onClose}>Cancelar</Button>
+          <Button onClick={salvar} disabled={salvando || carregando}>
+            {salvando && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Salvar
           </Button>
         </div>
       </DialogContent>
