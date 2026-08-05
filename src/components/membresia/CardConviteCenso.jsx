@@ -1,8 +1,13 @@
-import { useState, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { membresia } from '../../api';
-import { Send, AlertTriangle, RefreshCw, Mail, MessageSquare } from 'lucide-react';
+import {
+  Send, AlertTriangle, RefreshCw, Mail, MessageSquare, CheckCircle2, Users,
+} from 'lucide-react';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+} from '../ui/dialog';
 
 const C = {
   primary: '#00B39D', text: 'var(--cbrio-text)', text2: 'var(--cbrio-text2)',
@@ -35,9 +40,42 @@ export default function CardConviteCenso() {
   const [erro, setErro] = useState('');
   const [canais, setCanais] = useState(['whatsapp', 'email']);
   const [incluirVisitantes, setIncluirVisitantes] = useState(false);
+  // ⚠️ Reforço pelo 2º canal: DESLIGADO por padrão. Regra do Matheus (04/08) —
+  // não mandar WhatsApp pra quem já recebeu o e-mail. Ligar é escolha explícita,
+  // pra quem ignorou o 1º canal.
+  const [reforcar, setReforcar] = useState(false);
   const [confirmar, setConfirmar] = useState('');
   const [disparando, setDisparando] = useState(false);
   const [resultado, setResultado] = useState(null);
+
+  // Prévia do e-mail (HTML real, renderizado pelo servidor com a mesma função
+  // do disparo). Carregada sob demanda: ninguém precisa dela pra disparar.
+  const [amostraEmail, setAmostraEmail] = useState(null);
+  const [carregandoAmostra, setCarregandoAmostra] = useState(false);
+
+  // Resultado da CAMPANHA. Carrega sozinho, porque é o número que responde
+  // "está funcionando?" — o painel de cobertura acima mede a igreja inteira e
+  // faz uma rodada boa parecer 0,1%.
+  const [resultadoCampanha, setResultadoCampanha] = useState(null);
+  const [verQuemRespondeu, setVerQuemRespondeu] = useState(false);
+
+  const carregarResultado = useCallback(async () => {
+    try {
+      setResultadoCampanha(await membresia.censo.disparoResultado());
+    } catch { /* silencioso: é acompanhamento, não pode atrapalhar o disparo */ }
+  }, []);
+  useEffect(() => { carregarResultado(); }, [carregarResultado]);
+
+  const verComoChega = async () => {
+    setCarregandoAmostra(true);
+    try {
+      setAmostraEmail(await membresia.censo.disparoPreviewEmail(prev?.exemplo?.nome));
+    } catch (e) {
+      setErro(e.message || 'Erro ao carregar a prévia do e-mail');
+    } finally {
+      setCarregandoAmostra(false);
+    }
+  };
 
   const statusParam = incluirVisitantes ? 'membro_ativo,visitante' : 'membro_ativo';
 
@@ -49,13 +87,14 @@ export default function CardConviteCenso() {
     try {
       setPrev(await membresia.censo.disparoPreview({
         status: statusParam, canais: canais.join(','),
+        ...(reforcar ? { cruzado: '1' } : {}),
       }));
     } catch (e) {
       setErro(e.message || 'Erro ao montar a prévia');
     } finally {
       setCarregando(false);
     }
-  }, [statusParam, canais]);
+  }, [statusParam, canais, reforcar]);
 
   const toggleCanal = (c) => {
     setCanais((atual) => (atual.includes(c) ? atual.filter(x => x !== c) : [...atual, c]));
@@ -69,12 +108,21 @@ export default function CardConviteCenso() {
     setDisparando(true);
     setErro('');
     try {
-      const r = await membresia.censo.disparar({ status: statusParam, canais });
+      const r = await membresia.censo.disparar({
+        status: statusParam, canais, permitirCanalCruzado: reforcar,
+      });
       setResultado(r);
       setPrev(null);
       setConfirmar('');
+      carregarResultado();   // o bloco de rodadas reflete o disparo na hora
     } catch (e) {
-      setErro(e.message || 'Erro ao disparar');
+      // ⚠️ Timeout aqui NÃO significa que nada saiu — o envio continua no
+      // servidor e o registro é gravado em blocos durante o percurso. Dizer
+      // "tente de novo" (a mensagem genérica) foi o que fez o Matheus achar,
+      // em 04/08, que 200 e-mails enviados não tinham sido enviados.
+      setErro(e.code === 'API_TIMEOUT'
+        ? 'O envio passou do tempo de espera da tela, mas provavelmente CONTINUOU no servidor. NÃO dispare de novo: clique em "Ver prévia" — quem já recebeu sai da contagem de elegíveis.'
+        : (e.message || 'Erro ao disparar'));
     } finally {
       setDisparando(false);
     }
@@ -114,6 +162,27 @@ export default function CardConviteCenso() {
             {label}
           </button>
         ))}
+        {/* ⚠️ Reforço pelo 2º canal · DESLIGADO por padrão.
+            Sem isso, o disparo de WhatsApp seria quase todo contato repetido
+            (508 dos 627 alcançáveis já tinham recebido o e-mail). Ligar é
+            escolha deliberada, pra quem ignorou o 1º canal — e é legítimo,
+            porque a maioria dos convidados por e-mail não respondeu. */}
+        <button
+          type="button"
+          onClick={() => { setReforcar(v => !v); setPrev(null); setConfirmar(''); }}
+          title={reforcar
+            ? 'Vai mandar TAMBÉM para quem já foi convidado pelo outro canal (ex.: já recebeu o e-mail).'
+            : 'Quem já foi convidado por outro canal fica de fora. Ligue para reforçar com quem ignorou o primeiro convite.'}
+          style={{
+            padding: '5px 11px', borderRadius: 999, fontSize: 11.5, cursor: 'pointer',
+            border: `1px solid ${reforcar ? C.amber : C.border}`,
+            background: reforcar ? '#f59e0b18' : 'transparent',
+            color: reforcar ? C.amber : C.text2, fontWeight: 600,
+          }}
+        >
+          {reforcar ? 'Reforçando quem já foi convidado' : 'Não repetir quem já foi convidado'}
+        </button>
+
         <button
           type="button"
           onClick={() => { setIncluirVisitantes(v => !v); setPrev(null); setConfirmar(''); }}
@@ -128,10 +197,106 @@ export default function CardConviteCenso() {
         </button>
       </div>
 
-      <Button variant="outline" size="sm" onClick={carregarPrevia} disabled={carregando || !canais.length}>
-        <RefreshCw style={{ width: 13, height: 13, marginRight: 6 }} />
-        {carregando ? 'Calculando…' : 'Ver prévia'}
-      </Button>
+      {/* ── RESULTADO DAS RODADAS JÁ DISPARADAS ──
+          ⚠️ Este bloco mede a CAMPANHA. O painel de cobertura logo acima mede a
+          IGREJA (denominador ~3.973), então 200 convites com 8 respostas
+          aparecem lá como 0,1% — lê-se fracasso quando foi 4% de conversão. E
+          o painel conta RESPOSTA, não CPF: em 04/08 as respostas subiam
+          enquanto um bug descartava todos os CPFs, e nada na tela denunciava. */}
+      {!!resultadoCampanha?.rodadas?.length && (
+        <div style={{
+          marginBottom: 14, padding: 12, borderRadius: 10,
+          border: `1px solid ${C.border}`, background: '#00B39D0d',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+            <CheckCircle2 style={{ width: 13, height: 13, color: C.primary }} />
+            <strong style={{ fontSize: 12, color: C.text }}>O que as rodadas já trouxeram</strong>
+          </div>
+
+          {resultadoCampanha.rodadas.map((r) => {
+            const pct = r.convidados ? Math.round(1000 * r.responderam / r.convidados) / 10 : 0;
+            return (
+              <div key={`${r.rodada}-${r.canal}`} style={{ fontSize: 12, color: C.text2, lineHeight: 1.8 }}>
+                <strong>Rodada {r.rodada}</strong> ({r.canal}):{' '}
+                {r.convidados} convidados ·{' '}
+                <span style={{ color: C.primary, fontWeight: 700 }}>{r.responderam} responderam ({pct}%)</span> ·{' '}
+                {/* O número que É o objetivo da campanha. */}
+                <span style={{ color: C.green, fontWeight: 700 }}>{r.com_cpf} passaram a ter CPF</span>
+                {r.em_conflito_identidade > 0 && (
+                  <> · <span style={{ color: C.amber }}>{r.em_conflito_identidade} viraram conflito de identidade</span></>
+                )}
+                {r.falhas_no_envio > 0 && (
+                  <> · <span style={{ color: C.red }}>{r.falhas_no_envio} falharam no envio</span></>
+                )}
+              </div>
+            );
+          })}
+
+          <p style={{ fontSize: 11, color: C.text3, margin: '6px 0 0' }}>
+            Conflito de identidade não é erro: é alguém que informou um CPF já
+            usado por outro cadastro — duplicata revelada, para fundir em Entradas.
+          </p>
+
+          {!!resultadoCampanha.responderam?.length && (
+            <>
+              <Button
+                variant="outline" size="sm" style={{ marginTop: 10 }}
+                onClick={() => setVerQuemRespondeu((v) => !v)}
+              >
+                <Users style={{ width: 13, height: 13, marginRight: 6 }} />
+                {verQuemRespondeu ? 'Esconder quem respondeu' : `Ver quem respondeu (${resultadoCampanha.responderam.length})`}
+              </Button>
+              {verQuemRespondeu && (
+                <div style={{ marginTop: 8, maxHeight: 220, overflowY: 'auto' }}>
+                  {resultadoCampanha.responderam.map((p, i) => (
+                    <div key={`${p.email}-${i}`} style={{
+                      display: 'flex', alignItems: 'center', gap: 8,
+                      padding: '6px 0', borderBottom: `1px solid ${C.border}`, fontSize: 12,
+                    }}>
+                      <span style={{ flex: 1, color: C.text }}>{p.nome}</span>
+                      <span style={{ color: C.text3, fontSize: 11 }}>{p.email}</span>
+                      {/* ⚠️ Três estados, não dois. "sem CPF" para quem
+                          INFORMOU o CPF (e o sistema segurou por conflito) fez o
+                          Matheus achar que a pessoa não preencheu — quando o
+                          campo é obrigatório e ela preencheu. */}
+                      {(() => {
+                        const s = p.cpf_situacao || (p.tem_cpf ? 'com_cpf' : 'sem_cpf');
+                        const meta = {
+                          com_cpf: { txt: 'com CPF', cor: C.green, bg: '#10b98118', dica: 'CPF consolidado no cadastro.' },
+                          conflito: { txt: 'CPF em conflito', cor: C.amber, bg: '#f59e0b18', dica: 'Informou o CPF, mas ele já pertence a outro cadastro — está na fila de Conflitos de CPF, em Entradas, para fundir.' },
+                          sem_cpf: { txt: 'não informou CPF', cor: C.red, bg: '#ef444418', dica: 'Respondeu sem CPF. O campo é obrigatório no formulário, então isto não deveria acontecer — vale investigar.' },
+                        }[s];
+                        return (
+                          <span title={meta.dica} style={{
+                            fontSize: 10.5, fontWeight: 700, padding: '2px 8px',
+                            borderRadius: 999, color: meta.cor, background: meta.bg,
+                            cursor: 'help', whiteSpace: 'nowrap',
+                          }}>
+                            {meta.txt}
+                          </span>
+                        );
+                      })()}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <Button variant="outline" size="sm" onClick={carregarPrevia} disabled={carregando || !canais.length}>
+          <RefreshCw style={{ width: 13, height: 13, marginRight: 6 }} />
+          {carregando ? 'Calculando…' : 'Ver prévia'}
+        </Button>
+        {canais.includes('email') && (
+          <Button variant="outline" size="sm" onClick={verComoChega} disabled={carregandoAmostra}>
+            <Mail style={{ width: 13, height: 13, marginRight: 6 }} />
+            {carregandoAmostra ? 'Carregando…' : 'Ver como o e-mail chega'}
+          </Button>
+        )}
+      </div>
 
       {erro && (
         <p style={{ fontSize: 12, color: C.red, marginTop: 10 }}>{erro}</p>
@@ -173,6 +338,16 @@ export default function CardConviteCenso() {
           {prev.ja_convidadas > 0 && (
             <div style={{ color: C.text3 }}>
               {prev.ja_convidadas} já foram convidadas em rodada anterior e não recebem de novo.
+            </div>
+          )}
+
+          {/* O número que responde "vou repetir contato com quem já avisei?" */}
+          {prev.ja_convidadas_outro_canal > 0 && (
+            <div style={{ color: reforcar ? C.amber : C.text3 }}>
+              {prev.ja_convidadas_outro_canal} já foram convidadas por <strong>outro canal</strong>
+              {reforcar
+                ? ' e VÃO receber de novo (reforço ligado).'
+                : ' e ficam de fora — ligue "Reforçando" se quiser insistir com quem não respondeu.'}
             </div>
           )}
 
@@ -230,6 +405,51 @@ export default function CardConviteCenso() {
           )}
         </div>
       )}
+
+      {/* Prévia do e-mail · caixa de entrada simulada.
+          ⚠️ O HTML vai num <iframe srcDoc>, não injetado na página: o e-mail
+          tem estilo próprio e cor de fundo clara fixa, e injetado direto ele
+          brigaria com o tema (e ficaria ilegível no modo escuro). O iframe é
+          também o que faz a prévia ser FIEL — o e-mail renderiza isolado, como
+          renderiza no Gmail. `sandbox` sem allow-scripts: é conteúdo pra olhar. */}
+      <Dialog open={!!amostraEmail} onOpenChange={(v) => !v && setAmostraEmail(null)}>
+        <DialogContent className="max-w-2xl flex flex-col max-h-[90vh]">
+          <DialogHeader>
+            <DialogTitle>Como o e-mail chega</DialogTitle>
+          </DialogHeader>
+          <div className="flex-1 overflow-y-auto min-h-0">
+            <div style={{
+              border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden',
+              background: '#fff',
+            }}>
+              {/* Cabeçalho no formato de caixa de entrada, pra conferir remetente
+                  e assunto — que é metade do que decide se a pessoa abre. */}
+              <div style={{ padding: '12px 14px', borderBottom: '1px solid #e5e7eb', background: '#f9fafb' }}>
+                <div style={{ fontSize: 11, color: '#6b7280' }}>
+                  De: <strong style={{ color: '#374151' }}>CBRio</strong> &lt;noreply@cbrio.org&gt;
+                </div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: '#111827', marginTop: 3 }}>
+                  {amostraEmail?.assunto}
+                </div>
+              </div>
+              <iframe
+                title="Prévia do e-mail"
+                srcDoc={`<!doctype html><meta charset="utf-8"><body style="margin:0;padding:20px;background:#fff">${amostraEmail?.html || ''}</body>`}
+                sandbox=""
+                style={{ width: '100%', height: 460, border: 'none', display: 'block', background: '#fff' }}
+              />
+            </div>
+            <p style={{ fontSize: 11.5, color: C.text3, marginTop: 10 }}>
+              O nome e o link acima são exemplo. No envio real, cada pessoa recebe
+              o primeiro nome dela e um link próprio, que abre o cadastro dela já
+              preenchido.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAmostraEmail(null)}>Fechar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {resultado && (
         <div style={{

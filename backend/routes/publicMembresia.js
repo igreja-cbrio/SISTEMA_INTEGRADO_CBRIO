@@ -638,6 +638,40 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
       } catch (censoErr) {
         console.error('[PUBLIC CADASTRO censo]', censoErr.message);
       }
+
+      // ⚠️⚠️ O CPF É O OBJETIVO DA CAMPANHA E ESTAVA SENDO DESCARTADO.
+      // `CAMPOS_CENSO` exclui `cpf` de propósito (CPF tem serviço próprio, que
+      // trata conflito de identidade e CPF já pertencente a outro membro) — mas
+      // esse serviço NUNCA era chamado aqui. Resultado medido em 04/08: as 4
+      // primeiras pessoas do disparo preencheram o CPF no formulário, a
+      // submissão foi marcada `aplicado`, e o CPF não chegou ao cadastro. A
+      // campanha inteira existe pra coletar CPF de ~2.000 pessoas que não têm.
+      //
+      // `confianca` espelha a força do vínculo: só CPF e o token pessoal do
+      // convite identificam sozinhos. Com sinal fraco (telefone+nome), o
+      // serviço exige nascimento conferível e manda pra fila humana se
+      // divergir — é o que impede gravar o CPF de uma pessoa no cadastro de
+      // outra da mesma família.
+      if (duplicadoDeId && cpfLimpo) {
+        try {
+          const { reconciliarCpfTardio } = require('../services/cpfReconciliar');
+          const rCpf = await reconciliarCpfTardio({
+            membroId: duplicadoDeId,
+            cpf: cpfLimpo,
+            origem: matchedBy === 'token_censo' ? 'censo_link_pessoal' : 'censo_formulario',
+            origemId: data.id,
+            dataNascimento: data_nascimento || null,
+            confianca: (matchedBy === 'cpf' || matchedBy === 'token_censo') ? 'forte' : 'fraca',
+          });
+          if (rCpf?.acao && !['consolidado', 'ja_tinha'].includes(rCpf.acao)) {
+            console.warn('[PUBLIC CADASTRO censo cpf]', rCpf.acao);
+          }
+        } catch (cpfErr) {
+          // Best-effort: a submissão já está gravada e não se desfaz porque a
+          // consolidação do CPF falhou. O dado fica na linha pra reprocessar.
+          console.error('[PUBLIC CADASTRO censo cpf]', cpfErr.message);
+        }
+      }
     }
 
     // Notifica responsáveis pela integração (assíncrono, não bloqueia resposta).
@@ -655,7 +689,14 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
         mensagem: ehCenso
           ? `${nome.trim()} respondeu o censo e o cadastro precisa de revisão${censoResultado?.conflitos?.length ? ` (${censoResultado.conflitos.length} campo(s) em conflito)` : ''}.`
           : `${nome.trim()} enviou um cadastro pelo formulário público.`,
-        link: '/ministerial/membresia',
+        // ⚠️ Deep link até a ABA e o STATUS certos. Antes ia pra
+        // `/ministerial/membresia` e caía na lista de 3.973 membros, sem pista
+        // de onde estava o cadastro a revisar. Conflito do censo mantém o
+        // status `duplicado` (a submissão tem `duplicado_de_id`), então é esse
+        // o filtro — chegar na aba com "pendente" esconderia a própria linha.
+        link: ehCenso
+          ? `/ministerial/membresia?tab=cadastros&status=${data.status === 'duplicado' ? 'duplicado' : 'pendente'}`
+          : '/ministerial/membresia?tab=cadastros&status=pendente',
         severidade: 'info',
         chaveDedup: `novo_cadastro_${data.id}`,
       }).catch(err => console.error('[PUBLIC CADASTRO] notificação falhou:', err.message));

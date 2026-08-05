@@ -768,6 +768,80 @@ Corrigido nas 3 camadas: campo no form (`masculino|feminino`, **nunca "outro"**)
 backend, e `genero` entrou em `CAMPOS_CENSO` do reconciliador — sem isso o dado chegava do censo
 e era **descartado em silêncio**.
 
+## ⚠️⚠️ LEI · em operação LONGA, gravar o efeito DURANTE, não no fim (2026-08-04)
+
+Três incidentes no mesmo dia, todos da mesma família. A lei que sai deles vale
+pra qualquer coisa que faça N ações externas numa requisição:
+
+**1 · Aprovação em massa (49 cadastros).** O servidor concluiu; o cliente abortou
+em 30s (`request()` tem timeout padrão de 30s) e a tela disse *"Tempo esgotado ao
+falar com o servidor. Recarregue a página ou tente de novo."* — para um trabalho
+que **deu certo**. A lista continuou mostrando os 50 pendentes que já não
+existiam. O caminho que a mensagem sugeria (tentar de novo) reprocessaria 49
+cadastros. Correção: **pedaços de 8 com progresso real no botão**
+("Aprovando 16 de 49…").
+
+**2 · Disparo do censo (200 e-mails).** Mesma coisa, com prejuízo real: os 200
+e-mails **saíram** e o registro em `mem_censo_convites` — que era **um único
+insert no FIM** — falhou. Ninguém ficou marcado como convidado, e a rodada
+seguinte teria reenviado pras mesmas 200 pessoas. Diagnóstico veio do
+`get_runtime_logs` da Vercel (POST 200 + a mensagem do erro), **não** de
+suposição: pelo que a tela mostrava, a conclusão natural era "nada saiu".
+
+⇒ **A LEI: o registro do que já aconteceu vai em BLOCOS, durante o laço.** Morte
+no meio (timeout da função, rede, deploy) deixa gravado o que já saiu, e a
+próxima execução continua de onde parou em vez de duplicar. Registro no fim
+transforma qualquer interrupção num bug com prejuízo externo.
+
+⇒ **Corolário na UI: timeout de cliente NÃO é prova de que nada aconteceu.** A
+mensagem nesses fluxos não pode dizer "tente de novo" — a do disparo agora diz
+que o envio provavelmente continuou e manda conferir pela prévia. Em envio pra
+fora, "tente de novo" é a instrução mais cara que a tela pode dar.
+
+**3 · `ON CONFLICT` não usa índice PARCIAL.** A UNIQUE de `mem_censo_convites`
+nasceu com `where membro_id is not null` e o upsert do PostgREST estourava
+*"there is no unique or exclusion constraint matching the ON CONFLICT
+specification"* — o Postgres exige que o statement repita o predicado do índice,
+coisa que o `upsert()` do supabase-js não expressa. Índice recriado **sem
+predicado** (`NULL` não conflita de qualquer forma: `NULLS DISTINCT` é o padrão).
+Régua: **índice usado por `ON CONFLICT` nunca é parcial.**
+
+⚠️ Os 200 convites foram **reconstruídos** com a MESMA ordem do disparo
+(`created_at asc`, primeiros 200 elegíveis), com **deriva zero conferida** antes
+(ninguém respondeu, ganhou CPF ou foi criado no intervalo). Verificação
+independente que fechou: a prévia dizia "451 ficam para a próxima" e o sistema
+recalculou **451** depois do reparo. Coluna `observacao` marca as linhas como
+reconstrução — **não** usar `erro` pra isso (`erro` significa "o canal recusou",
+e sujá-lo faz a contagem de falhas mentir).
+
+## ⚠️ Censo · o CPF era DESCARTADO, e o painel dizia que estava tudo bem (2026-08-04)
+
+O pior bug do dia, e o mais silencioso. `CAMPOS_CENSO` do `censoReconciliar`
+exclui `cpf` **de propósito** (CPF tem serviço próprio, `cpfReconciliar`, que
+trata conflito de identidade e CPF já pertencente a outro membro) — mas esse
+serviço **nunca era chamado** no `publicMembresia.js`. Medido em produção: as
+primeiras 4 pessoas do disparo preencheram o CPF, a submissão foi marcada
+`aplicado` (sem conflito, tudo "certo"), e **o CPF não chegou a nenhum cadastro**.
+A campanha existe pra coletar CPF de ~2.000 pessoas que não têm.
+
+- Corrigido: o caminho do censo chama `reconciliarCpfTardio`, com `confianca`
+  espelhando a força do vínculo — `cpf` e `token_censo` são fortes; sinal fraco
+  exige nascimento conferível e vai pra fila humana se divergir (é o que impede
+  gravar o CPF de uma pessoa no cadastro de outra da mesma família).
+- Reparo: 4 CPFs consolidados. **2 casos NÃO foram gravados** porque o CPF
+  informado já pertencia a outro cadastro — viraram `identidade_pendencias`
+  (`cpf_conflito`). ⚠️ **Isso é GANHO, não erro:** é a pessoa duplicada se
+  identificando: o convite foi pro cadastro sem CPF e ela respondeu com o CPF do
+  outro. A campanha revela duplicata que ninguém achava.
+
+**⚠️ A lição que passa do bug: o painel de cobertura NÃO mede a campanha.** Ele
+tem a base inteira no denominador (200 convites com 8 respostas = "0,1%") e conta
+**RESPOSTA, não CPF** — então as respostas subiam enquanto todos os CPFs eram
+descartados, e **nada na tela denunciava**. Daí a `vw_censo_campanha` e o bloco
+"O que as rodadas já trouxeram" no card: convidados → responderam → **passaram a
+ter CPF** → viraram conflito. Métrica de campanha mede o OBJETIVO, não a
+atividade; quando as duas divergem, é a atividade que engana.
+
 ## ⚠️ Membresia · aprovação em massa da fila de cadastros (2026-08-04 · SEM migration)
 
 Pedido do Matheus: selecionar alguns ou todos e aprovar de uma vez, *"mas o sistema deve ter uma
@@ -1055,6 +1129,75 @@ de `/:id`").
 - Idade passou a aparecer **ao lado do nome** na lista de Crianças (antes estava
   na 2ª linha, misturada com o nome do responsável).
 
+## ⚠️ App · entrada de PESSOA sob o Contrato de porta (2026-08-04 · migration `20260804200000`)
+
+Decisão do Marcos: os LÍDERES de grupo são os primeiros a usar o app e é a
+chance de fechar o cadastro de quem falta — então **entrar no app passa a
+exigir cadastro de gente**, com um **caminho rápido por CPF** pra quem já está
+na base. Fecha (na entrada do app) o furo do
+`## ⚠️ LEI · o gatilho de auth.users`: medido em 04/08 · **21 cadastros**
+`origem_cadastro='auth'` (20 sem CPF/telefone/nascimento · **13 com nome =
+prefixo do e-mail** · **1 duplicata confirmada**: Victória Lannes × Maria
+Victória Lannes Campos) e **26 das 43 contas do app** apontando pra cadastro
+sem CPF.
+
+**⚠️ LEI DESTE FLUXO · CPF IDENTIFICA, NÃO AUTENTICA.** CPF está em nota
+fiscal, cadastro de loja, planilha — não é segredo. Vincular a conta só porque
+alguém digitou um CPF entregaria a essa pessoa o grupo, os **filhos no Kids** e
+o **histórico de contribuição** do dono do CPF. Então: CPF acha o cadastro → o
+código vai pro **telefone QUE JÁ ESTÁ NO CADASTRO** (NUNCA pra número digitado
+na hora) → quem prova posse é vinculado. Mesma régua de "prova de posse" dos
+links do WhatsApp dos líderes.
+
+- **`services/appIdentidade.js`** · `identificarPorCpf` (busca SÓ por CPF —
+  aqui não vale o "achou por telefone/nome" do matcher, senão o CPF deixa de
+  ser a régua) · `confirmarCodigo` · `completarCadastro` (formulário → matcher
+  canônico `acharOuCriarGuardado`, origem `app_onboarding`).
+- **Resposta MASCARADA** (`mascararNome`/`mascararTelefone`): quem digita um
+  CPF vê "Marcos P. D. de A." e "(21) *****-8249" — nunca nome/telefone
+  completo de terceiro. Guarda em `src/test/appIdentidade.test.ts` (8 casos):
+  aumentar o que a máscara revela transforma o endpoint em coletor de dados
+  com uma lista de CPFs.
+- **Tetos**: `limiterStrict` (10/15min por IP) nas rotas de CPF/código +
+  **5 envios por telefone/dia** no serviço (o dono do número não pediu nada) +
+  6 tentativas de código + TTL 10 min + 1 verificação aberta por conta
+  (UNIQUE parcial).
+- **Código nunca em claro**: `app_verificacoes.codigo_hash` = sha256(código +
+  id da linha como sal). Tabela **só service_role** (nenhuma policy pra
+  authenticated — SELECT ali deixaria a anon key ler o alvo de vínculo alheio).
+- **Envio direto, NÃO pela fila `whatsapp_envios`**: a fila guarda params em
+  texto (código legível no banco) e faz retry/backoff — entrega atrasada de
+  código de 10 min é inútil.
+- **Fantasma é FUNDIDO**: se a conta estava pendurada num cadastro do gatilho
+  (sem CPF/telefone/nascimento **e** nome placeholder/derivado do e-mail), o
+  vínculo novo dispara `merge_membros` (⚠️ params com prefixo `p_`) e loga em
+  `mem_merge_log`. Falha do merge não desfaz o vínculo — a duplicata sobra pra
+  fila das Entradas, que é onde humano decide.
+- **`GET /app/identidade/status`** diz o que falta; **`completo` ignora o CPF**
+  (recomendado, não obrigatório — ninguém fica fora do app por não ter o
+  documento em mãos). No app, `CadastroGate` só redireciona quando o servidor
+  RESPONDE que falta algo: falha de rede não prende ninguém na tela.
+- ⚠️⚠️ **O CÓDIGO VAI POR E-MAIL, não por WhatsApp** (migration
+  `20260804210000`): a Meta **RECUSOU a categoria Autenticação** pra nossa
+  conta do WhatsApp Business ("sua conta não pode usar esse tipo de mensagem")
+  — e código de uso único NÃO pode ir em template utility (violação de política
+  + derruba a nota de qualidade do número que fala com os 87 líderes). Canal =
+  `services/email.js` (Graph; Resend só com `RESEND_FALLBACK=1`). Sem canal
+  configurado o endpoint devolve `motivo:'sem_canal'` e a tela cai no
+  formulário — nunca promete um código que não vai chegar.
+  ⚠️ **E-mail COMPARTILHADO em família não serve de prova** (`motivo:
+  'email_compartilhado'`): mãe e filho na mesma caixa significaria o filho
+  digitar o CPF da mãe, ler o código e ver as CONTRIBUIÇÕES dela. Nesse caso o
+  caminho rápido se recusa e a pessoa vai pro formulário, que resolve pelo
+  matcher (nome+e-mail) e cai no cadastro DELA.
+  ⚠️ Se algum dia a Meta liberar autenticação: o botão "Preenchimento
+  automático" exige **nome do pacote + hash de assinatura de 11 chars**
+  derivado do certificado do **Play App Signing** (não do keystore do EAS) —
+  usar "Copiar código" evita isso e funciona no iOS também.
+- ⚠️ Não substitui o gatilho de auth.users (que segue criando cadastro no
+  signup) — este fluxo **reconcilia** depois. Trocar o gatilho continua
+  dependendo da query no SQL Editor + alinhamento com o Matheus.
+
 ## Kids · idade exata, WhatsApp pessoal e gerencial dentro da trava (2026-08-03 · SEM migration)
 
 Três pedidos do Matheus no mesmo dia, todos no Kids.
@@ -1313,6 +1456,44 @@ também é conhecido como **"Tuninho"**, e não havia busca por apelido.
   `lideres_busca`/apelido (a busca lá é acento-insensível, mas não acha por
   apelido); a ficha da pessoa da aba Pessoas do /grupos ainda não edita apelido;
   a Membresia não exibe o apelido no cabeçalho do membro (só no form).
+
+## ⚠️ Página lida por verificador EXTERNO tem que ser HTML estático (2026-08-04)
+
+A verificação da marca no **Google Auth Platform** (projeto `crm-cbrio` — o que
+autoriza o "Entrar com Google" do app de membros) foi recusada com dois motivos,
+ambos sobre a página inicial declarada no consentimento: *"your home page does
+not explain the purpose of your app"* e *"the app name 'CBRio' does not match
+the app name on your home page"*. **Verificada ✅ na tentativa seguinte**, com o
+conserto abaixo (levou ~3h, não dias).
+
+**A causa não era o texto — era o JavaScript.** O campo apontava para o ERP, que
+é SPA: o verificador busca a página **sem executar JS**, recebe o shell vazio do
+`index.html` e lê o `<title>` global (`CBRio · Comunidade Batista do Rio de
+Janeiro`). Isso é, ao mesmo tempo, "não explica propósito" e "o nome não bate".
+
+- **`public/aplicativo.html`** + rewrite em `vercel.json` (`/aplicativo →
+  /aplicativo.html`, **antes** do catch-all do SPA) é a home page do app. Mesmo
+  padrão do **`public/privacidade.html`**, que já existia e que o Google sempre
+  aceitou — foi justamente essa diferença que revelou o mecanismo.
+- ⚠️ **NÃO converter para rota React.** Já foi tentado (PR #2261) e é a versão
+  que falha: o conteúdo precisa existir na resposta HTTP. Mesma régua vale para
+  qualquer página que um robô de terceiro (Google, Apple, Meta) precise LER.
+- ⚠️ **O `<title>` e o `<h1>` são exatamente `CBRio`** — o mesmo string do campo
+  *App name* do consentimento e do `expo.name` do `app.json`. **Renomear o app no
+  console exige renomear aqui**, senão o motivo 2 volta. O acoplamento está
+  escrito no comentário do topo do arquivo.
+- Rotas públicas servidas por rewrite estático hoje: `/privacidade`,
+  `/aplicativo`. As por rota React: `/suporte`, `/politica-reembolso`.
+- ⚠️ **Lição de método (erro meu, registrado):** procurei `"/privacidade"` no
+  bundle de produção, não achei e concluí que a página não existia — ela existe,
+  como arquivo estático. **Ausência de rota no bundle não prova ausência de
+  página**: rewrite e arquivo em `public/` não passam pelo React Router. Para
+  saber se uma URL pública existe, olhar `public/` e os `rewrites` do
+  `vercel.json` também.
+- Pendência conhecida (não bloqueou esta verificação): `cbrio.org`/`cbrio.com.br`
+  estão verificados no **Search Console por outra conta Google** ("Play Console
+  org"). Se uma verificação futura falhar por propriedade de domínio, é isso — e
+  o conserto é adicionar a conta do console como proprietária, não é código.
 
 ## ⚠️ Google Tag Manager · SÓ no domínio público, nunca no ERP (2026-07-29)
 
@@ -6330,6 +6511,46 @@ App: `lib/telemetria.ts` (`trackTela`/`trackEvento`/`trackErro` + handler global
 erro + flush por tamanho/timer/background) ligado no `app/_layout.tsx` (init + cada
 tela via `usePathname`). Próximas features chamam `trackEvento` pra medir adoção.
 
+### ⚠️ A telemetria ficou 5 dias MORTA em silêncio · `event_id` (2026-08-05)
+
+Fui usar a telemetria pra diagnosticar um problema do app do Marcos e ela estava
+**zerada desde 31/07** — o dia em que a `20260731143000` (etapa 4 do módulo
+Sistema) criou `app_eventos.event_id uuid NOT NULL DEFAULT gen_random_uuid()` e o
+índice único, pro `upsert(..., { onConflict: 'event_id' })` do endpoint.
+
+**O DEFAULT existe e funciona** (conferido: `POST /rest/v1/app_eventos` cru, SEM a
+chave → 201). Quem quebrava era o **cliente**: o app não manda `event_id`, o
+normalizador devolvia `event_id: undefined`, e — a pegadinha — **`Object.keys()`
+INCLUI chave com valor `undefined`**, então o supabase-js montava
+`?columns=…,event_id`; o PostgREST vê a coluna listada e ausente no JSON e insere
+**NULL** → `23502`, lote inteiro descartado. E o handler responde **HTTP 200
+`{ok:false}`** de propósito ("telemetria não pode quebrar o app") e o app ignorava
+o corpo ⇒ **falha perfeitamente silenciosa**.
+
+- **Régua que fica:** em `upsert` com `onConflict`, **toda linha precisa ter a
+  chave de conflito PREENCHIDA** — nem `undefined` (vira NULL via `?columns=`) nem
+  presente só em algumas linhas (o `?columns=` é a UNIÃO das chaves do lote).
+  `normalizeMobileEvent` agora sempre gera `event_id` (o do app quando vier — aí o
+  reenvio é idempotente de verdade; senão `crypto.randomUUID()`).
+- **Falha de ingestão AVISA GENTE** (`notificar` módulo `dashboard`, dedup por dia,
+  link `/admin/app-analytics`). Sem isso, o próximo silêncio dura outros 5 dias.
+- ⚠️ **A whitelist de `props` estava comendo quase tudo**: das 10 chaves que o app
+  mandava, só `message` passava (`{grupo: id}`, `{tipo}`, `{criado}`,
+  `{encontrado}`, `{id}`, `{url}` iam pro lixo sem erro). O app foi ajustado pras
+  chaves permitidas e a lista ganhou **`entity_id`** (id de COISA — grupo, vídeo,
+  comunicado · **nunca de pessoa**) e **`label`** (rótulo curto de enum NOSSO —
+  tipo de decisão, parentesco · **nunca texto digitado**). Chave nova exige a
+  mesma pergunta: *isso pode identificar alguém?*
+- O app passou a mandar `event_id`, `occurred_at` (quando ACONTECEU · o
+  `created_at` é quando chegou), `session_id` (uma abertura), `installation_id`
+  (aparelho, persistido), `os_version`, `device_model`, `manufacturer` e
+  `build_number` — tudo de `Platform.constants` + `expo-constants`, **sem
+  dependência nativa nova** (o que manteria a mudança fora do alcance de OTA).
+  ⚠️ **`Constants.deviceName` é PROIBIDO** aqui: no iOS vem "iPhone de \<nome da
+  pessoa\>" (PII). No iOS vai o formato (`handset`/`pad`).
+- ⚠️ `GET /sistema/v1/mobile/command-center` (mesma etapa 4) **não tem tela** no
+  frontend ainda — a telemetria do app se vê em `/admin/app-analytics`.
+
 ## Comunicados / Mural (2026-06-16 · Fase 2 do app)
 
 Conteúdo criado no **Marketing** → **mural do app** + **push segmentado**.
@@ -6362,8 +6583,37 @@ revisão** (decisão da liderança: NADA do app entra direto na NSM). Migration
 culto_id + ambiente presencial/online + tipo aceitar/reconciliacao/rededicacao/
 batismo/outro + status pendente/confirmada/descartada + decisao_id · deleted_at +
 whitelist + RLS contextual) e libera `fonte='app'` em `cultos_decisoes_pessoas`.
-- **App**: `GET /app/culto/agora` (culto de hoje + link ao vivo + jaRegistrou),
-  `POST /app/culto/decisao` (insere pendente · dedup 1/dia · notifica Integração).
+- **App**: `GET /app/culto/agora` (culto de agora + `ao_vivo` + link ao vivo +
+  jaRegistrou), `POST /app/culto/decisao` (insere pendente · dedup 1/dia ·
+  notifica Integração).
+
+### ⚠️ Qual culto é "agora" · dia em BRT e o mais recente que COMEÇOU (2026-08-04)
+
+Os dois endpoints acima resolviam o culto com
+`data = new Date().toISOString().slice(0,10)` + `order('hora', desc).limit(1)`.
+**Os dois pedaços estavam errados**, e o efeito era atribuição de culto errada
+na fila da Integração (que alimenta a NSM):
+
+1. **`toISOString()` é UTC.** Das 21h BRT em diante o "hoje" já é o dia
+   SEGUINTE — ou seja, **no culto de domingo 19h** (que passa das 21h) o
+   `culto` vinha nulo, a decisão era gravada sem `culto_id` e o dedup de
+   1-por-dia olhava a janela do dia errado. Mesma classe de bug do dia da
+   curva do censo e do check-in do Kids: **dia de operação da igreja é BRT**.
+2. **"maior hora do dia" ≠ "culto de agora".** Às 08:30 o endpoint dizia que o
+   culto era o das 19:00 → decisão do culto da manhã carimbada no da noite.
+
+Agora existe `cultoDeAgora()` (helper único, usado pelos DOIS endpoints —
+duplicar a régua era o que deixava o GET e o POST discordarem):
+`hojeBRT()` + entre os cultos que **já começaram** e estão dentro de 3h vale o
+**mais recente**; só quando nada começou é que a antecedência de 30 min conta.
+⚠️ A ordem importa porque os cultos de domingo saem de 90 em 90 min e uma
+janela de 3h sobrepõe dois ou três: `find` simples (o primeiro que casa) diria
+"08:30" às 10:30, e "10:00" às 09:40 com o das 08:30 ainda rolando.
+`ao_vivo` é o que o app usa pra mostrar o "No culto" **só durante o culto** —
+fora da janela aquela tela não tem propósito (pedido do Marcos, 04/08).
+Conferido em BRT nos horários reais de domingo (06:00 → fora · 08:05/08:15 →
+08:30 · 09:40 → 08:30 · 10:30 → 10:00 · 12:15 e 13:00 → 11:30 · 15:00 → fora ·
+18:45–21:30 → 19:00 · 22:10 e 23:40 → fora, com o dia BRT correto).
 - **Integração**: `GET /integracao/decisoes-app` + `/:id/confirmar` (cria a
   decisão oficial em `cultos_decisoes_pessoas` com `fonte='app'` → entra na NSM
   via trigger) + `/:id/descartar`. UI: `DecisoesApp.tsx` no topo da aba Decisões

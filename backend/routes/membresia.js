@@ -2989,11 +2989,124 @@ router.get('/censo/disparo/preview', authorizeModule('membresia', 2), async (req
       status: parseStatusCenso(req.query.status),
       canais: parseCanaisCenso(req.query.canais),
       reenviar: req.query.reenviar === '1' || req.query.reenviar === 'true',
+      // Reforço deliberado: manda pelo 2º canal pra quem já foi convidado no 1º.
+      permitirCanalCruzado: req.query.cruzado === '1' || req.query.cruzado === 'true',
     });
     res.json(prev);
   } catch (e) {
     console.error('[CENSO disparo preview]', e.message);
     res.status(500).json({ error: 'Erro ao montar a prévia do disparo' });
+  }
+});
+
+// GET /api/membresia/censo/disparo/resultado
+// Resultado da CAMPANHA por rodada + quem respondeu (nominal).
+//
+// ⚠️ Mede a campanha, NÃO a igreja. O painel de cobertura tem a base inteira no
+//    denominador (uma rodada de 200 com 7 respostas aparece como 0,1%) e conta
+//    RESPOSTA, não CPF — foi por isso que o CPF ficou sendo descartado por um
+//    bug sem ninguém perceber: o número que a tela mostrava subia igual.
+//
+// Nível 2: a lista carrega nome e e-mail. ⚠️ CPF NÃO viaja — só o booleano de
+// "tem CPF agora", que é o que a tela precisa saber.
+router.get('/censo/disparo/resultado', authorizeModule('membresia', 2), async (req, res) => {
+  try {
+    const { data: rodadas, error } = await supabase
+      .from('vw_censo_campanha')
+      .select('*')
+      .order('rodada', { ascending: false });
+    if (error) {
+      if (censoSchemaAusente(error) || error.code === '42P01') {
+        return res.json({ disponivel: false, rodadas: [], responderam: [], aviso: 'A view vw_censo_campanha ainda não foi criada.' });
+      }
+      throw error;
+    }
+
+    // Quem respondeu, para a tela poder mostrar nome. Paginado pelo cap de 1000.
+    const PAGE = 1000;
+    const convites = [];
+    for (let off = 0; ; off += PAGE) {
+      const { data, error: eC } = await supabase
+        .from('mem_censo_convites')
+        .select('membro_id, canal, rodada, enviado_em, ok')
+        .eq('ok', true)
+        .range(off, off + PAGE - 1);
+      if (eC) throw eC;
+      if (!data?.length) break;
+      convites.push(...data);
+      if (data.length < PAGE) break;
+    }
+
+    // Quem está com CPF em CONFLITO: informou, e o CPF pertence a outro
+    // cadastro. ⚠️ Sem isso a tela dizia só "sem CPF" e lia-se "a pessoa não
+    // preencheu" — quando o CPF é obrigatório no formulário e ela preencheu.
+    // Confundir "não informou" com "informamos e seguramos de propósito" faz a
+    // equipe procurar problema no lugar errado (e duvidar do formulário).
+    const emConflito = new Set();
+    {
+      const { data: pend } = await supabase
+        .from('identidade_pendencias')
+        .select('membro_id')
+        .eq('status', 'pendente')
+        .in('origem', ['censo_link_pessoal', 'censo_formulario']);
+      for (const p of pend || []) if (p.membro_id) emConflito.add(p.membro_id);
+    }
+
+    const responderam = [];
+    for (let i = 0; i < convites.length; i += 200) {
+      const lote = convites.slice(i, i + 200);
+      const { data: membros } = await supabase
+        .from('mem_membros')
+        .select('id, nome, email, cpf, censo_respondido_em')
+        .in('id', lote.map(c => c.membro_id))
+        .is('deleted_at', null)
+        .not('censo_respondido_em', 'is', null);
+      for (const m of membros || []) {
+        const c = lote.find(x => x.membro_id === m.id);
+        if (!c || !(m.censo_respondido_em >= c.enviado_em)) continue;
+        const temCpf = String(m.cpf || '').replace(/\D/g, '').length === 11;
+        responderam.push({
+          nome: m.nome,
+          email: m.email,
+          rodada: c.rodada,
+          canal: c.canal,
+          respondeu_em: m.censo_respondido_em,
+          tem_cpf: temCpf,
+          // 'com_cpf' | 'conflito' (informou, CPF é de outro cadastro) |
+          // 'sem_cpf' (não veio CPF — não deveria acontecer, é obrigatório)
+          cpf_situacao: temCpf ? 'com_cpf' : (emConflito.has(m.id) ? 'conflito' : 'sem_cpf'),
+        });
+      }
+    }
+    responderam.sort((a, b) => String(b.respondeu_em).localeCompare(String(a.respondeu_em)));
+
+    res.json({ disponivel: true, rodadas: rodadas || [], responderam });
+  } catch (e) {
+    console.error('[CENSO resultado]', e.message);
+    res.status(500).json({ error: 'Erro ao carregar o resultado da campanha' });
+  }
+});
+
+// GET /api/membresia/censo/disparo/preview-email
+// Renderiza o e-mail EXATAMENTE como ele sai (mesma função `corpoEmail` do
+// disparo — não uma imitação, senão a prévia mente).
+//
+// ⚠️ O link do exemplo leva um token FALSO de propósito. Devolver um token
+//    válido de alguém real transformaria a prévia num vazamento: quem abrisse a
+//    tela veria um link que abre o cadastro daquela pessoa.
+router.get('/censo/disparo/preview-email', authorizeModule('membresia', 2), async (req, res) => {
+  try {
+    const nome = String(req.query.nome || 'Maria').trim() || 'Maria';
+    const base = String(process.env.FRONTEND_URL || 'https://cbrio.org').replace(/\/+$/, '');
+    const { subject, html, text } = censoDisparo.corpoEmail({
+      nome,
+      link: `${base}/cadastro-membresia?censo=1&t=exemplo0000000000000000000000000.00000000000000000000`,
+      destinatario: 'pessoa@exemplo.com',
+    });
+    res.json({ assunto: subject, html, texto: text });
+  } catch (e) {
+    console.error('[CENSO preview-email]', e.message);
+    res.status(500).json({ error: 'Erro ao montar a prévia do e-mail' });
   }
 });
 
@@ -3007,6 +3120,7 @@ router.post('/censo/disparo', authorizeModule('membresia', 4), async (req, res) 
       status: parseStatusCenso(req.body?.status),
       canais: parseCanaisCenso(req.body?.canais),
       reenviar: req.body?.reenviar === true,
+      permitirCanalCruzado: req.body?.permitirCanalCruzado === true,
       por: req.user?.id || null,
     });
     if (r.ok === false) return res.status(409).json(r);
@@ -3245,6 +3359,44 @@ async function aprovarCadastroCore({
       if (eHist) console.warn('[CADASTROS] histórico não gravado:', eHist.message);
     } catch (_) { /* histórico é opcional */ }
 
+    // ── Status pela ATIVIDADE (regra do Matheus · 04/08) ────────────────────
+    // "Membro ativo se tiver qualquer ação na igreja em 1 ano; sem ação, fica
+    // frequentador." Participar de grupo conta; ter filho com check-in no Kids
+    // conta. A régua é a função `fn_membro_tem_atividade` — a MESMA da varredura
+    // da base, pra o status não depender de por onde a pessoa entrou.
+    //
+    // ⚠️ Aqui só PROMOVE (ou define no ato da criação). NUNCA rebaixa quem já é
+    //    membro_ativo: aprovar um cadastro não pode ter como efeito colateral
+    //    tirar a membresia de alguém — e o sistema não tem presença nominal de
+    //    culto, então "sem ação" pode ser falta de DADO, não falta de igreja.
+    //    Rebaixar é varredura deliberada, com a lista na mão.
+    try {
+      const { data: temAtividade, error: eAtiv } = await supabase
+        .rpc('fn_membro_tem_atividade', { p_membro_id: membro.id, p_dias: 365 });
+      if (eAtiv) {
+        // Função ausente (deploy em 2 etapas) não pode derrubar a aprovação: o
+        // membro já existe e o cadastro já está sendo aprovado.
+        console.warn('[CADASTROS] fn_membro_tem_atividade indisponível:', eAtiv.message);
+      } else {
+        // `foiAtualizacao` é false só quando o cadastro CRIOU a pessoa agora
+        // (nos dois ramos: duplicado_de_id sempre atualiza; o outro usa
+        // `!resultado.created`). Pessoa recém-criada sem sinal nasce
+        // frequentador; pessoa que já existia sem sinal não é tocada.
+        const novoStatus = temAtividade
+          ? 'membro_ativo'
+          : (foiAtualizacao ? null : 'frequentador');
+        if (novoStatus && membro.status !== novoStatus && membro.status !== 'membro_ativo') {
+          const { data: ajustado } = await supabase.from('mem_membros')
+            .update({ status: novoStatus })
+            .eq('id', membro.id).is('deleted_at', null)
+            .select().single();
+          if (ajustado) membro = ajustado;
+        }
+      }
+    } catch (e) {
+      console.warn('[CADASTROS] status por atividade:', e.message);
+    }
+
     // ⚠️ No LOTE isto vem desligado e o chamador manda UM aviso com o resumo.
     // Sem regra configurada, `notificar` cai no fallback de todos os
     // admin/diretor (16 pessoas): aprovar 50 cadastros geraria ~800 linhas de
@@ -3255,7 +3407,11 @@ async function aprovarCadastroCore({
         modulo: 'membresia',
         tipo: 'cadastro_aprovado',
         titulo: `Cadastro aprovado: ${cad.nome}`,
-        mensagem: `O cadastro de ${cad.nome} foi ${foiAtualizacao ? 'atualizado' : 'aprovado'} e o membro está ativo no sistema.`,
+        // Diz o status REAL: com a regra de atividade, aprovar não significa
+        // mais "está ativo" em todo caso (sem sinal, a pessoa nasce
+        // frequentador) — e aviso que afirma o que não aconteceu é pior que
+        // aviso genérico.
+        mensagem: `O cadastro de ${cad.nome} foi ${foiAtualizacao ? 'atualizado' : 'aprovado'} (status: ${membro.status}).`,
         link: `/ministerial/membresia`,
         severidade: 'info',
         chaveDedup: `cadastro_aprovado_${id}`,
@@ -3352,7 +3508,8 @@ router.post('/cadastros/aprovar-lote', podeAprovarMembresia, async (req, res) =>
         tipo: 'cadastros_aprovados_lote',
         titulo: `${aprovados.length} cadastro(s) aprovados em lote`,
         mensagem: `${aprovados.length} aprovados${ignorados.length ? ` · ${ignorados.length} ficaram para aprovação manual (dados incompletos)` : ''}${falhas.length ? ` · ${falhas.length} falharam` : ''}.`,
-        link: '/ministerial/membresia',
+        // O trabalho que sobra é o que ficou PENDENTE — o link leva direto lá.
+        link: '/ministerial/membresia?tab=cadastros&status=pendente',
         severidade: 'info',
         chaveDedup: `cadastros_lote_${new Date().toISOString().slice(0, 16)}`,
       }).catch(() => {});

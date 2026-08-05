@@ -859,7 +859,11 @@ export default function Membresia() {
   const [loading, setLoading] = useState(true);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState('');
-  const [busca, setBusca] = useState('');
+  // `?q=` pré-preenche a busca de membros: é o que faz o link "atualizou o
+  // cadastro de X" da aba Cadastros cair na pessoa, em vez de na lista inteira.
+  const [busca, setBusca] = useState(
+    () => new URLSearchParams(window.location.search).get('q') || '',
+  );
   const [filterStatus, setFilterStatus] = useState('');
   const [filterPapel, setFilterPapel] = useState('');
   const [filterFaixa, setFilterFaixa] = useState('');
@@ -874,7 +878,15 @@ export default function Membresia() {
   const [grupos, setGrupos] = useState([]);
   const [grupoSelecionado, setGrupoSelecionado] = useState('');
   const [salvandoGrupo, setSalvandoGrupo] = useState(false);
-  const [pageTab, setPageTab] = useState('membros');
+  // ⚠️ Aba vem da URL (`?tab=`). Sem isso, notificação que aponta pra cá cai
+  // sempre em "Membros": o aviso do censo ("cadastro para revisar") linkava
+  // `/ministerial/membresia` e a pessoa chegava numa lista de 3.973 membros sem
+  // nenhuma pista de onde estava o cadastro a revisar. Link de notificação que
+  // não leva ao destino é pior que não ter link — gasta a confiança no sino.
+  const [pageTab, setPageTab] = useState(() => {
+    const t = new URLSearchParams(window.location.search).get('tab');
+    return ['membros', 'jornada', 'duplicados', 'cadastros'].includes(t) ? t : 'membros';
+  });
   const [showShareLink, setShowShareLink] = useState(false);
   const [showContribForm, setShowContribForm] = useState(false);
   const [contribForm, setContribForm] = useState({ tipo: 'dizimo', valor: '', data: new Date().toISOString().slice(0, 10), forma_pagamento: '', campanha: '', observacoes: '' });

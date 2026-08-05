@@ -2415,7 +2415,16 @@ export const membresia = {
     faltantes: (params) => get('/membresia/censo/faltantes' + (params ? '?' + new URLSearchParams(params) : '')),
     // Convite de atualização cadastral (WhatsApp + e-mail) pra quem está sem CPF.
     disparoPreview: (params) => get('/membresia/censo/disparo/preview' + (params ? '?' + new URLSearchParams(params) : '')),
-    disparar: (body) => post('/membresia/censo/disparo', body),
+    // ⚠️ 300s (o padrão é 30s): a rodada manda até 200 e-mails sequenciais pelo
+    // Graph. Em 04/08 o cliente abortou em 30s, a função seguiu e mandou os 200
+    // — a tela disse "tempo esgotado" para um envio que aconteceu. O registro
+    // agora é gravado em blocos DURANTE o envio, então um timeout aqui não
+    // duplica nada; este teto existe pra pessoa ver o resultado.
+    disparar: (body) => post('/membresia/censo/disparo', body, { timeout: 300000 }),
+    // Resultado da CAMPANHA (convidados → responderam → com CPF), por rodada.
+    disparoResultado: () => get('/membresia/censo/disparo/resultado'),
+    // Prévia do e-mail: HTML renderizado pela MESMA função do disparo.
+    disparoPreviewEmail: (nome) => get('/membresia/censo/disparo/preview-email' + (nome ? `?nome=${encodeURIComponent(nome)}` : '')),
   },
   cadastros: {
     list: (params) => get('/membresia/cadastros' + (params ? '?' + new URLSearchParams(params) : '')),

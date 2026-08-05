@@ -85,7 +85,14 @@ export default function TabCadastros({ onMembrosChange }) {
   const [cadastros, setCadastros] = useState([]);
   const [kpis, setKpis] = useState({ pendente: 0, aprovado: 0, rejeitado: 0, duplicado: 0, aplicado: 0 });
   const [loading, setLoading] = useState(true);
-  const [filterStatus, setFilterStatus] = useState('pendente');
+  // ⚠️ Status também vem da URL (`?status=`). O aviso de conflito do censo
+  // aponta pra `duplicado` — chegar aqui com o filtro travado em "pendente"
+  // esconderia exatamente a linha que o aviso pediu pra revisar.
+  const [filterStatus, setFilterStatus] = useState(() => {
+    const s = new URLSearchParams(window.location.search).get('status');
+    return ['pendente', 'aprovado', 'rejeitado', 'duplicado', 'aplicado'].includes(s)
+      ? s : 'pendente';
+  });
   const [busca, setBusca] = useState('');
   const [error, setError] = useState('');
 
@@ -412,6 +419,37 @@ export default function TabCadastros({ onMembrosChange }) {
         </div>
       </div>
 
+      {/* ⚠️ Onde duplicata se resolve DE VERDADE.
+          Esta aba lista SUBMISSÕES de formulário, não pessoas — então não há
+          duas pessoas pra fundir aqui. Duplicata é entre dois `mem_membros`, e
+          vive na aba Duplicados (nome/telefone/nascimento) e em Entradas >
+          Conflitos de CPF (mesmo CPF em dois cadastros — inclusive os que o
+          próprio censo revelou). Sem este aviso, "possível duplicado de X" na
+          linha faz procurar a fusão no lugar errado. */}
+      {['duplicado', 'aplicado'].includes(filterStatus) && (
+        <div style={{
+          display: 'flex', alignItems: 'flex-start', gap: 8, flexWrap: 'wrap',
+          padding: '10px 12px', marginBottom: 14, borderRadius: 10,
+          border: `1px solid ${C.border}`, background: C.blueBg,
+          fontSize: 11.5, color: C.text2, lineHeight: 1.6,
+        }}>
+          <Copy style={{ width: 13, height: 13, color: C.blue, flexShrink: 0, marginTop: 2 }} />
+          <div style={{ flex: 1, minWidth: 240 }}>
+            {filterStatus === 'aplicado'
+              ? 'Aqui a pessoa respondeu e o sistema já atualizou o cadastro dela — mesma pessoa, nada a fundir.'
+              : 'A submissão foi ligada a um cadastro existente e aguarda decisão. Abrir a linha mostra os dois lados.'}
+            {' '}Para <strong>fundir duas pessoas</strong>, o lugar é:
+          </div>
+          <Link to="/ministerial/membresia?tab=duplicados" style={{ color: C.primary, fontWeight: 600 }}>
+            aba Duplicados
+          </Link>
+          <span style={{ color: C.text3 }}>·</span>
+          <Link to="/entradas" style={{ color: C.primary, fontWeight: 600 }}>
+            Entradas › Conflitos de CPF
+          </Link>
+        </div>
+      )}
+
       {/* Barra de aprovação em massa · só aparece com pendente na tela */}
       {mostrarSelecao && (
         <div style={{
@@ -545,10 +583,32 @@ export default function TabCadastros({ onMembrosChange }) {
                     </div>
                     <div>
                       <div style={{ fontSize: 14, fontWeight: 500, color: C.text }}>{c.nome}</div>
+                      {/* ⚠️ `duplicado_de_id` significa "esta submissão foi
+                          LIGADA a este cadastro" — e o rótulo exibia o nome
+                          técnico da coluna como se fosse diagnóstico. Em
+                          `aplicado` (censo) NÃO há duplicata: é a mesma pessoa
+                          atualizando o próprio cadastro, e o sistema já aplicou.
+                          Chamar isso de "possível duplicado" fez o Matheus
+                          procurar duas pessoas pra fundir onde só existe uma
+                          (conferido: zero outros membros com o mesmo nome).
+                          Duplicata de VERDADE (dois mem_membros) vive na aba
+                          Duplicados e em Entradas > Conflitos de CPF. */}
                       {c.duplicado_de && (
-                        <div style={{ fontSize: 11, color: C.blue, marginTop: 2 }}>
-                          ↻ possível duplicado de {c.duplicado_de.nome}
-                        </div>
+                        <Link
+                          to={`/ministerial/membresia?tab=membros&q=${encodeURIComponent(c.duplicado_de.nome || '')}`}
+                          onClick={(e) => e.stopPropagation()}
+                          style={{
+                            display: 'inline-block', fontSize: 11, marginTop: 2,
+                            color: c.status === 'aplicado' ? C.green : C.blue,
+                          }}
+                          title={c.status === 'aplicado'
+                            ? 'A pessoa respondeu e o sistema já atualizou este cadastro. Clique para abrir o cadastro dela.'
+                            : 'A submissão foi ligada a este cadastro e aguarda decisão. Clique para abrir o cadastro.'}
+                        >
+                          {c.status === 'aplicado'
+                            ? `✓ atualizou o cadastro de ${c.duplicado_de.nome}`
+                            : `↻ ligado ao cadastro de ${c.duplicado_de.nome}`}
+                        </Link>
                       )}
                       {/* Por que este cadastro não entra na aprovação em massa */}
                       {c.status === 'pendente' && c.prontidao && !c.prontidao.pronto && (
