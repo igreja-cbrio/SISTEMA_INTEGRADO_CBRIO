@@ -855,6 +855,81 @@ então nem o `/resumo` voltava barato (ele recomputa `dup` também).
   telefone é compartilhado em família. Juntar os dois num "tem CPF" esconderia
   justamente a diferença que decide se pode ligar sem conferir.
 
+## ⚠️ Entradas · "tem CPF" ≠ "achou PELO CPF" · e o lote (2026-08-05 · migration `20260805120000`)
+
+Pedido do Matheus na aba **Conflitos de CPF**: *"gostaria que tivesse a
+funcionalidade para eu marcar todos e aprovar, e ajeite esse bug, pois mesmo eu
+marcando o filtro de mostrar só quem tem cpf preenchido, ele mostra pessoas que
+não tem cpf preenchido. Pois quero ligar o cadastro em massa de todos aqueles
+que tem cpf preenchido já."*
+
+**O filtro não estava errado na conta — estava errado na PERGUNTA.** O chip lia
+`origem_id`, que é a **chave da pessoa órfã** (`chavePessoa`: cpf > tel > nome).
+`cpf:...` ali significa que **a INSCRIÇÃO trouxe CPF** — não que o candidato foi
+achado por ele, e muito menos que o cadastro tem CPF. Caso do print (medido):
+**Ana Luisa Dib Silvestre** — inscrição de batismo com CPF `194.117.357-89`,
+candidato achado **por telefone+nome**, cadastro **sem CPF nenhum**. Ela entrava
+em "Só com CPF" e o card mostrava `—`, porque **a tela só exibia o lado do
+CADASTRO**: o CPF que a pessoa digitou não aparecia em lugar algum.
+Das 7 pendências com chave `cpf:`, **4 casaram por telefone+nome/nome** — e a
+tooltip prometia *"chave mais forte que existe, ligar é seguro sem conferir
+nome"*. Era a tooltip a parte perigosa, não a contagem.
+
+- **`avaliarForcaOrfa(insc, cad)`** (`services/inscricaoOrfas.js`) responde a
+  pergunta certa: *este cadastro é essa pessoa?* Régua = os ramos do **matcher
+  canônico**: CPF da inscrição igual ao do cadastro, ou **telefone igual +
+  NOME COMPLETO idêntico**. ⚠️ Nada aqui é mais frouxo que o que já liga sozinho
+  em toda porta; o que é mais frouxo — **primeiro nome igual + telefone**, que o
+  enfileiramento aceita pra SUGERIR — fica fora, porque é exatamente mãe/filha
+  no telefone da casa. Mutation-testado em `inscricaoOrfas.test.js`: afrouxar a
+  comparação de nome deixa o gate vermelho.
+- **2 VETOS, e vêm ANTES das evidências fortes**: nascimento conferível e
+  divergente (contradição — nenhuma outra evidência compra de volta) e **CPF
+  divergente dos dois lados**. Sem essa ordem, CPF diferente + telefone/nome
+  batendo cairia no ramo forte, ou seja, escolheria a evidência que convém.
+- **A tela mostra os DOIS lados** (`InscricaoBox` "O que a pessoa preencheu" ×
+  "Cadastro candidato") + selo da força. É a correção de raiz do "mostra gente
+  sem CPF": o CPF existe, é da inscrição, e agora aparece.
+- **Chips**: rótulos passam a dizer de QUAL lado é o CPF ("CPF em algum lado" /
+  "CPF na inscrição") e ganharam a ressalva na tooltip. Ficam porque servem aos
+  **218 `cpf_para_confirmar`**; quem responde "dá pra ligar?" é o chip novo
+  **"Pode ligar em lote"**.
+- **`POST /identidade-pendencias/ligar-lote`** (nível 3 · teto 100): `ligarInscricaoCore`
+  extraído (padrão `aprovarCadastroCore`) e o lote **REAVALIA a força no
+  servidor** — o payload diz *quais*, nunca *se pode*. **Sequencial** (cada
+  ligação passa pelo matcher e pode consolidar CPF tardio; em paralelo, duas
+  pessoas da mesma família correriam no matcher juntas). `lerLinhasOrfas` roda
+  **uma vez** pro lote. **UM aviso agregado** (lição do censo).
+- ⚠️ **Chave morta é DECLARADA**: pendência cujas inscrições já foram ligadas
+  mostra "Nada a ligar" em vez do botão que só devolveria 409. O Matheus passou
+  **110 pendências na mão em 05/08** — clique que erra é caro.
+
+**Cobertura honesta, medida em 05/08 (67 pendentes de `inscricao_sem_vinculo`):
+20 vão em lote** (23 linhas de inscrição) · **40 seguem manuais** (a maioria
+primeiro-nome-só + telefone) · **7 com chave morta**. Não são os 157 do chip
+antigo — aquele número contava "CPF em algum lado", e CPF que não participou do
+match não prova nada sobre ser a mesma pessoa.
+
+### ⚠️ A trilha do "Ligar ao cadastro" nunca existiu (CHECK engolido)
+
+Achado ao construir o lote: `entradas_resolucoes_acao_check` **não tinha**
+`inscricao_vinculada`, então todo INSERT da trilha violava 23514 e o erro era
+engolido pelo `console.warn` de `registrarResolucaoEntrada` (que só propaga se a
+mensagem casar `/entradas_resolucoes|schema cache|does not exist/`).
+
+Medido: **134 linhas** em `mem_identidade_observacoes` com origem
+`fila_identidade%` (última 05/08 13:36) — as ligações **aconteceram de verdade**
+— contra **ZERO** `acao='inscricao_vinculada'`. Ou seja: 134 vínculos de pessoa
+criados por decisão humana, e a pergunta "quem ligou esta inscrição a este
+cadastro?" sem resposta. Migration `20260805120000` acrescenta
+`inscricao_vinculada` e `inscricao_vinculada_lote` (ação **própria** pro lote: a
+decisão "ligou 20 confiando na régua" é diferente de "olhou os dois lados e
+ligou", e compartilhar rótulo apaga a distinção). **Não reescreve o passado** —
+as 134 seguem sem trilha, porque não há de onde tirar autor/momento.
+⚠️ Régua que fica: **ação nova no backend precisa entrar nesse CHECK**, e
+`registrarResolucaoEntrada` engolir erro significa que a falha aparece só quando
+alguém for auditar.
+
 ## ⚠️ Inscrições · `null` em coluna NOT NULL derruba o UPDATE inteiro (2026-08-04)
 
 A Ariel não conseguia salvar edição de evento. Erro real no runtime da Vercel:

@@ -87,7 +87,73 @@ function ordemAncora(a, b) {
   return String(b.criado_em || '').localeCompare(String(a.criado_em || ''));
 }
 
+// ── Força da evidência · o que decide se ligar em LOTE é honesto ───────────
+// ⚠️ NÃO confundir com `chavePessoa`. A chave diz "estas linhas órfãs são a
+// mesma pessoa" (agrupa pra decisão). A FORÇA diz "este cadastro candidato é
+// essa pessoa" — é outra pergunta, e é ela que autoriza ligar sem conferir.
+//
+// Medido em 05/08, e é o bug que o Matheus viu: `origem_id = 'cpf:...'`
+// significa que a INSCRIÇÃO trouxe CPF, **não** que o candidato foi achado por
+// ele. Das 7 pendências com chave `cpf:`, 4 casaram por telefone+nome com um
+// cadastro que não tem CPF nenhum (caso Ana Luisa Dib Silvestre) — e a tela
+// prometia "ligar é seguro sem conferir nome".
+//
+// A régua é a do **matcher canônico** (Contrato de porta): CPF, ou
+// telefone+NOME. Nada aqui é mais frouxo que o que já liga sozinho em toda
+// porta do sistema; o que é mais frouxo (primeiro nome igual + telefone, que o
+// enfileiramento aceita pra SUGERIR) fica de fora, porque é exatamente o caso
+// mãe/filha no telefone da casa.
+const FORCA = Object.freeze({ CPF: 'forte_cpf', TEL_NOME: 'forte_telefone_nome', MANUAL: 'manual' });
+
+/**
+ * @param {object} insc  linha órfã ÂNCORA (nome_display, telefone_norm, cpf_norm, nascimento)
+ * @param {object} cad   cadastro candidato (nome, telefone, cpf, data_nascimento)
+ * @returns {{forca:string, motivo:string, veto:string|null}}
+ */
+function avaliarForcaOrfa(insc, cad) {
+  if (!insc || !cad) return { forca: FORCA.MANUAL, motivo: 'sem dados dos dois lados', veto: null };
+
+  // VETO antes de tudo: nascimento conferível e DIFERENTE é contradição, não
+  // sinal fraco. A duplicidadePolicy exclui par com nascimento conflitante, e a
+  // mesma régua vale aqui — nenhuma outra evidência compra isso de volta.
+  const nInsc = String(insc.nascimento || '').slice(0, 10);
+  const nCad = String(cad.data_nascimento || '').slice(0, 10);
+  if (nInsc && nCad && nInsc !== nCad) {
+    return { forca: FORCA.MANUAL, motivo: 'nascimento divergente entre a inscrição e o cadastro', veto: 'nascimento_divergente' };
+  }
+
+  const cpfInsc = dig(insc.cpf_norm);
+  const cpfCad = dig(cad.cpf);
+  // 2º VETO, e ele vem ANTES das evidências fortes de propósito: CPF diferente
+  // dos dois lados é evidência CONTRA, e cair no ramo telefone+nome depois dela
+  // seria escolher a evidência que convém.
+  if (cpfInsc.length === 11 && cpfCad.length === 11 && cpfInsc !== cpfCad) {
+    return { forca: FORCA.MANUAL, motivo: 'a inscrição trouxe CPF diferente do CPF do cadastro', veto: 'cpf_divergente' };
+  }
+  if (cpfInsc.length === 11 && cpfInsc === cpfCad) {
+    return { forca: FORCA.CPF, motivo: 'o CPF da inscrição é o CPF do cadastro', veto: null };
+  }
+
+  const telInsc = dig(insc.telefone_norm);
+  const telCad = dig(cad.telefone);
+  const nomeInsc = norm(insc.nome_display);
+  const nomeCad = norm(cad.nome);
+  // Telefone SOZINHO nunca identifica (lei do Contrato de porta) e primeiro
+  // nome igual também não — exige o nome COMPLETO idêntico.
+  if (telInsc.length >= 10 && telInsc === telCad && nomeInsc && nomeInsc === nomeCad) {
+    return { forca: FORCA.TEL_NOME, motivo: 'mesmo telefone e nome completo idêntico', veto: null };
+  }
+
+  if (telInsc.length >= 10 && telInsc === telCad) {
+    return { forca: FORCA.MANUAL, motivo: 'telefone igual mas o nome não é o mesmo — telefone é compartilhado em família', veto: null };
+  }
+  return { forca: FORCA.MANUAL, motivo: 'sem chave forte em comum — confira antes de ligar', veto: null };
+}
+
+const forcaPodeLote = (f) => f === FORCA.CPF || f === FORCA.TEL_NOME;
+
 module.exports = {
   chavePessoa, PORTA_VINCULO, COLUNAS_ORFA, lerLinhasOrfas, agruparPorPessoa,
   ordemAncora, digitosOrfa: dig, normOrfa: norm,
+  FORCA, avaliarForcaOrfa, forcaPodeLote,
 };
