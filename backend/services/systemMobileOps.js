@@ -1,9 +1,21 @@
+const crypto = require('node:crypto');
 const { supabase } = require('../utils/supabase');
 
 const PLATFORMS = new Set(['android', 'ios']);
+/**
+ * Whitelist de `props` — o que não está aqui é DESCARTADO em silêncio (é a
+ * trava de PII da telemetria). Medido em 04/08/2026: das 10 chaves que o app
+ * mandava, só `message` passava; `{grupo: id}`, `{tipo}`, `{criado}` e
+ * `{encontrado}` iam pro lixo sem erro. O app foi ajustado pra usar estas
+ * chaves e ganhou duas:
+ *  · `entity_id` — id de COISA (grupo, vídeo, comunicado). **Nunca de pessoa.**
+ *  · `label` — rótulo curto e não-identificante, de enum NOSSO (tipo de decisão,
+ *    parentesco). **Nunca texto que a pessoa digitou.**
+ * Chave nova aqui exige a mesma decisão: ela pode identificar alguém?
+ */
 const ALLOWED_PROPS = new Set([
   'message', 'fatal', 'screen', 'route', 'action', 'reason', 'status_code',
-  'endpoint', 'permission', 'notification_type', 'source',
+  'endpoint', 'permission', 'notification_type', 'source', 'entity_id', 'label',
 ]);
 
 function cleanText(value, max = 120) {
@@ -55,6 +67,30 @@ function sanitizeProps(input) {
   return Object.keys(result).length ? result : null;
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/**
+ * ⚠️⚠️ `event_id` SEMPRE preenchido AQUI — foi a ausência dele que matou a
+ * telemetria do app inteira (04/08/2026 · último evento gravado: 31/07, o dia
+ * em que a `20260731143000` criou a coluna).
+ *
+ * A coluna nasceu `NOT NULL DEFAULT gen_random_uuid()` e o DEFAULT existe em
+ * produção (conferido: insert cru SEM a chave → 201). O que quebrava era o
+ * CLIENTE: o app não manda `event_id`, o normalizador devolvia
+ * `event_id: undefined` e `Object.keys()` **inclui** chave com undefined →
+ * o supabase-js monta `?columns=…,event_id` → o PostgREST vê a coluna listada
+ * e ausente no JSON e insere **NULL** → 23502, todo lote descartado. E o
+ * handler responde `{ok:false}` com HTTP 200 ("telemetria não pode quebrar o
+ * app"), então falhou em silêncio por 5 dias.
+ *
+ * Régua que fica: em upsert com `onConflict`, **toda linha tem que ter a chave
+ * de conflito preenchida** — nem `undefined` (vira NULL pelo `?columns=`) nem
+ * ausente em algumas linhas (o `?columns=` é a UNIÃO das chaves do lote).
+ */
+function eventIdValido(value) {
+  return UUID_RE.test(value || '') ? value : crypto.randomUUID();
+}
+
 function normalizeMobileEvent(event, userId = null) {
   const type = ['tela', 'acao', 'erro', 'ping'].includes(event?.tipo) ? event.tipo : 'acao';
   const duration = Number.parseInt(event?.duration_ms, 10);
@@ -75,8 +111,8 @@ function normalizeMobileEvent(event, userId = null) {
     outcome: cleanText(event?.outcome, 30),
     is_offline: typeof event?.is_offline === 'boolean' ? event.is_offline : null,
     occurred_at: safeTimestamp(event?.occurred_at),
-    event_id: /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(event?.event_id || '')
-      ? event.event_id : undefined,
+    // Id do app quando vier (dá idempotência real no reenvio); senão o nosso.
+    event_id: eventIdValido(event?.event_id),
     user_id: userId,
   };
 }

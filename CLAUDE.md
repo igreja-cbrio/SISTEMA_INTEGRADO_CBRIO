@@ -6306,6 +6306,46 @@ App: `lib/telemetria.ts` (`trackTela`/`trackEvento`/`trackErro` + handler global
 erro + flush por tamanho/timer/background) ligado no `app/_layout.tsx` (init + cada
 tela via `usePathname`). Próximas features chamam `trackEvento` pra medir adoção.
 
+### ⚠️ A telemetria ficou 5 dias MORTA em silêncio · `event_id` (2026-08-05)
+
+Fui usar a telemetria pra diagnosticar um problema do app do Marcos e ela estava
+**zerada desde 31/07** — o dia em que a `20260731143000` (etapa 4 do módulo
+Sistema) criou `app_eventos.event_id uuid NOT NULL DEFAULT gen_random_uuid()` e o
+índice único, pro `upsert(..., { onConflict: 'event_id' })` do endpoint.
+
+**O DEFAULT existe e funciona** (conferido: `POST /rest/v1/app_eventos` cru, SEM a
+chave → 201). Quem quebrava era o **cliente**: o app não manda `event_id`, o
+normalizador devolvia `event_id: undefined`, e — a pegadinha — **`Object.keys()`
+INCLUI chave com valor `undefined`**, então o supabase-js montava
+`?columns=…,event_id`; o PostgREST vê a coluna listada e ausente no JSON e insere
+**NULL** → `23502`, lote inteiro descartado. E o handler responde **HTTP 200
+`{ok:false}`** de propósito ("telemetria não pode quebrar o app") e o app ignorava
+o corpo ⇒ **falha perfeitamente silenciosa**.
+
+- **Régua que fica:** em `upsert` com `onConflict`, **toda linha precisa ter a
+  chave de conflito PREENCHIDA** — nem `undefined` (vira NULL via `?columns=`) nem
+  presente só em algumas linhas (o `?columns=` é a UNIÃO das chaves do lote).
+  `normalizeMobileEvent` agora sempre gera `event_id` (o do app quando vier — aí o
+  reenvio é idempotente de verdade; senão `crypto.randomUUID()`).
+- **Falha de ingestão AVISA GENTE** (`notificar` módulo `dashboard`, dedup por dia,
+  link `/admin/app-analytics`). Sem isso, o próximo silêncio dura outros 5 dias.
+- ⚠️ **A whitelist de `props` estava comendo quase tudo**: das 10 chaves que o app
+  mandava, só `message` passava (`{grupo: id}`, `{tipo}`, `{criado}`,
+  `{encontrado}`, `{id}`, `{url}` iam pro lixo sem erro). O app foi ajustado pras
+  chaves permitidas e a lista ganhou **`entity_id`** (id de COISA — grupo, vídeo,
+  comunicado · **nunca de pessoa**) e **`label`** (rótulo curto de enum NOSSO —
+  tipo de decisão, parentesco · **nunca texto digitado**). Chave nova exige a
+  mesma pergunta: *isso pode identificar alguém?*
+- O app passou a mandar `event_id`, `occurred_at` (quando ACONTECEU · o
+  `created_at` é quando chegou), `session_id` (uma abertura), `installation_id`
+  (aparelho, persistido), `os_version`, `device_model`, `manufacturer` e
+  `build_number` — tudo de `Platform.constants` + `expo-constants`, **sem
+  dependência nativa nova** (o que manteria a mudança fora do alcance de OTA).
+  ⚠️ **`Constants.deviceName` é PROIBIDO** aqui: no iOS vem "iPhone de \<nome da
+  pessoa\>" (PII). No iOS vai o formato (`handset`/`pad`).
+- ⚠️ `GET /sistema/v1/mobile/command-center` (mesma etapa 4) **não tem tela** no
+  frontend ainda — a telemetria do app se vê em `/admin/app-analytics`.
+
 ## Comunicados / Mural (2026-06-16 · Fase 2 do app)
 
 Conteúdo criado no **Marketing** → **mural do app** + **push segmentado**.

@@ -2527,6 +2527,24 @@ router.post('/telemetria', tryAuth, async (req, res) => {
     res.json({ ok: true, gravados: rows.length });
   } catch (e) {
     console.warn('[APP] telemetria:', e.message);
+    // ⚠️ Falha de ingestão AVISA GENTE (1×/dia). Este handler responde 200
+    // `{ok:false}` de propósito (telemetria não pode quebrar o app) e o app
+    // ignora o corpo — então, sem este aviso, a telemetria morre em SILÊNCIO:
+    // foi o que aconteceu de 31/07 a 04/08/2026 (o `event_id NOT NULL` novo
+    // rejeitava todo lote e ninguém soube por 5 dias, justo quando ela era
+    // necessária pra diagnosticar o app do Marcos).
+    try {
+      const dia = new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10);
+      await notificar({
+        modulo: 'dashboard',
+        tipo: 'telemetria_app_falhando',
+        titulo: 'Telemetria do app não está gravando',
+        mensagem: `A ingestão de eventos do app está falhando: ${e.message}. Enquanto isso, o painel de uso do app fica sem dado novo.`,
+        severidade: 'alta',
+        link: '/admin/app-analytics',
+        chaveDedup: `telemetria_app_falha_${dia}`,
+      });
+    } catch { /* aviso é best-effort · nunca derruba a resposta */ }
     res.json({ ok: false }); // nunca 500 pro app
   }
 });
