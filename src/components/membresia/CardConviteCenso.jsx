@@ -22,6 +22,17 @@ const MOTIVO_LABEL = {
   sem_email: 'sem e-mail',
 };
 
+// Por que um CANAL inteiro não saiu. ⚠️ Frase inteira, não slug: era
+// `template_nao_configurado` no fim da linha, e passou batido duas vezes.
+const MOTIVO_CANAL = {
+  template_nao_configurado:
+    'O canal de WhatsApp está FECHADO: falta configurar a env WHATSAPP_TEMPLATE_CENSO_ATUALIZACAO com o nome exato do template aprovado (e fazer um deploy novo — a Vercel só aplica env nova em deployment novo). Ninguém foi marcado como convidado, então a audiência está intacta.',
+  template_recusado:
+    'A Meta RECUSOU o template na primeira mensagem, então a rodada foi abortada e ninguém foi marcado como convidado. Confira se o nome na env é exatamente o do template aprovado e se o número de variáveis bate (2: nome e link).',
+  canal_nao_configurado: 'O canal de e-mail não está configurado no servidor.',
+  disabled: 'O envio de WhatsApp está desligado no sistema (kill-switch global).',
+};
+
 /**
  * Convite de atualização cadastral para quem está SEM CPF.
  *
@@ -461,30 +472,56 @@ export default function CardConviteCenso() {
         </DialogContent>
       </Dialog>
 
-      {resultado && (
+      {resultado && (() => {
+        // ⚠️ NADA ENVIADO NÃO PODE APARECER COMO SUCESSO. Em 05/08 o Matheus
+        // apertou disparar DUAS vezes achando que o WhatsApp tinha saído: a
+        // caixa era verde e dizia "Rodada N disparada", e o motivo real
+        // (`template_nao_configurado`) vinha como slug cru no fim da linha.
+        // Rodada que não enviou ninguém nem incrementa rodada de verdade.
+        const zapEnf = resultado.whatsapp?.enfileirados || 0;
+        const mailEnv = resultado.email?.enviados || 0;
+        const nadaSaiu = zapEnf === 0 && mailEnv === 0;
+        const cor = nadaSaiu ? C.amber : C.green;
+        return (
         <div style={{
           marginTop: 12, padding: 10, borderRadius: 10, fontSize: 12,
-          border: `1px solid ${C.green}55`, background: '#10b98112', color: C.text2, lineHeight: 1.7,
+          border: `1px solid ${cor}55`, background: `${cor}12`, color: C.text2, lineHeight: 1.7,
         }}>
-          <strong style={{ color: C.text }}>Rodada {resultado.rodada} disparada.</strong>
-          <div>WhatsApp: {resultado.whatsapp?.enfileirados || 0} na fila de envio
+          <strong style={{ color: nadaSaiu ? C.amber : C.text }}>
+            {nadaSaiu
+              ? 'Nada foi enviado — nenhuma pessoa foi convidada nesta tentativa.'
+              : `Rodada ${resultado.rodada} disparada.`}
+          </strong>
+          <div>WhatsApp: {zapEnf} na fila de envio
             {resultado.whatsapp?.adiados ? ` · ${resultado.whatsapp.adiados} para a próxima` : ''}
-            {resultado.whatsapp?.motivo ? ` · ${resultado.whatsapp.motivo}` : ''}
           </div>
-          <div>E-mail: {resultado.email?.enviados || 0} enviados
+          {resultado.whatsapp?.motivo && (
+            <div style={{ color: C.amber }}>
+              {MOTIVO_CANAL[resultado.whatsapp.motivo] || resultado.whatsapp.motivo}
+              {resultado.whatsapp.detalhe ? ` (${resultado.whatsapp.detalhe})` : ''}
+            </div>
+          )}
+          <div>E-mail: {mailEnv} enviados
             {resultado.email?.falhas ? ` · ${resultado.email.falhas} falharam` : ''}
             {resultado.email?.adiados ? ` · ${resultado.email.adiados} para a próxima` : ''}
-            {resultado.email?.motivo ? ` · ${resultado.email.motivo}` : ''}
           </div>
+          {resultado.email?.motivo && (
+            <div style={{ color: C.amber }}>
+              {MOTIVO_CANAL[resultado.email.motivo] || resultado.email.motivo}
+            </div>
+          )}
           {resultado.aviso_registro && (
             <div style={{ color: C.amber, marginTop: 6 }}>{resultado.aviso_registro}</div>
           )}
-          <div style={{ color: C.text3, fontSize: 11.5, marginTop: 6 }}>
-            O WhatsApp sai pela fila (retry automático). Rode a próxima rodada amanhã,
-            para não estourar o teto de 24h da Meta.
-          </div>
+          {!nadaSaiu && (
+            <div style={{ color: C.text3, fontSize: 11.5, marginTop: 6 }}>
+              O WhatsApp sai pela fila (retry automático). Rode a próxima rodada amanhã,
+              para não estourar o teto de 24h da Meta.
+            </div>
+          )}
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
