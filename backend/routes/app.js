@@ -15,7 +15,7 @@ const { vincularParentesco, entrarNaFamilia, VINC_INVERSO } = require('../servic
 const { baseUrl } = require('../services/gruposWhatsapp');
 // Espelho da matrícula do Next (o app inscreve por ENCONTRO; a gestão vive em
 // TURMA/MATRÍCULA desde o cutover de 17/06) — ver services/nextMatricula.js.
-const { espelharMatriculaDoEncontro } = require('../services/nextMatricula');
+const { chaveMesMembro } = require('../services/nextMatricula');
 // Reuso: núcleo de aprovação de pedidos de grupo (claim atômico + vínculo +
 // notificação) já validado no módulo web de grupos.
 const { aprovarPedidoCore } = require('./grupos');
@@ -190,10 +190,6 @@ router.get('/identidade/status', authApp, limiterNormal, async (req, res) => {
     const { data: m } = await supabase.from('mem_membros')
       .select('nome, data_nascimento').eq('id', membro.id).maybeSingle();
     if (!m?.data_nascimento) falta.push('nascimento');
-    // ⚠️ 'sexo' NÃO entra no `falta` ainda: a tela publicada não coleta o campo,
-    // então marcar incompleto criaria LOOP (portão manda pra tela → salva sem
-    // sexo → status segue incompleto). Ligar junto com o `exigirSexo`, depois do
-    // release do app.
     const nomeFraco = require('../services/membroMatch')
       .ehNomeDerivadoDeEmail(m?.nome, req.user.email || '');
     if (nomeFraco) falta.push('nome');
@@ -1417,32 +1413,84 @@ function partesNome(nomeCompleto) {
   return { nome: n.split(' ')[0] || 'Membro', sobrenome: n.split(' ').slice(1).join(' ') || null };
 }
 
-// GET /api/app/next/me — próximos encontros + status de inscrição/check-in
+// ⚠️⚠️ O NEXT DO APP LÊ O MODELO VIVO: turma → encontro → matrícula → presença
+// (2026-08-05). Antes lia `next_eventos`/`next_inscricoes`, a camada APOSENTADA
+// no cutover de turmas (17/06) — e o efeito era o app dizendo "não há encontros
+// do NEXT agendados" com DUAS turmas abertas no sistema: medido em 05/08, os 8
+// `next_eventos` com status 'agendado' têm data máxima **21/06** (todos no
+// passado), enquanto `next_turmas` tinha "Agosto/01" (encontros 02 e 09/08) e
+// "Agosto/02" (16 e 23/08). Foi o caso que o Marcos reportou.
+// ⚠️ E o KPI de frequência do Next passou a ler `next_presencas` em 22/07
+// (migration 20260722250000) — o check-in do app, que carimbava
+// `next_inscricoes.check_in_at`, deixou de contar. Gravar a presença no modelo
+// vivo conserta os dois de uma vez.
+// ⚠️ `next_inscricoes` NÃO é porta de inscrição (é presença por encontro do
+// modelo antigo, e a porta `next_legado` da view unificada morreu na migration
+// 20260730120000). Não voltar a escrever ali por aqui.
+
+/** Turmas com inscrição aberta + os encontros delas (o "quando" vive no encontro). */
+async function nextTurmasAbertas() {
+  const { data: turmas } = await supabase.from('next_turmas')
+    .select('id, nome, status, horario, observacoes')
+    .eq('status', 'aberta').is('deleted_at', null)
+    .order('created_at', { ascending: true });
+  if (!turmas || !turmas.length) return { turmas: [], encontros: [] };
+  const { data: encontros } = await supabase.from('next_encontros')
+    .select('id, turma_id, numero, data, tema')
+    .in('turma_id', turmas.map(t => t.id))
+    .order('data', { ascending: true });
+  return { turmas, encontros: encontros || [] };
+}
+
+// GET /api/app/next/me — próximos encontros + status de matrícula/presença
 router.get('/next/me', authApp, limiterNormal, async (req, res) => {
   try {
     const membro = await resolveMembroApp(req);
     const hoje = hojeBRT();
-    const { data: eventos } = await supabase.from('next_eventos')
-      .select('id, data, titulo, status').eq('status', 'agendado')
-      .gte('data', hoje).order('data', { ascending: true }).limit(12);
+    const { turmas, encontros } = await nextTurmasAbertas();
+    const turmaPorId = new Map(turmas.map(t => [t.id, t]));
 
-    let byEvento = {};
-    if (membro && (eventos || []).length) {
-      const { data: ins } = await supabase.from('next_inscricoes')
-        .select('evento_id, check_in_at').eq('membro_id', membro.id)
-        .in('evento_id', eventos.map(e => e.id));
-      (ins || []).forEach(i => { byEvento[i.evento_id] = i; });
+    // Matrícula do membro nas turmas abertas = "está inscrito".
+    const matPorTurma = {};
+    if (membro && turmas.length) {
+      const { data: mats } = await supabase.from('next_matriculas')
+        .select('id, turma_id, status, check_in_at')
+        .eq('membro_id', membro.id).in('turma_id', turmas.map(t => t.id))
+        .is('deleted_at', null);
+      (mats || []).forEach(m => { matPorTurma[m.turma_id] = m; });
     }
-    const encontros = (eventos || []).map(e => ({
-      id: e.id, data: e.data, titulo: e.titulo,
-      inscrito: !!byEvento[e.id],
-      check_in_at: byEvento[e.id]?.check_in_at || null,
-      pode_checkin_hoje: e.data === hoje,
-    }));
+
+    // Presença POR ENCONTRO (é o que o app mostra como "confirmado").
+    const presPorEncontro = {};
+    const matIds = Object.values(matPorTurma).map(m => m.id);
+    if (matIds.length && encontros.length) {
+      const { data: pres } = await supabase.from('next_presencas')
+        .select('encontro_id, presente, created_at')
+        .in('matricula_id', matIds).in('encontro_id', encontros.map(e => e.id));
+      (pres || []).forEach(p => { if (p.presente) presPorEncontro[p.encontro_id] = p.created_at; });
+    }
+
+    const lista = encontros.filter(e => e.data >= hoje).slice(0, 12).map(e => {
+      const turma = turmaPorId.get(e.turma_id);
+      return {
+        id: e.id,
+        data: e.data,
+        // O app já mostrava `titulo`; o tema do encontro é mais específico que
+        // o nome da turma, então ele vem primeiro (sem quebrar o contrato).
+        titulo: e.tema || turma?.nome || 'Encontro do NEXT',
+        turma_id: e.turma_id,
+        turma_nome: turma?.nome || null,
+        horario: turma?.horario || null,
+        inscrito: !!matPorTurma[e.turma_id],
+        check_in_at: presPorEncontro[e.id] || null,
+        pode_checkin_hoje: e.data === hoje,
+      };
+    });
+
     res.json({
       membro_id: membro?.id || null,
-      inscrito_next: encontros.some(e => e.inscrito),
-      encontros,
+      inscrito_next: Object.keys(matPorTurma).length > 0,
+      encontros: lista,
       igreja: { lat: NEXT_CHURCH.lat, lng: NEXT_CHURCH.lng, raio_m: NEXT_CHURCH.raio },
     });
   } catch (e) {
@@ -1451,66 +1499,100 @@ router.get('/next/me', authApp, limiterNormal, async (req, res) => {
   }
 });
 
-// POST /api/app/next/inscrever — inscreve o membro no próximo encontro
+// POST /api/app/next/inscrever — matrícula na turma do PRÓXIMO encontro
+// ⚠️ Cria MATRÍCULA (`next_matriculas`), não linha em `next_inscricoes` — ver o
+// bloco do /next/me acima. A turma escolhida é a do próximo encontro (a que
+// está por vir), não a criada mais recentemente: em 05/08 havia "Agosto/01"
+// (em curso) e "Agosto/02" (a partir de 16/08), e "a mais nova" jogaria quem se
+// inscreve hoje pra depois do encontro de amanhã.
 router.post('/next/inscrever', authApp, limiterStrict, async (req, res) => {
   try {
     const membro = await resolveMembroApp(req);
     if (!membro) return res.status(404).json({ error: 'Cadastro de membro não encontrado' });
 
-    const { data: prox } = await supabase.from('next_eventos')
-      .select('id, data, titulo').eq('status', 'agendado')
-      .gte('data', hojeBRT()).order('data').limit(1).maybeSingle();
-    if (!prox) return res.status(400).json({ error: 'Não há encontros do NEXT agendados no momento.' });
+    const hoje = hojeBRT();
+    const { turmas, encontros } = await nextTurmasAbertas();
+    if (!turmas.length) {
+      return res.status(400).json({ error: 'Não há turma do NEXT com inscrições abertas no momento.' });
+    }
+    const proximo = encontros.find(e => e.data >= hoje) || null;
+    const turma = proximo
+      ? turmas.find(t => t.id === proximo.turma_id)
+      : turmas[turmas.length - 1];
+    if (!turma) {
+      return res.status(400).json({ error: 'Não há turma do NEXT com inscrições abertas no momento.' });
+    }
 
-    const { data: ja } = await supabase.from('next_inscricoes')
-      .select('id').eq('membro_id', membro.id).eq('evento_id', prox.id).maybeSingle();
-    if (ja) return res.json({ ok: true, evento: prox, jaInscrito: true });
+    const respostaTurma = {
+      id: proximo?.id || turma.id,
+      turma_id: turma.id,
+      titulo: turma.nome,
+      data: proximo?.data || null,
+      horario: turma.horario || null,
+    };
+
+    const { data: ja } = await supabase.from('next_matriculas')
+      .select('id').eq('membro_id', membro.id).eq('turma_id', turma.id)
+      .is('deleted_at', null).limit(1).maybeSingle();
+    if (ja) return res.json({ ok: true, evento: respostaTurma, jaInscrito: true });
 
     const { nome, sobrenome } = partesNome(membro.nome);
-    const { data: nova, error } = await supabase.from('next_inscricoes').insert({
-      evento_id: prox.id, nome, sobrenome,
-      cpf: membro.cpf || null, email: membro.email || req.user.email || null,
-      telefone: membro.telefone || null, membro_id: membro.id, origem: 'app',
-    }).select('id').single();
-    if (error) throw error;
+    // Chave canônica (mês × pessoa) — a MESMA de services/nextMatricula.js, pra
+    // não existirem duas réguas. Mês = o do 1º encontro da turma.
+    const primeiroEnc = encontros.find(e => e.turma_id === turma.id) || proximo;
+    const chave = primeiroEnc ? chaveMesMembro(primeiroEnc.data, membro.id) : null;
 
-    // Espelha a MATRÍCULA do mês (camada viva do Next pós-cutover de turmas).
-    // Sem isto a inscrição pelo app nascia só em `next_inscricoes` e a pessoa
-    // não aparecia em turma nenhuma. Best-effort: não derruba a resposta.
-    await espelharMatriculaDoEncontro({
-      membro, evento: prox, nome, sobrenome,
-      email: membro.email || req.user.email || null, origem: 'app',
-    });
+    const { data: nova, error } = await supabase.from('next_matriculas').insert({
+      turma_id: turma.id, nome, sobrenome,
+      cpf: membro.cpf || null, email: membro.email || req.user.email || null,
+      telefone: membro.telefone || null, data_nascimento: membro.data_nascimento || null,
+      membro_id: membro.id, origem: 'app', status: 'matriculado',
+      origem_mes_key: chave,
+    }).select('id').single();
+
+    if (error) {
+      // 23505 = UNIQUE (origem_mes_key ou turma+cpf/email): a pessoa já tem
+      // matrícula no mês. É 1 Next por mês por pessoa — objetivo atingido.
+      if (error.code === '23505') return res.json({ ok: true, evento: respostaTurma, jaInscrito: true });
+      throw error;
+    }
 
     // Notifica os responsáveis do NEXT (sino + push) — espelha o form público.
     notificar({
       modulo: 'next',
       tipo: 'next_nova_inscricao',
       titulo: 'Nova inscrição no NEXT',
-      mensagem: `${membro.nome || nome} se inscreveu no NEXT pelo app${prox.titulo ? ` (${prox.titulo})` : ''}.`,
-      link: '/ministerial/next?tab=inscritos',
-      chaveDedup: nova?.id ? `next_insc_${nova.id}` : undefined,
+      mensagem: `${membro.nome || nome} se inscreveu no NEXT pelo app (${turma.nome}).`,
+      link: '/ministerial/next?tab=turmas',
+      chaveDedup: nova?.id ? `next_mat_${nova.id}` : undefined,
     }).catch(e => console.warn('[APP next/inscrever] notificar:', e.message));
 
-    res.status(201).json({ ok: true, evento: prox, message: 'Inscrição no NEXT confirmada!' });
+    res.status(201).json({ ok: true, evento: respostaTurma, message: 'Inscrição no NEXT confirmada!' });
   } catch (e) {
     console.error('[APP next/inscrever]', e.message);
     res.status(500).json({ error: 'Erro ao inscrever no NEXT' });
   }
 });
 
-// POST /api/app/next/encontros/:eventoId/checkin — body { lat, lng }
+// POST /api/app/next/encontros/:encontroId/checkin — body { lat, lng }
 // Só no DIA do encontro (BRT) e dentro do raio da igreja.
-router.post('/next/encontros/:eventoId/checkin', authApp, limiterNormal, async (req, res) => {
+// ⚠️ Grava presença em `next_presencas` (modelo vivo · é o que o KPI
+// `frequencia_next` lê desde 22/07) e carimba `next_matriculas.check_in_at`,
+// que é o `compareceu` da view unificada. Antes carimbava
+// `next_inscricoes.check_in_at`, que nenhum leitor vivo enxerga mais.
+// O `:encontroId` é sempre um `next_encontros.id` — vem do /next/me, então não
+// existe id do modelo antigo em circulação (o app não cacheia essa lista).
+router.post('/next/encontros/:encontroId/checkin', authApp, limiterNormal, async (req, res) => {
   try {
     const { lat, lng } = req.body || {};
     const membro = await resolveMembroApp(req);
     if (!membro) return res.status(404).json({ error: 'Cadastro de membro não encontrado' });
 
-    const { data: ev } = await supabase.from('next_eventos')
-      .select('id, data, titulo').eq('id', req.params.eventoId).maybeSingle();
-    if (!ev) return res.status(404).json({ error: 'Encontro não encontrado' });
-    if (ev.data !== hojeBRT()) {
+    const encontroId = req.params.encontroId;
+    const { data: enc } = await supabase.from('next_encontros')
+      .select('id, turma_id, data, tema').eq('id', encontroId).maybeSingle();
+    if (!enc) return res.status(404).json({ error: 'Encontro não encontrado' });
+    if (enc.data !== hojeBRT()) {
       return res.status(422).json({ error: 'O check-in só fica disponível no dia do encontro.' });
     }
     if (lat == null || lng == null || Number.isNaN(Number(lat)) || Number.isNaN(Number(lng))) {
@@ -1521,53 +1603,72 @@ router.post('/next/encontros/:eventoId/checkin', authApp, limiterNormal, async (
       return res.status(403).json({ error: 'Você precisa estar na igreja para fazer o check-in.', distancia_m: Math.round(dist) });
     }
 
-    const agora = new Date().toISOString();
-    const { data: insc } = await supabase.from('next_inscricoes')
-      .select('id, check_in_at').eq('membro_id', membro.id).eq('evento_id', ev.id).maybeSingle();
+    const { data: turma } = await supabase.from('next_turmas')
+      .select('id, nome').eq('id', enc.turma_id).is('deleted_at', null).maybeSingle();
+    if (!turma) return res.status(404).json({ error: 'Turma do encontro não encontrada' });
 
-    const { nome: nomeM, sobrenome: sobrenomeM } = partesNome(membro.nome);
-    if (insc) {
-      if (insc.check_in_at) return res.json({ ok: true, jaCheckin: true, check_in_at: insc.check_in_at });
-      const { data: up, error } = await supabase.from('next_inscricoes')
-        .update({ check_in_at: agora, check_in_by: req.user.id, updated_at: agora })
-        .eq('id', insc.id).select('check_in_at').single();
-      if (error) throw error;
-      // A presença também sobe pra matrícula do mês (é o `compareceu` da view
-      // unificada e o que a gestão do Next enxerga).
-      await espelharMatriculaDoEncontro({
-        membro, evento: ev, nome: nomeM, sobrenome: sobrenomeM,
-        email: membro.email || req.user.email || null,
-        checkInAt: agora, checkInBy: req.user.id, origem: 'app',
-      });
-      return res.json({ ok: true, check_in_at: up.check_in_at });
+    const agora = new Date().toISOString();
+    const { nome, sobrenome } = partesNome(membro.nome);
+
+    // Matrícula da pessoa na turma. Check-in de quem não se inscreveu antes
+    // CRIA a matrícula — é a semântica que o fluxo antigo já tinha (quem chega
+    // no encontro está no Next), e o walk-in do totem faz o mesmo.
+    let { data: mat } = await supabase.from('next_matriculas')
+      .select('id, check_in_at').eq('membro_id', membro.id).eq('turma_id', turma.id)
+      .is('deleted_at', null).limit(1).maybeSingle();
+    let matriculaNova = false;
+    if (!mat) {
+      const { data: criada, error: errMat } = await supabase.from('next_matriculas').insert({
+        turma_id: turma.id, nome, sobrenome,
+        cpf: membro.cpf || null, email: membro.email || req.user.email || null,
+        telefone: membro.telefone || null, data_nascimento: membro.data_nascimento || null,
+        membro_id: membro.id, origem: 'app', status: 'matriculado',
+        origem_mes_key: chaveMesMembro(enc.data, membro.id),
+        check_in_at: agora, check_in_by: req.user.id,
+      }).select('id, check_in_at').single();
+      if (errMat) {
+        // 23505 = já tem matrícula no mês (talvez em outra turma aberta): usa a
+        // que existe em vez de falhar o check-in de quem está na porta.
+        if (errMat.code !== '23505') throw errMat;
+        const { data: existente } = await supabase.from('next_matriculas')
+          .select('id, check_in_at').eq('membro_id', membro.id)
+          .eq('origem_mes_key', chaveMesMembro(enc.data, membro.id))
+          .is('deleted_at', null).limit(1).maybeSingle();
+        if (!existente) throw errMat;
+        mat = existente;
+      } else {
+        mat = criada;
+        matriculaNova = true;
+      }
     }
 
-    const nome = nomeM; const sobrenome = sobrenomeM;
-    const { data: novo, error } = await supabase.from('next_inscricoes').insert({
-      evento_id: ev.id, nome, sobrenome,
-      cpf: membro.cpf || null, email: membro.email || req.user.email || null,
-      telefone: membro.telefone || null, membro_id: membro.id, origem: 'app',
-      check_in_at: agora, check_in_by: req.user.id,
-    }).select('id, check_in_at').single();
-    if (error) throw error;
+    // Presença idempotente (mesma lógica do responsável: apaga o par e insere).
+    const { data: jaPres } = await supabase.from('next_presencas')
+      .select('id, created_at').eq('encontro_id', enc.id).eq('matricula_id', mat.id)
+      .eq('presente', true).limit(1).maybeSingle();
+    if (jaPres) {
+      return res.json({ ok: true, jaCheckin: true, check_in_at: jaPres.created_at || mat.check_in_at || agora });
+    }
+    await supabase.from('next_presencas').delete().eq('encontro_id', enc.id).eq('matricula_id', mat.id);
+    const { error: errPres } = await supabase.from('next_presencas')
+      .insert({ encontro_id: enc.id, matricula_id: mat.id, presente: true });
+    if (errPres) throw errPres;
+    await supabase.from('next_matriculas')
+      .update({ check_in_at: agora, check_in_by: req.user.id, updated_at: agora })
+      .eq('id', mat.id);
 
-    await espelharMatriculaDoEncontro({
-      membro, evento: ev, nome, sobrenome,
-      email: membro.email || req.user.email || null,
-      checkInAt: agora, checkInBy: req.user.id, origem: 'app',
-    });
+    if (matriculaNova) {
+      notificar({
+        modulo: 'next',
+        tipo: 'next_nova_inscricao',
+        titulo: 'Nova inscrição no NEXT',
+        mensagem: `${membro.nome || nome} entrou no NEXT pelo app (check-in · ${turma.nome}).`,
+        link: '/ministerial/next?tab=turmas',
+        chaveDedup: `next_mat_${mat.id}`,
+      }).catch(e => console.warn('[APP next/checkin] notificar:', e.message));
+    }
 
-    // Inscrição nova surgida no check-in pelo app → notifica o NEXT.
-    notificar({
-      modulo: 'next',
-      tipo: 'next_nova_inscricao',
-      titulo: 'Nova inscrição no NEXT',
-      mensagem: `${membro.nome || nome} se inscreveu no NEXT pelo app (check-in${ev.titulo ? ` · ${ev.titulo}` : ''}).`,
-      link: '/ministerial/next?tab=inscritos',
-      chaveDedup: novo?.id ? `next_insc_${novo.id}` : undefined,
-    }).catch(e => console.warn('[APP next/checkin] notificar:', e.message));
-
-    res.status(201).json({ ok: true, check_in_at: novo.check_in_at });
+    res.status(matriculaNova ? 201 : 200).json({ ok: true, check_in_at: agora });
   } catch (e) {
     console.error('[APP next/checkin]', e.message);
     res.status(500).json({ error: 'Erro ao fazer check-in' });
