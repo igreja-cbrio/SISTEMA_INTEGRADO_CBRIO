@@ -4160,6 +4160,61 @@ bloqueia o CPF quando o servidor diz que sim. Falha de rede mantém o default
 **true (fail-closed)**: sem isso, ficar offline viraria porta pra entrar sem
 cadastro. É a mesma lei do resto — quem define o que é válido é o backend.
 
+## ⚠️ GERENCIAR GRUPO pelo app · tudo do líder num lugar só (2026-08-05)
+
+Pedido do Marcos: *"ao apertar gerenciar grupo, ali devem ter TODAS as opções
+para se fazer em um grupo"* — e a lista dele: membros (com quem é líder ou em
+treinamento), registro de frequência (com comentário do líder e pedido de ajuda),
+aprovação de pedidos, saídas e transferências, estudos e editar o grupo.
+
+**7 endpoints novos em `routes/app.js`**, todos com o MESMO gate do
+`GET /grupos/:grupoId/membros` (helper `gateGrupoApp`: gere o grupo OU admin de
+grupos), e reusando os escritores canônicos:
+
+| endpoint | régua reusada |
+|---|---|
+| `PUT /grupos/:g/membros/:row/funcao` | — (whitelist própria, ver abaixo) |
+| `POST /grupos/:g/membros/:row/sair` | soft (`saiu_em` + `motivo_saida`), como o "confira a lista" |
+| `POST /grupos/:g/membros/:row/transferir` | cria **pedido** no destino (fila do outro líder) |
+| `GET/POST /grupos/:g/encontros` | **RPC `registrar_encontro_grupo`** (o mesmo escritor do web e do WhatsApp) |
+| `POST /grupos/:g/ajuda` | `notificar()` módulo grupos |
+| `GET /grupos/:g/materiais` | `mem_grupo_documentos` (do grupo + os gerais) |
+
+### ⚠️⚠️ O que o app NÃO pode fazer, e por quê
+
+- **Não dá `lider`** (nem supervisor/coordenador): `FUNCOES_APP` é
+  `frequentador · lider_treinamento · co_lider`. Quem lidera é
+  **`mem_grupos.lider_id`**, e esse campo decide **quem recebe o WhatsApp do
+  grupo** (lei de 31/07: um destinatário só, e tem que ser líder do roster).
+  Deixar isso no app abriria caminho pra um líder se remover e o grupo ficar sem
+  destinatário de aviso. Também **bloqueia** mudar função ou registrar saída de
+  quem é o `lider_id`.
+- **Transferência NÃO empurra ninguém pra dentro de outro grupo**: cria
+  `mem_grupo_pedidos` no destino, `origem='app'`, pro líder de lá aprovar — o
+  mesmo fluxo de quem se inscreve. E os destinos oferecidos são só os grupos que
+  o próprio líder gerencia. A **saída** do grupo atual é um passo separado.
+- **Presença só de quem está no roster ATIVO** (o servidor filtra a lista que o
+  app manda) e **encontro no futuro é recusado**.
+- **"Pedir ajuda" NÃO abre fila com "resolvido"** — chega como notificação
+  persistida (`app_notificacoes`) + push pra quem cuida de Grupos. Fila com
+  estado pediria tabela nova, e criar fila é decisão da coordenação. A tela diz
+  "a coordenação recebe seu pedido", não "abrimos um ticket".
+
+### ⚠️ Duas colunas que o probe pegou antes de subir
+
+`mem_grupo_pedidos.observacoes` **não existe** — é **`observacao`** (singular). E
+`mem_grupo_documentos` **não tem `url`**: os campos reais são `sharepoint_url` e
+`storage_path` (o link é montado no backend). Nos dois casos, pedir coluna
+inexistente faria o PostgREST recusar a operação INTEIRA — o INSERT da
+transferência falharia e a aba de estudos apareceria vazia, em silêncio.
+
+**No app**: `grupo-membros.tsx` virou **Gerenciar grupo** com 4 abas (Membros ·
+Frequência · Pedidos · Estudos) + **Editar** no cabeçalho (abre
+`/grupo-editar`, que já existia). O botão **"Inscrições do grupo" SAIU do
+`/meu-grupo`** — duas portas pra aprovar pedido era o que fazia parecer que
+existiam dois lugares. A rota `/grupo-inscricoes` **continua viva** (link antigo
+e push apontam pra ela).
+
 ## Grupos · contagens (vínculo × pessoa) + nova régua visitante/frequentador (2026-07-23)
 
 Auditoria (4 agentes) das divergências que o Marcos pegou entre as abas. **Régua de
