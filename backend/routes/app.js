@@ -489,6 +489,35 @@ router.post('/inscricoes', limiterStrict, tryAuth, async (req, res) => {
       dados.cpf = cpfDig;
     }
 
+    // ⚠️ `tipo:'next'` (build ANTIGO do app · a tela órfã) ia pro ramo `next` do
+    // `fn_app_inscricoes_fanout`, que procura `next_eventos` agendado e futuro —
+    // e não existe nenhum desde 21/06. Resultado: a linha virava 'processado' e
+    // NADA era criado; a pessoa via "enviado" sem estar inscrita em nada. Agora
+    // passa pela MESMA régua do `/next/inscrever` (matrícula na turma do próximo
+    // encontro). Medido em 05/08: 0 linhas `tipo='next'` em app_inscricoes — é
+    // rede de segurança, não fluxo vivo, mas rede que mentia.
+    if (tipo === 'next') {
+      const membroNext = membroId ? await resolveMembroApp(req).catch(() => null) : null;
+      if (!membroNext) {
+        return res.status(404).json({ error: 'Cadastro de membro não encontrado — complete seu cadastro no app.' });
+      }
+      const rNext = await matricularNoNextAberto({ membro: membroNext, email: req.user?.email })
+        .catch((e) => { console.error('[APP] inscricoes next:', e.message); return { ok: false, error: 'Não foi possível inscrever no NEXT agora.' }; });
+      if (!rNext.ok) return res.status(400).json({ error: rNext.error });
+      if (rNext.matricula_id) {
+        notificar({
+          modulo: 'next',
+          tipo: 'next_nova_inscricao',
+          titulo: 'Nova inscrição no NEXT',
+          mensagem: `${membroNext.nome || 'Alguém'} se inscreveu no NEXT pelo app (${rNext.turma.titulo}).`,
+          link: '/ministerial/next?tab=turmas',
+          chaveDedup: `next_mat_${rNext.matricula_id}`,
+        }).catch(e => console.warn('[APP] inscricoes next · notificar:', e.message));
+      }
+      // Segue e grava em app_inscricoes (rastro do pedido). O ramo `next` do
+      // fan-out é no-op hoje (não há evento agendado), então não duplica.
+    }
+
     // Pedido de oração: a IA classifica o tema (pra insights) já no insert.
     if (tipo === 'oracao') {
       const msgOra = extrairMensagem(extras);
@@ -621,8 +650,16 @@ async function resolveMembroApp(req) {
   if (authId) {
     const { data: prof } = await supabase.from('profiles').select('membro_id').eq('id', authId).maybeSingle();
     if (prof?.membro_id) {
+      // ⚠️ `deleted_at IS NULL` também AQUI (2026-08-05): os outros 2 caminhos
+      // (e-mail e CPF) já filtravam, e este não — então cadastro que a equipe
+      // apagou continuava servindo o app, e tudo que a pessoa fizesse (inscrição,
+      // matrícula, devocional) ia pousar num membro que o ERP considera fora da
+      // base. Caso real: a limpeza de 04/08 soft-deletou 3 cadastros que TÊM
+      // conta no app. Sem membro, o `CadastroGate` manda a pessoa completar o
+      // cadastro e o matcher canônico resolve — que é o efeito desejado.
       const { data: m } = await supabase.from('mem_membros')
-        .select('id, nome, cpf, email, telefone').eq('id', prof.membro_id).maybeSingle();
+        .select('id, nome, cpf, email, telefone').eq('id', prof.membro_id)
+        .is('deleted_at', null).maybeSingle();
       if (m) return m;
     }
   }
@@ -1499,6 +1536,65 @@ router.get('/next/me', authApp, limiterNormal, async (req, res) => {
   }
 });
 
+/**
+ * Matricula o membro na turma ABERTA do próximo encontro. Devolve
+ * `{ ok, turma, jaInscrito, matricula_id }` ou `{ ok:false, error }` — usado
+ * pelo `/next/inscrever` E pelo genérico `POST /app/inscricoes` com
+ * `tipo:'next'` (build antigo do app), pra não existirem duas réguas de
+ * "em qual turma essa pessoa entra".
+ */
+// ⚠️ HOISTING: esta função é usada pelo `POST /inscricoes` (linha ~500), que
+// vem ANTES dela no arquivo. Funciona porque `async function` é hoisted —
+// **não converter pra `const ... = async () =>` sem mover a declaração pra
+// cima** (a mesma armadilha registrada no publicNext.js).
+async function matricularNoNextAberto({ membro, email }) {
+  const hoje = hojeBRT();
+  const { turmas, encontros } = await nextTurmasAbertas();
+  if (!turmas.length) {
+    return { ok: false, error: 'Não há turma do NEXT com inscrições abertas no momento.' };
+  }
+  const proximo = encontros.find(e => e.data >= hoje) || null;
+  const turma = proximo
+    ? turmas.find(t => t.id === proximo.turma_id)
+    : turmas[turmas.length - 1];
+  if (!turma) {
+    return { ok: false, error: 'Não há turma do NEXT com inscrições abertas no momento.' };
+  }
+  const resposta = {
+    id: proximo?.id || turma.id,
+    turma_id: turma.id,
+    titulo: turma.nome,
+    data: proximo?.data || null,
+    horario: turma.horario || null,
+  };
+
+  const { data: ja } = await supabase.from('next_matriculas')
+    .select('id').eq('membro_id', membro.id).eq('turma_id', turma.id)
+    .is('deleted_at', null).limit(1).maybeSingle();
+  if (ja) return { ok: true, turma: resposta, jaInscrito: true, matricula_id: ja.id };
+
+  const { nome, sobrenome } = partesNome(membro.nome);
+  // Chave canônica (mês × pessoa) — a MESMA de services/nextMatricula.js.
+  const primeiroEnc = encontros.find(e => e.turma_id === turma.id) || proximo;
+  const chave = primeiroEnc ? chaveMesMembro(primeiroEnc.data, membro.id) : null;
+
+  const { data: nova, error } = await supabase.from('next_matriculas').insert({
+    turma_id: turma.id, nome, sobrenome,
+    cpf: membro.cpf || null, email: membro.email || email || null,
+    telefone: membro.telefone || null, data_nascimento: membro.data_nascimento || null,
+    membro_id: membro.id, origem: 'app', status: 'matriculado',
+    origem_mes_key: chave,
+  }).select('id').single();
+
+  if (error) {
+    // 23505 = UNIQUE (origem_mes_key ou turma+cpf/email): já tem matrícula no
+    // mês. É 1 Next por mês por pessoa — objetivo atingido.
+    if (error.code === '23505') return { ok: true, turma: resposta, jaInscrito: true };
+    throw error;
+  }
+  return { ok: true, turma: resposta, matricula_id: nova?.id || null };
+}
+
 // POST /api/app/next/inscrever — matrícula na turma do PRÓXIMO encontro
 // ⚠️ Cria MATRÍCULA (`next_matriculas`), não linha em `next_inscricoes` — ver o
 // bloco do /next/me acima. A turma escolhida é a do próximo encontro (a que
@@ -1510,64 +1606,21 @@ router.post('/next/inscrever', authApp, limiterStrict, async (req, res) => {
     const membro = await resolveMembroApp(req);
     if (!membro) return res.status(404).json({ error: 'Cadastro de membro não encontrado' });
 
-    const hoje = hojeBRT();
-    const { turmas, encontros } = await nextTurmasAbertas();
-    if (!turmas.length) {
-      return res.status(400).json({ error: 'Não há turma do NEXT com inscrições abertas no momento.' });
-    }
-    const proximo = encontros.find(e => e.data >= hoje) || null;
-    const turma = proximo
-      ? turmas.find(t => t.id === proximo.turma_id)
-      : turmas[turmas.length - 1];
-    if (!turma) {
-      return res.status(400).json({ error: 'Não há turma do NEXT com inscrições abertas no momento.' });
-    }
-
-    const respostaTurma = {
-      id: proximo?.id || turma.id,
-      turma_id: turma.id,
-      titulo: turma.nome,
-      data: proximo?.data || null,
-      horario: turma.horario || null,
-    };
-
-    const { data: ja } = await supabase.from('next_matriculas')
-      .select('id').eq('membro_id', membro.id).eq('turma_id', turma.id)
-      .is('deleted_at', null).limit(1).maybeSingle();
-    if (ja) return res.json({ ok: true, evento: respostaTurma, jaInscrito: true });
-
-    const { nome, sobrenome } = partesNome(membro.nome);
-    // Chave canônica (mês × pessoa) — a MESMA de services/nextMatricula.js, pra
-    // não existirem duas réguas. Mês = o do 1º encontro da turma.
-    const primeiroEnc = encontros.find(e => e.turma_id === turma.id) || proximo;
-    const chave = primeiroEnc ? chaveMesMembro(primeiroEnc.data, membro.id) : null;
-
-    const { data: nova, error } = await supabase.from('next_matriculas').insert({
-      turma_id: turma.id, nome, sobrenome,
-      cpf: membro.cpf || null, email: membro.email || req.user.email || null,
-      telefone: membro.telefone || null, data_nascimento: membro.data_nascimento || null,
-      membro_id: membro.id, origem: 'app', status: 'matriculado',
-      origem_mes_key: chave,
-    }).select('id').single();
-
-    if (error) {
-      // 23505 = UNIQUE (origem_mes_key ou turma+cpf/email): a pessoa já tem
-      // matrícula no mês. É 1 Next por mês por pessoa — objetivo atingido.
-      if (error.code === '23505') return res.json({ ok: true, evento: respostaTurma, jaInscrito: true });
-      throw error;
-    }
+    const r = await matricularNoNextAberto({ membro, email: req.user.email });
+    if (!r.ok) return res.status(400).json({ error: r.error });
+    if (r.jaInscrito) return res.json({ ok: true, evento: r.turma, jaInscrito: true });
 
     // Notifica os responsáveis do NEXT (sino + push) — espelha o form público.
     notificar({
       modulo: 'next',
       tipo: 'next_nova_inscricao',
       titulo: 'Nova inscrição no NEXT',
-      mensagem: `${membro.nome || nome} se inscreveu no NEXT pelo app (${turma.nome}).`,
+      mensagem: `${membro.nome || 'Alguém'} se inscreveu no NEXT pelo app (${r.turma.titulo}).`,
       link: '/ministerial/next?tab=turmas',
-      chaveDedup: nova?.id ? `next_mat_${nova.id}` : undefined,
+      chaveDedup: r.matricula_id ? `next_mat_${r.matricula_id}` : undefined,
     }).catch(e => console.warn('[APP next/inscrever] notificar:', e.message));
 
-    res.status(201).json({ ok: true, evento: respostaTurma, message: 'Inscrição no NEXT confirmada!' });
+    res.status(201).json({ ok: true, evento: r.turma, message: 'Inscrição no NEXT confirmada!' });
   } catch (e) {
     console.error('[APP next/inscrever]', e.message);
     res.status(500).json({ error: 'Erro ao inscrever no NEXT' });

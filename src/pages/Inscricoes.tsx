@@ -26,6 +26,7 @@ import { toast } from 'sonner';
 import {
   CalendarDays, ClipboardList, Plus, Loader2, ChevronLeft, ChevronRight,
   Users, Trash2, CopyPlus, Image as ImageIcon, Lock, Link2, Repeat, Megaphone,
+  MonitorSmartphone,
 } from 'lucide-react';
 
 const MESES = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
@@ -671,7 +672,15 @@ export default function Inscricoes() {
           <h1 className="text-2xl font-extrabold flex items-center gap-2"><ClipboardList className="h-6 w-6 text-primary" /> Inscrições</h1>
           <p className="text-sm text-muted-foreground">Módulo central de inscrições · calendário, eventos e séries (Contrato de Inscrição).</p>
         </div>
-        <Button onClick={() => setModal({ tipo: 'novo' })}><Plus className="h-4 w-4 mr-1" /> Novo evento</Button>
+        <div className="flex gap-2">
+          {/* Totens é CONFIGURAÇÃO de equipamento, não uma visão de dado — por
+              isso é link no cabeçalho e não uma 8ª aba (a fila de abas já está
+              longa e ninguém procuraria "totem" ao lado de "Dashboard"). */}
+          <Button variant="outline" onClick={() => navigate('/inscricoes/totens')}>
+            <MonitorSmartphone className="h-4 w-4 mr-1" /> Totens
+          </Button>
+          <Button onClick={() => setModal({ tipo: 'novo' })}><Plus className="h-4 w-4 mr-1" /> Novo evento</Button>
+        </div>
       </div>
 
       <div className="flex gap-1.5 flex-wrap">

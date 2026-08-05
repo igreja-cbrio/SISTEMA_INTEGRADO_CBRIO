@@ -1208,6 +1208,112 @@ as 134 seguem sem trilha, porque não há de onde tirar autor/momento.
 `registrarResolucaoEntrada` engolir erro significa que a falha aparece só quando
 alguém for auditar.
 
+## ⚠️ Totem · IDENTIDADE DE ESTAÇÃO (2026-08-05 · migrations `20260805130000` + `20260805130100` · PR #2291)
+
+Fase 0 do pagamento presencial em inscrições (plano completo: totem com Pix →
+provider TEF → agente com a DLL → conciliação → dinheiro em espécie). Esta leva
+**não toca em dinheiro**: entrega só a identidade do equipamento, que é
+pré-requisito de tudo o resto — o totem vai **receber dinheiro** e hoje não há
+como saber QUAL totem cobrou.
+
+**A troca:** a autenticação de totem era **conta de e-mail/senha por
+computador** (`20260703160000_totem_membro_kiosk.sql`) — senha compartilhada num
+PC de hall, sem revogação por dispositivo. Agora o totem de inscrições usa
+credencial de EQUIPAMENTO: pareamento por código de uso único (8 caracteres,
+alfabeto sem O/0/I/1, 15 min, queimado no 1º uso) → segredo `tk_<64 hex>`
+guardado **só como sha256**, revogável individualmente.
+
+- **`totem_estacoes`** (genérica: `finalidades text[]` serve inscrições agora e
+  Kids/Membro/Voluntariado por adição) + **`totem_estacao_tokens`**
+  (`tipo IN ('pareamento','dispositivo','agente')` · `linhagem` sobrevive à
+  rotação e detecta clone). Campos de pinpad (`tef_*`) e impressora já na
+  estação — a estação É o lugar físico com PC + pinpad + impressora, e com duas
+  tabelas haveria duas verdades sobre "qual maquininha é essa".
+- **Atribuição**: `pag_cobrancas.estacao_id`, `inscricoes.totem_estacao_id`,
+  `inscricao_consentimentos.totem_estacao_id`. **Coluna, não `metadata` jsonb**
+  — a conciliação do presencial é `GROUP BY estacao_id`, e em JSON isso é scan.
+- Backend: `services/totemEstacao.js` · `middleware/totemEstacao.js` (header
+  **dedicado `x-totem-token`**, NUNCA `Authorization`) · `routes/totem.js`
+  (`/parear`, `/eu`) · gestão em `routes/inscricoes.js` (ver 1 · parear/revogar
+  **4**). Front: `/inscricoes/totens` (link no cabeçalho do módulo) e
+  `/totem/inscricoes` (**rota pública** · quem autentica é o equipamento).
+
+⚠️ **NÃO generalizar `kids_estacoes` — e não "consertar" a inconsistência dela.**
+Ela está amarrada ao Kids (`sala_id`, FKs vivas de check-in de MENOR) e o modelo
+de token dela é o anti-padrão: UM token, em TEXTO PURO, na própria linha, numa
+tabela cujo RLS deixa qualquer `authenticated` fazer SELECT — uma leitura
+entrega a credencial de todos os totens. O pareamento planejado em
+`20260521220000` **nunca foi implementado** (`grep parear` em `backend/` e `src/`
+= zero; o front manda `estacao_id: null` e o backend engole o erro de FK
+regravando null). A coluna ganhou COMMENT de depreciação; a adoção pelos outros
+totens é fase futura (`kids_checkins.totem_estacao_id` nullable).
+⚠️ `src/pages/atlas/atlas.html:418` e `docs/quiosque-lounge-identidade.md` §15.5
+**descrevem como vivo** aquele pareamento inexistente — corrigir quando alguém
+passar por lá.
+
+⚠️ **Segurança, sem maquiagem: o token é bearer e extraível.** Fica no
+`localStorage` de um PC de hall público; 20 segundos de acesso físico e alguém
+sai com ele. O desenho faz o token roubado valer quase nada — autoriza 2
+endpoints, **nunca** passa por `authorizeModule`, não popula `req.user`, não lê
+lista de gente e não faz `cpf-lookup`. **É REDUÇÃO de risco**: a conta de
+quiosque do `/totem` tem `membros-totem` no `ROUTE_MODULE_MAP` (`auth.js:56`),
+ou seja uma sessão roubada de um PC do hall **hoje lê PII de membro**.
+Mitigações: `ip_permitidos` (fail-closed), revogação em ≤60s (TTL do cache
+espelhando `authUserCache`), e **nenhuma PII em storage em momento nenhum**.
+
+⚠️ **NÃO expor `cpf-lookup` ao token de estação** (vai ser pedido, pra
+pré-preencher membro): transforma token roubado num oráculo CPF → nome/telefone
+da igreja inteira, de graça, e o ganho são 4 campos. Se for pedido, o caminho
+seguro é POSSE FÍSICA (QR da carteirinha ou o reconhecimento facial que já
+existe) devolvendo prefill one-shot amarrado à estação — com os consentimentos
+recolhidos SEMPRE (consentimento anterior não é consentimento deste evento).
+
+- **Régua PURA em `backend/utils/totemCerco.js`** (cerco de IP + alfabeto) pra
+  entrar no gate. `src/test/totemCerco.test.ts` (16 casos) é **mutation-testado**:
+  trocar o `return false` do IP incomparável por `return true` deixa 2 testes
+  vermelhos — é essa mudança, de boa-fé, que transformaria o cerco num enfeite
+  (bastaria o cliente chegar por IPv6). O cerco é **IPv4 e fail-closed** por
+  decisão declarada.
+- ⚠️ **Cerco de IP é conferido a CADA request, nunca no cache**: o cache guarda a
+  linha do token, não a permissão daquele chamador.
+- ⚠️ **Falha de INFRA na resolução do token devolve 503, não 401**: 401 fez o
+  front apagar o pareamento, e desparear o totem por instabilidade de banco
+  exigiria voluntário repareando no meio do culto. `ip_nao_permitido` também
+  **não** limpa credencial (a credencial está boa; a rede é que está errada).
+- ⚠️ **Queimar o código de pareamento vem ANTES de emitir**, condicionado
+  (`.is('usado_em', null)`): é o UPDATE que serializa duas tentativas
+  simultâneas. Emitir primeiro deixaria dois dispositivos pareados com um código
+  de uso único. Conferido em transação revertida: 1ª tentativa 1 linha, 2ª **0**.
+- Aplicadas e conferidas **no catálogo** (não no `success: true`): 3 FKs com
+  `convalidated = true` · `totem_estacao_tokens` **sem nenhuma policy para
+  `authenticated`** · 6 recusas de CHECK/UNIQUE validadas.
+
+### ⚠️ O gate de deploy tem 8 passos, e o vitest é UM deles (lição de 05/08)
+
+O deploy do #2291 **falhou** em `test:inscricao-portas` e travou a publicação
+(inclusive de terceiros; produção seguiu no deployment anterior). Eu havia
+rodado `npm test` (vitest · 341 verdes) e concluído que o gate estava coberto —
+os outros **7 passos são scripts node** (`test:inscricao-contrato`,
+`test:inscricao-portas`, `test:inscricao-orfas`, `test:inscricao-qr`,
+`test:censo`, `test:nome-email`, `test:duplicidade`) e não passam pelo vitest.
+**Rodar os 8 antes de mergear** (`.github/workflows/deploy-vercel.yml`).
+
+O guarda que pegou foi o **App.tsx → catálogo** de `inscricaoPortas.test.js`,
+que existe pra impedir porta de inscrição nova entrar sem registro: as rotas
+casam com `inscri|inscrever|apresentacao`. Corrigido em #2293 —
+`/totem/inscricoes` e `/inscricoes/totens` entraram em **`ROTAS_INTERNAS`**, não
+no catálogo, porque `catalogoPublico()` alimenta o inventário **com link/QR pra
+compartilhar** e o quiosque só funciona em dispositivo pareado (um "copiar link"
+ali entregaria URL que não abre em lugar nenhum).
+⚠️ **REVISITAR NA FASE 1**: quando o totem passar a inscrever de verdade, ele
+vira porta (presencial) e precisa aparecer na view unificada e no inventário
+como entrada própria em `PORTAS_INSCRICAO` (`escritores: ['inscricoes']`).
+
+**Pendente da Fase 0** (não é código): pareamento exercitado ponta a ponta no
+navegador — não há credencial de service role local pra subir o backend. Validar
+cadastrando um totem em `/inscricoes/totens`, gerando o código e digitando em
+`/totem/inscricoes`.
+
 ## ⚠️ Inscrições · `null` em coluna NOT NULL derruba o UPDATE inteiro (2026-08-04)
 
 A Ariel não conseguia salvar edição de evento. Erro real no runtime da Vercel:
@@ -3747,6 +3853,62 @@ CPF no cabeçalho do arquivo mas o CPF **não bloqueia** no código (decisão da
 revisão da Apple) — o cabeçalho mente pra próxima sessão e foi corrigido no repo
 do app. E os gates `exigirCpf: true` / `completo: falta.length === 0` seguem
 represados até o build iOS ser aprovado.
+
+### Rodada 2 · "corrigir todos esses achados" (mesmo dia)
+
+Ele mandou fechar tudo. O que entrou DEPOIS da 1ª rodada:
+
+- **⚠️ `resolveMembroApp` ignorava soft-delete no caminho do profile.** Os outros
+  dois caminhos (e-mail e CPF) filtravam `deleted_at` e este não — então cadastro
+  que a equipe APAGOU continuava servindo o app inteiro, e tudo que a pessoa
+  fizesse (inscrição, matrícula, devocional) pousava num membro que o ERP
+  considera fora da base. Caso real: a limpeza de 04/08 soft-deletou **3 cadastros
+  que têm conta no app**. Sem membro, o `CadastroGate` manda completar o cadastro
+  e o matcher resolve — que é o efeito desejado.
+- **`tipo:'next'` no `POST /app/inscricoes` MENTIA.** Ia pro ramo `next` do
+  `fn_app_inscricoes_fanout`, que procura `next_eventos` agendado e futuro — e não
+  existe nenhum desde 21/06: a linha virava `'processado'` e **nada era criado**,
+  com a pessoa vendo "enviado". Agora passa pela MESMA régua do `/next/inscrever`
+  (helper `matricularNoNextAberto`, extraído pra não haver duas réguas de "em qual
+  turma essa pessoa entra"). Medido: **0 linhas `tipo='next'`** em
+  `app_inscricoes` — é rede de segurança pra build antigo, mas rede que mentia.
+  ⚠️ O ramo SQL do fanout **não foi tocado** (patch dinâmico da 20260729060000
+  seria revertido por um `CREATE OR REPLACE` do repo): ele segue no-op, e agora
+  isso é inofensivo porque o JS resolve antes.
+- **`vol_inscricoes.status` tem 7 valores e o app tratava 3.** Medido: `integrado`
+  575 · `inscrito` 80 · `enviado_ministerio` 68 · **`nao_responde` 69 ·
+  `nao_pode_ou_duplicata` 19 · `kids` 3**. A divergência era na MESMA abertura do
+  app: o hub fazia `=== 'integrado' ? ativo : pendente` (quem a equipe encerrou
+  via "Pendente") e a tela de Servir só reconhecia 3 status (a mesma pessoa caía
+  no `else` e via o FORMULÁRIO). Régua única agora em `lib/volStatus.ts` do app —
+  status novo no ERP entra lá; desconhecido vira "nenhum" (deixa a pessoa agir),
+  nunca "pendente" (fila que ninguém está tratando).
+- **11 leituras do app sem `deleted_at`** em tabela soft-deletable (`mem_membros`
+  ×5, `mem_devocionais` ×4, `mem_grupos` ×2, `cultos`) — a RLS não filtra nada
+  disso. ⚠️ No `grupo-editar` entrou só `deleted_at`, NÃO `ativo`: o líder precisa
+  poder editar grupo pausado; quem trava a inscrição é a face pública.
+- **O dia em BRT virou helper** (`lib/dataBRT.ts`, espelho do `hojeBRT()` daqui):
+  além da lista de cultos, a chave de cache dela e o filtro de indisponibilidade
+  do voluntariado estavam em UTC. ⚠️ O check-in do devocional segue em hora do
+  APARELHO de propósito (o "hoje" de quem lê é o do lugar onde a pessoa está).
+- **Botão FÍSICO do Android = a mesma árvore da seta** (`BackHandler` no
+  `(app)/_layout.tsx`). ⚠️ Na Home e em `/completar-cadastro` ele NÃO intercepta —
+  engolir o back na raiz é como se faz um app que não fecha, e a Play Store
+  reclama disso.
+
+**Auditoria automática que passou** (registro pra não refazer): rodei as **38
+consultas literais do app contra o schema de produção** — `0 erros de coluna`.
+Isso importa porque select que nomeia coluna inexistente faz o PostgREST recusar
+a query INTEIRA, e o app trata como "vazio" (foi assim que o `parcelas_max` e a
+minha própria sonda do `next_turmas` enganaram antes). Também conferido:
+`kids_vinculo_solicitacoes` usa `pendente|aprovado|rejeitado|cancelado` e o app
+compara os certos.
+
+**Segue represado por decisão, não por esquecimento:** `exigirCpf: true` /
+`completo: falta.length === 0` no `/identidade/status` — ligar isso hoje travaria
+as contas de revisão da Apple na tela de cadastro (o revisor não tem CPF
+brasileiro), que é a rejeição clássica de "não passamos do registro". Ligar junto,
+depois da aprovação do build iOS.
 
 ## Grupos · contagens (vínculo × pessoa) + nova régua visitante/frequentador (2026-07-23)
 

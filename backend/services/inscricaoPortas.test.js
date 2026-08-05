@@ -88,6 +88,18 @@ const ROTAS_INTERNAS = new Set([
   '/admin/grupos/qrcode-inscricao',
   '/ministerial/totem-kids/apresentacao',
   '/ministerial/totem-kids/voluntariado-inscricoes',
+  // Gestão das estações de totem (equipamento, não porta de gente).
+  '/inscricoes/totens',
+  // ⚠️ Quiosque do totem de inscrições. Está aqui e NÃO no catálogo porque
+  // `catalogoPublico()` alimenta o inventário de portas com link/QR pra
+  // compartilhar — e esta rota só funciona num dispositivo PAREADO (header
+  // `x-totem-token`), então um "copiar link" ali entregaria uma URL que não
+  // abre em lugar nenhum. Na Fase 0 ela não cria inscrição nenhuma.
+  // ⚠️ REVISITAR NA FASE 1: quando o totem passar a inscrever de verdade, ele
+  // vira porta (presencial) e precisa aparecer na view unificada e no
+  // inventário — provavelmente como entrada própria em PORTAS_INSCRICAO com
+  // `escritores: ['inscricoes']`, e não mais aqui.
+  '/totem/inscricoes',
 ]);
 const rotasDoCatalogo = new Set(PORTAS_INSCRICAO.flatMap((p) => p.rotasPublicas));
 const PADRAO_PORTA = /inscri|inscrever|apresentacao/i;

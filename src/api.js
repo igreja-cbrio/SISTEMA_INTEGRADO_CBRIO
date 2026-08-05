@@ -428,6 +428,18 @@ export const inscricoesApi = {
   previewEmailTemplate: (data) => post('/inscricoes/email-templates/preview', data),
   // Envia o rascunho pro e-mail de quem está logado (destinatário é do servidor).
   testarEmailTemplate: (data) => post('/inscricoes/email-templates/teste', data),
+
+  // ── Totens (estações de autoatendimento) ──
+  // Ver = nível 1 · criar/parear/revogar = nível 4 (é quem decide qual
+  // equipamento pode receber dinheiro em nome da igreja).
+  // ⚠️ `pareamento` devolve o código UMA vez e ele não é recuperável depois —
+  // a tela tem que mostrar na hora. Gerar outro revoga o anterior.
+  totens: () => get('/inscricoes/totens'),
+  criarTotem: (data) => post('/inscricoes/totens', data),
+  atualizarTotem: (id, data) => patch(`/inscricoes/totens/${id}`, data),
+  parearTotem: (id, rotulo) => post(`/inscricoes/totens/${id}/pareamento`, { rotulo }),
+  revogarTotem: (id, motivo) => post(`/inscricoes/totens/${id}/revogar`, { motivo }),
+  revogarCredencialTotem: (tokenId, motivo) => post(`/inscricoes/totens/tokens/${tokenId}/revogar`, { motivo }),
 };
 
 // Eventos Externos · formulário público de confirmação de presença (sem auth)

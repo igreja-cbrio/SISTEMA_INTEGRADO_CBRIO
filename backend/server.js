@@ -59,9 +59,16 @@ app.use(rateLimit({
     || req.path.startsWith('/api/public/grupos')
     || req.path.startsWith('/api/public/evento')
     || req.path.startsWith('/api/public/membresia')
-    // Doação: a tela de pagamento faz polling e a igreja inteira sai por 1 IP.
+    // Doação: a tela de pagamento faz POLLING do status, então sob o teto por IP
+    // a pessoa tomaria 429 no meio do próprio pagamento — e a igreja inteira sai
+    // por 1 IP no culto. Limiter próprio em routes/publicGenerosidade.js.
     || req.path.startsWith('/api/public/generosidade')
-    || req.path.startsWith('/api/pagamentos-webhook'),
+    || req.path.startsWith('/api/pagamentos-webhook')
+    // ⚠️ Totem também sai do teto por IP: todos os totens da igreja saem pelo
+    // MESMO NAT, então 500/15min por IP seria compartilhado entre eles (e com
+    // o WiFi dos visitantes). O limite certo é por ESTAÇÃO, e vive no router
+    // (routes/totem.js) — que é quem sabe qual estação fez a request.
+    || req.path.startsWith('/api/totem'),
 }));
 app.use(hpp());
 app.use(compression());
@@ -193,6 +200,13 @@ app.use('/api/public/decisao-online', require('./routes/publicDecisaoOnline'));
 // (escapa o publicLimiter de 30/15min) e isento do limiter global no skip()
 // acima. Perder entrega aqui = pagamento aprovado sem inscrição confirmada.
 app.use('/api/pagamentos-webhook', require('./routes/pagamentosWebhook'));
+// Totem de autoatendimento · quem se autentica é o EQUIPAMENTO (header
+// `x-totem-token`), não uma pessoa. Montado FORA de /api/public (escapa o
+// publicLimiter de 30/15min · um domingo cheio é rajada legítima do mesmo
+// dispositivo) e isento do limiter global no skip() acima; o teto real é por
+// estação, dentro do router. Superfície deliberadamente mínima —
+// ver o cabeçalho de routes/totem.js antes de acrescentar rota aqui.
+app.use('/api/totem', require('./routes/totem'));
 // Webhook WhatsApp (público · sem auth, fora do publicLimiter pra não
 // perder entregas em rajada). Montado ANTES do admin /api/whatsapp.
 app.use('/api/whatsapp/webhook', require('./routes/publicWhatsapp'));
