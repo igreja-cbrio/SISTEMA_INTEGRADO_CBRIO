@@ -874,7 +874,15 @@ export default function Membresia() {
   const [grupos, setGrupos] = useState([]);
   const [grupoSelecionado, setGrupoSelecionado] = useState('');
   const [salvandoGrupo, setSalvandoGrupo] = useState(false);
-  const [pageTab, setPageTab] = useState('membros');
+  // ⚠️ Aba vem da URL (`?tab=`). Sem isso, notificação que aponta pra cá cai
+  // sempre em "Membros": o aviso do censo ("cadastro para revisar") linkava
+  // `/ministerial/membresia` e a pessoa chegava numa lista de 3.973 membros sem
+  // nenhuma pista de onde estava o cadastro a revisar. Link de notificação que
+  // não leva ao destino é pior que não ter link — gasta a confiança no sino.
+  const [pageTab, setPageTab] = useState(() => {
+    const t = new URLSearchParams(window.location.search).get('tab');
+    return ['membros', 'jornada', 'duplicados', 'cadastros'].includes(t) ? t : 'membros';
+  });
   const [showShareLink, setShowShareLink] = useState(false);
   const [showContribForm, setShowContribForm] = useState(false);
   const [contribForm, setContribForm] = useState({ tipo: 'dizimo', valor: '', data: new Date().toISOString().slice(0, 10), forma_pagamento: '', campanha: '', observacoes: '' });

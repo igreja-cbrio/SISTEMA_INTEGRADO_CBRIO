@@ -3488,7 +3488,8 @@ router.post('/cadastros/aprovar-lote', podeAprovarMembresia, async (req, res) =>
         tipo: 'cadastros_aprovados_lote',
         titulo: `${aprovados.length} cadastro(s) aprovados em lote`,
         mensagem: `${aprovados.length} aprovados${ignorados.length ? ` · ${ignorados.length} ficaram para aprovação manual (dados incompletos)` : ''}${falhas.length ? ` · ${falhas.length} falharam` : ''}.`,
-        link: '/ministerial/membresia',
+        // O trabalho que sobra é o que ficou PENDENTE — o link leva direto lá.
+        link: '/ministerial/membresia?tab=cadastros&status=pendente',
         severidade: 'info',
         chaveDedup: `cadastros_lote_${new Date().toISOString().slice(0, 16)}`,
       }).catch(() => {});

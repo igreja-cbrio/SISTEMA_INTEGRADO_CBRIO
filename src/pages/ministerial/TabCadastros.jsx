@@ -85,7 +85,14 @@ export default function TabCadastros({ onMembrosChange }) {
   const [cadastros, setCadastros] = useState([]);
   const [kpis, setKpis] = useState({ pendente: 0, aprovado: 0, rejeitado: 0, duplicado: 0, aplicado: 0 });
   const [loading, setLoading] = useState(true);
-  const [filterStatus, setFilterStatus] = useState('pendente');
+  // ⚠️ Status também vem da URL (`?status=`). O aviso de conflito do censo
+  // aponta pra `duplicado` — chegar aqui com o filtro travado em "pendente"
+  // esconderia exatamente a linha que o aviso pediu pra revisar.
+  const [filterStatus, setFilterStatus] = useState(() => {
+    const s = new URLSearchParams(window.location.search).get('status');
+    return ['pendente', 'aprovado', 'rejeitado', 'duplicado', 'aplicado'].includes(s)
+      ? s : 'pendente';
+  });
   const [busca, setBusca] = useState('');
   const [error, setError] = useState('');
 
