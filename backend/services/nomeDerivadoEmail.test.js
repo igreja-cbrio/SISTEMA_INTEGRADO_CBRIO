@@ -6,7 +6,7 @@
 // positivo = sobrescrever nome legítimo. Falso negativo = o cadastro-fantasma
 // segue crescendo em silêncio, que é o defeito que ela existe pra expor.
 const assert = require('assert');
-const { ehNomeDerivadoDeEmail, ehNomePlaceholder } = require('./membroMatch');
+const { ehNomeDerivadoDeEmail, ehNomePlaceholder, nomeEhEnderecoDeEmail } = require('./membroMatch');
 
 // ── 1. Os casos REAIS medidos em produção (04/08) ───────────────────────────
 const REAIS = [
@@ -78,4 +78,20 @@ assert.equal(ehNomePlaceholder('Ana Contribuinte'), false, 'só o PREFIXO conta'
 assert.equal(ehNomeDerivadoDeEmail('Contribuinte 059412', 'ana@x.com'), false,
   'placeholder do financeiro é outro problema, com outra guarda');
 
-console.log('nomeDerivadoEmail: OK');
+// ── 6. nomeEhEnderecoDeEmail · o e-mail está NO CAMPO DO NOME ───────────────
+// Forma diferente da anterior: aqui não há e-mail na coluna própria pra comparar.
+// Casos reais de 04/08 (2 do import do Next, 1 do wifi).
+for (const nome of ['Lucimere@gmail.com', 'Dianevieira26@gmail.com', 'Juliafuncionalfight@gmail.com']) {
+  assert.equal(nomeEhEnderecoDeEmail(nome), true, `deveria detectar: ${nome}`);
+}
+// ⚠️ Nome de gente nunca pode entrar: quem tem espaço não é endereço, e o
+// detector NÃO é heurística de "nome estranho" (o relay da Apple, por exemplo,
+// é problema do outro detector).
+for (const nome of ['Ana Silva', 'Maria da Silva Souza', '5rr9697fp4', 'ana@', '@gmail.com', 'a@b', '', null]) {
+  assert.equal(nomeEhEnderecoDeEmail(nome), false, `NÃO pode detectar: ${JSON.stringify(nome)}`);
+}
+// Endereço com nome colado num espaço deixa de casar de propósito — "João
+// joao@x.com" é nome sujo, não endereço, e o conserto é outro.
+assert.equal(nomeEhEnderecoDeEmail('João joao@x.com'), false);
+
+console.log('nomeDerivadoEmail: OK (derivado do e-mail + e-mail no campo do nome)');

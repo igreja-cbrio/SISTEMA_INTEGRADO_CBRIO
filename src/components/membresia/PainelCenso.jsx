@@ -64,6 +64,12 @@ export default function PainelCenso() {
   const [erro, setErro] = useState('');
   const [carregando, setCarregando] = useState(false);
 
+  // ⚠️ "Cobertura de quem?" é decisão da liderança, não do painel: a base viva
+  // inclui ~2.9 mil `visitante` (que respondem o censo no culto e devem
+  // responder) e a membresia formal é bem menor. O backend devolve os DOIS
+  // recortes e aqui é um botão — assim o número nunca afirma uma definição que
+  // não é nossa, e "quem falta" pode ser a lista de cobrança útil (só membros).
+  const [recorte, setRecorte] = useState('base'); // 'base' | 'membros'
   const [verFaltantes, setVerFaltantes] = useState(false);
   const [faltantes, setFaltantes] = useState({ items: [], total: 0 });
   const [busca, setBusca] = useState('');
@@ -91,7 +97,8 @@ export default function PainelCenso() {
     setCarregandoFalt(true);
     try {
       const r = await membresia.censo.faltantes({
-        limit: LIMITE, offset: novoOffset, ...(q && q.length >= 2 ? { q } : {}),
+        limit: LIMITE, offset: novoOffset, recorte,
+        ...(q && q.length >= 2 ? { q } : {}),
       });
       setFaltantes({ items: r.items || [], total: r.total || 0, aviso: r.aviso });
       setOffset(novoOffset);
@@ -100,7 +107,7 @@ export default function PainelCenso() {
     } finally {
       setCarregandoFalt(false);
     }
-  }, []);
+  }, [recorte]);
 
   useEffect(() => {
     if (!verFaltantes) return;
@@ -108,6 +115,8 @@ export default function PainelCenso() {
     return () => clearTimeout(t);
   }, [verFaltantes, busca, carregarFaltantes]);
 
+  // recorte escolhido (cai na base quando o backend antigo não devolve `membros`)
+  const rec = (recorte === 'membros' ? dados?.membros : dados?.base) || dados?.base;
   const janela = dados?.janela;
   const rotuloJanela = janela?.desde
     ? `de ${fmtDia(janela.desde)} até hoje`
@@ -138,7 +147,7 @@ export default function PainelCenso() {
         </span>
         {dados?.disponivel && (
           <span style={{ fontSize: 13, fontWeight: 700, color: C.primary }}>
-            {dados.base.pct}%
+            {rec.pct}%
           </span>
         )}
         {aberto
@@ -170,21 +179,45 @@ export default function PainelCenso() {
 
           {dados?.disponivel && (
             <>
-              <p style={{ fontSize: 11.5, color: C.text3, margin: '12px 0 12px', lineHeight: 1.5 }}>
-                Base viva considerada: <strong style={{ color: C.text2 }}>{dados.base.total}</strong>{' '}
-                pessoas ativas na membresia. Responder o censo <strong>não</strong> torna
-                ninguém membro — o vínculo abaixo é o que a própria pessoa declarou.
+              <div style={{ display: 'flex', gap: 6, margin: '12px 0 10px', flexWrap: 'wrap' }}>
+                {[
+                  { id: 'base', label: `Todos os ativos (${dados.base.total})` },
+                  { id: 'membros', label: `Só membresia (${dados.membros?.total ?? '—'})` },
+                ].map((op) => (
+                  <button
+                    key={op.id}
+                    type="button"
+                    onClick={() => setRecorte(op.id)}
+                    style={{
+                      padding: '5px 12px', fontSize: 11.5, fontWeight: 600, borderRadius: 20,
+                      cursor: 'pointer',
+                      border: `1px solid ${recorte === op.id ? C.primary : C.border}`,
+                      background: recorte === op.id ? C.primaryBg : 'transparent',
+                      color: recorte === op.id ? C.primary : C.text3,
+                    }}
+                  >
+                    {op.label}
+                  </button>
+                ))}
+              </div>
+
+              <p style={{ fontSize: 11.5, color: C.text3, margin: '0 0 12px', lineHeight: 1.5 }}>
+                {recorte === 'membros'
+                  ? 'Recorte da membresia formal (status membro ativo). É este que serve de lista de cobrança.'
+                  : 'Todos os ativos, incluindo quem ainda é visitante — é o público real do QR no culto.'}
+                {' '}Responder o censo <strong>não</strong> torna ninguém membro: o vínculo abaixo
+                é o que a própria pessoa declarou.
               </p>
 
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 14 }}>
                 <Tile
                   icon={Users} cor={C.green}
-                  valor={dados.base.respondidos} label="Já responderam"
-                  sub={`de ${dados.base.total} da base`}
+                  valor={rec.respondidos} label="Já responderam"
+                  sub={`de ${rec.total} ${recorte === 'membros' ? 'da membresia' : 'da base'}`}
                 />
                 <Tile
                   icon={Users} cor={C.amber}
-                  valor={dados.base.faltando} label="Ainda faltam"
+                  valor={rec.faltando} label="Ainda faltam"
                 />
                 <Tile
                   icon={UserPlus} cor={C.blue}
@@ -204,7 +237,7 @@ export default function PainelCenso() {
                 overflow: 'hidden', marginBottom: 6,
               }}>
                 <div style={{
-                  width: `${Math.min(100, dados.base.pct)}%`, height: '100%',
+                  width: `${Math.min(100, rec.pct)}%`, height: '100%',
                   background: C.primary, transition: 'width .4s',
                 }} />
               </div>
@@ -263,7 +296,7 @@ export default function PainelCenso() {
                 onClick={() => setVerFaltantes((v) => !v)}
               >
                 <Search style={{ width: 13, height: 13, marginRight: 6 }} />
-                {verFaltantes ? 'Esconder quem falta' : `Ver quem falta (${dados.base.faltando})`}
+                {verFaltantes ? 'Esconder quem falta' : `Ver quem falta (${rec.faltando})`}
               </Button>
 
               {verFaltantes && (

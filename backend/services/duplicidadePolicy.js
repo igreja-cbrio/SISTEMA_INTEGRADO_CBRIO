@@ -57,6 +57,32 @@ function nomesPodemSerMesmaPessoa(a, b) {
   return comuns >= 2 && comuns / menor.length >= 0.75;
 }
 
+// ⚠️ Stub de LOGIN não é "duas pessoas com o mesmo e-mail".
+//
+// O gatilho de auth.users cria um cadastro só com o e-mail da conta e o nome que
+// o provedor OAuth mandou — e o provedor costuma mandar o nome ABREVIADO
+// ("Victória Lannes" para "Maria Victória Lannes Campos"). Aí
+// `nomesPodemSerMesmaPessoa` recusa, porque exige o mesmo PRIMEIRO nome, e o par
+// fica INVISÍVEL na fila: foi o caso real de 02/08, em que a pessoa preencheu o
+// formulário público corretamente às 11:49 e ficou duplicada.
+//
+// Aqui o e-mail não é o endereço compartilhado da família — é a credencial que
+// AUTENTICOU. Mesmo assim exigimos que os tokens do nome menor estejam TODOS
+// contidos no maior (100%, não 75%): sem isso, cônjuges que usam o mesmo e-mail
+// e compartilham sobrenome entrariam na fila. Com 100%, o provedor teria que ter
+// mandado o nome do outro cônjuge pra o par casar.
+function ehStubDeLogin(m) {
+  return !!m && m.origem_cadastro === 'auth' && !digits(m.cpf) && !digits(m.telefone);
+}
+
+function nomeMenorTodoContidoNoMaior(a, b) {
+  const ta = tokensNome(a); const tb = tokensNome(b);
+  if (ta.length < 2 || tb.length < 2) return false;
+  const menor = ta.length <= tb.length ? ta : tb;
+  const maior = new Set(ta.length <= tb.length ? tb : ta);
+  return menor.every((t) => maior.has(t));
+}
+
 function avaliarPossivelDuplicidade(a = {}, b = {}) {
   const cpfA = digits(a.cpf); const cpfB = digits(b.cpf);
   const telA = digits(a.telefone); const telB = digits(b.telefone);
@@ -76,7 +102,23 @@ function avaliarPossivelDuplicidade(a = {}, b = {}) {
       generoConflitante ? 'Gêneros diferentes' : null,
     ].filter(Boolean) };
   }
-  if (!nomeCompativel) return { incluir: false, prioridade: null, evidencias: [], contradicoes: ['Nomes incompatíveis'] };
+  if (!nomeCompativel) {
+    // Exatamente UM lado é stub de login + mesmo e-mail + nome menor todo
+    // contido no maior → mesma pessoa, com o nome curto vindo do provedor.
+    // Roda DEPOIS dos vetos de conflito (CPF/nascimento/gênero divergentes já
+    // barraram acima), então nunca contradiz identidade conferida.
+    const umLadoEhStub = ehStubDeLogin(a) !== ehStubDeLogin(b);
+    if (emailA.length > 3 && emailA === emailB && umLadoEhStub
+        && nomeMenorTodoContidoNoMaior(a.nome, b.nome)) {
+      return {
+        incluir: true,
+        prioridade: 'alta',
+        evidencias: ['Cadastro criado pelo login com o mesmo e-mail (provedor mandou o nome abreviado)'],
+        contradicoes: [],
+      };
+    }
+    return { incluir: false, prioridade: null, evidencias: [], contradicoes: ['Nomes incompatíveis'] };
+  }
 
   const evidencias = [];
   if (a.data_nascimento && a.data_nascimento === b.data_nascimento) evidencias.push('Nome e nascimento compatíveis');
@@ -86,5 +128,8 @@ function avaliarPossivelDuplicidade(a = {}, b = {}) {
   return { incluir: true, prioridade: evidencias[0].includes('nascimento') ? 'alta' : 'media', evidencias, contradicoes: [] };
 }
 
-module.exports = { avaliarPossivelDuplicidade, similaridadeNome, nomesPodemSerMesmaPessoa, tokensNome };
+module.exports = {
+  avaliarPossivelDuplicidade, similaridadeNome, nomesPodemSerMesmaPessoa, tokensNome,
+  ehStubDeLogin, nomeMenorTodoContidoNoMaior,
+};
 

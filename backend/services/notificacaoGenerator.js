@@ -660,27 +660,41 @@ async function gerarNotificacoesMembresia() {
   // trabalho, não evento — e sem regra configurada o notificar cai no fallback
   // de TODOS os admin/diretor.
   try {
-    const { ehNomeDerivadoDeEmail } = require('./membroMatch');
+    const { ehNomeDerivadoDeEmail, nomeEhEnderecoDeEmail } = require('./membroMatch');
     const suspeitos = [];
+    const comEmailNoNome = [];
     const PAGE = 1000;
     let offset = 0;
     for (;;) {
       const { data, error } = await supabase
         .from('mem_membros')
         .select('id, nome, email, created_at')
-        .not('email', 'is', null)
         .eq('active', true)
         .is('deleted_at', null)
         .range(offset, offset + PAGE - 1);
       if (error) throw error;
       for (const m of data || []) {
         if (ehNomeDerivadoDeEmail(m.nome, m.email)) suspeitos.push(m);
+        // Forma diferente: o e-mail está NO CAMPO DO NOME (e em 2 de 3 casos a
+        // coluna `email` está vazia — contato que o sistema tem e não usa).
+        else if (nomeEhEnderecoDeEmail(m.nome)) comEmailNoNome.push(m);
       }
       if (!data || data.length < PAGE) break;
       offset += PAGE;
     }
+    const hoje = new Date().toISOString().slice(0, 10);
+    if (comEmailNoNome.length) {
+      count += await notificar({
+        modulo: 'membresia',
+        tipo: 'cadastro_email_no_nome',
+        titulo: `${comEmailNoNome.length} cadastro(s) com e-mail no campo do nome`,
+        mensagem: `${comEmailNoNome.length} pessoa(s) têm um endereço de e-mail onde deveria estar o nome (ex.: ${JSON.stringify(comEmailNoNome[0].nome)}). O nome real não é derivável do endereço — precisa de contato. NÃO apagar: são pessoas reais e apagar quebra o matcher.`,
+        link: '/ministerial/membresia',
+        severidade: 'info',
+        chaveDedup: `cadastro_email_no_nome_${hoje}`,
+      });
+    }
     if (suspeitos.length) {
-      const hoje = new Date().toISOString().slice(0, 10);
       const novos7d = suspeitos.filter(
         (m) => new Date(m.created_at).getTime() > Date.now() - 7 * 86400000,
       ).length;
