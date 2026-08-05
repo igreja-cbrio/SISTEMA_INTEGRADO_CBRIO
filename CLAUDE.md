@@ -842,6 +842,66 @@ descartados, e **nada na tela denunciava**. Daí a `vw_censo_campanha` e o bloco
 ter CPF** → viraram conflito. Métrica de campanha mede o OBJETIVO, não a
 atividade; quando as duas divergem, é a atividade que engana.
 
+## ⚠️ Censo · o OPT-IN também era descartado — e ele destrava o aniversário (2026-08-05)
+
+Mesma família do bug do CPF, achado ao responder a pergunta do Matheus sobre o
+disparo de aniversário dos voluntários. **Quem propaga consentimento é a
+APROVAÇÃO** (`aprovarCadastroCore` / `promoverInscricaoLider`) — e a linha do
+censo vira **`aplicado` e NUNCA é aprovada**, então o opt-in ficava só na
+submissão. `CAMPOS_CENSO` não inclui `whatsapp_optin` (e não deve: consentimento
+não é campo cadastral que se preenche por igualdade).
+
+Medido em 05/08: **70 das 74 respostas marcaram a caixa (95%)** e só **13**
+tinham chegado ao cadastro — **57 consentimentos válidos invisíveis** pra quem
+decide se pode enviar. Corrigido no caminho do censo (`publicMembresia.js`) e os
+57 reparados com a **data da submissão**, não a de hoje: `whatsapp_optin_em` é a
+data da PROVA, e estampá-la com "agora" apagaria desde quando o consentimento
+vale. Backup em `_bk_20260805_optin_censo`.
+
+- ⚠️ **SÓ LIGA, NUNCA DESLIGA** (mesma política da aprovação): não marcar a caixa
+  é ausência de consentimento NESTA submissão, não revogação do que a pessoa
+  autorizou em outra porta. Revogar é ação dela.
+- ⚠️ O UPDATE leva `.or('whatsapp_optin.is.null,whatsapp_optin.eq.false')` pra
+  **preservar o `whatsapp_optin_em` de quem já havia consentido** — sobrescrever
+  a data da prova é perder a informação, não atualizá-la.
+- ⚠️ **O reparo pegou 58, não 57**: o Amaury respondeu o censo às 14:17 daquele
+  dia, ENTRE o snapshot do backup e o UPDATE. Benigno (ele consentiu de fato) e
+  é prova ao vivo de que o furo estava ativo até o commit. Régua: em reparo sobre
+  porta pública VIVA, conferir quem entrou no alvo depois do backup em vez de
+  tratar divergência de 1 como erro de contagem.
+
+### A resposta sobre o aniversário dos voluntários: já está construído
+
+Pergunta dele: *"agora todos os nossos formulários têm a checkbox — não podemos
+usar isso para que a Meta não bloqueie o envio das mensagens de aniversário dos
+voluntários?"* **Sim, e o raciocínio está certo: o impedimento nunca foi "a Meta
+bloqueia Marketing", é que Marketing EXIGE opt-in.** Nada a construir — o
+mecanismo existe ponta a ponta e está agendado:
+
+- `vercel.json` → cron `/api/whatsapp-cron/aniversarios` (`0 12 * * *` = 9h BRT)
+- `whatsappCron.js` filtra `whatsapp_optin = true` **e** vínculo de voluntário
+  aberto (`mem_voluntarios.ate IS NULL`)
+- `whatsappService.TEMPLATES_MARKETING = new Set(['aniversario'])` → o gate de
+  opt-in do `notificarMembro` já vale exatamente pra este template
+- templates `cbrio_aniversario` e `aniversario_voluntariado` **aprovados**, com
+  `WHATSAPP_TEMPLATE_ANIVERSARIO2` setado em produção
+
+**A única variável é o tamanho da audiência**, e ela cresce sozinha com a
+campanha: de **178 voluntários** com nascimento + telefone, os que podem receber
+foram de **21 → 36** só com o reparo acima. Nada enviado até 05/08 porque o cron
+depende de cair no dia de alguém com opt-in.
+
+## ⚠️ Folha por pessoa · o coordenador estratégico VÊ (decisão de 2026-08-05)
+
+Registrado pra não ser re-sinalizado como problema: **o coordenador estratégico
+pode ver a folha de pagamento por pessoa** (decisão do Matheus). Então
+`SAIDAS_ALLOWLIST` em `backend/routes/financeiroV2.js` e o espelho em
+`src/pages/admin/financeiro/DashboardFinanceiroSemanal.jsx` **ficam como estão** —
+não "corrigir" removendo esse acesso.
+
+⚠️ Pela LEI de não nomear pessoa como dono de fluxo, o que vale aqui é o PAPEL.
+Quem ocupa o papel vive no banco (`usuario_areas` / cargo), não neste arquivo.
+
 ## ⚠️ Membresia · aprovação em massa da fila de cadastros (2026-08-04 · SEM migration)
 
 Pedido do Matheus: selecionar alguns ou todos e aprovar de uma vez, *"mas o sistema deve ter uma
