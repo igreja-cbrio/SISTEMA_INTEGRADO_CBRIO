@@ -942,66 +942,6 @@ não é tratado por ninguém.
 - O aviso **nomeia a pessoa** quando dá (`ref_id` é o membro nos contextos de
   `notificarMembro`) — "o telefone 21…" não diz a quem avisar.
 
-## ⚠️ Aniversário do voluntário · são DOIS caminhos, e eles não se conheciam (2026-08-05)
-
-Achado ao inventariar "quem recebe as mensagens automáticas" (pergunta do
-Matheus). O parabéns tem **dois** caminhos e nenhum olhava o outro:
-
-| caminho | quando | registrava |
-|---|---|---|
-| **manual** · botão "Parabenizar" na tela de aniversariantes | a tela mostra a **SEMANA** (próximos 7 dias) ⇒ o clique costuma vir ANTES do dia | `vol_parabens` |
-| **automático** · cron `/whatsapp-cron/aniversarios` | 9h BRT **no dia** | nada |
-
-**Caso real:** a coordenação parabenizou uma pessoa às 13:30 de 05/08 e o
-aniversário dela era **06/08** — o cron do dia seguinte mandaria o segundo.
-E na direção inversa: o cron não gravava em `vol_parabens`, então a tela mostrava
-**"não parabenizado"** pra quem o automático já tinha alcançado, convidando a
-equipe a mandar o duplicado na mão.
-
-⚠️ Template de **Marketing repetido pra mesma pessoa** é o padrão que a Meta lê
-como spam — e a nota de qualidade do número é o que decide a subida de tier.
-
-- **`backend/services/aniversarioVoluntario.js`** = régua compartilhada
-  (`jaParabenizado` · `registrarParabens` · `anoBrt`), usada pelos DOIS caminhos.
-- ⚠️ **A prova principal é `whatsapp_envios`, não `vol_parabens`**: é a única
-  fonte que os dois alimentam (ambos passam por `notificarMembro`, que enfileira
-  com `ref_id` = membro e contexto `app.aniversario`). `vol_parabens` é por
-  `vol_profile_id`, e **não todo voluntário de `mem_voluntarios` tem perfil no
-  vol_\*** — dedup só por ela deixaria gente descoberta.
-- ⚠️ **Só `status='enviado'` conta.** Tentativa que ERROU não é parabéns dado:
-  bloquear por causa dela deixaria a pessoa sem mensagem no aniversário dela.
-- ⚠️ **`anoBrt`, não `getFullYear()`**: o servidor da Vercel roda em UTC, então
-  na noite de 31/12 o ano já virou e o dedup não acharia o parabéns dado horas
-  antes.
-- O botão manual passou a responder **409** quando já houve parabéns no ano, com
-  o texto explicando que pode ter sido o automático — a decisão de não mandar 2×
-  não pode depender da tela.
-- O cron devolve `ja_parabenizados` no JSON (o que ele PULOU é informação, não
-  silêncio).
-
-### ⚠️ Devocional diário por WhatsApp: tenta todo dia e falha 100% (medido 05/08)
-
-`devocionalSender.enviarDoDia` (cron `/api/devocional-planos/cron/enviar-diario`,
-9h) manda pra **todo membro com login no app e telefone** — e em
-`devocional_envios`: **187 tentativas `api_error`, ZERO entregas**, a última hoje.
-Causa: o template é `WHATSAPP_TEMPLATE_DEVOCIONAL || 'devocional_diario'` e **não
-existe template com esse nome na conta** (a Meta recusa template inexistente).
-
-- ⚠️ **É a lição do semáforo do censo, violada**: nome de template com **default
-  literal no código** faz o canal parecer ligado quando não está. Sem env, o
-  certo é **no-op** (`notificarMembro` faz assim: env vazia ⇒
-  `template_nao_configurado`), não tentar contra um nome chutado.
-- ⚠️ Não passa pela fila `whatsapp_envios` (usa `sendTemplate` direto), então
-  **não aparece no histórico de envios** nem herda retry/aviso de falha. Foi por
-  isso que 187 falhas passaram invisíveis.
-- ⚠️ E **não checa `whatsapp_optin`** — mensagem diária pra todo mundo que logou
-  no app. Se um dia o template for aprovado do jeito que está, começa a enviar
-  sem consentimento. **Decisão pendente do Matheus** (dono do módulo): o lembrete
-  por **push** das 7h30 já funciona e cobre o objetivo.
-- ⚠️ `wa_templates` é **snapshot e pode estar velho**: ali `grupos_pedido_*_v2`
-  aparecem como `PENDING` e no entanto enviaram 331 mensagens com sucesso. Não
-  afirmar status de template só por essa tabela — cruzar com envio real.
-
 ## ⚠️ Folha por pessoa · o coordenador estratégico VÊ (decisão de 2026-08-05)
 
 Registrado pra não ser re-sinalizado como problema: **o coordenador estratégico
@@ -3807,6 +3747,62 @@ CPF no cabeçalho do arquivo mas o CPF **não bloqueia** no código (decisão da
 revisão da Apple) — o cabeçalho mente pra próxima sessão e foi corrigido no repo
 do app. E os gates `exigirCpf: true` / `completo: falta.length === 0` seguem
 represados até o build iOS ser aprovado.
+
+### Rodada 2 · "corrigir todos esses achados" (mesmo dia)
+
+Ele mandou fechar tudo. O que entrou DEPOIS da 1ª rodada:
+
+- **⚠️ `resolveMembroApp` ignorava soft-delete no caminho do profile.** Os outros
+  dois caminhos (e-mail e CPF) filtravam `deleted_at` e este não — então cadastro
+  que a equipe APAGOU continuava servindo o app inteiro, e tudo que a pessoa
+  fizesse (inscrição, matrícula, devocional) pousava num membro que o ERP
+  considera fora da base. Caso real: a limpeza de 04/08 soft-deletou **3 cadastros
+  que têm conta no app**. Sem membro, o `CadastroGate` manda completar o cadastro
+  e o matcher resolve — que é o efeito desejado.
+- **`tipo:'next'` no `POST /app/inscricoes` MENTIA.** Ia pro ramo `next` do
+  `fn_app_inscricoes_fanout`, que procura `next_eventos` agendado e futuro — e não
+  existe nenhum desde 21/06: a linha virava `'processado'` e **nada era criado**,
+  com a pessoa vendo "enviado". Agora passa pela MESMA régua do `/next/inscrever`
+  (helper `matricularNoNextAberto`, extraído pra não haver duas réguas de "em qual
+  turma essa pessoa entra"). Medido: **0 linhas `tipo='next'`** em
+  `app_inscricoes` — é rede de segurança pra build antigo, mas rede que mentia.
+  ⚠️ O ramo SQL do fanout **não foi tocado** (patch dinâmico da 20260729060000
+  seria revertido por um `CREATE OR REPLACE` do repo): ele segue no-op, e agora
+  isso é inofensivo porque o JS resolve antes.
+- **`vol_inscricoes.status` tem 7 valores e o app tratava 3.** Medido: `integrado`
+  575 · `inscrito` 80 · `enviado_ministerio` 68 · **`nao_responde` 69 ·
+  `nao_pode_ou_duplicata` 19 · `kids` 3**. A divergência era na MESMA abertura do
+  app: o hub fazia `=== 'integrado' ? ativo : pendente` (quem a equipe encerrou
+  via "Pendente") e a tela de Servir só reconhecia 3 status (a mesma pessoa caía
+  no `else` e via o FORMULÁRIO). Régua única agora em `lib/volStatus.ts` do app —
+  status novo no ERP entra lá; desconhecido vira "nenhum" (deixa a pessoa agir),
+  nunca "pendente" (fila que ninguém está tratando).
+- **11 leituras do app sem `deleted_at`** em tabela soft-deletable (`mem_membros`
+  ×5, `mem_devocionais` ×4, `mem_grupos` ×2, `cultos`) — a RLS não filtra nada
+  disso. ⚠️ No `grupo-editar` entrou só `deleted_at`, NÃO `ativo`: o líder precisa
+  poder editar grupo pausado; quem trava a inscrição é a face pública.
+- **O dia em BRT virou helper** (`lib/dataBRT.ts`, espelho do `hojeBRT()` daqui):
+  além da lista de cultos, a chave de cache dela e o filtro de indisponibilidade
+  do voluntariado estavam em UTC. ⚠️ O check-in do devocional segue em hora do
+  APARELHO de propósito (o "hoje" de quem lê é o do lugar onde a pessoa está).
+- **Botão FÍSICO do Android = a mesma árvore da seta** (`BackHandler` no
+  `(app)/_layout.tsx`). ⚠️ Na Home e em `/completar-cadastro` ele NÃO intercepta —
+  engolir o back na raiz é como se faz um app que não fecha, e a Play Store
+  reclama disso.
+
+**Auditoria automática que passou** (registro pra não refazer): rodei as **38
+consultas literais do app contra o schema de produção** — `0 erros de coluna`.
+Isso importa porque select que nomeia coluna inexistente faz o PostgREST recusar
+a query INTEIRA, e o app trata como "vazio" (foi assim que o `parcelas_max` e a
+minha própria sonda do `next_turmas` enganaram antes). Também conferido:
+`kids_vinculo_solicitacoes` usa `pendente|aprovado|rejeitado|cancelado` e o app
+compara os certos.
+
+**Segue represado por decisão, não por esquecimento:** `exigirCpf: true` /
+`completo: falta.length === 0` no `/identidade/status` — ligar isso hoje travaria
+as contas de revisão da Apple na tela de cadastro (o revisor não tem CPF
+brasileiro), que é a rejeição clássica de "não passamos do registro". Ligar junto,
+depois da aprovação do build iOS.
 
 ## Grupos · contagens (vínculo × pessoa) + nova régua visitante/frequentador (2026-07-23)
 
