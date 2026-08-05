@@ -287,6 +287,35 @@ async function confirmarCodigo({ verificacaoId, codigo, authUserId, email }) {
   return { ok: true, membro: m || null, fantasma_fundido: !!fusao.fundido };
 }
 
+// ⚠️⚠️ CONTAS DE REVISÃO DA LOJA · a ÚNICA isenção do gate de CPF (05/08/2026)
+//
+// Decisão do Marcos: "todas as pessoas que entrarem no sistema devem completar o
+// cadastro antes; após completar elas acessam normalmente". Gate LIGADO.
+//
+// O problema que esta lista resolve: o revisor da Apple/Google **não tem CPF
+// brasileiro**. Com o gate ligado sem isenção, ele trava na tela de cadastro e o
+// build é recusado com "não conseguimos completar o registro" — a rejeição mais
+// comum de app com login. Isso não é bug de usuário: bloqueia o release inteiro.
+//
+// ⚠️ E POR QUE NÃO É SÓ PÔR UM CPF NESSAS CONTAS: CPF com dígito verificador
+// válido PERTENCE A ALGUÉM REAL, e é a chave MAIS FORTE do matcher — a primeira
+// vez que essa pessoa preenchesse um formulário, ela seria ligada à conta de
+// revisão. Uma delas já teve um CPF DV-válido e foi anulado por isso.
+//
+// ⚠️ São contas declaradas à loja, não pessoas (ver `mem_membros.observacoes`).
+// Não acrescentar e-mail de gente aqui — seria criar um caminho pra entrar no app
+// sem cadastro, que é exatamente o que o gate existe pra impedir.
+const CONTAS_REVISAO_LOJA = new Set([
+  'apple.review@cbrio.com.br',
+  'appstore.review@cbrio.app',
+  'appstore.staff@cbrio.app',
+]);
+
+/** É conta de revisão de loja? (isenta do gate de CPF/sexo, e SÓ dele) */
+function contaDeRevisaoLoja(email) {
+  return CONTAS_REVISAO_LOJA.has(String(email || '').trim().toLowerCase());
+}
+
 // ── B · formulário completo (Contrato de porta) ─────────────────────────────
 async function completarCadastro({ payload, authUserId, email, ip, userAgent }) {
   // CPF NÃO é exigido (decisão antiga: o app não pode travar a entrada de quem
@@ -303,7 +332,7 @@ async function completarCadastro({ payload, authUserId, email, ip, userAgent }) 
     cpf: payload?.cpf,
     data_nascimento: payload?.data_nascimento,
     sexo: payload?.sexo,
-  }, { exigirCpf: false, exigirSexo: false, exigirEmail: true, exigirNascimento: true });
+  }, { exigirCpf: !contaDeRevisaoLoja(email), exigirSexo: !contaDeRevisaoLoja(email), exigirEmail: true, exigirNascimento: true });
   const campos = Object.keys(erros || {});
   if (campos.length) {
     return { ok: false, status: 400, codigo: 'campos', campo: campos[0], error: erros[campos[0]], erros };
@@ -361,6 +390,7 @@ async function completarCadastro({ payload, authUserId, email, ip, userAgent }) 
 }
 
 module.exports = {
+  contaDeRevisaoLoja,
   identificarPorCpf,
   confirmarCodigo,
   completarCadastro,

@@ -185,25 +185,47 @@ router.post('/identidade/completar', authApp, limiterNormal, async (req, res) =>
 // completar meu cadastro?". Devolve o que falta (sem PII de terceiro).
 router.get('/identidade/status', authApp, limiterNormal, async (req, res) => {
   try {
+    // ⚠️⚠️ GATE DA FICHA LIGADO (Marcos · 05/08/2026): "todas as pessoas que
+    // entrarem no sistema devem completar o cadastro antes; após completar elas
+    // acessam normalmente". Então `completo` exige a ficha FECHADA — nome de
+    // gente + telefone + nascimento + CPF + sexo. Antes o CPF era só
+    // informativo, e o efeito medido era pior: a pessoa entrava "completa" e
+    // levava 400 na primeira inscrição (`POST /app/inscricoes` exige CPF), o que
+    // acontecia com 50 das 75 contas.
+    // A ÚNICA isenção é conta de REVISÃO DE LOJA (o revisor não tem CPF
+    // brasileiro e travaria na tela de cadastro → build recusado).
+    const exigirFicha = !appIdentidade.contaDeRevisaoLoja(req.user?.email);
     const membro = await resolveMembroApp(req).catch(() => null);
     if (!membro) {
-      return res.json({ vinculado: false, completo: false, falta: ['nome', 'telefone', 'nascimento'] });
+      return res.json({
+        vinculado: false,
+        completo: false,
+        falta: exigirFicha
+          ? ['nome', 'telefone', 'nascimento', 'cpf', 'sexo']
+          : ['nome', 'telefone', 'nascimento'],
+        exige_cpf: exigirFicha,
+      });
     }
     const falta = [];
     if (!membro.telefone) falta.push('telefone');
-    if (!membro.cpf) falta.push('cpf'); // informativo — CPF não é exigido
+    if (!membro.cpf) falta.push('cpf');
     const { data: m } = await supabase.from('mem_membros')
-      .select('nome, data_nascimento').eq('id', membro.id).maybeSingle();
+      .select('nome, data_nascimento, genero').eq('id', membro.id).maybeSingle();
     if (!m?.data_nascimento) falta.push('nascimento');
+    if (!m?.genero) falta.push('sexo');
     const nomeFraco = require('../services/membroMatch')
       .ehNomeDerivadoDeEmail(m?.nome, req.user.email || '');
     if (nomeFraco) falta.push('nome');
+    // Conta de revisão: CPF e sexo continuam aparecendo em `falta` (informativo),
+    // mas não impedem o acesso.
+    const bloqueiam = exigirFicha ? falta : falta.filter(f => f !== 'cpf' && f !== 'sexo');
     res.json({
       vinculado: true,
-      // "completo" = dá pro matcher reconhecer a pessoa depois (nome de gente +
-      // telefone + nascimento). CPF entra como recomendado, não obrigatório.
-      completo: !falta.some(f => f !== 'cpf'),
+      completo: bloqueiam.length === 0,
       falta,
+      // O app pergunta ao SERVIDOR se tem que exigir CPF — nunca decide sozinho
+      // (é a mesma lei do resto: quem decide o que é válido é o backend).
+      exige_cpf: exigirFicha,
       nome: m?.nome || membro.nome || null,
     });
   } catch (e) {
