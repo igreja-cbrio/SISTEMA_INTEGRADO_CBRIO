@@ -2277,4 +2277,216 @@ router.post('/email-templates/teste', authorizeModule('inscricoes', 5), async (r
   }
 });
 
+// ============================================================================
+// TOTENS · estações de autoatendimento (2026-08-05 · Fase 0)
+//
+// Gestão fica AQUI e não num módulo novo: quem gerencia eventos é quem gerencia
+// os totens que os vendem, e `inscricoes` já está no ROUTE_MODULE_MAP (uma
+// coluna menos na matriz de permissões).
+//
+// Ver = nível 1 · criar/parear/revogar = nível 4. Nível 4 e não 3 de propósito:
+// aqui se decide qual equipamento pode receber dinheiro em nome da igreja.
+// ============================================================================
+const totemEstacao = require('../services/totemEstacao');
+// Régua PURA do cerco de rede (mesma que o middleware usa pra decidir se o
+// token vale). Importada, nunca copiada — cópia divergente aqui faria a tela
+// salvar um cerco que o middleware não reconhece.
+const { sanitizarIps } = require('../utils/totemCerco');
+
+// GET /inscricoes/totens — lista com o estado das credenciais.
+// ⚠️ Nunca devolve `token_hash`; só `prefixo` (8 chars) pra pessoa reconhecer
+// a linha na tela.
+router.get('/totens', authorizeModule('inscricoes', 1), async (req, res) => {
+  try {
+    const { data: estacoes, error } = await supabase.from('totem_estacoes')
+      .select('*').order('codigo');
+    if (error) throw error;
+
+    const ids = (estacoes || []).map((e) => e.id);
+    let tokens = [];
+    if (ids.length) {
+      const { data, error: e2 } = await supabase.from('totem_estacao_tokens')
+        .select('id, estacao_id, tipo, prefixo, rotulo, linhagem, expira_em, pareado_em, usado_em, ultimo_uso_em, revogado_em, revogado_motivo, created_at')
+        .in('estacao_id', ids).order('created_at', { ascending: false });
+      if (e2) throw e2;
+      tokens = data || [];
+    }
+
+    const agora = Date.now();
+    const lista = (estacoes || []).map((e) => {
+      const meus = tokens.filter((t) => t.estacao_id === e.id);
+      const vivo = (t) => !t.revogado_em && (!t.expira_em || new Date(t.expira_em).getTime() > agora);
+      return {
+        ...e,
+        // "online" = bateu ponto nos últimos 2 min. O heartbeat tem throttle de
+        // 60s, então 2 min tolera uma batida perdida sem acusar queda falsa.
+        online: !!e.ultima_batida_em && (agora - new Date(e.ultima_batida_em).getTime()) < 120000,
+        dispositivo: meus.find((t) => t.tipo === 'dispositivo' && vivo(t)) || null,
+        agente: meus.find((t) => t.tipo === 'agente' && vivo(t)) || null,
+        pareamento_pendente: meus.find((t) => t.tipo === 'pareamento' && vivo(t) && !t.usado_em) || null,
+        historico: meus.slice(0, 20),
+      };
+    });
+
+    res.json({ estacoes: lista });
+  } catch (e) {
+    console.error('[inscricoes] listar totens:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar os totens' });
+  }
+});
+
+// POST /inscricoes/totens — cria estação
+router.post('/totens', authorizeModule('inscricoes', 4), async (req, res) => {
+  try {
+    const codigo = String(req.body?.codigo || '').trim().toLowerCase();
+    if (!/^[a-z0-9][a-z0-9-]{1,30}$/.test(codigo)) {
+      return res.status(400).json({ error: 'Código: minúsculas, números e hífen (ex.: hall-01).' });
+    }
+    const nome = String(req.body?.nome || '').trim();
+    if (nome.length < 3) return res.status(400).json({ error: 'Dê um nome que a equipe reconheça (ex.: Totem do Hall).' });
+
+    const finalidades = Array.isArray(req.body?.finalidades) && req.body.finalidades.length
+      ? req.body.finalidades.filter((f) => ['inscricoes', 'kids', 'membro', 'voluntariado'].includes(f))
+      : ['inscricoes'];
+    if (!finalidades.length) return res.status(400).json({ error: 'Finalidade inválida.' });
+
+    const ips = sanitizarIps(req.body?.ip_permitidos);
+    const linha = {
+      codigo, nome, finalidades,
+      local: String(req.body?.local || '').trim() || null,
+      evento_fixo_id: req.body?.evento_fixo_id || null,
+      ip_permitidos: ips.lista,
+      created_by: req.user?.id || null,
+    };
+
+    const { data, error } = await supabase.from('totem_estacoes').insert(linha).select('*').single();
+    if (error) {
+      if (error.code === '23505') return res.status(409).json({ error: `Já existe um totem com o código "${codigo}".` });
+      throw error;
+    }
+    // ⚠️ IP descartado é DECLARADO: "salvou" com o cerco vazio faria a equipe
+    // acreditar que o totem está protegido quando não está.
+    res.status(201).json({
+      ok: true,
+      estacao: data,
+      aviso: ips.descartados.length
+        ? `Não entendi como IP: ${ips.descartados.join(', ')}. ${ips.lista ? 'O resto foi salvo.' : 'O totem ficou SEM cerco de rede.'}`
+        : undefined,
+    });
+  } catch (e) {
+    console.error('[inscricoes] criar totem:', e.message);
+    res.status(500).json({ error: 'Erro ao criar o totem' });
+  }
+});
+
+// PATCH /inscricoes/totens/:id — edição (nome, local, evento fixo, cerco, TEF)
+router.patch('/totens/:id', authorizeModule('inscricoes', 4), async (req, res) => {
+  try {
+    const patch = {};
+    if (req.body?.nome !== undefined) patch.nome = String(req.body.nome).trim();
+    if (req.body?.local !== undefined) patch.local = String(req.body.local || '').trim() || null;
+    if (req.body?.evento_fixo_id !== undefined) patch.evento_fixo_id = req.body.evento_fixo_id || null;
+    let avisoIps;
+    if (req.body?.ip_permitidos !== undefined) {
+      const ips = sanitizarIps(req.body.ip_permitidos);
+      patch.ip_permitidos = ips.lista;
+      if (ips.descartados.length) {
+        avisoIps = `Não entendi como IP: ${ips.descartados.join(', ')}. ${ips.lista ? 'O resto foi salvo.' : 'O totem ficou SEM cerco de rede.'}`;
+      }
+    }
+    if (req.body?.ativo !== undefined) patch.ativo = !!req.body.ativo;
+    if (req.body?.finalidades !== undefined && Array.isArray(req.body.finalidades)) {
+      const f = req.body.finalidades.filter((x) => ['inscricoes', 'kids', 'membro', 'voluntariado'].includes(x));
+      if (f.length) patch.finalidades = f;
+    }
+    // Campos do pinpad: entram agora pra a estação nascer completa, mas só
+    // passam a ter efeito quando o cartão presencial (Fase 2) existir.
+    for (const c of ['tef_provider', 'tef_terminal_serie', 'tef_terminal_logico']) {
+      if (req.body?.[c] !== undefined) patch[c] = String(req.body[c] || '').trim() || null;
+    }
+    if (req.body?.tef_ativo !== undefined) patch.tef_ativo = !!req.body.tef_ativo;
+    for (const c of ['printer_target', 'printer_modelo']) {
+      if (req.body?.[c] !== undefined) patch[c] = String(req.body[c] || '').trim() || null;
+    }
+
+    if (!Object.keys(patch).length) return res.status(400).json({ error: 'Nada a atualizar.' });
+
+    // Reativar estação revogada é ato explícito: limpa a marca de revogação
+    // (senão o middleware continuaria recusando e ninguém entenderia por quê).
+    if (patch.ativo === true) {
+      patch.revogada_em = null; patch.revogada_motivo = null; patch.revogada_por = null;
+    }
+
+    const { data, error } = await supabase.from('totem_estacoes')
+      .update(patch).eq('id', req.params.id).select('*').maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Totem não encontrado' });
+
+    totemEstacao.limparCache();
+    res.json({ ok: true, estacao: data, aviso: avisoIps });
+  } catch (e) {
+    console.error('[inscricoes] editar totem:', e.message);
+    res.status(500).json({ error: 'Erro ao atualizar o totem' });
+  }
+});
+
+// POST /inscricoes/totens/:id/pareamento — gera o código que o voluntário digita
+router.post('/totens/:id/pareamento', authorizeModule('inscricoes', 4), async (req, res) => {
+  try {
+    const { data: est, error } = await supabase.from('totem_estacoes')
+      .select('id, codigo, nome, ativo, revogada_em').eq('id', req.params.id).maybeSingle();
+    if (error) throw error;
+    if (!est) return res.status(404).json({ error: 'Totem não encontrado' });
+    if (!est.ativo || est.revogada_em) {
+      return res.status(400).json({ error: 'Reative este totem antes de parear.' });
+    }
+
+    const r = await totemEstacao.gerarPareamento(est.id, {
+      criadoPor: req.user?.id || null,
+      rotulo: String(req.body?.rotulo || '').trim() || null,
+    });
+
+    // ⚠️ O código aparece UMA vez, aqui. Não é recuperável depois — gerar outro
+    // é o caminho (e o anterior é revogado automaticamente).
+    res.json({ ok: true, codigo: r.codigo, expira_em: r.expira_em, estacao: { id: est.id, codigo: est.codigo, nome: est.nome } });
+  } catch (e) {
+    console.error('[inscricoes] pareamento totem:', e.message);
+    res.status(500).json({ error: 'Erro ao gerar o código de pareamento' });
+  }
+});
+
+// POST /inscricoes/totens/:id/revogar — mata a estação e TODAS as credenciais
+router.post('/totens/:id/revogar', authorizeModule('inscricoes', 4), async (req, res) => {
+  try {
+    const r = await totemEstacao.revogarEstacao(req.params.id, {
+      por: req.user?.id || null,
+      motivo: req.body?.motivo,
+    });
+    if (!r.ok) {
+      return res.status(400).json({ error: 'Diga o motivo da revogação (fica no registro de auditoria).' });
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[inscricoes] revogar totem:', e.message);
+    res.status(500).json({ error: 'Erro ao revogar o totem' });
+  }
+});
+
+// POST /inscricoes/totens/tokens/:tokenId/revogar — revoga UMA credencial
+// (dispositivo trocado, navegador reinstalado) sem desligar a estação.
+router.post('/totens/tokens/:tokenId/revogar', authorizeModule('inscricoes', 4), async (req, res) => {
+  try {
+    const r = await totemEstacao.revogarToken(req.params.tokenId, {
+      por: req.user?.id || null,
+      motivo: req.body?.motivo || 'revogado pela equipe',
+    });
+    if (!r.ok) return res.status(400).json({ error: 'Diga o motivo da revogação.' });
+    if (!r.revogados) return res.status(404).json({ error: 'Credencial não encontrada ou já revogada' });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[inscricoes] revogar credencial:', e.message);
+    res.status(500).json({ error: 'Erro ao revogar a credencial' });
+  }
+});
+
 module.exports = router;
