@@ -60,19 +60,29 @@ async function tryAuth(req, _res, next) {
 // efetivo é `max × nº de instâncias` e zera a cada cold start. Store
 // compartilhado (ou regra na borda do Vercel) é item da onda de escala; o
 // desenho por usuário já tira o dano do NAT, que era o dano real.
-const { ipKeyGenerator } = require('express-rate-limit');
+// ⚠️⚠️ NÃO importar `{ ipKeyGenerator }` daqui (incidente 06/08/2026 · 500 nas
+// rotas ANÔNIMAS em produção, com todo teste local verde).
+// **Este arquivo roda com o `backend/package.json`, que pina express-rate-limit
+// `^7.4.0` (lock: 7.5.1) — a RAIZ tem 8.3.2, e `ipKeyGenerator` só existe na
+// 8.x.** O `vercel.json` faz `installCommand: npm install && cd backend && npm
+// install`, então é a árvore do BACKEND que vale em produção; localmente o
+// `backend/node_modules` estava vazio e o Node subiu pra raiz, exercitando uma
+// versão que produção nunca carrega.
+// Régua: conferir versão de dependência em `backend/package.json`, nunca na
+// raiz. A normalização de IP é NOSSA (`utils/appRateLimit.js`, no gate).
 const { chaveLimiteApp, ehChaveAnonima } = require('../utils/appRateLimit');
 
 function limiterApp({ max, maxAnonimo, nome }) {
-  // `ipKeyGenerator` normaliza sub-rede IPv6 (exigência do express-rate-limit 8
-  // pra keyGenerator próprio; sem ele, cada endereço IPv6 de um mesmo cliente
-  // viraria bucket novo e o teto por IP não valeria nada).
-  const chave = (req) => chaveLimiteApp(req, (ip) => ipKeyGenerator(ip));
+  const chave = (req) => chaveLimiteApp(req);
   return rateLimit({
     windowMs: 15 * 60 * 1000,
     // Anônimo paga o teto de IP, que é mais alto: ali é 1 IP pra congregação.
     limit: (req) => (ehChaveAnonima(chave(req)) ? maxAnonimo : max),
     keyGenerator: (req) => `${nome}:${chave(req)}`,
+    // ⚠️ SEM `validate: { keyGeneratorIpFallback: false }` — essa validação só
+    // existe na 8.x e a 7.5.1 (a de produção) responde
+    // `ERR_ERL_UNKNOWN_VALIDATION` a cada construção do limiter, poluindo o log
+    // sem efeito nenhum. Pego no smoke rodado contra a árvore do backend.
     skip: () => process.env.NODE_ENV !== 'production',
     standardHeaders: true,
     legacyHeaders: false,
