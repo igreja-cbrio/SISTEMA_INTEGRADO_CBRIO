@@ -33,12 +33,67 @@ const crypto = require('crypto');
 const PREFIXO_ANONIMO = 'ip:';
 
 /**
- * @param {{ user?: {id?: string}, headers?: object, ip?: string }} req
- * @param {(ip: string) => string} [normalizarIp] injetado pelo chamador
- *   (`ipKeyGenerator` do express-rate-limit, que normaliza sub-rede IPv6).
- *   Sem ele cai no IP cru — bom pra teste, nunca pra produção.
+ * Expande um IPv6 em 8 hextets (resolve o `::`). `null` se não for IPv6 válido.
  */
-function chaveLimiteApp(req, normalizarIp) {
+function expandirIpv6(ip) {
+  if (!/^[0-9a-fA-F:]+$/.test(ip)) return null;
+  const lados = ip.split('::');
+  if (lados.length > 2) return null;
+  const esq = lados[0] ? lados[0].split(':').filter(Boolean) : [];
+  const dir = lados.length === 2 && lados[1] ? lados[1].split(':').filter(Boolean) : [];
+  if (lados.length === 1) return esq.length === 8 ? esq.map((h) => h.toLowerCase()) : null;
+  const faltam = 8 - esq.length - dir.length;
+  if (faltam < 0) return null;
+  return [...esq, ...Array(faltam).fill('0'), ...dir].map((h) => h.toLowerCase());
+}
+
+/**
+ * ⚠️⚠️ NORMALIZAÇÃO PRÓPRIA, DE PROPÓSITO — não usar o `ipKeyGenerator` do
+ * express-rate-limit aqui (incidente 06/08/2026, 15:38→16:0x BRT).
+ *
+ * O que aconteceu: a 1ª versão deste arquivo fazia
+ * `const { ipKeyGenerator } = require('express-rate-limit')`. Passou em TODOS os
+ * testes locais (inclusive num smoke com express de verdade) e **quebrou em
+ * produção** com `ipKeyGenerator is not a function` — 500 em
+ * `/api/app/anuncios` e `/api/app/grupos`, as duas rotas ANÔNIMAS, que são as
+ * únicas que chegam neste ramo. As autenticadas seguiram respondendo, e por isso
+ * o estrago passou perto de ser invisível.
+ *
+ * ⚠️⚠️ A CAUSA, MEDIDA (e não é a que eu supus primeiro): **o backend tem
+ * árvore de dependências PRÓPRIA em produção.** O `vercel.json` roda
+ * `installCommand: "npm install && cd backend && npm install"`, e
+ * `backend/package.json` declara `"express-rate-limit": "^7.4.0"`
+ * (`backend/package-lock.json` → **7.5.1**). O `package.json` da RAIZ tem
+ * **8.3.2** — e `ipKeyGenerator` só existe na 8.x. Localmente o
+ * `backend/node_modules` estava vazio, então o Node subiu pra raiz e resolveu a
+ * 8.3.2: o teste local exercitava uma versão que produção nunca carrega.
+ *
+ * ⚠️ RÉGUA QUE FICA (vale pra qualquer pacote, não só este): **conferir a
+ * versão em `backend/package.json`, não na raiz**, antes de usar API nova de
+ * dependência em `backend/`. Ver a versão na raiz é a armadilha.
+ * Aqui a normalização é nossa: pura, sem dependência, no gate.
+ *
+ * Agrupa IPv6 pelo /64 (a alocação típica de um cliente): sem isso, trocar de
+ * endereço dentro da própria casa daria bucket novo e o teto anônimo não valeria
+ * nada. IPv4 e IPv4-mapeado ficam como estão.
+ */
+function normalizarIpParaChave(ip) {
+  const bruto = String(ip == null ? '' : ip).trim();
+  if (!bruto) return 'desconhecido';
+  const semZona = bruto.split('%')[0]; // fe80::1%eth0
+  if (!semZona.includes(':')) return semZona; // IPv4
+  const mapeado = semZona.match(/(\d{1,3}(?:\.\d{1,3}){3})$/); // ::ffff:200.1.1.1
+  if (mapeado) return mapeado[1];
+  const hextets = expandirIpv6(semZona);
+  return hextets ? `${hextets.slice(0, 4).join(':')}::/64` : semZona;
+}
+
+/**
+ * @param {{ user?: {id?: string}, headers?: object, ip?: string }} req
+ * @param {(ip: string) => string} [normalizarIp] normalizador do IP. O default é
+ *   o nosso `normalizarIpParaChave`; o parâmetro existe só pra teste.
+ */
+function chaveLimiteApp(req, normalizarIp = normalizarIpParaChave) {
   const userId = req?.user?.id;
   if (userId) return `u:${userId}`;
 
@@ -59,4 +114,4 @@ function ehChaveAnonima(chave) {
   return String(chave || '').startsWith(PREFIXO_ANONIMO);
 }
 
-module.exports = { chaveLimiteApp, ehChaveAnonima, PREFIXO_ANONIMO };
+module.exports = { chaveLimiteApp, ehChaveAnonima, normalizarIpParaChave, PREFIXO_ANONIMO };
