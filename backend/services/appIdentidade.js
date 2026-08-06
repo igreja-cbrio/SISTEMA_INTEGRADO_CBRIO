@@ -276,6 +276,23 @@ async function confirmarCodigo({ verificacaoId, codigo, authUserId, email }) {
   await supabase.from('app_verificacoes')
     .update({ consumido_em: new Date().toISOString() }).eq('id', v.id);
   const { fusao } = await vincularProfile({ authUserId, email, membroId: v.membro_id });
+
+  // ⚠️⚠️ CARIMBA A CONFIRMAÇÃO TAMBÉM AQUI (conserto de 06/08 · o Marcos ficou
+  // TRANCADO FORA do app por causa disto). Quando liguei o gate em 05/08, só o
+  // FORMULÁRIO marcava `app_ficha_confirmada_em` — então quem provava identidade
+  // pelo caminho rápido (CPF → código no e-mail) continuava com a marca nula,
+  // `completo` seguia false e o portão devolvia a pessoa pra tela de cadastro:
+  // **beco sem saída por construção**.
+  // E é legítimo marcar aqui: ler o código enviado ao e-mail DO CADASTRO é prova
+  // de POSSE — mais forte que digitar um formulário, que qualquer um digita.
+  // ⚠️ Isto NÃO libera acesso sozinho: `completo` continua exigindo a ficha
+  // fechada (telefone, nascimento, CPF, sexo). Quem prova identidade mas tem
+  // cadastro incompleto vai pro formulário — agora já com os campos preenchidos,
+  // porque a identidade deixou de ser palpite.
+  const { error: eMarca } = await supabase.from('profiles')
+    .update({ app_ficha_confirmada_em: new Date().toISOString() })
+    .eq('id', authUserId);
+  if (eMarca) console.warn('[appIdentidade] marcar app_ficha_confirmada_em (cpf):', eMarca.message);
   // O e-mail da conta do app acumula como contato secundário (é por ele que a
   // próxima porta vai reencontrar a pessoa). Assinatura POSICIONAL
   // (membroId, {telefone,email}, fonte) e não-async — não dá pra await.

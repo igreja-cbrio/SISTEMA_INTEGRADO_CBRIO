@@ -4177,6 +4177,46 @@ bloqueia o CPF quando o servidor diz que sim. Falha de rede mantém o default
 **true (fail-closed)**: sem isso, ficar offline viraria porta pra entrar sem
 cadastro. É a mesma lei do resto — quem define o que é válido é o backend.
 
+## 🔴 INCIDENTE · o portão do app trancou TODO MUNDO pra fora (2026-08-06)
+
+O Marcos tentou entrar e não conseguiu: *"coloquei o CPF, recebi o e-mail de
+confirmação, mas o app não entrou e voltou na primeira página"*. **O app ficou
+inutilizável pra todas as contas** entre a aplicação da migration
+`20260805150000` e este conserto. Causa: **duas falhas minhas somadas**, e
+nenhuma delas apareceu antes porque **ninguém tinha concluído o cadastro pelo app
+até hoje** (`mem_identidade_observacoes` com origem `app_onboarding` = **0**).
+
+**Falha 1 · o caminho rápido não carimbava a confirmação.** Ao ligar o gate em
+05/08, só o FORMULÁRIO marcava `app_ficha_confirmada_em`. Quem provava identidade
+por CPF → código no e-mail ficava com a marca nula, `completo` seguia false e o
+portão devolvia pra tela de cadastro. **Beco sem saída por construção.**
+⇒ `confirmarCodigo` passa a carimbar. É legítimo: **ler o código enviado ao
+e-mail DO CADASTRO é prova de POSSE** — mais forte que digitar um formulário, que
+qualquer um digita. Não libera sozinho: `completo` continua exigindo a ficha
+fechada; quem prova identidade com cadastro incompleto vai ao formulário, agora
+**com os campos preenchidos** (a identidade deixou de ser palpite).
+
+**Falha 2 · o portão perguntava ao servidor UMA vez e nunca mais.** `CadastroGate`
+guardava `incompleto` da montagem; ao concluir, a tela navegava pra Home, o efeito
+de rota via o valor velho e **devolvia pra tela de cadastro**. Laço infinito, por
+QUALQUER caminho (formulário inclusive).
+⇒ A tela chama `revalidarCadastro()` antes de navegar; o portão repergunta e só
+então libera. ⚠️ A trava é um **ref** (`liberado`), não estado: `router.replace`
+roda logo após o `setIncompleto(false)` e o commit do React pode não ter
+acontecido — o ref fecha a janela de corrida.
+
+### Lições (as duas valem além deste caso)
+
+1. ⚠️⚠️ **Portão que decide com estado LIDO UMA VEZ vira armadilha quando a
+   condição muda.** Qualquer gate assim precisa de um caminho explícito de
+   revalidação — senão "resolver o problema" não tira a pessoa do bloqueio.
+2. ⚠️⚠️ **Ligar uma exigência exige cobrir TODOS os caminhos que a satisfazem.**
+   Eu liguei o gate cobrindo só um dos dois caminhos de conclusão. Régua: ao criar
+   uma condição de acesso, listar quem pode satisfazê-la e conferir um a um.
+3. **"Ninguém nunca fez isso" é sinal de alerta, não de segurança**: o zero em
+   `app_onboarding` estava na minha frente desde 05/08 e eu o li como "recurso
+   novo", quando era "caminho nunca exercitado".
+
 ## ⚠️⚠️ LEI · o LOGIN não liga ninguém a cadastro (2026-08-06 · migration `20260806120000`)
 
 Fecha o desenho que o Marcos pediu em duas etapas. Palavras dele: *"sobre o
