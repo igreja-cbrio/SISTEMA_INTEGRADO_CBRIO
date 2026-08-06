@@ -292,6 +292,21 @@ export const propostas = {
   consolidarCiclo: (cicloId) => post(`/propostas/config/ciclos/${cicloId}/consolidar`, {}),
 };
 
+// Módulo Censo · plataforma de pesquisas (censo demográfico, pulso, evento).
+// F0: CRUD do questionário. A coleta pública e os dashboards vêm nas fases
+// seguintes (publicCenso / dashboard).
+export const censo = {
+  aux: () => get('/censo/aux'),
+  // Vem da view vw_cen_pesquisa_stats: já traz iniciadas/concluídas/taxa.
+  pesquisas: () => get('/censo/pesquisas'),
+  pesquisa: (id) => get(`/censo/pesquisas/${id}`),
+  criar: (data) => post('/censo/pesquisas', data),
+  atualizar: (id, data) => put(`/censo/pesquisas/${id}`, data),
+  status: (id, status) => post(`/censo/pesquisas/${id}/status`, { status }),
+  duplicar: (id, data) => post(`/censo/pesquisas/${id}/duplicar`, data || {}),
+  remover: (id) => del(`/censo/pesquisas/${id}`),
+};
+
 export const projects = {
   categories: () => get('/projects/categories'),
   dashboard: () => get('/projects/dashboard'),

@@ -40,6 +40,10 @@ const ROUTE_MODULE_MAP = {
   'next-batismo': ['next-batismo'],
   'voluntariado': ['voluntariado'],
   'membresia':    ['membresia'],
+  // Censo/pesquisas. Nível 1 = agregado; 2 = resposta nominal (mesma régua da
+  // membresia). Sem esta entrada, moduleNames viria vazio e o guard cairia no
+  // nível padrão do cargo — liberando o módulo pra quem não deveria ver.
+  'censo':        ['censo'],
   // Leitura de dados de PESSOA (nome/CPF/telefone) é legítima em vários módulos
   // ministeriais que trabalham com gente. Quem tem QUALQUER um destes em leitura
   // passa; quem não tem (ex.: conta só de logística/financeiro/produção/marketing,
