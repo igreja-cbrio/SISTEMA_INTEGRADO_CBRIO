@@ -466,6 +466,38 @@ async function tocarReconciliacao(cobrancaId) {
   if (error) console.error('[pagamentos] tocar reconciliação:', error.message);
 }
 
+/**
+ * Guarda o último erro da cobrança sem tocar no status. Usado quando o provedor
+ * recusou (cartão negado, por exemplo): quem investiga depois precisa do motivo,
+ * e mexer no status faria uma recusa parecer fim de linha — `falhou` é terminal
+ * e a pessoa não poderia nem tentar outro cartão.
+ */
+async function registrarErro(cobrancaId, mensagem) {
+  const { error } = await supabase.from('pag_cobrancas')
+    .update({ ultimo_erro: String(mensagem || '').slice(0, 500) })
+    .eq('id', cobrancaId);
+  if (error) throw error;
+  return { ok: true };
+}
+
+/**
+ * Campos informativos que não são estado nem dinheiro (bandeira e últimos 4 do
+ * cartão). ⚠️ Whitelist fechada de propósito: é a barreira que impede um dia
+ * alguém passar PAN, CVV ou validade por aqui (lei nº 4).
+ */
+const EXTRAS_PERMITIDOS = new Set(['cartao_brand', 'cartao_last4', 'parcelas_total']);
+
+async function aplicarExtras(cobrancaId, extras = {}) {
+  const patch = {};
+  for (const [k, v] of Object.entries(extras)) {
+    if (EXTRAS_PERMITIDOS.has(k) && v !== undefined && v !== null) patch[k] = v;
+  }
+  if (!Object.keys(patch).length) return { ok: true, semMudanca: true };
+  const { error } = await supabase.from('pag_cobrancas').update(patch).eq('id', cobrancaId);
+  if (error) throw error;
+  return { ok: true };
+}
+
 module.exports = {
   SELECT_COBRANCA,
   porId, porToken, porReferencia, porProviderId,
@@ -477,4 +509,7 @@ module.exports = {
   listarParaExpirar,
   listarParaReconciliar,
   tocarReconciliacao,
+  registrarErro,
+  aplicarExtras,
+  EXTRAS_PERMITIDOS,
 };

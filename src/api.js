@@ -478,6 +478,17 @@ export const eventoPublico = {
   // provedor o corpo traz `pagamento` com o estado atual, pra tela não regredir.
   // `parcelas` só faz efeito no cartão, e o SERVIDOR valida contra o teto do
   // evento — o número da tela é pedido, não decisão.
+  // Cobra o cartão SEM sair da nossa página: o corpo é o formData do Brick, e o
+  // que viaja é TOKEN, nunca o número do cartão. O valor é ignorado no servidor
+  // (quem manda é a cobrança) — ver backend/services/pagamentos/index.js.
+  // 402 = emissor recusou; a cobrança segue viva pra tentar outro cartão ou Pix.
+  pagamentoCartao: (token, formData) => fetch(`${API}/public/evento/pagamento/${encodeURIComponent(token)}/cartao`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(formData),
+  }).then(async r => {
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { const e = new Error(j.error || 'Erro'); e.recusado = !!j.recusado; e.pagamento = j.pagamento; throw e; }
+    return j;
+  }),
   pagamentoMetodo: (token, metodo, parcelas = 1) => fetch(`${API}/public/evento/pagamento/${encodeURIComponent(token)}/metodo`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ metodo, parcelas }),
   }).then(async r => {

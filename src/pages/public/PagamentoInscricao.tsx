@@ -18,6 +18,7 @@ import { useParams, Link } from 'react-router-dom';
 import QRCode from 'qrcode';
 import confetti from 'canvas-confetti';
 import { eventoPublico } from '../../api';
+import CartaoBrick from '../../components/pagamento/CartaoBrick';
 import { usePublicTheme, PublicThemeToggle } from './publicTheme';
 
 interface Pagamento {
@@ -30,6 +31,8 @@ interface Pagamento {
   metodos: string[] | null;
   parcelas_max: number | null;
   checkout_url: string | null;
+  cartao_na_pagina?: boolean;
+  cartao_public_key?: string | null;
   pix_payload: string | null;
   boleto_linha_digitavel: string | null;
   boleto_url: string | null;
@@ -683,6 +686,36 @@ export default function PagamentoInscricao() {
                         )}
                       </div>
                     )}
+                    {/* ⚠️ Com o Brick, quem escolhe as parcelas é o próprio
+                        formulário do provedor (ele mostra os juros de cada
+                        opção). Manter TAMBÉM o nosso seletor daria duas
+                        verdades na mesma tela — por isso o bloco acima só
+                        aparece quando o Brick NÃO está no ar. */}
+                    {pag.cartao_na_pagina && pag.cartao_public_key ? (
+                      <CartaoBrick
+                        publicKey={pag.cartao_public_key}
+                        valorCentavos={pag.valor_centavos}
+                        parcelasMax={pag.parcelas_max}
+                        checkoutUrl={pag.checkout_url}
+                        corTexto={C.text2}
+                        corTextoFraco={C.textDim}
+                        onPagar={async (formData) => {
+                          // ⚠️ LANÇAR em erro é contrato do Brick: é o que faz
+                          // ele sair do estado "processando" e deixar a pessoa
+                          // corrigir. Resolver sem pagar deixaria a tela
+                          // parecendo que deu certo.
+                          try {
+                            const r = await eventoPublico.pagamentoCartao(token!, formData);
+                            setPag(r);
+                            if (!r?.pago) throw new Error('Pagamento não confirmado.');
+                          } catch (e: any) {
+                            if (e?.pagamento) setPag(e.pagamento);
+                            throw e;
+                          }
+                        }}
+                      />
+                    ) : (
+                      <>
                     <p style={{ fontSize: 13, color: C.text2, marginTop: 14 }}>
                       Você digita os dados do cartão no ambiente seguro do provedor de pagamento.
                     </p>
@@ -699,6 +732,8 @@ export default function PagamentoInscricao() {
                           Pagar com cartão
                         </button>
                       </a>
+                    )}
+                      </>
                     )}
                   </>
                 )}

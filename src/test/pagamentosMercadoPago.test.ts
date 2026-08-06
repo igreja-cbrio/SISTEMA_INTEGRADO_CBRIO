@@ -177,10 +177,15 @@ describe('mercadopago · tradução de status', () => {
       .toBe('aguardando_pagamento');
   });
 
-  it('Payments: approved é PAGO e rejected é FALHOU', () => {
+  // ⚠️ CORRIGIDO EM 06/08: este teste fixava `rejected → 'falhou'`. `falhou` é
+  // terminal e absorvente, então aplicá-lo numa recusa travava a cobrança: a
+  // pessoa não podia tentar outro cartão nem o Pix, e um pagamento posterior
+  // aprovado tinha a transição RECUSADA pelo trigger — dinheiro recebido com
+  // inscrição não confirmada. Recusa agora é `null` (não mexe no status).
+  it('Payments: approved é PAGO e rejected NÃO vira status terminal', () => {
     expect(statusCanonico('approved', 'accredited', STATUS_POR_PAYMENT)).toBe('pago');
     expect(statusCanonico('rejected', 'cc_rejected_bad_filled_security_code', STATUS_POR_PAYMENT))
-      .toBe('falhou');
+      .toBeNull();
   });
 
   it('partially_refunded vence o status cru nas DUAS APIs', () => {
@@ -361,5 +366,110 @@ describe('mercadopago · webhook precisa buscar o objeto', () => {
     await expect(
       mp.normalizarEvento({ type: 'payment', live_mode: true, data: { id: '1' } }, {}),
     ).rejects.toThrow(/dinheiro real/i);
+  });
+});
+
+// ── Cartão NA PRÓPRIA PÁGINA (Card Payment Brick) ──────────────────────────
+//
+// O `formData` do Brick vem do NAVEGADOR da pessoa. O que estes testes protegem,
+// em ordem de dano:
+//   1. o VALOR ser o da cobrança e nunca o que o formulário mandou (senão
+//      qualquer um escolhe quanto pagar pela inscrição);
+//   2. nada de PAN/CVV/validade sair daqui — só token, bandeira e últimos 4;
+//   3. recusa do emissor NÃO virar status terminal (a pessoa precisa poder
+//      tentar outro cartão);
+//   4. as parcelas gravadas serem as que o PSP CONFIRMOU.
+describe('mercadopago · pagarComToken (cartão sem redirecionamento)', () => {
+  const cobranca = {
+    id: 'cob-1', valor_centavos: 90000, descricao: 'Inscrição · Retiro',
+    referencia: 'inscricao:abc', pagador_email: 'pessoa@exemplo.com',
+  };
+
+  function stubFetch(resposta: any, capturado: { corpo?: any; headers?: any } = {}) {
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, opts: any) => {
+      capturado.corpo = JSON.parse(opts.body);
+      capturado.headers = opts.headers;
+      return { ok: true, status: 200, text: async () => JSON.stringify(resposta) } as any;
+    }));
+  }
+
+  const aprovado = {
+    id: 111, status: 'approved', live_mode: false,
+    transaction_amount: 900, installments: 3,
+    payment_method_id: 'master', payment_type_id: 'credit_card',
+    transaction_details: { total_paid_amount: 900, net_received_amount: 850.5 },
+    fee_details: [{ amount: 49.5 }],
+    money_release_date: '2026-09-05T00:00:00.000-03:00',
+    card: { brand: 'master', last_four_digits: '1234' },
+    external_reference: 'inscricao:abc',
+  };
+
+  it('⚠️ manda o valor DA COBRANÇA, ignorando o que o formulário informou', async () => {
+    const cap: any = {};
+    stubFetch(aprovado, cap);
+    // O cliente tentou pagar R$ 1,00 por uma inscrição de R$ 900,00.
+    await mp.pagarComToken(cobranca, { token: 'tok_x', installments: 3, transaction_amount: 1 });
+    // `paraReais` devolve string formatada (convenção deste adapter).
+    expect(cap.corpo.transaction_amount).toBe('900.00');
+  });
+
+  it('exige token e recusa sem ele', async () => {
+    await expect(mp.pagarComToken(cobranca, {})).rejects.toThrow(/token/i);
+  });
+
+  it('parcela inválida vira 1x em vez de ir suja pro provedor', async () => {
+    const cap: any = {};
+    stubFetch(aprovado, cap);
+    await mp.pagarComToken(cobranca, { token: 'tok_x', installments: 0 });
+    expect(cap.corpo.installments).toBe(1);
+  });
+
+  it('usa chave de idempotência estável por tentativa', async () => {
+    const cap: any = {};
+    stubFetch(aprovado, cap);
+    await mp.pagarComToken(cobranca, { token: 'tok_abcdefghijklmno' });
+    expect(cap.headers['X-Idempotency-Key']).toBe('cob-1:cartao:tok_abcdefgh');
+  });
+
+  it('devolve taxa, líquido e data de liberação (o que a Orders API não dá)', async () => {
+    stubFetch(aprovado);
+    const r = await mp.pagarComToken(cobranca, { token: 'tok_x', installments: 3 });
+    expect(r.valor_pago_centavos).toBe(90000);
+    expect(r.liquido_centavos).toBe(85050);
+    expect(r.taxa_centavos).toBe(4950);
+    expect(r.repassado_em).toBe('2026-09-05T00:00:00.000-03:00');
+    expect(r.parcelas).toBe(3);   // confirmado pelo PSP, não o que foi pedido
+  });
+
+  it('⚠️ não devolve NADA de cartão além de bandeira e últimos 4', async () => {
+    stubFetch(aprovado);
+    const r = await mp.pagarComToken(cobranca, { token: 'tok_x' });
+    expect(r.cartao_brand).toBe('master');
+    expect(r.cartao_last4).toBe('1234');
+    const texto = JSON.stringify(r);
+    for (const proibido of ['number', 'security_code', 'cvv', 'expiration', 'cardholder']) {
+      expect(texto.toLowerCase()).not.toContain(proibido);
+    }
+  });
+
+  it('⚠️ recusa do emissor vem como `recusado`, sem status terminal', async () => {
+    stubFetch({ id: 9, status: 'rejected', status_detail: 'cc_rejected_insufficient_amount', live_mode: false, transaction_amount: 900 });
+    const r = await mp.pagarComToken(cobranca, { token: 'tok_x' });
+    expect(r.recusado).toBe(true);
+    expect(r.motivo_recusa).toBe('cc_rejected_insufficient_amount');
+    // `falhou` é TERMINAL: se aparecesse aqui, a pessoa não poderia nem tentar
+    // outro cartão nem cair no Pix.
+    expect(r.status).toBeNull();
+  });
+
+  it('a guarda de live_mode vale também neste caminho', async () => {
+    process.env.MERCADOPAGO_AMBIENTE = 'teste';
+    stubFetch({ ...aprovado, live_mode: true });
+    await expect(mp.pagarComToken(cobranca, { token: 'tok_x' })).rejects.toThrow(/live_mode/i);
+  });
+
+  it('declara que sabe tokenizar (é o que a tela lê pra não redirecionar)', () => {
+    expect(mp.capacidades.tokenizacao).toBe(true);
+    expect(typeof mp.pagarComToken).toBe('function');
   });
 });
