@@ -6511,6 +6511,139 @@ cargos no nível 3** (= 89 usuários com INSERT/UPDATE direto em `inscricoes`,
 um cargo chamado **"Acesso negado"** — o seed subiu todo mundo pra 3. A view
 unificada está revogada de `authenticated`; as tabelas-base não.
 
+## ⚠️⚠️ AUDITORIA DO APP · ONDA 0 (2026-08-06 · migration `20260806140000`)
+
+Auditoria de 4 dimensões pedida pelo Marcos ("procure erros de versão,
+integração, código e escalabilidade — o app aguenta 4.000 downloads?"). 21
+agentes, 85 achados brutos, **12 confirmados sob contestação adversarial**.
+Relatório navegável em `~/Downloads/auditoria-app-cbrio.html`. O plano ficou em
+**6 ondas agrupadas por VEÍCULO de entrega** (servidor chega na hora, inclusive
+em bundle velho · OTA depende de 2 aberturas · loja depende da Apple) — esta
+seção é a **Onda 0**, que é inteira servidor + 1 migration.
+
+**A resposta à pergunta dele: não aguentava — e o gargalo não era o Supabase.**
+Cold start do app = ~13 chamadas; 4.000 pessoas em 30 min = ~30 RPS sustentados
+(picos 90-150), que o banco absorve. Quem quebrava primeiro era coisa nossa.
+
+### 1 · ⚠️⚠️ LEI · o limite do `/api/app` é por USUÁRIO, não por IP
+
+`/api/app` era a única superfície de multidão AINDA no teto global por IP
+(500/15min): a lista de `skip()` do `server.js` já isentava NPS, grupos, evento,
+membresia, generosidade, webhook de pagamento e totem — e o app tinha ficado
+fora. Somava `limiterNormal` 100/15min compartilhado por ~45 rotas e
+`limiterStrict` 10/15min nas portas de inscrição, **os dois por IP**. No WiFi da
+igreja todo celular sai por 1 IP e UMA abertura gasta 10-30 requisições ⇒ 5 a 10
+aparelhos esgotavam a cota de TODOS.
+
+⚠️ **E o 429 não parecia limite de rede:** o app traduz a falha em resposta de
+NEGÓCIO — `lib/temporadaGrupos.ts` → `aberta:false` ("inscrições fechadas") e
+`lib/useAdminGrupo.ts` → `isAdmin:false` (líder sem botão de gerenciar). O teto
+estourado se disfarçava de regra da igreja.
+
+- **`backend/utils/appRateLimit.js`** = régua PURA da chave (em `utils/` pra
+  entrar no gate): `u:<id>` do `req.user` → senão `t:<hash do Bearer>` → senão
+  `ip:<...>`. O nível do token existe porque em `/membro/vincular` e
+  `/inscricoes` o limiter vem ANTES do `authApp` na cadeia; sem ele, essas duas
+  continuariam por IP (o furo, só que em 2 rotas). Hash pra não usar JWT como
+  chave em memória, e **mínimo de 40 chars** — senão `Bearer x` de lixo viraria
+  bucket próprio e qualquer cliente escaparia do teto anônimo.
+- Tetos: **600/15min por usuário** (normal) · **30** (strict) · anônimo tem teto
+  PRÓPRIO e mais alto (**10.000** normal · 120 strict), porque ali continua sendo
+  1 IP pra congregação — é a calibragem já validada em multidão real do NPS e da
+  membresia. Envs: `APP_RATE_LIMIT_MAX`, `APP_RATE_LIMIT_IP_MAX`,
+  `APP_STRICT_RATE_LIMIT_MAX`, `APP_STRICT_RATE_LIMIT_IP_MAX`.
+- ⚠️ `ipKeyGenerator` do express-rate-limit 8 é obrigatório no ramo de IP
+  (normaliza sub-rede IPv6): sem ele cada endereço IPv6 do mesmo cliente viraria
+  bucket novo e o teto anônimo não valeria nada.
+- ⚠️ **Quem protege as sondas de identidade não é o teto por IP** — é o serviço
+  (`appIdentidade`: 5 envios por telefone/dia, 6 tentativas de código, TTL 10min,
+  resposta MASCARADA). Isso não mudou.
+- ⚠️ **LIMITAÇÃO CONHECIDA**: MemoryStore por instância no Vercel ⇒ teto efetivo
+  = `max × instâncias`, zerando a cada cold start. Store compartilhado (ou WAF) é
+  onda de escala; o desenho por usuário já tira o dano do NAT, que era o real.
+- Testes: `src/test/appRateLimit.test.ts` (10 casos) **mutation-testado** —
+  voltar a contar por IP deixa 2 vermelhos. Smoke funcional rodado: 2 usuários no
+  MESMO IP com cotas separadas, anônimo pagando o teto de IP, Bearer isolado.
+
+### 2 · Fale Conosco do app era invisível no ERP (estrago ATIVO)
+
+O app grava `criarInscricao('contato', …)` em `app_inscricoes` e promete "nossa
+equipe vai te responder em breve". A **única** fila do ERP que lê essa tabela é
+`GET /cuidados/pedidos-app`, cujo `TIPOS_PEDIDO_APP` era
+`['aconselhamento','oracao','sos']` — `contato` ficava fora. Medido: **2
+mensagens reais (02 e 03/08) pendentes até hoje**, sem tela pra ler, responder ou
+marcar como tratada.
+
+- `contato` entrou em `TIPOS_PEDIDO_APP` (a mesma constante gateia o GET e o
+  PATCH, então listar e tratar vieram juntos).
+- A notificação ia pro módulo **`membresia`** com link `/ministerial/membresia`,
+  tela que NÃO lista `app_inscricoes` — a pessoa clicava e não achava a mensagem.
+  Agora vai pro módulo **`cuidados`** com link `?tab=acomp` (a fila exige
+  `cuidados >= 1`, então o destinatário do aviso tem que ser de lá). Se a
+  secretaria precisar receber, o caminho é **regra de notificação** do módulo
+  cuidados em /admin — não um 2º destino no código.
+- ⚠️ `contato` **NÃO é tipo de `cui_pedidos`** (CHECK de lá:
+  aconselhamento|capelania|oracao|sos|visita|outro). Por isso o front ganhou
+  `TIPOS_PEDIDO_MANUAL` pro select de "Registrar pedido" e `PEDIDO_TIPO_META`
+  (exibição + filtro) ficou MAIOR que ele: oferecer "Fale Conosco" no cadastro
+  manual faria o insert violar o CHECK.
+- `TIPO_ATEND_SUGERIDO.contato = 'outro'`, não `aconselhamento`: Fale Conosco
+  pode ser dúvida ou elogio, e a maioria se resolve respondendo pelo Conversas e
+  marcando tratada — sem criar atendimento pastoral que não aconteceu.
+
+### 3 · O broadcast de push parava de entregar em 1.000 instalações
+
+`app_push_tokens` era lido com `select` cru (`inscricoes.js` broadcast de evento
+publicado) e com `.in()` da lista inteira (`services/appPush.js`). Duas
+armadilhas silenciosas: o PostgREST **capa em 1000 linhas sem erro** (a partir de
+~1.000 instalações, 3/4 da igreja deixaria de receber e nenhum log acusaria) e
+`.in()` gigante estoura a URL, derrubando a query INTEIRA. Hoje são 29 tokens ⇒
+**gatilho armado, não estrago consumado**. Corrigido com o `fetchAllRows` que já
+existia (`utils/pagination.js`) + lotes de 200 no `.in()` (`membrosParaUsuarios`
+e `pushExpoParaUsers`). Régua: **leitura de tabela que cresce com o uso vai
+paginada, e `.in()` sempre em lotes ≤ 200.**
+
+### 4 · ⚠️⚠️ A tela de perfil do app parou de VINCULAR pessoa (migration `20260806140000`)
+
+Achado **crítico**, e o único em que alguém via dado de terceiro.
+`app_salvar_membro` (SECURITY DEFINER, EXECUTE pra `authenticated`, chamada por
+`app/(app)/perfil.tsx:184`) procurava `mem_membros` por **CPF ou telefone ou
+`lower(btrim(nome))` EXATO** e vinculava a conta ao primeiro que achasse, **sem
+prova de posse**. Como `profiles.membro_id` alimenta `current_user_membro_id()`,
+quem digitasse o nome de um homônimo passava a ver grupo, comprovante de
+contribuições e **filhos no Kids** daquela pessoa. É o MESMO furo que a
+`20260806120000` fechou na porta da frente — esta lateral ficou aberta.
+
+- **Estreitada, NÃO dropada**, e a ordem importa: `perfil.tsx` ainda a chama, e
+  dropar/revogar antes do OTA do app deixaria a tela de perfil sem salvar. Ela
+  perdeu os ramos de BUSCA e de CRIAÇÃO; segue salvando a ficha de quem já está
+  vinculado. Sem `membro_id`, devolve `null` (o app trata: `if (vId) …`) e os
+  campos de `profiles` seguem salvando, porque isso o cliente faz antes da RPC.
+- **CPF só PREENCHE campo vazio e só com DV válido** (`fn_cpf_dv_valido`) — a
+  versão antiga fazia `cpf = coalesce(v_cpf, cpf)` **sem DV**, e CPF torto em
+  `mem_membros` envenena o matcher de TODAS as portas.
+- ⚠️ **Deixou de tocar `profiles`**: a versão antiga fazia
+  `set is_membro_only = true` pra QUALQUER chamador — inclusive **staff**, que
+  saía marcado como app-only por ter salvo o perfil no celular.
+- ⚠️ A migration tem **guarda de DRIFT**: aborta se houver mais de uma
+  `app_salvar_membro` ou se a assinatura viva for diferente da esperada —
+  `CREATE OR REPLACE` com assinatura diferente **cria overload** e deixaria a
+  versão perigosa alcançável (lição do `feedback_pg_function_overload_default`).
+- ⚠️ O arquivo `supabase/app_salvar_membro.sql` do **repo do app** foi
+  sincronizado e marcado como cópia de leitura: arquivo desatualizado ali é o
+  mecanismo exato que deixou o gatilho de `auth.users` 2 meses fora do git.
+- **Quando o app estiver usando `PUT /app/membro/perfil` (onda seguinte, por
+  OTA), a função pode ser DROPADA.**
+
+⚠️ **Fora do ERP, na mesma onda** (repo `Aplicativo-CBRio`): a Edge Function
+`notify-lembretes` lia `next_eventos`/`next_inscricoes` (camada aposentada no
+cutover de 17/06, data máxima 21/06) ⇒ **nenhum lembrete de véspera do NEXT saiu
+desde 13/06**, com o cron vivo e 46 matriculados em 2 turmas abertas. O conserto
+de #2288 cobriu as ROTAS e não a função, que vive no outro repo. Reescrita pra
+turma → encontro → matrícula (espelho de `nextTurmasAbertas()`), dedup por
+encontro. **Precisa de `supabase functions deploy notify-lembretes` — não sai
+por OTA nem por merge daqui.**
+
 ## ⚠️ DECISÃO · o APP é o canal oficial do devocional (2026-08-06)
 
 Palavras do Marcos: *"acho que podemos usar agora o canal oficial da devocional

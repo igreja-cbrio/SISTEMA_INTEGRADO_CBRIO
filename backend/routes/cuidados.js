@@ -389,10 +389,19 @@ router.delete('/acompanhamentos/:id', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────
-// Pedidos de Cuidados vindos do app (aconselhamento / oração / SOS)
+// Pedidos de Cuidados vindos do app (aconselhamento / oração / SOS / contato)
 // Fila pra equipe pastoral · alimentada por POST /api/app/inscricoes.
 // ─────────────────────────────────────────────────────────────
-const TIPOS_PEDIDO_APP = ['aconselhamento', 'oracao', 'sos'];
+// ⚠️ `contato` (Fale Conosco do app) entrou em 06/08/2026 por auditoria: o app
+// gravava a mensagem em `app_inscricoes` e prometia "nossa equipe vai te
+// responder em breve", mas esta é a ÚNICA fila que lê essa tabela — e o tipo
+// ficava fora dela. Medido: 2 mensagens reais (02 e 03/08) paradas sem nenhuma
+// tela onde ler, responder ou marcar como tratada.
+// ⚠️ `contato` NÃO é tipo de `cui_pedidos` (o CHECK de lá é
+// aconselhamento|capelania|oracao|sos|visita|outro): ele existe só como tipo de
+// `app_inscricoes`. Então aparece na fila e no filtro, mas NUNCA na lista de
+// "registrar pedido manual" — ali o insert violaria o CHECK.
+const TIPOS_PEDIDO_APP = ['aconselhamento', 'oracao', 'sos', 'contato'];
 const TRATAMENTO_STATUS = ['pendente', 'em_andamento', 'concluido'];
 
 function extrairMensagemPedido(d) {

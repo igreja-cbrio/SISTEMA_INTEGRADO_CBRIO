@@ -50,8 +50,55 @@ async function tryAuth(req, _res, next) {
   next();
 }
 
-const limiterStrict = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false });
-const limiterNormal = rateLimit({ windowMs: 15 * 60 * 1000, max: 100, standardHeaders: true, legacyHeaders: false });
+// ⚠️⚠️ O LIMITE DO APP É POR USUÁRIO, NÃO POR IP (auditoria 06/08/2026).
+// A régua da CHAVE vive em `utils/appRateLimit.js` (pura, no gate de deploy) —
+// o porquê de cada nível está documentado lá, junto do sintoma que isto
+// conserta. Aqui ficam só os TETOS e a montagem do middleware.
+//
+// ⚠️ LIMITAÇÃO CONHECIDA (não era o que quebrava, mas está medida): o store é o
+// MemoryStore, e no Vercel cada instância tem o próprio contador — o teto
+// efetivo é `max × nº de instâncias` e zera a cada cold start. Store
+// compartilhado (ou regra na borda do Vercel) é item da onda de escala; o
+// desenho por usuário já tira o dano do NAT, que era o dano real.
+const { ipKeyGenerator } = require('express-rate-limit');
+const { chaveLimiteApp, ehChaveAnonima } = require('../utils/appRateLimit');
+
+function limiterApp({ max, maxAnonimo, nome }) {
+  // `ipKeyGenerator` normaliza sub-rede IPv6 (exigência do express-rate-limit 8
+  // pra keyGenerator próprio; sem ele, cada endereço IPv6 de um mesmo cliente
+  // viraria bucket novo e o teto por IP não valeria nada).
+  const chave = (req) => chaveLimiteApp(req, (ip) => ipKeyGenerator(ip));
+  return rateLimit({
+    windowMs: 15 * 60 * 1000,
+    // Anônimo paga o teto de IP, que é mais alto: ali é 1 IP pra congregação.
+    limit: (req) => (ehChaveAnonima(chave(req)) ? maxAnonimo : max),
+    keyGenerator: (req) => `${nome}:${chave(req)}`,
+    skip: () => process.env.NODE_ENV !== 'production',
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Muitas requisições. Tente novamente em alguns minutos.' },
+  });
+}
+
+// ⚠️ `limiterStrict` cobre as sondas de identidade (CPF → código) e as portas
+// de inscrição. Continua estreito, mas por PESSOA: quem defende essas rotas de
+// enumeração NÃO é o teto por IP — é o serviço (5 envios por telefone/dia, 6
+// tentativas de código, TTL de 10 min e resposta MASCARADA), que não mudou.
+const limiterStrict = limiterApp({
+  max: parseInt(process.env.APP_STRICT_RATE_LIMIT_MAX) || 30,
+  maxAnonimo: parseInt(process.env.APP_STRICT_RATE_LIMIT_IP_MAX) || 120,
+  nome: 'strict',
+});
+// ⚠️ O teto ANÔNIMO de `limiterNormal` segue a calibragem da casa pra porta que
+// a igreja inteira usa pelo mesmo IP (10.000/15min · validada em multidão real
+// no NPS e nos grupos · `PUBLIC_MEMBRESIA_RATE_LIMIT_MAX`). Aqui caem as leituras
+// públicas do app (`/anuncios`, `/grupos`), que TODO celular no WiFi do culto
+// dispara: número menor volta a ser o mesmo estrago por outro caminho.
+const limiterNormal = limiterApp({
+  max: parseInt(process.env.APP_RATE_LIMIT_MAX) || 600,
+  maxAnonimo: parseInt(process.env.APP_RATE_LIMIT_IP_MAX) || 10000,
+  nome: 'normal',
+});
 
 // ⚠️⚠️ RESPOSTA DO APP NUNCA É CACHEÁVEL (incidente 2026-08-05 · não regredir)
 //
@@ -654,18 +701,26 @@ router.post('/inscricoes', limiterStrict, tryAuth, async (req, res) => {
       }).catch(e => console.warn('[APP] inscricoes · notificar:', e.message));
     }
 
-    // Fale Conosco: notifica a secretaria (cai no fallback admin/diretor
-    // se não houver regra de notificação configurada).
+    // Fale Conosco: avisa a equipe e aponta pra FILA onde a mensagem aparece.
+    // ⚠️ Corrigido em 06/08/2026 (auditoria): o aviso ia pro módulo `membresia`
+    // com link pra `/ministerial/membresia`, uma tela que NÃO lista
+    // `app_inscricoes` — a pessoa clicava e não achava a mensagem, que fica
+    // truncada em 180 chars aqui e em nenhum outro lugar. Agora vai pro módulo
+    // `cuidados` (o dono da única fila que lê essa tabela, e a permissão que a
+    // fila exige: cuidados >= 1) e aponta pra Caixa de entrada, onde dá pra
+    // ler inteira, responder pelo Conversas e marcar como tratada.
+    // ⚠️ Se a secretaria tiver que receber isto, o caminho é regra de
+    // notificação do módulo `cuidados` em /admin — não um 2º destino aqui.
     if (tipo === 'contato') {
       const nome = dados.nome || req.user?.email || 'Alguém';
       const msg = extrairMensagem(extras);
       const assunto = dados.assunto ? ` (${String(dados.assunto).slice(0, 40)})` : '';
       notificar({
-        modulo: 'membresia',
+        modulo: 'cuidados',
         tipo: 'app_contato',
         titulo: `Fale Conosco — ${nome}${assunto}`,
         mensagem: `${nome} mandou uma mensagem pelo app${msg ? `: "${String(msg).slice(0, 180)}"` : '.'}`,
-        link: '/ministerial/membresia',
+        link: '/ministerial/cuidados?tab=acomp',
         severidade: 'info',
         chaveDedup: `app_contato_${inserted.id}`,
       }).catch(e => console.warn('[APP] inscricoes · notificar contato:', e.message));
