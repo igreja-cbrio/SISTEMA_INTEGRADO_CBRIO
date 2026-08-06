@@ -6552,9 +6552,47 @@ estourado se disfarçava de regra da igreja.
   1 IP pra congregação — é a calibragem já validada em multidão real do NPS e da
   membresia. Envs: `APP_RATE_LIMIT_MAX`, `APP_RATE_LIMIT_IP_MAX`,
   `APP_STRICT_RATE_LIMIT_MAX`, `APP_STRICT_RATE_LIMIT_IP_MAX`.
-- ⚠️ `ipKeyGenerator` do express-rate-limit 8 é obrigatório no ramo de IP
-  (normaliza sub-rede IPv6): sem ele cada endereço IPv6 do mesmo cliente viraria
-  bucket novo e o teto anônimo não valeria nada.
+- ⚠️⚠️ **A normalização de IPv6 é NOSSA (`normalizarIpParaChave`, agrupa por /64)
+  e não pode usar o `ipKeyGenerator` do pacote** — ver o incidente abaixo.
+  Sem agrupar, trocar de endereço IPv6 dentro da própria casa daria bucket novo e
+  o teto anônimo não valeria nada.
+
+#### 🔴 INCIDENTE (mesmo dia, 15:38→16:0x) · `ipKeyGenerator is not a function`
+
+A 1ª versão importava `const { ipKeyGenerator } = require('express-rate-limit')`.
+Passou no gate inteiro, no `tsc`, no mutation test e num **smoke com express de
+verdade** — e **quebrou em produção**: 500 em `/api/app/anuncios` e
+`/api/app/grupos`, as duas rotas ANÔNIMAS (as únicas que chegam no ramo de IP).
+As autenticadas seguiram respondendo 401/200, então o estrago quase passou
+invisível.
+
+⚠️⚠️ **A CAUSA (medida, e não a que eu supus primeiro): `backend/` tem árvore de
+dependências PRÓPRIA em produção.** O `vercel.json` faz
+`installCommand: "npm install && cd backend && npm install"`, e
+`backend/package.json` pina **express-rate-limit `^7.4.0`** (lock **7.5.1**)
+enquanto a RAIZ tem **8.3.2** — e `ipKeyGenerator` só existe na 8.x. Como o
+`backend/node_modules` das worktrees costuma estar **vazio**, o Node sobe pra
+raiz e o teste local exercita **uma versão que produção nunca carrega**.
+
+⚠️ **RÉGUA QUE FICA (vale pra qualquer pacote): conferir a versão em
+`backend/package.json`, nunca na raiz, antes de usar API nova de dependência em
+`backend/`.** E, pra mudança de dependência que roda no servidor, o smoke tem que
+rodar **de dentro de `backend/` com `npm install` feito lá** — foi assim que a
+causa apareceu em 20 segundos depois de horas de hipótese errada.
+
+⚠️ O mesmo smoke na 7.5.1 pegou um **segundo** defeito que eu ia enviar:
+`validate: { keyGeneratorIpFallback: false }` só existe na 8.x e a 7.5.1 responde
+`ERR_ERL_UNKNOWN_VALIDATION` a cada construção do limiter — log poluído, efeito
+nenhum. Removido.
+
+⚠️ Guarda no gate (`appRateLimit.test.ts`): nenhum dos 2 arquivos pode
+desestruturar `require('express-rate-limit')` nem chamar `ipKeyGenerator(...)`
+(mutation-testado), e um teste afirma que **o backend declara o pacote por conta
+própria** — se alguém remover essa dependência e passar a depender da raiz, o
+teste falha e a pessoa lê o porquê aqui.
+⚠️ A guarda ignora COMENTÁRIOS antes de casar: a própria explicação do incidente
+cita o import errado como exemplo, e sem isso a documentação derrubava o gate
+(aconteceu).
 - ⚠️ **Quem protege as sondas de identidade não é o teto por IP** — é o serviço
   (`appIdentidade`: 5 envios por telefone/dia, 6 tentativas de código, TTL 10min,
   resposta MASCARADA). Isso não mudou.
