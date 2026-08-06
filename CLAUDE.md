@@ -4221,6 +4221,45 @@ Dois casos não-staff eram gente que logou com Gmail e caiu num cadastro do
   dizia que CPF e sexo **não** eram exigidos (estado anterior a 05/08) enquanto o
   código exigia os dois — comentário que mente engana a próxima sessão.
 
+## ⚠️⚠️ LEI · resposta de `/api/app` NUNCA é cacheável (2026-08-05 · PR #2313)
+
+Incidente relatado pelo Matheus: *"Mesmo preenchendo tudo certo volto pra essa
+tela e não consigo passar dela. Boto o cpf, recebo o código e volto pra ela."* A
+tela é a de completar cadastro. A Joana Botafogo tentou **3× em dois minutos**.
+Os dois com `profiles.membro_id` preenchido e a ficha COMPLETA no banco — ou
+seja, **o servidor respondia `completo: true` e a pessoa não passava**.
+
+**CAUSA: `res.json` do Express gera ETag e não manda `Cache-Control`.** O
+`fetch` do React Native usa o cache HTTP do sistema (NSURLSession no iOS, OkHttp
+no Android): guarda a resposta, revalida com `If-None-Match`, o Express responde
+**304 sem corpo**, e a camada nativa entrega ao JS **a resposta ANTERIOR** — a
+de antes de vincular, com `completo: false`. Medido nos runtime logs: **124 de
+251** respostas de `/api/app/*` em 6h eram 304, e a sequência do Matheus aparece
+literal (200 → 304 → confirma o código → 304).
+
+- **A correção vale pro ROUTER INTEIRO** (`router.use` no topo de `app.js`):
+  `Cache-Control: no-store` **+** `res.json` respondendo por
+  `res.end(JSON.stringify(body))`. Assim GET novo do app nasce sem cache sem
+  ninguém precisar lembrar.
+- ⚠️ **`no-store` SOZINHO não resolve**: o `req.fresh` do Express compara o
+  `If-None-Match` do REQUEST com o ETag da RESPOSTA e devolve 304 do mesmo
+  jeito. Quem mata o 304 é **não emitir validador** — `res.end` não gera ETag.
+- ⚠️ **Prova com `http.get` CRU, não `fetch`**: o `fetch` do Node (undici)
+  injeta `Cache-Control: no-cache`, o que faz `fresh()` dar false e **mascara o
+  304**. Minha 1ª tentativa de reproduzir falhou por isso. Antes → `304` corpo
+  vazio; depois → `200` com o estado atual, `etag: undefined`.
+- ⚠️ **Não "otimizar" devolvendo ETag em rota do app**: o corpo aqui é **estado
+  da PESSOA** (o que falta no cadastro, meus grupos, meu perfil, minhas
+  inscrições) e muda por ação dela na tela anterior — servir a versão anterior é
+  sempre errado. Cache condicional é pra conteúdo, não pra estado.
+- ⚠️ **Eram DUAS causas independentes** pro mesmo loop: esta (servidor) e a do
+  app (`CadastroGate` nunca limpava o estado local `incompleto`, então rebatia
+  mesmo depois de completar · PR #67 do Aplicativo-CBRio). Sem as duas, o loop
+  volta.
+- ⚠️ Descartado de propósito no cliente: `cache: "no-store"` no `apiGet` do app.
+  O `fetch` do React Native é o polyfill `whatwg-fetch` sobre `XMLHttpRequest` e
+  **ignora a opção `cache`** — seria decoração que se lê como proteção.
+
 ## ⚠️ GERENCIAR GRUPO pelo app · tudo do líder num lugar só (2026-08-05)
 
 Pedido do Marcos: *"ao apertar gerenciar grupo, ali devem ter TODAS as opções
