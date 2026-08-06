@@ -160,6 +160,10 @@ const publicLimiter = rateLimit({
 // primeiro, o NPS não passa pelo teto de 30 · usa o limiter próprio (generoso) do
 // routes/publicNps.js. Os demais forms públicos seguem no publicLimiter.
 app.use('/api/public/nps', require('./routes/publicNps'));
+// Censo público: MESMO motivo do NPS, elevado ao cubo — o censo é respondido por
+// centenas de pessoas no mesmo culto, todas atrás do NAT do prédio. Limiter
+// próprio (dois baldes: submissão generosa, lookup de CPF apertado).
+app.use('/api/public/censo', require('./routes/publicCenso'));
 // Convite de familiar (página de bounce /f/a/:codigo · só leitura do convite)
 app.use('/api/public/familia', require('./routes/publicFamilia'));
 // Pixel de abertura de e-mail (fora do publicLimiter · proxies carregam por 1 IP)

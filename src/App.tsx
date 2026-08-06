@@ -249,6 +249,7 @@ const Projetos = lazyWithRetry(() => import('./pages/Projetos'));
 const Processos = lazyWithRetry(() => import('./pages/Processos'));
 const Nps = lazyWithRetry(() => import('./pages/Nps'));
 const Censo = lazyWithRetry(() => import('./pages/censo/Censo'));
+const CensoPublica = lazyWithRetry(() => import('./pages/public/CensoPublica'));
 const NpsResponder = lazyWithRetry(() => import('./pages/nps/NpsResponder'));
 const NpsPublica = lazyWithRetry(() => import('./pages/public/NpsPublica'));
 const KidsRetirada = lazyWithRetry(() => import('./pages/public/KidsRetirada'));
@@ -587,6 +588,8 @@ function AppRoutes() {
       {/* Página pública de suporte dos apps (Apple Guideline 1.5 · Support URL) */}
       <Route path="/suporte" element={<Suspense fallback={<Loading />}><Suporte /></Suspense>} />
       <Route path="/nps/publica/:token" element={<Suspense fallback={<Loading />}><NpsPublica /></Suspense>} />
+      {/* Censo público · é o endereço que vai no QR impresso do culto. */}
+      <Route path="/censo/p/:slug" element={<Suspense fallback={<Loading />}><CensoPublica /></Suspense>} />
       {/* Retirada do Kids · QR aberto pelo link do WhatsApp · público, sem PII */}
       <Route path="/kids/retirada/:codigo" element={<Suspense fallback={<Loading />}><KidsRetirada /></Suspense>} />
       <Route path="/auth/pc-callback" element={<Suspense fallback={<Loading />}><PcCallback /></Suspense>} />
