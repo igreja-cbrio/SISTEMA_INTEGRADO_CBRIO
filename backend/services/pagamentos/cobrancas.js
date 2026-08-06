@@ -247,6 +247,13 @@ async function definirMetodo(cobrancaOuId, metodo, opcoes = {}) {
     metodo: r.metodo || metodo,
     ultimo_erro: null,
   };
+  // ⚠️ Há PSP em que o objeto cobrável do provider só NASCE quando a forma é
+  // escolhida: no Mercado Pago a criação rende uma *preference* (que não tem
+  // estado de pagamento consultável) e a *order* — o que `consultarStatus` e a
+  // reconciliação precisam — só existe a partir daqui. Sem repontar, o cron
+  // ficaria consultando um objeto que nunca muda de estado.
+  // Só reponta quando o adapter devolve algo; o Asaas não devolve e segue igual.
+  if (r.provider_cobranca_id) patch.provider_cobranca_id = String(r.provider_cobranca_id);
   // Parcelas CONFIRMADAS pelo provedor (1 = à vista). Diferente dos artefatos
   // abaixo, este campo é sobrescrito sempre: voltar de 6x pra 1x tem que
   // aparecer, senão a tela e o comprovante seguem falando em 6 parcelas.

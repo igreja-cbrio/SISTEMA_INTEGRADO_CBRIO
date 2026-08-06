@@ -19,7 +19,14 @@
 //   async cancelarCobranca(cobranca) → { ok }
 //   async estornar(cobranca, { valor_centavos? }) → { ok, provider_pagamento_id? }
 //
-//   verificarAssinatura(rawBody, headers, segredo) → { ok, motivo? }
+//   verificarAssinatura(rawBody, headers, segredo, { query, payload }) → { ok, motivo? }
+//   ⚠️ O 4º argumento existe porque nem todo PSP assina o CORPO: o Mercado Pago
+//   monta o manifesto com o `data.id` do QUERY STRING + o header `x-request-id`.
+//   Adapter que assina o corpo (Asaas) ignora o extra.
+//
+//   ⚠️ `normalizarEvento` PODE SER ASSÍNCRONO (o chamador dá await). Há PSP cujo
+//   webhook não traz o pagamento: o do Mercado Pago manda só `{ data: { id } }`
+//   e o adapter precisa buscar o pagamento pra saber status, valor e taxa.
 //   normalizarEvento(payload, headers) → {
 //     evento_id,            // ID do EVENTO no PSP (é a chave de idempotência)
 //     tipo,                 // string do PSP, só pra log
@@ -44,16 +51,26 @@ function registrar(adapter) {
 
 registrar(manual);
 
-// Adapter do PSP (Asaas) entra aqui quando existir:
-//   registrar(require('./asaas'));
-// Deliberadamente ausente: parser de webhook escrito contra documentação, sem
-// payload real do sandbox, se reescreve inteiro no primeiro teste. Melhor
-// faltar alto do que existir errado.
-try {
-  // eslint-disable-next-line global-require, import/no-unresolved
-  registrar(require('./asaas'));
-} catch (e) {
-  if (e.code !== 'MODULE_NOT_FOUND') throw e;   // erro DENTRO do adapter não é engolido
+// Adapters de PSP. O `try` cobre só a AUSÊNCIA do arquivo (deploy em que o
+// adapter ainda não subiu); erro DENTRO do adapter propaga — silêncio ali
+// significaria cobrança criada num provider que não sabe cobrar.
+//
+// ⚠️ Os dois convivem de propósito. `PAG_PROVIDER_PADRAO` decide quem cobra
+// AGORA; o outro segue registrado pra que cobrança ANTIGA continue sendo
+// consultada, conciliada e estornada pelo provedor que a criou
+// (`pag_cobrancas.provider` é por linha, e é ele que `obter()` recebe). Remover
+// o adapter antigo depois de uma troca deixaria as cobranças dele órfãs.
+for (const caminho of ['./asaas', './mercadopago']) {
+  try {
+    // eslint-disable-next-line global-require, import/no-dynamic-require
+    registrar(require(caminho));
+  } catch (e) {
+    // ⚠️ Só engole "o ARQUIVO DO ADAPTER não existe". `MODULE_NOT_FOUND` cru
+    // engoliria também um `require` quebrado DENTRO do adapter — e aí o PSP
+    // sumiria do registro em silêncio, com o sistema caindo pro `manual` e
+    // recusando todo evento pago sem ninguém entender por quê.
+    if (e.code !== 'MODULE_NOT_FOUND' || !String(e.message).includes(caminho)) throw e;
+  }
 }
 
 /** Nome do provider padrão pra cobrança nova (env `PAG_PROVIDER_PADRAO`). */

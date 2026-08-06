@@ -57,6 +57,9 @@ router.post('/:provider', limiter, async (req, res) => {
       rawBody: req.rawBody,
       headers: req.headers,
       payload: req.body,
+      // O Mercado Pago assina um manifesto montado com o `data.id` do QUERY
+      // STRING (não do corpo) — sem isto, toda entrega dele tomaria 401.
+      query: req.query,
     });
     return res.status(http).json(corpo);
   } catch (e) {

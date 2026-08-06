@@ -7743,7 +7743,24 @@ inscrito, rastreabilidade e impressão da lista por faixa de idade/sexo.
 com `pagamento_ativo=true`. Esta seção cobre só a camada de PAGAMENTO. Ver a
 consolidação com `insc_pagamentos` mais abaixo.
 
-### Decisão do gateway (fechada · não reabrir sem motivo novo)
+### ⚠️ Decisão do gateway · REVISTA em 2026-08-06: o PSP passou a ser o MERCADO PAGO
+
+Decisão do Marcos (retomada de sessão anterior): *"já decidimos que vamos seguir
+com Mercado Pago"*. O bloco abaixo (Asaas) fica como **registro histórico do
+racional de 28/07** — o que o invalidou não foi o raciocínio, foi o
+**operacional**: a conta Asaas de produção ficou "em análise" e o sandbox nasceu
+sem forma nenhuma habilitada, enquanto a igreja já tem conta no Mercado Pago.
+
+**O adapter do Asaas NÃO foi removido e não deve ser.** `pag_cobrancas.provider`
+é por LINHA: cobrança criada por ele precisa seguir sendo consultada, conciliada
+e estornada por ele. Quem decide o PSP das cobranças NOVAS é
+`PAG_PROVIDER_PADRAO`. Trocar de PSP custa 1 env — é exatamente o que o núcleo
+provider-agnostic existe pra permitir, e agora foi exercitado de verdade.
+
+Ver a seção **"Adapter do Mercado Pago"** abaixo para os fatos da API, as três
+decisões de arquitetura que ele forçou e o que ficou pendente de gente.
+
+### Racional histórico da escolha do Asaas (28/07 · superado, mantido pro registro)
 
 **PSP brasileiro único (Asaas), checkout hospedado, página pública web.** O que
 elimina as alternativas é fato verificado, não preferência:
@@ -8688,3 +8705,110 @@ antes de chegar na rota. Roteiro completo de teste ficou na conversa.
 ⚠️ Conferir na aba Cron Jobs se `pagamentos-webhook/cron/tick` registrou (45
 crons vs teto documentado de 40) — sem ele, vaga reservada e não paga nunca
 expira.
+
+## ⚠️ Adapter do MERCADO PAGO (2026-08-06 · SEM migration)
+
+`providers/mercadopago.js` — o único arquivo que conhece a linguagem do MP.
+`'accredited'` em qualquer outro lugar é bug de arquitetura (lei nº 2). Fatos
+levantados na doc oficial em 06/08 (não de memória), com o que NÃO foi
+confirmado declarado como tal.
+
+### As três coisas que o MP forçou a mudar no desenho
+
+**1 · ⚠️⚠️ A Orders API (a recomendada) NÃO devolve taxa, líquido nem data de
+liberação.** O schema de `transactions.payments[]` tem amount/paid_amount/
+status/payment_method/discounts e mais nada. Quem tem `fee_details`,
+`net_received_amount` e `money_release_date` é a **Payments API, marcada
+"legacy"** ("will not receive new features, only security and stability fixes",
+sem data de sunset).
+Decisão: **escrever pela Orders API, ler pelas duas.** Pagamento que chega pela
+Orders entra com `taxa_centavos: null` / `liquido_centavos: null` — que é a
+resposta HONESTA ("o PSP não disse") e **não fere a lei nº 6**, que proíbe
+CALCULAR taxa, não proíbe não tê-la. Pagamento pelo tópico `payment` (checkout
+hospedado) traz os três e eles são usados.
+⚠️ **Consequência aberta: a conciliação automática da TARIFA não fica de pé só
+com este adapter.** Pix cai sem tarifa conhecida. Fechar isso exige o relatório
+"Released money" do MP (produto separado) ou aceitar a API legada — **decisão de
+arquitetura, não de implementação**, e ainda não tomada.
+
+**2 · ⚠️⚠️ Nenhum prefixo distingue token de teste do de produção.** Citação
+literal: *"The test Access Token starts with the prefix `APP_USR`, just like your
+production Access Token."* Isso **mata a guarda do Asaas** (`$aact_hmlg_` ×
+`$aact_prod_` conferido na chamada). A guarda foi reprojetada em duas partes:
+(a) **`MERCADOPAGO_AMBIENTE`** declara a intenção; (b) **`live_mode`** — que vem
+em toda resposta e em todo webhook — é conferido contra ela e **LANÇA** se
+divergir. Os dois lados são fatais por motivos opostos: produção com token de
+teste = a pessoa "paga" e nada entra; teste com token de produção = o ensaio
+cobra de verdade. ⚠️ `live_mode` ausente **não** vira erro: nem toda resposta o
+traz, e inventar erro onde não há sinal quebraria o fluxo por nada.
+
+**3 · ⚠️ O webhook chega em DOIS tópicos.** `orders` (nosso Pix, via Orders API)
+e `payment` (quem pagou pelo checkout hospedado). **Marcar só um no painel deixa
+metade das entregas muda.** O adapter trata os dois; tópico desconhecido devolve
+`null` e o núcleo registra sem despachar.
+
+### Como o adapter mapeia no núcleo (e por que assim)
+
+| momento | o que o adapter faz | por quê |
+|---|---|---|
+| `criarCobranca` | `POST /checkout/preferences` | a Orders API exige o `payment_method` na criação, e aí a pessoa **ainda não escolheu**. Sem um `provider_cobranca_id` aqui o núcleo trataria a linha como "meio-criada" e a retentaria pra sempre. A preference dá id + `init_point` (checkout que já funciona). |
+| `definirMetodo('pix')` | `POST /v1/orders` | é onde o objeto cobrável de verdade nasce. Devolve o QR (`payment_method.qr_code`). |
+| `definirMetodo('cartao')` | devolve o `init_point` guardado | PAN não entra aqui (lei nº 5). ⚠️ **NÃO devolve `parcelas`** — quem escolhe é o pagador na página do MP; afirmar o que foi PEDIDO violaria "a forma/parcela confirmada é a que o PSP devolveu". O número real chega no webhook. |
+| `consultarStatus` | `GET /v1/orders/{id}` | só a ORDER é consultável; preference não tem estado de pagamento. Antes da escolha devolve `null` — honesto, e o núcleo lê null como "sem novidade". |
+
+⚠️ **O vínculo estável entre preference e as N orders é o `external_reference`**
+(= nossa `referencia`), não o id do provider. É por ele que o webhook reencontra
+a cobrança quando o id é de outro objeto — e é o que torna seguro trocar de
+forma de pagamento (cada troca cria outra order, todas com a mesma referência).
+
+**Mudança no núcleo que isso exigiu:** `cobrancas.definirMetodo` passou a
+persistir `provider_cobranca_id` quando o adapter devolve um. Sem repontar, o
+cron de reconciliação ficaria consultando a preference, que nunca muda de
+estado. O Asaas não devolve o campo e segue idêntico.
+
+**E no contrato do webhook:** `verificarAssinatura` ganhou um 4º argumento
+`{ query, payload }`. O manifesto do MP é montado com o `data.id` do **QUERY
+STRING** (não do corpo) + o header `x-request-id`:
+`id:<data.id minúsculo>;request-id:<x-request-id>;ts:<ts>;` → HMAC-SHA256 hex
+comparado com o `v1` do header `x-signature`. ⚠️ O `;` final faz parte, e
+**minusculizar é o caso NORMAL**: os ids da Orders API são ULIDs MAIÚSCULOS
+(`ORD01J…`) e a doc manda converter. Sem passar a query, toda entrega legítima
+tomaria 401.
+
+### ⚠️ Boleto está FORA das capacidades, de propósito
+
+O boleto do MP exige **endereço completo** do pagador (street_name,
+street_number, zip_code, neighborhood, city, state) e **`pag_cobrancas` não
+guarda endereço**. A fachada consulta `capacidades.metodos` pra decidir o que
+oferecer na tela — declarar boleto abriria uma aba que **sempre** falha. Mesmo
+racional do provider `manual`: declarar só o que se sabe fazer. Ligar boleto
+exige coletar endereço na porta pública primeiro. Mutation-testado.
+
+### ⏳ Pendente de GENTE (não é código)
+
+1. **⚠️ Confirmar com o Mercado Pago se dá pra repassar juros do parcelado ao
+   pagador.** A doc de API **não** documenta isso; o material comercial descreve
+   o modelo "sem juros" em que **o custo é do vendedor** e a taxa cresce com o
+   número de parcelas que o COMPRADOR escolher (à vista ~3%, 2–6x 4–6%, 7–12x
+   7–13%). O sistema pressupõe `juros_repassados = true` desde 28/07. **Se o MP
+   não repassar, esses 4–13% saem da margem da igreja** e mudam a conta do
+   evento. Isso não se resolve no código.
+2. **Gerar as credenciais** e setar `MERCADOPAGO_ACCESS_TOKEN`,
+   `MERCADOPAGO_AMBIENTE`, `MERCADOPAGO_WEBHOOK_SECRET` +
+   `PAG_PROVIDER_PADRAO=mercadopago`. Sandbox vai no escopo **Preview**;
+   produção fica em `manual` até o teste passar.
+3. **No painel do MP, marcar os tópicos `orders` E `payment`** e apontar o
+   webhook pra `/api/pagamentos-webhook/mercadopago`.
+4. **Decidir a fonte da tarifa** (item 1 do bloco de cima).
+
+### O que a doc NÃO confirmou (não preencher por conta própria)
+
+`payment_method_id` do boleto na API legada (`"bolbradesco"` circula mas não
+está em página oficial) · subcampos de `fee_details` · existência de
+`money_release_status` · busca de order por `external_reference` · 3DS na Orders
+API · valor mínimo/máximo por transação · nº máximo de reentregas de webhook.
+
+Testes: `src/test/pagamentosMercadoPago.test.ts` (34 casos · **sem rede**, o
+`fetch` é stubado — a lição é o flake dos testes do Asaas que batiam no sandbox
+de verdade e derrubavam o deploy). Mutation-testados: a guarda de `live_mode`,
+`authorized` não ser "pago", e a ausência de boleto nas capacidades.
