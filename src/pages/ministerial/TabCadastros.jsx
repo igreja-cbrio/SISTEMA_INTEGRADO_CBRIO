@@ -9,6 +9,7 @@ import {
   Inbox, Check, X, Search, User, Mail, Phone,
   MapPin, Calendar, Copy, ExternalLink, Trash2, CheckCircle2,
   CreditCard, RefreshCw, MessageSquare, Sparkles, AlertTriangle,
+  ChevronDown, UserMinus,
 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
@@ -30,6 +31,118 @@ const C = {
   amber: '#f59e0b', amberBg: '#f59e0b18',
   blue: '#3b82f6', blueBg: '#3b82f618',
 };
+
+// ── Pedidos de exclusão de conta (LGPD art. 18) · 06/08/2026 ────────────────
+// Bloco RECOLHÍVEL, no formato do "Entradas e saídas" do /grupos (leitura pura,
+// pouco destaque). Existe porque o app grava o pedido em
+// `app_solicitacoes_exclusao` e promete desativação, e o ERP **não lia essa
+// tabela em lugar nenhum** — o primeiro pedido cairia num buraco com o prazo da
+// LGPD correndo (e a Apple testa esse fluxo na revisão da loja).
+//
+// ⚠️ SÓ LEITURA de propósito: não existe caminho de desativação de conta no
+// sistema (nem banir, nem anonimizar). Prometer um botão "processar" que não
+// processa seria repetir o erro que criou este problema.
+function BlocoExclusaoConta() {
+  const [aberto, setAberto] = useState(false);
+  const [dados, setDados] = useState(null);
+  const [carregando, setCarregando] = useState(false);
+  const [erro, setErro] = useState('');
+
+  // Lazy: só busca quando abre (a aba já carrega bastante coisa).
+  useEffect(() => {
+    if (!aberto || dados || carregando) return;
+    setCarregando(true);
+    membresia.exclusoes()
+      .then(setDados)
+      .catch((e) => setErro(e.message || 'Não foi possível carregar'))
+      .finally(() => setCarregando(false));
+  }, [aberto, dados, carregando]);
+
+  const pendentes = dados?.total_pendentes ?? null;
+
+  return (
+    <div style={{
+      background: C.card, border: `1px solid ${C.border}`, borderRadius: 10,
+      marginBottom: 16, overflow: 'hidden',
+    }}>
+      <div
+        onClick={() => setAberto((v) => !v)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setAberto((v) => !v); }}
+        style={{
+          padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 8,
+          cursor: 'pointer', userSelect: 'none',
+        }}
+      >
+        <UserMinus size={14} style={{ color: C.text3 }} />
+        <span style={{ fontSize: 13, fontWeight: 600, color: C.text2, flex: 1 }}>
+          Pedidos de exclusão de conta (LGPD)
+          {pendentes != null && pendentes > 0 ? ` · ${pendentes} pendente${pendentes > 1 ? 's' : ''}` : ''}
+        </span>
+        <ChevronDown
+          size={14}
+          style={{ color: C.text3, transform: aberto ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }}
+        />
+      </div>
+
+      {aberto && (
+        <div style={{ borderTop: `1px solid ${C.border}` }}>
+          {carregando && (
+            <div style={{ padding: '10px 16px', fontSize: 12, color: C.text3 }}>Carregando…</div>
+          )}
+          {/* ⚠️ Erro NÃO se disfarça de lista vazia: "nenhum pedido" e "não
+              conseguimos ler" são coisas diferentes (a armadilha do fail-closed). */}
+          {!carregando && erro && (
+            <div style={{ padding: '10px 16px', fontSize: 12, color: C.red }}>{erro}</div>
+          )}
+          {!carregando && !erro && dados && (
+            <>
+              {dados.itens.length === 0 ? (
+                <div style={{ padding: '10px 16px', fontSize: 12, color: C.text3 }}>
+                  Nenhum pedido de exclusão de conta.
+                </div>
+              ) : (
+                dados.itens.map((it) => (
+                  <div key={it.id} style={{
+                    padding: '10px 16px', borderBottom: `1px solid ${C.border}`,
+                    display: 'flex', gap: 10, alignItems: 'flex-start', flexWrap: 'wrap',
+                  }}>
+                    <div style={{ flex: '1 1 240px', minWidth: 0 }}>
+                      <div style={{ fontSize: 13, color: C.text, fontWeight: 600 }}>
+                        {it.nome || it.email || 'Conta sem cadastro vinculado'}
+                      </div>
+                      {it.email && it.nome && (
+                        <div style={{ fontSize: 11, color: C.text3 }}>{it.email}</div>
+                      )}
+                      {it.motivo && (
+                        <div style={{ fontSize: 12, color: C.text2, marginTop: 4 }}>
+                          <strong>Motivo:</strong> {it.motivo}
+                          {it.detalhe ? ` — ${it.detalhe}` : ''}
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 11, color: C.text3, whiteSpace: 'nowrap' }}>
+                      {it.criada_em ? new Date(it.criada_em).toLocaleDateString('pt-BR') : '—'}
+                      {' · '}
+                      <span style={{ color: it.status === 'pendente' ? C.amber : C.text3 }}>{it.status}</span>
+                    </div>
+                  </div>
+                ))
+              )}
+              <div style={{
+                padding: '10px 16px', fontSize: 11, color: C.text3,
+                background: C.amberBg, borderTop: `1px solid ${C.border}`,
+              }}>
+                {dados.aviso_processamento}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 const STATUS_META = {
   pendente:  { label: 'Pendente',  cor: C.amber, bg: C.amberBg, icon: Inbox },
@@ -340,6 +453,8 @@ export default function TabCadastros({ onMembrosChange }) {
   return (
     <div>
       <PainelCenso />
+
+      <BlocoExclusaoConta />
 
       {error && (
         <div style={{
