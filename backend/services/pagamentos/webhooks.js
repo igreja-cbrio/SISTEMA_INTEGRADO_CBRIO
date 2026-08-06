@@ -108,7 +108,12 @@ async function processar({ providerNome, rawBody, headers, payload }) {
     return { http: 401, corpo: { error: 'assinatura inválida' } };
   }
 
-  const evento = adapter.normalizarEvento(payload, headers);
+  // ⚠️ `await` mesmo o Asaas sendo SÍNCRONO aqui: `await` sobre valor que não é
+  // promise é no-op, e há PSP cujo webhook não traz o pagamento — o do Mercado
+  // Pago manda só `{ data: { id } }`, então o adapter precisa BUSCAR o
+  // pagamento pra saber status e valor. Sem o await, o `evento` seria uma
+  // Promise e o `!evento.evento_id` abaixo mandaria tudo pro ramo "sem id".
+  const evento = await adapter.normalizarEvento(payload, headers);
   if (!evento || !evento.evento_id) {
     // Sem id de evento não há chave de idempotência — processar seria apostar
     // que o PSP não reentrega. Guardamos pro replay manual.
@@ -216,7 +221,7 @@ async function reprocessarPendentes({ limite = 50 } = {}) {
   for (const ev of data || []) {
     try {
       const adapter = providers.obter(ev.provider);
-      const evento = adapter.normalizarEvento(ev.payload, {});
+      const evento = await adapter.normalizarEvento(ev.payload, {});
       if (!evento) { resultado.falhas += 1; continue; }
       const cobranca = await acharCobranca(ev.provider, evento);
       if (!cobranca) {
