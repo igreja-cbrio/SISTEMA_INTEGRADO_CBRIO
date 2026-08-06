@@ -305,6 +305,22 @@ export const censo = {
   status: (id, status) => post(`/censo/pesquisas/${id}/status`, { status }),
   duplicar: (id, data) => post(`/censo/pesquisas/${id}/duplicar`, data || {}),
   remover: (id) => del(`/censo/pesquisas/${id}`),
+  // Respostas nominais (nível 2). O bloco sensível vem filtrado pelo servidor
+  // para quem não está em cen_acesso_sensivel — o front só mostra que existe
+  // algo oculto, nunca o conteúdo.
+  respostas: (pesquisaId, limite) =>
+    get(`/censo/respostas?pesquisa_id=${pesquisaId}${limite ? `&limite=${limite}` : ''}`),
+  resposta: (id) => get(`/censo/respostas/${id}`),
+  // Fila de cuidado: nominal é restrito à equipe designada; o resumo (contagens,
+  // sem PII) é aberto para quem tem o módulo.
+  cuidadoResumo: (pesquisaId) => get(`/censo/cuidado/resumo?pesquisa_id=${pesquisaId}`),
+  cuidado: (pesquisaId, filtros = {}) => {
+    const qs = new URLSearchParams({ pesquisa_id: pesquisaId });
+    if (filtros.status) qs.set('status', filtros.status);
+    if (filtros.tipo) qs.set('tipo', filtros.tipo);
+    return get(`/censo/cuidado?${qs}`);
+  },
+  cuidadoAtualizar: (id, dados) => patch(`/censo/cuidado/${id}`, dados),
 };
 
 export const projects = {

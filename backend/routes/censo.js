@@ -279,4 +279,169 @@ router.get('/aux', authorizeModule('censo', 1), async (req, res) => {
   });
 });
 
+// ══════════════════════════════════════════════════════════════════════════
+//  RESPOSTAS NOMINAIS · nível 2, com o bloco sensível filtrado
+// ══════════════════════════════════════════════════════════════════════════
+//
+// Régua: agregado é nível 1 (inclui o bloco 6, porque estatística de saúde
+// emocional não expõe ninguém). NOMINAL é nível 2 para os 12 blocos, e o bloco
+// SENSÍVEL só para quem está em `cen_acesso_sensivel`.
+//
+// O filtro acontece aqui, no servidor, e não no front: esconder no front é
+// maquiagem — o dado já teria saído pela rede.
+
+const CUIDADO_STATUS = ['aberto', 'em_contato', 'concluido', 'sem_retorno'];
+
+/** Remove os itens sensíveis de uma lista de itens de resposta. */
+function filtrarSensiveis(itens, podeVer) {
+  if (podeVer) return itens || [];
+  return (itens || []).filter((i) => i.sensivel !== true);
+}
+
+router.get('/respostas', authorizeModule('censo', 2), async (req, res) => {
+  try {
+    const pesquisaId = String(req.query.pesquisa_id || '').trim();
+    if (!pesquisaId) return res.status(400).json({ error: 'pesquisa_id é obrigatório' });
+    const limite = Math.min(Number(req.query.limite) || 100, 500);
+
+    const { data, error } = await supabase
+      .from('cen_resposta')
+      .select('id, membro_id, nome_declarado, contato_declarado, canal, identificado_por, concluida_em, duracao_seg')
+      .eq('pesquisa_id', pesquisaId)
+      .not('concluida_em', 'is', null)
+      .is('deleted_at', null)
+      .order('concluida_em', { ascending: false })
+      .limit(limite);
+    if (error) return res.status(400).json({ error: error.message });
+
+    // Nome de quem está na base vem de mem_membros; quem não casou tem só o
+    // nome declarado. Uma consulta para todos, não uma por linha.
+    const ids = [...new Set((data || []).map((r) => r.membro_id).filter(Boolean))];
+    const nomes = new Map();
+    if (ids.length) {
+      const { data: membros } = await supabase
+        .from('mem_membros').select('id, nome').in('id', ids);
+      for (const m of membros || []) nomes.set(m.id, m.nome);
+    }
+
+    res.json((data || []).map((r) => ({
+      id: r.id,
+      nome: r.membro_id ? (nomes.get(r.membro_id) || '—') : (r.nome_declarado || 'Sem identificação'),
+      na_base: !!r.membro_id,
+      contato: r.membro_id ? null : r.contato_declarado,
+      canal: r.canal,
+      identificado_por: r.identificado_por,
+      concluida_em: r.concluida_em,
+      duracao_seg: r.duracao_seg,
+    })));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/respostas/:id', authorizeModule('censo', 2), async (req, res) => {
+  try {
+    const { data: resposta, error } = await supabase
+      .from('cen_resposta')
+      .select('id, pesquisa_id, membro_id, nome_declarado, contato_declarado, canal, identificado_por, concluida_em, duracao_seg, consentimento_em')
+      .eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (error) return res.status(400).json({ error: error.message });
+    if (!resposta) return res.status(404).json({ error: 'Resposta não encontrada' });
+
+    const { data: itens } = await supabase
+      .from('cen_resposta_item')
+      .select('pergunta_id, pergunta_texto, tipo, valor_texto, valor_num, valor_opcoes, sensivel, acao')
+      .eq('resposta_id', resposta.id);
+
+    const podeVer = await podeVerSensivel(req.user?.id);
+    const visiveis = filtrarSensiveis(itens, podeVer);
+    const ocultos = (itens || []).length - visiveis.length;
+
+    let nome = resposta.nome_declarado || 'Sem identificação';
+    if (resposta.membro_id) {
+      const { data: m } = await supabase
+        .from('mem_membros').select('nome').eq('id', resposta.membro_id).maybeSingle();
+      nome = m?.nome || '—';
+    }
+
+    res.json({
+      ...resposta,
+      nome,
+      itens: visiveis,
+      // Diz que existe algo oculto em vez de fingir que a resposta é isso. Quem
+      // precisa e não tem acesso sabe a quem pedir.
+      itens_sensiveis_ocultos: ocultos,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+//  FILA DE CUIDADO
+// ══════════════════════════════════════════════════════════════════════════
+//
+// Um pedido de acompanhamento familiar, aconselhamento ou oração é, ele próprio,
+// dado sensível — e a fila existe justamente com nome e telefone à vista. Então
+// o acesso NOMINAL aqui é a mesma lista nomeada do bloco 6, não o nível no
+// módulo. Super-admin passa porque alguém precisa administrar.
+//
+// O RESUMO (contagens, sem PII) é aberto para nível 1: a liderança tem que poder
+// ver que existem 40 pedidos abertos sem precisar ver de quem são.
+async function guardaCuidado(req, res, next) {
+  if (req.user?.is_super_admin === true) return next();
+  if (await podeVerSensivel(req.user?.id)) return next();
+  return res.status(403).json({
+    error: 'A fila de cuidado é restrita à equipe designada para o acompanhamento pastoral.',
+  });
+}
+
+router.get('/cuidado/resumo', authorizeModule('censo', 1), async (req, res) => {
+  try {
+    let q = supabase.from('vw_cen_cuidado_resumo').select('*');
+    const pesquisaId = String(req.query.pesquisa_id || '').trim();
+    if (pesquisaId) q = q.eq('pesquisa_id', pesquisaId);
+    const { data, error } = await q;
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/cuidado', authorizeModule('censo', 2), guardaCuidado, async (req, res) => {
+  try {
+    let q = supabase.from('vw_cen_cuidado_fila').select('*');
+    const pesquisaId = String(req.query.pesquisa_id || '').trim();
+    if (pesquisaId) q = q.eq('pesquisa_id', pesquisaId);
+    if (CUIDADO_STATUS.includes(req.query.status)) q = q.eq('status', req.query.status);
+    if (req.query.tipo) q = q.eq('tipo', String(req.query.tipo));
+    // Mais antigo primeiro: numa fila de pedido de ajuda, quem esperou mais é
+    // quem tem mais urgência — não o último que chegou.
+    const { data, error } = await q.order('criado_em', { ascending: true }).limit(500);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.patch('/cuidado/:id', authorizeModule('censo', 2), guardaCuidado, async (req, res) => {
+  try {
+    const patch = {};
+    if (req.body?.status !== undefined) {
+      if (!CUIDADO_STATUS.includes(req.body.status)) return res.status(400).json({ error: 'Status inválido' });
+      patch.status = req.body.status;
+      patch.concluido_em = ['concluido', 'sem_retorno'].includes(req.body.status)
+        ? new Date().toISOString() : null;
+    }
+    if (req.body?.observacao !== undefined) patch.observacao = limpar(req.body.observacao) || null;
+    if (req.body?.responsavel_id !== undefined) {
+      patch.responsavel_id = req.body.responsavel_id || null;
+    }
+    // "Assumir": quem clica vira o responsável, sem precisar se escolher numa lista.
+    if (req.body?.assumir === true) patch.responsavel_id = req.user?.id || null;
+
+    if (!Object.keys(patch).length) return res.status(400).json({ error: 'Nada para atualizar' });
+
+    const { data, error } = await supabase
+      .from('cen_cuidado').update(patch).eq('id', req.params.id).select('id').maybeSingle();
+    if (error) return res.status(400).json({ error: error.message });
+    if (!data) return res.status(404).json({ error: 'Pedido não encontrado' });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 module.exports = router;

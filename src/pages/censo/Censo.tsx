@@ -24,7 +24,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { toast } from 'sonner';
 import {
   ClipboardList, Plus, Loader2, Copy, Trash2, Save, ArrowLeft,
-  Play, Square, ListChecks, BarChart3, Sparkles, Users,
+  Play, Square, ListChecks, BarChart3, Sparkles, Users, HeartHandshake, Lock, Clock,
 } from 'lucide-react';
 
 type Stats = {
@@ -46,6 +46,20 @@ type Pesquisa = {
 type Aux = {
   tipos_pergunta: string[]; tipos_pesquisa: string[];
   consentimento_default: string; nivel: number;
+  pode_ver_sensivel?: boolean;
+};
+
+type CuidadoResumo = {
+  pesquisa_id: string; tipo: string; total: number; abertos: number;
+  em_contato: number; concluidos: number; sem_retorno: number;
+  dias_do_mais_antigo: number | null;
+};
+
+type CuidadoItem = {
+  id: string; tipo: string; status: string; criado_em: string;
+  pessoa_nome: string | null; pessoa_contato: string | null; pessoa_email: string | null;
+  responsavel_nome: string | null; fora_da_base: boolean; dias_aberto: number;
+  observacao: string | null;
 };
 
 type Form = { titulo: string; subtitulo: string; tipo: string; slug: string; consentimento_texto: string };
@@ -68,10 +82,21 @@ const TIPO_LABEL: Record<string, string> = {
 
 const TABS = [
   { id: 'pesquisas', label: 'Pesquisas', icon: ListChecks, futuro: false },
+  { id: 'cuidado', label: 'Cuidado', icon: HeartHandshake, futuro: false },
   { id: 'cobertura', label: 'Cobertura', icon: BarChart3, futuro: true },
   { id: 'perfil', label: 'Perfil', icon: Users, futuro: true },
   { id: 'ia', label: 'Leitura da IA', icon: Sparkles, futuro: true },
 ];
+
+const CUIDADO_LABEL: Record<string, string> = {
+  familiar: 'Acompanhamento familiar',
+  aconselhamento: 'Aconselhamento',
+  oracao: 'Contato para oração',
+  conversa: 'Quer conversar com alguém',
+};
+const STATUS_CUIDADO: Record<string, string> = {
+  aberto: 'Aberto', em_contato: 'Em contato', concluido: 'Concluído', sem_retorno: 'Sem retorno',
+};
 
 const fmtData = (v: string | null) =>
   v ? new Date(v).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }) : '—';
@@ -201,6 +226,13 @@ export default function Censo() {
           )}
         </TabsContent>
 
+        <TabsContent value="cuidado">
+          <AbaCuidado
+            pesquisas={lista || []}
+            podeVerFila={aux?.pode_ver_sensivel === true}
+          />
+        </TabsContent>
+
         {TABS.filter((t) => t.futuro).map((t) => (
           <TabsContent key={t.id} value={t.id}>
             <EmptyState
@@ -220,6 +252,187 @@ function Metrica({ label, valor }: { label: string; valor: number | string }) {
     <div>
       <div className="text-lg font-semibold tabular-nums leading-none">{valor}</div>
       <div className="text-[10px] uppercase tracking-wide text-muted-foreground mt-1">{label}</div>
+    </div>
+  );
+}
+
+// ── Aba Cuidado · a fila de follow-up dos 4 gatilhos ───────────────────────
+//
+// A especificação do censo é explícita: o gatilho de cuidado "só tem valor se
+// houver retorno para quem pediu". Então isto não é um gráfico — é fila, com
+// responsável, status e o tempo de espera à vista.
+//
+// Quem NÃO está na equipe designada vê apenas as contagens. Não é para esconder
+// trabalho: é que um pedido de aconselhamento com nome ao lado é, ele próprio,
+// dado sensível. O servidor é quem filtra; aqui só evitamos que a pessoa bata
+// num 403 sem entender por quê.
+function AbaCuidado({ pesquisas, podeVerFila }: { pesquisas: Stats[]; podeVerFila: boolean }) {
+  const comResposta = pesquisas.filter((p) => p.concluidas > 0);
+  const [pesquisaId, setPesquisaId] = useState<string>(comResposta[0]?.pesquisa_id || '');
+  const [resumo, setResumo] = useState<CuidadoResumo[] | null>(null);
+  const [fila, setFila] = useState<CuidadoItem[] | null>(null);
+  const [status, setStatus] = useState<string>('aberto');
+
+  const carregar = useCallback(async () => {
+    if (!pesquisaId) { setResumo([]); setFila([]); return; }
+    try {
+      const r: CuidadoResumo[] = await censo.cuidadoResumo(pesquisaId);
+      setResumo(r || []);
+    } catch { setResumo([]); }
+    if (!podeVerFila) { setFila([]); return; }
+    try {
+      const f: CuidadoItem[] = await censo.cuidado(pesquisaId, status === 'todos' ? {} : { status });
+      setFila(f || []);
+    } catch { setFila([]); }
+  }, [pesquisaId, status, podeVerFila]);
+  useEffect(() => { carregar(); }, [carregar]);
+
+  async function mudar(id: string, dados: Record<string, unknown>) {
+    try { await censo.cuidadoAtualizar(id, dados); toast.success('Atualizado'); carregar(); }
+    catch (e: unknown) { toast.error(msg(e, 'Não foi possível atualizar')); }
+  }
+
+  if (!pesquisaId) {
+    return (
+      <EmptyState
+        icon={HeartHandshake}
+        title="Nenhum pedido ainda"
+        description="Quando o censo começar a receber respostas, os pedidos de acompanhamento, aconselhamento e oração aparecem aqui."
+      />
+    );
+  }
+
+  const abertosTotal = (resumo || []).reduce((n, r) => n + r.abertos + r.em_contato, 0);
+  const maisAntigo = Math.max(0, ...(resumo || []).map((r) => r.dias_do_mais_antigo || 0));
+
+  return (
+    <div className="space-y-4">
+      {comResposta.length > 1 && (
+        <Select value={pesquisaId} onValueChange={setPesquisaId}>
+          <SelectTrigger className="w-full sm:w-80"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {comResposta.map((p) => (
+              <SelectItem key={p.pesquisa_id} value={p.pesquisa_id}>{p.titulo}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      )}
+
+      {/* Contagens: liberadas para quem tem o módulo, sem PII. */}
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {(resumo || []).map((r) => (
+          <Card key={r.tipo}>
+            <CardContent className="p-4">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                {CUIDADO_LABEL[r.tipo] || r.tipo}
+              </p>
+              <div className="mt-2 flex items-baseline gap-2">
+                <span className="text-2xl font-semibold tabular-nums">{r.abertos + r.em_contato}</span>
+                <span className="text-xs text-muted-foreground">em aberto de {r.total}</span>
+              </div>
+              {!!r.dias_do_mais_antigo && r.dias_do_mais_antigo > 0 && (
+                <p className="mt-1 text-[11px] text-amber-600 flex items-center gap-1">
+                  <Clock className="size-3" /> mais antigo há {r.dias_do_mais_antigo} dia(s)
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
+      {abertosTotal > 0 && maisAntigo >= 7 && (
+        <p className="text-sm text-amber-600">
+          Há pedido esperando há {maisAntigo} dias. Um pedido de ajuda sem retorno é
+          pior do que não ter perguntado.
+        </p>
+      )}
+
+      {!podeVerFila ? (
+        <Card>
+          <CardContent className="p-5 flex items-start gap-3">
+            <Lock className="size-4 mt-0.5 text-muted-foreground shrink-0" />
+            <div className="text-sm text-muted-foreground">
+              <p className="font-medium text-foreground">Os nomes ficam com a equipe de cuidado.</p>
+              <p className="mt-1">
+                Um pedido de aconselhamento com nome ao lado é dado sensível, então a lista
+                nominal é restrita a quem foi designado para o acompanhamento pastoral. Os
+                números acima são a visão completa para o resto da equipe.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      ) : (
+        <>
+          <div className="flex flex-wrap gap-1 border-b border-border">
+            {['aberto', 'em_contato', 'concluido', 'sem_retorno', 'todos'].map((s) => (
+              <button
+                key={s} type="button" onClick={() => setStatus(s)}
+                className={`px-3 py-2 text-[13px] border-b-2 transition-colors ${
+                  status === s ? 'border-b-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                {s === 'todos' ? 'Todos' : STATUS_CUIDADO[s]}
+              </button>
+            ))}
+          </div>
+
+          {fila === null ? (
+            <div className="p-6 flex items-center gap-2 text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" /> Carregando…
+            </div>
+          ) : fila.length === 0 ? (
+            <EmptyState icon={HeartHandshake} title="Nada nesta fila"
+              description="Nenhum pedido com este status." />
+          ) : (
+            <div className="space-y-2">
+              {fila.map((c) => (
+                <Card key={c.id}>
+                  <CardContent className="p-4">
+                    <div className="flex flex-wrap items-start gap-2">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-medium">{c.pessoa_nome || 'Sem identificação'}</span>
+                          {c.fora_da_base && (
+                            <Badge variant="secondary" className="bg-amber-500/15 text-amber-600">
+                              fora da base
+                            </Badge>
+                          )}
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {CUIDADO_LABEL[c.tipo] || c.tipo}
+                          {c.pessoa_contato ? ` · ${c.pessoa_contato}` : ''}
+                          {c.dias_aberto > 0 ? ` · há ${c.dias_aberto} dia(s)` : ' · hoje'}
+                        </p>
+                        {c.responsavel_nome && (
+                          <p className="text-xs text-muted-foreground mt-0.5">com {c.responsavel_nome}</p>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {!c.responsavel_nome && c.status === 'aberto' && (
+                          <Button size="sm" variant="secondary" onClick={() => mudar(c.id, { assumir: true, status: 'em_contato' })}>
+                            Assumir
+                          </Button>
+                        )}
+                        {c.status !== 'concluido' && (
+                          <Button size="sm" variant="ghost" onClick={() => mudar(c.id, { status: 'concluido' })}>
+                            Concluir
+                          </Button>
+                        )}
+                        {c.status === 'em_contato' && (
+                          <Button size="sm" variant="ghost" className="text-muted-foreground"
+                            onClick={() => mudar(c.id, { status: 'sem_retorno' })}>
+                            Sem retorno
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }
