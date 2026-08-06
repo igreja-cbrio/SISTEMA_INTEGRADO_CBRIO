@@ -161,8 +161,26 @@ grant execute on function public.app_salvar_membro(text, text, text, text, date)
 --      from pg_proc p join pg_namespace n on n.oid = p.pronamespace
 --     where n.nspname = 'public' and p.proname = 'app_salvar_membro';
 --
--- 2) o corpo NÃO tem mais busca por nome/telefone (as 3 contagens devem dar 0):
+-- 2) o corpo perdeu busca/criação/escrita em profiles (os 4 devem dar 0):
+--
+-- ⚠️⚠️ TIRAR OS COMENTÁRIOS ANTES DE CASAR TEXTO. `pg_get_functiondef` devolve o
+-- corpo **com os comentários**, e este arquivo EXPLICA nos comentários o que a
+-- versão antiga fazia (`set is_membro_only = true`). A 1ª versão desta
+-- conferência não tirava comentário e devolveu `mexe_no_profile = 1` numa função
+-- que **não toca em profiles** (o único `update` do corpo é em `mem_membros`) —
+-- falso positivo, e o Marcos aplicou a migration e veio perguntar por que a
+-- conferência acusava falha (06/08/2026). Era a conferência, não a migration.
+-- Régua: checagem por TEXTO em corpo de função (ou em arquivo) IGNORA comentário,
+-- e procura o COMANDO (`update public.profiles`), não o identificador solto.
+--
+--    with def as (
+--      select pg_get_functiondef('public.app_salvar_membro(text,text,text,text,date)'::regprocedure) as d
+--    ), codigo as (
+--      select regexp_replace(d, '--[^\n]*', '', 'g') as d from def
+--    )
 --    select
---      (pg_get_functiondef('public.app_salvar_membro(text,text,text,text,date)'::regprocedure) ilike '%lower(btrim(nome))%')::int as busca_por_nome,
---      (pg_get_functiondef('public.app_salvar_membro(text,text,text,text,date)'::regprocedure) ilike '%insert into public.mem_membros%')::int as cria_pessoa,
---      (pg_get_functiondef('public.app_salvar_membro(text,text,text,text,date)'::regprocedure) ilike '%is_membro_only%')::int as mexe_no_profile;
+--      (d ilike '%lower(btrim(nome))%')::int             as busca_por_nome,
+--      (d ilike '%insert into public.mem_membros%')::int as cria_pessoa,
+--      (d ilike '%update public.profiles%')::int         as escreve_em_profiles,
+--      (d ilike '%is_membro_only%')::int                 as is_membro_only_no_codigo
+--    from codigo;
