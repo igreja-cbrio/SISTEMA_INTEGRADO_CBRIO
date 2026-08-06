@@ -53,6 +53,46 @@ async function tryAuth(req, _res, next) {
 const limiterStrict = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false });
 const limiterNormal = rateLimit({ windowMs: 15 * 60 * 1000, max: 100, standardHeaders: true, legacyHeaders: false });
 
+// ⚠️⚠️ RESPOSTA DO APP NUNCA É CACHEÁVEL (incidente 2026-08-05 · não regredir)
+//
+// Sintoma: o Matheus completava o cadastro pelo CPF, recebia o código,
+// confirmava — e voltava pra tela "Vamos confirmar quem você é". A Joana
+// Botafogo tentou 3× em 2 minutos. Os dois com o vínculo JÁ criado
+// (`profiles.membro_id` preenchido) e a ficha COMPLETA no banco (nome,
+// telefone, CPF, nascimento e sexo) — ou seja, o servidor respondia
+// `completo: true` e a tela não passava.
+//
+// CAUSA: `res.json` do Express gera **ETag** e não manda `Cache-Control`. O
+// fetch do React Native usa o cache HTTP do sistema (NSURLSession no iOS,
+// OkHttp no Android): ele guarda a resposta, revalida com `If-None-Match`, o
+// Express responde **304 sem corpo**, e a camada nativa entrega ao JS a
+// resposta ANTIGA — a de antes de vincular, com `completo: false`. Medido nos
+// runtime logs: **124 de 251** respostas de `/api/app/*` em 6h eram 304, e a
+// sequência do Matheus é literal (200 → 304 → confirma código → 304).
+//
+// Cache condicional é aceitável em conteúdo; aqui o corpo é **estado da
+// pessoa** (o que falta no cadastro, meus grupos, meu perfil, minhas
+// inscrições) e muda por ação dela na tela anterior. Servir a versão anterior
+// é sempre errado.
+//
+// ⚠️ `Cache-Control: no-store` SOZINHO não resolve: `req.fresh` do Express olha
+// o `If-None-Match` do REQUEST contra o ETag da resposta e devolve 304 do
+// mesmo jeito. Por isso `res.json` passa a responder por `res.end`, que **não
+// gera ETag** — sem validador, não há revalidação nem 304.
+//
+// Vale pro router INTEIRO de propósito: qualquer GET novo do app nasce sem
+// cache, sem ninguém precisar lembrar disso.
+router.use((req, res, next) => {
+  res.set('Cache-Control', 'no-store');
+  const enviarJson = (body) => {
+    if (!res.get('Content-Type')) res.type('application/json');
+    res.end(JSON.stringify(body));
+    return res;
+  };
+  res.json = enviarJson;
+  next();
+});
+
 // ── Anúncios (público) ────────────────────────────────────────────────────
 router.get('/anuncios', limiterNormal, async (_req, res) => {
   try {
