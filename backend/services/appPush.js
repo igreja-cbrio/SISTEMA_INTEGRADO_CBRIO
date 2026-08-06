@@ -4,6 +4,28 @@
 // No-op gracioso se não houver token. Não usar pra push do ERP web (esse é o
 // webpush.js/VAPID).
 const { supabase } = require('../utils/supabase');
+const { fetchAllRows } = require('../utils/pagination');
+
+// ⚠️⚠️ LEITURA DE TOKEN É PAGINADA E EM LOTES (auditoria 06/08/2026).
+// Duas armadilhas somadas, as duas SILENCIOSAS:
+//   1. o PostgREST capa em 1000 linhas server-side (sem erro), então a partir de
+//      ~1.000 instalações o broadcast alcançava só o primeiro pedaço da base —
+//      a igreja "não recebia o aviso" e nenhum log acusava. Medido em 06/08: 29
+//      tokens hoje, ou seja gatilho armado, não estrago consumado.
+//   2. `.in()` com a lista inteira estoura a URL do PostgREST e a query falha
+//      INTEIRA — mesma lição do `.in()` gigante da Onda 1 de performance.
+// Régua da casa: leitura de tabela que cresce com o uso vai por `fetchAllRows`,
+// e `.in()` sempre em lotes de <= 200.
+const LOTE_IN = 200;
+
+async function lerEmLotes(ids, build) {
+  const out = [];
+  for (let i = 0; i < ids.length; i += LOTE_IN) {
+    const fatia = ids.slice(i, i + LOTE_IN);
+    out.push(...(await fetchAllRows(() => build(fatia))));
+  }
+  return out;
+}
 
 function safeText(value, max = 500) {
   return value == null ? null : String(value).replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, max) || null;
@@ -18,8 +40,11 @@ async function persistExpoTickets(items) {
 // Resolve membro_id -> user_id (profiles.id) quando vier por membro.
 async function membrosParaUsuarios(membroIds) {
   if (!membroIds?.length) return [];
-  const { data } = await supabase.from('profiles').select('id').in('membro_id', membroIds);
-  return (data || []).map((p) => p.id);
+  const rows = await lerEmLotes(
+    [...new Set(membroIds.filter(Boolean))],
+    (fatia) => supabase.from('profiles').select('id').in('membro_id', fatia),
+  );
+  return rows.map((p) => p.id).filter(Boolean);
 }
 
 // Dispara push Expo (SEM gravar histórico in-app) pros tokens registrados em
@@ -31,7 +56,10 @@ async function pushExpoParaUsers(userIds, { title, body, data } = {}) {
     const ids = [...new Set((userIds || []).filter(Boolean))];
     if (!ids.length || !title) return { enviados: 0 };
 
-    const { data: toks } = await supabase.from('app_push_tokens').select('token,platform').in('user_id', ids);
+    const toks = await lerEmLotes(
+      ids,
+      (fatia) => supabase.from('app_push_tokens').select('token,platform').in('user_id', fatia),
+    );
     const seen = new Set();
     const tokens = (toks || []).filter((item) => {
       if (!item.token || seen.has(item.token)) return false;

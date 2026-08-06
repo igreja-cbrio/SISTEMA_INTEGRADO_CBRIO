@@ -12,6 +12,7 @@ const multer = require('multer');
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { escapePostgrestValue } = require('../utils/sanitize');
+const { fetchAllRows } = require('../utils/pagination');
 const { verificarTokenComprovanteAtivo, extrairToken } = require('../services/inscricaoComprovante');
 const { portasSatelites, fontesUnificadas, catalogoPublico } = require('../services/inscricaoPortas');
 const {
@@ -1965,7 +1966,10 @@ router.post('/eventos', authorizeModule('inscricoes', 3), async (req, res) => {
 // Best-effort · lotes p/ não estourar payload. O tap abre /evento/<slug>.
 async function notificarNovoEventoApp(evento) {
   if (!evento?.slug) return;
-  const { data: toks } = await supabase.from('app_push_tokens').select('user_id');
+  // ⚠️ PAGINADO (auditoria 06/08/2026): `select('user_id')` cru trunca em 1000
+  // linhas server-side, SEM erro — a partir de ~1.000 instalações o "inscrições
+  // abertas" alcançaria só o primeiro pedaço da igreja e nada acusaria.
+  const toks = await fetchAllRows(() => supabase.from('app_push_tokens').select('user_id'));
   const userIds = [...new Set((toks || []).map((t) => t.user_id).filter(Boolean))];
   if (!userIds.length) return;
   const payload = {
