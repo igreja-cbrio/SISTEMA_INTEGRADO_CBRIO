@@ -71,6 +71,8 @@ async function tryAuth(req, _res, next) {
 // Régua: conferir versão de dependência em `backend/package.json`, nunca na
 // raiz. A normalização de IP é NOSSA (`utils/appRateLimit.js`, no gate).
 const { chaveLimiteApp, ehChaveAnonima } = require('../utils/appRateLimit');
+// Saneamento do payload de inscrição do app (régua PURA · no gate de deploy).
+const { sanearDadosApp } = require('../utils/saneamentoInscricaoApp');
 
 function limiterApp({ max, maxAnonimo, nome }) {
   const chave = (req) => chaveLimiteApp(req);
@@ -584,6 +586,16 @@ const LABEL_INSCRICAO_LEAD = {
   retiro: 'Retiro', cursos: 'Cursos', eventos: 'Eventos',
 };
 const MODULO_LEAD = { retiro: 'eventos', cursos: 'eventos', eventos: 'eventos' };
+// Pra onde vai o aviso quando o FANOUT falha (status='erro' · migration
+// 20260806160000). São os 4 tipos que têm ramo no trigger — os pastorais e o
+// `contato` não passam por fanout, então nunca caem nesse caminho.
+const MODULO_POR_TIPO_INSCRICAO = {
+  grupos: 'grupos', batismo: 'batismos', next: 'next', voluntariado: 'voluntariado',
+};
+const LINK_POR_TIPO_INSCRICAO = {
+  grupos: '/grupos?tab=entrada', batismo: '/batismo',
+  next: '/ministerial/next?tab=turmas', voluntariado: '/ministerial/voluntariado/inscricoes',
+};
 const LABEL_CUIDADOS = { aconselhamento: 'aconselhamento', oracao: 'oração', sos: 'SOS' };
 // Mapeia a urgência pra cor do sino (SEV_COLORS no AppShell)
 const SEV_CUIDADOS = { sos: 'urgente', aconselhamento: 'aviso', oracao: 'info' };
@@ -602,7 +614,8 @@ router.post('/inscricoes', limiterStrict, tryAuth, async (req, res) => {
     }
 
     const ehCuidados = TIPOS_CUIDADOS.has(tipo);
-    const dados = { ...extras };
+    // `let`: o saneamento (mais abaixo) devolve um objeto NOVO.
+    let dados = { ...extras };
     let membroId = null;
 
     // Pedidos pastorais + batismo/next: resolve o membro logado pra vincular a
@@ -676,6 +689,34 @@ router.post('/inscricoes', limiterStrict, tryAuth, async (req, res) => {
       }
     }
 
+    // ⚠️⚠️ SANEAMENTO DO PAYLOAD (06/08/2026 · auditoria, Onda 1 item 3).
+    //
+    // O que isto conserta, medido em produção: **o '55' grudado no telefone**.
+    // 15 das 22 linhas de `app_inscricoes` têm 13 dígitos começando com 55 (vem
+    // de `profiles.telefone`, que o PhoneInput grava como "+55 (21) …"), e o
+    // fanout só remove NÃO-DÍGITO — ele não tira código de país. Efeito: as 5
+    // inscrições de voluntariado que chegaram em `vol_inscricoes` estão com 13
+    // dígitos, e o **próprio dedup por telefone do fanout compara contra os 11
+    // dígitos da base** ⇒ não casa, e a pessoa pode duplicar.
+    //
+    // ⚠️ NÃO chamamos `validarCamposPadrao` aqui, e é decisão com número: medi o
+    // que o app manda e ligar o contrato pleno reprovaria ~tudo — 0 de 22
+    // payloads mandam nascimento ou sexo, oração/SOS/aconselhamento nunca mandam
+    // e-mail, a régua de telefone não tem flag pra relaxar (e 46 dos 83
+    // cadastros ligados a conta do app não têm telefone) e batismo manda `nome` =
+    // primeiro token. Aplicar ali travaria o botão de SOS pra ~55% das contas,
+    // numa tela que não tem campo pra corrigir. Subir exigência é decisão com a
+    // base fechada — outra onda, com a medição na mão.
+    //
+    // Régua pura em `utils/saneamentoInscricaoApp.js` (no gate). NÃO bloqueia:
+    // campo que não normaliza vira null, que é o que o fanout já gravava.
+    const saneado = sanearDadosApp(dados);
+    if (saneado.ajustes.length) {
+      // Loga só os NOMES dos campos ajustados — nunca os valores (é telefone e CPF).
+      console.log(`[APP] inscricoes · payload saneado (${tipo}): ${saneado.ajustes.join(', ')}`);
+    }
+    dados = saneado.dados;
+
     const { data: inserted, error } = await supabase
       .from('app_inscricoes')
       .insert({
@@ -692,6 +733,69 @@ router.post('/inscricoes', limiterStrict, tryAuth, async (req, res) => {
     if (error) {
       console.error('[APP] inscricoes · falha ao gravar:', error.message);
       return res.status(500).json({ error: 'Não foi possível registrar sua solicitação. Tente novamente.' });
+    }
+
+    // ⚠️⚠️ O FANOUT PODE TER FALHADO — E ATÉ 06/08/2026 ISSO ERA INVISÍVEL.
+    //
+    // `fn_app_inscricoes_fanout` é AFTER INSERT: ele roda na MESMA transação,
+    // mas o `RETURNING` do insert reflete a linha ANTES do trigger, então o
+    // `status` que veio acima é sempre 'pendente'. Quem sabe o que aconteceu de
+    // fato é a linha RELIDA.
+    //
+    // Antes, ramo que falhava era engolido (`RAISE WARNING`) e a linha era
+    // carimbada 'processado' de qualquer jeito: a pessoa via "inscrição
+    // enviada", recebia WhatsApp de confirmação e **não existia pedido em fila
+    // nenhuma**. Vítima medida na auditoria: um pedido de grupo de 11/06.
+    // A migration `20260806160000` fez o ramo que falha marcar **'erro'** (com
+    // SQLSTATE + constraint em `dados`); esta releitura é o que transforma isso
+    // em erro VISÍVEL — pra equipe e pra pessoa.
+    //
+    // ⚠️ Best-effort de propósito: se a releitura falhar, seguimos no caminho de
+    // sucesso. A linha existe e o rastro está no banco; derrubar a resposta por
+    // causa de uma consulta de conferência seria pior que o problema.
+    // ⚠️ `fanout_erro` em select ISOLADO junto do status: pedir coluna que a
+    // migration ainda não criou faz o PostgREST recusar a query INTEIRA, e aí a
+    // conferência viraria "não deu erro" — o oposto do que ela existe pra fazer.
+    // Deploy em 2 etapas: sem a migration, `posFanout` vem null e seguimos no
+    // caminho antigo (a lição do `parcelas_max`).
+    const { data: posFanout } = await supabase
+      .from('app_inscricoes')
+      .select('status, fanout_erro')
+      .eq('id', inserted.id)
+      .maybeSingle();
+
+    if (posFanout?.status === 'erro') {
+      const nomeErro = dados.nome || req.user?.email || 'Alguém';
+      const sqlstate = posFanout.fanout_erro?.sqlstate || '?';
+      const constr = posFanout.fanout_erro?.constraint || null;
+      console.error(
+        `[APP] inscricoes · fanout falhou · tipo=${tipo} id=${inserted.id} sqlstate=${sqlstate}${constr ? ` constraint=${constr}` : ''}`,
+      );
+      notificar({
+        modulo: MODULO_POR_TIPO_INSCRICAO[tipo] || 'membresia',
+        tipo: 'app_inscricao_erro',
+        titulo: `Inscrição pelo app NÃO foi registrada — ${nomeErro}`,
+        mensagem:
+          `A solicitação de ${LABEL_INSCRICAO_WPP[tipo] || tipo} de ${nomeErro} não chegou na fila `
+          + `(erro ${sqlstate}${constr ? ` em ${constr}` : ''}). A pessoa foi avisada e pode ter tentado de novo. `
+          + 'Registrar à mão ou corrigir a causa.',
+        link: LINK_POR_TIPO_INSCRICAO[tipo] || '/ministerial/membresia',
+        severidade: 'alta',
+        // Dedup por PESSOA+TIPO, não por linha: quem toma erro tende a tentar de
+        // novo, e cada tentativa cria uma linha nova — dedup por id encheria o
+        // sino com o mesmo problema (lição dos avisos em massa do censo).
+        chaveDedup: `app_inscricao_erro_${tipo}_${membroId || req.user?.id || 'anon'}`,
+      }).catch((e) => console.warn('[APP] inscricoes · notificar erro de fanout:', e.message));
+
+      // ⚠️ E a pessoa passa a ouvir a verdade. Dizer "recebido" pra algo que não
+      // existe é o defeito que estamos consertando; o custo aceito é ela poder
+      // tentar de novo (o dedup do fanout trata) enquanto a equipe corrige.
+      return res.status(502).json({
+        error:
+          'Não conseguimos concluir sua solicitação agora. Nossa equipe já foi avisada '
+          + 'e vai resolver — se preferir, tente novamente em alguns minutos.',
+        codigo: 'fanout_falhou',
+      });
     }
 
     // Notifica a equipe de Cuidados (in-app + push). SOS é urgente.
