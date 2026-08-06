@@ -622,6 +622,8 @@ function Detalhe({ id, podeEditar, nivel, consentimentoDefault, tiposPesquisa, o
         </CardContent>
       </Card>
 
+      <CardVinculoPendente pesquisaId={id} podeRodar={podeEditar} />
+
       <Card>
         <CardContent className="p-5">
           <h3 className="font-semibold mb-1">Perguntas</h3>
@@ -643,6 +645,70 @@ function Detalhe({ id, podeEditar, nivel, consentimentoDefault, tiposPesquisa, o
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+/**
+ * Fila do pós-processamento. Durante o culto a coleta só GRAVA a resposta:
+ * medido, o matcher (achar a pessoa na base) mais a correção do cadastro eram 7
+ * das 8,3 idas ao banco por resposta — ~17 mil queries de trabalho derivado com
+ * 2.500 pessoas esperando a tela. Isto roda depois, e é melhor assim: dá para
+ * revisar conflito de cadastro com calma.
+ */
+function CardVinculoPendente({ pesquisaId, podeRodar }: { pesquisaId: string; podeRodar: boolean }) {
+  const [info, setInfo] = useState<{ pendentes: number; com_erro: number } | null>(null);
+  const [rodando, setRodando] = useState(false);
+
+  const carregar = useCallback(async () => {
+    try { setInfo(await censo.pendentes(pesquisaId)); } catch { setInfo(null); }
+  }, [pesquisaId]);
+  useEffect(() => { carregar(); }, [carregar]);
+
+  async function rodar() {
+    setRodando(true);
+    try {
+      // Em lotes: um clique não deve tentar processar 2.500 de uma vez.
+      let total = 0; let vinculadas = 0; let conflitos = 0; let restantes = 0;
+      for (let volta = 0; volta < 20; volta += 1) {
+        const r = await censo.posProcessar(pesquisaId);
+        total += r.processadas; vinculadas += r.vinculadas;
+        conflitos += r.conflitos; restantes = r.restantes;
+        if (!r.processadas || !r.restantes) break;
+      }
+      toast.success(
+        `${total} processada(s) · ${vinculadas} vinculada(s) a pessoas`
+        + (conflitos ? ` · ${conflitos} conflito(s) de cadastro para revisar` : '')
+        + (restantes ? ` · ${restantes} ainda na fila` : ''),
+      );
+      carregar();
+    } catch (e: unknown) { toast.error(msg(e, 'Erro ao processar')); }
+    finally { setRodando(false); }
+  }
+
+  if (!info || (info.pendentes === 0 && info.com_erro === 0)) return null;
+
+  return (
+    <Card>
+      <CardContent className="p-5">
+        <h3 className="font-semibold mb-1">Vínculo com as pessoas</h3>
+        <p className="text-sm text-muted-foreground">
+          {info.pendentes > 0
+            ? `${info.pendentes} resposta(s) aguardando ser ligada(s) à pessoa na base e aplicada(s) ao cadastro.`
+            : 'Nenhuma resposta pendente.'}
+          {info.com_erro > 0 && ` ${info.com_erro} com erro na última tentativa.`}
+        </p>
+        <p className="text-[11px] text-muted-foreground mt-2">
+          Isto não roda durante a coleta de propósito: no culto, cada consulta a mais
+          é a tela demorando para todo mundo.
+        </p>
+        {podeRodar && (
+          <Button className="mt-3" onClick={rodar} disabled={rodando}>
+            {rodando ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : null}
+            Processar agora
+          </Button>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

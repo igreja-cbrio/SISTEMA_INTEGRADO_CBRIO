@@ -15,6 +15,10 @@ type Props = {
   perguntas: Pergunta[];
   respostas: Respostas;
   onChange: (respostas: Respostas) => void;
+  /** Chamado quando a pessoa CONCLUI um bloco. É o checkpoint do salvar-e-retomar:
+   *  salvar por bloco em vez de a cada 4s de digitação corta a carga em 9x num
+   *  culto de 2.500 pessoas (300 mil requisições viram 32 mil). */
+  onBlocoConcluido?: (respostas: Respostas) => void;
   onEnviar: () => void;
   enviando?: boolean;
   consentimentoTexto?: string | null;
@@ -25,7 +29,7 @@ type Props = {
 const TEAL = '#00B39D';
 
 export default function CensoForm({
-  perguntas, respostas, onChange, onEnviar, enviando,
+  perguntas, respostas, onChange, onBlocoConcluido, onEnviar, enviando,
   consentimentoTexto, consentimento, onConsentimento,
 }: Props) {
   const c = usePublicPalette();
@@ -56,7 +60,12 @@ export default function CensoForm({
   function avancar() {
     if (faltandoNoBloco.length) { setMostrarErros(true); return; }
     setMostrarErros(false);
-    if (!ultimo) { setPasso(idx + 1); window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
+    if (!ultimo) {
+      onBlocoConcluido?.(respostas);       // checkpoint do rascunho
+      setPasso(idx + 1);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
     // Última rede antes de enviar: o formulário pode ter mudado de forma no
     // caminho (a pessoa voltou e trocou uma condicional).
     const tudo = faltando(perguntas, respostas);

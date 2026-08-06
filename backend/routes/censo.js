@@ -14,6 +14,8 @@ const { authenticate, authorizeModule, getEffectiveLevel } = require('../middlew
 const {
   TIPOS, FORMATOS, CUIDADO_TIPOS, validarPerguntas, slugificar,
 } = require('../utils/censoPerguntas');
+const { acharMembroGuardado } = require('../services/membroMatch');
+const { reconciliarCenso } = require('../services/censoReconciliar');
 
 router.use(authenticate);
 
@@ -441,6 +443,143 @@ router.patch('/cuidado/:id', authorizeModule('censo', 2), guardaCuidado, async (
     if (error) return res.status(400).json({ error: error.message });
     if (!data) return res.status(404).json({ error: 'Pedido não encontrado' });
     res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+//  PÓS-PROCESSAMENTO · vincular a pessoa e corrigir o cadastro
+// ══════════════════════════════════════════════════════════════════════════
+//
+// Durante o culto a porta pública só GRAVA a resposta. Medido no teste de carga
+// deste módulo: matcher + reconciliação eram 7 das 8,3 idas ao banco por
+// resposta — ~17.500 queries de trabalho derivado com 2.500 pessoas esperando a
+// tela. A resposta é o que não dá para pedir de novo; o vínculo é derivável do
+// payload a qualquer momento.
+//
+// Fazer depois é melhor por dois motivos, não só mais leve: dá para revisar
+// conflito de cadastro com calma, e o matcher acerta mais quando roda sobre o
+// lote inteiro (a mesma pessoa que respondeu duas vezes aparece junto).
+
+const LOTE_MAX = 200;
+
+router.get('/pendentes', authorizeModule('censo', 2), async (req, res) => {
+  try {
+    const pesquisaId = String(req.query.pesquisa_id || '').trim();
+    if (!pesquisaId) return res.status(400).json({ error: 'pesquisa_id é obrigatório' });
+    const { count, error } = await supabase
+      .from('cen_resposta').select('id', { count: 'exact', head: true })
+      .eq('pesquisa_id', pesquisaId)
+      .is('pos_processado_em', null).not('concluida_em', 'is', null).is('deleted_at', null);
+    if (error) return res.status(400).json({ error: error.message });
+
+    const { count: comErro } = await supabase
+      .from('cen_resposta').select('id', { count: 'exact', head: true })
+      .eq('pesquisa_id', pesquisaId)
+      .not('pos_processo_erro', 'is', null).is('deleted_at', null);
+
+    res.json({ pendentes: count || 0, com_erro: comErro || 0, lote_max: LOTE_MAX });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/pos-processar', authorizeModule('censo', 4), async (req, res) => {
+  try {
+    const pesquisaId = String(req.body?.pesquisa_id || '').trim();
+    if (!pesquisaId) return res.status(400).json({ error: 'pesquisa_id é obrigatório' });
+    const limite = Math.min(Number(req.body?.limite) || LOTE_MAX, LOTE_MAX);
+
+    const { data: pesquisa, error: e0 } = await supabase
+      .from('cen_pesquisa').select('id, perguntas').eq('id', pesquisaId).maybeSingle();
+    if (e0) return res.status(400).json({ error: e0.message });
+    if (!pesquisa) return res.status(404).json({ error: 'Pesquisa não encontrada' });
+
+    const { data: fila, error: e1 } = await supabase
+      .from('cen_resposta')
+      .select('id, membro_id, payload, identificado_por')
+      .eq('pesquisa_id', pesquisaId)
+      .is('pos_processado_em', null).not('concluida_em', 'is', null).is('deleted_at', null)
+      .order('concluida_em', { ascending: true })
+      .limit(limite);
+    if (e1) return res.status(400).json({ error: e1.message });
+    if (!fila?.length) return res.json({ processadas: 0, vinculadas: 0, conflitos: 0, restantes: 0 });
+
+    // `preenche_de` diz qual pergunta guarda qual campo do cadastro.
+    const campoPorPergunta = new Map();
+    for (const p of pesquisa.perguntas || []) {
+      if (p.preenche_de) campoPorPergunta.set(p.id, p.preenche_de);
+    }
+
+    let vinculadas = 0; let conflitos = 0; let falhas = 0;
+    for (const r of fila) {
+      try {
+        const porCampo = {};
+        for (const [pid, campo] of campoPorPergunta) {
+          const v = r.payload?.[pid];
+          if (v !== undefined && v !== null && v !== '') porCampo[campo] = v;
+        }
+
+        let membroId = r.membro_id;
+        let matchedBy = r.identificado_por === 'cpf_nascimento' ? 'cpf' : null;
+
+        if (!membroId) {
+          const hit = await acharMembroGuardado({
+            email: porCampo.email, telefone: porCampo.telefone,
+            nome: porCampo.nome, dataNascimento: porCampo.data_nascimento,
+          });
+          if (hit?.membro_id) {
+            membroId = hit.membro_id;
+            matchedBy = hit.matched_by;
+            // Tentar gravar o vínculo pode bater na UNIQUE (pesquisa_id,
+            // membro_id): é a MESMA pessoa tendo respondido duas vezes. Não é
+            // erro de sistema — a segunda fica sem vínculo e vai para a fila de
+            // duplicidade, exatamente como o resto do sistema trata isso.
+            const { error } = await supabase.from('cen_resposta')
+              .update({
+                membro_id: membroId,
+                identificado_por: hit.matched_by === 'cpf' ? 'cpf_nascimento' : 'nome_nascimento',
+              })
+              .eq('id', r.id);
+            if (error) {
+              if (error.code === '23505') {
+                await supabase.from('cen_resposta')
+                  .update({ pos_processado_em: new Date().toISOString(),
+                    pos_processo_erro: 'Já existe outra resposta desta mesma pessoa nesta pesquisa.' })
+                  .eq('id', r.id);
+                continue;
+              }
+              throw new Error(error.message);
+            }
+            vinculadas += 1;
+            // A fila de cuidado precisa saber de quem é o pedido.
+            await supabase.from('cen_cuidado').update({ membro_id: membroId }).eq('resposta_id', r.id);
+          }
+        }
+
+        if (membroId && matchedBy) {
+          const dados = { ...porCampo };
+          delete dados.nome;   // chave de match; o serviço já o ignora
+          const out = await reconciliarCenso({ membroId, matchedBy, dados, origemId: r.id });
+          conflitos += out?.conflitos?.length || 0;
+        }
+
+        await supabase.from('cen_resposta')
+          .update({ pos_processado_em: new Date().toISOString(), pos_processo_erro: null })
+          .eq('id', r.id);
+      } catch (e) {
+        falhas += 1;
+        // Guarda o erro e NÃO marca como processada: a linha fica na fila para
+        // a próxima rodada. Marcar aqui esconderia a falha para sempre.
+        await supabase.from('cen_resposta')
+          .update({ pos_processo_erro: String(e.message).slice(0, 400) })
+          .eq('id', r.id);
+      }
+    }
+
+    const { count: restantes } = await supabase
+      .from('cen_resposta').select('id', { count: 'exact', head: true })
+      .eq('pesquisa_id', pesquisaId)
+      .is('pos_processado_em', null).not('concluida_em', 'is', null).is('deleted_at', null);
+
+    res.json({ processadas: fila.length, vinculadas, conflitos, falhas, restantes: restantes || 0 });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

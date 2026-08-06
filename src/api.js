@@ -321,6 +321,12 @@ export const censo = {
     return get(`/censo/cuidado?${qs}`);
   },
   cuidadoAtualizar: (id, dados) => patch(`/censo/cuidado/${id}`, dados),
+  // Vínculo com a pessoa e correção do cadastro NÃO acontecem durante o culto
+  // (eram 7 das 8,3 idas ao banco por resposta). Ficam nesta fila, para rodar
+  // depois — quando ninguém está esperando a tela responder.
+  pendentes: (pesquisaId) => get(`/censo/pendentes?pesquisa_id=${pesquisaId}`),
+  posProcessar: (pesquisaId, limite) =>
+    post('/censo/pos-processar', { pesquisa_id: pesquisaId, limite }),
 };
 
 export const projects = {

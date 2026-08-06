@@ -113,11 +113,18 @@ export default function CensoPublica() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug]);
 
-  // ── salva o rascunho no servidor, com folga entre gravações ──
+  // ── salva o rascunho no servidor ──
+  //
+  // ⚠️ Gravamos por MUDANÇA DE BLOCO, não por tempo. A primeira versão salvava a
+  // cada 4s de digitação: com 2.500 pessoas preenchendo por ~8 minutos isso dava
+  // 300 mil requisições (≈1.250 queries/s SUSTENTADOS) — muito mais carga que o
+  // pico dos envios. Por bloco são 13 gravações por pessoa: 32 mil no total,
+  // 9x menos, e no momento que faz sentido (o fim de um bloco é o checkpoint
+  // natural). O piso de 15s protege de quem vai e volta entre blocos.
   const ultimoSalvo = useRef(0);
   const salvarRascunho = useCallback(async (novas: Respostas) => {
     if (Object.keys(novas).length === 0) return;
-    if (Date.now() - ultimoSalvo.current < 4000) return;   // não grava a cada tecla
+    if (Date.now() - ultimoSalvo.current < 15000) return;
     ultimoSalvo.current = Date.now();
     try {
       const salvo = JSON.parse(localStorage.getItem(RASCUNHO) || 'null');
@@ -133,7 +140,6 @@ export default function CensoPublica() {
 
   function aoMudar(novas: Respostas) {
     setRespostas(novas);
-    salvarRascunho(novas);
   }
 
   const perguntas = pesquisa?.perguntas || [];
@@ -191,7 +197,8 @@ export default function CensoPublica() {
           perguntas={perguntas}
           respostas={respostas}
           onChange={aoMudar}
-        onEnviar={enviar}
+          onBlocoConcluido={salvarRascunho}
+          onEnviar={enviar}
           enviando={enviando}
           consentimentoTexto={pesquisa.consentimento_texto}
           consentimento={consentimento}
