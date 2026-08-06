@@ -14,6 +14,12 @@ const {
   registrarObservacaoSegura,
 } = require('./identidadeProgressiva');
 const { acharOuCriarGuardado, acharMembroGuardado } = require('./membroMatch');
+// Réguas PURAS de campo de contato (moradia nova em 06/08/2026 · ver comentário
+// mais abaixo). Espelho de tirarCodigoPais de src/lib/inscricao.js — mudou lá,
+// mude no util.
+const {
+  tirarCodigoPaisTelefone, emailValido, validarNascimento,
+} = require('../utils/camposContato');
 
 const SEXOS = ['masculino', 'feminino']; // D8 — nunca "outro"
 
@@ -56,16 +62,13 @@ function temAbreviacaoNome(nome) {
   });
 }
 
-// ISO YYYY-MM-DD, data real, não-futura, ano >= 1900 → string normalizada ou null
-function validarNascimento(v) {
-  const s = String(v || '').slice(0, 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
-  const d = new Date(`${s}T00:00:00Z`);
-  if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== s) return null;
-  if (Number(s.slice(0, 4)) < 1900) return null;
-  if (s > new Date().toISOString().slice(0, 10)) return null;
-  return s;
-}
+// ⚠️ `validarNascimento`, `emailValido` e `tirarCodigoPaisTelefone` MUDARAM DE
+// CASA em 06/08/2026 (auditoria do app, Onda 1): moraram aqui, mas este arquivo
+// carrega o cliente do Supabase, então elas não podiam ser testadas no gate sem
+// banco. Foram pra `utils/camposContato.js` (puras) e seguem sendo
+// **re-exportadas daqui** — nenhuma das 7 portas muda de import.
+// Comportamento idêntico; `validarNascimento` só ganhou um 2º parâmetro
+// OPCIONAL (`hoje`) pra teste determinístico.
 
 // D1 — regra determinística de split para tabelas com nome+sobrenome
 function splitNomeCompleto(nomeCompleto) {
@@ -77,23 +80,10 @@ function honeypotPreenchido(body) {
   return Boolean(String((body && body.website) || '').trim());
 }
 
-// Regex ÚNICA do e-mail (a mesma dos forms client) — era re-declarada em
-// grupos/next/voluntariado (P3 do sweep 28/07: cópia local diverge um dia).
-// Não normaliza de propósito: valida o que recebeu; quem normaliza pra gravar
-// é normalizarEmail/validarCamposPadrao.
-function emailValido(v) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || ''));
-}
 
 // Valida o bloco de campos padrão. Retorna { erros, valores } — erros vazio = ok.
 // opts existe SÓ para exceções documentadas (ex.: walk-in do totem não exige
 // nascimento); o default é o contrato pleno.
-// Espelho de tirarCodigoPais de src/lib/inscricao.js — mudou aqui, mude lá.
-function tirarCodigoPaisTelefone(digitos) {
-  const d = String(digitos || '');
-  if (d.length >= 12 && d.length <= 13 && d.startsWith('55')) return d.slice(2);
-  return d;
-}
 
 function validarCamposPadrao(body = {}, opts = {}) {
   const {

@@ -6704,6 +6704,152 @@ turma → encontro → matrícula (espelho de `nextTurmasAbertas()`), dedup por
 encontro. **Precisa de `supabase functions deploy notify-lembretes` — não sai
 por OTA nem por merge daqui.**
 
+## ⚠️⚠️ AUDITORIA DO APP · ONDA 1a · PARAR DE PERDER DADO (2026-08-06)
+
+Migrations `20260806160000` (fanout) e `20260806170000` (RLS + o achado novo).
+Itens 1, 2 e 3 do plano de 6 ondas. Ondas agrupam por **veículo de entrega**:
+aqui é tudo servidor + 2 migrations, nada de OTA nem loja.
+
+### 1 · O fanout parava de dizer "processado" quando falhou
+
+`fn_app_inscricoes_fanout` engolia a exceção nos 4 ramos (`RAISE WARNING`) e a
+última linha carimbava `'processado'` **incondicionalmente**. Prova medida: a
+linha `tipo='grupos'` de 11/06 está `processado` e `mem_grupo_pedidos` tem **0**
+linhas `origem='app'` (a causa de origem era o CHECK de `origem`, só ampliado em
+28/07 — mas o que fez a perda ser SILENCIOSA foi o carimbo).
+
+- **PATCH DINÂMICO obrigatório** (`pg_get_functiondef` + `regexp_replace`, a
+  técnica de 20260729060000): a definição VIVA não é a do repo — a 29/07
+  reescreveu o corpo em produção (`vi.deleted_at IS NULL` no dedup de
+  voluntariado). **`CREATE OR REPLACE` do arquivo reverteria aquilo em
+  silêncio**, e é por isso que o fanout ficou sem conserto até hoje. A migration
+  verifica cada uma das 3 substituições e ABORTA se alguma não casar.
+- ⚠️ **`'erro'` teve que entrar no CHECK de `status` ANTES** (era
+  `pendente|em_analise|aprovado|recusado|processado|duplicado`). UPDATE pra valor
+  fora do CHECK dentro de AFTER INSERT levanta 23514 e **ABORTA o INSERT** — a
+  pessoa deixaria de conseguir se inscrever. É o estrago literal que a
+  20260609120000 documenta. A lista nova é **derivada da viva** (extraída do
+  `pg_get_constraintdef`), nunca escrita à mão: lista decorada estreitaria o
+  CHECK em silêncio se prod tiver valor que o repo não conhece.
+- ⚠️ **Cinto e suspensório**: o carimbo novo roda dentro do PRÓPRIO
+  `BEGIN/EXCEPTION` e, se falhar, cai no comportamento antigo. O pior caso deste
+  conserto não pode ser "a pessoa não consegue se inscrever".
+- **O motivo vai em COLUNA PRÓPRIA** (`app_inscricoes.fanout_erro` jsonb):
+  `{sqlstate, constraint, em}` via `GET STACKED DIAGNOSTICS`. ⚠️ **Nunca
+  SQLERRM**: ele embute o valor que violou a chave ("Key (cpf)=(…)") e a linha é
+  legível pelo próprio dono via RLS. E não vai em `dados` porque `cuidados.js`
+  reescreve `dados` inteiro em algumas ações — o diagnóstico desapareceria.
+- ⚠️ **O consumidor é o backend, não uma tela**: `POST /app/inscricoes` RELÊ a
+  linha depois do insert (o `RETURNING` reflete o estado ANTES do AFTER trigger),
+  e quando vê `'erro'` **notifica o módulo dono** e responde **502 com mensagem
+  honesta** em vez de "Solicitação recebida!". Sem esse consumidor a onda só
+  trocaria "perda silenciosa com rótulo errado" por "rótulo certo": **nenhuma
+  tela do sistema lê `app_inscricoes.status`** (conferido nos 8 leitores).
+  Dedup do aviso é por PESSOA+TIPO, não por linha — quem toma erro tenta de novo.
+- ⚠️⚠️ **RESÍDUO CONHECIDO, não resolvido nesta onda**: existe um SEGUNDO trigger
+  AFTER INSERT, `app_inscricoes_notify_recebida` (repo do app ·
+  `supabase/webhooks_app.sql`), e a ordem de disparo do Postgres é **alfabética**
+  ⇒ ele roda **antes** do fanout e manda push *"o líder recebeu seu pedido"*
+  olhando só `record.tipo`. **Essa push continua saindo mesmo quando o fanout
+  falha.** Fechar exige mover a notificação pro backend (depois da releitura) ou
+  passar o trigger pra AFTER UPDATE de status — mexe no repo do app + deploy de
+  Edge Function.
+
+### 2 · O cliente parou de poder escrever o que não é dele
+
+`app_inscricoes_own` era `FOR ALL USING (auth.uid() = auth_user_id)` — sem `TO`,
+sem `WITH CHECK`. Dava pra o autor marcar o próprio SOS como concluído (sai da
+fila pastoral), apagar a linha e inserir pedido com `membro_id` de terceiro.
+
+- ⚠️⚠️ **As policies são descobertas no CATÁLOGO, não pelo nome do arquivo**:
+  policy permissiva é **OR'eada**, e há indício de uma SEGUNDA policy `own` que
+  **não está em migration nenhuma** (a 20260701030000 revela duas). Dropar só a
+  que o git conhece deixaria a duplicata `FOR ALL` viva: migration passa, lint
+  verde, **furo aberto**.
+- Sobrou `FOR SELECT TO authenticated` do dono + `FOR ALL TO service_role`, e
+  `REVOKE INSERT/UPDATE/DELETE`. Pode, porque **o cliente não escreve ali**: o
+  app toca `app_inscricoes` em UM lugar e é leitura (`lib/meusPedidos.ts:18`);
+  quem escreve é `POST /api/app/inscricoes` com service_role.
+- ⚠️ `(select auth.uid())` na policy nova — `auth.uid()` cru reavalia por LINHA e
+  desfaz o initplan da 20260701030000.
+- ⚠️ Teste de fumaça **com token de usuário real**: o supabase-js manda a anon
+  key em `apikey` e o JWT em `Authorization`, e o papel efetivo é
+  `authenticated`. Testar com a anon key pura dá "permission denied" (correto) e
+  se lê como "quebrei o app".
+
+### ⚠️⚠️ 2b · ACHADO NOVO (fora dos 12 da auditoria) e MAIS GRAVE
+
+`app_soft_delete(text,text,uuid)` e `app_restore(text,text)` são **SECURITY
+DEFINER** com `GRANT EXECUTE ... TO authenticated` (20260521180000:174 e :207) e
+a **única** validação dentro delas é "a tabela está na whitelist" — **sem
+checagem de dono, de módulo ou de nível**. Qualquer pessoa logada (inclusive
+qualquer membro pelo app, com a chave pública que vai no bundle) podia
+`select app_soft_delete('mem_membros', '<uuid de qualquer pessoa>')` e apagar por
+soft-delete **qualquer linha das ~30 tabelas da whitelist** — pessoas, grupos,
+contribuições, dados de Kids — sabendo só o id. `app_restore` desfaz, o que
+também ressuscita o que a equipe apagou de propósito.
+
+**Revogado de `authenticated` e `anon`, e é mudança de ZERO comportamento**:
+varredura dos dois repos → **17 arquivos de rota** do backend chamam
+`app_soft_delete`, todos com service_role; **ZERO** chamadores no frontend do ERP
+(`src/`), no app mobile e nas Edge Functions. Reverter, se um dia precisar, é um
+`GRANT`. ⚠️ **Follow-up**: outras funções SECURITY DEFINER com grant pra
+`authenticated` merecem a mesma varredura (`app_salvar_membro` já foi estreitada
+em 20260806140000).
+
+### 3 · O payload do app passou a ser SANEADO — e por que NÃO é o contrato
+
+⚠️⚠️ **Ligar `validarCamposPadrao` aqui reprovaria ~tudo, e isso foi MEDIDO**
+(22 linhas de `app_inscricoes` em 06/08): **0 de 22** mandam nascimento ou sexo ·
+oração/SOS/aconselhamento **nunca** mandam e-mail · a régua de telefone **não tem
+flag pra relaxar** e 46 dos 83 cadastros ligados a conta do app não têm telefone
+⇒ o botão de **SOS** (risco de vida) e o Fale Conosco passariam a recusar ~55%
+das contas, em telas sem campo pra corrigir · batismo manda `nome` = **primeiro
+token** ⇒ "Informe o nome completo" em 100% dos envios.
+
+Então o conserto é o dano REAL medido: **o '55' grudado no telefone.** 15 das 22
+linhas têm 13 dígitos começando com 55 (`profiles.telefone` guarda "+55 (21) …"
+do PhoneInput) e o fanout só remove NÃO-DÍGITO — não tira código de país. As 5
+inscrições de voluntariado em `vol_inscricoes` estão com 13 dígitos, e **o
+próprio dedup por telefone do fanout compara contra os 11 da base** ⇒ não casa.
+
+- **`backend/utils/saneamentoInscricaoApp.js`** = régua PURA no gate (17 testes).
+  Telefone → dígitos → tira o 55 (só quando o resto ainda é telefone completo:
+  **DDD 55 é Santa Maria/RS**) → aceita 10-11, senão `null`. E-mail normalizado
+  ou null · nascimento validado ou null · CPF só dígitos (o DV é julgado pelo
+  handler, não aqui) · nome com trim/colapso.
+- ⚠️ **NÃO BLOQUEIA NADA**: campo que não normaliza vira `null`, que é o que o
+  fanout já gravava. Nenhum 400 novo em nenhum tipo.
+- ⚠️ **Só mexe em chave que EXISTE** e preserva todas as outras: o fanout lê
+  `grupo_id`, `areas`, `nome_mae`, `sobrenome`, `tamanho_camisa`,
+  `possui_deficiencia`, `deficiencia_descricao`, `observacoes`, `observacao`,
+  `evento_id`, `membro_id`. Remover ou renomear qualquer uma quebra um ramo.
+- Log de ajuste sai com os **NOMES** dos campos, nunca os valores (é telefone e CPF).
+- **Subir exigência é decisão com número na mão, outra onda**: hoje só **1**
+  profile tem `app_ficha_confirmada_em`, e dos 25 cadastros com CPF completo
+  **17 não têm `genero`**.
+
+⚠️ **Réguas puras mudaram de casa**: `validarNascimento`, `emailValido` e
+`tirarCodigoPaisTelefone` saíram de `services/inscricaoContrato.js` (que carrega
+o Supabase e por isso não entrava no gate) pra **`backend/utils/camposContato.js`**
+— e o `inscricaoContrato` **re-exporta as três**, então nenhuma das 7 portas
+públicas muda de import. `validarNascimento` ganhou 2º parâmetro OPCIONAL
+(`hoje`) pra teste sem o relógio da máquina. Conferido com smoke rodado **de
+dentro de `backend/`** (a lição da Onda 0) + `test:inscricao-contrato` verde.
+
+### ⏳ Onda 1 · o que FALTA (itens 4 e 5, levantamento pronto)
+
+- **Item 4 · pedido de exclusão de conta (LGPD)** ainda sem leitor. ⚠️ Achado do
+  levantamento: **`gerarTodasNotificacoes` não tem agendador nenhum** —
+  `/api/notificacoes/cron` NÃO está no `vercel.json` (só `/cron/alerta-culto-dados`,
+  semanal) e nada mais o chama. Ou seja, TODOS os avisos periódicos do
+  `notificacaoGenerator` (documento vencendo, membro sem grupo, jornada,
+  grupos sem visita, `cadastro_sem_nome_real`) **só rodam quando um admin clica
+  em "gerar"**. Acrescentar gerador ali não faz o aviso sair. Agendar liga ~15
+  geradores de uma vez e é decisão do Marcos (risco de enterrar o sino).
+- **Item 5 · `PUT /app/grupos/:id`** pra o save do supervisor parar de mentir
+  (79 de 100 grupos).
+
 ## ⚠️ DECISÃO · o APP é o canal oficial do devocional (2026-08-06)
 
 Palavras do Marcos: *"acho que podemos usar agora o canal oficial da devocional
