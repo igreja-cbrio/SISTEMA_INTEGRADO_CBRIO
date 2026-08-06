@@ -6511,6 +6511,40 @@ cargos no nível 3** (= 89 usuários com INSERT/UPDATE direto em `inscricoes`,
 um cargo chamado **"Acesso negado"** — o seed subiu todo mundo pra 3. A view
 unificada está revogada de `authenticated`; as tabelas-base não.
 
+## ⚠️ DECISÃO · o APP é o canal oficial do devocional (2026-08-06)
+
+Palavras do Marcos: *"acho que podemos usar agora o canal oficial da devocional
+sendo o aplicativo mobile, mantenha assim por enquanto"*.
+
+Contexto: eu havia levantado que, com o login não ligando mais ninguém a cadastro
+(migration `20260806120000`), quem entrasse na **webapp** `/devocionais/*` sem ter
+preenchido a ficha veria *"você não é membro"*. Ele decidiu **não consertar** —
+a webapp fica como está.
+
+⚠️⚠️ **NÃO "consertar" isso depois.** Especificamente, NÃO criar `mem_membros`
+automaticamente pra a tela parar de reclamar: era exatamente esse cadastro-fantasma
+que o gatilho fazia e que a migration removeu. Se um dia o comportamento
+incomodar, o caminho é a webapp **mandar completar o cadastro**, nunca o banco
+inventar pessoa.
+
+**Estado medido em 06/08 (encanamento OK, adoção é o gargalo):**
+- Lembrete por **push funciona**: 253 notificações `tipo='devocional'`, a última
+  **hoje 07:30 BRT** (o horário do cron). `app_lembretes_enviados` tem 32 chaves
+  `devocional:`.
+- **Conteúdo existe**: plano "Devocional da semana 03/08" ativo, 96 itens, com item
+  pra hoje.
+- 🔴 **Uso real: 12 check-ins em `mem_devocionais`, de 6 pessoas, o último em
+  15/07** (3 semanas atrás). 253 lembretes → ~0 registro. Como `mem_devocionais` é
+  a fonte dos KPIs de **Investir tempo com Deus**, o valor é ~zero por falta de
+  USO, não por falta de canal — não confundir os dois ao ler o painel.
+- Achado menor: temas repetidos em dias seguidos ("A Força que Vem da Fraqueza" em
+  05 e 06/08 · "A Força na Fraqueza" em 04/08) — a geração por IA repetindo
+  assunto. Não bloqueia nada.
+- ⚠️ Correção de registro: a aba "Automáticas" (05/08) marcou o devocional como
+  "quebrado · 187 erros, 0 entregas". Aquilo é do canal **WhatsApp**
+  (`whatsapp_envios` não tem NENHUMA linha de devocional hoje); o **push**, que é o
+  canal que importa agora, está entregando.
+
 ## Devocionais · módulo do Matheus (no ar)
 
 Módulo existe e roda: `backend/routes/devocionalPlanos.js` (CRUD + geração de
