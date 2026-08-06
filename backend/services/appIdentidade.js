@@ -353,6 +353,25 @@ async function completarCadastro({ payload, authUserId, email, ip, userAgent }) 
   }
   const { fusao } = await vincularProfile({ authUserId, email, membroId });
 
+  // ⚠️ `frequenta_area` (AMI/Bridge) vinha do metadata do signup e o GATILHO
+  // gravava. Desde 06/08 o gatilho não escreve mais em `mem_membros` (o vínculo
+  // passou a ser feito aqui, com a ficha na mão · migration 20260806120000), então
+  // é aqui que esse dado é aplicado — senão a escolha da pessoa no cadastro do app
+  // seria descartada em silêncio, que é o bug do CPF do censo se repetindo.
+  // Best-effort e SÓ ONDE ESTÁ VAZIO: falha na leitura do metadata não pode
+  // derrubar um cadastro que já foi salvo.
+  try {
+    const { data: au } = await supabase.auth.admin.getUserById(authUserId);
+    const freq = au?.user?.user_metadata?.frequenta_area;
+    if (freq === 'ami' || freq === 'bridge') {
+      await supabase.from('mem_membros')
+        .update({ frequenta_area: freq })
+        .eq('id', membroId).is('frequenta_area', null).is('deleted_at', null);
+    }
+  } catch (e) {
+    console.warn('[appIdentidade] frequenta_area do metadata:', e.message);
+  }
+
   // ⚠️ O matcher (`acharOuCriarGuardado`) não escreve `genero` — ele resolve
   // IDENTIDADE, não preenche cadastro. Sem este UPDATE o sexo seria validado e
   // DESCARTADO: a pessoa preencheria, o endpoint responderia ok, e o

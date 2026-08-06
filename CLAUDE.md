@@ -4177,6 +4177,48 @@ bloqueia o CPF quando o servidor diz que sim. Falha de rede mantém o default
 **true (fail-closed)**: sem isso, ficar offline viraria porta pra entrar sem
 cadastro. É a mesma lei do resto — quem define o que é válido é o backend.
 
+## ⚠️⚠️ LEI · o LOGIN não liga ninguém a cadastro (2026-08-06 · migration `20260806120000`)
+
+Fecha o desenho que o Marcos pediu em duas etapas. Palavras dele: *"sobre o
+gatilho ligando o login, eu acho que deve ter, mas ele só deve ser acionado PÓS
+PREENCHER TODOS OS DADOS, e todos que baixarem devem ser obrigados a preencher, e
+somente após o preenchimento entrar no app; e com os dados completos, aí sim ir
+para o módulo de duplicatas se houver algum matcher"*.
+
+**O mecanismo de ligar continua existindo — mudou de MOMENTO.** `handle_new_user`
+passa a criar **só a conta** (`profiles`, com `is_membro_only = true` e
+`membro_id NULL`). Quem resolve identidade agora é
+`POST /app/identidade/completar` → `acharOuCriarGuardado`, **com CPF na mão**; o
+par duvidoso segue pra fila humana em /entradas.
+
+- **Por que**: o gatilho ligava por **e-mail + nome** (sinal médio) e, com login
+  do Google, é só isso que existe. A pessoa caía num cadastro que outra porta
+  preencheu e **entrava no app herdando CPF, nascimento e sexo que nunca
+  forneceu** — 9 de 89 contas, medido em 05/08. Caso concreto: o Pedro Paiva
+  logou com o Gmail e foi ligado ao cadastro dele importado do Next.
+- **Ritmo real**: ~2 logins de membro por dia (13 profiles em 7 dias). Desde o
+  conserto de 04/08 o gatilho **não criava** cadastro (`origem='auth_signup'` = 0);
+  ele vinha **ligando** — que é o que sai agora.
+- ⚠️ **`is_membro_only = true` continua obrigatório** no INSERT: sem isso a pessoa
+  cai no `/dashboard` do ERP em vez do app.
+- ⚠️ **Os metadados não se perdem**: `cpf`, `telefone`, `nascimento` e
+  `frequenta_area` ficam em `auth.users.raw_user_meta_data`.
+  `appIdentidade.completarCadastro` aplica o `frequenta_area` (AMI/Bridge) ao
+  concluir — sem isso a escolha da pessoa seria **descartada em silêncio**, que é
+  o bug do CPF do censo se repetindo.
+- ⚠️⚠️ **Consequência conhecida e aceita**: quem loga e ainda não preencheu fica
+  **sem `mem_membros`**. No app é irrelevante (o portão bloqueia tudo até
+  preencher). Fora dele — webapp do devocional — a pessoa vê "você não é membro"
+  até completar. É honesto: ela ainda não é. A versão anterior criava um
+  cadastro-fantasma só pra aquela tela não reclamar, e era esse o anti-padrão.
+- ⚠️ **Não reescreve o passado**: os 24 cadastros `origem='auth'` e os vínculos já
+  feitos ficam; o par duplicado deles vive na fila de /entradas. E
+  `profiles.app_ficha_confirmada_em` (20260805150000) continua sendo o que fecha o
+  furo das contas ANTIGAS, que já têm `membro_id` — as duas migrations são
+  complementares, não alternativas.
+- ⚠️ Staff (`rh_funcionarios` ativo) **nunca** teve cadastro criado pelo gatilho —
+  esse ramo está intocado.
+
 ## ⚠️⚠️ LEI · no APP, dado HERDADO de vínculo não libera acesso (2026-08-05 · migration `20260805150000`)
 
 Decisão do Marcos, ao ver que o login do Pedro Paiva não pediu cadastro:
