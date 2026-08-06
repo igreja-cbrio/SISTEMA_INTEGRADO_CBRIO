@@ -73,6 +73,8 @@ async function tryAuth(req, _res, next) {
 const { chaveLimiteApp, ehChaveAnonima } = require('../utils/appRateLimit');
 // Saneamento do payload de inscrição do app (régua PURA · no gate de deploy).
 const { sanearDadosApp } = require('../utils/saneamentoInscricaoApp');
+// Régua PURA da edição de grupo pelo app (allowlist + categoria fechada + horário).
+const { validarEdicaoGrupoApp } = require('../utils/grupoEdicaoApp');
 
 function limiterApp({ max, maxAnonimo, nome }) {
   const chave = (req) => chaveLimiteApp(req);
@@ -3334,6 +3336,102 @@ async function gateGrupoApp(req, res, gid) {
   }
   return { ok: true, grupo, membro, adminGrupos };
 }
+
+// ⚠️⚠️ PUT /app/grupos/:grupoId — EDITAR GRUPO PELO APP (06/08/2026 · Onda 1b)
+//
+// O QUE ISTO CONSERTA: `grupo-editar.tsx` fazia UPDATE DIRETO em `mem_grupos`, e
+// a RLS de UPDATE só aceita `lider_id = current_user_membro_id()` OU nível
+// grupos >= 3 — **supervisor não passa**. Como o update do app não tinha
+// `.select()` nem conferia linhas afetadas, 0 linhas voltavam SEM erro e a tela
+// dizia "Grupo atualizado." Medido em 06/08: dos 13 supervisores, o único com
+// conta no app supervisiona **8 grupos ativos e não é líder em 7** — são 7 saves
+// que hoje mentem. (E `current_user_module_level` resolve `usuarios` pelo E-MAIL
+// DO LOGIN: o e-mail com que ele entra no app não é o da conta de sistema, então
+// o nível dele na RLS é 0.)
+//
+// ⚠️⚠️ POR QUE NÃO REUSAR O `PUT /api/grupos/:id` DO WEB: ele é update de OBJETO
+// INTEIRO, não patch — escreve ~28 colunas e aplica DEFAULT no que não vem
+// (`lider_id: d.lider_id || null`, `ativo: d.ativo ?? true`, `temporada: || null`,
+// `aceitando_inscricoes: d.aceitando_inscricoes !== false`). Chamá-lo com os 9
+// campos da tela do app **apagaria a liderança, a temporada e o estado de
+// inscrição** do grupo. Daí endpoint próprio, com allowlist e semântica de PATCH.
+//
+// Autorização: o MESMO `gateGrupoApp` dos outros 7 endpoints de gerenciar grupo
+// (líder OU supervisor OU admin de grupos) — a mesma régua que a TELA usa pra
+// decidir se mostra o botão "Editar". Era essa divergência entre tela e RLS que
+// produzia o save silencioso.
+//
+// ⚠️ A régua de campo vive em `utils/grupoEdicaoApp.js` (pura, no gate): lista
+// FECHADA de categoria (é regra de negócio — trava de gênero e inscrição de
+// casal), `horario` normalizado pra `HH:MM` (a coluna é `time` e a tela manda
+// texto livre) e `dia_semana` aceitando **0 = domingo** (que é falsy).
+router.put('/grupos/:grupoId', authApp, limiterNormal, async (req, res) => {
+  try {
+    const gid = req.params.grupoId;
+    const gate = await gateGrupoApp(req, res, gid);
+    if (!gate.ok) return undefined;
+
+    const { erros, valores, mudouEndereco } = validarEdicaoGrupoApp(req.body || {});
+    const campoComErro = Object.keys(erros)[0];
+    if (campoComErro) {
+      // Mesmo formato de erro do resto do app (appIdentidade): o cliente já sabe
+      // exibir `error` e agora tem `campo` pra destacar.
+      return res.status(400).json({ error: erros[campoComErro], campo: campoComErro, erros });
+    }
+    if (!Object.keys(valores).length) {
+      return res.status(400).json({ error: 'Nada para atualizar.' });
+    }
+
+    // ⚠️ `.select()` + conferir a linha é o ponto do conserto: sem isso, 0 linhas
+    // afetadas voltam como sucesso. E `updated_at` passa a ser carimbado (não há
+    // trigger de updated_at em mem_grupos, e o PUT do web também não o seta —
+    // então hoje editar grupo deixa a coluna velha).
+    const { data: atualizado, error } = await supabase
+      .from('mem_grupos')
+      .update({ ...valores, updated_at: new Date().toISOString() })
+      .eq('id', gid)
+      .is('deleted_at', null)
+      .select('id, nome, categoria, descricao, tema, dia_semana, horario, local, endereco, bairro')
+      .maybeSingle();
+
+    if (error) {
+      console.error('[APP] grupos · editar:', error.message);
+      return res.status(500).json({ error: 'Não foi possível salvar as alterações.' });
+    }
+    if (!atualizado) {
+      // Chegou aqui = o gate passou mas a linha não foi escrita. Não existe
+      // caminho conhecido pra isso (service_role ignora RLS), então é sinal de
+      // corrida (o grupo foi apagado no meio) — e a pessoa tem que saber.
+      console.error('[APP] grupos · editar: 0 linhas afetadas no grupo', gid);
+      return res.status(409).json({ error: 'O grupo não está mais disponível para edição.' });
+    }
+
+    // ⚠️ ENDEREÇO MUDOU = O PINO DO MAPA FICOU VELHO. Nenhum save do sistema
+    // re-geocodifica (nem o do web); quem faz isso é a ferramenta MANUAL
+    // `/admin/grupos/geocode`. Geocodificar aqui seria chamar ViaCEP + Nominatim
+    // (com 1,1s de espera por política) dentro do request — é como uma edição
+    // vira timeout. Então avisamos a coordenação, que é o que evita o pino
+    // apontando pra casa antiga sem ninguém saber.
+    if (mudouEndereco) {
+      notificar({
+        modulo: 'grupos',
+        tipo: 'grupo_endereco_mudou_app',
+        titulo: `Endereço do grupo mudou — ${atualizado.nome}`,
+        mensagem:
+          `O endereço de "${atualizado.nome}" foi editado pelo app. O pino do mapa e o `
+          + '"como chegar" continuam no lugar antigo até rodar a ferramenta de endereços.',
+        link: '/admin/grupos/geocode',
+        severidade: 'aviso',
+        chaveDedup: `grupo_endereco_app_${gid}`,
+      }).catch((e) => console.warn('[APP] grupos · editar · notificar endereço:', e.message));
+    }
+
+    return res.json({ ok: true, grupo: atualizado });
+  } catch (e) {
+    console.error('[APP] grupos · editar:', e.message);
+    return res.status(500).json({ error: 'Não foi possível salvar as alterações.' });
+  }
+});
 
 // ⚠️⚠️ DUAS COISAS DIFERENTES, e eu tinha confundido as duas (corrigido 05/08 por
 // esclarecimento do Marcos):

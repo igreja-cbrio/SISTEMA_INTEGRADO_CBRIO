@@ -6850,6 +6850,118 @@ dentro de `backend/`** (a lição da Onda 0) + `test:inscricao-contrato` verde.
 - **Item 5 · `PUT /app/grupos/:id`** pra o save do supervisor parar de mentir
   (79 de 100 grupos).
 
+## ⚠️⚠️ AUDITORIA DO APP · ONDA 1b · O SAVE PARA DE MENTIR E O LGPD GANHA FILA (2026-08-06)
+
+Itens 4 e 5 do plano. **Sem migration** — é rota + tela + régua pura.
+
+### 5 · `PUT /app/grupos/:grupoId` · o save do supervisor gravava NADA
+
+`grupo-editar.tsx` fazia UPDATE DIRETO em `mem_grupos`, e a RLS de UPDATE só
+aceita `lider_id = current_user_membro_id()` OU nível grupos >= 3 — **supervisor
+não passa**. Como o update não tinha `.select()` nem conferia linhas afetadas, **0
+linhas voltavam SEM erro** e a tela dizia "Grupo atualizado."
+
+Medido em 06/08: dos 13 supervisores, **1 tem conta no app**; ele supervisiona 8
+grupos ativos e **não é líder em 7** → são 7 saves que hoje mentem. E
+`current_user_module_level` resolve `usuarios` pelo **e-mail do LOGIN**: o e-mail
+com que ele entra no app não é o da conta de sistema, então o nível dele na RLS é
+**0**. (Contexto maior: **88 dos 101 grupos ativos não têm líder com conta no
+app**.)
+
+- ⚠️⚠️ **NÃO reusei o `PUT /api/grupos/:id` do web, e não é preguiça**: ele é
+  **update de OBJETO INTEIRO**, escreve ~28 colunas e aplica DEFAULT no que não
+  vem (`lider_id: d.lider_id || null` · `ativo: d.ativo ?? true` ·
+  `temporada: || null` · `aceitando_inscricoes: d.aceitando_inscricoes !== false`).
+  Chamá-lo com os 9 campos da tela do app **apagaria a liderança, a temporada e o
+  estado de inscrição** do grupo. O endpoint do app é **PATCH com allowlist**.
+- Autorização = o MESMO `gateGrupoApp` dos outros 7 endpoints de gerenciar grupo
+  (líder OU supervisor OU admin). Era a divergência entre o que a TELA mostra e o
+  que a RLS aceita que produzia o save silencioso.
+- **`.select()` + conferir a linha** é o conserto: 0 linhas agora é **409**, não
+  sucesso. E `updated_at` passou a ser carimbado — não há trigger de `updated_at`
+  em `mem_grupos` e o PUT do web também não o seta, então editar pelo web deixa a
+  coluna velha até hoje.
+- ⚠️ **`categoria` é REGRA DE NEGÓCIO, não rótulo**: `publicGrupos` usa pra a
+  trava de gênero e pra habilitar a **inscrição de CASAL** (só em 'Casais'), e o
+  filtro público compara valor exato. No app o campo é `Input` de **texto livre** —
+  um "casais" minúsculo ou "Casal" desligaria a inscrição de casal em silêncio.
+  Agora a lista é **FECHADA** (espelho de `TIPOS_GRUPO`) e o valor é normalizado.
+- ⚠️ **`horario` é coluna `time`** e a tela manda texto livre: "1930"/"19h30"/"9:5"
+  passam a virar `HH:MM`, e o que não é hora vira 400 com mensagem — antes era
+  erro de cast cru do Postgres, que a pessoa lê como "não salvou".
+- ⚠️ **`dia_semana` aceita 0 = domingo** (que é falsy) — a armadilha já
+  documentada, agora com teste.
+- ⚠️ **NÃO geocodifica dentro do request**: ViaCEP + Nominatim com 1,1s de espera
+  por política é como uma edição vira timeout, e **nenhum save do sistema
+  re-geocodifica** (nem o do web — quem faz é a ferramenta manual
+  `/admin/grupos/geocode`). Quando `endereco`/`bairro` mudam, o endpoint **avisa a
+  coordenação** com link pra ferramenta: é o que evita o pino do mapa apontando
+  pra casa antiga sem ninguém saber.
+- Régua pura em `backend/utils/grupoEdicaoApp.js` (18 testes no gate).
+- ⚠️ Autoria do audit log: a trigger `trg_audit_mem_grupos` grava autor por
+  `auth.uid()`, que é NULL em escrita por service_role ⇒ a edição pelo app aparece
+  como "sistema" no card "Log de alterações" — **mesma limitação que o web já
+  tem**, não regressão.
+- ⚠️ **A troca na TELA é Onda 2 (por OTA)**: o endpoint está pronto e o app ainda
+  grava direto. Até publicar, o save do supervisor continua não gravando.
+- ⚠️ **A FOTO DE CAPA continua quebrada e fica pra Onda 2**: sonda de 06/08 → **0
+  de 140 grupos têm `foto_url`**, ou seja a capa **nunca gravou nada em
+  produção**. A policy do bucket `grupos` exige `is_admin_or_diretor()`
+  (`profiles.role`, esquema APOSENTADO) ou ser o líder — supervisor não passa nem
+  no Storage. Consertar exige endpoint de upload, não só o PUT.
+
+### 4 · Pedido de exclusão de conta (LGPD) ganhou fila — e SÓ leitor
+
+O app insere em `app_solicitacoes_exclusao` e promete "em breve sua conta será
+desativada". O ERP **não lia essa tabela em lugar nenhum** (grep: zero rotas, zero
+telas, zero serviços) e `profiles.status='excluido_solicitado'` **não afeta nada**
+(0 profiles com status preenchido; nenhum filtro do sistema usa a coluna). Hoje a
+tabela está **vazia** — gatilho armado, melhor momento pra construir.
+
+- `GET /api/membresia/exclusoes` (nível 3, o mesmo do export LGPD) + bloco
+  **recolhível** "Pedidos de exclusão de conta (LGPD)" na aba **Cadastros
+  pendentes** da Membresia (formato do "Entradas e saídas" do /grupos, ao lado do
+  `PainelCenso` — precedente de bloco embutido em vez de tela nova).
+- ⚠️ **SÓ LEITURA de propósito**: **não existe nenhum caminho de desativação de
+  conta no sistema** — o único `auth.admin.deleteUser` do repo é script de teste,
+  `ban_duration` tem 0 ocorrências e `profiles.active` é só LIDO (nada nunca
+  escreve false). O que existe é export LGPD (`routes/lgpd.js`) e soft-delete de
+  `mem_membros`. Um botão "processar" que não processa repetiria exatamente o erro
+  que criou este problema; a tela **declara** que a desativação é manual e cita o
+  prazo de 15 dias (art. 18).
+- ⚠️ Decidir o que a igreja **RETÉM** por obrigação legal/fiscal (contribuição,
+  batismo) antes de desativar é decisão do Marcos — e a FK
+  `user_id → auth.users ON DELETE CASCADE` significa que apagar o auth user
+  **apaga a prova de que o pedido existiu**. Resolver isso vem antes de qualquer
+  processamento.
+- ⚠️ Erro de carregamento **não se disfarça de fila vazia** na tela: "nenhum
+  pedido" e "não conseguimos ler" são coisas diferentes.
+
+### ⚠️⚠️ ACHADO GRANDE DO LEVANTAMENTO: `gerarTodasNotificacoes` NÃO TEM CRON
+
+`/api/notificacoes/cron` (que chama o gerador) **não está no `vercel.json`** — o
+único cron de notificações agendado é `/cron/alerta-culto-dados` (semanal), e o
+outro caminho é o POST manual `/api/notificacoes/gerar`. Não é dedução do arquivo:
+**medido** — em **13.581** notificações desde 12/05, **nenhum tipo exclusivo do
+`notificacaoGenerator` jamais apareceu**, enquanto há **283 `identidade_pendencias`
+pendentes** que dispararia aviso e 5 cadastros pendentes (3 com ≥1 dia). Módulos
+inteiros nunca tiveram uma única notificação: solicitações, online, governança,
+tarefas, kpis, patrimônio, ritual, jornada.
+
+⇒ **~20 avisos periódicos do sistema (documento vencendo, membro sem grupo,
+jornada do convertido, grupo sem encontro, `cadastro_sem_nome_real`) só existem
+quando alguém clica em "gerar".** O que roda de verdade todo dia é
+`/api/monitor-automacoes/cron/checar` (prova: 17 `automacao_sem_atualizar`, a mais
+recente em 06/08 11:01 UTC) — e o comentário em `routes/monitorAutomacoes.js:13-14`
+dizendo que ele "também roda no cron diário de notificações" está DESATUALIZADO.
+
+`gerarNotificacoesLgpdExclusao()` foi escrito no padrão da casa (contagem, sem
+PII, dedup por dia, `urgente` quando passa dos 15 dias) e fica **dormente como os
+outros 20**. ⚠️ **Agendar `/api/notificacoes/cron` é o conserto certo do sistema,
+mas liga ~20 geradores de uma vez** — precisa de plano de contenção e é decisão do
+Marcos. Caminho barato de medir antes: rodar o POST manual `/notificacoes/gerar`
+uma vez e olhar o volume.
+
 ## ⚠️ DECISÃO · o APP é o canal oficial do devocional (2026-08-06)
 
 Palavras do Marcos: *"acho que podemos usar agora o canal oficial da devocional
