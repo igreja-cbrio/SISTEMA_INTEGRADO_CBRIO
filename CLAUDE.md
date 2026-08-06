@@ -6593,6 +6593,28 @@ teste falha e a pessoa lê o porquê aqui.
 ⚠️ A guarda ignora COMENTÁRIOS antes de casar: a própria explicação do incidente
 cita o import errado como exemplo, e sem isso a documentação derrubava o gate
 (aconteceu).
+
+#### ⚠️⚠️ RÉGUA · checagem por TEXTO em corpo de função/arquivo IGNORA comentário
+
+Aconteceu **2× no mesmo dia (06/08)**, e nas duas o falso positivo foi a própria
+documentação do conserto:
+
+1. a guarda do `appRateLimit.test.ts` casou com o comentário que cita o import
+   errado como exemplo do que NÃO fazer;
+2. a conferência que eu deixei na migration `20260806140000` fazia
+   `pg_get_functiondef(...) ilike '%is_membro_only%'` — e o `pg_get_functiondef`
+   devolve o corpo **com os comentários**. Deu `mexe_no_profile = 1` numa função
+   que **não escreve em `profiles`** (o único `update` do corpo é em
+   `mem_membros`). O Marcos aplicou a migration e veio perguntar por que a
+   conferência acusava falha: **era a conferência**, não a migration.
+
+**Como fazer:** tirar comentário antes de casar
+(`regexp_replace(d, '--[^\n]*', '', 'g')` no SQL · helper `semComentarios` no
+teste) **e** procurar o COMANDO, não o identificador solto (`update
+public.profiles`, não `is_membro_only`) — identificador aparece em explicação,
+comando não. ⚠️ E conferência que dá falso positivo custa CONFIANÇA: manda a
+pessoa investigar um conserto que estava certo.
+
 - ⚠️ **Quem protege as sondas de identidade não é o teto por IP** — é o serviço
   (`appIdentidade`: 5 envios por telefone/dia, 6 tentativas de código, TTL 10min,
   resposta MASCARADA). Isso não mudou.
