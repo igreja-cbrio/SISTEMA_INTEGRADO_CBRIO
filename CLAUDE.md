@@ -4177,6 +4177,88 @@ bloqueia o CPF quando o servidor diz que sim. Falha de rede mantém o default
 **true (fail-closed)**: sem isso, ficar offline viraria porta pra entrar sem
 cadastro. É a mesma lei do resto — quem define o que é válido é o backend.
 
+## 🔴 INCIDENTE · o portão do app trancou TODO MUNDO pra fora (2026-08-06)
+
+O Marcos tentou entrar e não conseguiu: *"coloquei o CPF, recebi o e-mail de
+confirmação, mas o app não entrou e voltou na primeira página"*. **O app ficou
+inutilizável pra todas as contas** entre a aplicação da migration
+`20260805150000` e este conserto. Causa: **duas falhas minhas somadas**, e
+nenhuma delas apareceu antes porque **ninguém tinha concluído o cadastro pelo app
+até hoje** (`mem_identidade_observacoes` com origem `app_onboarding` = **0**).
+
+**Falha 1 · o caminho rápido não carimbava a confirmação.** Ao ligar o gate em
+05/08, só o FORMULÁRIO marcava `app_ficha_confirmada_em`. Quem provava identidade
+por CPF → código no e-mail ficava com a marca nula, `completo` seguia false e o
+portão devolvia pra tela de cadastro. **Beco sem saída por construção.**
+⇒ `confirmarCodigo` passa a carimbar. É legítimo: **ler o código enviado ao
+e-mail DO CADASTRO é prova de POSSE** — mais forte que digitar um formulário, que
+qualquer um digita. Não libera sozinho: `completo` continua exigindo a ficha
+fechada; quem prova identidade com cadastro incompleto vai ao formulário, agora
+**com os campos preenchidos** (a identidade deixou de ser palpite).
+
+**Falha 2 · o portão perguntava ao servidor UMA vez e nunca mais.** `CadastroGate`
+guardava `incompleto` da montagem; ao concluir, a tela navegava pra Home, o efeito
+de rota via o valor velho e **devolvia pra tela de cadastro**. Laço infinito, por
+QUALQUER caminho (formulário inclusive).
+⇒ A tela chama `revalidarCadastro()` antes de navegar; o portão repergunta e só
+então libera. ⚠️ A trava é um **ref** (`liberado`), não estado: `router.replace`
+roda logo após o `setIncompleto(false)` e o commit do React pode não ter
+acontecido — o ref fecha a janela de corrida.
+
+### Lições (as duas valem além deste caso)
+
+1. ⚠️⚠️ **Portão que decide com estado LIDO UMA VEZ vira armadilha quando a
+   condição muda.** Qualquer gate assim precisa de um caminho explícito de
+   revalidação — senão "resolver o problema" não tira a pessoa do bloqueio.
+2. ⚠️⚠️ **Ligar uma exigência exige cobrir TODOS os caminhos que a satisfazem.**
+   Eu liguei o gate cobrindo só um dos dois caminhos de conclusão. Régua: ao criar
+   uma condição de acesso, listar quem pode satisfazê-la e conferir um a um.
+3. **"Ninguém nunca fez isso" é sinal de alerta, não de segurança**: o zero em
+   `app_onboarding` estava na minha frente desde 05/08 e eu o li como "recurso
+   novo", quando era "caminho nunca exercitado".
+
+## ⚠️⚠️ LEI · o LOGIN não liga ninguém a cadastro (2026-08-06 · migration `20260806120000`)
+
+Fecha o desenho que o Marcos pediu em duas etapas. Palavras dele: *"sobre o
+gatilho ligando o login, eu acho que deve ter, mas ele só deve ser acionado PÓS
+PREENCHER TODOS OS DADOS, e todos que baixarem devem ser obrigados a preencher, e
+somente após o preenchimento entrar no app; e com os dados completos, aí sim ir
+para o módulo de duplicatas se houver algum matcher"*.
+
+**O mecanismo de ligar continua existindo — mudou de MOMENTO.** `handle_new_user`
+passa a criar **só a conta** (`profiles`, com `is_membro_only = true` e
+`membro_id NULL`). Quem resolve identidade agora é
+`POST /app/identidade/completar` → `acharOuCriarGuardado`, **com CPF na mão**; o
+par duvidoso segue pra fila humana em /entradas.
+
+- **Por que**: o gatilho ligava por **e-mail + nome** (sinal médio) e, com login
+  do Google, é só isso que existe. A pessoa caía num cadastro que outra porta
+  preencheu e **entrava no app herdando CPF, nascimento e sexo que nunca
+  forneceu** — 9 de 89 contas, medido em 05/08. Caso concreto: o Pedro Paiva
+  logou com o Gmail e foi ligado ao cadastro dele importado do Next.
+- **Ritmo real**: ~2 logins de membro por dia (13 profiles em 7 dias). Desde o
+  conserto de 04/08 o gatilho **não criava** cadastro (`origem='auth_signup'` = 0);
+  ele vinha **ligando** — que é o que sai agora.
+- ⚠️ **`is_membro_only = true` continua obrigatório** no INSERT: sem isso a pessoa
+  cai no `/dashboard` do ERP em vez do app.
+- ⚠️ **Os metadados não se perdem**: `cpf`, `telefone`, `nascimento` e
+  `frequenta_area` ficam em `auth.users.raw_user_meta_data`.
+  `appIdentidade.completarCadastro` aplica o `frequenta_area` (AMI/Bridge) ao
+  concluir — sem isso a escolha da pessoa seria **descartada em silêncio**, que é
+  o bug do CPF do censo se repetindo.
+- ⚠️⚠️ **Consequência conhecida e aceita**: quem loga e ainda não preencheu fica
+  **sem `mem_membros`**. No app é irrelevante (o portão bloqueia tudo até
+  preencher). Fora dele — webapp do devocional — a pessoa vê "você não é membro"
+  até completar. É honesto: ela ainda não é. A versão anterior criava um
+  cadastro-fantasma só pra aquela tela não reclamar, e era esse o anti-padrão.
+- ⚠️ **Não reescreve o passado**: os 24 cadastros `origem='auth'` e os vínculos já
+  feitos ficam; o par duplicado deles vive na fila de /entradas. E
+  `profiles.app_ficha_confirmada_em` (20260805150000) continua sendo o que fecha o
+  furo das contas ANTIGAS, que já têm `membro_id` — as duas migrations são
+  complementares, não alternativas.
+- ⚠️ Staff (`rh_funcionarios` ativo) **nunca** teve cadastro criado pelo gatilho —
+  esse ramo está intocado.
+
 ## ⚠️⚠️ LEI · no APP, dado HERDADO de vínculo não libera acesso (2026-08-05 · migration `20260805150000`)
 
 Decisão do Marcos, ao ver que o login do Pedro Paiva não pediu cadastro:
@@ -6428,6 +6510,40 @@ cargos no nível 3** (= 89 usuários com INSERT/UPDATE direto em `inscricoes`,
 `insc_eventos`, `insc_pagamentos`, `insc_checkins`, `insc_sorteios`), incluindo
 um cargo chamado **"Acesso negado"** — o seed subiu todo mundo pra 3. A view
 unificada está revogada de `authenticated`; as tabelas-base não.
+
+## ⚠️ DECISÃO · o APP é o canal oficial do devocional (2026-08-06)
+
+Palavras do Marcos: *"acho que podemos usar agora o canal oficial da devocional
+sendo o aplicativo mobile, mantenha assim por enquanto"*.
+
+Contexto: eu havia levantado que, com o login não ligando mais ninguém a cadastro
+(migration `20260806120000`), quem entrasse na **webapp** `/devocionais/*` sem ter
+preenchido a ficha veria *"você não é membro"*. Ele decidiu **não consertar** —
+a webapp fica como está.
+
+⚠️⚠️ **NÃO "consertar" isso depois.** Especificamente, NÃO criar `mem_membros`
+automaticamente pra a tela parar de reclamar: era exatamente esse cadastro-fantasma
+que o gatilho fazia e que a migration removeu. Se um dia o comportamento
+incomodar, o caminho é a webapp **mandar completar o cadastro**, nunca o banco
+inventar pessoa.
+
+**Estado medido em 06/08 (encanamento OK, adoção é o gargalo):**
+- Lembrete por **push funciona**: 253 notificações `tipo='devocional'`, a última
+  **hoje 07:30 BRT** (o horário do cron). `app_lembretes_enviados` tem 32 chaves
+  `devocional:`.
+- **Conteúdo existe**: plano "Devocional da semana 03/08" ativo, 96 itens, com item
+  pra hoje.
+- 🔴 **Uso real: 12 check-ins em `mem_devocionais`, de 6 pessoas, o último em
+  15/07** (3 semanas atrás). 253 lembretes → ~0 registro. Como `mem_devocionais` é
+  a fonte dos KPIs de **Investir tempo com Deus**, o valor é ~zero por falta de
+  USO, não por falta de canal — não confundir os dois ao ler o painel.
+- Achado menor: temas repetidos em dias seguidos ("A Força que Vem da Fraqueza" em
+  05 e 06/08 · "A Força na Fraqueza" em 04/08) — a geração por IA repetindo
+  assunto. Não bloqueia nada.
+- ⚠️ Correção de registro: a aba "Automáticas" (05/08) marcou o devocional como
+  "quebrado · 187 erros, 0 entregas". Aquilo é do canal **WhatsApp**
+  (`whatsapp_envios` não tem NENHUMA linha de devocional hoje); o **push**, que é o
+  canal que importa agora, está entregando.
 
 ## Devocionais · módulo do Matheus (no ar)
 
