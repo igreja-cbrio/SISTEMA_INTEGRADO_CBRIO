@@ -1,0 +1,1073 @@
+{
+  "_fonte": "Censo_CBRio_Especificacao_Final_1.docx (especificação final, 2026-08-06)",
+  "_leia": "Fonte de verdade do questionário do Censo CBRio 2026. Os ids são IMUTÁVEIS: trocar um id órfã as respostas já coletadas e zera o gráfico daquela pergunta.",
+  "slug": "censo-cbrio-2026",
+  "titulo": "Censo CBRio 2026",
+  "subtitulo": "Queremos conhecer melhor a nossa comunidade. São alguns minutos e você pode parar e continuar depois.",
+  "tipo": "censo",
+  "perguntas": [
+    {
+      "id": "b1",
+      "tipo": "secao",
+      "texto": "1 — Identificação básica"
+    },
+    {
+      "id": "nome",
+      "tipo": "texto_curto",
+      "texto": "Nome completo",
+      "obrigatoria": true,
+      "preenche_de": "nome"
+    },
+    {
+      "id": "nascimento",
+      "tipo": "data",
+      "texto": "Data de nascimento",
+      "obrigatoria": true,
+      "descricao": "A idade é calculada automaticamente.",
+      "preenche_de": "data_nascimento"
+    },
+    {
+      "id": "estado_civil",
+      "tipo": "opcao_unica",
+      "texto": "Estado civil",
+      "obrigatoria": true,
+      "preenche_de": "estado_civil",
+      "opcoes": [
+        "Solteiro(a)",
+        "Casado(a)",
+        "União estável",
+        "Divorciado(a)",
+        "Viúvo(a)"
+      ]
+    },
+    {
+      "id": "conjuge_nome",
+      "tipo": "texto_curto",
+      "texto": "Nome do cônjuge",
+      "obrigatoria": true,
+      "mostrar_se": {
+        "pergunta": "estado_civil",
+        "valores": [
+          "Casado(a)",
+          "União estável"
+        ]
+      }
+    },
+    {
+      "id": "tem_filhos",
+      "tipo": "sim_nao",
+      "texto": "Tem filhos?",
+      "obrigatoria": true
+    },
+    {
+      "id": "filhos_quantos",
+      "tipo": "numero",
+      "texto": "Quantos filhos?",
+      "obrigatoria": true,
+      "min_num": 1,
+      "max_num": 20,
+      "mostrar_se": {
+        "pergunta": "tem_filhos",
+        "valores": [
+          "Sim"
+        ]
+      }
+    },
+    {
+      "id": "filhos_faixas",
+      "tipo": "multipla",
+      "texto": "Em quais faixas de idade?",
+      "obrigatoria": true,
+      "descricao": "Marque todas que se aplicam.",
+      "opcoes": [
+        "0 a 5 anos",
+        "6 a 12 anos",
+        "13 a 17 anos",
+        "18 anos ou mais"
+      ],
+      "mostrar_se": {
+        "pergunta": "tem_filhos",
+        "valores": [
+          "Sim"
+        ]
+      }
+    },
+    {
+      "id": "cidade",
+      "tipo": "texto_curto",
+      "texto": "Cidade",
+      "obrigatoria": true,
+      "preenche_de": "cidade"
+    },
+    {
+      "id": "bairro",
+      "tipo": "texto_curto",
+      "texto": "Bairro",
+      "obrigatoria": true,
+      "preenche_de": "bairro"
+    },
+    {
+      "id": "telefone",
+      "tipo": "texto_curto",
+      "texto": "Telefone",
+      "obrigatoria": true,
+      "formato": "telefone",
+      "preenche_de": "telefone"
+    },
+    {
+      "id": "email",
+      "tipo": "texto_curto",
+      "texto": "E-mail",
+      "obrigatoria": true,
+      "formato": "email",
+      "preenche_de": "email"
+    },
+    {
+      "id": "tem_instagram",
+      "tipo": "sim_nao",
+      "texto": "Você tem Instagram?",
+      "obrigatoria": true
+    },
+    {
+      "id": "instagram",
+      "tipo": "texto_curto",
+      "texto": "Seu @ no Instagram",
+      "obrigatoria": true,
+      "formato": "instagram",
+      "mostrar_se": {
+        "pergunta": "tem_instagram",
+        "valores": [
+          "Sim"
+        ]
+      }
+    },
+    {
+      "id": "profissao",
+      "tipo": "texto_curto",
+      "texto": "Profissão",
+      "obrigatoria": true,
+      "preenche_de": "profissao"
+    },
+    {
+      "id": "b2",
+      "tipo": "secao",
+      "texto": "2 — Histórico na CBRio"
+    },
+    {
+      "id": "como_conheceu",
+      "tipo": "opcao_unica",
+      "texto": "Como você conheceu a CBRio?",
+      "obrigatoria": true,
+      "opcoes": [
+        "Instagram",
+        "Indicação de alguém",
+        "Família",
+        "Online",
+        "Evento",
+        "Outro"
+      ]
+    },
+    {
+      "id": "tempo_frequenta",
+      "tipo": "opcao_unica",
+      "texto": "Há quanto tempo frequenta?",
+      "obrigatoria": true,
+      "opcoes": [
+        "Menos de 6 meses",
+        "De 6 meses a 1 ano",
+        "De 1 a 3 anos",
+        "De 3 a 5 anos",
+        "Mais de 5 anos"
+      ]
+    },
+    {
+      "id": "presencial_online",
+      "tipo": "opcao_unica",
+      "texto": "Você frequenta presencial ou online?",
+      "obrigatoria": true,
+      "opcoes": [
+        "Presencial",
+        "Online",
+        "Ambos"
+      ]
+    },
+    {
+      "id": "congregava_antes",
+      "tipo": "sim_nao",
+      "texto": "Você já congregava em outra igreja antes?",
+      "obrigatoria": true
+    },
+    {
+      "id": "igreja_anterior_tipo",
+      "tipo": "opcao_unica",
+      "texto": "De que tipo era a igreja anterior?",
+      "obrigatoria": true,
+      "opcoes": [
+        "Tradicional",
+        "Batista",
+        "Pentecostal",
+        "Neopentecostal",
+        "Católica",
+        "Outro"
+      ],
+      "mostrar_se": {
+        "pergunta": "congregava_antes",
+        "valores": [
+          "Sim"
+        ]
+      }
+    },
+    {
+      "id": "motivo_permanecer",
+      "tipo": "texto_longo",
+      "texto": "Por que você escolheu permanecer na CBRio?",
+      "obrigatoria": true
+    },
+    {
+      "id": "saiu_e_voltou",
+      "tipo": "sim_nao",
+      "texto": "Você já saiu e voltou para a CBRio?",
+      "obrigatoria": true
+    },
+    {
+      "id": "saiu_e_voltou_motivo",
+      "tipo": "texto_longo",
+      "texto": "O que aconteceu?",
+      "obrigatoria": true,
+      "mostrar_se": {
+        "pergunta": "saiu_e_voltou",
+        "valores": [
+          "Sim"
+        ]
+      }
+    },
+    {
+      "id": "marcou_chegada",
+      "tipo": "texto_longo",
+      "texto": "O que mais te marcou quando você chegou?",
+      "obrigatoria": true
+    },
+    {
+      "id": "b3",
+      "tipo": "secao",
+      "texto": "3 — Vida espiritual"
+    },
+    {
+      "id": "entregou_vida",
+      "tipo": "opcao_unica",
+      "texto": "Você já entregou sua vida a Jesus?",
+      "obrigatoria": true,
+      "opcoes": [
+        "Sim",
+        "Não",
+        "Ainda em decisão"
+      ]
+    },
+    {
+      "id": "batizado",
+      "tipo": "sim_nao",
+      "texto": "Você já foi batizado nas águas?",
+      "obrigatoria": true
+    },
+    {
+      "id": "freq_oracao",
+      "tipo": "opcao_unica",
+      "texto": "Com que frequência você ora?",
+      "obrigatoria": true,
+      "opcoes": [
+        "Nunca",
+        "Raramente",
+        "Algumas vezes na semana",
+        "Diariamente"
+      ]
+    },
+    {
+      "id": "freq_biblia",
+      "tipo": "opcao_unica",
+      "texto": "Com que frequência você lê a Bíblia?",
+      "obrigatoria": true,
+      "opcoes": [
+        "Nunca",
+        "Raramente",
+        "Algumas vezes na semana",
+        "Diariamente"
+      ]
+    },
+    {
+      "id": "participa_grupo",
+      "tipo": "sim_nao",
+      "texto": "Você participa de um Grupo?",
+      "obrigatoria": true
+    },
+    {
+      "id": "qual_grupo",
+      "tipo": "texto_curto",
+      "texto": "Qual Grupo?",
+      "obrigatoria": false,
+      "mostrar_se": {
+        "pergunta": "participa_grupo",
+        "valores": [
+          "Sim"
+        ]
+      }
+    },
+    {
+      "id": "maturidade",
+      "tipo": "opcao_unica",
+      "texto": "Como você avalia sua maturidade espiritual?",
+      "obrigatoria": true,
+      "opcoes": [
+        "Início da fé",
+        "Crescimento",
+        "Estável",
+        "Maduro"
+      ]
+    },
+    {
+      "id": "crescendo_aqui",
+      "tipo": "escala_5",
+      "texto": "Sinto que estou crescendo espiritualmente aqui.",
+      "obrigatoria": true,
+      "rotulos": {
+        "min": "Discordo totalmente",
+        "max": "Concordo totalmente"
+      }
+    },
+    {
+      "id": "area_crescer",
+      "tipo": "multipla",
+      "texto": "Em que áreas você precisa crescer?",
+      "obrigatoria": true,
+      "opcoes": [
+        "Oração",
+        "Leitura da Bíblia",
+        "Evangelismo",
+        "Domínio próprio",
+        "Relacionamentos",
+        "Serviço"
+      ]
+    },
+    {
+      "id": "deus_falando",
+      "tipo": "opcao_unica",
+      "texto": "Deus tem falado algo com você?",
+      "obrigatoria": true,
+      "opcoes": [
+        "Sim",
+        "Não",
+        "Não sei dizer"
+      ]
+    },
+    {
+      "id": "b4",
+      "tipo": "secao",
+      "texto": "4 — Serviço e envolvimento"
+    },
+    {
+      "id": "fez_next",
+      "tipo": "sim_nao",
+      "texto": "Você já fez o Next?",
+      "obrigatoria": true
+    },
+    {
+      "id": "serve_ministerio",
+      "tipo": "sim_nao",
+      "texto": "Você serve em algum ministério?",
+      "obrigatoria": true
+    },
+    {
+      "id": "quais_ministerios",
+      "tipo": "multipla",
+      "texto": "Em qual(is) ministério(s)?",
+      "obrigatoria": true,
+      "opcoes": [
+        "Louvor",
+        "Kids",
+        "Recepção",
+        "Diaconia",
+        "Mídia e comunicação",
+        "Intercessão",
+        "Grupos",
+        "Next / Integração",
+        "Ação social",
+        "Outro"
+      ],
+      "mostrar_se": {
+        "pergunta": "serve_ministerio",
+        "valores": [
+          "Sim"
+        ]
+      }
+    },
+    {
+      "id": "serviu_e_parou",
+      "tipo": "sim_nao",
+      "texto": "Você já serviu e parou?",
+      "obrigatoria": true
+    },
+    {
+      "id": "serviu_e_parou_motivo",
+      "tipo": "texto_longo",
+      "texto": "Por que você parou?",
+      "obrigatoria": true,
+      "mostrar_se": {
+        "pergunta": "serviu_e_parou",
+        "valores": [
+          "Sim"
+        ]
+      }
+    },
+    {
+      "id": "gostaria_servir",
+      "tipo": "sim_nao",
+      "texto": "Você gostaria de servir?",
+      "obrigatoria": true
+    },
+    {
+      "id": "gostaria_servir_areas",
+      "tipo": "multipla",
+      "texto": "Em qual(is) área(s)?",
+      "obrigatoria": true,
+      "opcoes": [
+        "Louvor",
+        "Kids",
+        "Recepção",
+        "Diaconia",
+        "Mídia e comunicação",
+        "Intercessão",
+        "Grupos",
+        "Next / Integração",
+        "Ação social",
+        "Outro"
+      ],
+      "mostrar_se": {
+        "pergunta": "gostaria_servir",
+        "valores": [
+          "Sim"
+        ]
+      }
+    },
+    {
+      "id": "valorizado_voluntario",
+      "tipo": "escala_5",
+      "texto": "Me sinto valorizado(a) como voluntário(a).",
+      "obrigatoria": true,
+      "rotulos": {
+        "min": "Discordo totalmente",
+        "max": "Concordo totalmente"
+      },
+      "mostrar_se": {
+        "pergunta": "serve_ministerio",
+        "valores": [
+          "Sim"
+        ]
+      }
+    },
+    {
+      "id": "preparado_servir",
+      "tipo": "escala_5",
+      "texto": "Me sinto preparado(a) para servir.",
+      "obrigatoria": true,
+      "rotulos": {
+        "min": "Discordo totalmente",
+        "max": "Concordo totalmente"
+      },
+      "mostrar_se": {
+        "pergunta": "serve_ministerio",
+        "valores": [
+          "Sim"
+        ]
+      }
+    },
+    {
+      "id": "acompanhamento_lideranca",
+      "tipo": "opcao_unica",
+      "texto": "Você recebe acompanhamento da liderança?",
+      "obrigatoria": true,
+      "opcoes": [
+        "Sim",
+        "Não",
+        "Às vezes"
+      ],
+      "mostrar_se": {
+        "pergunta": "serve_ministerio",
+        "valores": [
+          "Sim"
+        ]
+      }
+    },
+    {
+      "id": "melhorar_voluntariado",
+      "tipo": "multipla",
+      "texto": "O que poderia melhorar no voluntariado?",
+      "obrigatoria": true,
+      "opcoes": [
+        "Treinamento e preparo",
+        "Comunicação da escala",
+        "Reconhecimento",
+        "Acompanhamento do líder",
+        "Tamanho da equipe",
+        "Clareza do que fazer",
+        "Está bom como está"
+      ]
+    },
+    {
+      "id": "melhorar_voluntariado_detalhe",
+      "tipo": "texto_longo",
+      "texto": "Quer detalhar?",
+      "obrigatoria": false
+    },
+    {
+      "id": "b5",
+      "tipo": "secao",
+      "texto": "5 — Pertencimento e cultura"
+    },
+    {
+      "id": "acolhido",
+      "tipo": "escala_5",
+      "texto": "Eu me sinto acolhido(a) na CBRio.",
+      "obrigatoria": true,
+      "rotulos": {
+        "min": "Discordo totalmente",
+        "max": "Concordo totalmente"
+      }
+    },
+    {
+      "id": "amigos_proximos",
+      "tipo": "opcao_unica",
+      "texto": "Você tem amigos próximos na igreja?",
+      "obrigatoria": true,
+      "opcoes": [
+        "Sim",
+        "Alguns",
+        "Não"
+      ]
+    },
+    {
+      "id": "pensou_sair",
+      "tipo": "sim_nao",
+      "texto": "Você já pensou em sair da CBRio?",
+      "obrigatoria": true
+    },
+    {
+      "id": "pensou_sair_motivo",
+      "tipo": "texto_longo",
+      "texto": "Por quê?",
+      "obrigatoria": true,
+      "mostrar_se": {
+        "pergunta": "pensou_sair",
+        "valores": [
+          "Sim"
+        ]
+      }
+    },
+    {
+      "id": "mais_ama",
+      "tipo": "texto_longo",
+      "texto": "O que você mais ama na CBRio?",
+      "obrigatoria": true
+    },
+    {
+      "id": "menos_gosta",
+      "tipo": "multipla",
+      "texto": "O que você menos gosta?",
+      "obrigatoria": true,
+      "opcoes": [
+        "Horário dos cultos",
+        "Estacionamento",
+        "Estrutura do templo",
+        "Duração do culto",
+        "Dificuldade de fazer amizades",
+        "Comunicação",
+        "Não tenho nada a apontar"
+      ]
+    },
+    {
+      "id": "menos_gosta_detalhe",
+      "tipo": "texto_longo",
+      "texto": "Quer detalhar?",
+      "obrigatoria": false
+    },
+    {
+      "id": "indicaria",
+      "tipo": "nps",
+      "texto": "De 0 a 10, o quanto você indicaria a CBRio para alguém?",
+      "obrigatoria": true,
+      "max": 10,
+      "descricao": "0 = de jeito nenhum · 10 = com certeza"
+    },
+    {
+      "id": "pastoreado",
+      "tipo": "escala_5",
+      "texto": "Eu me sinto pastoreado(a).",
+      "obrigatoria": true,
+      "rotulos": {
+        "min": "Discordo totalmente",
+        "max": "Concordo totalmente"
+      }
+    },
+    {
+      "id": "b6",
+      "tipo": "secao",
+      "texto": "6 — Saúde emocional"
+    },
+    {
+      "id": "emocional_hoje",
+      "tipo": "opcao_unica",
+      "texto": "Como você está emocionalmente hoje?",
+      "obrigatoria": true,
+      "sensivel": true,
+      "opcoes": [
+        "Bem",
+        "Sobrecarregado(a)",
+        "Ansioso(a)",
+        "Desanimado(a)",
+        "Em processo de cura",
+        "Prefiro não dizer"
+      ],
+      "opcoes_neutras": [
+        "Prefiro não dizer"
+      ]
+    },
+    {
+      "id": "terapia",
+      "tipo": "opcao_unica",
+      "texto": "Você já fez ou faz terapia?",
+      "obrigatoria": true,
+      "sensivel": true,
+      "opcoes": [
+        "Nunca fiz",
+        "Já fiz",
+        "Faço atualmente",
+        "Prefiro não dizer"
+      ],
+      "opcoes_neutras": [
+        "Prefiro não dizer"
+      ]
+    },
+    {
+      "id": "restauracao_area",
+      "tipo": "multipla",
+      "texto": "Qual área da sua vida precisa de restauração?",
+      "obrigatoria": true,
+      "sensivel": true,
+      "opcoes": [
+        "Autoestima",
+        "Casamento",
+        "Relação com os pais",
+        "Traumas",
+        "Culpa",
+        "Perdão",
+        "Prefiro não dizer"
+      ],
+      "opcoes_neutras": [
+        "Prefiro não dizer"
+      ]
+    },
+    {
+      "id": "pedir_ajuda",
+      "tipo": "escala_5",
+      "texto": "Sinto que posso pedir ajuda na igreja.",
+      "obrigatoria": true,
+      "sensivel": true,
+      "rotulos": {
+        "min": "Discordo totalmente",
+        "max": "Concordo totalmente"
+      }
+    },
+    {
+      "id": "b7",
+      "tipo": "secao",
+      "texto": "7 — Família e relacionamentos"
+    },
+    {
+      "id": "conjuge_frequenta",
+      "tipo": "opcao_unica",
+      "texto": "Seu cônjuge frequenta a CBRio?",
+      "obrigatoria": true,
+      "opcoes": [
+        "Sim",
+        "Não",
+        "Não se aplica"
+      ]
+    },
+    {
+      "id": "filhos_frequentam",
+      "tipo": "opcao_unica",
+      "texto": "Seus filhos frequentam a CBRio?",
+      "obrigatoria": true,
+      "opcoes": [
+        "Sim",
+        "Parcialmente",
+        "Não",
+        "Não se aplica"
+      ]
+    },
+    {
+      "id": "casamento_esta",
+      "tipo": "opcao_unica",
+      "texto": "Seu casamento está:",
+      "obrigatoria": true,
+      "sensivel": true,
+      "opcoes": [
+        "Saudável",
+        "Em crise",
+        "Em reconstrução",
+        "Prefiro não dizer"
+      ],
+      "opcoes_neutras": [
+        "Prefiro não dizer"
+      ],
+      "mostrar_se": {
+        "pergunta": "estado_civil",
+        "valores": [
+          "Casado(a)",
+          "União estável"
+        ]
+      }
+    },
+    {
+      "id": "quer_acompanhamento_familiar",
+      "tipo": "sim_nao",
+      "texto": "Você gostaria de acompanhamento familiar?",
+      "obrigatoria": true,
+      "acao": "cuidado",
+      "cuidado_tipo": "familiar"
+    },
+    {
+      "id": "precisa_aconselhamento",
+      "tipo": "sim_nao",
+      "texto": "Você precisa de aconselhamento?",
+      "obrigatoria": true,
+      "acao": "cuidado",
+      "cuidado_tipo": "aconselhamento"
+    },
+    {
+      "id": "b8",
+      "tipo": "secao",
+      "texto": "8 — Vida profissional e financeira"
+    },
+    {
+      "id": "situacao_trabalho",
+      "tipo": "opcao_unica",
+      "texto": "Qual a sua situação de trabalho hoje?",
+      "obrigatoria": true,
+      "opcoes": [
+        "CLT",
+        "Autônomo(a)",
+        "Empresário(a)",
+        "Desempregado(a)",
+        "Aposentado(a)",
+        "Estudante"
+      ]
+    },
+    {
+      "id": "satisfacao_profissional",
+      "tipo": "escala_5",
+      "texto": "Você está satisfeito(a) profissionalmente?",
+      "obrigatoria": true,
+      "rotulos": {
+        "min": "Insatisfeito(a)",
+        "max": "Satisfeito(a)"
+      }
+    },
+    {
+      "id": "empreende",
+      "tipo": "sim_nao",
+      "texto": "Você empreende?",
+      "obrigatoria": true
+    },
+    {
+      "id": "pressao_financeira",
+      "tipo": "opcao_unica",
+      "texto": "Você vive pressão financeira?",
+      "obrigatoria": true,
+      "opcoes": [
+        "Sim, muita",
+        "Um pouco",
+        "Não"
+      ]
+    },
+    {
+      "id": "participou_cursos",
+      "tipo": "sim_nao",
+      "texto": "Você já participou de cursos ou eventos da CBRio?",
+      "obrigatoria": true
+    },
+    {
+      "id": "b9",
+      "tipo": "secao",
+      "texto": "9 — Comunicação"
+    },
+    {
+      "id": "consome_conteudo",
+      "tipo": "multipla",
+      "texto": "Onde você mais consome conteúdo da CBRio?",
+      "obrigatoria": true,
+      "opcoes": [
+        "Instagram",
+        "YouTube",
+        "Culto presencial",
+        "WhatsApp"
+      ]
+    },
+    {
+      "id": "comunicacao_clara",
+      "tipo": "escala_5",
+      "texto": "A comunicação da igreja é clara.",
+      "obrigatoria": true,
+      "rotulos": {
+        "min": "Discordo totalmente",
+        "max": "Concordo totalmente"
+      }
+    },
+    {
+      "id": "perdeu_informacoes",
+      "tipo": "opcao_unica",
+      "texto": "Você já perdeu informações importantes?",
+      "obrigatoria": true,
+      "opcoes": [
+        "Sim",
+        "Não",
+        "Às vezes"
+      ]
+    },
+    {
+      "id": "melhorar_comunicacao",
+      "tipo": "multipla",
+      "texto": "O que pode melhorar na comunicação?",
+      "obrigatoria": true,
+      "opcoes": [
+        "Avisar com mais antecedência",
+        "Usar menos canais",
+        "Usar mais o WhatsApp",
+        "Usar mais o aplicativo",
+        "Mensagens mais curtas",
+        "Está boa como está"
+      ]
+    },
+    {
+      "id": "melhorar_comunicacao_detalhe",
+      "tipo": "texto_longo",
+      "texto": "Quer detalhar?",
+      "obrigatoria": false
+    },
+    {
+      "id": "prefere_receber",
+      "tipo": "opcao_unica",
+      "texto": "Você prefere receber informações por:",
+      "obrigatoria": true,
+      "opcoes": [
+        "WhatsApp",
+        "E-mail",
+        "Instagram",
+        "Aplicativo"
+      ]
+    },
+    {
+      "id": "b10",
+      "tipo": "secao",
+      "texto": "10 — Experiência no culto"
+    },
+    {
+      "id": "nota_recepcao",
+      "tipo": "estrelas_5",
+      "texto": "Como você foi recepcionado(a)?",
+      "obrigatoria": true,
+      "rotulos": {
+        "min": "Muito ruim",
+        "max": "Excelente"
+      }
+    },
+    {
+      "id": "nota_estrutura",
+      "tipo": "estrelas_5",
+      "texto": "Como você avalia a estrutura?",
+      "obrigatoria": true,
+      "rotulos": {
+        "min": "Muito ruim",
+        "max": "Excelente"
+      }
+    },
+    {
+      "id": "nota_palavra",
+      "tipo": "estrelas_5",
+      "texto": "Como você avalia a palavra?",
+      "obrigatoria": true,
+      "rotulos": {
+        "min": "Muito ruim",
+        "max": "Excelente"
+      }
+    },
+    {
+      "id": "nota_louvor",
+      "tipo": "estrelas_5",
+      "texto": "Como você avalia o louvor?",
+      "obrigatoria": true,
+      "rotulos": {
+        "min": "Muito ruim",
+        "max": "Excelente"
+      }
+    },
+    {
+      "id": "conecta_deus",
+      "tipo": "texto_longo",
+      "texto": "O que mais te conecta com Deus no culto?",
+      "obrigatoria": true
+    },
+    {
+      "id": "desconecta",
+      "tipo": "texto_longo",
+      "texto": "O que te desconecta?",
+      "obrigatoria": true
+    },
+    {
+      "id": "b11",
+      "tipo": "secao",
+      "texto": "11 — Visão e futuro"
+    },
+    {
+      "id": "conhece_cultura",
+      "tipo": "opcao_unica",
+      "texto": "Você conhece a cultura da CBRio?",
+      "obrigatoria": true,
+      "opcoes": [
+        "Sim",
+        "Em parte",
+        "Não"
+      ]
+    },
+    {
+      "id": "cultura_faz_sentido",
+      "tipo": "escala_5",
+      "texto": "A cultura da CBRio faz sentido para mim.",
+      "obrigatoria": true,
+      "rotulos": {
+        "min": "Discordo totalmente",
+        "max": "Concordo totalmente"
+      }
+    },
+    {
+      "id": "pretende_permanecer",
+      "tipo": "opcao_unica",
+      "texto": "Você pretende permanecer na CBRio nos próximos anos?",
+      "obrigatoria": true,
+      "opcoes": [
+        "Sim, com certeza",
+        "Provavelmente",
+        "Não sei",
+        "Provavelmente não"
+      ]
+    },
+    {
+      "id": "imagina_liderando",
+      "tipo": "opcao_unica",
+      "texto": "Você se imagina liderando aqui?",
+      "obrigatoria": true,
+      "opcoes": [
+        "Sim",
+        "Talvez",
+        "Não"
+      ]
+    },
+    {
+      "id": "projetos_desejados",
+      "tipo": "texto_longo",
+      "texto": "Quais projetos você gostaria de ver na CBRio?",
+      "obrigatoria": true
+    },
+    {
+      "id": "deus_quer_fazer",
+      "tipo": "texto_longo",
+      "texto": "O que você acredita que Deus quer fazer na CBRio?",
+      "obrigatoria": true
+    },
+    {
+      "id": "b12",
+      "tipo": "secao",
+      "texto": "12 — Oração e direção espiritual"
+    },
+    {
+      "id": "areas_oracao",
+      "tipo": "multipla",
+      "texto": "Quais áreas da sua vida precisam de oração?",
+      "obrigatoria": true,
+      "opcoes": [
+        "Saúde",
+        "Família",
+        "Trabalho e finanças",
+        "Vida espiritual",
+        "Relacionamentos",
+        "Emocional"
+      ]
+    },
+    {
+      "id": "desafio_especifico",
+      "tipo": "sim_nao",
+      "texto": "Você está vivendo algum desafio específico?",
+      "obrigatoria": true
+    },
+    {
+      "id": "desafio_qual",
+      "tipo": "texto_longo",
+      "texto": "Quer nos contar?",
+      "obrigatoria": false,
+      "mostrar_se": {
+        "pergunta": "desafio_especifico",
+        "valores": [
+          "Sim"
+        ]
+      }
+    },
+    {
+      "id": "quer_contato_oracao",
+      "tipo": "sim_nao",
+      "texto": "Você gostaria de ser contatado(a) para oração?",
+      "obrigatoria": true,
+      "acao": "cuidado",
+      "cuidado_tipo": "oracao"
+    },
+    {
+      "id": "algo_nunca_compartilhou",
+      "tipo": "opcao_unica",
+      "sensivel": true,
+      "obrigatoria": true,
+      "texto": "Existe algo que você nunca teve coragem de compartilhar?",
+      "descricao": "Não pedimos que você conte o quê.",
+      "opcoes": [
+        "Sim",
+        "Não",
+        "Prefiro não dizer"
+      ],
+      "opcoes_neutras": [
+        "Prefiro não dizer"
+      ]
+    },
+    {
+      "id": "quer_conversar",
+      "tipo": "sim_nao",
+      "texto": "Você gostaria de conversar com alguém?",
+      "obrigatoria": true,
+      "acao": "cuidado",
+      "cuidado_tipo": "conversa",
+      "mostrar_se": {
+        "pergunta": "algo_nunca_compartilhou",
+        "valores": [
+          "Sim"
+        ]
+      }
+    },
+    {
+      "id": "bfim",
+      "tipo": "secao",
+      "texto": "Para terminar"
+    },
+    {
+      "id": "comentario_livre",
+      "tipo": "texto_longo",
+      "obrigatoria": false,
+      "texto": "Tem algo que você queira nos dizer?",
+      "descricao": "Opcional. É aqui que aparecem as coisas que a gente não pensou em perguntar."
+    }
+  ]
+}

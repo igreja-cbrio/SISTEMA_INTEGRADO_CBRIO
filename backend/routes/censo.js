@@ -11,7 +11,9 @@ const express = require('express');
 const router = express.Router();
 const { supabase } = require('../utils/supabase');
 const { authenticate, authorizeModule, getEffectiveLevel } = require('../middleware/auth');
-const { TIPOS, validarPerguntas, slugificar } = require('../utils/censoPerguntas');
+const {
+  TIPOS, FORMATOS, CUIDADO_TIPOS, validarPerguntas, slugificar,
+} = require('../utils/censoPerguntas');
 
 router.use(authenticate);
 
@@ -30,6 +32,25 @@ const CONSENTIMENTO_DEFAULT = [
 
 function limpar(v) {
   return typeof v === 'string' ? v.trim() : v;
+}
+
+/**
+ * Quem pode ver o bloco sensível com NOME (saúde emocional, casamento, "nunca
+ * teve coragem"). NÃO é o nível no módulo: é a lista nomeada em
+ * `cen_acesso_sensivel` — hoje 34 cargos têm o módulo censo na matriz, e
+ * "Em crise" ao lado do nome circula muito mais do que a pessoa imagina.
+ * Super-admin NÃO entra de graça aqui: é o tipo de dado em que "sou admin" não
+ * é justificativa. Fail-closed em qualquer erro.
+ */
+async function podeVerSensivel(profileId) {
+  if (!profileId) return false;
+  try {
+    const { data, error } = await supabase
+      .from('cen_acesso_sensivel').select('profile_id')
+      .eq('profile_id', profileId).is('revogado_em', null).maybeSingle();
+    if (error) return false;
+    return !!data;
+  } catch { return false; }
 }
 
 /** Slug único entre as pesquisas vivas: acrescenta -2, -3… se já existir. */
@@ -246,8 +267,15 @@ router.get('/aux', authorizeModule('censo', 1), async (req, res) => {
   res.json({
     tipos_pergunta: TIPOS,
     tipos_pesquisa: TIPOS_PESQUISA,
+    formatos: FORMATOS,
+    cuidado_tipos: CUIDADO_TIPOS,
     consentimento_default: CONSENTIMENTO_DEFAULT,
     nivel: getEffectiveLevel(req, 'censo'),
+    // Quem pode ver o bloco sensível com NOME não é definido pelo nível no
+    // módulo, e sim pela lista nomeada em cen_acesso_sensivel (decisão de
+    // 06/08). O front usa isto para esconder a aba de resposta nominal
+    // sensível em vez de deixar o usuário bater num 403.
+    pode_ver_sensivel: await podeVerSensivel(req.user?.id),
   });
 });
 
