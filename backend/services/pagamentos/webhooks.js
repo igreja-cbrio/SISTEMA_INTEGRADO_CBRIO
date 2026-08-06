@@ -75,7 +75,7 @@ const TIPO_POR_STATUS = {
  * @returns {{http: number, corpo: object}} — o que a rota deve responder.
  *   Sempre 200, exceto assinatura inválida (401).
  */
-async function processar({ providerNome, rawBody, headers, payload }) {
+async function processar({ providerNome, rawBody, headers, payload, query }) {
   let adapter;
   try {
     adapter = providers.obter(providerNome);
@@ -86,7 +86,14 @@ async function processar({ providerNome, rawBody, headers, payload }) {
     return { http: 200, corpo: { ok: true, ignorado: 'provider desconhecido' } };
   }
 
-  const assinatura = adapter.verificarAssinatura(rawBody, headers, segredoDe(adapter.nome));
+  // ⚠️ O 4º argumento (`{ query, payload }`) existe porque nem todo PSP assina o
+  // CORPO: o manifesto do Mercado Pago é montado com o `data.id` que vem no
+  // QUERY STRING da URL, mais o header `x-request-id`. Sem passar a query, a
+  // assinatura dele nunca fecharia — e o sintoma seria 401 em toda entrega
+  // legítima. Adapter que assina o corpo (Asaas) simplesmente ignora o extra.
+  const assinatura = adapter.verificarAssinatura(
+    rawBody, headers, segredoDe(adapter.nome), { query: query || {}, payload },
+  );
   if (!assinatura.ok) {
     console.error(`[pagamentos/webhook] assinatura inválida (${adapter.nome}): ${assinatura.motivo}`);
     // ⚠️ Seguimos recusando (quem posta sem o segredo não pode ser aceito), MAS

@@ -19,7 +19,10 @@
 //   async cancelarCobranca(cobranca) → { ok }
 //   async estornar(cobranca, { valor_centavos? }) → { ok, provider_pagamento_id? }
 //
-//   verificarAssinatura(rawBody, headers, segredo) → { ok, motivo? }
+//   verificarAssinatura(rawBody, headers, segredo, { query, payload }) → { ok, motivo? }
+//   ⚠️ O 4º argumento existe porque nem todo PSP assina o CORPO: o Mercado Pago
+//   monta o manifesto com o `data.id` do QUERY STRING + o header `x-request-id`.
+//   Adapter que assina o corpo (Asaas) ignora o extra.
 //
 //   ⚠️ `normalizarEvento` PODE SER ASSÍNCRONO (o chamador dá await). Há PSP cujo
 //   webhook não traz o pagamento: o do Mercado Pago manda só `{ data: { id } }`
