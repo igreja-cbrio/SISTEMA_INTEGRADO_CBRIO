@@ -242,6 +242,50 @@ describe('resolverMultipla · a neutra é exclusiva', () => {
   });
 });
 
+describe('escala com "Não se aplica"', () => {
+  // As perguntas de voluntariado ficam visíveis para TODOS (decisão do Matheus):
+  // quem serve informalmente ou parou responderia "não sirvo" e a liderança
+  // perderia o sinal. A saída existe para que quem nunca serviu não seja
+  // obrigado a dar nota — e para que essa nota não entre na média.
+  const p = {
+    id: 'valorizado', tipo: 'escala_5', texto: 'Me sinto valorizado(a) como voluntário(a).',
+    obrigatoria: true, permite_nao_se_aplica: true,
+  };
+
+  it('só vale em escala — em pergunta de opção é opção normal', () => {
+    const ruim = validarPerguntas([
+      { tipo: 'opcao_unica', texto: 'X', opcoes: ['A', 'B'], permite_nao_se_aplica: true },
+    ]);
+    expect(ruim.ok).toBe(false);
+    expect(ruim.erros.join(' ')).toContain('só vale em escala');
+  });
+
+  it('guarda o texto e deixa o número NULO — é o que mantém a média limpa', () => {
+    const { itens, faltando } = montarItens({ perguntas: [p], respostas: { valorizado: 'Não se aplica' } });
+    expect(faltando).toEqual([]);
+    expect(itens[0].valor_texto).toBe('Não se aplica');
+    expect(itens[0].valor_num).toBeNull();
+  });
+
+  it('a nota normal continua indo para valor_num', () => {
+    const { itens } = montarItens({ perguntas: [p], respostas: { valorizado: 4 } });
+    expect(itens[0].valor_num).toBe(4);
+  });
+
+  it('conta como neutra, então sai da base do percentual', () => {
+    expect(ehNeutra(p, 'Não se aplica')).toBe(true);
+    expect(baseSemNeutras(p, [{ valor: '5', total: 30 }, { valor: 'Não se aplica', total: 70 }]))
+      .toEqual({ base: 30, neutras: 70, total: 100 });
+  });
+
+  it('sem a permissão, "Não se aplica" não é resposta válida de escala', () => {
+    const semSaida = { ...p, permite_nao_se_aplica: undefined, obrigatoria: true };
+    const { itens, faltando } = montarItens({ perguntas: [semSaida], respostas: { valorizado: 'Não se aplica' } });
+    expect(itens).toEqual([]);
+    expect(faltando.map((f) => f.id)).toEqual(['valorizado']);
+  });
+});
+
 describe('montarItens', () => {
   const perguntas = [
     { id: 'sec', tipo: 'secao', texto: 'Sobre você' },

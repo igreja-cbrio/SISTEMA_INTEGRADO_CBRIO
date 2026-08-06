@@ -144,11 +144,42 @@ describe('questionário 2026 · o formulário é respondível de ponta a ponta',
     expect(montarItens({ perguntas, respostas }).faltando).toEqual([]);
   });
 
-  it('quem não serve não responde as perguntas de voluntário', () => {
+  // Decisão do Matheus (06/08): as perguntas de voluntariado aparecem para
+  // TODOS. Quem serve informalmente, quem parou ou quem está começando
+  // responderia "não sirvo" e a liderança perderia justamente esse sinal. A
+  // especificação original também as tinha soltas.
+  it('quem não serve AINDA VÊ as perguntas de voluntariado', () => {
     const respostas = responder((p) => (p.id === 'serve_ministerio' ? 'Não' : primeiraOpcao(p)));
-    expect(respostas.valorizado_voluntario).toBeUndefined();
+    expect(respostas.valorizado_voluntario).toBeDefined();
+    expect(respostas.preparado_servir).toBeDefined();
+    expect(respostas.acompanhamento_lideranca).toBeDefined();
+    // Mas a lista de QUAIS ministérios segue condicional — a própria
+    // especificação marca esse desdobramento como "Se Sim →".
     expect(respostas.quais_ministerios).toBeUndefined();
-    expect(montarItens({ perguntas, respostas }).faltando).toEqual([]);
+  });
+
+  it('e pode responder "Não se aplica" sem que isso entre na média dos voluntários', () => {
+    const respostas = responder((p) => {
+      if (p.id === 'serve_ministerio') return 'Não';
+      if (p.permite_nao_se_aplica || (p.opcoes_neutras as string[] | undefined)?.includes('Não se aplica')) {
+        return 'Não se aplica';
+      }
+      return primeiraOpcao(p);
+    });
+    const { itens, faltando } = montarItens({ perguntas, respostas });
+    expect(faltando).toEqual([]);
+    const valorizado = itens.find((i) => i.pergunta_id === 'valorizado_voluntario');
+    expect(valorizado?.valor_texto).toBe('Não se aplica');
+    expect(valorizado?.valor_num).toBeNull();   // fora da média
+  });
+
+  it('as três perguntas soltas têm saída — obrigatória sem saída viraria nota inventada', () => {
+    for (const id of ['valorizado_voluntario', 'preparado_servir']) {
+      expect(respondiveis.find((p) => p.id === id)?.permite_nao_se_aplica).toBe(true);
+    }
+    const acomp = respondiveis.find((p) => p.id === 'acompanhamento_lideranca');
+    expect(acomp?.opcoes).toContain('Não se aplica');
+    expect(acomp?.opcoes_neutras).toContain('Não se aplica');
   });
 
   it('formulário em branco acusa só as obrigatórias VISÍVEIS de saída', () => {

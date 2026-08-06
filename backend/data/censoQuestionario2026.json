@@ -456,12 +456,7 @@
         "min": "Discordo totalmente",
         "max": "Concordo totalmente"
       },
-      "mostrar_se": {
-        "pergunta": "serve_ministerio",
-        "valores": [
-          "Sim"
-        ]
-      }
+      "permite_nao_se_aplica": true
     },
     {
       "id": "preparado_servir",
@@ -472,12 +467,7 @@
         "min": "Discordo totalmente",
         "max": "Concordo totalmente"
       },
-      "mostrar_se": {
-        "pergunta": "serve_ministerio",
-        "valores": [
-          "Sim"
-        ]
-      }
+      "permite_nao_se_aplica": true
     },
     {
       "id": "acompanhamento_lideranca",
@@ -487,14 +477,12 @@
       "opcoes": [
         "Sim",
         "Não",
-        "Às vezes"
+        "Às vezes",
+        "Não se aplica"
       ],
-      "mostrar_se": {
-        "pergunta": "serve_ministerio",
-        "valores": [
-          "Sim"
-        ]
-      }
+      "opcoes_neutras": [
+        "Não se aplica"
+      ]
     },
     {
       "id": "melhorar_voluntariado",

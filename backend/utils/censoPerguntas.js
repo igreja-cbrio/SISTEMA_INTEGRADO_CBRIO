@@ -51,6 +51,14 @@ const CUIDADO_TIPOS = Object.freeze(['familiar', 'aconselhamento', 'oracao', 'co
 const ESCALA_MIN = 1;
 const ESCALA_MAX = 5;
 
+// Saída para escala que não se aplica à pessoa. Existe porque as perguntas de
+// voluntariado ficam VISÍVEIS para todos (decisão do Matheus, 06/08: quem serve
+// informalmente ou parou responderia "não sirvo" e a liderança perderia o
+// sinal). Sem esta saída, quem nunca serviu seria obrigado a dar nota em "me
+// sinto valorizado como voluntário" — e essa nota entraria na média como se
+// fosse opinião de voluntário. Contada como NEUTRA: fica fora da base.
+const NAO_SE_APLICA = 'Não se aplica';
+
 function ehTexto(v) {
   return typeof v === 'string' && v.trim().length > 0;
 }
@@ -134,6 +142,10 @@ function validarPerguntas(entrada) {
       const min = ehTexto(p?.rotulos?.min) ? String(p.rotulos.min).trim() : '';
       const rmax = ehTexto(p?.rotulos?.max) ? String(p.rotulos.max).trim() : '';
       if (min || rmax) out.rotulos = { min, max: rmax };
+      if (p?.permite_nao_se_aplica === true) out.permite_nao_se_aplica = true;
+    } else if (p?.permite_nao_se_aplica === true) {
+      // Em pergunta de opção, "Não se aplica" é só mais uma opção (+ neutra).
+      erros.push(`Pergunta ${pos}: permite_nao_se_aplica só vale em escala — em pergunta de opção, inclua "${NAO_SE_APLICA}" nas opções e em opcoes_neutras`);
     }
 
     // ── texto com formato ──
@@ -219,7 +231,9 @@ function visivel(pergunta, respostas = {}) {
 
 /** É uma opção neutra ("Prefiro não dizer") desta pergunta? */
 function ehNeutra(pergunta, valor) {
-  return lista(pergunta?.opcoes_neutras).includes(String(valor ?? '').trim());
+  const v = String(valor ?? '').trim();
+  if (pergunta?.permite_nao_se_aplica === true && v === NAO_SE_APLICA) return true;
+  return lista(pergunta?.opcoes_neutras).includes(v);
 }
 
 /**
@@ -304,6 +318,13 @@ function montarItens({ perguntas, respostas }) {
       item.valor_texto = v;
       if (p.acao === 'cuidado' && v === 'Sim') cuidados.push({ tipo: p.cuidado_tipo });
     } else if (TIPOS_NUMERICOS.includes(p.tipo)) {
+      // Escala com saída: guarda o texto e deixa valor_num NULO. É isso que
+      // mantém a nota de quem não é voluntário fora da média dos voluntários.
+      if (p.permite_nao_se_aplica === true && String(bruto).trim() === NAO_SE_APLICA) {
+        item.valor_texto = NAO_SE_APLICA;
+        itens.push(item);
+        continue;
+      }
       const n = Number(bruto);
       if (!Number.isFinite(n)) { faltou(); continue; }
       const [min, max] = p.tipo === 'nps' ? [0, p.max ?? 10]
@@ -376,6 +397,7 @@ module.exports = {
   CUIDADO_TIPOS,
   ESCALA_MIN,
   ESCALA_MAX,
+  NAO_SE_APLICA,
   slugificar,
   validarPerguntas,
   visivel,
