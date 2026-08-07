@@ -3749,6 +3749,49 @@ router.get('/grupos/:grupoId/encontros', authApp, limiterNormal, async (req, res
   }
 });
 
+// GET /api/app/grupos/:grupoId/encontros/:encontroId — o encontro ABERTO:
+// quem esteve presente (com NOME), o comentário de quem registrou e o tema.
+//
+// ⚠️ Pedido do Marcos (07/08): *"faz um quadradinho clicável do encontro; aí
+// quando eu clico, vejo os comentários e a presença em um lugar só"*. A LISTA
+// não traz nomes de propósito — seriam 24 encontros × N pessoas a cada abertura
+// de tela; aqui é sob demanda, um encontro por vez.
+//
+// ⚠️ Só nomes de quem ESTEVE: a RPC `registrar_encontro_grupo` não cria linha
+// pra ausente, então a tela não pode listar faltosos — deduzi-los do roster
+// ATUAL afirmaria ausência de gente que talvez nem estivesse no grupo naquele
+// dia (o roster muda). O que não se sabe, não se afirma.
+router.get('/grupos/:grupoId/encontros/:encontroId', authApp, limiterNormal, async (req, res) => {
+  try {
+    const gid = req.params.grupoId;
+    const g = await gateGrupoApp(req, res, gid);
+    if (!g.ok) return;
+
+    const { data: enc } = await supabase.from('mem_grupo_encontros')
+      .select('id, data, tema, observacoes, registrado_por_nome, created_at')
+      .eq('id', req.params.encontroId).eq('grupo_id', gid).is('deleted_at', null)
+      .maybeSingle();
+    if (!enc) return res.status(404).json({ error: 'Encontro não encontrado' });
+
+    const { data: pres } = await supabase.from('mem_grupo_encontro_presencas')
+      .select('membro_id, presente, membro:mem_membros(id, nome)')
+      .eq('encontro_id', enc.id);
+
+    const presentes = (pres || [])
+      .filter(p => p.presente)
+      .map(p => {
+        const m = Array.isArray(p.membro) ? p.membro[0] : p.membro;
+        return { membro_id: p.membro_id, nome: m?.nome || '—' };
+      })
+      .sort((a, b) => String(a.nome).localeCompare(String(b.nome)));
+
+    res.json({ encontro: { ...enc, presentes } });
+  } catch (e) {
+    console.error('[APP] grupos/encontros detalhe:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar o encontro' });
+  }
+});
+
 // POST /api/app/grupos/:grupoId/encontros — registra a frequência do encontro
 // body { data, tema?, observacoes?, presentes: [membro_id] }
 // ⚠️ Usa a RPC `registrar_encontro_grupo` — o MESMO escritor do web e do fluxo do
