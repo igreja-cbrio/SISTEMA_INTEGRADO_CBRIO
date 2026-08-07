@@ -20,7 +20,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { EmptyState } from '@/components/ui/empty-state';
+import EmptyState from '@/components/EmptyState';
 import { toast } from 'sonner';
 import {
   ClipboardList, Plus, Loader2, Copy, Trash2, Save, ArrowLeft,
@@ -186,9 +186,9 @@ export default function Censo() {
             </div>
           ) : lista.length === 0 ? (
             <EmptyState
-              icon={ClipboardList}
-              title="Nenhuma pesquisa ainda"
-              description={podeEditar
+              icone={ClipboardList}
+              titulo="Nenhuma pesquisa ainda"
+              mensagem={podeEditar
                 ? 'Crie a primeira pesquisa. Ela nasce em rascunho — você monta as perguntas e só depois abre para respostas.'
                 : 'Nenhuma pesquisa foi criada. Fale com quem administra o módulo.'}
             />
@@ -236,9 +236,9 @@ export default function Censo() {
         {TABS.filter((t) => t.futuro).map((t) => (
           <TabsContent key={t.id} value={t.id}>
             <EmptyState
-              icon={t.icon}
-              title={`${t.label} — em construção`}
-              description="Esta aba entra quando a coleta estiver no ar: os números só fazem sentido com resposta na mesa."
+              icone={t.icon}
+              titulo={`${t.label} — em construção`}
+              mensagem="Esta aba entra quando a coleta estiver no ar: os números só fazem sentido com resposta na mesa."
             />
           </TabsContent>
         ))}
@@ -295,9 +295,9 @@ function AbaCuidado({ pesquisas, podeVerFila }: { pesquisas: Stats[]; podeVerFil
   if (!pesquisaId) {
     return (
       <EmptyState
-        icon={HeartHandshake}
-        title="Nenhum pedido ainda"
-        description="Quando o censo começar a receber respostas, os pedidos de acompanhamento, aconselhamento e oração aparecem aqui."
+        icone={HeartHandshake}
+        titulo="Nenhum pedido ainda"
+        mensagem="Quando o censo começar a receber respostas, os pedidos de acompanhamento, aconselhamento e oração aparecem aqui."
       />
     );
   }
@@ -381,8 +381,8 @@ function AbaCuidado({ pesquisas, podeVerFila }: { pesquisas: Stats[]; podeVerFil
               <Loader2 className="h-4 w-4 animate-spin" /> Carregando…
             </div>
           ) : fila.length === 0 ? (
-            <EmptyState icon={HeartHandshake} title="Nada nesta fila"
-              description="Nenhum pedido com este status." />
+            <EmptyState icone={HeartHandshake} titulo="Nada nesta fila"
+              mensagem="Nenhum pedido com este status." />
           ) : (
             <div className="space-y-2">
               {fila.map((c) => (
