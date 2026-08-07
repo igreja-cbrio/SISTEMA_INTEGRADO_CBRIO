@@ -3077,6 +3077,23 @@ async function gruposPapelApp(req) {
   return { membro, adminGrupos, gruposLiderados, gruposSupervisionados, gruposGeridos };
 }
 
+/**
+ * Papel da pessoa NAQUELE grupo — quem decide é o SERVIDOR (07/08/2026).
+ *
+ * ⚠️ Precedência FIXA, e LIDERAR GANHA: medido em 07/08, **7 dos 87 grupos
+ * ativos têm `supervisor_id == lider_id`**. Sem isso, esses líderes cairiam na
+ * tela enxuta de supervisão e perderiam Pedidos, Estudos e Editar do PRÓPRIO
+ * grupo.
+ * ⚠️ `admin_grupos` (a coordenação) fica com a tela COMPLETA: quem cuida do
+ * módulo precisa de tudo, não da visão de acompanhamento.
+ */
+function papelNoGrupoApp({ gruposLiderados, gruposSupervisionados, adminGrupos }, gid) {
+  if ((gruposLiderados || []).some(g => g.id === gid)) return 'lider';
+  if ((gruposSupervisionados || []).some(g => g.id === gid)) return 'supervisor';
+  if (adminGrupos) return 'admin';
+  return 'nenhum';
+}
+
 // GET /api/app/grupos/papel — o app decide se mostra a funcionalidade.
 router.get('/grupos/papel', authApp, limiterNormal, async (req, res) => {
   try {
@@ -3247,7 +3264,8 @@ router.post('/grupos/pedidos/:id/rejeitar', authApp, limiterNormal, async (req, 
 // nenhuma inscrição pendente.
 router.get('/grupos/meus', authApp, limiterNormal, async (req, res) => {
   try {
-    const { adminGrupos, gruposGeridos } = await gruposPapelApp(req);
+    const papel = await gruposPapelApp(req);
+    const { adminGrupos, gruposGeridos } = papel;
     const ids = gruposGeridos.map(g => g.id);
     if (!ids.length) return res.json({ admin: adminGrupos, grupos: [] });
 
@@ -3271,6 +3289,11 @@ router.get('/grupos/meus', authApp, limiterNormal, async (req, res) => {
       ...g,
       membros_ativos: mc[g.id] || 0,
       pendentes: pc[g.id] || 0,
+      // ⚠️ O PAPEL vem do servidor (07/08): é ele que decide se o app abre a
+      // tela completa de gestão ou a enxuta de supervisão. Sem este campo o app
+      // teria que fazer uma 2ª chamada a `/grupos/papel` e cruzar ids no
+      // cliente — que é o tipo de régua duplicada que já divergiu antes.
+      papel: papelNoGrupoApp(papel, g.id),
     })).sort((a, b) => (b.pendentes - a.pendentes) || String(a.nome).localeCompare(String(b.nome)));
     res.json({ admin: adminGrupos, grupos });
   } catch (e) {
@@ -3284,7 +3307,8 @@ router.get('/grupos/meus', authApp, limiterNormal, async (req, res) => {
 // OU admin de grupos.
 router.get('/grupos/:grupoId/membros', authApp, limiterNormal, async (req, res) => {
   try {
-    const { adminGrupos, gruposGeridos } = await gruposPapelApp(req);
+    const papel = await gruposPapelApp(req);
+    const { adminGrupos, gruposGeridos } = papel;
     const gid = req.params.grupoId;
     const ehGerido = gruposGeridos.some(g => g.id === gid);
     if (!adminGrupos && !ehGerido) {
@@ -3324,7 +3348,9 @@ router.get('/grupos/:grupoId/membros', authApp, limiterNormal, async (req, res) 
       id: p.id, grupo_id: p.grupo_id, grupo_nome: grupo.nome,
       nome: p.nome, telefone: p.telefone, email: p.email, origem: p.origem, created_at: p.created_at,
     }));
-    res.json({ grupo, membros, pendentes });
+    // ⚠️ `meu_papel` fecha a porta do deep link: a tela de destino RE-CONFERE o
+    // papel com o servidor em vez de confiar no que veio na navegação.
+    res.json({ grupo, membros, pendentes, meu_papel: papelNoGrupoApp(papel, gid) });
   } catch (e) {
     console.error('[APP] grupos/membros:', e.message);
     res.status(500).json({ error: 'Erro ao carregar o grupo' });
@@ -3344,7 +3370,8 @@ router.get('/grupos/:grupoId/membros', authApp, limiterNormal, async (req, res) 
 
 /** Gate comum: devolve `{ ok }` ou responde 403/404 e devolve `{ ok:false }`. */
 async function gateGrupoApp(req, res, gid) {
-  const { adminGrupos, gruposGeridos, membro } = await gruposPapelApp(req);
+  const papel = await gruposPapelApp(req);
+  const { adminGrupos, gruposGeridos, membro } = papel;
   if (!adminGrupos && !gruposGeridos.some(g => g.id === gid)) {
     res.status(403).json({ error: 'Você não gerencia este grupo' });
     return { ok: false };
@@ -3355,7 +3382,10 @@ async function gateGrupoApp(req, res, gid) {
     res.status(404).json({ error: 'Grupo não encontrado' });
     return { ok: false };
   }
-  return { ok: true, grupo, membro, adminGrupos };
+  // `meuPapel` sai daqui pra quem precisa DISTINGUIR quem está agindo (hoje: o
+  // nome que vai no registro do encontro). A AUTORIZAÇÃO continua a mesma —
+  // líder e supervisor passam igual, como desde 05/08.
+  return { ok: true, grupo, membro, adminGrupos, meuPapel: papelNoGrupoApp(papel, gid) };
 }
 
 // ⚠️⚠️ PUT /app/grupos/:grupoId — EDITAR GRUPO PELO APP (06/08/2026 · Onda 1b)
@@ -3658,7 +3688,16 @@ router.post('/grupos/:grupoId/encontros', authApp, limiterNormal, async (req, re
       p_tema: req.body?.tema ? String(req.body.tema).trim().slice(0, 200) : null,
       p_observacoes: req.body?.observacoes ? String(req.body.observacoes).trim().slice(0, 2000) : null,
       p_registrado_por: req.user?.id || null,
-      p_registrado_por_nome: g.membro?.nome || req.user?.email || 'Líder (app)',
+      // ⚠️ MARCA O SUPERVISOR NO NOME (07/08). O card "Grupos sem relatório de
+      // encontro" do /grupos conta QUALQUER `mem_grupo_encontros` e o texto dele
+      // afirma que o relato veio do líder ("chamada feita no sistema ou relato
+      // do líder pelo bot"). Com o supervisor registrando, o card passaria a
+      // dizer que o líder reportou quando não reportou — e a coordenação
+      // deixaria de cobrar quem precisa ser cobrado. O campo já existe e já é
+      // exibido; marcar aqui é o conserto mais barato e honesto.
+      p_registrado_por_nome: g.meuPapel === 'supervisor'
+        ? `${g.membro?.nome || req.user?.email || 'Supervisor'} (supervisor)`
+        : (g.membro?.nome || req.user?.email || 'Líder (app)'),
       p_membros_presentes: presentes,
     });
     if (error) throw error;
@@ -3674,8 +3713,117 @@ router.post('/grupos/:grupoId/encontros', authApp, limiterNormal, async (req, re
 
     res.status(201).json({ ok: true, encontro_id: encontroId, presentes: presentes.length });
   } catch (e) {
+    // ⚠️⚠️ `mem_grupo_encontros` tem UNIQUE (grupo_id, data) e a RPC faz INSERT
+    // puro — a 2ª chamada no mesmo dia levanta 23505. O web já devolvia 409
+    // ("Já existe encontro registrado nessa data"); AQUI virava **500 genérico**
+    // e a pessoa lia "erro no sistema".
+    //
+    // Com a tela do supervisor isso deixa de ser exceção e vira o caso NORMAL:
+    // líder e supervisor registram o MESMO dia do MESMO grupo. A frequência é
+    // uma só (é do grupo) — quem chegar depois precisa saber disso, não levar
+    // erro.
+    // ⚠️ A UNIQUE **não é parcial**, então encontro soft-deletado continua
+    // ocupando a data: a tela pode mostrar "nenhum encontro" e o POST recusar.
+    // A mensagem diz o que houve em vez de culpar a rede.
+    if (e?.code === '23505') {
+      return res.status(409).json({
+        error: 'Já existe frequência registrada para este grupo nesta data.',
+        codigo: 'encontro_duplicado',
+      });
+    }
     console.error('[APP] grupos/encontros POST:', e.message);
     res.status(500).json({ error: 'Erro ao registrar a frequência' });
+  }
+});
+
+// ── Grupos · VISITA DE SUPERVISÃO (07/08/2026) ──────────────────────────────
+// Pedido do Marcos: o supervisor ganha uma tela enxuta onde registra a
+// frequência do grupo e um comentário sobre a visita, e "a plataforma entende
+// que quando supervisor preenche a frequência é porque fez uma visita e conta
+// isso" — com o interruptor **"estive presente no encontro"** que ele aprovou,
+// pra o indicador não passar a medir "digitou" em vez de "foi lá".
+//
+// ⚠️⚠️ O INTERRUPTOR SÓ FUNCIONA PORQUE `presente:false` **NÃO GRAVA LINHA**.
+// Medido em 07/08: o KPI real (`_kpi_agregar_dado`, ramo `lideres_acompanhados`)
+// conta `DISTINCT lider_id` das visitas do período e **NÃO filtra `status`** —
+// 'agendada' e 'cancelada' contam igual a 'realizada'. Ou seja, gravar a linha
+// com outro status faria o interruptor ser puro enfeite. Não gravar é o que dá
+// efeito real a ele, sem depender de migration.
+// (O filtro de `status` ausente no KPI é bug PRÉ-EXISTENTE e está reportado —
+// não foi criado aqui, e este endpoint não depende dele.)
+//
+// ⚠️ NÃO reusa `POST /api/grupos/:id/visitas` do web, e não é preguiça: aquela
+// rota passa por `authenticate`, que **auto-provisiona linha em `usuarios`** com
+// cargo 'membro' pra todo token sem uma (auth.js) — cada supervisor do app
+// viraria usuário do ERP no módulo Permissões — e resolve o membro por e-mail
+// EXATO (`getMeuPerfilGrupo`), régua diferente do `resolveMembroApp` do app.
+// O que se reusa é o FORMATO da linha, pra a visita do app aparecer igual na
+// aba Visitas do /grupos.
+//
+// ⚠️ Grava `responsavel_id` (profile) E `supervisor_id` (mem_membros) porque o
+// nome exibido no histórico do web sai de `profiles.name[responsavel_id] ||
+// mem_membros.nome[supervisor_id]` — sem os dois, a visita aparece SEM NOME.
+router.post('/grupos/:grupoId/visitas', authApp, limiterNormal, async (req, res) => {
+  try {
+    const gid = req.params.grupoId;
+    const g = await gateGrupoApp(req, res, gid);
+    if (!g.ok) return;
+
+    const hoje = hojeBRT();
+    const data = /^\d{4}-\d{2}-\d{2}$/.test(String(req.body?.data_visita || ''))
+      ? req.body.data_visita : hoje;
+    if (data > hoje) return res.status(400).json({ error: 'Não dá pra registrar visita no futuro.' });
+
+    const observacao = req.body?.observacao ? String(req.body.observacao).trim().slice(0, 2000) : null;
+
+    const { data: linha, error } = await supabase.from('grupo_supervisao_visitas')
+      .insert({
+        grupo_id: gid,
+        supervisor_id: g.membro?.id || null,
+        responsavel_id: req.user?.id || null,
+        registrado_por: req.user?.id || null,
+        data_visita: data,
+        observacao,
+        status: 'realizada',
+      })
+      .select('id, data_visita, observacao, status')
+      .single();
+    if (error) throw error;
+
+    notificar({
+      modulo: 'grupos',
+      tipo: 'grupo_visita_registrada',
+      titulo: 'Visita de supervisão registrada pelo app',
+      mensagem: `${g.grupo.nome}: visita em ${data.split('-').reverse().join('/')}${observacao ? ' · com comentário' : ''}.`,
+      link: '/grupos?tab=visitas',
+      chaveDedup: `grupo_visita_${linha.id}`,
+    }).catch(e => console.warn('[APP] visita · notificar:', e.message));
+
+    res.status(201).json({ ok: true, visita: linha });
+  } catch (e) {
+    console.error('[APP] grupos/visitas POST:', e.message);
+    res.status(500).json({ error: 'Erro ao registrar a visita' });
+  }
+});
+
+// GET /api/app/grupos/:grupoId/visitas — histórico, pra a tela não prometer o
+// que não mostra (e pra o supervisor ver quando esteve lá pela última vez).
+router.get('/grupos/:grupoId/visitas', authApp, limiterNormal, async (req, res) => {
+  try {
+    const gid = req.params.grupoId;
+    const g = await gateGrupoApp(req, res, gid);
+    if (!g.ok) return;
+    const { data, error } = await supabase.from('grupo_supervisao_visitas')
+      .select('id, data_visita, observacao, status')
+      .eq('grupo_id', gid)
+      .eq('status', 'realizada')
+      .order('data_visita', { ascending: false })
+      .limit(20);
+    if (error) throw error;
+    res.json({ visitas: data || [] });
+  } catch (e) {
+    console.error('[APP] grupos/visitas GET:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar as visitas' });
   }
 });
 
