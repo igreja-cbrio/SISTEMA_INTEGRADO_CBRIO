@@ -59,10 +59,28 @@ function LivePanel() {
     }
   }, []);
 
+  // ⚠️ 15s e não 5s (07/08/2026 · Onda 4). Cada tick roda
+  // `fn_app_telemetria_ao_vivo`, que faz ~10 agregações — inclusive `count(*)`
+  // em `mem_membros` (3.979 linhas) e em `profiles`. A 5s eram 720 execuções
+  // por hora de painel aberto, pra um dado que muda em minutos.
+  // ⚠️ E PAUSA com a aba em segundo plano: painel esquecido aberto a noite
+  // toda dava ~17 mil execuções sem ninguém olhando — o mesmo padrão do
+  // aparelho de teste que gerou 84% dos pings da telemetria.
   useEffect(() => {
     carregar();
-    const t = setInterval(carregar, 5000);
-    return () => clearInterval(t);
+    let t = setInterval(carregar, 15000);
+    const aoTrocarVisibilidade = () => {
+      clearInterval(t);
+      if (document.visibilityState === 'visible') {
+        carregar();
+        t = setInterval(carregar, 15000);
+      }
+    };
+    document.addEventListener('visibilitychange', aoTrocarVisibilidade);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener('visibilitychange', aoTrocarVisibilidade);
+    };
   }, [carregar]);
 
   if (primeira.current && !d) return <div className="flex justify-center py-16"><Loader2 className="h-8 w-8 animate-spin text-[#00B39D]" /></div>;

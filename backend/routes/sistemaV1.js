@@ -17,7 +17,10 @@ const {
 const {
   getMobileCommandCenter,
   refreshExpoReceipts,
+  expirarRecibosVencidos,
+  alertarSaudeDoPush,
 } = require('../services/systemMobileOps');
+const { requireCron } = require('../utils/cronAuth');
 const {
   getGovernanceCommandCenter,
   updateGovernanceControl,
@@ -48,6 +51,39 @@ const TRANSITIONS = {
   nao_reproduzido: new Set([]),
   risco_aceito: new Set([]),
 };
+
+// ⚠️⚠️ CRON DOS RECIBOS DE PUSH — declarado ANTES do `authenticate`, de propósito
+// (07/08/2026 · Onda 4). O cron da Vercel não tem sessão de usuário: ele se
+// autentica pelo `CRON_SECRET` (`utils/cronAuth.js`). Pôr esta rota depois do
+// `router.use(authenticate)` faria o cron levar 401 todo dia sem ninguém notar —
+// exatamente a classe de falha silenciosa que ela existe pra matar.
+//
+// O QUE ISTO CONSERTA: `refreshExpoReceipts` já existia no código e **nunca
+// rodou** — 0 de 1.849 tickets tinham `receipt_status`. A única porta era um
+// POST atrás de `requireSuperAdmin`, e nenhum dos 46 crons apontava pra cá. Foi
+// assim que 1.801 falhas de entrega (98,9%) passaram DOIS MESES despercebidas.
+//
+// ⚠️ A ordem das 3 etapas importa: expirar os vencidos ANTES de coletar (senão
+// nunca saem da fila), e alertar DEPOIS (pra medir já com o dado do dia).
+// ⚠️ Nunca devolve 5xx por falha de UMA etapa: a Vercel marcaria o cron inteiro
+// como falho e sumiria com o resultado das outras duas. Cada etapa reporta o
+// próprio erro no corpo.
+router.get('/cron/push-receipts', requireCron, async (_req, res) => {
+  const saida = {};
+  for (const [nome, fn] of [
+    ['expirados', expirarRecibosVencidos],
+    ['recibos', refreshExpoReceipts],
+    ['alerta', alertarSaudeDoPush],
+  ]) {
+    try {
+      saida[nome] = await fn();
+    } catch (e) {
+      console.error(`[cron push-receipts · ${nome}]`, e.message);
+      saida[nome] = { erro: e.message };
+    }
+  }
+  res.json({ ok: true, ...saida });
+});
 
 router.use(authenticate);
 router.use(requireSuperAdmin);
