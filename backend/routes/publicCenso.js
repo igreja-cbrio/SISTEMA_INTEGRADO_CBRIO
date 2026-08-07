@@ -24,7 +24,7 @@ const {
 } = require('../utils/censoRespostaToken');
 const { cpfValido, normalizarCpf } = require('../utils/cpf');
 const { casarComOpcao, loteParaBanco } = require('../utils/censoVocabulario');
-const { acharMembroGuardado } = require('../services/membroMatch');
+const { acharMembroGuardado, acharOuCriarGuardado } = require('../services/membroMatch');
 
 let reconciliarCenso;
 try { ({ reconciliarCenso } = require('../services/censoReconciliar')); }
@@ -70,6 +70,33 @@ const lookupLimiter = rateLimit({
 });
 
 const CANAIS = ['qr', 'app', 'link', 'email', 'whatsapp', 'totem'];
+
+/**
+ * "Matheus Ribeiro Toscano" → "Matheus R. T."
+ *
+ * É o MÁXIMO que um endereço público pode devolver a partir de um CPF sozinho.
+ * O nome inteiro transformaria isto num consultor de CPF → nome, e CPF vaza e se
+ * compra. Mesmo padrão dos lookups de `publicMembresia` (primeiro nome +
+ * iniciais + telefone mascarado), que existe exatamente por isso.
+ * O dado de verdade só sai depois de a pessoa confirmar o NASCIMENTO — que é uma
+ * pergunta do censo, então ela não digita nada duas vezes.
+ */
+function nomeMascarado(nome) {
+  const partes = String(nome || '').trim().split(/\s+/).filter(Boolean);
+  if (!partes.length) return null;
+  const primeiro = partes[0];
+  const iniciais = partes.slice(1)
+    .filter((x) => x.length > 2 || /^[A-ZÀ-Ú]/.test(x))   // pula "de", "da", "dos"
+    .map((x) => `${x[0].toUpperCase()}.`)
+    .join(' ');
+  return iniciais ? `${primeiro} ${iniciais}` : primeiro;
+}
+
+function mascararTelefone(tel) {
+  const d = String(tel || '').replace(/\D/g, '');
+  if (d.length < 8) return null;
+  return `(${d.slice(0, 2)}) ****-${d.slice(-4)}`;
+}
 
 // ── Cache do questionário em memória ──────────────────────────────────────
 // Num culto de 2.500 pessoas, CADA requisição relia a mesma linha de
@@ -171,16 +198,32 @@ router.post('/:slug/prefill', lookupLimiter, async (req, res) => {
     if (r.erro) return res.status(r.erro).json({ error: r.mensagem });
 
     const cpf = normalizarCpf(req.body?.cpf);
+    if (!cpfValido(cpf)) return res.json(neutra);
     const nascimento = String(req.body?.data_nascimento || '').trim();
-    if (!cpfValido(cpf) || !/^\d{4}-\d{2}-\d{2}$/.test(nascimento)) return res.json(neutra);
+    const temNascimento = /^\d{4}-\d{2}-\d{2}$/.test(nascimento);
 
     const { data, error } = await supabase
       .from('mem_membros')
       .select('id, nome, telefone, email, data_nascimento, estado_civil, cidade, bairro, profissao')
-      .eq('cpf', cpf).eq('data_nascimento', nascimento)
-      .eq('active', true).is('deleted_at', null)
+      .eq('cpf', cpf).eq('active', true).is('deleted_at', null)
       .maybeSingle();
     if (error || !data) return res.json(neutra);
+
+    // ESTÁGIO 1 — só o CPF: devolve identificação MASCARADA, para a tela poder
+    // perguntar "você é Matheus R. T.?". Nada de dado real ainda.
+    if (!temNascimento) {
+      return res.json({
+        encontrado: true,
+        confirmar: {
+          nome_mascarado: nomeMascarado(data.nome),
+          telefone_mascarado: mascararTelefone(data.telefone),
+        },
+      });
+    }
+
+    // ESTÁGIO 2 — CPF + nascimento conferem: agora sim o dado sai.
+    // Nascimento errado devolve a MESMA resposta neutra de "não existe".
+    if (data.data_nascimento !== nascimento) return res.json(neutra);
 
     // Já respondeu? Avisa em vez de deixar a pessoa preencher 93 campos para
     // tomar um erro no fim.
@@ -400,9 +443,43 @@ router.post('/:slug/responder', submitLimiter, async (req, res) => {
       } catch { /* matcher indisponível não impede a resposta de entrar */ }
     }
 
-    // Identidade DECLARADA: guardada SEMPRE que não houver membro vinculado. É o
-    // que o pós-processamento usa para achar a pessoa, e é o que faz a fila de
-    // cuidado ter para quem ligar enquanto o vínculo não aconteceu.
+    // ⚠️ CRIA A PESSOA quando o CPF é válido e não existe na base (decisão do
+    // Matheus, 07/08: "se o sistema não achar o cadastro dela, ele já vai criar
+    // um automaticamente quando ela enviar o censo").
+    //
+    // É o que as outras 8 portas públicas já fazem, e o `acharOuCriarGuardado` é
+    // o caminho guardado: entra como VISITANTE (nunca membro — promover é ato
+    // humano), registra os contatos e eleva par ambíguo para revisão em vez de
+    // fundir. Com CPF obrigatório e validado, a chave é forte e o risco de
+    // duplicata é o mesmo das outras portas.
+    //
+    // Ganho colateral que importa: com membro_id SEMPRE preenchido, a UNIQUE
+    // (pesquisa_id, membro_id) passa a barrar resposta repetida de qualquer
+    // pessoa — antes o anônimo escapava —, e toda resposta nasce ligada à ficha.
+    if (!membroId && cpfInformado && cpfValido(cpfInformado)) {
+      try {
+        const criado = await acharOuCriarGuardado({
+          cpf: cpfInformado,
+          nome: porCampo.nome,
+          email: porCampo.email,
+          telefone: porCampo.telefone,
+          dataNascimento: porCampo.data_nascimento,
+          status: 'visitante',
+          origem: 'censo',
+          origemId: envioId || null,
+        }, { soChaveForte: true });   // só CPF liga; nada de heurística de nome
+        if (criado?.membro_id) {
+          membroId = criado.membro_id;
+          matchedBy = 'cpf';
+          identificadoPor = 'cpf_nascimento';
+        }
+      } catch (e) { console.error('[PUBLIC CENSO] criar pessoa:', e.message); }
+    }
+
+    // Identidade DECLARADA: guardada SEMPRE que não houver membro vinculado (o
+    // criador pode ter falhado, ou a pessoa pode ter vindo sem CPF por uma
+    // pesquisa que não o exige). É o que faz a fila de cuidado ter para quem
+    // ligar mesmo sem vínculo.
     if (!membroId) {
       nomeDeclarado = porCampo.nome ? String(porCampo.nome).trim().slice(0, 160) : null;
       contatoDeclarado = porCampo.telefone || porCampo.email

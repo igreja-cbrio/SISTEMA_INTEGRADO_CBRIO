@@ -226,10 +226,9 @@ export default function CensoPublica() {
     }
     return (
       <>
-        {/* Atalho da especificação ("nome auto pelo CPF, se já cadastrado").
-            É atalho, não catraca: quem não usa preenche tudo à mão e responde
-            igual — o próprio formulário pede nome, telefone e e-mail. */}
-        {!identidade && !preenchido && <Prefill />}
+        {/* Confirmação de identidade: dispara do CPF que a pessoa já respondeu
+            como pergunta 1 — sem caixa separada pedindo CPF de novo. */}
+        {!identidade && !preenchido && <ConfirmarIdentidade />}
         <CensoForm
           perguntas={perguntas}
           respostas={respostas}
@@ -297,71 +296,124 @@ export default function CensoPublica() {
   );
 
   /**
-   * Bloco opcional de identificação. Manda CPF + nascimento e recebe de volta o
-   * token de identidade + os campos que a pessoa acabou de provar que são dela.
-   * Nunca diz se o CPF existe: a resposta é a mesma nos dois casos, porque CPF
-   * vaza e se compra.
+   * Confirmação de identidade, disparada pelo CPF que a pessoa JÁ respondeu na
+   * pergunta 1 — sem pedir CPF numa caixa separada (era redundante).
+   *
+   * Duas etapas, e a divisão é de propósito:
+   *   1. só com o CPF, o servidor devolve o nome MASCARADO ("Matheus R. T.") e a
+   *      tela pergunta "é você?". Nome inteiro a partir de CPF sozinho faria
+   *      deste endereço um consultor de CPF → nome, e CPF vaza e se compra.
+   *   2. ao confirmar, pede o NASCIMENTO — que é a pergunta 3 do censo. A pessoa
+   *      responde uma vez e serve para as duas coisas: confirmar quem é e
+   *      responder a pergunta.
+   *
+   * Quem não é encontrado segue normalmente: o cadastro é criado no envio.
    */
-  function Prefill() {
-    const [cpf, setCpf] = useState('');
-    const [nasc, setNasc] = useState('');
-    const [checando, setChecando] = useState(false);
-    const [naoAchou, setNaoAchou] = useState(false);
+  function ConfirmarIdentidade() {
+    const pCpf = perguntas.find((q) => q.formato === 'cpf');
+    const pNasc = perguntas.find((q) => q.preenche_de === 'data_nascimento');
+    const cpfDigitado = String(pCpf ? respostas[pCpf.id] ?? '' : '').replace(/\D/g, '');
+    const nascDigitado = String(pNasc ? respostas[pNasc.id] ?? '' : '');
 
-    const inp: React.CSSProperties = {
-      width: '100%', padding: '10px 12px', borderRadius: 9, fontSize: 15,
-      border: `1px solid ${palette.inputBorder}`, background: palette.optionBg,
-      color: palette.text, boxSizing: 'border-box', fontFamily: 'inherit',
+    const [etapa, setEtapa] = useState<'buscando' | 'confirmar' | 'nascimento' | 'nao_achou' | 'recusou'>('buscando');
+    const [confirmacao, setConfirmacao] = useState<{ nome_mascarado?: string; telefone_mascarado?: string } | null>(null);
+    const cpfConsultado = useRef('');
+
+    // Etapa 1 — assim que o CPF fica completo e válido no formato.
+    useEffect(() => {
+      if (cpfDigitado.length !== 11 || cpfConsultado.current === cpfDigitado) return;
+      cpfConsultado.current = cpfDigitado;
+      setEtapa('buscando');
+      censoPublico.prefill(slug, { cpf: cpfDigitado })
+        .then((r) => {
+          if (r?.encontrado && r.confirmar?.nome_mascarado) {
+            setConfirmacao(r.confirmar);
+            setEtapa('confirmar');
+          } else {
+            setEtapa('nao_achou');
+          }
+        })
+        .catch(() => setEtapa('nao_achou'));
+    }, [cpfDigitado]);
+
+    // Etapa 2 — com o nascimento respondido, tenta trazer os dados.
+    useEffect(() => {
+      if (etapa !== 'nascimento' || !/^\d{4}-\d{2}-\d{2}$/.test(nascDigitado)) return;
+      censoPublico.prefill(slug, { cpf: cpfDigitado, data_nascimento: nascDigitado })
+        .then((r) => {
+          if (!r?.encontrado) { setEtapa('nao_achou'); return; }
+          if (r.ja_respondeu) { setJaRespondeu(true); return; }
+          setIdentidade(r.identidade);
+          const novas: Respostas = { ...respostas, ...(r.valores || {}) };
+          setRespostas(novas);
+          gravarLocal(novas);
+          setPreenchido(true);
+        })
+        .catch(() => setEtapa('nao_achou'));
+    }, [etapa, nascDigitado, cpfDigitado]);
+
+    if (cpfDigitado.length !== 11 || etapa === 'recusou') return null;
+
+    const caixa: React.CSSProperties = {
+      marginBottom: 20, padding: 14, borderRadius: 11,
+      border: `1px solid ${palette.cardBorder}`, background: palette.optionBg,
     };
+    const botao = (primario: boolean): React.CSSProperties => ({
+      padding: '10px 16px', borderRadius: 9, fontSize: 14, cursor: 'pointer',
+      fontFamily: 'inherit', fontWeight: primario ? 600 : 400,
+      border: primario ? 'none' : `1px solid ${palette.inputBorder}`,
+      background: primario ? TEAL : 'transparent',
+      color: primario ? '#062b26' : palette.text3,
+    });
 
-    async function checar() {
-      const so = cpf.replace(/\D/g, '');
-      if (so.length !== 11 || !nasc) return;
-      setChecando(true); setNaoAchou(false);
-      try {
-        const r = await censoPublico.prefill(slug, { cpf: so, data_nascimento: nasc });
-        if (!r?.encontrado) { setNaoAchou(true); return; }
-        if (r.ja_respondeu) { setJaRespondeu(true); return; }
-        setIdentidade(r.identidade);
-        // O servidor devolve por PERGUNTA e já casado com as opções (o cadastro
-        // guarda 'casado', a opção é 'Casado(a)'). Casar é responsabilidade de
-        // quem tem as opções — o servidor —, não de duas réguas paralelas.
-        const novas: Respostas = { ...respostas, ...(r.valores || {}) };
-        setRespostas(novas);
-        gravarLocal(novas);
-        setPreenchido(true);
-      } catch { setNaoAchou(true); }
-      finally { setChecando(false); }
+    if (etapa === 'buscando') {
+      return <div style={caixa}><p style={{ fontSize: 13, color: palette.text3, margin: 0 }}>Procurando seu cadastro…</p></div>;
     }
 
-    return (
-      <div style={{
-        marginBottom: 22, padding: 14, borderRadius: 11,
-        border: `1px dashed ${palette.inputBorder}`, background: palette.optionBg,
-      }}>
-        <p style={{ fontSize: 13, color: palette.text3, margin: '0 0 10px', lineHeight: 1.5 }}>
-          Já tem cadastro na CBRio? Informe CPF e data de nascimento para já vir
-          preenchido. <span style={{ color: palette.textDim }}>(opcional)</span>
-        </p>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <input style={{ ...inp, flex: '1 1 150px' }} inputMode="numeric" placeholder="CPF"
-            value={cpf} onChange={(e) => setCpf(e.target.value.replace(/\D/g, '').slice(0, 11))} />
-          <input style={{ ...inp, flex: '1 1 150px' }} type="date" max={new Date().toISOString().slice(0, 10)}
-            value={nasc} onChange={(e) => setNasc(e.target.value)} />
-          <button type="button" onClick={checar} disabled={checando}
-            style={{
-              padding: '10px 16px', borderRadius: 9, border: 'none', background: TEAL,
-              color: '#062b26', fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
-            }}>
-            {checando ? '…' : 'Buscar'}
-          </button>
-        </div>
-        {naoAchou && (
-          <p style={{ fontSize: 12, color: palette.textDim, margin: '10px 0 0', lineHeight: 1.5 }}>
-            Não encontramos com esses dados — sem problema, siga preenchendo abaixo
-            que a gente cuida do resto.
+    if (etapa === 'nao_achou') {
+      return (
+        <div style={caixa}>
+          <p style={{ fontSize: 13, color: palette.text3, margin: 0, lineHeight: 1.5 }}>
+            Não encontramos um cadastro com esse CPF — sem problema. Preencha as
+            perguntas abaixo que a gente cria o seu cadastro ao receber o censo.
           </p>
-        )}
+        </div>
+      );
+    }
+
+    if (etapa === 'confirmar') {
+      return (
+        <div style={caixa}>
+          <p style={{ fontSize: 15, color: palette.text, margin: '0 0 4px', fontWeight: 600 }}>
+            Você é {confirmacao?.nome_mascarado}?
+          </p>
+          {confirmacao?.telefone_mascarado && (
+            <p style={{ fontSize: 12, color: palette.textDim, margin: '0 0 12px' }}>
+              telefone terminando em {confirmacao.telefone_mascarado}
+            </p>
+          )}
+          <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+            <button type="button" style={botao(true)} onClick={() => setEtapa('nascimento')}>
+              Sim, sou eu
+            </button>
+            <button type="button" style={botao(false)} onClick={() => setEtapa('recusou')}>
+              Não sou
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // etapa === 'nascimento'
+    return (
+      <div style={caixa}>
+        <p style={{ fontSize: 13, color: palette.text2, margin: '0 0 10px', lineHeight: 1.5 }}>
+          Para confirmar que é você e já trazer seus dados, responda a
+          <strong> data de nascimento</strong> logo abaixo — é a terceira pergunta.
+        </p>
+        <p style={{ fontSize: 12, color: palette.textDim, margin: 0 }}>
+          Assim você não digita nada duas vezes.
+        </p>
       </div>
     );
   }
