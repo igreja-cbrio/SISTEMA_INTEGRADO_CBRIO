@@ -327,6 +327,21 @@ export const censo = {
   pendentes: (pesquisaId) => get(`/censo/pendentes?pesquisa_id=${pesquisaId}`),
   posProcessar: (pesquisaId, limite) =>
     post('/censo/pos-processar', { pesquisa_id: pesquisaId, limite }),
+
+  // Cobertura: quem respondeu vs. quantos membros ativos existem. O denominador
+  // é calculado no servidor a cada chamada — número fixo envelhece sem avisar.
+  cobertura: (pesquisaId) => get(`/censo/cobertura?pesquisa_id=${pesquisaId}`),
+  // Perfil: todo gráfico do censo, na ordem do questionário, com a base já sem
+  // as opções neutras. Pergunta nova no construtor vira gráfico sozinha.
+  perfil: (pesquisaId) => get(`/censo/perfil?pesquisa_id=${pesquisaId}`),
+  ia: {
+    obter: (pesquisaId) => get(`/censo/ia?pesquisa_id=${pesquisaId}`),
+    // ⚠️ 600s (o padrão é 30s): a leitura roda Opus 5 sobre centenas de textos
+    // abertos e leva minutos. Um timeout curto aqui mostraria "falhou" para uma
+    // análise que na verdade terminou — e ela é gravada, então o próximo GET a
+    // acharia. Melhor esperar do que mentir.
+    gerar: (pesquisaId) => post('/censo/ia', { pesquisa_id: pesquisaId }, { timeout: 600000 }),
+  },
 };
 
 export const projects = {

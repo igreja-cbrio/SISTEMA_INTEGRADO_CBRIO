@@ -21,6 +21,9 @@ import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import EmptyState from '@/components/EmptyState';
+import AbaCobertura from '@/components/censo/AbaCobertura';
+import AbaPerfil from '@/components/censo/AbaPerfil';
+import AbaLeituraIA from '@/components/censo/AbaLeituraIA';
 import QrLinkDialog from '@/components/QrLinkDialog';
 import ConstrutorPerguntas from '@/components/censo/ConstrutorPerguntas';
 import type { Pergunta as ConstrutorPergunta } from '@/components/censo/ConstrutorPerguntas';
@@ -90,11 +93,11 @@ const TIPO_LABEL: Record<string, string> = {
 };
 
 const TABS = [
-  { id: 'pesquisas', label: 'Pesquisas', icon: ListChecks, futuro: false },
-  { id: 'cuidado', label: 'Cuidado', icon: HeartHandshake, futuro: false },
-  { id: 'cobertura', label: 'Cobertura', icon: BarChart3, futuro: true },
-  { id: 'perfil', label: 'Perfil', icon: Users, futuro: true },
-  { id: 'ia', label: 'Leitura da IA', icon: Sparkles, futuro: true },
+  { id: 'pesquisas', label: 'Pesquisas', icon: ListChecks },
+  { id: 'cuidado', label: 'Cuidado', icon: HeartHandshake },
+  { id: 'cobertura', label: 'Cobertura', icon: BarChart3 },
+  { id: 'perfil', label: 'Perfil', icon: Users },
+  { id: 'ia', label: 'Leitura da IA', icon: Sparkles },
 ];
 
 const CUIDADO_LABEL: Record<string, string> = {
@@ -151,8 +154,15 @@ export default function Censo() {
   const [aux, setAux] = useState<Aux | null>(null);
   const [lista, setLista] = useState<Stats[] | null>(null);
   const [tab, setTab] = useState('pesquisas');
+  // Qual pesquisa as três abas de análise estão olhando. Nulo até a lista
+  // carregar; então cai na primeira, que é a mais recente.
+  const [pesquisaAnalise, setPesquisaAnalise] = useState<string | null>(null);
   const [abrindo, setAbrindo] = useState<string | null>(null);
   const [criando, setCriando] = useState(false);
+
+  // Escolha explícita ganha; senão, a primeira da lista. Sem isto a aba abriria
+  // vazia esperando um clique que, com uma única pesquisa, nem tem onde dar.
+  const pesquisaEscolhida = pesquisaAnalise || lista?.[0]?.pesquisa_id || null;
 
   const nivel = aux?.nivel ?? nivelLocal;
   const podeEditar = nivel >= 4;
@@ -278,13 +288,33 @@ export default function Censo() {
           />
         </TabsContent>
 
-        {TABS.filter((t) => t.futuro).map((t) => (
-          <TabsContent key={t.id} value={t.id}>
-            <EmptyState
-              icone={t.icon}
-              titulo={`${t.label} — em construção`}
-              mensagem="Esta aba entra quando a coleta estiver no ar: os números só fazem sentido com resposta na mesa."
-            />
+        {/* As três abas de análise compartilham o mesmo seletor de pesquisa: o
+            número só quer dizer algo junto com "de qual censo". */}
+        {(['cobertura', 'perfil', 'ia'] as const).map((id) => (
+          <TabsContent key={id} value={id}>
+            <div className="space-y-4">
+              {(lista || []).length > 1 && (
+                <div className="flex items-center gap-2 flex-wrap">
+                  {(lista || []).map((p) => (
+                    <button
+                      key={p.pesquisa_id}
+                      type="button"
+                      onClick={() => setPesquisaAnalise(p.pesquisa_id)}
+                      className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${
+                        pesquisaEscolhida === p.pesquisa_id
+                          ? 'border-primary bg-primary/10 text-primary font-medium'
+                          : 'border-border text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      {p.titulo}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {id === 'cobertura' && <AbaCobertura pesquisaId={pesquisaEscolhida} />}
+              {id === 'perfil' && <AbaPerfil pesquisaId={pesquisaEscolhida} />}
+              {id === 'ia' && <AbaLeituraIA pesquisaId={pesquisaEscolhida} />}
+            </div>
           </TabsContent>
         ))}
       </Tabs>
