@@ -7019,11 +7019,58 @@ app**.)
   tem**, não regressão.
 - ⚠️ **A troca na TELA é Onda 2 (por OTA)**: o endpoint está pronto e o app ainda
   grava direto. Até publicar, o save do supervisor continua não gravando.
-- ⚠️ **A FOTO DE CAPA continua quebrada e fica pra Onda 2**: sonda de 06/08 → **0
-  de 140 grupos têm `foto_url`**, ou seja a capa **nunca gravou nada em
-  produção**. A policy do bucket `grupos` exige `is_admin_or_diretor()`
-  (`profiles.role`, esquema APOSENTADO) ou ser o líder — supervisor não passa nem
-  no Storage. Consertar exige endpoint de upload, não só o PUT.
+- ⚠️ ~~**A FOTO DE CAPA continua quebrada e fica pra Onda 2**~~ → **RESOLVIDO NO
+  SERVIDOR em 07/08** (ver 3b logo abaixo). Fica valendo o diagnóstico: a policy
+  do bucket `grupos` exige `is_admin_or_diretor()` (`profiles.role`, esquema
+  APOSENTADO) ou ser o líder — supervisor não passa nem no Storage.
+
+### 3b · A CAPA DO GRUPO tinha o MESMO save silencioso — na MESMA tela (07/08)
+
+**Medido antes de mexer**: `mem_grupos.foto_url` preenchido em **0 de 278**
+linhas (nem nas apagadas) e o bucket `grupos` com **0 objetos** desde que nasceu
+(04/06/2026). A capa nunca funcionou pra ninguém, nenhuma vez. E a telemetria
+mostra **0 aberturas de `/grupo-editar`** em 13.233 eventos — ninguém tinha ido
+lá conferir.
+
+⚠️ **Eram DOIS defeitos empilhados, e o segundo é o que engana:**
+1. A policy do bucket barra quem não é admin/diretor/líder (16 de 113 profiles).
+   Esse erro **aparece na tela** ("Falha ao enviar a capa: …") — não é o vilão.
+2. `grupo-editar.tsx:112` gravava `foto_url` com **UPDATE DIRETO sem
+   `.select()`** — exatamente o defeito que a Onda 1b consertou no `salvar()`
+   **desta mesma tela** e que ficou pra trás no `escolherCapa()`. 0 linhas
+   voltavam SEM erro, a tela dizia **"Capa atualizada."** e ainda pintava a
+   imagem. Ao recarregar, sumia.
+
+**A porta agora**: `POST /api/app/grupos/:grupoId/foto` (multipart, campo `foto`)
++ `DELETE` pra tirar a capa. `authApp` + `limiterStrict` + multer (memória, 4MB,
+allowlist jpg/png/webp) + `gateGrupoApp` **depois do multer** (ele precisa
+consumir o corpo antes) → upload com service_role → `.select().maybeSingle()` com
+**409 quando 0 linhas**, igual ao PUT.
+- ⚠️ **4MB e não 5MB** (o número do totem em `publicGrupos.js`): o corpo de
+  request serverless tem teto ~4,5MB e estourar vira 413 opaco, sem JSON. **Não
+  dá pra redimensionar no cliente** — `expo-image-manipulator` é módulo NATIVO e
+  não sai por OTA; quem segura o tamanho é o `quality` do picker.
+- ⚠️ **Caminho ÚNICO por upload** (`<gid>/<ms>.<ext>`), nunca `<gid>.jpg` fixo: o
+  bucket é público e o CDN guarda ~1h ⇒ com caminho fixo, trocar a capa não
+  aparece pra ninguém por uma hora. Era por isso que a tela improvisava
+  `?t=Date.now()`, que só engana o cache do próprio aparelho.
+- ⚠️ **A extensão sai do MIME que o multer validou**, nunca do nome do arquivo:
+  no Android a URI é `content://…` e vem sem extensão nenhuma.
+- Régua pura em `backend/utils/grupoCapaApp.js` (**37 asserções**, teste em
+  `src/test/grupoCapaApp.test.ts`). Ela é testada porque **autoriza um DELETE no
+  Storage** a partir de uma string que nem sempre é nossa: `Grupos.jsx:2500` é um
+  campo de **URL de texto livre** gravando `foto_url`. `caminhoDaCapa()` recusa
+  outro bucket, URL de fora, a marca escondida na query (`?u=…`) e travessia com
+  `..` — inclusive escapada. **Na dúvida devolve `null`**: objeto órfão custa
+  bytes; apagar o objeto errado custa a capa de outro grupo, ou um avatar.
+- ⚠️ **ORDEM DE ENTREGA**: o endpoint chega no merge, a tela só depois de 2
+  aberturas (OTA). **Não revogar as policies do bucket nem dropar
+  `is_admin_or_diretor()` antes do OTA chegar** — tiraria o pouco que hoje passa
+  sem pôr nada no lugar (mesma lição da migration `20260806120000`).
+- ⚠️ **Só 14 dos 102 grupos ativos têm líder com conta no app.** Liberar "o
+  supervisor" na policy do SQL resolveria 7 grupos e deixaria 88 de fora — além
+  de duplicar a régua de autorização num 2º lugar, que é a doença que o
+  `gateGrupoApp` existe pra curar.
 
 ### 4 · Pedido de exclusão de conta (LGPD) ganhou fila — e SÓ leitor
 

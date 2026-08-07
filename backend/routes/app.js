@@ -4,6 +4,7 @@
  */
 const router   = require('express').Router();
 const rateLimit = require('express-rate-limit');
+const multer = require('multer');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const { dispararAuto } = require('../services/whatsappAuto');
@@ -32,6 +33,9 @@ const appIdentidade = require('../services/appIdentidade');
 // Reuso dos helpers de permissão granular pra resolver o nível do módulo
 // "grupos" do usuário do app (authApp é leve e não computa permissões).
 const { getModulos, getCargoMatrix, resolveEffectivePerms } = require('../middleware/auth');
+// Régua PURA da capa do grupo (allowlist de formato + o caminho que PODE ser
+// apagado do Storage). Testada em `src/test/grupoCapaApp.test.ts`.
+const { MIMES_CAPA, caminhoDaCapa, extensaoDaCapa, caminhoNovoDaCapa } = require('../utils/grupoCapaApp');
 
 // ── Auth middleware leve ───────────────────────────────────────────────────
 async function authApp(req, res, next) {
@@ -3626,6 +3630,172 @@ router.put('/grupos/:grupoId', authApp, limiterNormal, async (req, res) => {
   } catch (e) {
     console.error('[APP] grupos · editar:', e.message);
     return res.status(500).json({ error: 'Não foi possível salvar as alterações.' });
+  }
+});
+
+// ⚠️⚠️ CAPA DO GRUPO — O MESMO SAVE SILENCIOSO QUE A ONDA 1b CONSERTOU, NA MESMA
+// TELA, QUE FICOU PRA TRÁS (07/08/2026 · fecho da Onda 2)
+//
+// MEDIDO EM PRODUÇÃO: `mem_grupos.foto_url` está preenchido em **0 de 278**
+// linhas e o bucket `grupos` tem **0 objetos**. A capa nunca funcionou pra
+// ninguém, nenhuma vez, desde que o bucket nasceu (04/06/2026).
+//
+// SÃO DOIS DEFEITOS EMPILHADOS:
+//  1. `grupo-editar.tsx:112-116` gravava `foto_url` com UPDATE DIRETO em
+//     `mem_grupos`, **sem `.select()`** — e a RLS `mem_grupos_update` só aceita
+//     `lider_id = current_user_membro_id()` OU nível grupos >= 3. 0 linhas
+//     voltavam SEM erro, a tela dizia "Capa atualizada." e ainda pintava a
+//     imagem (a URL pública é real). Ao recarregar, a capa sumia. É PALAVRA POR
+//     PALAVRA o estrago que o `salvar()` desta mesma tela já teve.
+//  2. A policy de escrita do bucket exige `is_admin_or_diretor()` — função que
+//     só existe em `Aplicativo-CBRio/supabase/storage_grupos.sql` e passa 16
+//     dos 113 profiles. Só 14 dos 102 grupos ativos têm líder com conta no app;
+//     liberar "o supervisor" no SQL resolveria 7 grupos e deixaria 88 de fora,
+//     além de duplicar a régua de autorização num 2º lugar (a doença que o
+//     `gateGrupoApp` existe pra curar).
+//
+// A PORTA É AQUI, com service_role, autorizada pelo MESMO gate que o resto do
+// gerenciar-grupo (líder ∪ supervisor ∪ admin de grupos) — que é a mesma régua
+// que a tela usa pra decidir se mostra o botão da câmera (`useAdminGrupo`).
+//
+// ⚠️ ORDEM DE ENTREGA: este endpoint chega na hora (servidor), a tela só depois
+// de 2 aberturas (OTA). Revogar as policies do bucket ou dropar
+// `is_admin_or_diretor()` ANTES do OTA chegar tira o pouco que hoje passaria
+// sem pôr nada no lugar — mesma lição da migration 20260806120000.
+const uploadCapa = multer({
+  storage: multer.memoryStorage(),
+  // ⚠️ 4MB e não os 5MB do precedente do totem: o corpo de request da função
+  // serverless tem teto (ordem de 4,5MB) e estourá-lo vira 413 opaco, sem JSON.
+  // Não dá pra redimensionar no cliente — `expo-image-manipulator` é módulo
+  // NATIVO e não sai por OTA; o que segura o tamanho é o `quality` do picker.
+  limits: { fileSize: 4 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    // A allowlist vive num lugar só (`utils/grupoCapaApp.js`), com teste.
+    if (MIMES_CAPA.includes(file.mimetype)) cb(null, true);
+    else cb(new Error('Use uma imagem JPG, PNG ou WEBP.'));
+  },
+});
+
+/** Traduz erro do multer em 400 JSON (senão pula o handler e vira 500 genérico). */
+function uploadCapaMw(req, res, next) {
+  uploadCapa.single('foto')(req, res, (err) => {
+    if (!err) return next();
+    const msg = err instanceof multer.MulterError
+      ? (err.code === 'LIMIT_FILE_SIZE' ? 'Imagem muito grande (máximo 4MB).' : 'Falha no envio da imagem.')
+      : (err.message || 'Formato de imagem não suportado.');
+    return res.status(400).json({ error: msg });
+  });
+}
+
+// POST /api/app/grupos/:grupoId/foto — multipart, campo `foto`
+// ⚠️ `limiterStrict` (e não o normal): upload é caro e não é leitura de multidão.
+// ⚠️ O multer roda ANTES do gate porque precisa consumir o corpo; quem não
+// gerencia o grupo gasta a subida e leva 403 — mas o arquivo nunca chega ao
+// Storage nem ao banco.
+router.post('/grupos/:grupoId/foto', authApp, limiterStrict, uploadCapaMw, async (req, res) => {
+  try {
+    const gid = req.params.grupoId;
+    const gate = await gateGrupoApp(req, res, gid);
+    if (!gate.ok) return undefined;
+    if (!req.file?.buffer?.length) {
+      return res.status(400).json({ error: 'Nenhuma imagem foi enviada.' });
+    }
+
+    // Lê a capa atual ANTES de trocar — é o que permite apagar o objeto velho.
+    const { data: antes } = await supabase
+      .from('mem_grupos').select('foto_url').eq('id', gid).maybeSingle();
+
+    // ⚠️ Caminho ÚNICO por upload (e não `${gid}.jpg` fixo): o bucket é público
+    // e o CDN serve o objeto com cache de 1h. Com caminho fixo, trocar a capa
+    // não aparece pra ninguém por uma hora — foi por isso que a tela improvisou
+    // um `?t=Date.now()` no cliente, que só engana o cache do próprio aparelho.
+    // ⚠️ A extensão sai do MIME que o multer validou, nunca do nome do arquivo.
+    const ext = extensaoDaCapa(req.file.mimetype);
+    if (!ext) return res.status(400).json({ error: 'Use uma imagem JPG, PNG ou WEBP.' });
+    const path = caminhoNovoDaCapa(gid, ext, Date.now());
+
+    const { error: upErr } = await supabase.storage
+      .from('grupos')
+      .upload(path, req.file.buffer, { contentType: req.file.mimetype, upsert: true });
+    if (upErr) {
+      console.error('[APP] grupos · capa · upload:', upErr.message);
+      return res.status(500).json({ error: 'Não foi possível enviar a imagem.' });
+    }
+
+    const { data: urlData } = supabase.storage.from('grupos').getPublicUrl(path);
+    const foto_url = urlData.publicUrl;
+
+    // ⚠️ `.select()` + conferir a linha é o ponto do conserto (ver cabeçalho).
+    const { data: atualizado, error } = await supabase
+      .from('mem_grupos')
+      .update({ foto_url, updated_at: new Date().toISOString() })
+      .eq('id', gid)
+      .is('deleted_at', null)
+      .select('id, foto_url')
+      .maybeSingle();
+
+    if (error || !atualizado) {
+      // Não deu pra gravar a coluna: o objeto recém-subido vira lixo. Apaga.
+      await supabase.storage.from('grupos').remove([path]).catch(() => {});
+      if (error) {
+        console.error('[APP] grupos · capa · update:', error.message);
+        return res.status(500).json({ error: 'Não foi possível salvar a capa.' });
+      }
+      console.error('[APP] grupos · capa: 0 linhas afetadas no grupo', gid);
+      return res.status(409).json({ error: 'O grupo não está mais disponível para edição.' });
+    }
+
+    // Limpeza best-effort da capa anterior (só se for objeto DESTE bucket).
+    const antigo = caminhoDaCapa(antes?.foto_url);
+    if (antigo && antigo !== path) {
+      supabase.storage.from('grupos').remove([antigo])
+        .catch((e) => console.warn('[APP] grupos · capa · limpar antiga:', e.message));
+    }
+
+    return res.json({ ok: true, foto_url: atualizado.foto_url });
+  } catch (e) {
+    console.error('[APP] grupos · capa:', e.message);
+    return res.status(500).json({ error: 'Não foi possível salvar a capa.' });
+  }
+});
+
+// DELETE /api/app/grupos/:grupoId/foto — tirar a capa
+// Sem isto, uma foto errada não tem desfazer: o app só sabe SUBSTITUIR, e quem
+// escolheu a imagem errada ficaria com ela até alguém abrir o web.
+router.delete('/grupos/:grupoId/foto', authApp, limiterNormal, async (req, res) => {
+  try {
+    const gid = req.params.grupoId;
+    const gate = await gateGrupoApp(req, res, gid);
+    if (!gate.ok) return undefined;
+
+    const { data: antes } = await supabase
+      .from('mem_grupos').select('foto_url').eq('id', gid).maybeSingle();
+
+    const { data: atualizado, error } = await supabase
+      .from('mem_grupos')
+      .update({ foto_url: null, updated_at: new Date().toISOString() })
+      .eq('id', gid)
+      .is('deleted_at', null)
+      .select('id')
+      .maybeSingle();
+
+    if (error) {
+      console.error('[APP] grupos · capa · remover:', error.message);
+      return res.status(500).json({ error: 'Não foi possível remover a capa.' });
+    }
+    if (!atualizado) {
+      return res.status(409).json({ error: 'O grupo não está mais disponível para edição.' });
+    }
+
+    const antigo = caminhoDaCapa(antes?.foto_url);
+    if (antigo) {
+      supabase.storage.from('grupos').remove([antigo])
+        .catch((e) => console.warn('[APP] grupos · capa · limpar:', e.message));
+    }
+    return res.json({ ok: true, foto_url: null });
+  } catch (e) {
+    console.error('[APP] grupos · capa · remover:', e.message);
+    return res.status(500).json({ error: 'Não foi possível remover a capa.' });
   }
 });
 
