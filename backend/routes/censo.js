@@ -273,11 +273,20 @@ router.get('/aux', authorizeModule('censo', 1), async (req, res) => {
     cuidado_tipos: CUIDADO_TIPOS,
     consentimento_default: CONSENTIMENTO_DEFAULT,
     nivel: getEffectiveLevel(req, 'censo'),
-    // Quem pode ver o bloco sensível com NOME não é definido pelo nível no
-    // módulo, e sim pela lista nomeada em cen_acesso_sensivel (decisão de
-    // 06/08). O front usa isto para esconder a aba de resposta nominal
-    // sensível em vez de deixar o usuário bater num 403.
+    // DUAS permissões distintas, e a distinção é deliberada:
+    //
+    //  · pode_ver_sensivel → ler a RESPOSTA do bloco 6 com nome. Só a lista
+    //    nomeada. Super-admin NÃO entra de graça: quem respondeu "em crise"
+    //    esperava estatística, e "sou admin" não é justificativa.
+    //  · pode_ver_cuidado → operar a FILA de pedidos de ajuda. Lista OU
+    //    super-admin, porque alguém precisa administrar a fila — e quem pediu
+    //    contato espera ser contatado.
+    //
+    // Antes eu expunha só a primeira e a tela usava ela para as duas coisas, o
+    // que bloqueava o super-admin na fila mesmo com o backend liberando
+    // (`guardaCuidado`). UI e API discordando é bug, não política.
     pode_ver_sensivel: await podeVerSensivel(req.user?.id),
+    pode_ver_cuidado: req.user?.is_super_admin === true || await podeVerSensivel(req.user?.id),
   });
 });
 

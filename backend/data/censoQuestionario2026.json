@@ -227,6 +227,21 @@
       }
     },
     {
+      "id": "igreja_anterior_nome",
+      "tipo": "busca",
+      "texto": "Qual era a igreja?",
+      "descricao": "Comece a digitar o nome. Se não encontrar a sua, pode escrever do jeito que você chama.",
+      "catalogo": "igrejas_rj",
+      "permite_outro": true,
+      "obrigatoria": false,
+      "mostrar_se": {
+        "pergunta": "congregava_antes",
+        "valores": [
+          "Sim"
+        ]
+      }
+    },
+    {
       "id": "motivo_permanecer",
       "tipo": "texto_longo",
       "texto": "Por que você escolheu permanecer na CBRio?",
@@ -310,7 +325,7 @@
     },
     {
       "id": "qual_grupo",
-      "tipo": "texto_curto",
+      "tipo": "busca",
       "texto": "Qual Grupo?",
       "obrigatoria": false,
       "mostrar_se": {
@@ -318,7 +333,10 @@
         "valores": [
           "Sim"
         ]
-      }
+      },
+      "catalogo": "grupos_ativos",
+      "permite_outro": true,
+      "descricao": "Procure pelo nome do grupo ou pelo nome do líder."
     },
     {
       "id": "maturidade",

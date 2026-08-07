@@ -4097,6 +4097,14 @@ export const censoPublico = {
       }),
       { tentativas: 2, msg: 'Não foi possível verificar' },
     ),
+  // Listas longas com busca. As opções NÃO vêm no questionário: 1.911 igrejas em
+  // cada abertura seria absurdo.
+  catalogo: (nome, q) =>
+    npsFetchRetry(
+      () => fetch(`${API}/public/censo/catalogo/${encodeURIComponent(nome)}?q=${encodeURIComponent(q)}`,
+        { headers: { 'Content-Type': 'application/json' } }),
+      { tentativas: 2, msg: 'Erro na busca' },
+    ),
   parcial: (slug, dados) =>
     npsFetchRetry(
       () => fetch(`${API}/public/censo/${encodeURIComponent(slug)}/parcial`, {

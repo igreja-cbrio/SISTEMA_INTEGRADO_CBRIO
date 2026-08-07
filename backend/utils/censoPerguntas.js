@@ -33,6 +33,10 @@ const TIPOS = Object.freeze([
   'sim_nao',
   'opcao_unica',
   'multipla',
+  // Lista longa com busca (igrejas do RJ, grupos ativos). As opções NÃO vão no
+  // jsonb da pesquisa: 1.900 igrejas em cada requisição do questionário seria
+  // absurdo. Vêm de um catálogo, por `/catalogo/:nome?q=`.
+  'busca',
 ]);
 
 const TIPOS_COM_OPCOES = Object.freeze(['opcao_unica', 'multipla']);
@@ -45,6 +49,10 @@ const TIPOS_NUMERICOS = Object.freeze(['numero', 'escala_5', 'estrelas_5', 'nps'
 // vínculo depende de casar nome+nascimento, que erra com homônimo e com a
 // família que compartilha telefone.
 const FORMATOS = Object.freeze(['texto', 'telefone', 'email', 'instagram', 'cpf']);
+
+// Catálogos que o tipo `busca` pode consultar. Lista fechada de propósito: nome
+// livre aqui viraria um endpoint público que consulta o que o cliente pedir.
+const CATALOGOS = Object.freeze(['igrejas_rj', 'grupos_ativos']);
 
 // Tipos de pedido de ajuda. Não viram estatística: viram linha em cen_cuidado.
 // A especificação é explícita — "só têm valor se houver retorno para quem pediu".
@@ -162,6 +170,20 @@ function validarPerguntas(entrada) {
         if (tipo !== 'texto_curto') erros.push(`Pergunta ${pos}: formato "${f}" só vale em texto_curto`);
         else out.formato = f;
       }
+    }
+
+    // ── busca em catálogo ──
+    if (tipo === 'busca') {
+      const cat = String(p?.catalogo || '').trim();
+      if (!CATALOGOS.includes(cat)) {
+        erros.push(`Pergunta ${pos}: catálogo "${cat}" não existe (use ${CATALOGOS.join(' ou ')})`);
+      } else {
+        out.catalogo = cat;
+      }
+      // Sem escape, uma lista incompleta faz a pessoa responder qualquer coisa.
+      out.permite_outro = p?.permite_outro !== false;
+    } else if (p?.catalogo !== undefined) {
+      erros.push(`Pergunta ${pos}: catálogo só vale no tipo "busca"`);
     }
 
     // ── número ──
@@ -346,6 +368,11 @@ function montarItens({ perguntas, respostas }) {
         ignoradas.push(p.id); faltou(); continue;
       }
       item.valor_texto = v;
+    } else if (p.tipo === 'busca') {
+      // Guarda o RÓTULO, não um id: é o que o gráfico e a exportação leem, e o
+      // catálogo pode mudar de id sem invalidar resposta já coletada.
+      item.valor_texto = String(bruto).trim().slice(0, 200);
+      if (!item.valor_texto) { faltou(); continue; }
     } else if (p.formato === 'cpf') {
       // Guarda só dígitos: é assim que `mem_membros.cpf` está gravado, e é o
       // que faz o vínculo por CPF ser uma busca por índice em vez de um LIKE.
@@ -406,6 +433,7 @@ module.exports = {
   TIPOS_SEM_RESPOSTA,
   TIPOS_NUMERICOS,
   FORMATOS,
+  CATALOGOS,
   CUIDADO_TIPOS,
   ESCALA_MIN,
   ESCALA_MAX,

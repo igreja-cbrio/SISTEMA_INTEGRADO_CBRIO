@@ -195,6 +195,56 @@ describe('validarPerguntas · gatilho de cuidado', () => {
   });
 });
 
+describe('tipo busca · lista longa com catálogo', () => {
+  // As opções NÃO moram na pergunta: 1.911 igrejas em cada requisição do
+  // questionário seria absurdo. Vêm por /catalogo/:nome?q=.
+  it('aceita catálogo conhecido e liga o escape por padrão', () => {
+    const { ok, perguntas } = validarPerguntas([
+      { id: 'ig', tipo: 'busca', texto: 'Qual igreja?', catalogo: 'igrejas_rj' },
+    ]);
+    expect(ok).toBe(true);
+    expect(perguntas[0].catalogo).toBe('igrejas_rj');
+    // Lista incompleta SEM escape faz a pessoa responder qualquer coisa.
+    expect(perguntas[0].permite_outro).toBe(true);
+  });
+
+  it('recusa catálogo inventado — senão vira endpoint que consulta o que pedirem', () => {
+    const { ok, erros } = validarPerguntas([
+      { id: 'x', tipo: 'busca', texto: 'X', catalogo: 'qualquer_coisa' },
+    ]);
+    expect(ok).toBe(false);
+    expect(erros.join(' ')).toContain('não existe');
+  });
+
+  it('recusa catálogo em tipo que não é busca', () => {
+    const { ok, erros } = validarPerguntas([
+      { id: 'y', tipo: 'texto_curto', texto: 'Y', catalogo: 'igrejas_rj' },
+    ]);
+    expect(ok).toBe(false);
+    expect(erros.join(' ')).toContain('só vale no tipo');
+  });
+
+  it('guarda o TEXTO escolhido — o catálogo pode mudar sem invalidar resposta', () => {
+    const p = validarPerguntas([
+      { id: 'ig', tipo: 'busca', texto: 'Qual igreja?', catalogo: 'igrejas_rj', obrigatoria: true },
+    ]).perguntas;
+    const { itens } = montarItens({ perguntas: p, respostas: { ig: 'Igreja Batista de Laranjal' } });
+    expect(itens[0].valor_texto).toBe('Igreja Batista de Laranjal');
+    expect(itens[0].valor_opcoes).toBeNull();
+  });
+
+  it('aceita valor FORA do catálogo (a pessoa digitou a igreja dela)', () => {
+    const p = validarPerguntas([
+      { id: 'ig', tipo: 'busca', texto: 'Qual igreja?', catalogo: 'igrejas_rj', obrigatoria: true },
+    ]).perguntas;
+    const { itens, faltando } = montarItens({
+      perguntas: p, respostas: { ig: 'Igreja que não está em lista nenhuma' },
+    });
+    expect(faltando).toEqual([]);
+    expect(itens[0].valor_texto).toContain('não está em lista');
+  });
+});
+
 describe('visivel', () => {
   const cond = { id: 'q', tipo: 'numero', texto: 'Q', mostrar_se: { pergunta: 'pai', valores: ['Sim'] } };
 

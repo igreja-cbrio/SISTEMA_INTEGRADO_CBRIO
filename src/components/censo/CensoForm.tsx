@@ -19,6 +19,7 @@ type Props = {
    *  salvar por bloco em vez de a cada 4s de digitação corta a carga em 9x num
    *  culto de 2.500 pessoas (300 mil requisições viram 32 mil). */
   onBlocoConcluido?: (respostas: Respostas) => void;
+  buscarCatalogo?: (catalogo: string, q: string) => Promise<{ valor: string; rotulo: string; detalhe?: string | null }[]>;
   onEnviar: () => void;
   enviando?: boolean;
   consentimentoTexto?: string | null;
@@ -29,7 +30,7 @@ type Props = {
 const TEAL = '#00B39D';
 
 export default function CensoForm({
-  perguntas, respostas, onChange, onBlocoConcluido, onEnviar, enviando,
+  perguntas, respostas, onChange, onBlocoConcluido, buscarCatalogo, onEnviar, enviando,
   consentimentoTexto, consentimento, onConsentimento,
 }: Props) {
   const c = usePublicPalette();
@@ -120,6 +121,7 @@ export default function CensoForm({
               valor={respostas[p.id]}
               onChange={(v) => setResposta(p.id, v)}
               faltando={mostrarErros && faltandoIds.has(p.id)}
+              buscarCatalogo={buscarCatalogo}
             />
           </div>
         ))}
