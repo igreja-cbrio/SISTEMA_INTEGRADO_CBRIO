@@ -1,5 +1,6 @@
 const crypto = require('node:crypto');
 const { supabase } = require('../utils/supabase');
+const { notificar } = require('./notificar');
 
 const PLATFORMS = new Set(['android', 'ios']);
 /**
@@ -222,6 +223,107 @@ async function getMobileCommandCenter(platform, days = 14) {
   };
 }
 
+/**
+ * ⚠️⚠️ FECHA A JANELA DOS RECIBOS VENCIDOS (07/08/2026 · Onda 4).
+ *
+ * A Expo guarda recibo por ~24h, e `refreshExpoReceipts` só olha tickets dentro
+ * dessa janela (`gte sent_at, -24h`). Então ticket que passou de 24h sem ser
+ * conferido fica com `receipt_checked_at` NULL **PARA SEMPRE** — sai da fila de
+ * trabalho e nunca é fechado.
+ *
+ * Sem isto a coluna mente por omissão: NULL passa a significar duas coisas
+ * diferentes ("ainda não conferi" e "perdi o prazo"), e aí ninguém consegue
+ * medir cobertura de entrega — que é justamente o buraco que deixou 1.801
+ * falhas passarem dois meses.
+ */
+async function expirarRecibosVencidos() {
+  const corte = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const { data, error } = await supabase
+    .from('system_mobile_push_tickets')
+    .update({ receipt_status: 'expirado', receipt_checked_at: new Date().toISOString() })
+    .is('receipt_checked_at', null)
+    .not('provider_ticket_id', 'is', null)
+    .lt('sent_at', corte)
+    .select('id');
+  if (error) throw error;
+  return { expirados: data?.length || 0 };
+}
+
+/**
+ * ⚠️⚠️ O ALERTA É O QUE VALE AQUI — não o recibo (07/08/2026).
+ *
+ * O que justifica: em 07/08 mediu-se **1.801 de 1.820 tickets em erro (98,9%)**,
+ * 1.773 com `PUSH_TOO_MANY_EXPERIENCE_IDS`, acumulados por DOIS MESES. O dado
+ * estava na tabela o tempo todo. **Ninguém olhava.** Coletar recibo sem alertar
+ * repetiria exatamente o erro: encher outra coluna que ninguém lê.
+ *
+ * Dispara incidente quando:
+ *  · a taxa de ACEITE em 24h cai abaixo de 90%, com **piso de 20 tickets** —
+ *    sem o piso, um envio isolado que falha vira alarme falso e o aviso perde
+ *    credibilidade (aviso que grita à toa é desligado, e aí volta a cegueira);
+ *  · aparece **qualquer** `PUSH_TOO_MANY_EXPERIENCE_IDS`. Esse não tem limiar
+ *    aceitável: significa que a régua de agrupamento por app Expo
+ *    (`utils/pushLotes.js`) parou de funcionar, e o efeito é o request INTEIRO
+ *    ser recusado — quem estava no mesmo lote também não recebeu. Um só já é
+ *    regressão.
+ *
+ * ⚠️ `chaveDedup` fixa por DIA: o cron roda a cada 15 min e não pode virar 96
+ * avisos iguais na caixa de entrada.
+ */
+async function alertarSaudeDoPush() {
+  const desde = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const { data, error } = await supabase
+    .from('system_mobile_push_tickets')
+    .select('ticket_status,ticket_error_code')
+    .gte('sent_at', desde);
+  if (error) throw error;
+
+  const tickets = data || [];
+  const total = tickets.length;
+  const aceitos = tickets.filter((t) => t.ticket_status === 'accepted').length;
+  const mistura = tickets.filter((t) => t.ticket_error_code === 'PUSH_TOO_MANY_EXPERIENCE_IDS').length;
+  const taxa = total ? aceitos / total : 1;
+
+  const PISO_TICKETS = 20;
+  const TAXA_MINIMA = 0.9;
+  const hoje = new Date().toISOString().slice(0, 10);
+  const alertas = [];
+
+  if (mistura > 0) {
+    alertas.push({
+      tipo: 'push_lote_misturado',
+      titulo: `Push recusado por mistura de apps (${mistura} em 24h)`,
+      mensagem:
+        `${mistura} envio(s) voltaram com PUSH_TOO_MANY_EXPERIENCE_IDS nas últimas 24h. `
+        + 'A Expo recusa o REQUEST INTEIRO quando tokens de apps Expo diferentes vão juntos, '
+        + 'então quem estava no mesmo lote também não recebeu. Conferir a régua de agrupamento '
+        + '(backend/utils/pushLotes.js) e se `app_push_tokens.projeto_id` está sendo carimbado.',
+      severidade: 'critico',
+      chaveDedup: `push_lote_misturado_${hoje}`,
+    });
+  }
+
+  if (total >= PISO_TICKETS && taxa < TAXA_MINIMA) {
+    alertas.push({
+      tipo: 'push_taxa_aceite_baixa',
+      titulo: `Push: só ${Math.round(taxa * 100)}% aceitos em 24h`,
+      mensagem:
+        `${aceitos} de ${total} envios foram aceitos pela Expo nas últimas 24h. `
+        + 'Entre junho e 07/08/2026 essa taxa ficou em 1% sem ninguém perceber, '
+        + 'porque este aviso não existia.',
+      severidade: 'aviso',
+      chaveDedup: `push_taxa_aceite_${hoje}`,
+    });
+  }
+
+  for (const a of alertas) {
+    await notificar({ modulo: 'sistema', link: '/admin/app-analytics', ...a })
+      .catch((e) => console.warn('[appPush] alerta:', e.message));
+  }
+
+  return { total, aceitos, mistura, taxa: Number(taxa.toFixed(4)), alertas: alertas.length };
+}
+
 async function refreshExpoReceipts(limit = 500) {
   const { data: pending, error } = await supabase
     .from('system_mobile_push_tickets')
@@ -273,4 +375,6 @@ module.exports = {
   normalizeMobileTelemetryBatch,
   getMobileCommandCenter,
   refreshExpoReceipts,
+  expirarRecibosVencidos,
+  alertarSaudeDoPush,
 };
