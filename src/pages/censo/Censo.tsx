@@ -52,7 +52,10 @@ type Pesquisa = {
 type Aux = {
   tipos_pergunta: string[]; tipos_pesquisa: string[];
   consentimento_default: string; nivel: number;
+  /** Ler a RESPOSTA do bloco sensível com nome — só a lista nomeada. */
   pode_ver_sensivel?: boolean;
+  /** Operar a FILA de cuidado — lista OU super-admin. São coisas diferentes. */
+  pode_ver_cuidado?: boolean;
 };
 
 type CuidadoResumo = {
@@ -271,7 +274,7 @@ export default function Censo() {
         <TabsContent value="cuidado">
           <AbaCuidado
             pesquisas={lista || []}
-            podeVerFila={aux?.pode_ver_sensivel === true}
+            podeVerFila={aux?.pode_ver_cuidado === true}
           />
         </TabsContent>
 
