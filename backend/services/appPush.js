@@ -90,7 +90,30 @@ async function pushExpoParaUsers(userIds, { title, body, data } = {}) {
     let aceitos = 0;
     let erros = 0;
     const mortos = [];
-    for (const chunkTokens of lotes) {
+
+    // ⚠️⚠️ ENVIO EM PARALELO, COM TETO (07/08/2026 · Onda 4).
+    //
+    // Isto conserta um risco que o conserto de ONTEM criou. Ao agrupar por app
+    // Expo, todo token com `projeto_id` NULL passou a ir **um por request** —
+    // correto, e é o que destravou a entrega. Só que o laço era SERIAL, e a
+    // função da Vercel tem `maxDuration: 300` (vercel.json:8). A ~1,16 s por
+    // request medido, isso dá:
+    //     30 tokens (hoje) ....  ~35 s   → folga confortável
+    //    250 tokens ..........  ~290 s   → **encosta no teto**
+    //  1.000+ tokens (alvo) ...  morre no meio do broadcast
+    // E morre em SILÊNCIO: a Vercel mata a função, metade da igreja recebe, e
+    // nada acusa. Trocaríamos "recusa tudo" (o bug de ontem) por "entrega
+    // metade sem avisar", que é pior de achar.
+    //
+    // ⚠️ O teto de 6 não é enfeite: a Expo limita taxa por projeto e responde
+    // `MessageRateExceeded`. 6 em paralelo × ~1 req/s fica bem abaixo do limite
+    // publicado e ainda assim leva 1.000 tokens de ~19 min pra ~3 min.
+    // ⚠️ Depois da migration `20260807220000`, a maioria dos tokens volta pro
+    // lote de 100 e isto deixa de importar tanto — mas o caminho de 1-por-
+    // request continua vivo pros tokens do app Staff, que nunca carimba.
+    const CONCORRENCIA = 6;
+
+    async function enviarLote(chunkTokens) {
       const chunk = chunkTokens.map((item) => ({
         to: item.token,
         // ⚠️ `cbrio_chime.wav` com UNDERSCORE — é o nome do asset em
@@ -141,6 +164,18 @@ async function pushExpoParaUsers(userIds, { title, body, data } = {}) {
         })));
       }
     }
+
+    // Pool simples: N trabalhadores puxam da mesma fila até acabar. Sem
+    // dependência nova, e `enviarLote` já não lança (tem try/catch próprio),
+    // então nenhum trabalhador morre e deixa lote pra trás.
+    const fila = [...lotes];
+    await Promise.all(
+      Array.from({ length: Math.min(CONCORRENCIA, fila.length) }, async () => {
+        for (let lote = fila.shift(); lote; lote = fila.shift()) {
+          await enviarLote(lote);
+        }
+      }),
+    );
 
     // Limpeza best-effort dos tokens que a Expo declarou permanentemente mortos.
     if (mortos.length) {
