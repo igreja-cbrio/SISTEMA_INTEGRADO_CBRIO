@@ -157,6 +157,62 @@ router.use((req, res, next) => {
   next();
 });
 
+// ── Versão mínima do app (PÚBLICO) · Onda 3 (07/08/2026) ──────────────────
+//
+// O achado: não existe versão mínima em lugar nenhum, e `runtimeVersion.policy
+// = appVersion` + `version 1.0.0` significa que, no dia em que a version subir,
+// TODO binário 1.0.0 para de receber OTA — provado com GET no manifesto
+// (`expo-runtime-version: 1.0.0` → 200 com bundle · `1.0.1` → **HTTP 204**).
+// O app não quebra: CONGELA no último bundle, e o portão de atualização nunca
+// mais dispara (ele só age com `isUpdatePending`). A partir daí, o único jeito
+// de falar com aquele aparelho é a loja — e quem precisa avisar é isto aqui.
+//
+// ⚠️⚠️ PÚBLICO e SEM `authApp`, de propósito: um app bloqueado por versão pode
+// nem ter conseguido logar (o login é Supabase Auth, fora do Express). Exigir
+// sessão aqui faria o aviso não alcançar exatamente quem mais precisa dele.
+//
+// ⚠️ FAIL-OPEN: se a config não puder ser lida, responde `bloqueia: false`.
+// Config indisponível trancando a base inteira é o pior desfecho possível — é o
+// oposto do que este portão existe pra fazer.
+//
+// ⚠️⚠️ NÃO respondemos 426 nas outras rotas, e a razão é medida: **metade do app
+// não passa por aqui** (perfil, devocional, cartão, destaques, catálogo de
+// grupos vão direto ao Supabase, e o LOGIN é Supabase Auth). Um 426 geral
+// produziria um app meio-funcionando — e ainda mataria `POST /telemetria`, que é
+// a ÚNICA fonte que mede quem está velho, e afrouxaria o `CadastroGate` (que é
+// fail-open em erro de rede). O servidor INFORMA; a tela de bloqueio vive no app.
+router.get('/versao', limiterNormal, async (_req, res) => {
+  const padrao = {
+    bloqueia: false,
+    minima_ios: null,
+    minima_android: null,
+    mensagem: null,
+    url_loja_ios: null,
+    url_loja_android: null,
+  };
+  try {
+    const { data, error } = await supabase
+      .from('app_config')
+      .select('bloqueia, versao_minima_ios, versao_minima_android, mensagem, url_loja_ios, url_loja_android')
+      .eq('id', true)
+      .maybeSingle();
+    // ⚠️ Tabela ausente (deploy em 2 etapas) cai aqui e responde o padrão —
+    // o app segue funcionando como hoje.
+    if (error || !data) return res.json(padrao);
+    res.json({
+      bloqueia: !!data.bloqueia,
+      minima_ios: data.versao_minima_ios || null,
+      minima_android: data.versao_minima_android || null,
+      mensagem: data.mensagem || null,
+      url_loja_ios: data.url_loja_ios || null,
+      url_loja_android: data.url_loja_android || null,
+    });
+  } catch (e) {
+    console.warn('[APP] /versao:', e.message);
+    res.json(padrao);
+  }
+});
+
 // ── Anúncios (público) ────────────────────────────────────────────────────
 router.get('/anuncios', limiterNormal, async (_req, res) => {
   try {
