@@ -21,10 +21,14 @@ import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import EmptyState from '@/components/EmptyState';
+import QrLinkDialog from '@/components/QrLinkDialog';
+import ConstrutorPerguntas from '@/components/censo/ConstrutorPerguntas';
+import type { Pergunta as ConstrutorPergunta } from '@/components/censo/ConstrutorPerguntas';
 import { toast } from 'sonner';
 import {
   ClipboardList, Plus, Loader2, Copy, Trash2, Save, ArrowLeft,
   Play, Square, ListChecks, BarChart3, Sparkles, Users, HeartHandshake, Lock, Clock,
+  QrCode, Copy as CopyIcon, ExternalLink, AlertTriangle,
 } from 'lucide-react';
 
 type Stats = {
@@ -34,7 +38,9 @@ type Stats = {
   duracao_media_seg: number | null; ultima_resposta_em: string | null;
 };
 
-type Pergunta = { id: string; tipo: string; texto: string; opcoes?: string[]; obrigatoria?: boolean };
+// Reusa o tipo do construtor: uma segunda definição aqui divergiria na primeira
+// pergunta nova que o motor ganhasse.
+type Pergunta = ConstrutorPergunta;
 
 type Pesquisa = {
   id: string; slug: string; titulo: string; subtitulo: string | null;
@@ -98,6 +104,39 @@ const STATUS_CUIDADO: Record<string, string> = {
   aberto: 'Aberto', em_contato: 'Em contato', concluido: 'Concluído', sem_retorno: 'Sem retorno',
 };
 
+/**
+ * Endereço público do formulário. Montado a partir do host ATUAL, então sai
+ * certo em qualquer ambiente sem env nova.
+ *
+ * ⚠️ Duas armadilhas que já custaram tempo aqui:
+ *  · `cbrio.com.br` serve SÓ o site institucional (tem um `path="*"` que joga
+ *    tudo para a home), então um link com esse domínio abre o site da igreja em
+ *    vez do formulário. O ERP e os formulários públicos vivem em `cbrio.org`.
+ *  · URLs `*.vercel.app` têm a proteção de SSO da Vercel ligada (só os domínios
+ *    próprios estão isentos), então um QR gerado a partir de um preview leva o
+ *    visitante para uma tela de login da Vercel.
+ * Por isso o aviso abaixo, em vez de deixar alguém imprimir 500 QRs errados.
+ */
+function linkPublico(slug: string) {
+  const origem = typeof window !== 'undefined' ? window.location.origin : '';
+  return `${origem}/censo/p/${slug}`;
+}
+
+function hostSuspeito() {
+  if (typeof window === 'undefined') return null;
+  const h = window.location.hostname;
+  if (h.includes('vercel.app')) {
+    return 'Você está num endereço de pré-visualização da Vercel. Um QR gerado aqui pede login da Vercel para quem escanear — gere pelo endereço de produção.';
+  }
+  if (h.includes('cbrio.com.br')) {
+    return 'O domínio cbrio.com.br serve o site institucional: este link abriria a home da igreja, não o formulário. Use o endereço do sistema (cbrio.org).';
+  }
+  if (h === 'localhost' || h === '127.0.0.1') {
+    return 'Você está em ambiente local — este link só funciona neste computador.';
+  }
+  return null;
+}
+
 const fmtData = (v: string | null) =>
   v ? new Date(v).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }) : '—';
 
@@ -130,8 +169,8 @@ export default function Censo() {
   async function criar() {
     setCriando(true);
     try {
-      const nova: Pesquisa = await censo.criar({ titulo: 'Censo CBRio 2026', tipo: 'censo' });
-      toast.success('Pesquisa criada em rascunho');
+      const nova: Pesquisa = await censo.criar({ titulo: 'Nova pesquisa', tipo: 'censo' });
+      toast.success('Pesquisa criada em rascunho — dê um nome e monte as perguntas');
       await carregar();
       setAbrindo(nova.id);
     } catch (e: unknown) { toast.error(msg(e, 'Erro ao criar')); }
@@ -216,9 +255,12 @@ export default function Censo() {
                       <Metrica label="conclusão" valor={`${p.taxa_conclusao ?? 0}%`} />
                       <Metrica label="identific." valor={p.identificadas} />
                     </div>
-                    <p className="text-[11px] text-muted-foreground">
-                      {TIPO_LABEL[p.tipo] || p.tipo} · última resposta {fmtData(p.ultima_resposta_em)}
-                    </p>
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <p className="text-[11px] text-muted-foreground">
+                        {TIPO_LABEL[p.tipo] || p.tipo} · última resposta {fmtData(p.ultima_resposta_em)}
+                      </p>
+                      <Compartilhar slug={p.slug} status={p.status} compacto />
+                    </div>
                   </CardContent>
                 </Card>
               ))}
@@ -244,6 +286,80 @@ export default function Censo() {
         ))}
       </Tabs>
     </div>
+  );
+}
+
+/**
+ * Link público + QR para compartilhar. É o que vai no QR impresso do culto e no
+ * WhatsApp. O QR é gerado LOCALMENTE (QrLinkDialog usa a lib `qrcode`), então a
+ * URL do censo não passa por servidor de terceiro — diferente do QR de
+ * membresia, que usa uma API externa.
+ */
+function Compartilhar({ slug, status, compacto }: { slug: string; status: string; compacto?: boolean }) {
+  const [qrAberto, setQrAberto] = useState(false);
+  const link = linkPublico(slug);
+  const aviso = hostSuspeito();
+
+  async function copiar(e: React.MouseEvent) {
+    e.stopPropagation();
+    try { await navigator.clipboard.writeText(link); toast.success('Link copiado'); }
+    catch { toast.error('Não foi possível copiar'); }
+  }
+
+  const abrirQr = (e: React.MouseEvent) => { e.stopPropagation(); setQrAberto(true); };
+
+  return (
+    <>
+      <div className={compacto ? 'flex items-center gap-1.5' : 'space-y-3'}>
+        {!compacto && (
+          <>
+            <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2">
+              <code className="flex-1 text-xs font-mono truncate">{link}</code>
+              <button type="button" onClick={copiar} title="Copiar link"
+                className="text-muted-foreground hover:text-foreground shrink-0">
+                <CopyIcon className="size-4" />
+              </button>
+            </div>
+            {aviso && (
+              <p className="text-xs text-amber-600 flex items-start gap-1.5">
+                <AlertTriangle className="size-3.5 mt-0.5 shrink-0" /> {aviso}
+              </p>
+            )}
+            {status !== 'aberta' && (
+              <p className="text-xs text-muted-foreground">
+                A pesquisa está {STATUS_LABEL[status]?.toLowerCase()}: quem abrir o link vê
+                um aviso de que ela não está recebendo respostas.
+              </p>
+            )}
+          </>
+        )}
+        <div className={compacto ? 'flex gap-1.5' : 'flex flex-wrap gap-2'}>
+          <Button size={compacto ? 'sm' : 'default'} variant="secondary" onClick={abrirQr}>
+            <QrCode className="h-4 w-4 mr-1" /> QR code
+          </Button>
+          {compacto && (
+            <Button size="sm" variant="ghost" onClick={copiar} title="Copiar link">
+              <CopyIcon className="h-4 w-4" />
+            </Button>
+          )}
+          <Button size={compacto ? 'sm' : 'default'} variant="ghost" asChild>
+            <a href={link} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
+              <ExternalLink className="h-4 w-4 mr-1" /> {compacto ? '' : 'Abrir o formulário'}
+            </a>
+          </Button>
+        </div>
+      </div>
+
+      {qrAberto && (
+        <QrLinkDialog
+          link={link}
+          titulo="Censo"
+          nomeArquivo={`qr-${slug}`}
+          descricao="Aponte a câmera do celular para responder o censo. Baixe o PNG para imprimir ou projetar no telão."
+          onClose={() => setQrAberto(false)}
+        />
+      )}
+    </>
   );
 }
 
@@ -486,6 +602,19 @@ function Detalhe({ id, podeEditar, nivel, consentimentoDefault, tiposPesquisa, o
     finally { setSalvando(false); }
   }
 
+  const [salvandoPerguntas, setSalvandoPerguntas] = useState(false);
+  async function salvarPerguntas(perguntas: Pergunta[]) {
+    setSalvandoPerguntas(true);
+    try {
+      // O servidor revalida tudo (ids, condicionais, opções neutras) e é ele
+      // quem PRESERVA o id de cada pergunta — a resposta dele é a verdade.
+      const d: Pesquisa = await censo.atualizar(id, { perguntas });
+      setP((prev) => (prev ? { ...prev, ...d } : d));
+      toast.success(`${(d.perguntas || []).filter((q) => q.tipo !== 'secao').length} pergunta(s) salva(s)`);
+    } catch (e: unknown) { toast.error(msg(e, 'Não foi possível salvar as perguntas')); }
+    finally { setSalvandoPerguntas(false); }
+  }
+
   async function mudarStatus(alvo: string) {
     try {
       const d: Pesquisa = await censo.status(id, alvo);
@@ -622,28 +751,25 @@ function Detalhe({ id, podeEditar, nivel, consentimentoDefault, tiposPesquisa, o
         </CardContent>
       </Card>
 
-      <CardVinculoPendente pesquisaId={id} podeRodar={podeEditar} />
-
       <Card>
         <CardContent className="p-5">
-          <h3 className="font-semibold mb-1">Perguntas</h3>
-          <p className="text-sm text-muted-foreground">
-            {p.perguntas?.length
-              ? `${p.perguntas.length} pergunta(s) configurada(s).`
-              : 'Nenhuma pergunta ainda. O construtor de perguntas entra na próxima fase — a pesquisa não abre sem pelo menos uma pergunta válida.'}
+          <h3 className="font-semibold mb-1">Compartilhar</h3>
+          <p className="text-sm text-muted-foreground mb-3">
+            Este é o endereço que vai no QR impresso do culto e nas mensagens.
           </p>
-          {!!p.perguntas?.length && (
-            <ol className="mt-3 space-y-1 text-sm list-decimal list-inside">
-              {p.perguntas.map((q) => (
-                <li key={q.id} className="text-muted-foreground">
-                  <span className="text-foreground">{q.texto}</span>
-                  <span className="text-[11px] ml-2 font-mono">{q.tipo}</span>
-                </li>
-              ))}
-            </ol>
-          )}
+          <Compartilhar slug={p.slug} status={p.status} />
         </CardContent>
       </Card>
+
+      <CardVinculoPendente pesquisaId={id} podeRodar={podeEditar} />
+
+      <ConstrutorPerguntas
+        perguntas={p.perguntas || []}
+        respostas={p.stats?.iniciadas || 0}
+        podeEditar={podeEditar}
+        salvando={salvandoPerguntas}
+        onSalvar={salvarPerguntas}
+      />
     </div>
   );
 }
