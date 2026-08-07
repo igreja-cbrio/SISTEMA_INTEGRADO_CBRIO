@@ -233,7 +233,28 @@ router.get('/anuncios', limiterNormal, async (_req, res) => {
 });
 
 // ── Visitante (público) ───────────────────────────────────────────────────
-router.post('/visitante', limiterStrict, async (req, res) => {
+//
+// ⚠️⚠️ LIMITER PRÓPRIO, e não o `limiterStrict` (07/08/2026 · Onda 4).
+// Esta é a ÚNICA cota que a escala real do culto alcança. O `limiterStrict`
+// dá 120/15min no balde ANÔNIMO — e "anônimo" aqui é a igreja inteira atrás de
+// um IP (o Wi-Fi do culto). O 121º visitante do quarto de hora levaria 429 e a
+// tela diria que o cadastro falhou.
+//
+// ⚠️ Por que o `limiterStrict` é estreito nas OUTRAS rotas e aqui não pode ser:
+// lá ele cobre sonda de identidade por CPF, onde o teto atrapalha enumeração.
+// Aqui a pessoa está se apresentando pela primeira vez — não há o que enumerar,
+// e quem defende a rota é a validação do próprio serviço.
+//
+// ⚠️ Teto alinhado com a calibragem da casa pra porta que a multidão usa pelo
+// mesmo IP (a mesma de `limiterNormal` e do `totemLimiter` de publicGrupos,
+// validada em multidão real no NPS e nos grupos). Por PESSOA continua estreito.
+const limiterVisitante = limiterApp({
+  max: parseInt(process.env.APP_VISITANTE_RATE_LIMIT_MAX) || 30,
+  maxAnonimo: parseInt(process.env.APP_VISITANTE_RATE_LIMIT_IP_MAX) || 3000,
+  nome: 'visitante',
+});
+
+router.post('/visitante', limiterVisitante, async (req, res) => {
   try {
     const { nome, telefone, email, como_conheceu } = req.body;
     if (!nome?.trim() || !telefone?.trim()) {
