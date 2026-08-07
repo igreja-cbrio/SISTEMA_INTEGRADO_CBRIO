@@ -60,6 +60,7 @@ async function enviarFormularioCulto(telefone, nome) {
   const { data: cultos } = await supabase
     .from('cultos')
     .select('id, data, service_type:vol_service_types(name)')
+    .eq('cancelado', false)
     .gte('data', limite.toISOString().slice(0, 10)).lte('data', hoje)
     .order('data', { ascending: false })
     .limit(20);

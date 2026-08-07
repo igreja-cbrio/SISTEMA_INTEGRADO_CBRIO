@@ -3412,6 +3412,10 @@ export const kpis = {
     create: (data) => post('/kpis/cultos', data),
     update: (id, data) => put(`/kpis/cultos/${id}`, data),
     remove: (id) => del(`/kpis/cultos/${id}`),
+    // Cancelamento de ocorrência · a linha fica (o gerador recorrente não recria)
+    cancelar: (id, motivo) => post(`/kpis/cultos/${id}/cancelar`, { motivo }),
+    reativar: (id) => post(`/kpis/cultos/${id}/reativar`, {}),
+    remarcar: (id, data) => post(`/kpis/cultos/${id}/remarcar`, data),
     voluntarios: (id) => get(`/kpis/cultos/${id}/voluntarios`),
     // Pessoas que tomaram decisão em culto · 1 row por pessoa
     decisoesPessoas: {

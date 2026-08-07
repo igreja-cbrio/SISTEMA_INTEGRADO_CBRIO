@@ -9,7 +9,7 @@ import { kpis as kpisApi } from '../api';
 import { BirthDatePicker } from './ui/birth-date-picker';
 
 const cultosApi = kpisApi.cultos;
-import { Calendar, CalendarClock, ChevronLeft, ChevronRight, CheckCircle2, AlertCircle, AlertTriangle, X, Save, Tv, Users, Sparkles, UserPlus, Trash2, Pencil, Search as SearchIcon, Link as LinkIcon, FileText } from 'lucide-react';
+import { Calendar, CalendarClock, ChevronLeft, ChevronRight, CheckCircle2, AlertCircle, AlertTriangle, Ban, CalendarX, X, Save, Tv, Users, Sparkles, UserPlus, Trash2, Pencil, Search as SearchIcon, Link as LinkIcon, FileText } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatErro } from '../lib/formatErro';
 
@@ -78,10 +78,12 @@ function preenchido(c) {
 
 // Status de preenchimento por seção · usa as flags do banco (lançar 0 conta como
 // lançado · pedido do Marcos), não os números (0 default ≠ "intocado").
+//   'cancelado'  = culto não aconteceu/não vai acontecer (jogo, feriado...)
 //   'completo'   = frequência E decisões lançadas
 //   'incompleto' = só uma das duas lançada
 //   'pendente'   = nada lançado
 function statusCulto(c) {
+  if (c.cancelado) return 'cancelado';
   const freq = !!c.frequencia_lancada;
   const dec = !!c.decisoes_lancadas;
   if (freq && dec) return 'completo';
@@ -194,21 +196,23 @@ export default function CalendarioCultos({ pendenciaSignal = 0, pendenciaFiltro 
   }, [cultos, filtroTipo]);
 
   const contagemSemana = useMemo(() => {
-    let completos = 0, incompletos = 0, pendentes = 0;
+    let completos = 0, incompletos = 0, pendentes = 0, cancelados = 0;
     cultosFiltrados.forEach(c => {
       const s = statusCulto(c);
       if (s === 'completo') completos++;
       else if (s === 'incompleto') incompletos++;
+      else if (s === 'cancelado') cancelados++;
       else pendentes++;
     });
-    return { completos, incompletos, pendentes };
+    return { completos, incompletos, pendentes, cancelados };
   }, [cultosFiltrados]);
 
   // Pendências (60d) já com status, filtradas e ordenadas (mais recente em cima)
+  // Culto cancelado não é pendência · não há dado a lançar de culto que não houve.
   const pendenciasFiltradas = useMemo(() => {
     const base = cultosPend
       .map(c => ({ c, st: statusCulto(c) }))
-      .filter(x => x.st !== 'completo');
+      .filter(x => x.st !== 'completo' && x.st !== 'cancelado');
     const f = filtroPend === 'incompletos' ? base.filter(x => x.st === 'incompleto')
             : filtroPend === 'pendentes'   ? base.filter(x => x.st === 'pendente')
             : base;
@@ -309,6 +313,9 @@ export default function CalendarioCultos({ pendenciaSignal = 0, pendenciaFiltro 
                 <span><strong style={{ color: '#10B981' }}>{contagemSemana.completos}</strong> completos</span>
                 <span><strong style={{ color: '#F97316' }}>{contagemSemana.incompletos}</strong> incompletos</span>
                 <span><strong style={{ color: '#F59E0B' }}>{contagemSemana.pendentes}</strong> pendentes</span>
+                {contagemSemana.cancelados > 0 && (
+                  <span><strong style={{ color: '#EF4444' }}>{contagemSemana.cancelados}</strong> cancelados</span>
+                )}
               </div>
             </>
           )}
@@ -492,9 +499,32 @@ function GradeSemanal({ dias, cultos, hoje, onClickCulto }) {
 
 // MiniCardCulto · compacto pra caber na coluna da semana
 function MiniCardCulto({ culto, onClick }) {
-  const st = statusCulto(culto);          // 'completo' | 'incompleto' | 'pendente'
+  const st = statusCulto(culto);          // 'cancelado' | 'completo' | 'incompleto' | 'pendente'
   const completo = st === 'completo';
-  const temNumeros = preenchido(culto);   // mostra os números quando há algum > 0
+  const cancelado = st === 'cancelado';
+  const temNumeros = !cancelado && preenchido(culto); // mostra os números quando há algum > 0
+
+  if (cancelado) {
+    return (
+      <button onClick={onClick} title={culto.cancelado_motivo || 'Culto cancelado'} style={{
+        textAlign: 'left', padding: '6px 8px', borderRadius: 6, cursor: 'pointer',
+        background: C.inputBg, border: `1px dashed ${C.border}`, borderLeft: '3px solid #EF4444',
+        display: 'flex', flexDirection: 'column', gap: 2, opacity: 0.7,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 }}>
+          <span style={{ fontSize: 10, fontWeight: 700, color: C.t3, textDecoration: 'line-through' }}>
+            {culto.hora?.slice(0, 5) || '--:--'}
+          </span>
+          <Ban size={11} style={{ color: '#EF4444' }} />
+        </div>
+        <span style={{ fontSize: 10, color: C.t3, fontWeight: 600, lineHeight: 1.2, textDecoration: 'line-through' }}>
+          {culto.service_type_name || culto.nome}
+        </span>
+        <span style={{ fontSize: 9, color: '#EF4444', fontWeight: 700 }}>Cancelado</span>
+      </button>
+    );
+  }
+
   const cor = culto.service_type_color || C.primary;
   const tipo = culto.service_type_name || culto.nome;
 
@@ -749,6 +779,7 @@ function ModalCulto({ culto, onClose, onSaved }) {
           <div>
             <h2 style={{ fontSize: 15, fontWeight: 700, margin: 0, color: C.text }}>
               {culto.nome}
+              {culto.cancelado && <span style={{ marginLeft: 8, fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 99, background: '#EF444422', color: '#DC2626', letterSpacing: 0.3 }}>CANCELADO</span>}
               {isDirty && <span style={{ marginLeft: 8, fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 99, background: '#F59E0B22', color: '#B45309', letterSpacing: 0.3 }}>NÃO SALVO</span>}
             </h2>
             <p style={{ fontSize: 11, color: C.t3, margin: '4px 0 0', textTransform: 'capitalize' }}>
@@ -763,6 +794,9 @@ function ModalCulto({ culto, onClose, onSaved }) {
         </header>
 
         <div style={{ padding: 16 }}>
+          {culto.cancelado ? (
+            <CultoCanceladoBox culto={culto} onDone={onSaved} />
+          ) : (<>
           <SecaoTitulo icone={Users} cor="#3B82F6" titulo="Frequência presencial" />
           <div style={{ display: 'grid', gridTemplateColumns: hasKids ? '1fr 1fr' : '1fr', gap: 10, marginBottom: 16 }}>
             <Field label={presencialLabel}>
@@ -860,15 +894,181 @@ function ModalCulto({ culto, onClose, onSaved }) {
               fontFamily: 'inherit',
             }}
           />
+
+          <ZonaCancelamento culto={culto} onDone={onSaved} />
+          </>)}
         </div>
 
         <footer style={{ padding: 14, borderTop: `1px solid ${C.border}`, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          {culto.cancelado ? (
+            <button onClick={onClose} style={btnGhost}>Fechar</button>
+          ) : (<>
           <button onClick={tentarFechar} disabled={saving} style={btnGhost}>Cancelar</button>
           <button onClick={submit} disabled={saving} style={{ ...btnPrimary, opacity: saving ? 0.5 : 1 }}>
             <Save size={13} /> {saving ? 'Salvando...' : 'Salvar'}
           </button>
+          </>)}
         </footer>
       </div>
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// CultoCanceladoBox — corpo do modal quando o culto está cancelado.
+// Mostra o motivo e permite reativar (volta a aparecer como pendente).
+// ----------------------------------------------------------------------------
+function CultoCanceladoBox({ culto, onDone }) {
+  const [working, setWorking] = useState(false);
+
+  const reativar = async () => {
+    if (!window.confirm('Reativar este culto? Ele volta a aparecer como pendente de preenchimento.')) return;
+    setWorking(true);
+    try {
+      await cultosApi.reativar(culto.id);
+      toast.success('Culto reativado');
+      onDone?.();
+    } catch (e) {
+      toast.error(formatErro(e, 'culto'));
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  return (
+    <div style={{ background: '#EF444412', border: '1px solid #EF444440', borderRadius: 10, padding: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 700, color: '#DC2626', marginBottom: 6 }}>
+        <Ban size={15} /> Este culto foi cancelado
+      </div>
+      {culto.cancelado_motivo && (
+        <p style={{ fontSize: 12, color: C.t2, margin: '0 0 4px', lineHeight: 1.5 }}>
+          <strong>Motivo:</strong> {culto.cancelado_motivo}
+        </p>
+      )}
+      {culto.cancelado_em && (
+        <p style={{ fontSize: 11, color: C.t3, margin: '0 0 12px' }}>
+          Cancelado em {new Date(culto.cancelado_em).toLocaleDateString('pt-BR')}
+        </p>
+      )}
+      <p style={{ fontSize: 11, color: C.t3, margin: '0 0 12px', lineHeight: 1.5 }}>
+        O culto continua no calendário marcado como cancelado — assim o sistema não o recria
+        automaticamente e ele não conta como pendência da Integração nem entra na agenda da Produção.
+      </p>
+      <button onClick={reativar} disabled={working} style={{ ...btnGhost, color: '#DC2626', borderColor: '#EF444455', opacity: working ? 0.5 : 1 }}>
+        {working ? 'Reativando...' : 'Reativar culto'}
+      </button>
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// ZonaCancelamento — cancelar (com motivo) ou remarcar (nova data/hora) um
+// culto ativo. A linha do culto NUNCA é apagada: cancelar marca cancelado=true
+// (o gerador recorrente não recria o slot) · remarcar cancela o original e
+// cria um culto avulso na nova data.
+// ----------------------------------------------------------------------------
+function ZonaCancelamento({ culto, onDone }) {
+  const [modo, setModo] = useState(null); // null | 'cancelar' | 'remarcar'
+  const [motivo, setMotivo] = useState('');
+  const [novaData, setNovaData] = useState('');
+  const [novaHora, setNovaHora] = useState(culto.hora?.slice(0, 5) || '');
+  const [working, setWorking] = useState(false);
+
+  const cancelar = async () => {
+    const m = motivo.trim();
+    if (!m) { toast.error('Informe o motivo do cancelamento'); return; }
+    setWorking(true);
+    try {
+      await cultosApi.cancelar(culto.id, m);
+      toast.success('Culto cancelado');
+      onDone?.();
+    } catch (e) {
+      toast.error(formatErro(e, 'culto'));
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  const remarcar = async () => {
+    if (!novaData) { toast.error('Informe a nova data'); return; }
+    setWorking(true);
+    try {
+      await cultosApi.remarcar(culto.id, {
+        data: novaData,
+        hora: novaHora || undefined,
+        motivo: motivo.trim() || undefined,
+      });
+      toast.success('Culto remarcado');
+      onDone?.();
+    } catch (e) {
+      toast.error(formatErro(e, 'culto'));
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  return (
+    <div style={{ marginTop: 18, paddingTop: 14, borderTop: `1px dashed ${C.border}` }}>
+      {modo === null ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 10, color: C.t3, marginRight: 'auto' }}>
+            Este culto não vai acontecer?
+          </span>
+          <button onClick={() => setModo('remarcar')} style={{ ...btnGhost, fontSize: 11, padding: '6px 10px', color: '#B45309', borderColor: '#F59E0B55', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+            <CalendarClock size={12} /> Remarcar
+          </button>
+          <button onClick={() => setModo('cancelar')} style={{ ...btnGhost, fontSize: 11, padding: '6px 10px', color: '#DC2626', borderColor: '#EF444455', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+            <CalendarX size={12} /> Cancelar culto
+          </button>
+        </div>
+      ) : modo === 'cancelar' ? (
+        <div style={{ background: '#EF444410', border: '1px solid #EF444440', borderRadius: 8, padding: 12 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: '#DC2626', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <CalendarX size={13} /> Cancelar este culto
+          </div>
+          <p style={{ fontSize: 11, color: C.t3, margin: '0 0 8px', lineHeight: 1.5 }}>
+            O culto fica no calendário marcado como cancelado (não vira pendência nem entra
+            na agenda da Produção). Dá pra reativar depois se precisar.
+          </p>
+          <Field label="Motivo *">
+            <input value={motivo} onChange={e => setMotivo(e.target.value)} placeholder='Ex: "Jogo Brasil x Noruega no horário do culto"' style={inp} autoFocus />
+          </Field>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 10 }}>
+            <button onClick={() => setModo(null)} disabled={working} style={{ ...btnGhost, fontSize: 11, padding: '6px 10px' }}>Voltar</button>
+            <button onClick={cancelar} disabled={working} style={{ ...btnPrimary, background: '#DC2626', fontSize: 11, padding: '6px 12px', opacity: working ? 0.5 : 1 }}>
+              {working ? 'Cancelando...' : 'Confirmar cancelamento'}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div style={{ background: '#F59E0B10', border: '1px solid #F59E0B40', borderRadius: 8, padding: 12 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: '#B45309', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <CalendarClock size={13} /> Remarcar este culto
+          </div>
+          <p style={{ fontSize: 11, color: C.t3, margin: '0 0 8px', lineHeight: 1.5 }}>
+            Este culto é cancelado e um novo é criado na data escolhida.
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <Field label="Nova data *">
+              <input type="date" value={novaData} onChange={e => setNovaData(e.target.value)} style={inp} autoFocus />
+            </Field>
+            <Field label="Horário">
+              <input type="time" value={novaHora} onChange={e => setNovaHora(e.target.value)} style={inp} />
+            </Field>
+          </div>
+          <div style={{ marginTop: 8 }}>
+            <Field label="Motivo (opcional)">
+              <input value={motivo} onChange={e => setMotivo(e.target.value)} placeholder='Ex: "Jogo no horário do culto"' style={inp} />
+            </Field>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 10 }}>
+            <button onClick={() => setModo(null)} disabled={working} style={{ ...btnGhost, fontSize: 11, padding: '6px 10px' }}>Voltar</button>
+            <button onClick={remarcar} disabled={working} style={{ ...btnPrimary, background: '#B45309', fontSize: 11, padding: '6px 12px', opacity: working ? 0.5 : 1 }}>
+              {working ? 'Remarcando...' : 'Confirmar remarcação'}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

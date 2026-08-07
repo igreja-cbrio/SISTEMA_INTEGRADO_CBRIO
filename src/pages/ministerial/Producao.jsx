@@ -219,8 +219,10 @@ function AbaSemana() {
     return map;
   }, [dias, cultos]);
 
-  const { preenchidos, pendentes } = useMemo(() => {
-    let p = 0, n = 0; cultos.forEach(c => c.producao_preenchido ? p++ : n++); return { preenchidos: p, pendentes: n };
+  const { preenchidos, pendentes, cancelados } = useMemo(() => {
+    let p = 0, n = 0, x = 0;
+    cultos.forEach(c => { if (c.cancelado) x++; else if (c.producao_preenchido) p++; else n++; });
+    return { preenchidos: p, pendentes: n, cancelados: x };
   }, [cultos]);
 
   const totalPend = (pend?.nao_preenchidos?.length || 0) + (pend?.incompletos?.length || 0);
@@ -267,9 +269,10 @@ function AbaSemana() {
       </header>
 
       {!loading && cultos.length > 0 && (
-        <div style={{ display: 'flex', gap: 12, marginBottom: 10, fontSize: 11, color: C.t3 }}>
+        <div style={{ display: 'flex', gap: 12, marginBottom: 10, fontSize: 11, color: C.t3, flexWrap: 'wrap' }}>
           <span><strong style={{ color: '#10B981' }}>{preenchidos}</strong> preenchidos</span>
           <span><strong style={{ color: '#F59E0B' }}>{pendentes}</strong> pendentes</span>
+          {cancelados > 0 && <span><strong style={{ color: '#EF4444' }}>{cancelados}</strong> cancelados</span>}
         </div>
       )}
 
@@ -362,6 +365,25 @@ function CardPendencia({ titulo, sub, cor, icone: Icone, cultos, status, onSelec
 }
 
 function MiniCard({ culto, onClick }) {
+  // Culto cancelado (Integração marcou · ex: jogo no horário) · nada a produzir.
+  if (culto.cancelado) {
+    return (
+      <div title={culto.cancelado_motivo || 'Culto cancelado'} style={{
+        textAlign: 'left', padding: '6px 8px', borderRadius: 6,
+        background: C.inputBg, border: `1px dashed ${C.border}`, borderLeft: '3px solid #EF4444',
+        display: 'flex', flexDirection: 'column', gap: 2, opacity: 0.7,
+      }}>
+        <span style={{ fontSize: 10, fontWeight: 700, color: C.t3, textDecoration: 'line-through' }}>
+          {culto.hora?.slice(0, 5) || '--:--'}
+        </span>
+        <span style={{ fontSize: 10, color: C.t3, fontWeight: 600, lineHeight: 1.2, textDecoration: 'line-through' }}>
+          {culto.service_type_name || culto.nome}
+        </span>
+        <span style={{ fontSize: 9, color: '#EF4444', fontWeight: 700 }}>Cancelado</span>
+      </div>
+    );
+  }
+
   const ok = culto.producao_preenchido;
   const cor = culto.service_type_color || C.primary;
   const dur = culto.producao?.duracao_minutos;

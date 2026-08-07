@@ -50,6 +50,7 @@ router.get('/dashboard', async (req, res) => {
     const { data: cultosRecentes } = await supabase
       .from('cultos')
       .select('id, data, frequencia_lancada, decisoes_lancadas')
+      .eq('cancelado', false)
       .gte('data', sessentaDiasAtrasStr)
       .lte('data', hojeStr);
     let cultosPendentes = 0;

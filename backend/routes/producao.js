@@ -216,6 +216,7 @@ router.get('/pendencias', authorizeModule('producao', 1), async (req, res) => {
     const { data: cultos, error } = await supabase
       .from('vw_culto_stats')
       .select('*')
+      .eq('cancelado', false)
       .gte('data', DESDE).lte('data', ate)
       .order('data', { ascending: false })
       .order('hora', { ascending: false });

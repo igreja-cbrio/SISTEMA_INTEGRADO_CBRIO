@@ -759,6 +759,7 @@ async function gerarNotificacoesKpis() {
   const { data: semVideo } = await supabase
     .from('cultos')
     .select('id, nome, data')
+    .eq('cancelado', false)
     .is('youtube_video_id', null)
     .lte('data', limite48h)
     .gte('data', limite30d);
