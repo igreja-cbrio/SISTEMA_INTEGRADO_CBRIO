@@ -17,7 +17,9 @@ const { supabase } = require('../../utils/supabase');
 const providers = require('./providers');
 const handlers = require('./handlers');
 const { STATUS, TIPO_PAGAMENTO, STATUS_ABERTOS } = require('./tipos');
-const { aplicarTransicao, statusPorValor, podeExpirar, estaTerminal } = require('./maquinaEstados');
+const {
+  aplicarTransicao, statusPorValor, podeExpirar, estaTerminal, estaAberta,
+} = require('./maquinaEstados');
 
 const SELECT_COBRANCA = `
   id, public_token, origem_tipo, origem_id, referencia, idempotency_key,
@@ -70,11 +72,66 @@ async function porProviderId(provider, providerCobrancaId) {
 }
 
 /**
+ * Cobranças da MESMA chave de negócio: a `referencia` exata mais as versionadas
+ * (`<referencia>:bolsa:<ts>`, `<referencia>:r<ts>`).
+ *
+ * Existe porque reemitir cria uma linha com referência NOVA — e a partir daí
+ * `porReferencia(referencia)` sozinho passa a enxergar só a cobrança morta. Sem
+ * olhar a família, o 2º reenvio do formulário emitiria uma TERCEIRA cobrança
+ * enquanto a segunda ainda está em aberto: duas cobranças pagáveis pela mesma
+ * inscrição, que é exatamente o que a UNIQUE de `referencia` existe pra impedir.
+ *
+ * ⚠️ O `like` do PostgREST traduz `*` em `%`, então o padrão pode trazer linha a
+ * mais — o filtro exato em JS logo abaixo é quem decide. Ele só não pode deixar
+ * candidato de FORA, e `%`/`_`/`*` no valor apenas alargam a busca.
+ */
+async function familiaReferencia(referencia) {
+  if (!referencia) return [];
+  const { data, error } = await supabase.from('pag_cobrancas')
+    .select(SELECT_COBRANCA)
+    .like('referencia', `${referencia}%`)
+    .is('deleted_at', null)
+    .order('created_at', { ascending: false })
+    .limit(50);
+  if (error) throw error;
+  return (data || []).filter((c) => {
+    const r = String(c.referencia || '');
+    return r === referencia || r.startsWith(`${referencia}:`);
+  });
+}
+
+/**
+ * Estados terminais em que reemitir é o comportamento CERTO: a cobrança morreu
+ * sem dinheiro nenhum dentro.
+ *
+ * ⚠️ `estornado`/`chargeback` ficam de fora de propósito, mesmo podendo zerar a
+ * soma (liquidação − estorno = 0): ali o dinheiro entrou e voltou por decisão de
+ * alguém, e reemitir sozinho transformaria uma devolução em cobrança nova sem
+ * ninguém mandar.
+ */
+const STATUS_REEMITIVEIS = Object.freeze([STATUS.EXPIRADA, STATUS.CANCELADA, STATUS.FALHOU]);
+
+function podeReemitir(c) {
+  return !!c
+    && STATUS_REEMITIVEIS.includes(c.status)
+    && Number(c.valor_pago_centavos || 0) === 0;
+}
+
+/**
  * Cria (ou recupera) uma cobrança.
  *
  * `referencia` é a chave de NEGÓCIO idempotente (ex.: `inscricao:<uuid>`):
  * reenvio de formulário e duplo clique devolvem a MESMA cobrança em vez de
  * criar uma segunda — que é como a pessoa acabaria pagando duas vezes.
+ *
+ * ⚠️ Cobrança TERMINAL sem dinheiro dentro é a exceção: ela não pode ser
+ * devolvida como se ainda servisse. `expirada`/`cancelada`/`falhou` são estados
+ * ABSORVENTES — nada os reabre —, então entregá-la de volta deixa a pessoa sem
+ * NENHUM caminho de pagamento (medido na re-inscrição de CBR-2026-000141: a
+ * inscrição voltava a `recebida`, ocupando vaga, com uma cobrança expirada na
+ * mão). Aqui ela é REEMITIDA com referência versionada, a mesma técnica da
+ * bolsa — `inscricao:<id>` é UNIQUE e é ela que impede pagar duas vezes.
+ * Cobrança COM dinheiro segue intocada: reemitir ali seria cobrar de novo.
  *
  * Ordem deliberada: grava a linha ANTES de falar com o PSP. Se a chamada
  * externa falhar no meio, a cobrança existe em `criada` com `ultimo_erro` e o
@@ -101,24 +158,11 @@ async function criarCobranca({
 
   const adapter = providers.obter(providerNome);
 
-  const existente = await porReferencia(referencia);
-  if (existente) {
-    // ⚠️ Cobrança MEIO-CRIADA: a linha existe mas a chamada ao PSP falhou, então
-    // ela não tem `provider_cobranca_id` nem checkout. Devolvê-la como está
-    // seria um beco sem saída — a pessoa reenviaria o formulário pra sempre e
-    // receberia a mesma cobrança sem link de pagamento (e o cron de
-    // reconciliação também não a pega, porque filtra por provider_cobranca_id).
-    // Aqui retomamos: chama o PSP de novo sobre a MESMA linha.
-    const incompleta = !existente.provider_cobranca_id && existente.status === STATUS.CRIADA;
-    if (!incompleta) return { cobranca: existente, reaproveitada: true };
-    const retomada = await pedirAoProvider(adapter, existente);
-    return { cobranca: retomada, reaproveitada: true, retomada: true };
-  }
-
-  const { data: nova, error: eIns } = await supabase.from('pag_cobrancas').insert({
+  // Campos da linha, sem a `referencia` — ela varia entre a criação normal e a
+  // reemissão, e é a ÚNICA diferença entre as duas.
+  const camposLinha = {
     origem_tipo,
     origem_id: origem_id || null,
-    referencia: referencia || null,
     valor_centavos: valor,
     descricao: descricao || null,
     provider: adapter.nome,
@@ -137,7 +181,43 @@ async function criarCobranca({
     metadata: metadata || {},
     criado_por: criado_por || null,
     status: STATUS.CRIADA,
-  }).select(SELECT_COBRANCA).single();
+  };
+
+  /** Retoma a linha meio-criada, ou devolve a que já serve. */
+  async function devolver(c) {
+    // ⚠️ Cobrança MEIO-CRIADA: a linha existe mas a chamada ao PSP falhou, então
+    // ela não tem `provider_cobranca_id` nem checkout. Devolvê-la como está
+    // seria um beco sem saída — a pessoa reenviaria o formulário pra sempre e
+    // receberia a mesma cobrança sem link de pagamento (e o cron de
+    // reconciliação também não a pega, porque filtra por provider_cobranca_id).
+    // Aqui retomamos: chama o PSP de novo sobre a MESMA linha.
+    const incompleta = !c.provider_cobranca_id && c.status === STATUS.CRIADA;
+    if (!incompleta) return { cobranca: c, reaproveitada: true };
+    const retomada = await pedirAoProvider(adapter, c);
+    return { cobranca: retomada, reaproveitada: true, retomada: true };
+  }
+
+  const existente = await porReferencia(referencia);
+
+  // Caminho comum: a cobrança da referência existe e ainda serve (aberta, paga
+  // ou estornada). Uma consulta só, como sempre foi.
+  if (existente && !podeReemitir(existente)) return devolver(existente);
+
+  if (existente) {
+    // Terminal e sem dinheiro. Antes de reemitir, olha a FAMÍLIA: se uma
+    // reemissão anterior (ou a cobrança da bolsa) ainda está viva, é ela que
+    // vale — emitir outra deixaria duas cobranças pagáveis pela mesma coisa.
+    const familia = await familiaReferencia(referencia);
+    const comDinheiro = familia.find((c) => Number(c.valor_pago_centavos || 0) > 0);
+    if (comDinheiro) return { cobranca: comDinheiro, reaproveitada: true };
+    const aberta = familia.find((c) => estaAberta(c.status));
+    if (aberta) return devolver(aberta);
+    return reemitir({ adapter, camposLinha, referencia, anterior: existente });
+  }
+
+  const { data: nova, error: eIns } = await supabase.from('pag_cobrancas')
+    .insert({ ...camposLinha, referencia: referencia || null })
+    .select(SELECT_COBRANCA).single();
 
   if (eIns) {
     // Corrida na UNIQUE de `referencia`: outra requisição criou primeiro.
@@ -151,6 +231,56 @@ async function criarCobranca({
 
   const atualizada = await pedirAoProvider(adapter, nova);
   return { cobranca: atualizada, reaproveitada: false };
+}
+
+/**
+ * Emite uma cobrança NOVA no lugar de uma terminal sem dinheiro, com referência
+ * versionada (`<referencia>:r<ts>`).
+ *
+ * ⚠️ A anterior é cancelada NO PROVEDOR antes: terminal aqui não significa
+ * terminal lá. O nosso cron marca `expirada` pelo `expira_em`, mas o QR do Pix e
+ * o boleto podem continuar pagáveis no PSP — e com a cobrança nova no ar seriam
+ * dois objetos cobráveis pela mesma inscrição. Best-effort: cobrança que o PSP
+ * mantém aberta e a gente fechou é conciliável; o inverso não é (mesmo racional
+ * do `cancelar` da fachada).
+ */
+async function reemitir({ adapter, camposLinha, referencia, anterior }) {
+  if (anterior.provider_cobranca_id && typeof adapter.cancelarCobranca === 'function') {
+    try {
+      await adapter.cancelarCobranca(anterior);
+    } catch (e) {
+      console.error(`[pagamentos] cancelar anterior ${anterior.id} no provider:`, e.message);
+    }
+  }
+
+  const novaRef = `${referencia}:r${Date.now()}`;
+  const { data, error } = await supabase.from('pag_cobrancas')
+    .insert({
+      ...camposLinha,
+      referencia: novaRef,
+      // Rastro de qual cobrança morta originou esta. É o que responde "por que
+      // existem 3 cobranças para uma inscrição?" sem depender do log.
+      metadata: {
+        ...(camposLinha.metadata || {}),
+        reemitida_de: anterior.id,
+        reemitida_de_status: anterior.status,
+      },
+    })
+    .select(SELECT_COBRANCA).single();
+
+  if (error) {
+    // Duas re-inscrições no mesmo milissegundo. Relê a família e devolve a que
+    // a outra requisição criou — o objetivo segue sendo UMA cobrança viva.
+    if (error.code === '23505') {
+      const familia = await familiaReferencia(referencia);
+      const viva = familia.find((c) => estaAberta(c.status));
+      if (viva) return { cobranca: viva, reaproveitada: true };
+    }
+    throw error;
+  }
+
+  const atualizada = await pedirAoProvider(adapter, data);
+  return { cobranca: atualizada, reaproveitada: false, reemitida: true, anterior_id: anterior.id };
 }
 
 /**
@@ -500,8 +630,10 @@ async function aplicarExtras(cobrancaId, extras = {}) {
 
 module.exports = {
   SELECT_COBRANCA,
-  porId, porToken, porReferencia, porProviderId,
+  porId, porToken, porReferencia, porProviderId, familiaReferencia,
   criarCobranca,
+  podeReemitir,
+  STATUS_REEMITIVEIS,
   definirMetodo,
   aplicarStatus,
   registrarPagamento,

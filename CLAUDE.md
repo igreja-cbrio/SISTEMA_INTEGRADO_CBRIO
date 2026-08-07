@@ -9211,6 +9211,57 @@ antes de chegar na rota. Roteiro completo de teste ficou na conversa.
 crons vs teto documentado de 40) — sem ele, vaga reservada e não paga nunca
 expira.
 
+### ⚠️⚠️ Cobrança TERMINAL sem dinheiro é REEMITIDA, não devolvida (2026-08-07 · SEM migration)
+
+`criarCobranca` devolvia a cobrança da `referencia` **fosse qual fosse o estado
+dela** — só reemitia quando estava meio-criada (sem `provider_cobranca_id`).
+Como `expirada`/`cancelada`/`falhou` são **absorventes** (`TRANSICOES` os deixa
+sem saída), quem reenviava o formulário recebia de volta uma cobrança que **não
+pode mais ser paga por caminho nenhum**.
+
+**Efeito medido no log de auditoria da inscrição CBR-2026-000141:** a
+re-inscrição reativa a inscrição pra `recebida` — que **OCUPA VAGA** — e entrega
+a cobrança expirada. Vaga travada, zero caminho de pagamento, e a tela ainda
+dizendo "A vaga voltou para a fila", que naquele instante é falso. No lançamento
+do retiro isso pega **todo mundo que deixa as 24h expirarem e tenta de novo**.
+
+- **Reemissão com referência versionada** (`<referencia>:r<ts>`), a MESMA técnica
+  do botão "Dar bolsa": `inscricao:<id>` é UNIQUE e é ela que impede pagar duas
+  vezes, então a cobrança nova não pode reusá-la. A antiga fica **intacta** (é o
+  registro de que a 1ª tentativa morreu) e a nova carrega
+  `metadata.reemitida_de`.
+- ⚠️ **Só `expirada`/`cancelada`/`falhou` COM `valor_pago_centavos = 0`**
+  (`STATUS_REEMITIVEIS` + `podeReemitir`). `estornado`/`chargeback` ficam de fora
+  **mesmo zerando a soma** (liquidação − estorno = 0): ali o dinheiro entrou e
+  voltou por decisão de alguém, e reemitir sozinho viraria cobrar de novo.
+- ⚠️⚠️ **`porReferencia` sozinho não bastava.** Depois da 1ª reemissão ele só
+  enxerga a base morta — o 2º reenvio do formulário emitiria uma TERCEIRA
+  cobrança com a segunda ainda viva, ou seja **duas cobranças pagáveis pela mesma
+  inscrição**, exatamente o que a UNIQUE existe pra impedir. Daí
+  `familiaReferencia()`: a referência exata + as versionadas (`:r<ts>`,
+  `:bolsa:<ts>`). Ordem de decisão: **dinheiro dentro vence · aberta vence ·
+  senão reemite**. A consulta extra só roda no caminho terminal — o caminho comum
+  segue com uma query só.
+- ⚠️ **A anterior é cancelada NO PROVEDOR antes** (best-effort): terminal aqui
+  não é terminal lá — o nosso cron marca `expirada` pelo `expira_em`, mas o QR do
+  Pix e o boleto podem seguir pagáveis no PSP. Mesmo racional do `cancelar` da
+  fachada: cobrança que o PSP mantém aberta e a gente fechou é conciliável; o
+  inverso não é.
+- ⚠️ **O espelho tem que rodar junto** (`cobrarInscricao`): `uq_insc_pag_inscricao_ativa`
+  admite UMA linha `pendente|aguardando|pago` por inscrição, e o insert do espelho
+  engole 23505 como "já existe". Sem aposentar a linha anterior (`status='expirado'`),
+  o painel e a `vw_insc_pagamento_estado` seguiriam apontando pra cobrança MORTA
+  enquanto a nova é a que a pessoa vai pagar. O update roda **sem filtrar pela
+  cobrança nova** — ela acabou de nascer e não tem espelho, e `neq` deixaria de
+  fora linha legada com `cobranca_id` nulo (NULL não compara).
+
+Testes: `src/test/pagamentosReemissao.test.ts` (13 casos · banco falsificado — o
+que está sob teste é a DECISÃO, não o PostgREST). **Mutation-testados**: voltar a
+devolver a terminal deixa 7 vermelhos; tirar a checagem de família deixa 1.
+⚠️ O `vi.mock` do Vitest **não** alcança `cobrancas.js` (CommonJS que
+DESESTRUTURA `supabase` no topo) — o teste usa `createRequire` e troca o
+`module.exports` antes do require. Vale pra qualquer teste novo sobre o núcleo.
+
 ## ⚠️ Adapter do MERCADO PAGO (2026-08-06 · SEM migration)
 
 `providers/mercadopago.js` — o único arquivo que conhece a linguagem do MP.
