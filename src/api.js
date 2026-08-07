@@ -2430,6 +2430,10 @@ export const membresia = {
     list: (params) => get('/membresia/membros' + (params ? '?' + new URLSearchParams(params) : '')),
     get: (id) => get(`/membresia/membros/${id}`),
     timeline: (id) => get(`/membresia/membros/${id}/timeline`),
+    // Respostas do censo desta pessoa. O bloco sensível vem filtrado pelo
+    // servidor conforme cen_acesso_sensivel — ter membresia não é autorização
+    // para ler saúde emocional de ninguém.
+    censo: (id) => get(`/membresia/membros/${id}/censo`),
     inscricoes: (id) => get(`/membresia/membros/${id}/inscricoes`),
     create: (data) => post('/membresia/membros', data),
     update: (id, data) => put(`/membresia/membros/${id}`, data),

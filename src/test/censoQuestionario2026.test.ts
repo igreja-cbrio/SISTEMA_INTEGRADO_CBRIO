@@ -102,6 +102,9 @@ describe('questionário 2026 · o formulário é respondível de ponta a ponta',
 
   const primeiraOpcao = (p: Record<string, unknown>) => {
     const opcoes = p.opcoes as string[] | undefined;
+    // CPF é obrigatório e VALIDADO no servidor (dígito verificador), então o
+    // gerador precisa de um CPF de verdade — 'texto' seria recusado.
+    if (p.formato === 'cpf') return '52998224725';
     switch (p.tipo) {
       case 'sim_nao': return 'Sim';
       case 'opcao_unica': return opcoes?.[0];

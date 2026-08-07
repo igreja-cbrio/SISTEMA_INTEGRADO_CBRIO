@@ -40,7 +40,11 @@ const TIPOS_SEM_RESPOSTA = Object.freeze(['secao']);
 // Tipos cuja resposta é NÚMERO (vai em valor_num e é o que o SQL agrega).
 const TIPOS_NUMERICOS = Object.freeze(['numero', 'escala_5', 'estrelas_5', 'nps']);
 
-const FORMATOS = Object.freeze(['texto', 'telefone', 'email', 'instagram']);
+// `cpf` entra aqui porque o censo passou a exigir CPF (decisão do Matheus,
+// 07/08): é a CHAVE FORTE que liga a resposta à pessoa na base — sem ela, o
+// vínculo depende de casar nome+nascimento, que erra com homônimo e com a
+// família que compartilha telefone.
+const FORMATOS = Object.freeze(['texto', 'telefone', 'email', 'instagram', 'cpf']);
 
 // Tipos de pedido de ajuda. Não viram estatística: viram linha em cen_cuidado.
 // A especificação é explícita — "só têm valor se houver retorno para quem pediu".
@@ -58,6 +62,8 @@ const ESCALA_MAX = 5;
 // sinto valorizado como voluntário" — e essa nota entraria na média como se
 // fosse opinião de voluntário. Contada como NEUTRA: fica fora da base.
 const NAO_SE_APLICA = 'Não se aplica';
+
+const { cpfValido, soDigitos } = require('./cpf');
 
 function ehTexto(v) {
   return typeof v === 'string' && v.trim().length > 0;
@@ -340,6 +346,12 @@ function montarItens({ perguntas, respostas }) {
         ignoradas.push(p.id); faltou(); continue;
       }
       item.valor_texto = v;
+    } else if (p.formato === 'cpf') {
+      // Guarda só dígitos: é assim que `mem_membros.cpf` está gravado, e é o
+      // que faz o vínculo por CPF ser uma busca por índice em vez de um LIKE.
+      const digitos = soDigitos(bruto);
+      if (!cpfValido(digitos)) { ignoradas.push(p.id); faltou(); continue; }
+      item.valor_texto = digitos;
     } else {
       item.valor_texto = String(bruto).trim();
       if (!item.valor_texto) { faltou(); continue; }

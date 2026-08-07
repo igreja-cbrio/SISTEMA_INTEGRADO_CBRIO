@@ -725,6 +725,74 @@ router.get('/membros/:id', authorizeModule('membros', 1), async (req, res) => {
 });
 
 // ────────────────────────────────────────────────────────────────────────
+// ── GET /membros/:id/censo · as respostas do censo daquela pessoa ────────────
+//
+// Pedido do Matheus (07/08): "se eu responder o censo, a equipe de membresia
+// deve conseguir ver isso nas minhas atividades e ver as minhas respostas".
+// A atividade vai na linha do tempo; as RESPOSTAS vêm por aqui.
+//
+// ⚠️ O bloco sensível (saúde emocional, casamento, "nunca teve coragem") NÃO
+// sai daqui para quem não está em `cen_acesso_sensivel`. Ter o módulo de
+// membresia não é autorização para ler saúde emocional de ninguém: a régua é a
+// mesma do módulo do censo, e é aplicada no SERVIDOR — filtrar no cliente seria
+// maquiagem, o dado já teria saído pela rede.
+router.get('/membros/:id/censo', authorizeModule('membros', 2), async (req, res) => {
+  try {
+    const { data: respostas, error } = await supabase
+      .from('cen_resposta')
+      .select('id, concluida_em, canal, identificado_por, duracao_seg, pesquisa:cen_pesquisa(id, titulo, slug, perguntas)')
+      .eq('membro_id', req.params.id)
+      .not('concluida_em', 'is', null)
+      .is('deleted_at', null)
+      .order('concluida_em', { ascending: false })
+      .limit(10);
+    if (error) return res.status(400).json({ error: error.message });
+    if (!respostas?.length) return res.json({ respostas: [] });
+
+    // Quem pode ver o bloco sensível é a lista nomeada, não o nível no módulo.
+    let podeSensivel = false;
+    try {
+      const { data: acesso } = await supabase
+        .from('cen_acesso_sensivel').select('profile_id')
+        .eq('profile_id', req.user?.id || '').is('revogado_em', null).maybeSingle();
+      podeSensivel = !!acesso;
+    } catch { podeSensivel = false; }   // fail-closed
+
+    const ids = respostas.map((r) => r.id);
+    const { data: itens } = await supabase
+      .from('cen_resposta_item')
+      .select('resposta_id, pergunta_id, pergunta_texto, tipo, valor_texto, valor_num, valor_opcoes, sensivel, acao')
+      .in('resposta_id', ids);
+
+    const saida = respostas.map((r) => {
+      const meus = (itens || []).filter((i) => i.resposta_id === r.id);
+      const visiveis = podeSensivel ? meus : meus.filter((i) => i.sensivel !== true);
+      // A ORDEM do questionário é a ordem que faz a leitura ter sentido; a do
+      // banco é a de inserção.
+      const ordem = new Map((r.pesquisa?.perguntas || [])
+        .map((q, idx) => [q.id, idx]));
+      visiveis.sort((a, b) => (ordem.get(a.pergunta_id) ?? 1e9) - (ordem.get(b.pergunta_id) ?? 1e9));
+      return {
+        id: r.id,
+        pesquisa: r.pesquisa?.titulo || null,
+        concluida_em: r.concluida_em,
+        canal: r.canal,
+        identificado_por: r.identificado_por,
+        duracao_seg: r.duracao_seg,
+        itens: visiveis,
+        // Diz que EXISTE algo oculto, em vez de fingir que a resposta é só isso.
+        // Quem precisa e não tem acesso sabe a quem pedir.
+        itens_sensiveis_ocultos: meus.length - visiveis.length,
+      };
+    });
+
+    res.json({ respostas: saida, pode_ver_sensivel: podeSensivel });
+  } catch (e) {
+    console.error('[membresia] censo:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar as respostas do censo' });
+  }
+});
+
 // GET /api/membresia/membros/:id/timeline · "log do membro" — linha do tempo
 // agregando as atividades da pessoa em vários módulos, em ordem cronológica.
 // Read-only. Uma query .eq por fonte (poucas linhas por membro · seguro).
@@ -749,6 +817,7 @@ router.get('/membros/:id/timeline', authorizeModule('membros', 1), async (req, r
     const [
       trilha, grupos, contribs, devos, next, batismos, jornada,
       convertidos, acompanh, encaminh, decisoes, historico, checkins, inscEspinha,
+      censoRespostas,
     ] = await Promise.all([
       supabase.from('mem_trilha_valores').select('etapa, concluida, data_conclusao, created_at').eq('membro_id', id),
       supabase.from('mem_grupo_membros').select('entrou_em, saiu_em, motivo_saida, grupo:mem_grupos(nome)').eq('membro_id', id),
@@ -770,6 +839,13 @@ router.get('/membros/:id/timeline', authorizeModule('membros', 1), async (req, r
       // /inscricoes não aparecia na história da pessoa.
       supabase.from('inscricoes').select('created_at, status, evento:insc_eventos(nome, tipo)')
         .eq('membro_id', id).is('deleted_at', null).order('created_at', { ascending: false }).limit(100),
+      // Censo: responder o censo é atividade da pessoa como qualquer outra, e a
+      // equipe de membresia precisa ver isso na ficha (pedido do Matheus, 07/08).
+      // Só respostas CONCLUÍDAS — rascunho não é atividade.
+      supabase.from('cen_resposta')
+        .select('id, concluida_em, canal, pesquisa:cen_pesquisa(titulo, slug)')
+        .eq('membro_id', id).not('concluida_em', 'is', null).is('deleted_at', null)
+        .order('concluida_em', { ascending: false }).limit(20),
     ]);
 
     (trilha.data || []).forEach((t) => t.concluida && add('trilha', t.data_conclusao || t.created_at, `Trilha: ${t.etapa}`, 'Etapa concluída', '/ministerial/membresia'));
@@ -791,6 +867,12 @@ router.get('/membros/:id/timeline', authorizeModule('membros', 1), async (req, r
     (convertidos.data || []).forEach((c) => add('conversao', c.data_culto, 'Decisão / conversão', c.observacoes, '/ministerial/cuidados'));
     (acompanh.data || []).forEach((a) => add('aconselhamento', a.data_inicio, 'Aconselhamento', [a.motivo, a.status].filter(Boolean).join(' · ') || null, '/ministerial/cuidados'));
     (encaminh.data || []).forEach((e) => add('encaminhamento', e.encaminhado_em, `Encaminhado · ${e.destino}`, e.status, '/ministerial/cuidados'));
+    (censoRespostas.data || []).forEach((c) => add(
+      'censo', c.concluida_em,
+      `Respondeu o censo${c.pesquisa?.titulo ? ` · ${c.pesquisa.titulo}` : ''}`,
+      c.canal === 'app' ? 'pelo aplicativo' : c.canal === 'qr' ? 'pelo QR do culto' : `por ${c.canal}`,
+      '/censo',
+    ));
     (decisoes.data || []).forEach((d) => add('decisao', d.registrado_em || d.culto?.data, `Decisão no culto`, d.tipo_decisao, '/integracao'));
     (historico.data || []).forEach((h) => add('nota', h.data, h.descricao, 'Registro manual', '/ministerial/membresia'));
     (checkins.data || []).forEach((ci) => add('voluntariado', ci.checked_in_at, 'Check-in de voluntariado', ci.service?.name || null, '/voluntariado'));
