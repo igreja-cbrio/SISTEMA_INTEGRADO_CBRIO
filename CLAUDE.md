@@ -7072,6 +7072,62 @@ consumir o corpo antes) → upload com service_role → `.select().maybeSingle()
   de duplicar a régua de autorização num 2º lugar, que é a doença que o
   `gateGrupoApp` existe pra curar.
 
+### 3c · ⚠️⚠️ O PUSH NUNCA CHEGOU: 1.801 de 1.820 recusados (07/08)
+
+**Medido em `system_mobile_push_tickets` antes de mexer:**
+
+| sonda | resultado |
+|---|---|
+| tickets totais | 1.820 |
+| `ticket_status='accepted'` | **19** (todos iOS, entre 02/08 e 07/08) |
+| `ticket_status='error'` | **1.801 — 98,9%** |
+| `PUSH_TOO_MANY_EXPERIENCE_IDS` | **1.773** |
+| erro mais recente | 07/08 20:02 |
+
+⚠️⚠️ **CAUSA**: `app_push_tokens` recebe token de **DOIS apps Expo** (o de
+membros e o CBRio Staff — mesma org `cbrio`, mesmo Supabase). A Expo responde,
+literalmente: *"All push notification messages in the same request must be for
+the same project."* E ela **recusa o REQUEST INTEIRO**, não as linhas estranhas
+— um token do Staff derrubava a entrega dos 30 tokens iOS perfeitamente
+válidos. Os 19 que passaram são justamente os envios pequenos, pra uma pessoa
+só, em que o lote por acaso não misturou.
+
+⚠️⚠️ **POR QUE NINGUÉM VIU**: havia **TRÊS** remetentes, cegos de jeitos
+diferentes. A Edge Function `_shared/notify.ts` dava `await fetch(...)` **sem
+ler o corpo**; `notify-devocional-semana` tinha uma **cópia própria** do envio,
+igualmente cega (e era o maior broadcast: 275 das 615 notificações in-app); e
+`services/appPush.js` lia e gravava ticket — mas ninguém olhava a tabela.
+
+**O conserto**: coluna `app_push_tokens.projeto_id` (migration
+`20260807220000`) + a régua `backend/utils/pushLotes.js`, que agrupa por app
+Expo antes de montar o request.
+- ⚠️ **Token de projeto DESCONHECIDO vai SOZINHO** (1 por request). Um request
+  com uma mensagem só não tem como ter "experience ids demais" — é o que faz a
+  entrega ficar correta **desde o 1º envio**, sem adivinhar a origem do token
+  antigo e **sem apagar linha de ninguém**. Se cura sozinho: o app reescreve o
+  próprio token a cada volta do background.
+- ⚠️ **NUNCA juntar os desconhecidos num lote**: são justamente os de origem
+  ambígua, ou seja, a mistura mais provável de todas. Tem mutante.
+- ⚠️ `tokenMorreu()` só aceita **`DeviceNotRegistered`**. Apagar por erro de
+  LOTE teria **zerado a tabela** — 1.773 tickets traziam
+  `PUSH_TOO_MANY_EXPERIENCE_IDS`, culpa do request e não do token. Tem mutante.
+- ⚠️ **RÉGUA GÊMEA**: `backend/utils/pushLotes.js` e
+  `Aplicativo-CBRio/lib/pushLotes.ts` têm que decidir IGUAL — escrevem na mesma
+  tabela e falam com o mesmo serviço. Divergir faz o erro voltar **só metade das
+  vezes**, que é pior de achar. Os testes usam o **mesmo vetor de casos** nos
+  dois repos (`src/test/pushLotes.test.ts` aqui, bloco `lotesDePush` lá).
+- De quebra: `appPush.js` mandava `sound: 'cbrio-chime.wav'` com **hífen**; o
+  asset (`app.json:55`) e o canal Android são `cbrio_chime.wav` com
+  **underscore**. Todo push do ERP saía com som inexistente.
+
+⚠️ **AINDA ABERTO, e é decisão de gente, não de código**: os 4 broadcasts
+definem a AUDIÊNCIA por `select from app_push_tokens`
+(`notify-lembretes:64` e `:216`, `notify-comunicado:22`,
+`notify-devocional-semana`). Quem não tem token — hoje **todo Android**, porque
+o binário não tem Firebase — fica de fora até do **sino in-app**, não só do
+push. Trocar por "todo mundo com conta no app" muda o raio de alcance de ~23
+pra ~113 pessoas: é chamada do Marcos.
+
 ### 4 · Pedido de exclusão de conta (LGPD) ganhou fila — e SÓ leitor
 
 O app insere em `app_solicitacoes_exclusao` e promete "em breve sua conta será
