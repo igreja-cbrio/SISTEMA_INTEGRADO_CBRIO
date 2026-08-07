@@ -6850,6 +6850,23 @@ dentro de `backend/`** (a lição da Onda 0) + `test:inscricao-contrato` verde.
 - **Item 5 · `PUT /app/grupos/:id`** pra o save do supervisor parar de mentir
   (79 de 100 grupos).
 
+## ⚠️ AUDITORIA DO APP · ONDA 2 · o servidor recebe a tela de perfil (2026-08-07)
+
+`PUT /app/membro/perfil` estava **órfão** desde sempre (quem salvava era a RPC
+`app_salvar_membro`, o crítico da auditoria). Com a Onda 2 a tela passou a
+chamá-lo, então ele ganhou o MESMO saneamento da porta de inscrição
+(`utils/saneamentoInscricaoApp.js`) — telefone com "+55 (21) …" gravado cru em
+`mem_membros` é o que quebra o dedup por telefone do sistema inteiro.
+
+- ⚠️ **Saneia, NÃO recusa**: perfil não é porta de inscrição; bloquear aqui
+  prenderia a pessoa numa tela de edição do próprio cadastro. A única recusa é
+  `nome` vazio — a coluna é NOT NULL e o UPDATE estouraria com 23502, que a
+  pessoa leria como "Erro ao atualizar perfil" sem motivo.
+- Ganhou `limiterNormal` (estava sem limiter nenhum).
+- ⚠️ **CPF não passa por aqui** (nunca esteve no allowlist) — e agora a tela
+  reflete isso: o campo virou somente-leitura. Trocar CPF é ato de IDENTIDADE,
+  em `/completar-cadastro`.
+
 ## ⚠️⚠️ AUDITORIA DO APP · ONDA 1b · O SAVE PARA DE MENTIR E O LGPD GANHA FILA (2026-08-06)
 
 Itens 4 e 5 do plano. **Sem migration** — é rota + tela + régua pura.
