@@ -12,7 +12,10 @@ const { analisarOracao } = require('../services/oracaoAnalise');
 const { acharOuCriarGuardado } = require('../services/membroMatch');
 // Convite de familiar pelo app · junta na mesma família + vínculo de parentesco.
 const { vincularParentesco, entrarNaFamilia, VINC_INVERSO } = require('../services/familiaVinculo');
-const { baseUrl } = require('../services/gruposWhatsapp');
+// `notificarLiderNovoPedido` é a MESMA função que o formulário público usa —
+// o app é um cliente novo da porta, não uma 2ª régua de aviso ao líder.
+const gruposWpp = require('../services/gruposWhatsapp');
+const { baseUrl } = gruposWpp;
 // Espelho da matrícula do Next (o app inscreve por ENCONTRO; a gestão vive em
 // TURMA/MATRÍCULA desde o cutover de 17/06) — ver services/nextMatricula.js.
 const { chaveMesMembro } = require('../services/nextMatricula');
@@ -821,6 +824,72 @@ router.post('/inscricoes', limiterStrict, tryAuth, async (req, res) => {
       });
     }
 
+    // ⚠️⚠️ INSCRIÇÃO DE GRUPO PELO APP AGORA AVISA O LÍDER (06/08/2026).
+    //
+    // Até aqui só o formulário público (`publicGrupos`) mandava o template
+    // `grupos_pedido_novo_lider_v2`. O app criava o pedido pelo fanout e
+    // NINGUÉM avisava o líder — o pedido ficava pendente na Caixa de entrada e
+    // quem deveria ligar pra pessoa antes de aprovar (lei dos templates v2,
+    // 29/07) não sabia que ele existia. Medido em 06/08: 1 pedido origem-app
+    // na história inteira, e a líder dele sem nenhum aviso desde o dia 06.
+    //
+    // ⚠️ AWAITED — mesma lei de 31/07 (em porta pública serverless, o que não
+    // pode se perder vai awaited; enfileirar é 1 INSERT). E roda DEPOIS da
+    // releitura do fanout: avisar o líder de um pedido que não existe é pior
+    // que não avisar.
+    // ⚠️ Best-effort no erro: o pedido já está gravado e a pessoa já tem vaga
+    // na fila — derrubar a resposta porque o aviso falhou seria trocar um
+    // problema de comunicação por um de inscrição. A falha vira log, e a
+    // Caixa de entrada continua sendo o caminho garantido da coordenação.
+    if (tipo === 'grupos' && dados.grupo_id) {
+      try {
+        // O fanout roda na MESMA transação do insert, então o pedido nasce com
+        // `created_at` igual ao da linha de `app_inscricoes`. Localizamos pelo
+        // par (grupo, membro) + pendente + origem 'app' dentro de uma janela
+        // curta — sem a janela, um pedido ANTIGO da mesma pessoa no mesmo
+        // grupo seria re-notificado a cada nova tentativa dela.
+        const desde = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+        let q = supabase
+          .from('mem_grupo_pedidos')
+          .select('id, nome, telefone, email')
+          .eq('grupo_id', dados.grupo_id)
+          .eq('status', 'pendente')
+          .eq('origem', 'app')
+          .gte('created_at', desde)
+          .order('created_at', { ascending: false })
+          .limit(1);
+        q = membroId ? q.eq('membro_id', membroId) : q.is('membro_id', null);
+        const { data: pedidos } = await q;
+        const pedido = pedidos?.[0] || null;
+
+        if (pedido) {
+          const { data: grupo } = await supabase
+            .from('mem_grupos')
+            .select('id, nome, lider_id')
+            .eq('id', dados.grupo_id)
+            .maybeSingle();
+          if (grupo) {
+            const r = await gruposWpp.notificarLiderNovoPedido({
+              grupo,
+              pedidoId: pedido.id,
+              pessoa: {
+                nome: pedido.nome || dados.nome,
+                telefone: pedido.telefone || dados.telefone,
+                email: pedido.email || dados.email,
+              },
+            });
+            if (!r?.sent) {
+              console.log('[APP] inscricoes · aviso ao líder não enviado:', r?.reason || r?.status);
+            }
+          }
+        } else {
+          console.warn('[APP] inscricoes · pedido de grupo não localizado pra avisar o líder:', inserted.id);
+        }
+      } catch (e) {
+        console.warn('[APP] inscricoes · aviso ao líder:', e.message);
+      }
+    }
+
     // Notifica a equipe de Cuidados (in-app + push). SOS é urgente.
     if (ehCuidados) {
       const nome = dados.nome || req.user?.email || 'Alguém';
@@ -905,14 +974,34 @@ router.post('/inscricoes', limiterStrict, tryAuth, async (req, res) => {
       }).catch(e => console.warn('[APP] inscricoes · notificar lead:', e.message));
     }
 
-    // Confirmação ao membro via WhatsApp · template aprovado (no-op até configurar
-    // o env do template + opt-in respeitado dentro de notificarMembro).
-    if (LABEL_INSCRICAO_WPP[tipo]) {
-      resolveMembroApp(req).then((m) => {
-        if (!m?.id) return;
-        const primeiroNome = String(m.nome || dados.nome || '').split(' ')[0] || 'Olá';
-        return wpp.notificarMembro(m.id, 'inscricao_confirmada', [primeiroNome, LABEL_INSCRICAO_WPP[tipo]]);
-      }).catch((e) => console.warn('[APP] inscricao wpp:', e.message));
+    // ⚠️⚠️ AWAITED — e isto É a causa-raiz da mensagem DUPLICADA de 06/08/2026.
+    //
+    // Este bloco era `resolveMembroApp(req).then(...)` SEM await, com o
+    // `res.status(201).json(...)` logo abaixo. Em serverless o container
+    // CONGELA na resposta: `enfileirar` já havia feito o INSERT (commitado) e
+    // `tentarEnvio` já havia chamado a Meta — a mensagem foi ENTREGUE às 16:33
+    // — mas o UPDATE que marca a linha como `enviado` se perdeu no
+    // congelamento. A linha ficou `pendente` e o cron horário da fila
+    // REENVIOU às 17:00. A pessoa recebeu o mesmo texto duas vezes.
+    //
+    // ⚠️ A forense enganou no começo: a linha da fila mostrava `tentativas=1` e
+    // UM message_id (o do SEGUNDO envio). Envio cuja escrituração se perdeu é
+    // INVISÍVEL em `tentativas`/`message_id` — o screenshot do Marcos é que
+    // provou as duas entregas. Não concluir "não duplicou" só porque a fila
+    // mostra um envio.
+    //
+    // Lei de 31/07 aplicada: em porta pública serverless, o que não pode se
+    // perder vai AWAITED. `membroId` e `dados.nome` já estão em escopo
+    // (resolvidos no topo do handler), então não há 2ª chamada a
+    // `resolveMembroApp`. Opt-in e env do template seguem sendo julgados
+    // dentro de `notificarMembro` (no-op gracioso quando não configurado).
+    if (LABEL_INSCRICAO_WPP[tipo] && membroId) {
+      try {
+        const primeiroNome = String(dados.nome || '').trim().split(/\s+/)[0] || 'Olá';
+        await wpp.notificarMembro(membroId, 'inscricao_confirmada', [primeiroNome, LABEL_INSCRICAO_WPP[tipo]]);
+      } catch (e) {
+        console.warn('[APP] inscricao wpp:', e.message);
+      }
     }
 
     res.status(201).json({ ok: true, id: inserted.id, message: 'Solicitação recebida! Nossa equipe entrará em contato.' });
