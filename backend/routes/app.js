@@ -429,7 +429,7 @@ router.get('/membro/perfil', authApp, async (req, res) => {
 });
 
 // ── Atualizar perfil (autenticado) ────────────────────────────────────────
-router.put('/membro/perfil', authApp, async (req, res) => {
+router.put('/membro/perfil', authApp, limiterNormal, async (req, res) => {
   try {
     const allowed = ['nome', 'telefone', 'data_nascimento', 'endereco'];
     const update  = Object.fromEntries(
@@ -437,6 +437,27 @@ router.put('/membro/perfil', authApp, async (req, res) => {
     );
     // Campo de data vazio vira NULL (coluna date estoura com string '')
     if ('data_nascimento' in update && !update.data_nascimento) update.data_nascimento = null;
+
+    // ⚠️⚠️ ESTE ENDPOINT VIROU O CAMINHO DA TELA DE PERFIL (Onda 2 · 07/08/2026).
+    // Até agora ele estava ÓRFÃO — quem salvava era a RPC `app_salvar_membro`,
+    // que vinculava conta a cadastro por nome exato (o crítico da auditoria).
+    // Agora que ele recebe o que a pessoa digita, o dado passa pelo MESMO
+    // saneamento da porta de inscrição: telefone com "+55 (21) …" gravado cru é
+    // o que quebra o dedup por telefone do sistema inteiro.
+    // ⚠️ Sanear, NÃO recusar: perfil não é porta de inscrição — bloquear aqui
+    // prenderia a pessoa numa tela de edição do próprio cadastro.
+    const saneado = sanearDadosApp(update);
+    if (saneado.ajustes.length) {
+      // Só os NOMES dos campos — nunca os valores (é telefone e nascimento).
+      console.log(`[APP] perfil · saneado: ${saneado.ajustes.join(', ')}`);
+    }
+    Object.assign(update, saneado.dados);
+
+    // ⚠️ `nome` vazio não pode ir: a coluna é NOT NULL e o UPDATE estouraria
+    // com 23502 — a pessoa veria "Erro ao atualizar perfil" sem saber o motivo.
+    if ('nome' in update && !update.nome) {
+      return res.status(400).json({ error: 'O nome não pode ficar vazio.', campo: 'nome' });
+    }
     if (Object.keys(update).length === 0) {
       return res.status(400).json({ error: 'Nenhum campo válido para atualizar' });
     }
