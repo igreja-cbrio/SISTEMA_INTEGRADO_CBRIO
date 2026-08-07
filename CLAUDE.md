@@ -6904,6 +6904,67 @@ chamá-lo, então ele ganhou o MESMO saneamento da porta de inscrição
   reflete isso: o campo virou somente-leitura. Trocar CPF é ato de IDENTIDADE,
   em `/completar-cadastro`.
 
+## ⚠️⚠️ LEI · o que não pode se perder vai AWAITED · WhatsApp duplicado (2026-08-07 · SEM migration)
+
+Reportado pelo Marcos com screenshot: ao se inscrever num grupo de conexão pelo
+app, ele recebeu **a MESMA mensagem de confirmação duas vezes** — 16:33 e 17:00
+(BRT), texto idêntico. Investigando, apareceu um segundo defeito, mais grave e
+totalmente silencioso: **a líder nunca soube do pedido dele**.
+
+### 1 · A mensagem dupla · fire-and-forget em container que congela
+
+O bloco de confirmação do `POST /app/inscricoes` era
+`resolveMembroApp(req).then(...)` **sem await**, com o `res.status(201).json(...)`
+imediatamente abaixo. Em serverless o container **CONGELA na resposta**:
+`enfileirar` já havia feito o INSERT (commitado) e `tentarEnvio` já havia
+chamado a Meta — a mensagem foi **entregue às 16:33** — mas o UPDATE que marca
+a linha como `enviado` se perdeu no congelamento. A linha ficou `pendente` e o
+**cron horário da fila reenviou às 17:00**.
+
+⚠️⚠️ **A forense me enganou primeiro, e a lição vale além deste caso:** a linha
+de `whatsapp_envios` mostrava `tentativas=1` e UM `message_id` — o do SEGUNDO
+envio. Eu disse ao Marcos que **não havia duplicação**; o screenshot dele provou
+o contrário. **Envio cuja escrituração se perdeu é INVISÍVEL** em
+`tentativas`/`message_id`: a entrega das 16:33 tem wamid próprio que nunca foi
+gravado. Não concluir "não duplicou" porque a fila mostra um envio só.
+
+Aplicada a **lei de 31/07** (mesma classe do aviso ao líder que não saía): em
+porta pública serverless, **o que não pode se perder vai AWAITED**. `membroId` e
+`dados.nome` já estavam em escopo desde o topo do handler, então o await não
+custa nem uma consulta a mais — some a 2ª chamada a `resolveMembroApp`.
+
+### 2 · Inscrição de grupo pelo APP nunca avisava o líder
+
+Só o formulário público (`publicGrupos`) mandava `grupos_pedido_novo_lider_v2`.
+Pelo app, o pedido nascia pelo fanout e **ninguém era avisado** — ficava pendente
+na Caixa de entrada, e quem deveria ligar pra pessoa antes de aprovar (lei dos
+templates v2, 29/07) não sabia que existia. Medido em 06/08: **1 pedido
+origem-app na história inteira** (o do Marcos, `d1907c7a`, no grupo da Natasha) e
+**zero avisos** citando ele entre os 34 disparados desde então.
+
+- Chama a **MESMA** `gruposWhatsapp.notificarLiderNovoPedido` do formulário
+  público — o app é cliente novo da porta, **não** uma 2ª régua de aviso.
+- **AWAITED**, e só **depois** da releitura do fanout: avisar o líder de um
+  pedido que não existe é pior que não avisar.
+- ⚠️ **Best-effort no erro** (log, não 502): o pedido já está gravado e a pessoa
+  já tem vaga na fila — derrubar a resposta porque o aviso falhou trocaria um
+  problema de comunicação por um de inscrição. A Caixa de entrada segue sendo o
+  caminho garantido da coordenação.
+- ⚠️ **A janela de 2 min na busca do pedido não é enfeite**: o ramo `grupos` do
+  fanout **não tem dedup**, então cada tentativa da pessoa cria um pedido novo.
+  Sem a janela, um pedido ANTIGO dela no mesmo grupo seria re-notificado a cada
+  inscrição. O par usado é (grupo, membro) + `pendente` + `origem='app'`, e o
+  `created_at` do pedido é idêntico ao da linha de `app_inscricoes` porque o
+  fanout roda na MESMA transação.
+
+### ⚠️ Resíduos conhecidos (mesma classe, NÃO corrigidos aqui)
+
+- **`kids_precheckin`** (`app.js`, chamada a `wpp.notificarMembro`) ainda é
+  fire-and-forget — mesmo risco de mensagem dupla, volume baixo.
+- O trigger **`app_inscricoes_notify_recebida`** (repo do app) segue mandando
+  push *"o líder recebeu seu pedido"* **antes** do fanout (ordem alfabética de
+  trigger), inclusive quando o fanout falha. Já registrado na Onda 1a.
+
 ## ⚠️⚠️ AUDITORIA DO APP · ONDA 1b · O SAVE PARA DE MENTIR E O LGPD GANHA FILA (2026-08-06)
 
 Itens 4 e 5 do plano. **Sem migration** — é rota + tela + régua pura.
