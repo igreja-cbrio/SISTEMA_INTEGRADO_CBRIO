@@ -101,6 +101,19 @@ function normalizeMobileEvent(event, userId = null) {
     plataforma: normalizePlatform(event?.plataforma),
     app_version: cleanText(event?.app_version, 40),
     build_number: cleanText(event?.build_number, 40),
+    // ⚠️ ONDA 3 (07/08): `app_version` é a versão do BUNDLE (veio no OTA) e é
+    // '1.0.0' em 13.231 de 13.231 eventos — nunca distinguiu binário nenhum.
+    // Quem identifica o BINÁRIO é `runtime_version` (compilada no build), e
+    // `update_id` diz qual bundle está rodando. `is_embedded` responde "esta
+    // sessão roda o bundle embutido?", que é o caso da 1ª abertura de toda
+    // instalação nova — o achado irmão da versão mínima.
+    // ⚠️ Saem SEMPRE, mesmo null: o upsert usa `?columns=` como UNIÃO das
+    // chaves do lote, e chave ausente em parte das linhas quebra o INSERT
+    // inteiro (a lição do `event_id`, que deixou a telemetria 5 dias morta).
+    runtime_version: cleanText(event?.runtime_version, 40),
+    update_id: cleanText(event?.update_id, 80),
+    canal: cleanText(event?.canal, 40),
+    is_embedded: typeof event?.is_embedded === 'boolean' ? event.is_embedded : null,
     session_id: cleanText(event?.session_id, 80),
     installation_id: cleanText(event?.installation_id, 80),
     os_version: cleanText(event?.os_version, 40),
