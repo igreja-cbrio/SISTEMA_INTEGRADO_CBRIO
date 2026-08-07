@@ -85,6 +85,11 @@ const BASE = 'https://api.mercadopago.com';
 const capacidades = Object.freeze({
   metodos: [METODOS.PIX, METODOS.CARTAO],
   parcelas_max: 36,        // teto do Checkout Pro (1–36; fora disso o MP recusa)
+  // O cartão pode ser cobrado SEM redirecionar: o Brick tokeniza no navegador e
+  // o servidor recebe só o token. Quem lê esta flag é a tela, pra decidir entre
+  // formulário próprio e o checkout hospedado — nunca pra assumir que o PAN
+  // pode passar por aqui (lei nº 5 segue valendo: o que chega é token).
+  tokenizacao: true,
   webhook: true,
   estorno: true,
   consulta_status: true,
@@ -226,7 +231,23 @@ const STATUS_POR_PAYMENT = {
   charged_back: STATUS.CHARGEBACK,
   cancelled: STATUS.CANCELADA,
   canceled: STATUS.CANCELADA,
-  rejected: STATUS.FALHOU,
+  // ⚠️⚠️ RECUSA NÃO É `falhou` — e isto é uma correção deliberada do mapeamento
+  // original deste adapter (que trazia `rejected: STATUS.FALHOU`).
+  //
+  // `falhou` é TERMINAL e ABSORVENTE (`tipos.js:127` · TRANSICOES[falhou] = []).
+  // Aplicado numa cobrança, o efeito em cascata é:
+  //   1. `definirMetodo` recusa cobrança terminal → a pessoa não consegue nem
+  //      tentar outro cartão, nem trocar pro Pix;
+  //   2. se ela pagar numa segunda tentativa, o webhook do pagamento aprovado
+  //      tenta `falhou → pago`, o trigger do banco RECUSA a transição, e o
+  //      resultado é DINHEIRO RECEBIDO COM INSCRIÇÃO NUNCA CONFIRMADA.
+  //
+  // No MP cada tentativa é um pagamento próprio: uma recusa é o fim daquela
+  // TENTATIVA, não da cobrança. `null` = "não mexe no status" — a recusa vira
+  // motivo pra tela explicar (ver `pagarComToken`), e a cobrança segue viva.
+  // Mesma régua do `PAYMENT_OVERDUE` do Asaas e da lição registrada no plano do
+  // TEF ("recusa NÃO muda o status da cobrança").
+  rejected: null,
 };
 
 /**
@@ -670,6 +691,87 @@ async function verificarChave() {
   }
 }
 
+/**
+ * Cobra o cartão com o TOKEN gerado no navegador (Card Payment Brick).
+ *
+ * ⚠️ O que chega aqui é `token`, NUNCA número de cartão — a lei nº 5 continua
+ * intacta. É essa tokenização que permite o formulário ficar na NOSSA página em
+ * vez de mandar a pessoa pro site do provedor.
+ *
+ * ⚠️ POR QUE `/v1/payments` E NÃO A ORDERS API, contrariando o "escrever pela
+ * Orders" do resto deste adapter: é o caminho documentado do Brick, e é o único
+ * que devolve `fee_details`, `net_received_amount` e `money_release_date` — os
+ * três campos que a Orders API não tem e sem os quais a conciliação da tarifa
+ * não fecha. Aqui a exceção COMPRA algo concreto; no Pix não compraria nada.
+ *
+ * ⚠️ O VALOR VEM DA COBRANÇA, jamais do `transaction_amount` que o Brick
+ * manda. O formulário roda no navegador da pessoa: aceitar o valor dele seria
+ * deixar qualquer um escolher quanto pagar pela inscrição.
+ */
+/**
+ * Chave PUBLICÁVEL do MP, exigida pelo SDK no navegador pra tokenizar o cartão.
+ *
+ * ⚠️ Não é segredo — ela é feita pra ficar visível no cliente e não autoriza
+ * nada além de gerar token de cartão. O que é segredo é o access token, e esse
+ * nunca sai daqui. Mesmo assim vive no adapter, e não numa `VITE_` de build: um
+ * único bundle serve produção e preview, então chave embutida em build seria a
+ * mesma nos dois ambientes — exatamente o cruzamento que a guarda de ambiente
+ * existe pra impedir.
+ */
+function chavePublica() {
+  return process.env.MERCADOPAGO_PUBLIC_KEY || null;
+}
+
+async function pagarComToken(c, dados = {}) {
+  const token = String(dados.token || '').trim();
+  if (!token) throw new Error('Mercado Pago: token do cartão ausente.');
+
+  const parcelas = Number(dados.installments) > 0 ? Math.floor(Number(dados.installments)) : 1;
+
+  const corpo = {
+    // ⚠️ do BANCO, não do cliente.
+    transaction_amount: paraReais(c.valor_centavos),
+    token,
+    installments: parcelas,
+    description: c.descricao || 'Pagamento CBRio',
+    external_reference: c.referencia || c.id,
+    payer: {
+      email: dados.payer?.email || c.pagador_email || undefined,
+      identification: dados.payer?.identification?.number
+        ? {
+          type: dados.payer.identification.type || 'CPF',
+          number: String(dados.payer.identification.number).replace(/\D/g, ''),
+        }
+        : undefined,
+    },
+  };
+  // Estes três o Brick resolve e o MP exige do jeito que ele mandou — repetir
+  // adivinhação nossa aqui só criaria divergência.
+  if (dados.payment_method_id) corpo.payment_method_id = String(dados.payment_method_id);
+  if (dados.issuer_id) corpo.issuer_id = String(dados.issuer_id);
+  if (dados.payment_method_option_id) corpo.payment_method_option_id = String(dados.payment_method_option_id);
+
+  const p = await req('POST', '/v1/payments', corpo, {
+    // Estável por TENTATIVA: retry de rede não cobra duas vezes, e um cartão
+    // novo (token novo) é outra tentativa legítima. Token do MP é de uso único,
+    // então reenviar o mesmo nunca vira segunda cobrança.
+    idempotencyKey: `${c.id}:cartao:${token.slice(0, 12)}`,
+  });
+  conferirLiveMode(p, 'pagamento com cartão');
+
+  const norm = dadosDoPayment(p);
+  return {
+    ...norm,
+    // Recusa do emissor NÃO é status de cobrança (`falhou` é terminal e
+    // tornaria a cobrança irrecuperável — a pessoa não poderia nem tentar outro
+    // cartão). Vai como motivo pra tela explicar e deixar tentar de novo.
+    recusado: norm.status === null,
+    motivo_recusa: norm.status === null
+      ? (p?.status_detail || p?.status || 'pagamento não aprovado')
+      : null,
+  };
+}
+
 module.exports = {
   nome,
   capacidades,
@@ -678,6 +780,8 @@ module.exports = {
   consultarStatus,
   cancelarCobranca,
   estornar,
+  pagarComToken,
+  chavePublica,
   verificarAssinatura,
   normalizarEvento,
   verificarChave,

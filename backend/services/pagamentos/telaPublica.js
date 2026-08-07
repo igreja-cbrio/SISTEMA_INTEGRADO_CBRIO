@@ -43,6 +43,23 @@ function estadoBasePagamento(cobranca) {
     boleto_url: cobranca.boleto_url || null,
     expira_em: cobranca.expira_em || null,
     pago_em: cobranca.pago_em || null,
+    // ── Cartão NA PRÓPRIA PÁGINA ──
+    // Quando o provider sabe tokenizar no navegador, a tela mostra formulário
+    // próprio em vez de mandar a pessoa pro site dele. `null` = cai no checkout
+    // hospedado (comportamento antigo), então isto degrada sozinho.
+    // ⚠️ Só faz sentido enquanto NÃO está pago e se cartão está entre as formas
+    // ofertadas — mandar a chave em toda resposta seria ruído.
+    cartao_na_pagina: !!(
+      cobranca.status !== 'pago'
+      && ofertados.includes('cartao')
+      && pagamentos.capacidades(cobranca.provider)?.tokenizacao
+      && pagamentos.chavePublica(cobranca.provider)
+    ),
+    cartao_public_key: (
+      cobranca.status !== 'pago'
+      && ofertados.includes('cartao')
+      && pagamentos.capacidades(cobranca.provider)?.tokenizacao
+    ) ? pagamentos.chavePublica(cobranca.provider) : null,
   };
 }
 

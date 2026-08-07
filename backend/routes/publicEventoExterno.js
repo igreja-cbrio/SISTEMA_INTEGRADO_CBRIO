@@ -577,6 +577,63 @@ router.post('/pagamento/:token/comprovante', uploadComprovante.single('arquivo')
  *
  * Não mexe em valor, status nem vaga. Trocar de forma não é pagar nem cancelar.
  */
+/**
+ * POST /pagamento/:token/cartao — cobra o cartão SEM sair da nossa página.
+ *
+ * O corpo é o `formData` que o Card Payment Brick monta no navegador. ⚠️ O que
+ * chega aqui é **token**, nunca número de cartão: é isso que mantém o PAN fora
+ * do nosso servidor (lei nº 5) e ainda assim tira o redirecionamento pro site do
+ * provedor — que era a única razão do salto existir.
+ *
+ * ⚠️ O `transaction_amount` que o Brick manda é IGNORADO. Quem diz o valor é a
+ * cobrança no banco; o formulário roda no navegador da pessoa, e aceitar o valor
+ * dele seria deixar qualquer um escolher quanto pagar pela inscrição.
+ */
+router.post('/pagamento/:token/cartao', async (req, res) => {
+  try {
+    const cobranca = await pagamentos.consultarPorToken(req.params.token);
+    if (!cobranca) return res.status(404).json({ error: 'Cobrança não encontrada' });
+
+    const b = req.body || {};
+    if (!b.token) return res.status(400).json({ error: 'Não recebemos os dados do cartão. Tente de novo.' });
+
+    const r = await pagamentos.pagarComCartao(cobranca, {
+      token: b.token,
+      installments: b.installments,
+      payment_method_id: b.payment_method_id,
+      issuer_id: b.issuer_id,
+      payment_method_option_id: b.payment_method_option_id,
+      payer: b.payer,
+    });
+
+    // Estado atual SEMPRE no corpo, inclusive em erro: sem isso a tela regride
+    // pra vazio e a pessoa não sabe se pagou (mesma régua do /metodo).
+    const pagamento = await respostaPagamento(r.cobranca || cobranca);
+
+    if (!r.ok) {
+      if (r.recusado) {
+        // 402: o pedido estava correto, o emissor recusou. A cobrança segue viva
+        // pra ela tentar outro cartão ou o Pix.
+        return res.status(402).json({ error: r.motivo || 'Pagamento não aprovado.', recusado: true, pagamento });
+      }
+      if (r.motivo === 'cobranca_nao_editavel') {
+        return res.status(409).json({ error: 'Esta cobrança já foi paga ou encerrada.', pagamento });
+      }
+      if (r.motivo === 'provider_sem_tokenizacao') {
+        return res.status(503).json({ error: 'Pagamento com cartão nesta tela está indisponível agora.', pagamento });
+      }
+      return res.status(400).json({ error: r.motivo || 'Não foi possível cobrar o cartão.', pagamento });
+    }
+
+    return res.json(pagamento);
+  } catch (e) {
+    console.error('[publicEvento] cartao:', e.message);
+    // ⚠️ Mensagem genérica pra fora: erro do provedor pode citar detalhe de
+    // conta/credencial, e isso não vai pra tela de quem está pagando.
+    res.status(502).json({ error: 'Não foi possível processar o cartão agora. Tente de novo em instantes.' });
+  }
+});
+
 router.post('/pagamento/:token/metodo', async (req, res) => {
   try {
     const cobranca = await pagamentos.consultarPorToken(req.params.token);
