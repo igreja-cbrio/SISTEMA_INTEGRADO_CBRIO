@@ -7,7 +7,7 @@ const { supabase } = require('../utils/supabase');
 const { uploadModuleFile, SHAREPOINT_CONFIGURED } = require('../services/storageService');
 const {
   normalizarCpf, normalizarTelefone, normalizarEmail, nomesMesmaPessoa,
-  acharMembroGuardado, acharOuCriarGuardado,
+  acharMembroGuardado, acharOuCriarGuardado, registrarContatoDaPorta,
 } = require('../services/membroMatch');
 const {
   verificarToken, notificarLiderNovoPedido, formatarQuando, formatarOnde,
@@ -604,19 +604,54 @@ async function processarPessoaPedido({ grupo, pessoa = {}, contexto = {}, princi
   );
   const membroId = achado?.membro_id || null;
 
-  // Já é membro: aproveita foto, sexo e data de nascimento declarados quando
-  // o cadastro ainda não os tem (enriquecimento só-onde-vazio — nunca
-  // sobrescreve o que existe). Roda ANTES do dedup de propósito: a RENOVAÇÃO
-  // (caso dominante da virada de temporada) respondia cedo e jogava fora o
-  // que a pessoa acabou de declarar (achado do sweep 28/07).
-  if (membroId && (fotoUrl || generoLimpo || dataNascimento)) {
-    const { data: mem } = await supabase.from('mem_membros').select('foto_url, genero, data_nascimento').eq('id', membroId).maybeSingle();
+  // Já é membro: aproveita foto, sexo, data de nascimento, e-mail e telefone
+  // declarados quando o cadastro ainda não os tem (enriquecimento só-onde-vazio
+  // — nunca sobrescreve o que existe; política do censo, 03/08). Contato
+  // DIVERGENTE do principal não é conflito nem sobrescreve: acumula em
+  // mem_contatos (Contrato de porta, item 3). Roda ANTES do dedup de propósito:
+  // a RENOVAÇÃO (caso dominante da virada de temporada) respondia cedo e jogava
+  // fora o que a pessoa acabou de declarar (achado do sweep 28/07).
+  if (membroId) {
+    const { data: mem } = await supabase.from('mem_membros')
+      .select('foto_url, genero, data_nascimento, email, telefone').eq('id', membroId).maybeSingle();
     if (mem) {
       const upd = {};
       if (fotoUrl && !mem.foto_url) upd.foto_url = fotoUrl;
       if (generoLimpo && !mem.genero) upd.genero = generoLimpo;
       if (dataNascimento && !mem.data_nascimento) upd.data_nascimento = dataNascimento;
+      if (emailLimpo && !mem.email) upd.email = emailLimpo;
+      const telAtual = soDigitos(mem.telefone);
+      if (telDigitos && [10, 11].includes(telDigitos.length) && !telAtual) upd.telefone = telDigitos;
       if (Object.keys(upd).length) await supabase.from('mem_membros').update(upd).eq('id', membroId);
+      // Divergente → contato secundário (mem_contatos), nunca o principal.
+      const emailDiverge = emailLimpo && mem.email && String(mem.email).trim().toLowerCase() !== emailLimpo;
+      const telDiverge = telDigitos && telAtual && telAtual !== telDigitos;
+      if (emailDiverge || telDiverge) {
+        registrarContatoDaPorta(membroId, {
+          telefone: telDiverge ? telDigitos : null,
+          email: emailDiverge ? emailLimpo : null,
+        }, 'grupos_formulario');
+      }
+    }
+    // CPF tardio (Contrato de porta, item 4 · mesma correção do censo em 04/08):
+    // o CPF digitado no formulário consolida no cadastro que o matcher ligou.
+    // Confiança espelha _consolidarCpfNoMatch (membroMatch): match por
+    // nome+nascimento = 'forte'; e-mail/telefone+nome = 'fraca' (o
+    // reconciliarCpfTardio só grava com nascimento conferível dos 2 lados —
+    // que o enriquecimento acima acabou de preencher quando estava vazio).
+    // Nascimento divergente ou CPF de outra pessoa vira identidade_pendencias
+    // (fila humana), nunca fusão. Best-effort: falha aqui não derruba a porta.
+    if (cpfLimpo && achado?.matched_by !== 'cpf') {
+      try {
+        const { reconciliarCpfTardio } = require('../services/cpfReconciliar');
+        await reconciliarCpfTardio({
+          membroId, cpf: cpfLimpo, origem: 'grupos_formulario',
+          dataNascimento,
+          confianca: achado?.matched_by === 'nome+nascimento' ? 'forte' : 'fraca',
+        });
+      } catch (e) {
+        console.warn('[public grupos inscrever] cpf tardio:', e.message);
+      }
     }
   }
 
