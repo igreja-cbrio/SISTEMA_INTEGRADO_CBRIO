@@ -32,7 +32,13 @@ const uuid = () => (crypto.randomUUID ? crypto.randomUUID()
 export default function CensoPublica() {
   const { slug = '' } = useParams();
   const [searchParams] = useSearchParams();
-  const palette = usePublicTheme();
+  // ⚠️ `usePublicTheme()` devolve { isDark, toggle, C } — a PALETA vem em `C`.
+  // Eu tinha passado o objeto inteiro para o contexto, então `optionBg`,
+  // `inputBorder` e `text` chegavam como undefined nos campos: o seletor de data
+  // virava um retângulo cinza sem texto, os botões de opção perdiam a moldura e
+  // "Sim"/"Não" ficavam idênticos (o estado selecionado não pintava nada).
+  // Todo o resto do sistema desestrutura `C` — é a convenção, e ela existe.
+  const { C: palette } = usePublicTheme();
 
   const [pesquisa, setPesquisa] = useState<Pesquisa | null>(null);
   const [erro, setErro] = useState<string | null>(null);
@@ -43,6 +49,7 @@ export default function CensoPublica() {
   const [pronto, setPronto] = useState<null | { cuidados: string[] }>(null);
   const [jaRespondeu, setJaRespondeu] = useState(false);
   const [preenchido, setPreenchido] = useState(false);
+  const [retomado, setRetomado] = useState(false);
 
   // Identidade: `?t=` (link pessoal) ou o token que o /prefill devolve.
   const [identidade, setIdentidade] = useState<string | null>(searchParams.get('t'));
@@ -54,6 +61,22 @@ export default function CensoPublica() {
   // ── chaves locais ──
   const FILA = `censo_fila_${slug}`;
   const RASCUNHO = `censo_rascunho_${slug}`;
+  // Rascunho LOCAL, gravado a cada toque. O rascunho do servidor vai a cada
+  // bloco (para não fazer 300 mil requisições num culto), então sozinho ele
+  // perde o que foi digitado no meio de um bloco — e não salva nada offline.
+  // Este aqui é síncrono, funciona sem rede e sobrevive a recarregar a página.
+  const LOCAL = `censo_respostas_${slug}`;
+
+  const lerLocal = useCallback((): { respostas: Respostas; iniciada_em?: string } | null => {
+    try { return JSON.parse(localStorage.getItem(LOCAL) || 'null'); } catch { return null; }
+  }, [LOCAL]);
+  const gravarLocal = useCallback((r: Respostas) => {
+    try {
+      localStorage.setItem(LOCAL, JSON.stringify({
+        respostas: r, iniciada_em: iniciadaEm.current, em: new Date().toISOString(),
+      }));
+    } catch { /* quota / modo privado: o formulário continua funcionando */ }
+  }, [LOCAL]);
 
   const lerFila = useCallback((): { payload: unknown }[] => {
     try { return JSON.parse(localStorage.getItem(FILA) || '[]'); } catch { return []; }
@@ -83,15 +106,27 @@ export default function CensoPublica() {
         if (!vivo) return;
         setPesquisa(p);
 
-        // Retomada: o segredo mora no aparelho; o servidor guarda só o hash.
+        // (a) Local primeiro: aparece na hora, mesmo sem rede.
+        const local = lerLocal();
+        if (vivo && local?.respostas && Object.keys(local.respostas).length) {
+          setRespostas(local.respostas);
+          if (local.iniciada_em) iniciadaEm.current = local.iniciada_em;
+          setRetomado(true);
+        }
+
+        // (b) Depois o servidor, que pode ter rascunho de OUTRO aparelho.
+        // Fica o que tiver mais resposta; empate fica com o local, que é o mais
+        // novo num recarregamento.
         try {
           const salvo = JSON.parse(localStorage.getItem(RASCUNHO) || 'null');
           if (salvo?.rascunho_id && salvo?.retomar) {
             const r = await censoPublico.retomar(slug, salvo);
-            if (vivo && r?.ok && !r.concluida && r.respostas && Object.keys(r.respostas).length) {
-              setRespostas(r.respostas);
+            if (vivo && r?.ok && !r.concluida && r.respostas) {
+              const doServidor = Object.keys(r.respostas).length;
+              const doAparelho = Object.keys(local?.respostas || {}).length;
+              if (doServidor > doAparelho) { setRespostas(r.respostas); setRetomado(true); }
             }
-            if (r?.concluida) localStorage.removeItem(RASCUNHO);
+            if (r?.concluida) { localStorage.removeItem(RASCUNHO); localStorage.removeItem(LOCAL); }
           }
         } catch { /* rascunho velho ou inválido: começa do zero, sem alarme */ }
       } catch (e) {
@@ -140,6 +175,7 @@ export default function CensoPublica() {
 
   function aoMudar(novas: Respostas) {
     setRespostas(novas);
+    gravarLocal(novas);            // a cada toque, sem rede
   }
 
   const perguntas = pesquisa?.perguntas || [];
@@ -167,6 +203,7 @@ export default function CensoPublica() {
     // culto não fica olhando um spinner enquanto a borda decide responder.
     salvarFila([...lerFila(), { payload }]);
     localStorage.removeItem(RASCUNHO);
+    localStorage.removeItem(LOCAL);
     setPronto({ cuidados: [] });
     setEnviando(false);
     subirFila();
@@ -217,6 +254,17 @@ export default function CensoPublica() {
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 10 }}>
             <PublicThemeToggle />
           </div>
+
+          {retomado && !pronto && !jaRespondeu && (
+            <div style={{
+              marginBottom: 16, padding: '10px 14px', borderRadius: 10, fontSize: 13,
+              background: 'color-mix(in srgb, #00B39D 12%, transparent)',
+              border: '1px solid color-mix(in srgb, #00B39D 35%, transparent)',
+              color: palette.text2,
+            }}>
+              Recuperamos o que você já havia preenchido — pode continuar de onde parou.
+            </div>
+          )}
 
           {pesquisa && !pronto && !jaRespondeu && (
             <header style={{ marginBottom: 24 }}>
@@ -275,14 +323,12 @@ export default function CensoPublica() {
         if (!r?.encontrado) { setNaoAchou(true); return; }
         if (r.ja_respondeu) { setJaRespondeu(true); return; }
         setIdentidade(r.identidade);
-        // Preenche pelo campo que a pergunta declara (`preenche_de`), não pelo
-        // id — assim renomear uma pergunta não quebra o pré-preenchimento.
-        const novas: Respostas = { ...respostas };
-        for (const p of perguntas) {
-          const v = p.preenche_de ? (r.valores || {})[p.preenche_de] : undefined;
-          if (v) novas[p.id] = v;
-        }
+        // O servidor devolve por PERGUNTA e já casado com as opções (o cadastro
+        // guarda 'casado', a opção é 'Casado(a)'). Casar é responsabilidade de
+        // quem tem as opções — o servidor —, não de duas réguas paralelas.
+        const novas: Respostas = { ...respostas, ...(r.valores || {}) };
         setRespostas(novas);
+        gravarLocal(novas);
         setPreenchido(true);
       } catch { setNaoAchou(true); }
       finally { setChecando(false); }

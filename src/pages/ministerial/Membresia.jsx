@@ -36,6 +36,7 @@ import {
 } from '../../components/ui/tabs';
 import TabCadastros from './TabCadastros';
 import MembersJornadaPanel from '../../components/MembersJornadaPanel';
+import CensoRespostasDialog from '../../components/membresia/CensoRespostasDialog';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
@@ -912,6 +913,7 @@ export default function Membresia() {
   const [loadingWifi, setLoadingWifi] = useState(false);
   const [faceHist, setFaceHist] = useState(null); // { total, ultima, itens: [] }
   const [loadingFace, setLoadingFace] = useState(false);
+  const [censoAberto, setCensoAberto] = useState(null);   // membro_id ou null
   const [timeline, setTimeline] = useState(null); // { eventos: [], total }
   const [loadingTimeline, setLoadingTimeline] = useState(false);
   const [possiveisDup, setPossiveisDup] = useState([]);
@@ -3191,6 +3193,22 @@ export default function Membresia() {
                                 </div>
                               </div>
                               {ev.detalhe && <div style={{ fontSize: 12, color: C.text3, marginTop: 2, wordBreak: 'break-word' }}>{ev.detalhe}</div>}
+                              {/* O censo é a única atividade cujo CONTEÚDO a
+                                  equipe precisa ler aqui — as outras são fatos
+                                  ("entrou no grupo"), esta é um questionário. */}
+                              {ev.tipo === 'censo' && (
+                                <button
+                                  type="button"
+                                  onClick={() => setCensoAberto(selectedMembro?.id)}
+                                  style={{
+                                    marginTop: 4, fontSize: 12, color: 'var(--teal)',
+                                    background: 'none', border: 'none', padding: 0,
+                                    cursor: 'pointer', fontFamily: 'inherit',
+                                  }}
+                                >
+                                  ver as respostas →
+                                </button>
+                              )}
                             </div>
                           </div>
                         );
@@ -3206,6 +3224,10 @@ export default function Membresia() {
             </div>
           </div>
         </div>
+      )}
+
+      {censoAberto && (
+        <CensoRespostasDialog membroId={censoAberto} onClose={() => setCensoAberto(null)} />
       )}
 
       {/* Form Modal */}

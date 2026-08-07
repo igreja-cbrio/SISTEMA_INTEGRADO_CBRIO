@@ -12,6 +12,15 @@
       "texto": "1 — Identificação básica"
     },
     {
+      "id": "cpf",
+      "tipo": "texto_curto",
+      "texto": "CPF",
+      "obrigatoria": true,
+      "formato": "cpf",
+      "preenche_de": "cpf",
+      "descricao": "É o que liga sua resposta ao seu cadastro na igreja."
+    },
+    {
       "id": "nome",
       "tipo": "texto_curto",
       "texto": "Nome completo",

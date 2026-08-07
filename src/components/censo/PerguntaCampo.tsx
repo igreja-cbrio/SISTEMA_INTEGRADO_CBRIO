@@ -10,6 +10,8 @@ import type { CSSProperties } from 'react';
 import type { Pergunta } from '@/lib/censoForm';
 import { NAO_SE_APLICA, alternarOpcao, ehNeutra } from '@/lib/censoForm';
 import { usePublicPalette } from '@/pages/public/publicTheme';
+import { BirthDatePicker } from '@/components/ui/birth-date-picker';
+import { DatePicker } from '@/components/ui/date-picker';
 
 type Props = {
   pergunta: Pergunta;
@@ -106,17 +108,37 @@ export default function PerguntaCampo({ pergunta: p, valor, onChange, faltando }
   }
 
   // ── Sim/Não e escolha única ──
+  // ⚠️ A marca NÃO é só a cor. O Matheus reportou "os dois ficam marcados"
+  // quando um valor da paleta falhou e as duas moldura ficaram parecidas — com a
+  // bolinha, marcado e desmarcado são inconfundíveis mesmo se o tema quebrar.
+  // Vale também para quem não distingue as cores.
   if (p.tipo === 'sim_nao' || p.tipo === 'opcao_unica') {
     const opcoes = p.tipo === 'sim_nao' ? ['Sim', 'Não'] : (p.opcoes || []);
     const emLinha = p.tipo === 'sim_nao';
     return (
       <div style={{ display: emLinha ? 'flex' : 'grid', gap: 8 }}>
-        {opcoes.map((o) => (
-          <button key={o} type="button" onClick={() => onChange(o)}
-            style={{ ...opcaoBtn(valor === o, ehNeutra(p, o)), flex: emLinha ? 1 : undefined, textAlign: emLinha ? 'center' : 'left' }}>
-            {o}
-          </button>
-        ))}
+        {opcoes.map((o) => {
+          const ativo = valor === o;
+          return (
+            <button key={o} type="button" onClick={() => onChange(o)}
+              role="radio" aria-checked={ativo}
+              style={{
+                ...opcaoBtn(ativo, ehNeutra(p, o)),
+                flex: emLinha ? 1 : undefined,
+                display: 'flex', alignItems: 'center', gap: 10,
+                justifyContent: emLinha ? 'center' : 'flex-start',
+              }}>
+              <span aria-hidden style={{
+                width: 18, height: 18, borderRadius: '50%', flexShrink: 0,
+                border: `1px solid ${ativo ? TEAL : c.inputBorder}`,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>
+                {ativo && <span style={{ width: 10, height: 10, borderRadius: '50%', background: TEAL }} />}
+              </span>
+              {o}
+            </button>
+          );
+        })}
       </div>
     );
   }
@@ -154,10 +176,18 @@ export default function PerguntaCampo({ pergunta: p, valor, onChange, faltando }
   }
 
   if (p.tipo === 'data') {
-    return (
-      <input type="date" style={base} max={new Date().toISOString().slice(0, 10)}
-        value={typeof valor === 'string' ? valor : ''}
-        onChange={(e) => onChange(e.target.value)} />
+    // ⚠️ NÃO usar <input type="date"> — é convenção do repo (DatePicker /
+    // BirthDatePicker), criada depois de o seletor nativo dar problema nas
+    // inscrições de grupos. No celular do Matheus ele aparecia como um
+    // retângulo cinza sem texto. `preenche_de: 'data_nascimento'` marca a
+    // pergunta de nascimento, que ganha o seletor com dropdown de ano.
+    const ehNascimento = p.preenche_de === 'data_nascimento' || /nascimento/i.test(p.texto);
+    const iso = typeof valor === 'string' ? valor : '';
+    return ehNascimento ? (
+      <BirthDatePicker value={iso} onChange={onChange}
+        placeholder="Selecione a data" aria-invalid={faltando || undefined} />
+    ) : (
+      <DatePicker value={iso} onChange={onChange} placeholder="Selecione a data" />
     );
   }
 

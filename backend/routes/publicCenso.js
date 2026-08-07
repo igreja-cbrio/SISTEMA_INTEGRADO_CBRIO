@@ -23,6 +23,7 @@ const {
   gerarSegredoRetomada, hashRetomada, retomadaConfere,
 } = require('../utils/censoRespostaToken');
 const { cpfValido, normalizarCpf } = require('../utils/cpf');
+const { casarComOpcao, loteParaBanco } = require('../utils/censoVocabulario');
 const { acharMembroGuardado } = require('../services/membroMatch');
 
 let reconciliarCenso;
@@ -193,22 +194,34 @@ router.post('/:slug/prefill', lookupLimiter, async (req, res) => {
     if (!token) return res.json(neutra);   // fail-closed sem segredo configurado
 
     // Devolve só o que a PRÓPRIA pessoa acabou de provar que é dela, e só o que
-    // o questionário usa para pré-preencher.
-    res.json({
-      encontrado: true,
-      ja_respondeu: !!jaTem,
-      identidade: token,
-      valores: {
-        nome: data.nome || '',
-        data_nascimento: data.data_nascimento || '',
-        telefone: data.telefone || '',
-        email: data.email || '',
-        estado_civil: data.estado_civil || '',
-        cidade: data.cidade || '',
-        bairro: data.bairro || '',
-        profissao: data.profissao || '',
-      },
-    });
+    // o questionário declara pré-preencher (`preenche_de`).
+    //
+    // ⚠️ Devolvemos por PERGUNTA, não por campo, e já CASADO com as opções: o
+    // cadastro guarda `estado_civil` como 'casado' e a opção é 'Casado(a)', então
+    // devolver o valor cru deixava a pergunta sem nada marcado — a pessoa achava
+    // que o "buscar meu cadastro" não tinha funcionado (relato do Matheus, 07/08).
+    // Casar aqui, onde estão as opções, evita repetir essa régua no cliente.
+    const doCadastro = {
+      cpf, nome: data.nome, data_nascimento: data.data_nascimento,
+      telefone: data.telefone, email: data.email, estado_civil: data.estado_civil,
+      cidade: data.cidade, bairro: data.bairro, profissao: data.profissao,
+    };
+    const valores = {};
+    for (const q of r.pesquisa.perguntas || []) {
+      if (!q.preenche_de) continue;
+      const bruto = doCadastro[q.preenche_de];
+      if (bruto === null || bruto === undefined || bruto === '') continue;
+      if (Array.isArray(q.opcoes) && q.opcoes.length) {
+        const casado = casarComOpcao(bruto, q.opcoes);
+        // Sem correspondência não inventamos: a pessoa escolhe. Marcar a opção
+        // errada por ela seria pior que não marcar nada.
+        if (casado) valores[q.id] = casado;
+      } else {
+        valores[q.id] = String(bruto);
+      }
+    }
+
+    res.json({ encontrado: true, ja_respondeu: !!jaTem, identidade: token, valores });
   } catch (e) { res.json(neutra); }
 });
 
@@ -353,6 +366,23 @@ router.post('/:slug/responder', submitLimiter, async (req, res) => {
     //
     // `config.vincular_na_hora: true` volta ao comportamento síncrono — útil
     // numa pesquisa pequena, onde a comodidade vale mais que a latência.
+    // ⚠️ CPF É CHAVE FORTE e o censo passou a exigi-lo (07/08). Casar por CPF é
+    // UMA consulta por índice — nada a ver com o matcher difuso (3 a 4 consultas
+    // e heurística de nome). Então este vínculo acontece NA HORA, mesmo no modo
+    // diferido: é o que faz a UNIQUE (pesquisa_id, membro_id) voltar a proteger
+    // contra resposta repetida durante o culto, e o que garante que a resposta
+    // aparece na ficha da pessoa sem esperar o pós-processamento.
+    const cpfInformado = normalizarCpf(porCampo.cpf);
+    if (!membroId && cpfInformado && cpfValido(cpfInformado)) {
+      try {
+        const { data: m } = await supabase
+          .from('mem_membros').select('id')
+          .eq('cpf', cpfInformado).eq('active', true).is('deleted_at', null)
+          .maybeSingle();
+        if (m?.id) { membroId = m.id; matchedBy = 'cpf'; identificadoPor = 'cpf_nascimento'; }
+      } catch { /* indisponível não impede a resposta de entrar */ }
+    }
+
     const vincularAgora = pesquisa.config?.vincular_na_hora === true;
     if (!membroId && vincularAgora) {
       try {
@@ -496,7 +526,10 @@ router.post('/:slug/responder', submitLimiter, async (req, res) => {
     let cadastro = null;
     if (vincularAgora && membroId && matchedBy) {
       try {
-        const dados = { ...porCampo };
+        // Traduz para o vocabulário do BANCO. Sem isto, gravaríamos 'Casado(a)'
+        // numa coluna que só tem 'casado' — criando um segundo vocabulário em
+        // silêncio, e depois todo filtro por estado civil passa a mentir.
+        const dados = loteParaBanco(porCampo);
         delete dados.nome;   // `nome` é chave de match e o serviço já o ignora
         cadastro = await reconciliarCenso({ membroId, matchedBy, dados, origemId: respostaId });
       } catch (e) { console.error('[PUBLIC CENSO] reconciliar:', e.message); }

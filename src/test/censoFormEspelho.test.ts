@@ -36,6 +36,7 @@ function preencher(rnd: () => number, { deixarVazio = 0 } = {}) {
     if (!visivelFront(p, R)) continue;
     if (rnd() < deixarVazio) continue;                       // simula campo não preenchido
     const o = p.opcoes as string[] | undefined;
+    if (p.formato === 'cpf') { R[p.id] = '52998224725'; continue; }
     switch (p.tipo) {
       case 'sim_nao': R[p.id] = rnd() < 0.5 ? 'Sim' : 'Não'; break;
       case 'opcao_unica': R[p.id] = o![Math.floor(rnd() * o!.length)]; break;
