@@ -3776,6 +3776,30 @@ router.post('/grupos/:grupoId/visitas', authApp, limiterNormal, async (req, res)
 
     const observacao = req.body?.observacao ? String(req.body.observacao).trim().slice(0, 2000) : null;
 
+    // ⚠️ IDEMPOTÊNCIA POR (grupo, pessoa, dia). `grupo_supervisao_visitas` NÃO
+    // tem UNIQUE nenhuma, e o caminho de repetição é REAL: se a frequência
+    // grava e a visita falha, a tela pede pra tentar de novo — sem esta guarda,
+    // a 2ª tentativa criaria a segunda visita do mesmo dia e o
+    // `visitas_mes_atual` da `vw_grupos_supervisao` passaria a contar visita que
+    // não houve. Devolve a que já existe em vez de duplicar.
+    const { data: jaTem } = await supabase.from('grupo_supervisao_visitas')
+      .select('id, data_visita, observacao, status')
+      .eq('grupo_id', gid)
+      .eq('data_visita', data)
+      .eq('status', 'realizada')
+      .eq('responsavel_id', req.user?.id || null)
+      .maybeSingle();
+    if (jaTem) {
+      // Comentário digitado na 2ª tentativa não pode se perder em silêncio.
+      if (observacao && observacao !== jaTem.observacao) {
+        const { data: atualizada } = await supabase.from('grupo_supervisao_visitas')
+          .update({ observacao }).eq('id', jaTem.id)
+          .select('id, data_visita, observacao, status').maybeSingle();
+        return res.status(200).json({ ok: true, visita: atualizada || jaTem, ja_existia: true });
+      }
+      return res.status(200).json({ ok: true, visita: jaTem, ja_existia: true });
+    }
+
     const { data: linha, error } = await supabase.from('grupo_supervisao_visitas')
       .insert({
         grupo_id: gid,
@@ -3813,12 +3837,24 @@ router.get('/grupos/:grupoId/visitas', authApp, limiterNormal, async (req, res) 
     const gid = req.params.grupoId;
     const g = await gateGrupoApp(req, res, gid);
     if (!g.ok) return;
-    const { data, error } = await supabase.from('grupo_supervisao_visitas')
+    // ⚠️⚠️ RECORTE POR PESSOA — sem ele a tela MENTE. A tela do app diz "Sua
+    // última visita" e "Suas visitas", e sem filtro esta lista traria também as
+    // visitas que a COORDENAÇÃO registrou pelo web (`POST /api/grupos/:id/visitas`
+    // deixa admin/coordenador registrar em qualquer grupo). O supervisor abriria
+    // a tela, leria "Sua última visita: 01/08" — de uma visita que ele não fez —
+    // e seria dispensado de ir ao grupo. É justamente o herói da tela.
+    //
+    // ⚠️ O corte é por `responsavel_id`/`registrado_por` (profiles de quem FEZ),
+    // NÃO por `supervisor_id`: quando quem registra pelo web não tem
+    // `membro_id`, o `supervisor_id` cai no supervisor DO GRUPO — ou seja, a
+    // visita do pastor já nasce carimbada com o nome dele.
+    const uid = req.user?.id || null;
+    let q = supabase.from('grupo_supervisao_visitas')
       .select('id, data_visita, observacao, status')
       .eq('grupo_id', gid)
-      .eq('status', 'realizada')
-      .order('data_visita', { ascending: false })
-      .limit(20);
+      .eq('status', 'realizada');
+    if (uid) q = q.or(`responsavel_id.eq.${uid},registrado_por.eq.${uid}`);
+    const { data, error } = await q.order('data_visita', { ascending: false }).limit(20);
     if (error) throw error;
     res.json({ visitas: data || [] });
   } catch (e) {
