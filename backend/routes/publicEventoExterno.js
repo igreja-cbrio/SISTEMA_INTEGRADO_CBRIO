@@ -276,7 +276,7 @@ async function aplicarBeneficio(beneficio, inscricaoId) {
  */
 async function cobrarInscricao({ ev, inscricaoId, val, membroId, valorCentavos, estacaoId }) {
   const horas = Number(ev.pagamento_expira_horas) > 0 ? Number(ev.pagamento_expira_horas) : 48;
-  const { cobranca } = await pagamentos.criarCobranca({
+  const { cobranca, reemitida } = await pagamentos.criarCobranca({
     origem_tipo: pagamentos.ORIGENS.INSCRICAO,
     origem_id: inscricaoId,
     referencia: refCobranca(inscricaoId),
@@ -301,6 +301,25 @@ async function cobrarInscricao({ ev, inscricaoId, val, membroId, valorCentavos, 
     estacao_id: estacaoId || null,
     metadata: { evento_id: ev.id, evento_slug: ev.slug, evento_nome: ev.nome },
   });
+
+  // ⚠️ Reemissão (a cobrança anterior morreu sem dinheiro): o espelho tem
+  // `uq_insc_pag_inscricao_ativa` — UMA linha por inscrição em
+  // pendente/aguardando/pago. Sem aposentar a antiga, o insert abaixo bate 23505,
+  // é engolido como "já existe", e o painel/`vw_insc_pagamento_estado` seguiriam
+  // apontando pra cobrança MORTA enquanto a nova é a que a pessoa vai pagar.
+  // Mesma manobra que o botão "Dar bolsa" já faz. Só linha `aguardando`/
+  // `pendente`: `pago` nunca é mexido (e ali nem se reemite).
+  if (reemitida) {
+    const { error: eVelha } = await supabase.from('insc_pagamentos')
+      .update({ status: 'expirado' })
+      // Sem filtrar pela cobrança nova: ela ACABOU de nascer, então não tem
+      // espelho ainda — e `neq` deixaria de fora linha legada com
+      // `cobranca_id` nulo (NULL não compara), que é justamente uma das que
+      // travariam a UNIQUE.
+      .eq('inscricao_id', inscricaoId)
+      .in('status', ['pendente', 'aguardando']);
+    if (eVelha) console.error('[publicEvento espinha] aposentar espelho anterior:', eVelha.message);
+  }
 
   // Espelho pro painel. Best-effort e idempotente pela UNIQUE de cobranca_id —
   // reenvio do formulário não cria segunda linha.
