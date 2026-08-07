@@ -163,6 +163,110 @@ async function carregarPesquisaAberta(slug) {
   return { pesquisa: data };
 }
 
+// ── GET /catalogo/:nome · listas longas com busca ─────────────────────────
+//
+// As opções destas perguntas NÃO moram no jsonb da pesquisa: 1.911 igrejas em
+// cada requisição do questionário seria absurdo (o questionário já tem 4 KB).
+//
+// Dois catálogos, com naturezas diferentes de propósito:
+//  · igrejas_rj    → arquivo no repo, buscado EM MEMÓRIA. Não muda durante um
+//                    culto e não vale uma ida ao banco por tecla digitada.
+//  · grupos_ativos → banco, porque grupo abre e fecha. Busca por nome do grupo
+//                    OU pelo nome do líder — pedido do Matheus: quem não lembra
+//                    o nome do grupo lembra de quem lidera.
+const MIN_BUSCA = 2;
+const TETO_CATALOGO = 20;
+
+let _igrejas = null;
+function igrejas() {
+  if (_igrejas) return _igrejas;
+  try {
+    const doc = require('../data/igrejasRJ.json');
+    _igrejas = (doc.igrejas || []).map((i) => ({
+      rotulo: i.nome,
+      detalhe: [i.bairro, i.cidade].filter(Boolean).join(' · ') || null,
+      chave: chaveBusca(`${i.nome} ${i.cidade || ''} ${i.bairro || ''}`),
+    }));
+  } catch { _igrejas = []; }
+  return _igrejas;
+}
+
+function chaveBusca(v) {
+  return String(v || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+router.get('/catalogo/:nome', submitLimiter, async (req, res) => {
+  try {
+    const nome = String(req.params.nome || '').trim();
+    const q = chaveBusca(req.query.q);
+    if (q.length < MIN_BUSCA) return res.json({ itens: [] });
+
+    if (nome === 'igrejas_rj') {
+      // Todos os termos precisam aparecer: "batista laranjal" acha
+      // "Igreja Batista de Laranjal" sem depender da ordem.
+      const termos = q.split(' ').filter(Boolean);
+      const achados = [];
+      for (const i of igrejas()) {
+        if (termos.every((t) => i.chave.includes(t))) {
+          achados.push({ valor: i.rotulo, rotulo: i.rotulo, detalhe: i.detalhe });
+          if (achados.length >= TETO_CATALOGO) break;
+        }
+      }
+      res.set('Cache-Control', 'public, s-maxage=3600');
+      return res.json({ itens: achados, incompleto: true });
+    }
+
+    if (nome === 'grupos_ativos') {
+      const termo = `%${String(req.query.q || '').trim()}%`;
+      const { data, error } = await supabase
+        .from('mem_grupos')
+        .select('id, nome, bairro, dia_semana, lider:mem_membros!mem_grupos_lider_id_fkey(nome)')
+        .eq('ativo', true).is('deleted_at', null)
+        .or(`nome.ilike.${termo}`)
+        .order('nome').limit(TETO_CATALOGO);
+      if (error) return res.json({ itens: [] });
+
+      // Busca pelo LÍDER: uma segunda consulta, porque `or` do PostgREST não
+      // atravessa relação embutida. Duas consultas curtas e indexadas valem mais
+      // que uma view nova só para isto.
+      const { data: porLider } = await supabase
+        .from('mem_grupos')
+        // `!inner` é obrigatório: sem ele o PostgREST TRAZ a relação mas não
+        // FILTRA por ela, e a busca por líder devolveria todos os grupos.
+        .select('id, nome, bairro, dia_semana, lider:mem_membros!mem_grupos_lider_id_fkey!inner(nome)')
+        .eq('ativo', true).is('deleted_at', null)
+        .ilike('lider.nome', termo)
+        .order('nome').limit(TETO_CATALOGO);
+
+      const DIA = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
+      const vistos = new Set();
+      const itens = [];
+      for (const g of [...(data || []), ...(porLider || [])]) {
+        if (vistos.has(g.id)) continue;
+        vistos.add(g.id);
+        itens.push({
+          valor: g.nome,
+          rotulo: g.nome,
+          detalhe: [
+            g.lider?.nome ? `líder ${g.lider.nome}` : null,
+            g.bairro,
+            typeof g.dia_semana === 'number' ? DIA[g.dia_semana] : null,
+          ].filter(Boolean).join(' · ') || null,
+        });
+        if (itens.length >= TETO_CATALOGO) break;
+      }
+      return res.json({ itens });
+    }
+
+    return res.status(404).json({ error: 'Catálogo não encontrado' });
+  } catch (e) {
+    console.error('[PUBLIC CENSO] catalogo:', e.message);
+    res.json({ itens: [] });
+  }
+});
+
 // ── GET /:slug · o questionário ───────────────────────────────────────────
 router.get('/:slug', submitLimiter, async (req, res) => {
   try {

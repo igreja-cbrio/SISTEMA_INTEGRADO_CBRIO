@@ -7,6 +7,7 @@
 // Estilo inline com a paleta pública (mesmo padrão de NpsForm/CadastroMembresia):
 // a página é aberta por gente de fora, no celular, e não carrega o tema do ERP.
 import type { CSSProperties } from 'react';
+import { useEffect, useState } from 'react';
 import type { Pergunta } from '@/lib/censoForm';
 import { NAO_SE_APLICA, alternarOpcao, ehNeutra } from '@/lib/censoForm';
 import { usePublicPalette } from '@/pages/public/publicTheme';
@@ -18,11 +19,16 @@ type Props = {
   valor: unknown;
   onChange: (valor: unknown) => void;
   faltando?: boolean;
+  /** Busca no catálogo (igrejas do RJ, grupos ativos). Injetada pelo formulário
+   *  para o campo não precisar conhecer a API. */
+  buscarCatalogo?: (catalogo: string, q: string) => Promise<CatalogoItem[]>;
 };
+
+export type CatalogoItem = { valor: string; rotulo: string; detalhe?: string | null };
 
 const TEAL = '#00B39D';
 
-export default function PerguntaCampo({ pergunta: p, valor, onChange, faltando }: Props) {
+export default function PerguntaCampo({ pergunta: p, valor, onChange, faltando, buscarCatalogo }: Props) {
   const c = usePublicPalette();
 
   const base: CSSProperties = {
@@ -167,6 +173,13 @@ export default function PerguntaCampo({ pergunta: p, valor, onChange, faltando }
     );
   }
 
+  if (p.tipo === 'busca') {
+    return (
+      <CampoBusca pergunta={p} valor={valor} onChange={onChange} faltando={faltando}
+        buscar={buscarCatalogo} />
+    );
+  }
+
   if (p.tipo === 'texto_longo') {
     return (
       <textarea rows={4} style={{ ...base, resize: 'vertical' }}
@@ -225,5 +238,117 @@ export default function PerguntaCampo({ pergunta: p, valor, onChange, faltando }
         onChange(v);
       }}
     />
+  );
+}
+
+/**
+ * Lista longa com busca (igrejas do RJ, grupos ativos).
+ *
+ * Três decisões que vêm do uso real:
+ *  · SEMPRE aceita o que a pessoa digitou. A lista de igrejas vem do
+ *    OpenStreetMap: é grande (1.911) mas incompleta, e lista incompleta sem
+ *    escape faz a pessoa responder qualquer coisa para poder avançar.
+ *  · busca no SERVIDOR, com espera de 300ms. Mandar 1.911 igrejas para cada
+ *    aparelho no culto seria pior que a busca.
+ *  · o valor guardado é o TEXTO, não um id: é o que o gráfico e a exportação
+ *    leem, e o catálogo pode mudar sem invalidar resposta já coletada.
+ */
+function CampoBusca({ pergunta: p, valor, onChange, faltando, buscar }: {
+  pergunta: Pergunta; valor: unknown; onChange: (v: unknown) => void;
+  faltando?: boolean; buscar?: (catalogo: string, q: string) => Promise<CatalogoItem[]>;
+}) {
+  const c = usePublicPalette();
+  const escolhido = typeof valor === 'string' ? valor : '';
+  const [termo, setTermo] = useState('');
+  const [itens, setItens] = useState<CatalogoItem[]>([]);
+  const [buscando, setBuscando] = useState(false);
+  const [aberto, setAberto] = useState(false);
+
+  useEffect(() => {
+    if (!aberto || termo.trim().length < 2 || !buscar || !p.catalogo) { setItens([]); return; }
+    setBuscando(true);
+    const t = setTimeout(() => {
+      buscar(p.catalogo!, termo.trim())
+        .then((r) => setItens(r || []))
+        .catch(() => setItens([]))
+        .finally(() => setBuscando(false));
+    }, 300);
+    return () => { clearTimeout(t); setBuscando(false); };
+  }, [termo, aberto, p.catalogo, buscar]);
+
+  const inp: CSSProperties = {
+    width: '100%', padding: '11px 12px', borderRadius: 10, fontSize: 15,
+    border: `1px solid ${faltando ? '#ef4444' : c.inputBorder}`,
+    background: c.optionBg, color: c.text, boxSizing: 'border-box', fontFamily: 'inherit',
+  };
+
+  // Já escolheu: mostra a escolha com um jeito claro de trocar.
+  if (escolhido && !aberto) {
+    return (
+      <div style={{ ...inp, display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{escolhido}</span>
+        <button type="button" onClick={() => { setAberto(true); setTermo(''); }}
+          style={{
+            background: 'none', border: 'none', color: TEAL, fontSize: 13,
+            cursor: 'pointer', fontFamily: 'inherit', padding: 0, flexShrink: 0,
+          }}>
+          trocar
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <input
+        style={inp}
+        value={termo}
+        autoComplete="off"
+        placeholder={p.catalogo === 'grupos_ativos'
+          ? 'Digite o nome do grupo ou do líder' : 'Digite o nome da igreja'}
+        onFocus={() => setAberto(true)}
+        onChange={(e) => { setTermo(e.target.value); setAberto(true); }}
+      />
+
+      {aberto && termo.trim().length >= 2 && (
+        <div style={{
+          marginTop: 6, borderRadius: 10, overflow: 'hidden',
+          border: `1px solid ${c.inputBorder}`, background: c.optionBg,
+        }}>
+          {buscando && (
+            <div style={{ padding: '10px 12px', fontSize: 13, color: c.textDim }}>Procurando…</div>
+          )}
+          {!buscando && itens.map((i) => (
+            <button key={i.valor} type="button"
+              onClick={() => { onChange(i.valor); setAberto(false); setTermo(''); }}
+              style={{
+                display: 'block', width: '100%', textAlign: 'left', padding: '10px 12px',
+                background: 'none', border: 'none', borderBottom: `1px solid ${c.inputBorder}`,
+                color: c.text, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit',
+              }}>
+              {i.rotulo}
+              {i.detalhe && (
+                <span style={{ display: 'block', fontSize: 12, color: c.textDim, marginTop: 2 }}>
+                  {i.detalhe}
+                </span>
+              )}
+            </button>
+          ))}
+          {/* O escape. Sem ele, quem não acha a própria igreja inventa uma. */}
+          {!buscando && p.permite_outro !== false && (
+            <button type="button"
+              onClick={() => { onChange(termo.trim()); setAberto(false); setTermo(''); }}
+              style={{
+                display: 'block', width: '100%', textAlign: 'left', padding: '10px 12px',
+                background: 'none', border: 'none', color: c.text2, fontSize: 14,
+                cursor: 'pointer', fontFamily: 'inherit', fontStyle: 'italic',
+              }}>
+              {itens.length ? 'Não é nenhuma dessas — usar ' : 'Usar '}
+              “{termo.trim()}”
+            </button>
+          )}
+        </div>
+      )}
+    </div>
   );
 }

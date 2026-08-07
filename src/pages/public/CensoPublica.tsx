@@ -173,6 +173,15 @@ export default function CensoPublica() {
     } catch { /* best-effort: o aparelho tem a própria cópia na fila */ }
   }, [slug, canal, RASCUNHO]);
 
+  // Busca no catálogo (igrejas do RJ, grupos ativos). Fica aqui porque é a
+  // página que conhece a API; o campo só recebe a função.
+  const buscarCatalogo = useCallback(async (catalogo: string, q: string) => {
+    try {
+      const r = await censoPublico.catalogo(catalogo, q);
+      return r?.itens || [];
+    } catch { return []; }
+  }, []);
+
   function aoMudar(novas: Respostas) {
     setRespostas(novas);
     gravarLocal(novas);            // a cada toque, sem rede
@@ -234,6 +243,7 @@ export default function CensoPublica() {
           respostas={respostas}
           onChange={aoMudar}
           onBlocoConcluido={salvarRascunho}
+          buscarCatalogo={buscarCatalogo}
           onEnviar={enviar}
           enviando={enviando}
           consentimentoTexto={pesquisa.consentimento_texto}
