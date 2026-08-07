@@ -292,6 +292,43 @@ export const propostas = {
   consolidarCiclo: (cicloId) => post(`/propostas/config/ciclos/${cicloId}/consolidar`, {}),
 };
 
+// Módulo Censo · plataforma de pesquisas (censo demográfico, pulso, evento).
+// F0: CRUD do questionário. A coleta pública e os dashboards vêm nas fases
+// seguintes (publicCenso / dashboard).
+export const censo = {
+  aux: () => get('/censo/aux'),
+  // Vem da view vw_cen_pesquisa_stats: já traz iniciadas/concluídas/taxa.
+  pesquisas: () => get('/censo/pesquisas'),
+  pesquisa: (id) => get(`/censo/pesquisas/${id}`),
+  criar: (data) => post('/censo/pesquisas', data),
+  atualizar: (id, data) => put(`/censo/pesquisas/${id}`, data),
+  status: (id, status) => post(`/censo/pesquisas/${id}/status`, { status }),
+  duplicar: (id, data) => post(`/censo/pesquisas/${id}/duplicar`, data || {}),
+  remover: (id) => del(`/censo/pesquisas/${id}`),
+  // Respostas nominais (nível 2). O bloco sensível vem filtrado pelo servidor
+  // para quem não está em cen_acesso_sensivel — o front só mostra que existe
+  // algo oculto, nunca o conteúdo.
+  respostas: (pesquisaId, limite) =>
+    get(`/censo/respostas?pesquisa_id=${pesquisaId}${limite ? `&limite=${limite}` : ''}`),
+  resposta: (id) => get(`/censo/respostas/${id}`),
+  // Fila de cuidado: nominal é restrito à equipe designada; o resumo (contagens,
+  // sem PII) é aberto para quem tem o módulo.
+  cuidadoResumo: (pesquisaId) => get(`/censo/cuidado/resumo?pesquisa_id=${pesquisaId}`),
+  cuidado: (pesquisaId, filtros = {}) => {
+    const qs = new URLSearchParams({ pesquisa_id: pesquisaId });
+    if (filtros.status) qs.set('status', filtros.status);
+    if (filtros.tipo) qs.set('tipo', filtros.tipo);
+    return get(`/censo/cuidado?${qs}`);
+  },
+  cuidadoAtualizar: (id, dados) => patch(`/censo/cuidado/${id}`, dados),
+  // Vínculo com a pessoa e correção do cadastro NÃO acontecem durante o culto
+  // (eram 7 das 8,3 idas ao banco por resposta). Ficam nesta fila, para rodar
+  // depois — quando ninguém está esperando a tela responder.
+  pendentes: (pesquisaId) => get(`/censo/pendentes?pesquisa_id=${pesquisaId}`),
+  posProcessar: (pesquisaId, limite) =>
+    post('/censo/pos-processar', { pesquisa_id: pesquisaId, limite }),
+};
+
 export const projects = {
   categories: () => get('/projects/categories'),
   dashboard: () => get('/projects/dashboard'),
@@ -4035,6 +4072,59 @@ async function npsFetchRetry(doFetch, { tentativas = 3, msg = 'Erro' } = {}) {
   }
   throw ultimo || new Error(msg);
 }
+
+// Censo · porta PÚBLICA (QR no culto, link pessoal, app do membro).
+// Reusa o `npsFetchRetry`: mesmo cenário e mesmo motivo — sob pico de culto a
+// borda do Vercel dá challenge/429 momentâneo, e perder a resposta de quem
+// preencheu 90 campos não é opção. 400/404 não são retentados (dado inválido ou
+// pesquisa fechada não melhoram com insistência).
+export const censoPublico = {
+  obter: (slug) =>
+    npsFetchRetry(
+      () => fetch(`${API}/public/censo/${encodeURIComponent(slug)}`, { headers: { 'Content-Type': 'application/json' } }),
+      { tentativas: 4, msg: 'Erro ao carregar o censo' },
+    ),
+  // Atalho opcional: quem já está na base não redigita nome/telefone/e-mail.
+  // Resposta NEUTRA por definição — não dá para saber se um CPF existe.
+  prefill: (slug, dados) =>
+    npsFetchRetry(
+      () => fetch(`${API}/public/censo/${encodeURIComponent(slug)}/prefill`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(dados),
+      }),
+      { tentativas: 2, msg: 'Não foi possível verificar' },
+    ),
+  parcial: (slug, dados) =>
+    npsFetchRetry(
+      () => fetch(`${API}/public/censo/${encodeURIComponent(slug)}/parcial`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(dados),
+      }),
+      { tentativas: 2, msg: 'Não foi possível salvar' },
+    ),
+  retomar: (slug, dados) =>
+    npsFetchRetry(
+      () => fetch(`${API}/public/censo/${encodeURIComponent(slug)}/retomar`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(dados),
+      }),
+      { tentativas: 2, msg: 'Não foi possível retomar' },
+    ),
+  responder: (slug, payload) =>
+    npsFetchRetry(
+      () => fetch(`${API}/public/censo/${encodeURIComponent(slug)}/responder`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+      }),
+      { tentativas: 3, msg: 'Erro ao enviar resposta' },
+    ),
+  // Última tentativa enquanto a aba fecha. O `envio_id` no payload garante que
+  // um beacon a mais não crie resposta duplicada.
+  responderBeacon: (slug, payload) => {
+    try {
+      if (typeof navigator === 'undefined' || !navigator.sendBeacon) return false;
+      const url = `${API}/public/censo/${encodeURIComponent(slug)}/responder`;
+      const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+      return navigator.sendBeacon(url, blob);
+    } catch { return false; }
+  },
+};
 
 export const online = {
   dashboard: () => get('/online/dashboard'),

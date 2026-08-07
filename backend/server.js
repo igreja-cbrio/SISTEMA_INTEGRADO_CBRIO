@@ -63,6 +63,13 @@ app.use(rateLimit({
     // a pessoa tomaria 429 no meio do próprio pagamento — e a igreja inteira sai
     // por 1 IP no culto. Limiter próprio em routes/publicGenerosidade.js.
     || req.path.startsWith('/api/public/generosidade')
+    // ⚠️⚠️ CENSO sai do teto por IP, e este é o caso mais extremo da lista: o
+    // censo é respondido por MILHARES de pessoas dentro do mesmo culto, todas
+    // pelo NAT do prédio, e UMA pessoa gasta ~15 requisições (abrir + salvar
+    // rascunho a cada bloco + enviar). Com 500/15min por IP, a ~34ª pessoa já
+    // levaria 429 — e 429 aqui é resposta perdida de quem preencheu 93 campos.
+    // Limiter próprio (e medido) em routes/publicCenso.js.
+    || req.path.startsWith('/api/public/censo')
     || req.path.startsWith('/api/pagamentos-webhook')
     // ⚠️ Totem também sai do teto por IP: todos os totens da igreja saem pelo
     // MESMO NAT, então 500/15min por IP seria compartilhado entre eles (e com
@@ -153,6 +160,7 @@ app.use('/api/dashboard', require('./routes/dashboard'));
 app.use('/api/notificacoes', require('./routes/notificacoes'));
 app.use('/api/permissoes', require('./routes/permissoes'));
 app.use('/api/membresia', require('./routes/membresia'));
+app.use('/api/censo', require('./routes/censo'));             // Plataforma de pesquisas (censo demográfico/perfil/engajamento)
 app.use('/api/destaques', require('./routes/destaques'));
 app.use('/api/batismo-fotos', require('./routes/batismoFotos'));
 // Rate limit dedicado pros forms públicos (anti-spam · sem auth)
@@ -170,6 +178,10 @@ const publicLimiter = rateLimit({
 // primeiro, o NPS não passa pelo teto de 30 · usa o limiter próprio (generoso) do
 // routes/publicNps.js. Os demais forms públicos seguem no publicLimiter.
 app.use('/api/public/nps', require('./routes/publicNps'));
+// Censo público: MESMO motivo do NPS, elevado ao cubo — o censo é respondido por
+// centenas de pessoas no mesmo culto, todas atrás do NAT do prédio. Limiter
+// próprio (dois baldes: submissão generosa, lookup de CPF apertado).
+app.use('/api/public/censo', require('./routes/publicCenso'));
 // Convite de familiar (página de bounce /f/a/:codigo · só leitura do convite)
 app.use('/api/public/familia', require('./routes/publicFamilia'));
 // Pixel de abertura de e-mail (fora do publicLimiter · proxies carregam por 1 IP)
