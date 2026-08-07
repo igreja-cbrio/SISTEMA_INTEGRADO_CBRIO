@@ -3151,15 +3151,72 @@ router.get('/services-availability', async (req, res) => {
       .in('service_id', serviceIds)
       .not('service_id', 'is', null);
 
+    // ⚠️⚠️ SÃO DOIS MODELOS DE INDISPONIBILIDADE NA MESMA TABELA, e este painel
+    // enxergava só um (achado em 07/08/2026):
+    //   · por CULTO   → `service_id` preenchido — é o que a coordenação marca aqui
+    //   · por PERÍODO → `unavailable_from/to` com `service_id` NULL — é o que o
+    //     APP grava quando o voluntário diz "viajo de 20 a 31/08"
+    //
+    // Ler só o primeiro fazia este painel mostrar "ninguém indisponível" pra quem
+    // tinha avisado pelo app — enquanto `POST /schedules/auto-fill` (que filtra
+    // por FAIXA DE DATA, linha ~3355) já o excluía. Ou seja: o gerador automático
+    // e a tela que a coordenação usa pra escalar NA MÃO discordavam sobre a mesma
+    // pessoa no mesmo culto, e quem escalasse pela tela não tinha como saber.
+    //
+    // ⚠️ Não é regressão: a tabela só passou a receber bloqueio por período em
+    // 07/08 (a tela do app nunca gravou nada antes — a RLS barrava e a validação
+    // recusava data futura). É porta recém-aberta cujo destino não olhava pra ela.
+    const { data: porPeriodo } = await supabase
+      .from('vol_availability')
+      .select('unavailable_from, unavailable_to, reason, volunteer_profile_id, vol_profiles(full_name, avatar_url)')
+      .is('service_id', null)
+      // Sobreposição com a janela pedida: começa antes do fim E termina depois do
+      // início. Comparar string ISO é seguro (YYYY-MM-DD ordena como data).
+      .lte('unavailable_from', to)
+      .gte('unavailable_to', from);
+
     // Agrupa por service_id
     const unavailByService = new Map();
+    const jaListado = new Map(); // service_id -> Set(profile_id)
+    const push = (serviceId, item) => {
+      if (!unavailByService.has(serviceId)) {
+        unavailByService.set(serviceId, []);
+        jaListado.set(serviceId, new Set());
+      }
+      // Quem tem bloqueio por período E por culto no mesmo dia apareceria 2×.
+      if (item.profile_id) {
+        if (jaListado.get(serviceId).has(item.profile_id)) return;
+        jaListado.get(serviceId).add(item.profile_id);
+      }
+      unavailByService.get(serviceId).push(item);
+    };
+
     for (const u of (unavail || [])) {
-      if (!unavailByService.has(u.service_id)) unavailByService.set(u.service_id, []);
-      unavailByService.get(u.service_id).push({
+      push(u.service_id, {
         profile_id: u.volunteer_profile_id,
         name: u.vol_profiles?.full_name || 'Voluntario',
         avatar_url: u.vol_profiles?.avatar_url || null,
+        origem: 'culto',
       });
+    }
+
+    // O bloqueio por período vale pra TODO culto cuja data cai dentro dele.
+    for (const s of services) {
+      const dia = String(s.scheduled_at).slice(0, 10);
+      for (const u of (porPeriodo || [])) {
+        if (u.unavailable_from <= dia && dia <= u.unavailable_to) {
+          push(s.id, {
+            profile_id: u.volunteer_profile_id,
+            name: u.vol_profiles?.full_name || 'Voluntario',
+            avatar_url: u.vol_profiles?.avatar_url || null,
+            origem: 'periodo',
+            // O motivo ("viagem", "prova") é o que deixa a coordenação decidir se
+            // cabe insistir — sem ele o painel diz "não pode" e mais nada.
+            motivo: u.reason || null,
+            periodo: { de: u.unavailable_from, ate: u.unavailable_to },
+          });
+        }
+      }
     }
 
     res.json(services.map(s => ({
