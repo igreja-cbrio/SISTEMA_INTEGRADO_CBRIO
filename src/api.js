@@ -1716,7 +1716,7 @@ export const patrimonio = {
     get: (id) => get(`/patrimonio/bens/${id}`),
     create: (data) => post('/patrimonio/bens', data),
     update: (id, data) => put(`/patrimonio/bens/${id}`, data),
-    remove: (id) => del(`/patrimonio/bens/${id}`),
+    remove: (id, data) => del(`/patrimonio/bens/${id}`, data),
     proximoCodigo: (qtd = 1) => get(`/patrimonio/bens/proximo-codigo?qtd=${qtd}`),
     criarLote: (data) => post('/patrimonio/bens/lote', data),
     movimentar: (id, data) => post(`/patrimonio/bens/${id}/movimentacoes`, data),

@@ -344,9 +344,19 @@ export default function Patrimonio() {
       alert(`${r.criados} bens cadastrados — números ${fmtCodigo(r.codigo_inicial)} a ${fmtCodigo(r.codigo_final)}.`);
     } catch (e) { setError(e.message); } finally { setLoteSaving(false); }
   }
-  async function baixarBem(id) {
-    if (!confirm('Dar baixa neste bem? Ele sai de "ativo" (fica marcado como baixado), mas o cadastro e o histórico de movimentações são preservados — dá pra reativar depois editando o status.')) return;
-    try { await patrimonio.bens.remove(id); loadBens(); loadDash(); setModalDetail(null); } catch (e) { setError(e.message); }
+  // Dar baixa pede o motivo por escrito (pedido do usuário 2026-08-07: o
+  // confirm() nativo não deixava registrar por quê — igual à movimentação,
+  // que já tem esse campo) — o motivo vai pra pat_movimentacoes via backend.
+  const [modalBaixaId, setModalBaixaId] = useState(null);
+  const [baixaBusy, setBaixaBusy] = useState(false);
+  function baixarBem(id) { setModalBaixaId(id); }
+  async function confirmarBaixa(motivo) {
+    if (!modalBaixaId) return;
+    setBaixaBusy(true);
+    try {
+      await patrimonio.bens.remove(modalBaixaId, { motivo });
+      setModalBaixaId(null); loadBens(); loadDash(); setModalDetail(null);
+    } catch (e) { setError(e.message); } finally { setBaixaBusy(false); }
   }
   async function openDetail(id) { try { setModalDetail(await patrimonio.bens.get(id)); } catch (e) { setError(e.message); } }
   async function openDetailPorCodigo(codigo) {
@@ -436,6 +446,10 @@ export default function Patrimonio() {
       <MovFormModal open={!!modalMov} data={modalMov} locOptions={locOptions} onClose={() => setModalMov(null)} onSave={saveMov} />
       <NovoCicloModal open={modalNovoCiclo} responsaveis={responsaveis} onClose={() => setModalNovoCiclo(false)} onSave={criarCiclo} />
       <ConvocacaoModal open={!!modalConvocacao} data={modalConvocacao} locOptions={locOptions} onClose={() => setModalConvocacao(null)} onIniciar={iniciarConvocacao} onAtualizarItem={atualizarItemRevisao} onConcluir={concluirConvocacao} isDiretor={isCoordenadorRevisao} />
+      <BaixaMotivoModal open={!!modalBaixaId} title="Dar baixa"
+        message='Dar baixa neste bem? Ele sai de "ativo" (fica marcado como baixado), mas o cadastro e o histórico de movimentações são preservados — dá pra reativar depois editando o status.'
+        busy={baixaBusy} onCancel={() => setModalBaixaId(null)} onConfirm={confirmarBaixa}
+      />
     </div>
   );
 }
@@ -1001,10 +1015,10 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
         onClose={() => setModalBulkMov(false)}
         onSave={(campos) => executarBulk(() => patrimonio.bens.bulkMovimentar({ ids: [...selecionados], ...campos })).then(() => setModalBulkMov(false))}
       />
-      <ConfirmDialog open={modalBulkBaixa} title="Dar baixa em massa"
+      <BaixaMotivoModal open={modalBulkBaixa} title="Dar baixa em massa"
         message={`Confirma dar baixa em ${selecionados.size} bem(ns)? Essa ação registra a movimentação de baixa e marca o status — não é uma exclusão.`}
         busy={bulkBusy} onCancel={() => setModalBulkBaixa(false)}
-        onConfirm={() => executarBulk(() => patrimonio.bens.bulkBaixa({ ids: [...selecionados] })).then(() => setModalBulkBaixa(false))}
+        onConfirm={(motivo) => executarBulk(() => patrimonio.bens.bulkBaixa({ ids: [...selecionados], motivo })).then(() => setModalBulkBaixa(false))}
       />
     </>
   );
@@ -1624,11 +1638,24 @@ function BulkMovModal({ open, qtd, locOptions, busy, onClose, onSave }) {
   );
 }
 
-function ConfirmDialog({ open, title, message, busy, onCancel, onConfirm }) {
+// Baixa de bem com motivo por escrito (pedido do usuário 2026-08-07) — mesmo
+// padrão de campo de texto da movimentação, mas numa ação dedicada porque
+// 'baixa' é excluída do select de tipo da movimentação manual (fluxo próprio).
+function BaixaMotivoModal({ open, title, message, busy, onCancel, onConfirm }) {
+  const [motivo, setMotivo] = useState('');
+  useEffect(() => { if (open) setMotivo(''); }, [open]);
   return (
     <Modal open={open} onClose={onCancel} title={title}
-      footer={<><Button variant="outline" onClick={onCancel} disabled={busy}>Cancelar</Button><Button variant="destructive" onClick={onConfirm} disabled={busy}>{busy ? 'Processando...' : 'Confirmar'}</Button></>}>
-      <div style={{ fontSize: 13, color: C.text2 }}>{message}</div>
+      footer={<><Button variant="outline" onClick={onCancel} disabled={busy}>Cancelar</Button><Button variant="destructive" onClick={() => onConfirm(motivo.trim() || null)} disabled={busy}>{busy ? 'Processando...' : 'Confirmar baixa'}</Button></>}>
+      <div style={{ fontSize: 13, color: C.text2, marginBottom: 12 }}>{message}</div>
+      <label style={{ fontSize: 12, fontWeight: 600, color: C.text2, display: 'block', marginBottom: 4 }}>Motivo da baixa (opcional)</label>
+      <textarea
+        value={motivo}
+        onChange={e => setMotivo(e.target.value)}
+        placeholder="Ex.: quebrado sem conserto viável, extraviado, doado, substituído..."
+        rows={3}
+        style={{ width: '100%', borderRadius: 8, border: `1px solid ${C.border}`, background: 'var(--cbrio-input-bg)', color: C.text, padding: '8px 10px', fontSize: 13, resize: 'vertical', fontFamily: 'inherit' }}
+      />
     </Modal>
   );
 }
