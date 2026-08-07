@@ -63,6 +63,13 @@ app.use(rateLimit({
     // a pessoa tomaria 429 no meio do próprio pagamento — e a igreja inteira sai
     // por 1 IP no culto. Limiter próprio em routes/publicGenerosidade.js.
     || req.path.startsWith('/api/public/generosidade')
+    // ⚠️⚠️ CENSO sai do teto por IP, e este é o caso mais extremo da lista: o
+    // censo é respondido por MILHARES de pessoas dentro do mesmo culto, todas
+    // pelo NAT do prédio, e UMA pessoa gasta ~15 requisições (abrir + salvar
+    // rascunho a cada bloco + enviar). Com 500/15min por IP, a ~34ª pessoa já
+    // levaria 429 — e 429 aqui é resposta perdida de quem preencheu 93 campos.
+    // Limiter próprio (e medido) em routes/publicCenso.js.
+    || req.path.startsWith('/api/public/censo')
     || req.path.startsWith('/api/pagamentos-webhook')
     // ⚠️ Totem também sai do teto por IP: todos os totens da igreja saem pelo
     // MESMO NAT, então 500/15min por IP seria compartilhado entre eles (e com
