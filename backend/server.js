@@ -68,7 +68,18 @@ app.use(rateLimit({
     // MESMO NAT, então 500/15min por IP seria compartilhado entre eles (e com
     // o WiFi dos visitantes). O limite certo é por ESTAÇÃO, e vive no router
     // (routes/totem.js) — que é quem sabe qual estação fez a request.
-    || req.path.startsWith('/api/totem'),
+    || req.path.startsWith('/api/totem')
+    // ⚠️⚠️ O APP DE MEMBROS sai do teto por IP (auditoria 06/08/2026): é a MESMA
+    // razão do totem e das portas públicas, e é a superfície que mais vai
+    // crescer (meta = 4.000 instalações = a base toda). No WiFi da igreja todo
+    // celular sai por 1 IP público, e UMA abertura do app gasta 10-30
+    // requisições — 5 a 10 aparelhos esgotavam 500/15min e a congregação
+    // inteira levava 429. Pior: o app trata 429 como resposta de NEGÓCIO
+    // (temporadaGrupos → "inscrições fechadas" · useAdminGrupo → líder sem
+    // botão de gerenciar), então o sintoma não parecia limite de rede.
+    // O limite certo aqui é por USUÁRIO AUTENTICADO, e vive no router
+    // (routes/app.js) — que é quem sabe de quem é a requisição.
+    || req.path.startsWith('/api/app'),
 }));
 app.use(hpp());
 app.use(compression());

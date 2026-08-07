@@ -62,6 +62,7 @@ async function gerarTodasNotificacoes() {
   total += await safe('Governanca', gerarNotificacoesGovernanca);
   total += await safe('TarefasPessoais', gerarNotificacoesTarefasPessoais);
   total += await safe('Kids', gerarNotificacoesKids);
+  total += await safe('LgpdExclusao', gerarNotificacoesLgpdExclusao);
   console.log(`[Notificações] ${total} notificação(ões) gerada(s).`);
   return total;
 }
@@ -1486,4 +1487,56 @@ async function gerarNotificacoesKids() {
 // gerarNotificacoesOnline também é consumida direto pelo cron de blindagem do
 // Online (routes/online.js /cron/verificar) — sem o export, aquele cron caía
 // com "gerarNotificacoesOnline is not a function" todo dia desde 04/07.
+// ── LGPD · pedidos de exclusao de conta sem tratamento ──────────────────────
+// ⚠️⚠️ ESTE GERADOR ESTA DORMENTE, e nao e por esquecimento: `gerarTodasNotificacoes`
+// **NAO TEM CRON NENHUM**. `/api/notificacoes/cron` (que a chama) nao esta no
+// `vercel.json` — o unico cron de notificacoes agendado e
+// `/cron/alerta-culto-dados` (semanal), e o outro caminho e o POST manual
+// `/api/notificacoes/gerar`. Medido em 06/08: em 13.581 notificacoes desde
+// 12/05, NENHUM tipo exclusivo deste arquivo jamais apareceu — enquanto ha 283
+// `identidade_pendencias` pendentes que dispariam aviso. Ou seja: ~20 geradores
+// deste arquivo nunca rodaram sozinhos.
+//
+// Por isso a fila de exclusao de conta e PULL (tela + contador em
+// /ministerial/membresia?tab=cadastros). Este gerador existe pra que, no dia em
+// que o cron for agendado (decisao do Marcos — liga ~20 geradores de uma vez e
+// pede plano de contencao), o aviso da LGPD ja esteja no padrao da casa.
+//
+// ⚠️ A mensagem leva CONTAGEM, nunca nome de quem pediu: e dado de pessoa saindo,
+// e o sino tem fan-out de push/e-mail.
+async function gerarNotificacoesLgpdExclusao() {
+  const { data, error } = await supabase
+    .from('app_solicitacoes_exclusao')
+    .select('id, criada_em')
+    .eq('status', 'pendente')
+    .order('criada_em', { ascending: true })
+    .limit(200);
+  if (error || !data || !data.length) return 0;
+
+  const maisAntigo = data[0].criada_em ? new Date(data[0].criada_em) : null;
+  const dias = maisAntigo
+    ? Math.floor((Date.now() - maisAntigo.getTime()) / 86400000)
+    : 0;
+  // Prazo do art. 18 da LGPD e de 15 dias: passar disso muda a natureza do aviso.
+  const estourou = dias >= 15;
+
+  await notificar({
+    modulo: 'membresia',
+    tipo: 'lgpd_exclusao_pendente',
+    titulo: estourou
+      ? `⚠️ Pedido de exclusao de conta ha ${dias} dias (prazo LGPD estourado)`
+      : `${data.length} pedido(s) de exclusao de conta aguardando`,
+    mensagem:
+      `${data.length} pessoa(s) pediram exclusao da conta pelo app e ainda estao `
+      + `como pendente. O mais antigo tem ${dias} dia(s) — o prazo da LGPD (art. 18) `
+      + 'e de 15 dias. A desativacao ainda e manual.',
+    link: '/ministerial/membresia?tab=cadastros',
+    severidade: estourou ? 'urgente' : 'aviso',
+    // Dedup por DIA: aviso e pra trabalho pendente, nao 1 por pessoa (licao do
+    // censo e do lote de aprovacao, que enterraram o sino).
+    chaveDedup: `lgpd_exclusao_pendente_${new Date().toISOString().slice(0, 10)}`,
+  });
+  return 1;
+}
+
 module.exports = { gerarTodasNotificacoes, gerarNotificacoesOnline };

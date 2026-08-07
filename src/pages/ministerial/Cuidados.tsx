@@ -1557,16 +1557,30 @@ const PEDIDO_TIPO_META: Record<string, { label: string; color: string }> = {
   oracao: { label: 'Oração', color: '#00B39D' },
   sos: { label: 'SOS', color: '#ef4444' },
   visita: { label: 'Visita', color: '#3b82f6' },
+  // Fale Conosco do app (tipo `contato` em app_inscricoes) · entrou 06/08/2026:
+  // as mensagens existiam no banco e não apareciam em tela nenhuma.
+  contato: { label: 'Fale Conosco', color: '#0ea5e9' },
   outro: { label: 'Outro', color: '#64748b' },
 };
+// ⚠️ Tipos que podem ser CRIADOS à mão aqui = os do CHECK de `cui_pedidos`.
+// `contato` fica de fora: ele só existe em `app_inscricoes` (canal app), e
+// oferecê-lo no "Registrar pedido" faria o insert violar o CHECK do banco.
+// O mapa acima é de EXIBIÇÃO (fila + filtro) e por isso é maior que esta lista.
+const TIPOS_PEDIDO_MANUAL = ['aconselhamento', 'capelania', 'oracao', 'sos', 'visita', 'outro'];
 const CANAL_LABEL: Record<string, string> = { app: 'App', whatsapp: 'WhatsApp', plataforma: 'Plataforma', manual: 'Manual' };
 const PEDIDO_STATUS_UI: { v: string; l: string }[] = [
   { v: 'pendente', l: 'Pendente' }, { v: 'em_andamento', l: 'Em andamento' }, { v: 'concluido', l: 'Concluído' },
 ];
 // pedido.tipo → tipo de atendimento sugerido ao atender
+// ⚠️ `contato` sugere 'outro', não 'aconselhamento': Fale Conosco pode ser
+// dúvida, elogio ou pedido administrativo. Registrar como aconselhamento
+// pastoral por padrão inventaria um atendimento que não aconteceu — e a maioria
+// das mensagens se resolve respondendo pelo Conversas e marcando como tratada,
+// sem criar atendimento nenhum.
 const TIPO_ATEND_SUGERIDO: Record<string, string> = {
   aconselhamento: 'aconselhamento', capelania: 'capelania', visita: 'visita_domiciliar',
   oracao: 'aconselhamento', sos: 'aconselhamento', outro: 'aconselhamento',
+  contato: 'outro',
 };
 
 // Modal "Atender" · o líder escolhe o tipo de atendimento/visita → cria a trilha
@@ -1674,7 +1688,9 @@ function RegistrarPedidoModal({ open, onClose, onSaved }: { open: boolean; onClo
             <Select value={tipo} onValueChange={setTipo}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
-                {Object.keys(PEDIDO_TIPO_META).map(t => <SelectItem key={t} value={t}>{PEDIDO_TIPO_META[t].label}</SelectItem>)}
+                {/* TIPOS_PEDIDO_MANUAL, não PEDIDO_TIPO_META: "Fale Conosco"
+                    é tipo do app e não existe no CHECK de cui_pedidos. */}
+                {TIPOS_PEDIDO_MANUAL.map(t => <SelectItem key={t} value={t}>{PEDIDO_TIPO_META[t].label}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>

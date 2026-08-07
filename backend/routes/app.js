@@ -50,8 +50,69 @@ async function tryAuth(req, _res, next) {
   next();
 }
 
-const limiterStrict = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false });
-const limiterNormal = rateLimit({ windowMs: 15 * 60 * 1000, max: 100, standardHeaders: true, legacyHeaders: false });
+// ⚠️⚠️ O LIMITE DO APP É POR USUÁRIO, NÃO POR IP (auditoria 06/08/2026).
+// A régua da CHAVE vive em `utils/appRateLimit.js` (pura, no gate de deploy) —
+// o porquê de cada nível está documentado lá, junto do sintoma que isto
+// conserta. Aqui ficam só os TETOS e a montagem do middleware.
+//
+// ⚠️ LIMITAÇÃO CONHECIDA (não era o que quebrava, mas está medida): o store é o
+// MemoryStore, e no Vercel cada instância tem o próprio contador — o teto
+// efetivo é `max × nº de instâncias` e zera a cada cold start. Store
+// compartilhado (ou regra na borda do Vercel) é item da onda de escala; o
+// desenho por usuário já tira o dano do NAT, que era o dano real.
+// ⚠️⚠️ NÃO importar `{ ipKeyGenerator }` daqui (incidente 06/08/2026 · 500 nas
+// rotas ANÔNIMAS em produção, com todo teste local verde).
+// **Este arquivo roda com o `backend/package.json`, que pina express-rate-limit
+// `^7.4.0` (lock: 7.5.1) — a RAIZ tem 8.3.2, e `ipKeyGenerator` só existe na
+// 8.x.** O `vercel.json` faz `installCommand: npm install && cd backend && npm
+// install`, então é a árvore do BACKEND que vale em produção; localmente o
+// `backend/node_modules` estava vazio e o Node subiu pra raiz, exercitando uma
+// versão que produção nunca carrega.
+// Régua: conferir versão de dependência em `backend/package.json`, nunca na
+// raiz. A normalização de IP é NOSSA (`utils/appRateLimit.js`, no gate).
+const { chaveLimiteApp, ehChaveAnonima } = require('../utils/appRateLimit');
+// Saneamento do payload de inscrição do app (régua PURA · no gate de deploy).
+const { sanearDadosApp } = require('../utils/saneamentoInscricaoApp');
+// Régua PURA da edição de grupo pelo app (allowlist + categoria fechada + horário).
+const { validarEdicaoGrupoApp } = require('../utils/grupoEdicaoApp');
+
+function limiterApp({ max, maxAnonimo, nome }) {
+  const chave = (req) => chaveLimiteApp(req);
+  return rateLimit({
+    windowMs: 15 * 60 * 1000,
+    // Anônimo paga o teto de IP, que é mais alto: ali é 1 IP pra congregação.
+    limit: (req) => (ehChaveAnonima(chave(req)) ? maxAnonimo : max),
+    keyGenerator: (req) => `${nome}:${chave(req)}`,
+    // ⚠️ SEM `validate: { keyGeneratorIpFallback: false }` — essa validação só
+    // existe na 8.x e a 7.5.1 (a de produção) responde
+    // `ERR_ERL_UNKNOWN_VALIDATION` a cada construção do limiter, poluindo o log
+    // sem efeito nenhum. Pego no smoke rodado contra a árvore do backend.
+    skip: () => process.env.NODE_ENV !== 'production',
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Muitas requisições. Tente novamente em alguns minutos.' },
+  });
+}
+
+// ⚠️ `limiterStrict` cobre as sondas de identidade (CPF → código) e as portas
+// de inscrição. Continua estreito, mas por PESSOA: quem defende essas rotas de
+// enumeração NÃO é o teto por IP — é o serviço (5 envios por telefone/dia, 6
+// tentativas de código, TTL de 10 min e resposta MASCARADA), que não mudou.
+const limiterStrict = limiterApp({
+  max: parseInt(process.env.APP_STRICT_RATE_LIMIT_MAX) || 30,
+  maxAnonimo: parseInt(process.env.APP_STRICT_RATE_LIMIT_IP_MAX) || 120,
+  nome: 'strict',
+});
+// ⚠️ O teto ANÔNIMO de `limiterNormal` segue a calibragem da casa pra porta que
+// a igreja inteira usa pelo mesmo IP (10.000/15min · validada em multidão real
+// no NPS e nos grupos · `PUBLIC_MEMBRESIA_RATE_LIMIT_MAX`). Aqui caem as leituras
+// públicas do app (`/anuncios`, `/grupos`), que TODO celular no WiFi do culto
+// dispara: número menor volta a ser o mesmo estrago por outro caminho.
+const limiterNormal = limiterApp({
+  max: parseInt(process.env.APP_RATE_LIMIT_MAX) || 600,
+  maxAnonimo: parseInt(process.env.APP_RATE_LIMIT_IP_MAX) || 10000,
+  nome: 'normal',
+});
 
 // ⚠️⚠️ RESPOSTA DO APP NUNCA É CACHEÁVEL (incidente 2026-08-05 · não regredir)
 //
@@ -368,7 +429,7 @@ router.get('/membro/perfil', authApp, async (req, res) => {
 });
 
 // ── Atualizar perfil (autenticado) ────────────────────────────────────────
-router.put('/membro/perfil', authApp, async (req, res) => {
+router.put('/membro/perfil', authApp, limiterNormal, async (req, res) => {
   try {
     const allowed = ['nome', 'telefone', 'data_nascimento', 'endereco'];
     const update  = Object.fromEntries(
@@ -376,6 +437,27 @@ router.put('/membro/perfil', authApp, async (req, res) => {
     );
     // Campo de data vazio vira NULL (coluna date estoura com string '')
     if ('data_nascimento' in update && !update.data_nascimento) update.data_nascimento = null;
+
+    // ⚠️⚠️ ESTE ENDPOINT VIROU O CAMINHO DA TELA DE PERFIL (Onda 2 · 07/08/2026).
+    // Até agora ele estava ÓRFÃO — quem salvava era a RPC `app_salvar_membro`,
+    // que vinculava conta a cadastro por nome exato (o crítico da auditoria).
+    // Agora que ele recebe o que a pessoa digita, o dado passa pelo MESMO
+    // saneamento da porta de inscrição: telefone com "+55 (21) …" gravado cru é
+    // o que quebra o dedup por telefone do sistema inteiro.
+    // ⚠️ Sanear, NÃO recusar: perfil não é porta de inscrição — bloquear aqui
+    // prenderia a pessoa numa tela de edição do próprio cadastro.
+    const saneado = sanearDadosApp(update);
+    if (saneado.ajustes.length) {
+      // Só os NOMES dos campos — nunca os valores (é telefone e nascimento).
+      console.log(`[APP] perfil · saneado: ${saneado.ajustes.join(', ')}`);
+    }
+    Object.assign(update, saneado.dados);
+
+    // ⚠️ `nome` vazio não pode ir: a coluna é NOT NULL e o UPDATE estouraria
+    // com 23502 — a pessoa veria "Erro ao atualizar perfil" sem saber o motivo.
+    if ('nome' in update && !update.nome) {
+      return res.status(400).json({ error: 'O nome não pode ficar vazio.', campo: 'nome' });
+    }
     if (Object.keys(update).length === 0) {
       return res.status(400).json({ error: 'Nenhum campo válido para atualizar' });
     }
@@ -527,6 +609,16 @@ const LABEL_INSCRICAO_LEAD = {
   retiro: 'Retiro', cursos: 'Cursos', eventos: 'Eventos',
 };
 const MODULO_LEAD = { retiro: 'eventos', cursos: 'eventos', eventos: 'eventos' };
+// Pra onde vai o aviso quando o FANOUT falha (status='erro' · migration
+// 20260806160000). São os 4 tipos que têm ramo no trigger — os pastorais e o
+// `contato` não passam por fanout, então nunca caem nesse caminho.
+const MODULO_POR_TIPO_INSCRICAO = {
+  grupos: 'grupos', batismo: 'batismos', next: 'next', voluntariado: 'voluntariado',
+};
+const LINK_POR_TIPO_INSCRICAO = {
+  grupos: '/grupos?tab=entrada', batismo: '/batismo',
+  next: '/ministerial/next?tab=turmas', voluntariado: '/ministerial/voluntariado/inscricoes',
+};
 const LABEL_CUIDADOS = { aconselhamento: 'aconselhamento', oracao: 'oração', sos: 'SOS' };
 // Mapeia a urgência pra cor do sino (SEV_COLORS no AppShell)
 const SEV_CUIDADOS = { sos: 'urgente', aconselhamento: 'aviso', oracao: 'info' };
@@ -545,7 +637,8 @@ router.post('/inscricoes', limiterStrict, tryAuth, async (req, res) => {
     }
 
     const ehCuidados = TIPOS_CUIDADOS.has(tipo);
-    const dados = { ...extras };
+    // `let`: o saneamento (mais abaixo) devolve um objeto NOVO.
+    let dados = { ...extras };
     let membroId = null;
 
     // Pedidos pastorais + batismo/next: resolve o membro logado pra vincular a
@@ -619,6 +712,34 @@ router.post('/inscricoes', limiterStrict, tryAuth, async (req, res) => {
       }
     }
 
+    // ⚠️⚠️ SANEAMENTO DO PAYLOAD (06/08/2026 · auditoria, Onda 1 item 3).
+    //
+    // O que isto conserta, medido em produção: **o '55' grudado no telefone**.
+    // 15 das 22 linhas de `app_inscricoes` têm 13 dígitos começando com 55 (vem
+    // de `profiles.telefone`, que o PhoneInput grava como "+55 (21) …"), e o
+    // fanout só remove NÃO-DÍGITO — ele não tira código de país. Efeito: as 5
+    // inscrições de voluntariado que chegaram em `vol_inscricoes` estão com 13
+    // dígitos, e o **próprio dedup por telefone do fanout compara contra os 11
+    // dígitos da base** ⇒ não casa, e a pessoa pode duplicar.
+    //
+    // ⚠️ NÃO chamamos `validarCamposPadrao` aqui, e é decisão com número: medi o
+    // que o app manda e ligar o contrato pleno reprovaria ~tudo — 0 de 22
+    // payloads mandam nascimento ou sexo, oração/SOS/aconselhamento nunca mandam
+    // e-mail, a régua de telefone não tem flag pra relaxar (e 46 dos 83
+    // cadastros ligados a conta do app não têm telefone) e batismo manda `nome` =
+    // primeiro token. Aplicar ali travaria o botão de SOS pra ~55% das contas,
+    // numa tela que não tem campo pra corrigir. Subir exigência é decisão com a
+    // base fechada — outra onda, com a medição na mão.
+    //
+    // Régua pura em `utils/saneamentoInscricaoApp.js` (no gate). NÃO bloqueia:
+    // campo que não normaliza vira null, que é o que o fanout já gravava.
+    const saneado = sanearDadosApp(dados);
+    if (saneado.ajustes.length) {
+      // Loga só os NOMES dos campos ajustados — nunca os valores (é telefone e CPF).
+      console.log(`[APP] inscricoes · payload saneado (${tipo}): ${saneado.ajustes.join(', ')}`);
+    }
+    dados = saneado.dados;
+
     const { data: inserted, error } = await supabase
       .from('app_inscricoes')
       .insert({
@@ -635,6 +756,69 @@ router.post('/inscricoes', limiterStrict, tryAuth, async (req, res) => {
     if (error) {
       console.error('[APP] inscricoes · falha ao gravar:', error.message);
       return res.status(500).json({ error: 'Não foi possível registrar sua solicitação. Tente novamente.' });
+    }
+
+    // ⚠️⚠️ O FANOUT PODE TER FALHADO — E ATÉ 06/08/2026 ISSO ERA INVISÍVEL.
+    //
+    // `fn_app_inscricoes_fanout` é AFTER INSERT: ele roda na MESMA transação,
+    // mas o `RETURNING` do insert reflete a linha ANTES do trigger, então o
+    // `status` que veio acima é sempre 'pendente'. Quem sabe o que aconteceu de
+    // fato é a linha RELIDA.
+    //
+    // Antes, ramo que falhava era engolido (`RAISE WARNING`) e a linha era
+    // carimbada 'processado' de qualquer jeito: a pessoa via "inscrição
+    // enviada", recebia WhatsApp de confirmação e **não existia pedido em fila
+    // nenhuma**. Vítima medida na auditoria: um pedido de grupo de 11/06.
+    // A migration `20260806160000` fez o ramo que falha marcar **'erro'** (com
+    // SQLSTATE + constraint em `dados`); esta releitura é o que transforma isso
+    // em erro VISÍVEL — pra equipe e pra pessoa.
+    //
+    // ⚠️ Best-effort de propósito: se a releitura falhar, seguimos no caminho de
+    // sucesso. A linha existe e o rastro está no banco; derrubar a resposta por
+    // causa de uma consulta de conferência seria pior que o problema.
+    // ⚠️ `fanout_erro` em select ISOLADO junto do status: pedir coluna que a
+    // migration ainda não criou faz o PostgREST recusar a query INTEIRA, e aí a
+    // conferência viraria "não deu erro" — o oposto do que ela existe pra fazer.
+    // Deploy em 2 etapas: sem a migration, `posFanout` vem null e seguimos no
+    // caminho antigo (a lição do `parcelas_max`).
+    const { data: posFanout } = await supabase
+      .from('app_inscricoes')
+      .select('status, fanout_erro')
+      .eq('id', inserted.id)
+      .maybeSingle();
+
+    if (posFanout?.status === 'erro') {
+      const nomeErro = dados.nome || req.user?.email || 'Alguém';
+      const sqlstate = posFanout.fanout_erro?.sqlstate || '?';
+      const constr = posFanout.fanout_erro?.constraint || null;
+      console.error(
+        `[APP] inscricoes · fanout falhou · tipo=${tipo} id=${inserted.id} sqlstate=${sqlstate}${constr ? ` constraint=${constr}` : ''}`,
+      );
+      notificar({
+        modulo: MODULO_POR_TIPO_INSCRICAO[tipo] || 'membresia',
+        tipo: 'app_inscricao_erro',
+        titulo: `Inscrição pelo app NÃO foi registrada — ${nomeErro}`,
+        mensagem:
+          `A solicitação de ${LABEL_INSCRICAO_WPP[tipo] || tipo} de ${nomeErro} não chegou na fila `
+          + `(erro ${sqlstate}${constr ? ` em ${constr}` : ''}). A pessoa foi avisada e pode ter tentado de novo. `
+          + 'Registrar à mão ou corrigir a causa.',
+        link: LINK_POR_TIPO_INSCRICAO[tipo] || '/ministerial/membresia',
+        severidade: 'alta',
+        // Dedup por PESSOA+TIPO, não por linha: quem toma erro tende a tentar de
+        // novo, e cada tentativa cria uma linha nova — dedup por id encheria o
+        // sino com o mesmo problema (lição dos avisos em massa do censo).
+        chaveDedup: `app_inscricao_erro_${tipo}_${membroId || req.user?.id || 'anon'}`,
+      }).catch((e) => console.warn('[APP] inscricoes · notificar erro de fanout:', e.message));
+
+      // ⚠️ E a pessoa passa a ouvir a verdade. Dizer "recebido" pra algo que não
+      // existe é o defeito que estamos consertando; o custo aceito é ela poder
+      // tentar de novo (o dedup do fanout trata) enquanto a equipe corrige.
+      return res.status(502).json({
+        error:
+          'Não conseguimos concluir sua solicitação agora. Nossa equipe já foi avisada '
+          + 'e vai resolver — se preferir, tente novamente em alguns minutos.',
+        codigo: 'fanout_falhou',
+      });
     }
 
     // Notifica a equipe de Cuidados (in-app + push). SOS é urgente.
@@ -654,18 +838,26 @@ router.post('/inscricoes', limiterStrict, tryAuth, async (req, res) => {
       }).catch(e => console.warn('[APP] inscricoes · notificar:', e.message));
     }
 
-    // Fale Conosco: notifica a secretaria (cai no fallback admin/diretor
-    // se não houver regra de notificação configurada).
+    // Fale Conosco: avisa a equipe e aponta pra FILA onde a mensagem aparece.
+    // ⚠️ Corrigido em 06/08/2026 (auditoria): o aviso ia pro módulo `membresia`
+    // com link pra `/ministerial/membresia`, uma tela que NÃO lista
+    // `app_inscricoes` — a pessoa clicava e não achava a mensagem, que fica
+    // truncada em 180 chars aqui e em nenhum outro lugar. Agora vai pro módulo
+    // `cuidados` (o dono da única fila que lê essa tabela, e a permissão que a
+    // fila exige: cuidados >= 1) e aponta pra Caixa de entrada, onde dá pra
+    // ler inteira, responder pelo Conversas e marcar como tratada.
+    // ⚠️ Se a secretaria tiver que receber isto, o caminho é regra de
+    // notificação do módulo `cuidados` em /admin — não um 2º destino aqui.
     if (tipo === 'contato') {
       const nome = dados.nome || req.user?.email || 'Alguém';
       const msg = extrairMensagem(extras);
       const assunto = dados.assunto ? ` (${String(dados.assunto).slice(0, 40)})` : '';
       notificar({
-        modulo: 'membresia',
+        modulo: 'cuidados',
         tipo: 'app_contato',
         titulo: `Fale Conosco — ${nome}${assunto}`,
         mensagem: `${nome} mandou uma mensagem pelo app${msg ? `: "${String(msg).slice(0, 180)}"` : '.'}`,
-        link: '/ministerial/membresia',
+        link: '/ministerial/cuidados?tab=acomp',
         severidade: 'info',
         chaveDedup: `app_contato_${inserted.id}`,
       }).catch(e => console.warn('[APP] inscricoes · notificar contato:', e.message));
@@ -3165,6 +3357,102 @@ async function gateGrupoApp(req, res, gid) {
   }
   return { ok: true, grupo, membro, adminGrupos };
 }
+
+// ⚠️⚠️ PUT /app/grupos/:grupoId — EDITAR GRUPO PELO APP (06/08/2026 · Onda 1b)
+//
+// O QUE ISTO CONSERTA: `grupo-editar.tsx` fazia UPDATE DIRETO em `mem_grupos`, e
+// a RLS de UPDATE só aceita `lider_id = current_user_membro_id()` OU nível
+// grupos >= 3 — **supervisor não passa**. Como o update do app não tinha
+// `.select()` nem conferia linhas afetadas, 0 linhas voltavam SEM erro e a tela
+// dizia "Grupo atualizado." Medido em 06/08: dos 13 supervisores, o único com
+// conta no app supervisiona **8 grupos ativos e não é líder em 7** — são 7 saves
+// que hoje mentem. (E `current_user_module_level` resolve `usuarios` pelo E-MAIL
+// DO LOGIN: o e-mail com que ele entra no app não é o da conta de sistema, então
+// o nível dele na RLS é 0.)
+//
+// ⚠️⚠️ POR QUE NÃO REUSAR O `PUT /api/grupos/:id` DO WEB: ele é update de OBJETO
+// INTEIRO, não patch — escreve ~28 colunas e aplica DEFAULT no que não vem
+// (`lider_id: d.lider_id || null`, `ativo: d.ativo ?? true`, `temporada: || null`,
+// `aceitando_inscricoes: d.aceitando_inscricoes !== false`). Chamá-lo com os 9
+// campos da tela do app **apagaria a liderança, a temporada e o estado de
+// inscrição** do grupo. Daí endpoint próprio, com allowlist e semântica de PATCH.
+//
+// Autorização: o MESMO `gateGrupoApp` dos outros 7 endpoints de gerenciar grupo
+// (líder OU supervisor OU admin de grupos) — a mesma régua que a TELA usa pra
+// decidir se mostra o botão "Editar". Era essa divergência entre tela e RLS que
+// produzia o save silencioso.
+//
+// ⚠️ A régua de campo vive em `utils/grupoEdicaoApp.js` (pura, no gate): lista
+// FECHADA de categoria (é regra de negócio — trava de gênero e inscrição de
+// casal), `horario` normalizado pra `HH:MM` (a coluna é `time` e a tela manda
+// texto livre) e `dia_semana` aceitando **0 = domingo** (que é falsy).
+router.put('/grupos/:grupoId', authApp, limiterNormal, async (req, res) => {
+  try {
+    const gid = req.params.grupoId;
+    const gate = await gateGrupoApp(req, res, gid);
+    if (!gate.ok) return undefined;
+
+    const { erros, valores, mudouEndereco } = validarEdicaoGrupoApp(req.body || {});
+    const campoComErro = Object.keys(erros)[0];
+    if (campoComErro) {
+      // Mesmo formato de erro do resto do app (appIdentidade): o cliente já sabe
+      // exibir `error` e agora tem `campo` pra destacar.
+      return res.status(400).json({ error: erros[campoComErro], campo: campoComErro, erros });
+    }
+    if (!Object.keys(valores).length) {
+      return res.status(400).json({ error: 'Nada para atualizar.' });
+    }
+
+    // ⚠️ `.select()` + conferir a linha é o ponto do conserto: sem isso, 0 linhas
+    // afetadas voltam como sucesso. E `updated_at` passa a ser carimbado (não há
+    // trigger de updated_at em mem_grupos, e o PUT do web também não o seta —
+    // então hoje editar grupo deixa a coluna velha).
+    const { data: atualizado, error } = await supabase
+      .from('mem_grupos')
+      .update({ ...valores, updated_at: new Date().toISOString() })
+      .eq('id', gid)
+      .is('deleted_at', null)
+      .select('id, nome, categoria, descricao, tema, dia_semana, horario, local, endereco, bairro')
+      .maybeSingle();
+
+    if (error) {
+      console.error('[APP] grupos · editar:', error.message);
+      return res.status(500).json({ error: 'Não foi possível salvar as alterações.' });
+    }
+    if (!atualizado) {
+      // Chegou aqui = o gate passou mas a linha não foi escrita. Não existe
+      // caminho conhecido pra isso (service_role ignora RLS), então é sinal de
+      // corrida (o grupo foi apagado no meio) — e a pessoa tem que saber.
+      console.error('[APP] grupos · editar: 0 linhas afetadas no grupo', gid);
+      return res.status(409).json({ error: 'O grupo não está mais disponível para edição.' });
+    }
+
+    // ⚠️ ENDEREÇO MUDOU = O PINO DO MAPA FICOU VELHO. Nenhum save do sistema
+    // re-geocodifica (nem o do web); quem faz isso é a ferramenta MANUAL
+    // `/admin/grupos/geocode`. Geocodificar aqui seria chamar ViaCEP + Nominatim
+    // (com 1,1s de espera por política) dentro do request — é como uma edição
+    // vira timeout. Então avisamos a coordenação, que é o que evita o pino
+    // apontando pra casa antiga sem ninguém saber.
+    if (mudouEndereco) {
+      notificar({
+        modulo: 'grupos',
+        tipo: 'grupo_endereco_mudou_app',
+        titulo: `Endereço do grupo mudou — ${atualizado.nome}`,
+        mensagem:
+          `O endereço de "${atualizado.nome}" foi editado pelo app. O pino do mapa e o `
+          + '"como chegar" continuam no lugar antigo até rodar a ferramenta de endereços.',
+        link: '/admin/grupos/geocode',
+        severidade: 'aviso',
+        chaveDedup: `grupo_endereco_app_${gid}`,
+      }).catch((e) => console.warn('[APP] grupos · editar · notificar endereço:', e.message));
+    }
+
+    return res.json({ ok: true, grupo: atualizado });
+  } catch (e) {
+    console.error('[APP] grupos · editar:', e.message);
+    return res.status(500).json({ error: 'Não foi possível salvar as alterações.' });
+  }
+});
 
 // ⚠️⚠️ DUAS COISAS DIFERENTES, e eu tinha confundido as duas (corrigido 05/08 por
 // esclarecimento do Marcos):
