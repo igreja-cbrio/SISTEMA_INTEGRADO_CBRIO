@@ -2394,6 +2394,12 @@ export const membresia = {
   qrLookup: (token) => get(`/membresia/qr-lookup/${encodeURIComponent(token)}`),
   cpfLookup: (cpf, nascimento) => get(`/membresia/cpf-lookup/${encodeURIComponent(String(cpf).replace(/\D/g, ''))}?nascimento=${encodeURIComponent(nascimento || '')}`),
   orfaosStats: () => get('/membresia/orfaos-stats'),
+  // Pedidos de exclusão de conta (LGPD art. 18) vindos do app · SÓ LEITURA:
+  // não existe caminho de desativação de conta no sistema ainda (06/08/2026).
+  exclusoes: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return get('/membresia/exclusoes' + (qs ? '?' + qs : ''));
+  },
   promoverOrfaos: () => post('/membresia/promover-orfaos', {}),
   // Fila de identidade (conflitos de CPF · identidade_pendencias)
   identidade: {

@@ -13,7 +13,7 @@ import { DatePicker } from '@/components/ui/date-picker';
 import { toast } from 'sonner';
 import { Plus, Trash2, Save, ClipboardCheck, Settings2, Loader2, Send, ArrowLeft, Check, X, RotateCcw, Paperclip, History, FileText } from 'lucide-react';
 
-type Aux = { ciclos: any[]; areas: { id: number; nome: string }[]; lideresPorArea: Record<string, { id: string; name: string }>; diretor_de: number[]; me: string; nivel: number };
+type Aux = { ciclos: any[]; areas: { id: number; nome: string }[]; diretor_de: number[]; me: string; nivel: number };
 const money = (v: number) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const ESTADO_LABEL: Record<string, string> = {
   RASCUNHO: 'Rascunho',
@@ -161,15 +161,6 @@ function PropostaForm({ aux, cicloId, propostaId, onVoltar }: { aux: Aux; cicloI
     }).catch((e: any) => toast.error(e?.message || 'Erro')).finally(() => setLoading(false));
   }, [propostaId]);
 
-  // Líder da área é sempre derivado da área escolhida (usuario_areas.is_principal)
-  // — não é mais um select manual. Reacopla sempre que a área mudar.
-  useEffect(() => {
-    const lider = f.area_id ? aux.lideresPorArea[f.area_id] : null;
-    const novoId = lider?.id || '';
-    if (f.lider_usuario_id !== novoId) set('lider_usuario_id', novoId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [f.area_id, aux.lideresPorArea]);
-
   const custoLiquido = Number(f.custo_total || 0) - Number(f.arrecadacao_prevista || 0);
   const pendentes = useMemo(() => {
     const req = [...OBRIG.comum, ...(OBRIG[f.tipo] || [])];
@@ -219,17 +210,12 @@ function PropostaForm({ aux, cicloId, propostaId, onVoltar }: { aux: Aux; cicloI
               </button>
             ))}
           </div>
-          <div className="flex gap-3 flex-wrap">
-            <Campo label="Área do projeto" cls="flex-1 min-w-[180px]">
-              <Select value={f.area_id || '__none__'} onValueChange={v => set('area_id', v === '__none__' ? '' : v)}>
-                <SelectTrigger><SelectValue placeholder="Área" /></SelectTrigger>
-                <SelectContent className="z-[1001]"><SelectItem value="__none__">—</SelectItem>{aux.areas.map(a => <SelectItem key={a.id} value={String(a.id)}>{a.nome}</SelectItem>)}</SelectContent>
-              </Select>
-            </Campo>
-            <Campo label="Líder da área" cls="flex-1 min-w-[180px]">
-              <Input disabled value={f.area_id ? (aux.lideresPorArea[f.area_id]?.name || 'Nenhum líder definido pra esta área') : 'Escolha a área primeiro'} />
-            </Campo>
-          </div>
+          <Campo label="Área do projeto">
+            <Select value={f.area_id || '__none__'} onValueChange={v => set('area_id', v === '__none__' ? '' : v)}>
+              <SelectTrigger><SelectValue placeholder="Área" /></SelectTrigger>
+              <SelectContent className="z-[1001]"><SelectItem value="__none__">—</SelectItem>{aux.areas.map(a => <SelectItem key={a.id} value={String(a.id)}>{a.nome}</SelectItem>)}</SelectContent>
+            </Select>
+          </Campo>
           {isP && <div className="flex gap-3 flex-wrap">
             <Campo label="Começa em" cls="flex-1 min-w-[150px]"><DatePicker value={f.data_inicio_prevista} onChange={(v: string) => set('data_inicio_prevista', v)} /></Campo>
             <Campo label="Termina em" cls="flex-1 min-w-[150px]"><DatePicker value={f.data_termino_prevista} onChange={(v: string) => set('data_termino_prevista', v)} /></Campo>

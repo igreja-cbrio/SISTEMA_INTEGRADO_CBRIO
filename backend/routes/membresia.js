@@ -4504,4 +4504,90 @@ router.post('/identidade-pendencias/:id/status', async (req, res) => {
   }
 });
 
+// ============================================================================
+// PEDIDOS DE EXCLUSAO DE CONTA (LGPD art. 18) · 06/08/2026 · Onda 1b
+// ============================================================================
+//
+// O QUE ESTAVA ABERTO: o app grava em `app_solicitacoes_exclusao` e promete
+// "em breve sua conta sera desativada" — e o ERP **nao lia essa tabela em lugar
+// nenhum**. Grep no repo inteiro: zero rotas, zero telas, zero servicos. O
+// primeiro pedido cairia num buraco com o prazo da LGPD correndo, e a Apple
+// TESTA esse fluxo na revisao da loja. Hoje a tabela esta VAZIA (0 pedidos) —
+// entao isto e gatilho armado, e e o melhor momento pra construir.
+//
+// ⚠️ ESTA ONDA E SO LEITOR. Nao processa, nao desativa, nao apaga. Motivo: **nao
+// existe nenhum caminho de desativacao de conta no sistema** (o unico
+// `auth.admin.deleteUser` do repo e script de teste; `ban_duration` tem 0
+// ocorrencias; `profiles.active` e so LIDO — nada nunca escreve false). Decidir
+// o que a igreja RETEM por obrigacao legal/fiscal (contribuicao, batismo) antes
+// de desativar e decisao do Marcos, nao efeito colateral de um endpoint.
+//
+// ⚠️ O app grava DIRETO no Supabase com o JWT da pessoa (`configuracoes.tsx`),
+// sem passar por aqui — entao nao existe hook no servidor pra avisar na hora. A
+// fila e PULL (esta rota + o bloco na tela) e e o que tira o pedido do buraco
+// hoje. O aviso periodico esta escrito em `notificacaoGenerator`, mas depende de
+// um cron que NAO esta agendado (ver o comentario la).
+//
+// Nivel 3 = o mesmo do export LGPD (`routes/lgpd.js`): e dado de pessoa pedindo
+// pra sair, nao leitura de painel.
+router.get('/exclusoes', authorizeModule('membresia', 3), async (req, res) => {
+  try {
+    const { status } = req.query;
+    let q = supabase
+      .from('app_solicitacoes_exclusao')
+      .select('id, user_id, motivo, detalhe, status, criada_em, processada_em')
+      .order('criada_em', { ascending: false })
+      .limit(200);
+    // A coluna nao tem CHECK (o 'pendente|processado|cancelado' do .sql e so
+    // comentario), entao o filtro e permissivo de proposito.
+    if (status && typeof status === 'string') q = q.eq('status', status);
+    const { data, error } = await q;
+    if (error) throw error;
+
+    const linhas = data || [];
+    // Nome/e-mail vem de `profiles` em consulta SEPARADA e best-effort: se ela
+    // falhar, a fila ainda aparece (com o id) em vez de sumir. E a regua do
+    // select isolado — pedir coluna inexistente derruba a query inteira.
+    let porUser = {};
+    const ids = [...new Set(linhas.map((l) => l.user_id).filter(Boolean))];
+    if (ids.length) {
+      const { data: profs } = await supabase
+        .from('profiles')
+        .select('id, name, email')
+        .in('id', ids);
+      porUser = Object.fromEntries((profs || []).map((p) => [p.id, p]));
+    }
+
+    const itens = linhas.map((l) => {
+      const p = porUser[l.user_id] || null;
+      return {
+        id: l.id,
+        user_id: l.user_id,
+        nome: (p && p.name) || null,
+        email: (p && p.email) || null,
+        motivo: l.motivo || null,
+        detalhe: l.detalhe || null,
+        status: l.status || 'pendente',
+        criada_em: l.criada_em,
+        processada_em: l.processada_em || null,
+      };
+    });
+
+    res.json({
+      itens,
+      total: itens.length,
+      total_pendentes: itens.filter((i) => i.status === 'pendente').length,
+      // ⚠️ A tela DIZ que ninguem processa automaticamente. Prometer menos do que
+      // o sistema faz e melhor que o contrario — e era justamente a promessa
+      // vazia do app que criou este problema.
+      aviso_processamento:
+        'A desativacao de conta ainda e manual e nao existe no sistema: trate com '
+        + 'a secretaria e registre o atendimento. O prazo da LGPD (art. 18) e de 15 dias.',
+    });
+  } catch (e) {
+    console.error('[membresia/exclusoes]', e.message);
+    res.status(500).json({ error: 'Erro ao carregar os pedidos de exclusao de conta' });
+  }
+});
+
 module.exports = router;
