@@ -5,6 +5,8 @@
 // webpush.js/VAPID).
 const { supabase } = require('../utils/supabase');
 const { fetchAllRows } = require('../utils/pagination');
+// ⚠️ Régua gêmea de `Aplicativo-CBRio/lib/pushLotes.ts` — ver o cabeçalho de lá.
+const { lotesDePush, tokenMorreu } = require('../utils/pushLotes');
 
 // ⚠️⚠️ LEITURA DE TOKEN É PAGINADA E EM LOTES (auditoria 06/08/2026).
 // Duas armadilhas somadas, as duas SILENCIOSAS:
@@ -56,32 +58,51 @@ async function pushExpoParaUsers(userIds, { title, body, data } = {}) {
     const ids = [...new Set((userIds || []).filter(Boolean))];
     if (!ids.length || !title) return { enviados: 0 };
 
-    const toks = await lerEmLotes(
-      ids,
-      (fatia) => supabase.from('app_push_tokens').select('token,platform').in('user_id', fatia),
-    );
-    const seen = new Set();
-    const tokens = (toks || []).filter((item) => {
-      if (!item.token || seen.has(item.token)) return false;
-      seen.add(item.token);
-      return true;
-    });
-    if (!tokens.length) return { enviados: 0 };
+    // ⚠️ `projeto_id` num SELECT que pode não existir ainda: se a migration
+    // `20260807220000` não tiver rodado, o PostgREST derruba a query INTEIRA por
+    // coluna desconhecida (não devolve "0 linhas" — falha tudo). Sem este
+    // resgate, o push pararia em vez de só perder o agrupamento.
+    let toks;
+    try {
+      toks = await lerEmLotes(
+        ids,
+        (fatia) => supabase.from('app_push_tokens').select('token,platform,projeto_id').in('user_id', fatia),
+      );
+    } catch (e) {
+      if (!/projeto_id/i.test(String(e?.message || ''))) throw e;
+      console.warn('[appPush] coluna projeto_id ausente — rode a migration 20260807220000');
+      toks = await lerEmLotes(
+        ids,
+        (fatia) => supabase.from('app_push_tokens').select('token,platform').in('user_id', fatia),
+      );
+    }
 
-    const messages = tokens.map((item) => ({
-      to: item.token,
-      sound: 'cbrio-chime.wav',
-      channelId: 'default',
-      title,
-      body,
-      data: data || {},
-    }));
+    // ⚠️⚠️ AGRUPA POR APP EXPO (07/08/2026). Aqui o chunk era só de 100, POR
+    // ORDEM DE LEITURA — e `app_push_tokens` recebe token de DOIS apps Expo
+    // (membros e CBRio Staff). A Expo recusa o REQUEST INTEIRO quando eles vão
+    // juntos: 1.801 de 1.820 tickets em erro, 1.773 com
+    // `PUSH_TOO_MANY_EXPERIENCE_IDS`. Um token do Staff derrubava a entrega dos
+    // 30 tokens iOS válidos. A dedupe por token agora vive na régua.
+    const lotes = lotesDePush(toks || []);
+    if (!lotes.length) return { enviados: 0 };
+    const totalMensagens = lotes.reduce((n, l) => n + l.length, 0);
 
     let aceitos = 0;
     let erros = 0;
-    for (let i = 0; i < messages.length; i += 100) {
-      const chunk = messages.slice(i, i + 100);
-      const chunkTokens = tokens.slice(i, i + 100);
+    const mortos = [];
+    for (const chunkTokens of lotes) {
+      const chunk = chunkTokens.map((item) => ({
+        to: item.token,
+        // ⚠️ `cbrio_chime.wav` com UNDERSCORE — é o nome do asset em
+        // `app.json:55` e do canal Android em `lib/push.ts:40`. Aqui estava
+        // `cbrio-chime.wav` com hífen: som que não existe, então o iOS caía no
+        // silêncio/padrão em todo push disparado pelo ERP.
+        sound: 'cbrio_chime.wav',
+        channelId: 'default',
+        title,
+        body,
+        data: data || {},
+      }));
       try {
         const response = await fetch('https://exp.host/--/api/v2/push/send', {
           method: 'POST',
@@ -95,6 +116,11 @@ async function pushExpoParaUsers(userIds, { title, body, data } = {}) {
           const accepted = response.ok && ticket.status === 'ok' && ticket.id;
           if (accepted) aceitos += 1;
           else erros += 1;
+          const code = ticket.details?.error || payload?.errors?.[0]?.code || `HTTP_${response.status}`;
+          // ⚠️ SÓ `DeviceNotRegistered` some. Apagar por erro de LOTE teria
+          // zerado a tabela — 1.773 tickets traziam
+          // `PUSH_TOO_MANY_EXPERIENCE_IDS`, culpa do request e não do token.
+          if (!accepted && tokenMorreu(code)) mortos.push(token.token);
           return {
             provider_ticket_id: accepted ? safeText(ticket.id, 160) : null,
             platform: ['android', 'ios'].includes(String(token.platform).toLowerCase()) ? String(token.platform).toLowerCase() : 'unknown',
@@ -115,7 +141,14 @@ async function pushExpoParaUsers(userIds, { title, body, data } = {}) {
         })));
       }
     }
-    return { enviados: messages.length, aceitos, erros };
+
+    // Limpeza best-effort dos tokens que a Expo declarou permanentemente mortos.
+    if (mortos.length) {
+      const { error } = await supabase.from('app_push_tokens').delete().in('token', mortos);
+      if (error) console.warn('[appPush] limpar tokens mortos:', error.message);
+    }
+
+    return { enviados: totalMensagens, aceitos, erros };
   } catch (e) {
     console.error('[appPush] pushExpoParaUsers erro:', e.message);
     return { enviados: 0 };
