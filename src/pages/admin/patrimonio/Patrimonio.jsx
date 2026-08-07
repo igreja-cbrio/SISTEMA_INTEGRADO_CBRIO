@@ -183,7 +183,7 @@ const fmtCodigo = (c) => {
 // exibidas na tabela; não pagina (exporta tudo que passou no filtro, não só
 // a página visível de 25 — o backend também não pagina mais em 1000, então
 // isso cobre o parque inteiro que bater no filtro).
-const BENS_EXPORT_HEADERS = ['Número', 'Nome', 'Categoria', 'Localização', 'Marca/Modelo', 'Valor de Aquisição', 'Status', 'Origem', 'Doador'];
+const BENS_EXPORT_HEADERS = ['Número', 'Nome', 'Categoria', 'Localização', 'Marca/Modelo', 'Valor de Aquisição', '% Depreciado', 'Valor Atual Estimado', 'Status', 'Origem', 'Doador'];
 function origemParaExportar(b) {
   return b.origem_aquisicao === 'doado' ? 'Doado' : 'Comprado';
 }
@@ -195,6 +195,8 @@ function bensParaExportar(lista) {
     b.pat_localizacoes?.nome || '',
     [b.marca, b.modelo].filter(Boolean).join(' '),
     b.valor_aquisicao != null ? fmtMoney(b.valor_aquisicao) : '',
+    b.depreciacao ? `${b.depreciacao.percentual_depreciado}%` : '',
+    b.depreciacao ? fmtMoney(b.depreciacao.valor_atual_estimado) : '',
     STATUS_BEM[b.status]?.label || b.status || '',
     origemParaExportar(b),
     b.origem_aquisicao === 'doado' ? (b.doador || '') : '',
@@ -209,6 +211,8 @@ function exportarBensCSV(lista) {
     b.pat_localizacoes?.nome || '',
     [b.marca, b.modelo].filter(Boolean).join(' '),
     b.valor_aquisicao ?? '',
+    b.depreciacao ? b.depreciacao.percentual_depreciado : '',
+    b.depreciacao ? b.depreciacao.valor_atual_estimado : '',
     STATUS_BEM[b.status]?.label || b.status || '',
     origemParaExportar(b),
     b.origem_aquisicao === 'doado' ? (b.doador || '') : '',
@@ -952,12 +956,14 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
             <thead><tr>
               {isDiretor && <th style={{ ...styles.th, width: 32 }}><input type="checkbox" checked={todosPaginaMarcados} onChange={toggleTodosPagina} onClick={e => e.stopPropagation()} /></th>}
               <th style={styles.th}>Número</th><th style={styles.th}>Nome</th><th style={styles.th}>Categoria</th>
-              <th style={styles.th}>Localização</th><th style={styles.th}>Marca/Modelo</th><th style={styles.th}>Valor</th><th style={styles.th}>Status</th>
+              <th style={styles.th}>Localização</th><th style={styles.th}>Marca/Modelo</th><th style={styles.th}>Valor</th>
+              <th style={styles.th} title="Depreciação (indicador gerencial) · cálculo linear interno, não é avaliação contábil oficial">% Deprec.</th>
+              <th style={styles.th}>Status</th>
               {isDiretor && <th style={styles.th}></th>}
             </tr></thead>
             <tbody>
-              {loading && <tr><td colSpan={9}><div className="flex items-center justify-center py-6 gap-2"><div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-primary" /><span className="text-xs text-muted-foreground">Carregando...</span></div></td></tr>}
-              {!loading && bens.length === 0 && <tr><td colSpan={9}><div className="flex flex-col items-center py-10 gap-2"><div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center mb-1"><svg className="h-5 w-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" /></svg></div><span className="text-sm font-medium text-foreground">Nenhum bem encontrado</span></div></td></tr>}
+              {loading && <tr><td colSpan={10}><div className="flex items-center justify-center py-6 gap-2"><div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-primary" /><span className="text-xs text-muted-foreground">Carregando...</span></div></td></tr>}
+              {!loading && bens.length === 0 && <tr><td colSpan={10}><div className="flex flex-col items-center py-10 gap-2"><div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center mb-1"><svg className="h-5 w-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" /></svg></div><span className="text-sm font-medium text-foreground">Nenhum bem encontrado</span></div></td></tr>}
               {bensPag.map(b => (
                 <tr key={b.id} className="cbrio-row" onClick={() => onDetail(b.id)}>
                   {isDiretor && <td style={styles.td} onClick={e => e.stopPropagation()}><input type="checkbox" checked={selecionados.has(b.id)} onChange={() => toggleSelecionado(b.id)} /></td>}
@@ -971,6 +977,11 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
                   </td>
                   <td style={styles.td}>{[b.marca, b.modelo].filter(Boolean).join(' ') || '—'}</td>
                   <td style={styles.td}>{fmtMoney(b.valor_aquisicao)}</td>
+                  <td style={styles.td}>
+                    {b.depreciacao
+                      ? <span title={`Valor atual estimado: ${fmtMoney(b.depreciacao.valor_atual_estimado)}`} style={{ color: b.depreciacao.percentual_depreciado >= 80 ? C.amber : C.text2 }}>{b.depreciacao.percentual_depreciado}%</span>
+                      : <span style={{ color: C.text3 }}>—</span>}
+                  </td>
                   <td style={styles.td}><Badge status={b.status} map={STATUS_BEM} /></td>
                   {isDiretor && <td style={styles.td}>{b.status !== 'baixado' && <Button variant="ghost" size="xs" title="Dar baixa" onClick={e => { e.stopPropagation(); onBaixar(b.id); }}><Archive style={{ width: 14, height: 14 }} /></Button>}</td>}
                 </tr>
@@ -1426,12 +1437,16 @@ function BemDetailModal({ open, data, onClose, onEdit, onBaixar, onMov, onDispen
         <div><span style={{ fontSize: 11, color: C.text2 }}>Responsável:</span><div style={{ fontSize: 14 }}>{data.responsavel?.name || '—'}</div></div>
         {data.status === 'baixado' && <div><span style={{ fontSize: 11, color: C.text2 }}>Data da baixa:</span><div style={{ fontSize: 14 }}>{fmtDate(data.data_baixa)}</div></div>}
       </div>
-      {data.depreciacao && (
+      {data.depreciacao ? (
         <div style={{ padding: '8px 12px', background: 'var(--cbrio-input-bg)', borderRadius: 8, marginBottom: 12, fontSize: 13 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
             <span>Depreciação (indicador gerencial): <strong>{data.depreciacao.percentual_depreciado}%</strong> · valor atual estimado <strong style={{ color: C.primary }}>{fmtMoney(data.depreciacao.valor_atual_estimado)}</strong></span>
           </div>
           <div style={{ fontSize: 11, color: C.text3, marginTop: 2 }}>Cálculo linear interno — não é avaliação contábil oficial</div>
+        </div>
+      ) : data.valor_aquisicao != null && (
+        <div style={{ padding: '8px 12px', background: 'var(--cbrio-input-bg)', borderRadius: 8, marginBottom: 12, fontSize: 13, color: C.amber }}>
+          Sem vida útil configurada pra esta categoria — depreciação não calculada. Configure em Categorias e Localizações.
         </div>
       )}
       {data.descricao && <div style={{ padding: '8px 12px', background: 'var(--cbrio-input-bg)', borderRadius: 8, marginBottom: 12, fontSize: 13, color: C.text2 }}>{data.descricao}</div>}

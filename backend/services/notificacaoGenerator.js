@@ -1,5 +1,6 @@
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('./notificar');
+const { calcularDepreciacao } = require('../utils/patrimonioDepreciacao');
 
 /**
  * Gera todas as notificações automáticas de todos os módulos.
@@ -572,9 +573,12 @@ async function gerarNotificacoesPatrimonio() {
   let count = 0;
 
   // 1. Bens extraviados
+  // ⚠️ Coluna correta é `codigo_barras` (pat_bens não tem `codigo_patrimonio`) —
+  // o select antigo pedia uma coluna inexistente, o PostgREST recusava a query
+  // INTEIRA (não só a coluna) e este alerta nunca disparava, em silêncio.
   const { data: extraviados } = await supabase
     .from('pat_bens')
-    .select('id, nome, codigo_patrimonio')
+    .select('id, nome, codigo_barras')
     .eq('status', 'extraviado');
 
   for (const b of extraviados || []) {
@@ -582,10 +586,36 @@ async function gerarNotificacoesPatrimonio() {
       modulo: 'patrimonio',
       tipo: 'bem_extraviado',
       titulo: `Bem extraviado`,
-      mensagem: `${b.nome} (${b.codigo_patrimonio || 'sem código'}) está marcado como extraviado.`,
+      mensagem: `${b.nome} (${b.codigo_barras || 'sem código'}) está marcado como extraviado.`,
       link: '/admin/patrimonio',
       severidade: 'urgente',
       chaveDedup: `extraviado_${b.id}`,
+    });
+  }
+
+  // 2. Fim de vida útil (depreciação gerencial >= 80%) — vira aviso real de
+  // planejamento de reposição (antes só aparecia no card do dashboard).
+  // Dedup por MÊS (não por dia): a depreciação muda devagar, reavisar todo
+  // dia enquanto o bem continuar ativo enterraria o sino sem necessidade.
+  const anoMes = new Date().toISOString().slice(0, 7);
+  const { data: bensAtivos } = await supabase
+    .from('pat_bens')
+    .select('id, nome, codigo_barras, valor_aquisicao, data_aquisicao, pat_categorias(nome, vida_util_meses)')
+    .eq('status', 'ativo')
+    .not('valor_aquisicao', 'is', null)
+    .not('data_aquisicao', 'is', null);
+
+  for (const b of bensAtivos || []) {
+    const dep = calcularDepreciacao(b);
+    if (!dep || dep.percentual_depreciado < 80) continue;
+    count += await notificar({
+      modulo: 'patrimonio',
+      tipo: 'bem_fim_vida_util',
+      titulo: `Bem perto do fim da vida útil: ${b.nome}`,
+      mensagem: `${b.nome} (${b.codigo_barras || 'sem código'}) está ${dep.percentual_depreciado}% depreciado (indicador gerencial) — considere planejar a reposição.`,
+      link: '/admin/patrimonio',
+      severidade: dep.percentual_depreciado >= 100 ? 'warning' : 'info',
+      chaveDedup: `dep_fim_vida_${b.id}_${anoMes}`,
     });
   }
 
