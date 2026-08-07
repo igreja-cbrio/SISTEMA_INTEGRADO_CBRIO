@@ -3561,6 +3561,43 @@ pessoa de grupo, **sem autorização do líder**.
   confirmação de aprovado enfileirada na `whatsapp_envios` pra quem tem opt-in —
   Rafaela ficou de fora por `whatsapp_optin=false`).
 
+## ⚠️ Grupos · membro existente ganha o que digitou no formulário (2026-08-06 · SEM migration)
+
+Pedido do Marcos, depois da auditoria da temporada: *"recupere esses que já
+foram e garanta que os próximos quando preencherem, já vir corretamente os
+dados para os campos"*. O achado: quando o matcher liga a inscrição num
+cadastro JÁ EXISTENTE (import antigo), o enriquecimento só-onde-vazio cobria
+foto/sexo/nascimento — **CPF e e-mail digitados não chegavam ao cadastro**.
+Medido em 06/08: 20 pessoas (aprovadas 26/07+ e pendentes) com cadastro de
+import (13/05–23/06) sem CPF, e **os 20 CPFs digitados guardados em
+`mem_identidade_observacoes`** — coletados e nunca aplicados. Mesma classe do
+bug do CPF do censo (04/08), versão branda (evidência preservada).
+
+- **`processarPessoaPedido` (publicGrupos.js)**, no ramo de membro existente:
+  (1) o só-onde-vazio ganhou **e-mail e telefone** (política do censo: vazio
+  preenche; divergente NUNCA sobrescreve — acumula em `mem_contatos` via
+  `registrarContatoDaPorta`, a MESMA função do matcher); (2) depois do
+  enriquecimento roda **`reconciliarCpfTardio`** com a confiança canônica do
+  `_consolidarCpfNoMatch` ('forte' só em nome+nascimento; e-mail/telefone+nome
+  = 'fraca'). Nascimento divergente ou CPF de outra pessoa segue virando
+  `identidade_pendencias` — fila humana, nunca fusão. Best-effort: falha não
+  derruba a porta.
+- ⚠️ **A ordem (enriquecer ANTES de consolidar) é decisão, não descuido**: o
+  formulário exige nascimento, o cadastro de import geralmente não tem — o
+  gate 'fraca' do reconciliar exige nascimento dos 2 lados, e sem o
+  preenchimento prévio quase nenhum CPF consolidaria (o pedido do Marcos é que
+  os dados CHEGUEM). O caso perigoso (cadastro com nascimento DIFERENTE do
+  digitado) continua barrado: só-onde-vazio não sobrescreve, e o reconciliar
+  detecta a divergência e abre pendência.
+- ⚠️ **`aprovarPedidoCore` NÃO enriquece pedido com `membro_id`** (só o ramo de
+  cadastro pendente/promoção) — quem completa o cadastro agora é a INSCRIÇÃO.
+  Registrado porque uma resposta anterior minha afirmou o contrário.
+- **Reparo dos que já passaram** (script com dry-run + backup em
+  `scratchpad/backup_reparo_cpf_email_grupos_20260806.json`): CPFs das
+  observações consolidados via `reconciliarCpfTardio` + e-mails/telefones dos
+  pedidos aplicados só-onde-vazio nos membros de pedidos aprovados (26/07+) e
+  pendentes. Conflito de CPF virou pendência em Entradas, como manda o contrato.
+
 ## Grupos · Caixa de entrada ganhou o "Retrato do período" + contato impossível (2026-08-03 · SEM migration)
 
 Depois da varredura do lançamento (domingo 02/08), o Marcos pediu: *"eu gostaria
