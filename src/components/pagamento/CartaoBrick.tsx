@@ -60,11 +60,21 @@ export type CartaoBrickProps = {
   checkoutUrl?: string | null;
   corTexto?: string;
   corTextoFraco?: string;
+  /** Paleta da página, pro formulário não parecer um bloco colado de fora. */
+  escuro?: boolean;
+  corFundoInput?: string;
+  corBorda?: string;
 };
+
+// Verde da casa (mesmo `C.primary` do sistema). O Brick aceita 34 variáveis
+// visuais; estas são as que mudam a percepção — cor de ação, texto, fundo de
+// campo, raio e foco. O resto herda do tema.
+const VERDE_CBRIO = '#00B39D';
 
 export default function CartaoBrick({
   publicKey, valorCentavos, parcelasMax, onPagar, checkoutUrl,
   corTexto = '#111', corTextoFraco = '#666',
+  escuro = false, corFundoInput, corBorda,
 }: CartaoBrickProps) {
   const [estado, setEstado] = useState<'carregando' | 'pronto' | 'erro'>('carregando');
   const [erro, setErro] = useState<string | null>(null);
@@ -101,7 +111,32 @@ export default function CartaoBrick({
           },
           customization: {
             paymentMethods: { minInstallments: 1, maxInstallments: teto },
-            visual: { style: { theme: 'default' } },
+            visual: {
+              // ⚠️ `hideFormTitle`: a nossa página JÁ tem título ("Pagar com
+              // cartão"). Sem isto aparecem dois títulos, e é o que faz o
+              // formulário parecer um bloco colado de fora.
+              hideFormTitle: true,
+              style: {
+                theme: escuro ? 'dark' : 'default',
+                customVariables: {
+                  baseColor: VERDE_CBRIO,
+                  buttonTextColor: '#ffffff',
+                  textPrimaryColor: corTexto,
+                  textSecondaryColor: corTextoFraco,
+                  ...(corFundoInput ? { inputBackgroundColor: corFundoInput } : {}),
+                  ...(corBorda ? { outlineSecondaryColor: corBorda } : {}),
+                  // Raio e espaçamento da casa (os botões da página são 999).
+                  borderRadiusSmall: '8px',
+                  borderRadiusMedium: '10px',
+                  borderRadiusLarge: '12px',
+                  borderRadiusFull: '999px',
+                  inputVerticalPadding: '12px',
+                  inputHorizontalPadding: '12px',
+                  formPadding: '0px',
+                  fontSizeMedium: '16px',   // 16px evita o zoom automático do iOS
+                },
+              },
+            },
           },
           callbacks: {
             onReady: () => { if (vivo) setEstado('pronto'); },
@@ -129,7 +164,7 @@ export default function CartaoBrick({
       controller.current = null;
     };
     // Recria quando o valor ou o teto mudam — as parcelas exibidas dependem dos dois.
-  }, [publicKey, valorCentavos, teto]);
+  }, [publicKey, valorCentavos, teto, escuro, corTexto, corTextoFraco, corFundoInput, corBorda]);
 
   if (estado === 'erro') {
     return (

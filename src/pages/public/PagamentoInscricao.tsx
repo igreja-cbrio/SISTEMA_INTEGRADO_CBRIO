@@ -254,7 +254,7 @@ function AnexarComprovante({ token, pag, C, onEnviado }: {
 
 export default function PagamentoInscricao() {
   const { token = '' } = useParams();
-  const { C } = usePublicTheme();
+  const { C, isDark } = usePublicTheme();
   const [pag, setPag] = useState<Pagamento | null>(null);
   const [erro, setErro] = useState('');
   const [carregando, setCarregando] = useState(true);
@@ -699,6 +699,8 @@ export default function PagamentoInscricao() {
                         checkoutUrl={pag.checkout_url}
                         corTexto={C.text2}
                         corTextoFraco={C.textDim}
+                        escuro={isDark}
+                        corBorda={C.inputBorder}
                         onPagar={async (formData) => {
                           // ⚠️ LANÇAR em erro é contrato do Brick: é o que faz
                           // ele sair do estado "processando" e deixar a pessoa
