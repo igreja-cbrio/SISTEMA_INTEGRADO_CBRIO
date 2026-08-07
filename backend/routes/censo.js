@@ -12,10 +12,12 @@ const router = express.Router();
 const { supabase } = require('../utils/supabase');
 const { authenticate, authorizeModule, getEffectiveLevel } = require('../middleware/auth');
 const {
-  TIPOS, FORMATOS, CUIDADO_TIPOS, validarPerguntas, slugificar,
+  TIPOS, FORMATOS, CUIDADO_TIPOS, TIPOS_NUMERICOS, validarPerguntas, slugificar,
+  ordenarPorOpcoes, baseSemNeutras, ehNeutra,
 } = require('../utils/censoPerguntas');
 const { acharMembroGuardado } = require('../services/membroMatch');
 const { reconciliarCenso } = require('../services/censoReconciliar');
+const { lerRespostasAbertas } = require('../services/censoLeituraIA');
 
 router.use(authenticate);
 
@@ -589,6 +591,286 @@ router.post('/pos-processar', authorizeModule('censo', 4), async (req, res) => {
       .is('pos_processado_em', null).not('concluida_em', 'is', null).is('deleted_at', null);
 
     res.json({ processadas: fila.length, vinculadas, conflitos, falhas, restantes: restantes || 0 });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+//  COBERTURA · quem respondeu, e quem falta
+// ══════════════════════════════════════════════════════════════════════════
+//
+// A pergunta que esta aba responde não é "quantas respostas temos" — é "posso
+// confiar nisso?". 300 respostas de 1.798 membros ativos é um retrato de 17% da
+// comunidade, e quem lê o resultado precisa saber disso antes de decidir.
+//
+// O denominador é CALCULADO ao vivo. Número fixo em código envelhece sem avisar,
+// e aí a cobertura mente para cima justamente quando a igreja cresce.
+
+router.get('/cobertura', authorizeModule('censo', 1), async (req, res) => {
+  try {
+    const pesquisaId = req.query.pesquisa_id;
+    if (!pesquisaId) return res.status(400).json({ error: 'pesquisa_id é obrigatório' });
+
+    const [stats, porCanalDia, membros, funil] = await Promise.all([
+      supabase.from('vw_cen_pesquisa_stats').select('*').eq('pesquisa_id', pesquisaId).maybeSingle(),
+      supabase.from('vw_cen_cobertura').select('*').eq('pesquisa_id', pesquisaId).order('dia'),
+      supabase.from('mem_membros').select('id', { count: 'exact', head: true })
+        .eq('status', 'membro_ativo').is('deleted_at', null),
+      supabase.from('vw_cen_funil_pergunta').select('*').eq('pesquisa_id', pesquisaId)
+        .order('respostas', { ascending: true }).limit(400),
+    ]);
+    if (stats.error) throw stats.error;
+    if (porCanalDia.error) throw porCanalDia.error;
+
+    const linhas = porCanalDia.data || [];
+    const s = stats.data || {};
+    const membrosAtivos = membros.count || 0;
+    const concluidas = Number(s.concluidas) || 0;
+    const identificadas = Number(s.identificadas) || 0;
+
+    // Agrega no backend em vez de mandar a matriz crua: a tela precisa de duas
+    // séries (por canal, por dia), não do produto cartesiano das duas.
+    const porCanal = {};
+    const porDia = {};
+    for (const l of linhas) {
+      const c = porCanal[l.canal] || (porCanal[l.canal] = { canal: l.canal, iniciadas: 0, concluidas: 0, identificadas: 0 });
+      c.iniciadas += Number(l.iniciadas) || 0;
+      c.concluidas += Number(l.concluidas) || 0;
+      c.identificadas += Number(l.identificadas) || 0;
+      const d = porDia[l.dia] || (porDia[l.dia] = { dia: l.dia, iniciadas: 0, concluidas: 0 });
+      d.iniciadas += Number(l.iniciadas) || 0;
+      d.concluidas += Number(l.concluidas) || 0;
+    }
+
+    // O funil mostra ONDE as pessoas param — a pergunta com menos respostas é a
+    // que está cansando ou incomodando. É o dado que melhora o próximo censo.
+    const abandono = (funil.data || [])
+      .filter((f) => Number(f.pct_do_total) < 92)
+      .slice(0, 12);
+
+    res.json({
+      pesquisa: {
+        titulo: s.titulo || null, status: s.status || null,
+        total_perguntas: Number(s.total_perguntas) || 0,
+        ultima_resposta_em: s.ultima_resposta_em || null,
+      },
+      iniciadas: Number(s.iniciadas) || 0,
+      concluidas,
+      abandonadas: Math.max(0, (Number(s.iniciadas) || 0) - concluidas),
+      taxa_conclusao: s.taxa_conclusao ?? null,
+      duracao_media_seg: s.duracao_media_seg ?? null,
+      identificadas,
+      anonimas: Number(s.anonimas) || 0,
+      // "Cobertura" é sobre gente reconhecível: uma resposta anônima conta para a
+      // estatística, mas não para "alcançamos tal pessoa".
+      membros_ativos: membrosAtivos,
+      cobertura_pct: membrosAtivos ? Math.round((identificadas / membrosAtivos) * 1000) / 10 : null,
+      por_canal: Object.values(porCanal).sort((a, b) => b.concluidas - a.concluidas),
+      por_dia: Object.values(porDia).sort((a, b) => String(a.dia).localeCompare(String(b.dia))),
+      abandono,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+//  PERFIL · todo gráfico do censo, gerado do próprio questionário
+// ══════════════════════════════════════════════════════════════════════════
+//
+// Nada aqui é escrito à mão por pergunta. A view devolve contagem por valor; o
+// motor de perguntas ordena os valores e calcula a base sem as neutras. Efeito
+// prático: quando o Matheus adiciona uma pergunta no construtor, ela aparece
+// como gráfico sozinha, sem eu tocar em código.
+//
+// Duas coisas que a view não sabe fazer e por isso ficam aqui:
+//  · ORDEM — "Nunca / Raramente / Às vezes / Sempre" não é ordem alfabética. Só
+//    quem tem o questionário na mão sabe a ordem certa.
+//  · BASE — "Prefiro não dizer" sai do denominador do percentual, senão dilui
+//    todo o bloco sensível e a leitura fica errada para baixo.
+
+router.get('/perfil', authorizeModule('censo', 1), async (req, res) => {
+  try {
+    const pesquisaId = req.query.pesquisa_id;
+    if (!pesquisaId) return res.status(400).json({ error: 'pesquisa_id é obrigatório' });
+
+    const [pesquisa, agregado, demo] = await Promise.all([
+      supabase.from('cen_pesquisa').select('id, titulo, perguntas').eq('id', pesquisaId).maybeSingle(),
+      supabase.from('vw_cen_item_agregado').select('*').eq('pesquisa_id', pesquisaId).limit(5000),
+      // Corte demográfico: vem da view NOMINAL, então é agregado aqui e o nome
+      // nunca sai desta função. É o que permite nível 1 ver o perfil.
+      supabase.from('vw_cen_resposta_pessoa')
+        .select('faixa_etaria, genero, estado_civil, bairro, status_membro')
+        .eq('pesquisa_id', pesquisaId).limit(5000),
+    ]);
+    if (pesquisa.error) throw pesquisa.error;
+    if (!pesquisa.data) return res.status(404).json({ error: 'Pesquisa não encontrada' });
+    if (agregado.error) throw agregado.error;
+
+    const perguntas = validarPerguntas(pesquisa.data.perguntas || []).perguntas;
+    const porId = new Map(perguntas.map((p) => [p.id, p]));
+
+    const linhasPorPergunta = new Map();
+    for (const l of agregado.data || []) {
+      if (!linhasPorPergunta.has(l.pergunta_id)) linhasPorPergunta.set(l.pergunta_id, []);
+      linhasPorPergunta.get(l.pergunta_id).push(l);
+    }
+
+    // Percorre na ORDEM DO QUESTIONÁRIO, não na ordem que o banco devolveu — a
+    // tela tem que parecer o formulário que a pessoa respondeu.
+    const graficos = [];
+    for (const p of perguntas) {
+      if (p.tipo === 'secao') { graficos.push({ tipo: 'secao', id: p.id, texto: p.texto }); continue; }
+      const linhas = linhasPorPergunta.get(p.id) || [];
+      if (!linhas.length) continue;
+
+      const { base, neutras, total } = baseSemNeutras(p, linhas);
+      const ordenadas = ordenarPorOpcoes(p, linhas).map((l) => {
+        const n = Number(l.total) || 0;
+        const neutra = ehNeutra(p, l.valor);
+        return {
+          valor: l.valor, total: n, neutra,
+          // Percentual sobre a base SEM neutras. Numa neutra o percentual é
+          // sobre o total — é a fatia "não quis responder", não uma resposta.
+          pct: neutra
+            ? (total ? Math.round((n / total) * 1000) / 10 : 0)
+            : (base ? Math.round((n / base) * 1000) / 10 : 0),
+        };
+      });
+
+      let media = null;
+      if (TIPOS_NUMERICOS.includes(p.tipo) && base) {
+        let soma = 0;
+        for (const l of linhas) {
+          if (ehNeutra(p, l.valor)) continue;
+          const v = Number(l.valor);
+          if (Number.isFinite(v)) soma += v * (Number(l.total) || 0);
+        }
+        media = Math.round((soma / base) * 100) / 100;
+      }
+
+      graficos.push({
+        tipo: p.tipo, id: p.id, texto: p.texto, sensivel: linhas[0]?.sensivel === true,
+        base, neutras, total, media,
+        // Texto livre não vira barra — vira Leitura da IA. Aqui só o volume.
+        aberta: ['texto_longo', 'texto_curto', 'busca'].includes(p.tipo),
+        valores: ['texto_longo', 'texto_curto'].includes(p.tipo) ? [] : ordenadas,
+      });
+    }
+
+    // Cortes demográficos, contados aqui.
+    const cortes = { faixa_etaria: {}, genero: {}, estado_civil: {}, bairro: {}, status_membro: {} };
+    for (const r of demo.data || []) {
+      for (const k of Object.keys(cortes)) {
+        const v = r[k] || '(não informado)';
+        cortes[k][v] = (cortes[k][v] || 0) + 1;
+      }
+    }
+    const emLista = (o, teto) => Object.entries(o)
+      .map(([valor, total]) => ({ valor, total }))
+      .sort((a, b) => b.total - a.total).slice(0, teto || 100);
+
+    res.json({
+      titulo: pesquisa.data.titulo,
+      respondentes: (demo.data || []).length,
+      graficos,
+      demografia: {
+        faixa_etaria: ordenarPorOpcoes({ opcoes: ['0-11', '12-17', '18-24', '25-34', '35-44', '45-59', '60+'] },
+          emLista(cortes.faixa_etaria)),
+        genero: emLista(cortes.genero),
+        estado_civil: emLista(cortes.estado_civil),
+        bairro: emLista(cortes.bairro, 12),
+        status_membro: emLista(cortes.status_membro),
+      },
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+//  LEITURA DA IA · síntese das respostas abertas
+// ══════════════════════════════════════════════════════════════════════════
+//
+// LER é nível 1 (é agregado e já sai sem o bloco sensível). GERAR é nível 4:
+// roda Opus 5 sobre centenas de textos, custa dinheiro e leva minutos — é ação,
+// não consulta. E é deliberado que todos leiam a MESMA leitura: se cada abertura
+// gerasse uma nova, cinco pessoas na reunião veriam cinco conclusões diferentes.
+
+router.get('/ia', authorizeModule('censo', 1), async (req, res) => {
+  try {
+    const pesquisaId = req.query.pesquisa_id;
+    if (!pesquisaId) return res.status(400).json({ error: 'pesquisa_id é obrigatório' });
+
+    const [ultima, agora] = await Promise.all([
+      supabase.from('cen_leitura_ia')
+        .select('id, respostas_na_base, respostas_lidas, modelo, conteudo, gerada_em')
+        .eq('pesquisa_id', pesquisaId).order('gerada_em', { ascending: false }).limit(1).maybeSingle(),
+      supabase.from('cen_resposta').select('id', { count: 'exact', head: true })
+        .eq('pesquisa_id', pesquisaId).not('concluida_em', 'is', null).is('deleted_at', null),
+    ]);
+    if (ultima.error) throw ultima.error;
+
+    const naBase = agora.count || 0;
+    const l = ultima.data;
+    res.json({
+      leitura: l ? { ...l, conteudo: l.conteudo } : null,
+      respostas_na_base: naBase,
+      // "Envelheceu" é uma pergunta de confiança, não de tempo: 30% de resposta
+      // nova depois da leitura muda a conclusão mais que duas semanas de calendário.
+      desatualizada: !!l && naBase > (l.respostas_na_base || 0) * 1.3,
+      novas_desde: l ? Math.max(0, naBase - (l.respostas_na_base || 0)) : naBase,
+      pode_gerar: getEffectiveLevel(req, 'censo') >= 4,
+      ia_configurada: !!process.env.ANTHROPIC_API_KEY,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/ia', authorizeModule('censo', 4), async (req, res) => {
+  try {
+    const pesquisaId = req.body?.pesquisa_id;
+    if (!pesquisaId) return res.status(400).json({ error: 'pesquisa_id é obrigatório' });
+    if (!process.env.ANTHROPIC_API_KEY) {
+      return res.status(503).json({ error: 'ANTHROPIC_API_KEY não configurada no servidor' });
+    }
+
+    // Só respostas de pergunta ABERTA e NÃO sensível, e só de resposta concluída.
+    // O filtro do sensível é no SQL (e há uma segunda guarda no serviço): o bloco 6
+    // foi coletado com a promessa de virar estatística, não contexto de modelo.
+    const { data: itens, error } = await supabase
+      .from('cen_resposta_item')
+      .select('pergunta_id, pergunta_texto, valor_texto, sensivel, cen_resposta!inner(pesquisa_id, concluida_em, deleted_at)')
+      .eq('cen_resposta.pesquisa_id', pesquisaId)
+      .not('cen_resposta.concluida_em', 'is', null)
+      .is('cen_resposta.deleted_at', null)
+      .eq('sensivel', false)
+      .not('valor_texto', 'is', null)
+      .limit(20000);
+    if (error) throw error;
+
+    const abertos = (itens || []).filter((i) => String(i.valor_texto || '').trim().length >= 3);
+    if (!abertos.length) {
+      return res.status(422).json({ error: 'Nenhuma resposta aberta para ler ainda' });
+    }
+
+    const leitura = await lerRespostasAbertas(abertos);
+    if (!leitura) return res.status(502).json({ error: 'A IA não devolveu uma leitura utilizável' });
+
+    const { count: naBase } = await supabase.from('cen_resposta')
+      .select('id', { count: 'exact', head: true })
+      .eq('pesquisa_id', pesquisaId).not('concluida_em', 'is', null).is('deleted_at', null);
+
+    const { data: salva, error: e2 } = await supabase.from('cen_leitura_ia').insert({
+      pesquisa_id: pesquisaId,
+      respostas_na_base: naBase || 0,
+      respostas_lidas: leitura.respostas_lidas,
+      modelo: leitura.modelo,
+      conteudo: {
+        por_pergunta: leitura.por_pergunta,
+        leitura_geral: leitura.leitura_geral,
+        truncadas: leitura.truncadas,
+      },
+      uso: leitura.uso,
+      gerada_por: req.user?.id || null,
+    }).select('id, respostas_na_base, respostas_lidas, modelo, conteudo, gerada_em').single();
+    if (e2) throw e2;
+
+    res.json({ leitura: salva, respostas_na_base: naBase || 0, desatualizada: false, novas_desde: 0 });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
