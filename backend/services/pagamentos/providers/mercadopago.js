@@ -127,7 +127,45 @@ function accessToken() {
       + 'consegue cobrar. (Sem a env, mantenha PAG_PROVIDER_PADRAO=manual.)',
     );
   }
+  conferirConta(t);
   return t;
+}
+
+/**
+ * ⚠️⚠️ A GUARDA DE CONTA — a que substitui a de ambiente quando o sandbox passa
+ * a usar credencial de PRODUÇÃO de conta de teste.
+ *
+ * Contexto (08/08/2026): o Mercado Pago aposentou as credenciais de teste na
+ * Orders API ("Test credentials are not supported, use test users with
+ * production credentials"). Isso obriga o preview a rodar com
+ * `MERCADOPAGO_AMBIENTE=producao` — e **neutraliza a guarda de `live_mode`**,
+ * que era o que impedia o ensaio de cobrar de verdade. Sem nada no lugar, um
+ * Access Token da conta REAL da igreja colado no preview cobraria cartão de
+ * gente.
+ *
+ * O sinal que sobra é a própria credencial: o ÚLTIMO segmento do Access Token do
+ * MP é o **id da conta** (`APP_USR-<app>-<data>-<hash>-<userId>`). Então a
+ * conferência é de igualdade contra `MERCADOPAGO_CONTA_ID`, setada por escopo:
+ * em Production o id da conta da igreja; em Preview o do vendedor de teste.
+ * Trocar a chave sem trocar o escopo passa a LANÇAR em vez de cobrar.
+ *
+ * ⚠️ Fail-OPEN em dois casos, de propósito (mesma régua do `live_mode`): env
+ * ausente e token em formato que não expõe o id. Inventar erro onde não há sinal
+ * derrubaria o pagamento por nada — e produção rodou meses sem esta env.
+ */
+function conferirConta(token) {
+  const esperada = String(process.env.MERCADOPAGO_CONTA_ID || '').replace(/\D/g, '');
+  if (!esperada) return;
+  const partes = String(token).split('-');
+  const daChave = String(partes[partes.length - 1] || '').replace(/\D/g, '');
+  if (!daChave) return;
+  if (daChave === esperada) return;
+  throw new Error(
+    'Mercado Pago: o Access Token é da conta ' + daChave + ', mas este ambiente '
+    + 'está declarado para a conta ' + esperada + ' (MERCADOPAGO_CONTA_ID). '
+    + '⚠️ Credencial da conta REAL num ambiente de ensaio cobraria dinheiro de '
+    + 'verdade — troque a chave ou o escopo da env antes de seguir.',
+  );
 }
 
 /**

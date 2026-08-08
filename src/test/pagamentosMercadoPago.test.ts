@@ -526,3 +526,59 @@ describe('mercadopago · erro de par de credenciais é traduzido', () => {
       .rejects.not.toThrow(/MESMA aplicação/i);
   });
 });
+
+// ⚠️⚠️ A guarda que substitui a de `live_mode` quando o sandbox passa a usar
+// credencial de PRODUÇÃO de conta de teste (mudança do MP em 08/08). Sem ela, um
+// Access Token da conta REAL da igreja colado no preview cobra cartão de gente —
+// e não há mais `live_mode` pra denunciar, porque o ensaio TEM que se declarar
+// produção. O sinal que sobra é o id da conta no fim do token.
+describe('mercadopago · guarda de CONTA (o token é da conta declarada?)', () => {
+  const cobranca = { id: 'cob-c', valor_centavos: 500, referencia: 'inscricao:c' };
+  const tokenDaIgreja = 'APP_USR-1111111111111111-080812-abcdef-461374279';
+  const tokenDeTeste = 'APP_USR-2222222222222222-080812-abcdef-3599169464';
+
+  function stubOk() {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true, status: 200,
+      text: async () => JSON.stringify({ id: 1, status: 'approved', live_mode: true }),
+    } as any)));
+  }
+
+  it('⚠️ token da conta REAL num ambiente declarado de teste LANÇA', async () => {
+    stubOk();
+    vi.stubEnv('MERCADOPAGO_AMBIENTE', 'producao');
+    vi.stubEnv('MERCADOPAGO_CONTA_ID', '3599169464');   // preview = vendedor de teste
+    vi.stubEnv('MERCADOPAGO_ACCESS_TOKEN', tokenDaIgreja);
+
+    await expect(mp.pagarComToken(cobranca, { token: 'tok_x' }))
+      .rejects.toThrow(/conta 461374279.*conta 3599169464|cobraria dinheiro de verdade/is);
+  });
+
+  it('token da conta declarada passa', async () => {
+    stubOk();
+    vi.stubEnv('MERCADOPAGO_AMBIENTE', 'producao');
+    vi.stubEnv('MERCADOPAGO_CONTA_ID', '3599169464');
+    vi.stubEnv('MERCADOPAGO_ACCESS_TOKEN', tokenDeTeste);
+
+    await expect(mp.pagarComToken(cobranca, { token: 'tok_x' })).resolves.toBeTruthy();
+  });
+
+  it('sem a env, NÃO bloqueia — inventar erro onde não há sinal derruba pagamento por nada', async () => {
+    // Mesma régua do `live_mode` ausente. Produção rodou meses sem esta env.
+    stubOk();
+    vi.stubEnv('MERCADOPAGO_AMBIENTE', 'producao');
+    vi.stubEnv('MERCADOPAGO_CONTA_ID', '');
+    vi.stubEnv('MERCADOPAGO_ACCESS_TOKEN', tokenDaIgreja);
+
+    await expect(mp.pagarComToken(cobranca, { token: 'tok_x' })).resolves.toBeTruthy();
+  });
+
+  it('token em formato sem id de conta não bloqueia', async () => {
+    stubOk();
+    vi.stubEnv('MERCADOPAGO_AMBIENTE', 'producao');
+    vi.stubEnv('MERCADOPAGO_CONTA_ID', '3599169464');
+    vi.stubEnv('MERCADOPAGO_ACCESS_TOKEN', 'TEST-formato-desconhecido');
+
+    await expect(mp.pagarComToken(cobranca, { token: 'tok_x' })).resolves.toBeTruthy();
+  });
+});
