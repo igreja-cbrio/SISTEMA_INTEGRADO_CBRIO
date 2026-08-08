@@ -496,3 +496,33 @@ describe('mercadopago · pagarComToken (cartão sem redirecionamento)', () => {
     expect(typeof mp.pagarComToken).toBe('function');
   });
 });
+
+// ⚠️ A resposta mais confusa do MP: a credencial é válida, o que não bate é o
+// PAR. O navegador tokeniza o cartão com a Public Key (conta A) e o servidor
+// cobra com o Access Token (conta B) — acontece toda vez que se troca um dos
+// dois e esquece o outro. Sem tradução, o sintoma na tela é "o botão gira e nada
+// acontece", e a investigação começa pelo lugar errado (foi o que aconteceu em
+// 08/08). O teste trava a DICA, não o texto do MP.
+describe('mercadopago · erro de par de credenciais é traduzido', () => {
+  const cobranca = { id: 'cob-9', valor_centavos: 500, referencia: 'inscricao:z' };
+
+  it('401 de "live credentials" diz que Public Key e Access Token têm que ser do MESMO par', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: false, status: 401,
+      text: async () => JSON.stringify({ message: 'Unauthorized use of live credentials' }),
+    } as any)));
+
+    await expect(mp.pagarComToken(cobranca, { token: 'tok_x' }))
+      .rejects.toThrow(/MESMA aplicação/i);
+  });
+
+  it('erro comum NÃO ganha a dica (senão ela vira ruído e ninguém lê)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: false, status: 400,
+      text: async () => JSON.stringify({ message: 'invalid parameter' }),
+    } as any)));
+
+    await expect(mp.pagarComToken(cobranca, { token: 'tok_x' }))
+      .rejects.not.toThrow(/MESMA aplicação/i);
+  });
+});

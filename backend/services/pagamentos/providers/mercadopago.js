@@ -208,7 +208,22 @@ async function req(metodo, caminho, corpo, { idempotencyKey } = {}) {
 
   if (!r.ok) {
     const detalhe = json?.message || json?.error || txt.slice(0, 300) || `HTTP ${r.status}`;
-    const err = new Error(`Mercado Pago ${metodo} ${caminho} falhou (${r.status}): ${detalhe}`);
+    // ⚠️ `Unauthorized use of live credentials` é a MAIS confusa das respostas do
+    // MP, porque a credencial está válida — o que não bate é o PAR. A Public Key
+    // e o Access Token são de UMA aplicação ("cada par de credenciais é único
+    // para cada integração", doc de Credenciais): o navegador tokeniza o cartão
+    // com a Public Key (conta A) e o servidor tenta cobrar com o Access Token
+    // (conta B), e o MP recusa. Acontece sempre que se troca um dos dois e
+    // esquece o outro. Sem esta tradução, o sintoma é "o botão gira e nada
+    // acontece" e a investigação começa pelo lugar errado.
+    const par = /live credentials|invalid.*(public.?key|token)/i.test(String(detalhe));
+    const err = new Error(
+      `Mercado Pago ${metodo} ${caminho} falhou (${r.status}): ${detalhe}`
+      + (par && r.status === 401
+        ? ' · ⚠️ MERCADOPAGO_PUBLIC_KEY e MERCADOPAGO_ACCESS_TOKEN precisam ser da'
+          + ' MESMA aplicação/conta — confira se os dois foram trocados juntos.'
+        : ''),
+    );
     err.status = r.status;
     err.corpo = json;
     throw err;
