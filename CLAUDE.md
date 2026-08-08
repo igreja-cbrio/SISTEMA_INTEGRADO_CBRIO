@@ -9521,6 +9521,116 @@ exige coletar endereço na porta pública primeiro. Mutation-testado.
    webhook pra `/api/pagamentos-webhook/mercadopago`.
 4. **Decidir a fonte da tarifa** (item 1 do bloco de cima).
 
+### ⚠️⚠️ O PRIMEIRO PAGAMENTO REAL (2026-08-08) — sete causas, e o que ficou de guarda
+
+O sintoma inicial era um só: *"o botão de pagar carrega e não acontece nada"*.
+Saíram **sete causas distintas**, cada uma só visível depois que a anterior saiu
+do caminho. Registro aqui porque **nenhuma delas se descobre lendo código** — e
+três já quase voltaram durante a própria sessão.
+
+**1 · O valor ia como STRING pra Payments API.** `paraReais` devolve
+`"900.00"` (formato da Orders API) e `POST /v1/payments` exige **número**:
+`400 transaction_amount attribute must be numeric`. Daí `paraReaisNumero`.
+⚠️ **E o teste que existia travava o comportamento ERRADO** (`toBe('900.00')`,
+com o comentário "convenção deste adapter"): ele conferia o que o nosso código
+fazia, não o que a API exige. Por isso 45 testes verdes conviviam com um cartão
+que **nunca havia cobrado**. Quando o teste espelha a implementação em vez do
+contrato externo, ele deixa de ser rede e vira confirmação.
+
+**2 · ⚠️ As credenciais de TESTE foram aposentadas na Orders API.** Resposta
+literal: *"Test credentials are not supported, use test users with production
+credentials to sandbox environment"*. Isso obriga o sandbox a usar **credencial
+de PRODUÇÃO de uma conta de teste**.
+
+**3 · ⚠️⚠️ E isso NEUTRALIZOU a guarda de ambiente.** Com o ensaio obrigado a se
+declarar `MERCADOPAGO_AMBIENTE=producao`, o `live_mode` deixou de distinguir
+ensaio de produção — a proteção **parou de proteger sem ninguém mexer nela**.
+Foi mudança de terceiro que esvaziou a premissa. No mesmo dia uma chave de
+PRODUÇÃO da conta real da igreja foi parar no Preview; com um cartão real,
+teria cobrado de verdade.
+⇒ **`MERCADOPAGO_CONTA_ID`** ocupa esse lugar: o último segmento do Access Token
+é o **id da conta**, conferido por escopo (Production = igreja · Preview =
+vendedor de teste). ⚠️ Token `TEST-` é ignorado pela guarda — ela existe pra
+impedir cobrança REAL, e credencial de teste não move dinheiro de conta nenhuma.
+Fail-open sem a env (mesma régua do `live_mode` ausente).
+
+**4 · Public Key e Access Token têm que ser do MESMO PAR** — mesma conta **e**
+mesma aplicação **e** mesma versão (teste × produção). O navegador tokeniza com
+uma e o servidor cobra com a outra; par trocado dá
+`401 Unauthorized use of live credentials`, que não diz nada disso. Duas guardas:
+o erro é traduzido, e `chavePublica()` devolve **null** quando as versões
+divergem — aí o cartão na página some e a pessoa segue pelo checkout hospedado
+(que só precisa do Access Token). ⚠️ Aba que sempre falha é pior que aba que não
+existe — mesma régua do boleto sem endereço.
+
+**5 · `external_reference` não aceita `:`.** Doc literal: *"máximo 64
+caracteres, apenas letras, números, `-` e `_`"*, e não pode conter PII. A nossa
+`inscricao:<uuid>` era recusada com `400 does not match pattern`. Conversão
+**reversível** `:` ↔ `_` (nenhuma referência nossa usa `_`), porque é por ela que
+o webhook reencontra a cobrança. ⚠️ `inscricao:<uuid>` já usa **46 dos 64** —
+os sufixos de reemissão e bolsa passaram a base36 (`:r<8>` / `:b<8>`), senão
+estouravam o teto na primeira reemissão.
+
+**6 · Em conta de teste, o e-mail do pagador tem que ser `@testuser.com`.**
+Regra que **só existe no sandbox** — o erro é traduzido dizendo explicitamente
+pra NÃO mexer no código: forçar o domínio no pagador quebraria produção inteira.
+
+**7 · ⚠️⚠️ Pix e cartão exigem credenciais INCOMPATÍVEIS no sandbox.** Doc:
+cartão via Bricks pede *"as credenciais de TESTE da sua conta REAL"*; a Orders
+API (Pix) pede **produção de conta de teste**. Não dá pra testar os dois na mesma
+configuração — o próprio MP manda **trocar** as credenciais entre um teste e
+outro. Era isso que fazia a investigação oscilar: cada ajuste consertava uma
+forma e quebrava a outra, com a mesma mensagem nos dois casos.
+
+| forma | credencial | `AMBIENTE` | e-mail do pagador |
+|---|---|---|---|
+| **Pix** (Orders API) | produção da conta de **teste** | `producao` | **precisa** ser `@testuser.com` |
+| **Cartão** (Bricks) | **teste** da conta real | `teste` | **não** pode ser `@testuser.com` |
+
+⚠️ Isso vale **só pro ensaio**. Em produção as duas usam a mesma credencial real
+e convivem sem problema.
+
+### ⚠️⚠️ E o bug que só apareceu porque o pagamento FUNCIONOU
+
+Cobrança de R$ 5,00 gravou `valor_pago = R$ 5,05`, e o e-mail de confirmação saiu
+com R$ 5,05. Causa: o adapter preferia **`total_paid_amount`** (o que o PAGADOR
+desembolsou, incluindo o custo de financiamento que fica com o MP) a
+**`transaction_amount`** (o valor da NOSSA cobrança que foi liquidado).
+
+Três estragos ao mesmo tempo, e o do e-mail era o menor: `valor_pago >
+valor_centavos` acusa na `vw_pag_invariantes`, e **o arrecadado somaria juros que
+a igreja não recebe** — exatamente a classe de erro que a lei nº 6 existe pra
+impedir. Num retiro parcelado, é a diferença entre o painel e o extrato.
+
+⚠️ **Ele não trava nada e não gera erro.** Teria ido pra produção sem ninguém
+notar até o dia do fechamento não bater. Régua que fica: **fluxo com dinheiro
+precisa ser conferido no BANCO depois do primeiro sucesso**, não só na tela.
+
+O payload cru passou a ser guardado na razão auxiliar (sem ele, conferir isso
+virou arqueologia) — mas **SEM o bloco `card`**: o payment do MP traz
+`expiration_month/year`, `first_six_digits` e `cardholder.name`, e a lei nº 5
+proíbe ARMAZENAR validade e nome impresso. ⚠️ O teste *"NUNCA devolve PAN, CVV,
+validade ou nome impresso"* pegou essa regressão na primeira versão escrita — a
+guarda funcionou exatamente como foi desenhada.
+
+### Confete: o gatilho é a RESPOSTA, nunca o clique
+
+O confete vivia dentro do `carregar()`, e o pagamento na própria página atualiza
+o estado direto da resposta do POST, sem passar pelo GET — então a inscrição era
+confirmada **sem festejar**. Virou `aplicarPagamento()`, por onde passam os três
+caminhos (carga, polling e cartão). ⚠️ A LEI segue intacta: só com
+`pago === true` LIDO DO SERVIDOR.
+
+### ⏳ Aberto (não é código)
+
+- **Devolver as envs do Preview** pra configuração de Pix depois de testar cartão
+  (as duas se excluem — ver tabela acima).
+- **Produção segue no Asaas.** `PAG_PROVIDER_PADRAO` só muda por decisão do
+  Matheus, e produção não tem credencial do MP.
+- **`GET /pagamento/:token` responde 304** (cache condicional) numa rota que faz
+  polling. Não causou estrago no teste, mas é a MESMA classe do que travou o app
+  em 05/08 (resposta cacheada devolvendo estado velho). Olhar em PR própria.
+
 ### O que a doc NÃO confirmou (não preencher por conta própria)
 
 `payment_method_id` do boleto na API legada (`"bolbradesco"` circula mas não
