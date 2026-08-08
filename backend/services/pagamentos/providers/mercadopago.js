@@ -787,8 +787,42 @@ async function verificarChave() {
  * mesma nos dois ambientes — exatamente o cruzamento que a guarda de ambiente
  * existe pra impedir.
  */
+/**
+ * Public Key pro Brick tokenizar no navegador.
+ *
+ * ⚠️⚠️ A CONFERÊNCIA DE PAR, e ela decide se o formulário de cartão sequer
+ * aparece. Public Key e Access Token são de UM par (doc de Credenciais: "cada
+ * par de credenciais é único para cada integração") e existem em DUAS versões
+ * por aplicação — teste (`TEST-…`) e produção (`APP_USR-…`). Misturar as duas
+ * versões da MESMA aplicação falha igual a misturar contas: o navegador
+ * tokeniza com uma e o servidor cobra com a outra, e o MP responde
+ * `401 Unauthorized use of live credentials`.
+ *
+ * ⚠️ Devolver `null` (em vez de deixar tentar) é deliberado: sem chave o núcleo
+ * cai no checkout HOSPEDADO, que precisa só do Access Token e portanto FUNCIONA.
+ * Oferecer um formulário que vai dar 401 em 100% das tentativas é a mesma
+ * armadilha do boleto sem endereço — aba que sempre falha é pior que aba que
+ * não existe.
+ */
 function chavePublica() {
-  return process.env.MERCADOPAGO_PUBLIC_KEY || null;
+  const pk = (process.env.MERCADOPAGO_PUBLIC_KEY || '').trim();
+  if (!pk) return null;
+
+  const token = (process.env.MERCADOPAGO_ACCESS_TOKEN || '').trim();
+  if (!token) return pk;   // sem token não há par a conferir
+
+  const versao = (v) => (v.startsWith('TEST-') ? 'teste' : 'producao');
+  if (versao(pk) !== versao(token)) {
+    console.error(
+      '[mercadopago] ⚠️ MERCADOPAGO_PUBLIC_KEY é de ' + versao(pk) + ' e '
+      + 'MERCADOPAGO_ACCESS_TOKEN é de ' + versao(token) + '. Os dois têm que ser '
+      + 'do MESMO par (mesma aplicação E mesma versão — Credenciais de teste OU '
+      + 'de produção). Enquanto divergirem, o cartão na página é desligado e a '
+      + 'pessoa segue pelo checkout hospedado.',
+    );
+    return null;
+  }
+  return pk;
 }
 
 async function pagarComToken(c, dados = {}) {

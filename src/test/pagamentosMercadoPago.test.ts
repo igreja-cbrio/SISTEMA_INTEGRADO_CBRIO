@@ -582,3 +582,36 @@ describe('mercadopago · guarda de CONTA (o token é da conta declarada?)', () =
     await expect(mp.pagarComToken(cobranca, { token: 'tok_x' })).resolves.toBeTruthy();
   });
 });
+
+// ⚠️ Par de credenciais MISTURADO — a causa que segurou o teste de 08/08 por
+// horas. Cada aplicação tem DUAS versões de par: teste (`TEST-`) e produção
+// (`APP_USR-`). Misturar as versões falha igual a misturar contas, com a mesma
+// mensagem inútil do MP ("Unauthorized use of live credentials").
+describe('mercadopago · chavePublica só sai com o par coerente', () => {
+  it('par coerente (produção + produção) devolve a chave', () => {
+    vi.stubEnv('MERCADOPAGO_PUBLIC_KEY', 'APP_USR-pk-1');
+    vi.stubEnv('MERCADOPAGO_ACCESS_TOKEN', 'APP_USR-tok-1');
+    expect(mp.chavePublica()).toBe('APP_USR-pk-1');
+  });
+
+  it('par coerente (teste + teste) devolve a chave', () => {
+    vi.stubEnv('MERCADOPAGO_PUBLIC_KEY', 'TEST-pk-1');
+    vi.stubEnv('MERCADOPAGO_ACCESS_TOKEN', 'TEST-tok-1');
+    expect(mp.chavePublica()).toBe('TEST-pk-1');
+  });
+
+  it('⚠️ versões MISTURADAS desligam o cartão na página em vez de dar 401 a cada tentativa', () => {
+    // Sem chave, o núcleo cai no checkout hospedado — que precisa só do Access
+    // Token e FUNCIONA. Aba que sempre falha é pior que aba que não existe.
+    vi.stubEnv('MERCADOPAGO_PUBLIC_KEY', 'TEST-pk-1');
+    vi.stubEnv('MERCADOPAGO_ACCESS_TOKEN', 'APP_USR-tok-1');
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(mp.chavePublica()).toBeNull();
+  });
+
+  it('sem Access Token não inventa divergência', () => {
+    vi.stubEnv('MERCADOPAGO_PUBLIC_KEY', 'APP_USR-pk-1');
+    vi.stubEnv('MERCADOPAGO_ACCESS_TOKEN', '');
+    expect(mp.chavePublica()).toBe('APP_USR-pk-1');
+  });
+});
