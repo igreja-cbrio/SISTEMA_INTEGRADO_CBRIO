@@ -34,6 +34,14 @@ export type Pergunta = {
   cuidado_tipo?: string;
   permite_nao_se_aplica?: boolean;
   preenche_de?: string;
+  /** Tipo `busca`: qual catálogo consultar ('igrejas_rj' | 'grupos_ativos').
+   *  As opções NÃO vivem na pergunta — 1.911 igrejas em cada abertura do
+   *  questionário seria absurdo; vêm por /catalogo/:nome?q=. */
+  catalogo?: string;
+  /** Tipo `busca`: aceita valor fora do catálogo. Verdadeiro por padrão, porque
+   *  lista incompleta sem escape faz a pessoa responder qualquer coisa só para
+   *  poder avançar. */
+  permite_outro?: boolean;
 };
 
 export type Respostas = Record<string, unknown>;

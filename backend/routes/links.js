@@ -232,6 +232,133 @@ router.post('/para-destino', authorizeModule('links', 4), async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ══════════════════════════════════════════════════════════════════════════
+//  CATÁLOGO · todo formulário público do sistema, num lugar só
+// ══════════════════════════════════════════════════════════════════════════
+//
+// Pedido do Matheus (08/08): "dá para mostrar todos os QR codes do sistema, de
+// todos os formulários?". Hoje cada QR mora na tela do seu módulo — quem quer
+// saber "quais QRs existem?" não tem onde olhar.
+//
+// A distinção que organiza a lista, e que é o conteúdo de verdade daqui:
+//
+//   · FORMULÁRIO ABERTO — a mesma URL serve para todo mundo. Cabe em cartaz,
+//     em banner, em adesivo. É QR de verdade.
+//   · LINK PESSOAL — `/g/a/<token>`, `/f/a/<código>`, `/nps/publica/<token>`,
+//     `/pagamento/<token>`, `/kids/retirada/<código>`. Cada pessoa recebe o
+//     seu. Imprimir um desses num cartaz entregaria o acesso de UMA pessoa para
+//     a igreja inteira. Ficam FORA da lista de propósito, e isso é uma decisão,
+//     não esquecimento.
+//
+// As portas de inscrição vêm de `inscricaoPortas.js`, que já é o inventário
+// oficial delas — manter uma segunda lista aqui garantiria que as duas
+// divergissem no primeiro formulário novo.
+
+const { catalogoPublico } = require('../services/inscricaoPortas');
+
+// Formulários públicos que NÃO são portas de inscrição. Só entra aqui o que tem
+// URL fixa: nada que dependa de token.
+const OUTROS_FORMULARIOS = [
+  { chave: 'cadastro_membresia', nome: 'Cadastro de membresia', caminho: '/cadastro-membresia',
+    grupo: 'Membresia', descricao: 'Ficha completa de cadastro — a porta principal da membresia.' },
+  { chave: 'doar', nome: 'Doação / generosidade', caminho: '/doar',
+    grupo: 'Generosidade', descricao: 'Página de contribuição (PIX e cartão).' },
+  { chave: 'decisao', nome: 'Decisão por Cristo', caminho: '/decisao',
+    grupo: 'Ministerial', descricao: 'Registro de decisão — usado no culto e no online.' },
+  { chave: 'wallet', nome: 'Carteirinha do membro', caminho: '/wallet',
+    grupo: 'Membresia', descricao: 'Onde a pessoa acessa a própria carteirinha.' },
+  { chave: 'vol_self_checkin', nome: 'Check-in do voluntário', caminho: '/voluntariado/self-checkin',
+    grupo: 'Voluntariado', descricao: 'Voluntário marca a própria presença na escala.' },
+  { chave: 'suporte', nome: 'Suporte', caminho: '/suporte',
+    grupo: 'Interno', descricao: 'Canal de suporte do sistema.' },
+];
+
+const BASE_PUBLICA = process.env.PUBLIC_BASE_URL || 'https://www.cbrio.org';
+
+router.get('/catalogo', authorizeModule('links', 1), async (req, res) => {
+  try {
+    const url = (caminho) => `${BASE_PUBLICA}${caminho}`;
+    const itens = [];
+
+    // 1. Portas de inscrição — do inventário que já existe.
+    for (const p of catalogoPublico()) {
+      const caminho = (p.rotas_publicas || [])[0];
+      // `/evento/:slug` é modelo, não endereço: os eventos entram um a um abaixo.
+      if (!caminho || caminho.includes(':')) continue;
+      itens.push({
+        chave: `porta_${p.chave}`, nome: p.nome, grupo: 'Inscrições',
+        url: url(caminho), descricao: `Porta de inscrição · módulo ${p.modulo || '—'}`,
+      });
+    }
+
+    // 2. Formulários fixos que não são portas.
+    for (const f of OUTROS_FORMULARIOS) {
+      itens.push({ chave: f.chave, nome: f.nome, grupo: f.grupo, url: url(f.caminho), descricao: f.descricao });
+    }
+
+    // 3. Por registro. Só o que está ABERTO: um QR para pesquisa encerrada ou
+    // evento que já passou é papel jogado fora.
+    // `/evento/:slug` serve as DUAS tabelas: a espinha nova (`insc_eventos`) e
+    // os eventos externos (`ext_eventos`) — é assim que publicEventoExterno.js
+    // resolve, e o catálogo precisa espelhar isso ou metade dos eventos some
+    // da lista sem ninguém perceber.
+    const [pesquisas, eventosNovos, eventosExternos, links] = await Promise.all([
+      supabase.from('cen_pesquisa').select('slug, titulo, status')
+        .eq('status', 'aberta').is('deleted_at', null).limit(50),
+      supabase.from('insc_eventos').select('slug, nome, status')
+        .eq('status', 'publicado').is('deleted_at', null)
+        .order('data', { ascending: false }).limit(50),
+      supabase.from('ext_eventos').select('slug, nome, form_ativo')
+        .eq('form_ativo', true).is('deleted_at', null).limit(50),
+      supabase.from('link_curto').select('slug, destino, titulo, ativo')
+        .is('deleted_at', null),
+    ]);
+
+    for (const p of pesquisas.data || []) {
+      itens.push({
+        chave: `censo_${p.slug}`, nome: p.titulo, grupo: 'Pesquisas',
+        url: url(`/censo/p/${p.slug}`), descricao: 'Pesquisa aberta para respostas',
+      });
+    }
+    // Se uma das consultas falhar, o catálogo segue sem aquela parte em vez de
+    // derrubar a tela inteira — meia lista é mais útil que um erro.
+    const vistos = new Set();
+    for (const [fonte, rotulo] of [[eventosNovos, 'Evento com inscrição aberta'],
+                                   [eventosExternos, 'Evento externo com formulário ativo']]) {
+      if (fonte.error) continue;
+      for (const e of fonte.data || []) {
+        if (!e.slug || vistos.has(e.slug)) continue;   // mesmo slug nas duas: mostra uma vez
+        vistos.add(e.slug);
+        itens.push({
+          chave: `evento_${e.slug}`, nome: e.nome, grupo: 'Eventos',
+          url: url(`/evento/${e.slug}`), descricao: rotulo,
+        });
+      }
+    }
+
+    // 4. Casa com os links curtos existentes, para a tela poder dizer quais já
+    // são dinâmicos e quais ainda vão precisar de reimpressão se mudarem.
+    const porDestino = new Map();
+    for (const l of links.data || []) {
+      if (l.ativo) porDestino.set(String(l.destino).replace(/\/$/, ''), l);
+    }
+    const comStatus = itens.map((i) => {
+      const curto = porDestino.get(i.url.replace(/\/$/, ''));
+      return { ...i, link_curto: curto ? { slug: curto.slug, titulo: curto.titulo } : null };
+    });
+
+    res.json({
+      base: BASE_PUBLICA,
+      itens: comStatus.sort((a, b) => a.grupo.localeCompare(b.grupo) || a.nome.localeCompare(b.nome)),
+      // Ditos em voz alta para a tela poder explicar a ausência deles.
+      excluidos_por_serem_pessoais: [
+        'Convite de família', 'Aprovação de pedido de grupo', 'Frequência do grupo',
+        'Pesquisa NPS', 'Retirada do Kids', 'Pagamento de inscrição', 'Onboarding de colaborador',
+      ],
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 module.exports = router;
 module.exports.normalizarDestino = normalizarDestino;
 module.exports.SLUG_RE = SLUG_RE;

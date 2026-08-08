@@ -355,6 +355,9 @@ export const links = {
   // Transforma um link existente em QR dinâmico sem sair da tela onde você
   // está. Reusa se já houver link ativo para o mesmo destino.
   paraDestino: (dados) => post('/links/para-destino', dados),
+  // Todo formulário público do sistema, com a marca de quem já é dinâmico.
+  // Links PESSOAIS (por token) ficam de fora — ver o comentário na rota.
+  catalogo: () => get('/links/catalogo'),
 };
 
 export const projects = {
