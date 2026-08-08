@@ -761,12 +761,34 @@ async function normalizarEvento(payload, headers = {}) {
  * DE LIBERAÇÃO (fato nº 2) — e é por isso que o pagamento por cartão via
  * checkout hospedado alimenta a razão auxiliar melhor que o Pix.
  */
+/** Tira o bloco de cartão do payload antes de ele virar linha permanente. */
+function payloadSemCartao(p) {
+  if (!p || typeof p !== 'object') return null;
+  const { card, ...resto } = p;
+  return resto;
+}
+
 function dadosDoPayment(p) {
+
   if (!p) return {};
   const status = statusCanonico(p.status, p.status_detail, STATUS_POR_PAYMENT);
   const td = p.transaction_details || {};
 
-  const bruto = paraCentavos(td.total_paid_amount ?? p.transaction_amount);
+  // ⚠️⚠️ `transaction_amount`, NÃO `total_paid_amount` — e a diferença é dinheiro.
+  //
+  // `transaction_amount` é o valor da NOSSA cobrança que foi liquidado.
+  // `total_paid_amount` é o que o PAGADOR desembolsou, e inclui o custo de
+  // financiamento do parcelado, que vai pro Mercado Pago e NUNCA chega à igreja.
+  //
+  // Medido no 1º pagamento real (08/08): cobrança de R$ 5,00 gravou
+  // `valor_pago = R$ 5,05`. Três estragos ao mesmo tempo: (a) o e-mail de
+  // confirmação dizia "R$ 5,05" pra quem se inscreveu num evento de R$ 5,00;
+  // (b) `valor_pago > valor_centavos` acusa na `vw_pag_invariantes`; (c) o
+  // arrecadado do evento somaria juros que a igreja não recebeu — que é
+  // exatamente a classe de erro da lei nº 6.
+  //
+  // O que o pagador desembolsou fica no payload cru, pra quem precisar auditar.
+  const bruto = paraCentavos(p.transaction_amount ?? td.total_paid_amount);
   const liquido = paraCentavos(td.net_received_amount);
   // ⚠️ Taxa vem SOMADA de `fee_details` (é assim que o MP a expressa), nunca
   // derivada de tabela nossa. Sem `fee_details`, fica null.
@@ -788,6 +810,20 @@ function dadosDoPayment(p) {
     cartao_brand: p.card?.brand || p.payment_method_id || null,
     cartao_last4: p.card?.last_four_digits || null,
     referencia: refDoExterno(p.external_reference),
+    // Payload pra razão auxiliar, SEM o bloco do cartão. ⚠️ Sem ele,
+    // `pag_pagamentos.payload` fica NULL e conferir um valor divergente vira
+    // arqueologia — foi o que aconteceu com os 5 centavos: só deu pra decidir
+    // pelos campos derivados, sem o número que o MP mandou.
+    //
+    // ⚠️⚠️ E o `card` SAI daqui, não é preciosismo: o `payment` do MP traz
+    // `expiration_month/year`, `first_six_digits` e `cardholder.name`, e a lei
+    // nº 5 proíbe ARMAZENAR validade e nome impresso. Guardar o payload cru
+    // colocaria os três em `pag_pagamentos.payload` — que é linha permanente de
+    // razão financeira. Bandeira e últimos 4 já saem nos campos próprios, que é
+    // tudo o que a UI e o comprovante mostram.
+    // (O teste "NUNCA devolve PAN, CVV, validade ou nome impresso" pegou
+    // exatamente esta regressão quando escrevi a versão sem o corte.)
+    payload: payloadSemCartao(p),
   };
 }
 

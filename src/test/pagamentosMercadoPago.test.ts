@@ -710,3 +710,56 @@ describe('mercadopago · guarda de conta × credencial de teste', () => {
       .rejects.toThrow(/cobraria dinheiro de verdade/i);
   });
 });
+
+// ⚠️⚠️ Bug medido no 1º pagamento REAL com cartão (08/08): cobrança de R$ 5,00
+// gravou `valor_pago = R$ 5,05`, porque o adapter preferia `total_paid_amount`
+// (o que o PAGADOR desembolsou, incluindo o custo de financiamento que fica com
+// o Mercado Pago) em vez de `transaction_amount` (o valor da NOSSA cobrança que
+// foi liquidado). Três estragos de uma vez: o e-mail de confirmação dizia R$ 5,05
+// pra quem se inscreveu num evento de R$ 5,00; `valor_pago > valor_centavos`
+// acusa na vw_pag_invariantes; e o arrecadado somaria juros que a igreja não
+// recebe — a classe de erro que a lei nº 6 existe pra impedir.
+describe('mercadopago · valor pago é o que QUITA a cobrança', () => {
+  const cobranca = { id: 'cob-v', valor_centavos: 500, referencia: 'inscricao:v' };
+
+  function stub(resposta: any) {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true, status: 200, text: async () => JSON.stringify(resposta),
+    } as any)));
+  }
+
+  it('juros do parcelado NÃO entram no valor pago', async () => {
+    stub({
+      id: 1, status: 'approved', live_mode: false,
+      transaction_amount: 5,                    // a nossa cobrança
+      transaction_details: {
+        total_paid_amount: 5.05,                // o que o pagador desembolsou
+        net_received_amount: 4.8,
+      },
+      fee_details: [{ amount: 0.15 }],
+      installments: 1,
+    });
+
+    const r = await mp.pagarComToken(cobranca, { token: 'tok_x' });
+    expect(r.valor_pago_centavos).toBe(500);    // não 505
+    expect(r.liquido_centavos).toBe(480);
+    expect(r.taxa_centavos).toBe(15);
+  });
+
+  it('sem transaction_amount, cai no total pago em vez de ficar sem valor', async () => {
+    stub({
+      id: 2, status: 'approved', live_mode: false,
+      transaction_details: { total_paid_amount: 5 },
+    });
+    const r = await mp.pagarComToken(cobranca, { token: 'tok_x' });
+    expect(r.valor_pago_centavos).toBe(500);
+  });
+
+  it('o payload CRU é devolvido pra razão auxiliar guardar', async () => {
+    // Sem ele, `pag_pagamentos.payload` fica NULL e conferir um valor divergente
+    // vira arqueologia — foi o que aconteceu com os 5 centavos.
+    stub({ id: 3, status: 'approved', live_mode: false, transaction_amount: 5 });
+    const r = await mp.pagarComToken(cobranca, { token: 'tok_x' });
+    expect(r.payload?.id).toBe(3);
+  });
+});

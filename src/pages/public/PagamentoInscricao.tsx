@@ -304,21 +304,37 @@ export default function PagamentoInscricao() {
   // Confete só uma vez, e só quando o SERVIDOR disse pago.
   const festejou = useRef(false);
 
+  // ⚠️ TODO caminho que traz estado novo do servidor passa por aqui — polling,
+  // carga inicial e o pagamento com cartão na própria página. Antes o confete
+  // vivia só dentro do `carregar()`, e o cartão (que atualiza o estado direto da
+  // resposta do POST, sem repassar pelo GET) confirmava a inscrição SEM festejar.
+  // ⚠️ A LEI continua intacta: só festeja com `pago === true` LIDO DO SERVIDOR —
+  // o gatilho é a resposta, nunca o clique.
+  const aplicarPagamento = useCallback((r: Pagamento) => {
+    setPag(r);
+    if (r?.pago && !festejou.current) {
+      festejou.current = true;
+      confetti({ particleCount: 120, spread: 90, origin: { y: 0.6 }, colors: ['#00B39D', '#00d9bd', '#ffd166', '#ffffff'] });
+      // Segunda salva pelos cantos: a inscrição paga é o fim de uma jornada
+      // longa (formulário + pagamento) e a tela é a única confirmação imediata.
+      setTimeout(() => {
+        confetti({ particleCount: 60, angle: 60, spread: 70, origin: { x: 0, y: 0.7 }, colors: ['#00B39D', '#00d9bd', '#ffd166'] });
+        confetti({ particleCount: 60, angle: 120, spread: 70, origin: { x: 1, y: 0.7 }, colors: ['#00B39D', '#00d9bd', '#ffd166'] });
+      }, 220);
+    }
+  }, []);
+
   const carregar = useCallback(async (primeira = false) => {
     try {
       const r = await eventoPublico.pagamento(token);
-      setPag(r);
+      aplicarPagamento(r);
       setErro('');
-      if (r.pago && !festejou.current) {
-        festejou.current = true;
-        confetti({ particleCount: 120, spread: 90, origin: { y: 0.6 }, colors: ['#00B39D', '#00d9bd', '#ffd166', '#ffffff'] });
-      }
     } catch (e: any) {
       if (primeira) setErro(e?.message || 'Não encontramos este pagamento.');
     } finally {
       if (primeira) setCarregando(false);
     }
-  }, [token]);
+  }, [token, aplicarPagamento]);
 
   useEffect(() => { carregar(true); }, [carregar]);
 
@@ -739,10 +755,10 @@ export default function PagamentoInscricao() {
                           // parecendo que deu certo.
                           try {
                             const r = await eventoPublico.pagamentoCartao(token!, formData);
-                            setPag(r);
+                            aplicarPagamento(r);
                             if (!r?.pago) throw new Error('Pagamento não confirmado.');
                           } catch (e: any) {
-                            if (e?.pagamento) setPag(e.pagamento);
+                            if (e?.pagamento) aplicarPagamento(e.pagamento);
                             throw e;
                           }
                         }}
