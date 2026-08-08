@@ -532,6 +532,15 @@ export default function Online() {
   const { getAccessLevel, isAdmin } = useAuth();
   const podeEditarOnline = isAdmin || (getAccessLevel?.(['online']) ?? 0) >= 3;
 
+  // ⚠️ Este `queryClient` faltava, e "Recoletar tudo" estava quebrado por isso.
+  // Existia um `useQueryClient()` neste MESMO arquivo, mas dentro de
+  // `OAuthStatusCardInner` — outro componente. As duas chamadas lá embaixo
+  // (invalidação entre lotes e no onSuccess) liam uma variável fora de escopo:
+  // o botão mostrava "Recoleta completa" e logo depois estourava
+  // "queryClient is not defined", e uma recoleta de vários lotes abortava no
+  // meio deixando métricas pela metade.
+  const queryClient = useQueryClient();
+
   const { data, isLoading, refetch } = useQuery<DashboardData>({
     queryKey: ['online', 'dashboard'],
     queryFn: () => online.dashboard(),

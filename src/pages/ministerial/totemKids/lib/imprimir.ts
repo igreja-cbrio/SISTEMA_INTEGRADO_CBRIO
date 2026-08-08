@@ -670,7 +670,11 @@ export async function reimprimirEtiquetasCompletas(d: DadosImpressao, motivo: st
     preloadImg(d.crianca.salaLogoUrl),
     preloadImg(d.logoAniversarioUrl),
   ]);
-  const fragCrianca = htmlEtiquetaCrianca(d, barcodeSvg);
+  // Sem `barcodeSvg` de propósito (confirmado pelo Matheus, 08/08): a etiqueta
+  // da CRIANÇA não leva código de barras — quem é lido na retirada é o
+  // responsável. O argumento estava sendo passado e silenciosamente ignorado,
+  // o que fazia o código sugerir o contrário de quem o lesse.
+  const fragCrianca = htmlEtiquetaCrianca(d);
   const fragmentos = [fragCrianca, fragCrianca, htmlEtiquetaResponsavel(d, barcodeSvg)];
   if (d.crianca.aniversarioSemana) fragmentos.push(htmlEtiquetaAniversario(d));
   const resultado = await imprimirHtml(documento(fragmentos));

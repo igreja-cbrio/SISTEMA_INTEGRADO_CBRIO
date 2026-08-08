@@ -46,3 +46,9 @@ skills-lock.json
 
 # Exports pro Google Stax (dado real · nunca commitar — só o exemplo sintético fica)
 backend/scripts/stax-export/export_*.csv
+
+# Cache do `npm run typecheck` (tsc -b). Não versionar: é derivado e muda a cada
+# execução, e um .tsbuildinfo desatualizado no repo faz o tsc PULAR arquivos —
+# a checagem passaria sem checar, que é exatamente o buraco que ela existe para
+# fechar.
+*.tsbuildinfo
