@@ -17,6 +17,8 @@ import { useAuth } from '../../contexts/AuthContext';
 import EmptyState from '@/components/EmptyState';
 import { ModuleHeader } from '@/components/layout/ModuleHeader';
 import QrLinkDialog from '@/components/QrLinkDialog';
+import CatalogoFormularios from '@/components/links/CatalogoFormularios';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -156,6 +158,7 @@ export default function Links() {
   const [lista, setLista] = useState<Link[] | null>(null);
   const [editando, setEditando] = useState<Link | null | undefined>(undefined);
   const [qr, setQr] = useState<Link | null>(null);
+  const [tab, setTab] = useState('meus');
   const [historico, setHistorico] = useState<{ link: Link; itens: { destino_antigo: string | null; destino_novo: string; alterado_em: string }[] } | null>(null);
 
   const carregar = useCallback(async () => {
@@ -192,6 +195,25 @@ export default function Links() {
         ) : null}
       />
 
+      <Tabs value={tab} onValueChange={setTab}>
+        <TabsList className="inline-flex flex-wrap h-auto w-auto bg-transparent p-0 gap-1 border-b border-border rounded-none mb-5">
+          <TabsTrigger value="meus"
+            className="relative rounded-none border-b-2 border-transparent px-4 py-2.5 text-[13px] font-medium text-muted-foreground transition-colors hover:text-foreground data-[state=active]:border-b-primary data-[state=active]:text-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none bg-transparent">
+            <Link2 className="size-3.5 mr-1.5 hidden sm:inline-block" />
+            Meus links
+          </TabsTrigger>
+          <TabsTrigger value="catalogo"
+            className="relative rounded-none border-b-2 border-transparent px-4 py-2.5 text-[13px] font-medium text-muted-foreground transition-colors hover:text-foreground data-[state=active]:border-b-primary data-[state=active]:text-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none bg-transparent">
+            <QrCode className="size-3.5 mr-1.5 hidden sm:inline-block" />
+            Formulários do sistema
+          </TabsTrigger>
+        </TabsList>
+
+      <TabsContent value="catalogo">
+        <CatalogoFormularios podeEditar={podeEditar} onMudou={carregar} />
+      </TabsContent>
+
+      <TabsContent value="meus">
       {lista === null ? (
         <div className="p-6 flex items-center gap-2 text-muted-foreground">
           <Loader2 className="size-4 animate-spin" /> Carregando…
@@ -268,6 +290,9 @@ export default function Links() {
           ))}
         </div>
       )}
+
+      </TabsContent>
+      </Tabs>
 
       {editando !== undefined && (
         <Editor link={editando} onFechar={() => setEditando(undefined)} onSalvo={carregar} />
