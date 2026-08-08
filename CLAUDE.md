@@ -7128,6 +7128,42 @@ o binário não tem Firebase — fica de fora até do **sino in-app**, não só 
 push. Trocar por "todo mundo com conta no app" muda o raio de alcance de ~23
 pra ~113 pessoas: é chamada do Marcos.
 
+### 3d · ⚠️ A FUNÇÃO MUDOU DE REGIÃO: `iad1` → `pdx1` (08/08/2026 · Onda 4)
+
+**O achado**: a função da API executava em `iad1` (Virgínia) e o banco Supabase
+está em **us-west-2 (Oregon)** — confirmado pelo Marcos no dashboard. Cada query
+atravessava os EUA, e a abertura do app faz ~22 delas.
+
+**Medido antes de mexer** (de um cliente no Brasil, 4 amostras cada):
+
+| sonda | tempo |
+|---|---|
+| `/api/health` (sem banco) | 215 ms |
+| `/api/app/versao` (1 query) | 308 ms |
+| `/api/app/anuncios` (1 query) | 358 ms |
+| ⇒ **custo de UMA ida ao banco vista de iad1** | **~90–140 ms** |
+| TCP connect Brasil → us-east-1 (Virgínia) | 159 ms |
+| TCP connect Brasil → us-west-2 (Oregon) | 209 ms |
+| ⇒ **custo de ficar mais longe do usuário** | **+50 ms** |
+
+**A conta**: paga-se +50 ms UMA vez por request e economiza-se 90–140 ms POR
+QUERY (que passa a ser intra-região, ~2-5 ms). Empata já na 1ª query; com as 4
+em série de `/identidade/status` são **−310 a −510 ms**.
+
+⚠️⚠️ **A recomendação intuitiva é a ERRADA.** "A igreja é no Brasil, põe em
+`gru1` (São Paulo)" faria a função ficar perto do usuário e **longe do banco** —
+trocaria 50 ms pagos uma vez por ~200 ms pagos 22 vezes. O certo é aproximar a
+função do BANCO, não do usuário: quem já está perto do usuário é a BORDA da
+Vercel (`X-Vercel-Id: gru1::…`), que não muda com isto.
+
+⚠️ **Como reverter**: tirar a linha `"regions": ["pdx1"]` do topo do
+`vercel.json` e reimplantar. Volta ao padrão (`iad1`). É 1 linha, e o efeito
+aparece no próximo deploy.
+⚠️ Esperar uma onda de **cold start** logo após o deploy — as instâncias quentes
+de `iad1` são descartadas.
+⚠️ Isto vale pra TODA a API, não só o app: o ERP web faz muito mais query por
+página, então tende a ganhar mais.
+
 ### 4 · Pedido de exclusão de conta (LGPD) ganhou fila — e SÓ leitor
 
 O app insere em `app_solicitacoes_exclusao` e promete "em breve sua conta será
