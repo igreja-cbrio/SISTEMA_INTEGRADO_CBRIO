@@ -21,6 +21,7 @@
 // que este formulário devolve é ignorado lá.
 // ============================================================================
 import { useEffect, useRef, useState } from 'react';
+import CartaoVisual from './CartaoVisual';
 
 const SDK_URL = 'https://sdk.mercadopago.com/js/v2';
 const CONTAINER_ID = 'cbrio-cartao-brick';
@@ -78,6 +79,11 @@ export default function CartaoBrick({
 }: CartaoBrickProps) {
   const [estado, setEstado] = useState<'carregando' | 'pronto' | 'erro'>('carregando');
   const [erro, setErro] = useState<string | null>(null);
+  // ⚠️ BIN — os 6 primeiros dígitos, que identificam o EMISSOR e que o SDK nos
+  // entrega de propósito. É o ÚNICO pedaço do cartão que existe do nosso lado, e
+  // é o que faz a bandeira aparecer sozinha no desenho. O número completo segue
+  // dentro do iframe do provedor (lei nº 5).
+  const [bin, setBin] = useState<string | null>(null);
   const controller = useRef<any>(null);
   // ⚠️ `onPagar` numa ref: o Brick é criado UMA vez e guarda o callback que
   // recebeu. Sem a ref, a versão capturada envelheceria e o submit mandaria
@@ -140,6 +146,14 @@ export default function CartaoBrick({
           },
           callbacks: {
             onReady: () => { if (vivo) setEstado('pronto'); },
+            // Dispara a cada tecla no campo do número. ⚠️ Só guardamos DÍGITO:
+            // o SDK manda string, e um `slice` defensivo garante que nada além
+            // do BIN entre no estado nem que ele cresça se o contrato mudar.
+            onBinChange: (b: any) => {
+              if (!vivo) return;
+              const d = String(b || '').replace(/\D/g, '').slice(0, 8);
+              setBin(d || null);
+            },
             onSubmit: (formData: any) => onPagarRef.current(formData),
             onError: (e: any) => {
               // Erro de validação do próprio formulário (campo inválido) já é
@@ -192,10 +206,18 @@ export default function CartaoBrick({
 
   return (
     <div style={{ marginTop: 14 }}>
+      {/* Desenho do cartão. Some enquanto o formulário não está de pé — cartão
+          bonito sobre um formulário que não carregou é promessa que a tela não
+          cumpre. */}
+      {estado === 'pronto' && (
+        <CartaoVisual bin={bin} valorCentavos={valorCentavos} escuro={escuro} />
+      )}
       {estado === 'carregando' && (
         <p style={{ fontSize: 13, color: corTextoFraco }}>Carregando o formulário seguro…</p>
       )}
-      <div id={CONTAINER_ID} />
+      {/* `pgto-cartao` (definido no CSS da página) impede o iframe do SDK de
+          empurrar a página no celular — iframe não encolhe sozinho. */}
+      <div className="pgto-cartao" id={CONTAINER_ID} />
       <p style={{ fontSize: 12.5, color: corTexto, marginTop: 10 }}>
         Você paga aqui mesmo, sem sair desta página.
       </p>

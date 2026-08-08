@@ -100,6 +100,31 @@ const CSS_MOBILE = `
     .pgto-head { padding-right: 46px; }
     .pgto-qr { width: min(200px, 62vw); height: auto; aspect-ratio: 1; }
   }
+
+  /* ── Formulário de cartão (Brick do provedor) ──
+     ⚠️ O Brick renderiza a árvore dele dentro deste container e alguns campos
+     são IFRAMES. Iframe tem largura intrínseca e NÃO encolhe sozinho: sem o
+     \`max-width: 100%\` abaixo, num celular estreito o formulário empurra a
+     página e cria rolagem horizontal — que é o defeito clássico de checkout no
+     celular, e o celular é onde a maioria se inscreve.
+     Estilo aqui é só CAIXA (largura/overflow); cor, raio e fonte vão pelas
+     \`customVariables\` do SDK, que é o canal suportado. */
+  .pgto-cartao { width: 100%; max-width: 100%; }
+  .pgto-cartao iframe,
+  .pgto-cartao form,
+  .pgto-cartao input,
+  .pgto-cartao select { max-width: 100%; }
+  /* O container não pode CORTAR conteúdo (a lista de parcelas do Brick abre
+     pra fora); só impedir que ele empurre a página. */
+  .pgto-cartao { overflow-x: clip; }
+
+  /* Alvo de toque de 48px (guia de acessibilidade) nas abas de forma — no
+     celular elas são o primeiro controle que a pessoa encosta. */
+  .pgto-metodos > button { min-height: 48px; }
+  @media (max-width: 380px) {
+    /* Com 3 formas em tela de 320px, 15px estoura o botão. */
+    .pgto-metodos > button { font-size: 14px; padding-left: 4px; padding-right: 4px; }
+  }
 `;
 
 
@@ -544,7 +569,7 @@ export default function PagamentoInscricao() {
                 )}
 
                 {metodos.length > 1 && (
-                  <div style={{ display: 'flex', gap: 6, marginTop: 16 }}>
+                  <div className="pgto-metodos" style={{ display: 'flex', gap: 6, marginTop: 16 }}>
                     {metodos.map(m => (
                       <button key={m} onClick={() => escolherMetodo(m, m === 'cartao' ? parcelasSel : 1)} disabled={!!preparando}
                         // Forma já recusada fica marcada: sem isso a pessoa tenta
