@@ -1,5 +1,4 @@
 import { describe, it, expect } from 'vitest';
-// @ts-expect-error - módulo CJS do backend (régua pura, sem banco/rede)
 import { lotesDePush, tokenMorreu, MAX_POR_REQUEST } from '../../backend/utils/pushLotes.js';
 
 // ⚠️⚠️ ESTE ARQUIVO É GÊMEO do bloco "lotesDePush" em

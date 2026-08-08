@@ -227,7 +227,9 @@ describe('pagamentos · reemissão de cobrança terminal', () => {
     await cobrancas.criarCobranca(pedido);
 
     expect(spy).toHaveBeenCalledTimes(1);
-    expect(spy.mock.calls[0][0].id).toBe(antiga.id);
+    // O argumento chega como `unknown` (o mock foi tipado com `as any`).
+    // Nomear o formato aqui é melhor que espalhar `any` pelo teste.
+    expect((spy.mock.calls[0][0] as { id: string }).id).toBe(antiga.id);
   });
 
   it('falha ao cancelar no provedor NÃO impede a reemissão', async () => {

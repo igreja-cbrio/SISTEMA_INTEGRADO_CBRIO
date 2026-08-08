@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 
-// @ts-expect-error módulo JS sem tipos
 import { hojeBrt, ehBissexto, corteDoAno, ultimaSemanaIsoCompleta, resolverPeriodo } from '../../backend/utils/periodoYtd.js';
 
 const HOJE = { ano: 2026, mes: 8, dia: 3 };

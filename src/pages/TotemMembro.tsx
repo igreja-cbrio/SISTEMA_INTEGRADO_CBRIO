@@ -1881,7 +1881,7 @@ function BatismoFlow({ opt, member, onBack, onDone, onEndSession, onActivity }: 
     return `${d.slice(0,3)}.${d.slice(3,6)}.${d.slice(6,9)}-${d.slice(9)}`;
   };
 
-  const setField = (k: string) => (e: React.ChangeEvent<HTMLInputElement>) =>
+  const setField = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setForm(f => ({ ...f, [k]: k === 'cpf' ? maskCpf(e.target.value) : e.target.value }));
 
   // Sessão com dados completos pula a tela de dados (pedido do redesenho):
@@ -2602,7 +2602,7 @@ function NextFlow({ opt, member, onBack, onDone, onEndSession, onActivity }: {
     setEnviandoInfo(false);
   };
 
-  const setField = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) => {
+  const setField = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     let v = e.target.value;
     if (k === 'cpf') v = maskCpfInput(v);
     if (k === 'telefone') v = maskPhoneInput(v);

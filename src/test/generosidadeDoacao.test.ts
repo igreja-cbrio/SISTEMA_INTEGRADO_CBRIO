@@ -8,15 +8,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // regra for "simplificada". Se um deles ficar vermelho depois de um refactor,
 // leia o comentário antes de ajustar a asserção.
 
-// @ts-expect-error módulo JS sem tipos
 import * as telaPublica from '../../backend/services/pagamentos/telaPublica.js';
-// @ts-expect-error módulo JS sem tipos
 import * as generosidade from '../../backend/services/pagamentos/handlers/generosidade.js';
 // ⚠️ Os efeitos (definirMetodo/sincronizar) entram por INJEÇÃO nos testes, não
 // por `vi.spyOn` na fachada: o núcleo é CommonJS e, sob o Vitest, espionar o
 // `module.exports` patcha o wrapper de interop — a função espionada nunca é a que
 // roda de verdade, e o teste passa a provar nada.
-// @ts-expect-error módulo JS sem tipos
 import * as pagamentos from '../../backend/services/pagamentos/index.js';
 
 const T = telaPublica as any;
@@ -256,7 +253,6 @@ describe('generosidade · handler registrado no núcleo', () => {
   beforeEach(() => { vi.unstubAllEnvs(); });
 
   it('o núcleo acha o handler por origem_tipo', async () => {
-    // @ts-expect-error módulo JS sem tipos
     const handlers = await import('../../backend/services/pagamentos/handlers/index.js');
     const H = handlers as any;
     expect(H.obter('generosidade')?.origem_tipo).toBe('generosidade');

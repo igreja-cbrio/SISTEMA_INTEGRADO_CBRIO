@@ -1,7 +1,5 @@
 import { describe, it, expect } from 'vitest';
-// @ts-expect-error - módulos CJS do backend (réguas puras, sem banco/rede)
 import { sanearDadosApp } from '../../backend/utils/saneamentoInscricaoApp.js';
-// @ts-expect-error - idem
 import { tirarCodigoPaisTelefone, validarNascimento, emailValido } from '../../backend/utils/camposContato.js';
 
 // Contrato do saneamento do payload do app (auditoria 06/08/2026 · Onda 1).

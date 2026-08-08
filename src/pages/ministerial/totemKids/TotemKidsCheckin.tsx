@@ -57,7 +57,17 @@ type Crianca = {
 };
 
 type Sala = { id: string; nome: string; cor: string; capacidade: number; faixa_etaria_min_meses: number; faixa_etaria_max_meses: number };
-type Sessao = { id: string; culto: { id: string; nome: string; data: string } | null };
+type Sessao = {
+  id: string;
+  culto: {
+    id: string; nome: string; data: string;
+    // Vem de `culto:cultos(..., service_type:vol_service_types(...))` em
+    // backend/routes/totemKids.js. É o que dá o rótulo "Domingo Manhã";
+    // sem declarar, o acesso caía sempre no fallback do nome do culto.
+    service_type?: { id: string; name: string; color: string | null;
+                     has_kids: boolean | null; recurrence_time: string | null } | null;
+  } | null;
+};
 
 // Confete comemorativo ao concluir o check-in da criança.
 function dispararConfete() {
@@ -1235,6 +1245,13 @@ export default function TotemKidsCheckin() {
           etiquetas: [{ dados: dadosEtiqueta, precisa: true }],
           checkinId: r.checkin.id,
           nomes: [crianca.nome.split(' ')[0]],
+          // ⚠️ Faltava, e o campo é o que TRANCA a válvula de escape.
+          // Inclusão exige pager (Mari, 2026-08-03). O caminho de FAMÍLIA
+          // calculava isto certo; o de uma criança só deixava `undefined`, que
+          // é falso — então uma criança com espectro ou limitação física
+          // conseguia sair sem pager por aqui. Mesmo critério do caminho de
+          // família: inclusão é espectro/limitação, não idade.
+          inclusao: !!(crianca.tem_espectro || crianca.tem_limitacao_fisica),
         });
       } else {
         await imprimirEtiquetas(dadosEtiqueta);

@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 
-// @ts-expect-error módulo JS sem tipos
 import { serializeContext } from '../../backend/services/agentContext.js';
 
 /**

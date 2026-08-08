@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 
-// @ts-expect-error módulo JS sem tipos
 import * as cerebroSearch from '../../backend/services/cerebroSearch.js';
 
 const { canReadRouteKey, BIBLIOTECA_TO_ROUTE_KEY, AREA_VAULT_TO_ROUTE_KEY } = cerebroSearch as any;

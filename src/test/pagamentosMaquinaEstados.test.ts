@@ -1,8 +1,6 @@
 import { describe, it, expect } from 'vitest';
 // Serviço do backend (CommonJS) — máquina de estados da cobrança.
-// @ts-expect-error módulo JS sem tipos
 import * as maq from '../../backend/services/pagamentos/maquinaEstados.js';
-// @ts-expect-error módulo JS sem tipos
 import { STATUS, TRANSICOES } from '../../backend/services/pagamentos/tipos.js';
 
 const {
