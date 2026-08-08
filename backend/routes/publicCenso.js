@@ -24,6 +24,7 @@ const {
 } = require('../utils/censoRespostaToken');
 const { cpfValido, normalizarCpf } = require('../utils/cpf');
 const { casarComOpcao, loteParaBanco } = require('../utils/censoVocabulario');
+const { acharRespostaDaPessoa } = require('../services/censoJaRespondeu');
 const { acharMembroGuardado, acharOuCriarGuardado } = require('../services/membroMatch');
 
 let reconciliarCenso;
@@ -292,6 +293,43 @@ router.get('/:slug', submitLimiter, async (req, res) => {
 // telefone e e-mail. Isto só poupa digitação de quem já está na base — e é o
 // que dá `identificado_por='cpf_nascimento'`, a chave forte que autoriza o
 // censo a corrigir o cadastro depois.
+
+/**
+ * Monta os valores de pré-preenchimento a partir do cadastro.
+ *
+ * Só devolve o que o questionário DECLARA pré-preencher (`preenche_de`) — a
+ * lista de campos não vive aqui, vive no questionário, então adicionar uma
+ * pergunta pré-preenchida não exige mexer nesta rota.
+ *
+ * ⚠️ O `casarComOpcao` é o que impede o bug de 07/08: o cadastro guarda
+ * `estado_civil` como 'casado' e a opção é 'Casado(a)'. Devolver o valor cru
+ * deixava a pergunta sem nada marcado, e a pessoa achava que o "buscar meu
+ * cadastro" não tinha funcionado.
+ */
+function valoresPreenchidos(pesquisa, membro) {
+  const doCadastro = {
+    cpf: membro.cpf ? String(membro.cpf).replace(/\D/g, '') : null,
+    nome: membro.nome, data_nascimento: membro.data_nascimento,
+    telefone: membro.telefone, email: membro.email, estado_civil: membro.estado_civil,
+    cidade: membro.cidade, bairro: membro.bairro, profissao: membro.profissao,
+  };
+  const valores = {};
+  for (const q of pesquisa.perguntas || []) {
+    if (!q.preenche_de) continue;
+    const bruto = doCadastro[q.preenche_de];
+    if (bruto === null || bruto === undefined || bruto === '') continue;
+    if (Array.isArray(q.opcoes) && q.opcoes.length) {
+      const casado = casarComOpcao(bruto, q.opcoes);
+      // Sem correspondência não inventamos: a pessoa escolhe. Marcar a opção
+      // errada por ela seria pior que não marcar nada.
+      if (casado) valores[q.id] = casado;
+    } else {
+      valores[q.id] = String(bruto);
+    }
+  }
+  return valores;
+}
+
 router.post('/:slug/prefill', lookupLimiter, async (req, res) => {
   // Resposta neutra ÚNICA. Toda saída sem sucesso usa exatamente este corpo —
   // não existe caminho que diferencie "CPF não existe" de "existe com outro
@@ -300,6 +338,31 @@ router.post('/:slug/prefill', lookupLimiter, async (req, res) => {
   try {
     const r = await carregarPesquisaAberta(req.params.slug);
     if (r.erro) return res.status(r.erro).json({ error: r.mensagem });
+
+    // ── Atalho do APP: a pessoa JÁ está autenticada ────────────────────────
+    // O app manda o token de identidade que o próprio backend emitiu para a
+    // sessão dela. Pedir CPF + nascimento a quem acabou de fazer login com
+    // senha seria teatro de segurança: mais atrito, zero garantia a mais — o
+    // token é assinado e o CPF é digitável por qualquer um.
+    const idDoToken = verificarTokenIdentidade(req.body?.identidade);
+    if (idDoToken) {
+      const { data: m } = await supabase.from('mem_membros')
+        .select('id, nome, cpf, telefone, email, data_nascimento, estado_civil, cidade, bairro, profissao')
+        .eq('id', idDoToken).eq('active', true).is('deleted_at', null).maybeSingle();
+      if (!m) return res.json(neutra);
+      const ja = await acharRespostaDaPessoa({
+        pesquisaId: r.pesquisa.id, membroId: m.id, cpf: m.cpf,
+      });
+      return res.json({
+        encontrado: true,
+        ja_respondeu: !!ja,
+        respondida_em: ja?.concluida_em || null,
+        // Devolve o MESMO token que recebeu: quem já provou identidade não
+        // precisa de um novo, e emitir outro só aumentaria a superfície.
+        identidade: req.body.identidade,
+        valores: valoresPreenchidos(r.pesquisa, m),
+      });
+    }
 
     const cpf = normalizarCpf(req.body?.cpf);
     if (!cpfValido(cpf)) return res.json(neutra);
@@ -331,11 +394,13 @@ router.post('/:slug/prefill', lookupLimiter, async (req, res) => {
 
     // Já respondeu? Avisa em vez de deixar a pessoa preencher 93 campos para
     // tomar um erro no fim.
-    const { data: jaTem } = await supabase
-      .from('cen_resposta').select('id')
-      .eq('pesquisa_id', r.pesquisa.id).eq('membro_id', data.id)
-      .not('concluida_em', 'is', null).is('deleted_at', null)
-      .maybeSingle();
+    //
+    // Regra COMPARTILHADA com o endpoint do app (services/censoJaRespondeu.js):
+    // olha membro_id E CPF. Só por membro_id, quem respondeu no culto e ainda
+    // não passou pelo pós-processamento seria convidado a responder de novo.
+    const jaTem = await acharRespostaDaPessoa({
+      pesquisaId: r.pesquisa.id, membroId: data.id, cpf,
+    });
 
     const token = gerarTokenIdentidade(data.id);
     if (!token) return res.json(neutra);   // fail-closed sem segredo configurado
@@ -344,31 +409,13 @@ router.post('/:slug/prefill', lookupLimiter, async (req, res) => {
     // o questionário declara pré-preencher (`preenche_de`).
     //
     // ⚠️ Devolvemos por PERGUNTA, não por campo, e já CASADO com as opções: o
-    // cadastro guarda `estado_civil` como 'casado' e a opção é 'Casado(a)', então
-    // devolver o valor cru deixava a pergunta sem nada marcado — a pessoa achava
-    // que o "buscar meu cadastro" não tinha funcionado (relato do Matheus, 07/08).
-    // Casar aqui, onde estão as opções, evita repetir essa régua no cliente.
-    const doCadastro = {
-      cpf, nome: data.nome, data_nascimento: data.data_nascimento,
-      telefone: data.telefone, email: data.email, estado_civil: data.estado_civil,
-      cidade: data.cidade, bairro: data.bairro, profissao: data.profissao,
-    };
-    const valores = {};
-    for (const q of r.pesquisa.perguntas || []) {
-      if (!q.preenche_de) continue;
-      const bruto = doCadastro[q.preenche_de];
-      if (bruto === null || bruto === undefined || bruto === '') continue;
-      if (Array.isArray(q.opcoes) && q.opcoes.length) {
-        const casado = casarComOpcao(bruto, q.opcoes);
-        // Sem correspondência não inventamos: a pessoa escolhe. Marcar a opção
-        // errada por ela seria pior que não marcar nada.
-        if (casado) valores[q.id] = casado;
-      } else {
-        valores[q.id] = String(bruto);
-      }
-    }
-
-    res.json({ encontrado: true, ja_respondeu: !!jaTem, identidade: token, valores });
+    res.json({
+      encontrado: true,
+      ja_respondeu: !!jaTem,
+      respondida_em: jaTem?.concluida_em || null,
+      identidade: token,
+      valores: valoresPreenchidos(r.pesquisa, { ...data, cpf }),
+    });
   } catch (e) { res.json(neutra); }
 });
 
