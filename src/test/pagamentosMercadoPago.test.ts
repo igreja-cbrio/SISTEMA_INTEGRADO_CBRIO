@@ -615,3 +615,44 @@ describe('mercadopago · chavePublica só sai com o par coerente', () => {
     expect(mp.chavePublica()).toBe('APP_USR-pk-1');
   });
 });
+
+// ⚠️ O MP RECUSA a nossa referência crua. Doc da Orders API, literal:
+// `external_reference` "é obrigatório, com no máximo 64 caracteres, apenas
+// letras, números, `-` e `_`". A nossa é `inscricao:<uuid>` — o `:` é inválido,
+// e o erro (`400 '$.external_reference' - does not match pattern`) não diz qual
+// caractere ofende. Foi o que segurou o Pix em 08/08, depois que a credencial
+// finalmente passou.
+describe('mercadopago · external_reference no formato que o MP aceita', () => {
+  const uuid = '9f0e4c2a-1b3d-4e5f-8a7b-6c5d4e3f2a1b';
+
+  it('troca `:` por `_` — os únicos separadores aceitos são - e _', () => {
+    expect(mp.refExterna(`inscricao:${uuid}`)).toBe(`inscricao_${uuid}`);
+    expect(mp.refExterna(`inscricao:${uuid}`)).toMatch(/^[A-Za-z0-9_-]+$/);
+  });
+
+  it('⚠️ a volta é EXATA — é por ela que o webhook reencontra a cobrança', () => {
+    const nossa = `inscricao:${uuid}:r1a2b3c4d`;
+    expect(mp.refDoExterno(mp.refExterna(nossa))).toBe(nossa);
+  });
+
+  it('as referências REAIS cabem nos 64 caracteres', () => {
+    // Se um formato novo estourar, é aqui que aparece — e não no webhook que
+    // não reencontra a cobrança seis meses depois.
+    for (const r of [
+      `inscricao:${uuid}`,                          // normal
+      `inscricao:${uuid}:r${Date.now().toString(36)}`,   // reemissão
+      `inscricao:${uuid}:b${Date.now().toString(36)}`,   // bolsa
+    ]) {
+      expect(mp.refExterna(r).length, `estourou: ${r}`).toBeLessThanOrEqual(64);
+      expect(mp.refDoExterno(mp.refExterna(r))).toBe(r);
+    }
+  });
+
+  it('caractere fora do alfabeto vira `-` em vez de ir sujo pro MP', () => {
+    expect(mp.refExterna('pedido#42 (novo)')).toMatch(/^[A-Za-z0-9_-]+$/);
+  });
+
+  it('sem referência, cai no id da cobrança', () => {
+    expect(mp.refExterna(null, 'cob-123')).toBe('cob-123');
+  });
+});

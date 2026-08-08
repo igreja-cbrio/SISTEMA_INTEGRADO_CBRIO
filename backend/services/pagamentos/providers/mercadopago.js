@@ -222,6 +222,42 @@ function paraCentavos(valor) {
   return Math.round(Number(valor) * 100);
 }
 
+// ── Referência externa ─────────────────────────────────────────────────────
+//
+// ⚠️⚠️ O MP RECUSA a nossa `referencia` crua. Doc da Orders API, literal:
+// `external_reference` "é obrigatório, com no máximo 64 caracteres, apenas
+// letras, números, `-` e `_`". A nossa é `inscricao:<uuid>` — o `:` é inválido,
+// e o erro é `400 property_value · '$.external_reference' - does not match
+// pattern`, que não diz qual caractere ofende.
+//
+// ⚠️ A conversão TEM que ser reversível: o `external_reference` é o vínculo
+// estável entre a preference e as N orders, e é por ele que o webhook reencontra
+// a cobrança quando o id é de outro objeto. Por isso `:` ↔ `_` e nada mais —
+// nenhuma referência nossa usa `_`, então a volta é exata.
+//
+// ⚠️ E não pode conter PII (a doc diz explicitamente). A nossa é
+// origem + uuid — nome/CPF/e-mail nunca entram aqui.
+
+const REF_MAX = 64;
+
+function refExterna(referencia, fallbackId) {
+  const cru = String(referencia || fallbackId || '');
+  const limpo = cru.replace(/:/g, '_').replace(/[^A-Za-z0-9_-]/g, '-');
+  if (limpo.length <= REF_MAX) return limpo;
+  // Não deveria acontecer com os formatos de hoje (o maior tem 56). Se um
+  // domínio novo estourar, o FIM é o que carrega a unicidade — e o aviso existe
+  // pra alguém encurtar a referência na origem em vez de descobrir pelo webhook
+  // que não reencontra a cobrança.
+  console.warn(`[mercadopago] external_reference acima de ${REF_MAX} — truncando: ${limpo}`);
+  return limpo.slice(-REF_MAX);
+}
+
+/** Volta do formato do MP pra nossa `referencia`. */
+function refDoExterno(externa) {
+  if (!externa) return null;
+  return String(externa).replace(/_/g, ':');
+}
+
 // ── HTTP ───────────────────────────────────────────────────────────────────
 
 async function req(metodo, caminho, corpo, { idempotencyKey } = {}) {
@@ -393,7 +429,7 @@ async function criarCobranca(c) {
       unit_price: paraReaisNumero(c.valor_centavos),
     }],
     payer: payerDaCobranca(c),
-    external_reference: c.referencia || c.id,
+    external_reference: refExterna(c.referencia, c.id),
     notification_url: `${base}/api/pagamentos-webhook/mercadopago`,
     back_urls: {
       success: `${base}/pagamento/${c.public_token}`,
@@ -466,7 +502,7 @@ async function definirMetodo(c, metodo, opcoes = {}) {
     type: 'online',
     processing_mode: 'automatic',
     total_amount: paraReais(c.valor_centavos),
-    external_reference: c.referencia || c.id,
+    external_reference: refExterna(c.referencia, c.id),
     payer: payerDaCobranca(c),
     transactions: {
       payments: [{
@@ -563,7 +599,7 @@ function dadosDaOrder(order) {
     liquido_centavos: null,
     repassado_em: null,
     metodo: metodoDeMp(pg.payment_method?.id) || metodoDeMp(pg.payment_method?.type) || null,
-    referencia: order.external_reference || null,
+    referencia: refDoExterno(order.external_reference),
   };
 }
 
@@ -734,7 +770,7 @@ function dadosDoPayment(p) {
     parcelas: Number(p.installments) > 0 ? Number(p.installments) : null,
     cartao_brand: p.card?.brand || p.payment_method_id || null,
     cartao_last4: p.card?.last_four_digits || null,
-    referencia: p.external_reference || null,
+    referencia: refDoExterno(p.external_reference),
   };
 }
 
@@ -838,7 +874,7 @@ async function pagarComToken(c, dados = {}) {
     token,
     installments: parcelas,
     description: c.descricao || 'Pagamento CBRio',
-    external_reference: c.referencia || c.id,
+    external_reference: refExterna(c.referencia, c.id),
     payer: {
       email: dados.payer?.email || c.pagador_email || undefined,
       identification: dados.payer?.identification?.number
@@ -886,6 +922,8 @@ module.exports = {
   estornar,
   pagarComToken,
   chavePublica,
+  refExterna,
+  refDoExterno,
   verificarAssinatura,
   normalizarEvento,
   verificarChave,
