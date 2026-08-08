@@ -1,5 +1,4 @@
 import { describe, it, expect } from 'vitest';
-// @ts-expect-error — módulo CJS do backend, sem tipos
 import { moduloDoContexto, diaBrt, MAPA, PADRAO } from '../../backend/utils/whatsappModulo.js';
 
 // Slugs conferidos no catálogo `modulos` do banco vivo em 2026-08-05 (todos

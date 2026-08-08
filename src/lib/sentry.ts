@@ -25,7 +25,10 @@ export function sanitizeRoute(value: string) {
     .replace(/\/[^/]*(?:%40|@)[^/]*(?=\/|$)/gi, '/:value');
 }
 
-export function sanitizeEvent(event: Sentry.Event) {
+// Genérica de propósito: o `beforeSend` do SDK é tipado com `ErrorEvent`, que é
+// um `Event` mais estreito, e uma assinatura fixa em `Event` alargaria o retorno
+// e quebraria o encaixe. Assim a função devolve exatamente o que recebeu.
+export function sanitizeEvent<E extends Sentry.Event>(event: E): E {
   if (event.request) {
     delete event.request.cookies;
     delete event.request.data;

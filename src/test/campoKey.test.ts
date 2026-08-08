@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 
-// @ts-expect-error módulo JS sem tipos
 import { keyCampoPreservada, novaKeyCampo, KEY_CAMPO_OK } from '../../backend/utils/campoKey.js';
 
 // Guarda do incidente 2026-08-03: o `sanitizeCampos` exigia `^c_[a-z0-9_]+$`, então

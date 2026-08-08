@@ -1,5 +1,4 @@
 import { describe, it, expect } from 'vitest';
-// @ts-expect-error - módulo CJS do backend (régua pura, sem banco/rede)
 import {
   caminhoDaCapa, extensaoDaCapa, caminhoNovoDaCapa, MIMES_CAPA,
 } from '../../backend/utils/grupoCapaApp.js';

@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 
-// @ts-expect-error módulo JS sem tipos
 import { ipDentroDoCerco, sanitizarIps, ipv4ParaInt, ALFABETO, CODIGO_LEN } from '../../backend/utils/totemCerco.js';
 
 // O token do totem vive no localStorage de um PC de hall público: é bearer e

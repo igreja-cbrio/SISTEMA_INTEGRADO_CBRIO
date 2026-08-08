@@ -42,6 +42,11 @@ type Solicitacao = {
 };
 
 type Detalhe = Solicitacao & {
+  // Coluna real de `kids_vinculo_solicitacoes`: fica preenchida quando a
+  // solicitação já foi casada com uma criança. A tela usa a AUSÊNCIA dela para
+  // decidir se ainda oferece candidatas — sem declarar, o teste `!crianca_id`
+  // era sempre verdadeiro para o compilador.
+  crianca_id: string | null;
   crianca_foto_url: string | null;
   foto_mae_url: string | null;
   foto_pai_url: string | null;

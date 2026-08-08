@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-// @ts-expect-error - módulo CJS do backend (régua pura, sem express/banco)
 import { chaveLimiteApp, ehChaveAnonima, normalizarIpParaChave } from '../../backend/utils/appRateLimit.js';
 
 // Contrato da chave de rate limit do app de membros (auditoria 06/08/2026).
