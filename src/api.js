@@ -344,6 +344,19 @@ export const censo = {
   },
 };
 
+// QR dinâmicos: o código impresso é estável, o destino muda no banco.
+export const links = {
+  listar: () => get('/links'),
+  obter: (id) => get(`/links/${id}`),
+  criar: (dados) => post('/links', dados),
+  // ⚠️ NÃO existe troca de slug de propósito: o slug está impresso em papel.
+  atualizar: (id, dados) => put(`/links/${id}`, dados),
+  remover: (id) => del(`/links/${id}`),
+  // Transforma um link existente em QR dinâmico sem sair da tela onde você
+  // está. Reusa se já houver link ativo para o mesmo destino.
+  paraDestino: (dados) => post('/links/para-destino', dados),
+};
+
 export const projects = {
   categories: () => get('/projects/categories'),
   dashboard: () => get('/projects/dashboard'),

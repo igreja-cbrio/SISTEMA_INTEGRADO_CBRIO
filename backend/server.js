@@ -70,6 +70,12 @@ app.use(rateLimit({
     // levaria 429 — e 429 aqui é resposta perdida de quem preencheu 93 campos.
     // Limiter próprio (e medido) em routes/publicCenso.js.
     || req.path.startsWith('/api/public/censo')
+    // ⚠️ O REDIRECIONADOR DE QR sai do teto por IP pelo mesmo motivo, e aqui a
+    // falha é a mais visível de todas: 429 no /r/ é o cartaz não abrindo nada.
+    // A pessoa não vê "muitas requisições", vê um QR quebrado — e conclui que o
+    // sistema não funciona. É uma leitura de banco de 30s de cache; o custo de
+    // isentar é nenhum perto disso.
+    || req.path.startsWith('/r/')
     || req.path.startsWith('/api/pagamentos-webhook')
     // ⚠️ Totem também sai do teto por IP: todos os totens da igreja saem pelo
     // MESMO NAT, então 500/15min por IP seria compartilhado entre eles (e com
@@ -160,7 +166,8 @@ app.use('/api/dashboard', require('./routes/dashboard'));
 app.use('/api/notificacoes', require('./routes/notificacoes'));
 app.use('/api/permissoes', require('./routes/permissoes'));
 app.use('/api/membresia', require('./routes/membresia'));
-app.use('/api/censo', require('./routes/censo'));             // Plataforma de pesquisas (censo demográfico/perfil/engajamento)
+app.use('/api/censo', require('./routes/censo'));   // Plataforma de pesquisas (censo demográfico/perfil/engajamento)
+app.use('/api/links', require('./routes/links'));   // QR dinâmicos: o papel fica, o destino muda
 app.use('/api/destaques', require('./routes/destaques'));
 app.use('/api/batismo-fotos', require('./routes/batismoFotos'));
 // Rate limit dedicado pros forms públicos (anti-spam · sem auth)
@@ -178,6 +185,12 @@ const publicLimiter = rateLimit({
 // primeiro, o NPS não passa pelo teto de 30 · usa o limiter próprio (generoso) do
 // routes/publicNps.js. Os demais forms públicos seguem no publicLimiter.
 app.use('/api/public/nps', require('./routes/publicNps'));
+// Redirecionador dos QR dinâmicos. Fora de /api de propósito: o endereço vai
+// impresso em papel e `cbrio.org/r/censo` cabe num QR pequeno, que lê de longe.
+// Fica ANTES de qualquer limiter — um culto inteiro escaneia o mesmo QR nos
+// mesmos dois minutos, e derrubar isso por limite de taxa seria derrubar o
+// próprio cartaz.
+app.use('/r', require('./routes/redirecionador'));
 // Censo público: MESMO motivo do NPS, elevado ao cubo — o censo é respondido por
 // centenas de pessoas no mesmo culto, todas atrás do NAT do prédio. Limiter
 // próprio (dois baldes: submissão generosa, lookup de CPF apertado).

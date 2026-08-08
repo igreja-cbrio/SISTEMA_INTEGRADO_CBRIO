@@ -200,9 +200,10 @@
   ],
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/index.js" },
+    { "source": "/r/(.*)", "destination": "/api/index.js" },
     { "source": "/privacidade", "destination": "/privacidade.html" },
     { "source": "/aplicativo", "destination": "/aplicativo.html" },
-    { "source": "/((?!api/|assets/|_vercel/).*)", "destination": "/index.html" }
+    { "source": "/((?!api/|r/|assets/|_vercel/).*)", "destination": "/index.html" }
   ],
   "headers": [
     {
