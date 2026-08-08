@@ -136,9 +136,16 @@ export default function CartaoBrick({
                   borderRadiusMedium: '10px',
                   borderRadiusLarge: '12px',
                   borderRadiusFull: '999px',
-                  inputVerticalPadding: '12px',
-                  inputHorizontalPadding: '12px',
-                  formPadding: '0px',
+                  // Campo mais alto = alvo de toque maior no celular, que é onde
+                  // a maioria se inscreve.
+                  inputVerticalPadding: '14px',
+                  inputHorizontalPadding: '14px',
+                  // ⚠️ Era `0px`, e no celular isso fazia os campos encostarem na
+                  // borda do cartão branco da página (o `.pgto-card` só tem 14px
+                  // de folga lateral ali). Uma folga própria do formulário é o
+                  // que separa "formulário dentro do cartão" de "formulário
+                  // espremido contra a borda".
+                  formPadding: '4px',
                   fontSizeMedium: '16px',   // 16px evita o zoom automático do iOS
                 },
               },

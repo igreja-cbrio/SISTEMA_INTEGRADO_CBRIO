@@ -726,6 +726,12 @@ export default function PagamentoInscricao() {
                         corTextoFraco={C.textDim}
                         escuro={isDark}
                         corBorda={C.inputBorder}
+                        // ⚠️ Sem isto o Brick pinta o fundo dos campos com o
+                        // cinza-azulado do tema escuro DELE, que não é o da
+                        // página — era isso que fazia o bloco do formulário
+                        // parecer colado de outro site no modo escuro. A prop
+                        // existia e nunca tinha sido passada daqui.
+                        corFundoInput={C.optionBg}
                         onPagar={async (formData) => {
                           // ⚠️ LANÇAR em erro é contrato do Brick: é o que faz
                           // ele sair do estado "processando" e deixar a pessoa

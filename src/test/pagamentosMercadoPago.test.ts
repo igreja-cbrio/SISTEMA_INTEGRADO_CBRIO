@@ -409,8 +409,31 @@ describe('mercadopago · pagarComToken (cartão sem redirecionamento)', () => {
     stubFetch(aprovado, cap);
     // O cliente tentou pagar R$ 1,00 por uma inscrição de R$ 900,00.
     await mp.pagarComToken(cobranca, { token: 'tok_x', installments: 3, transaction_amount: 1 });
-    // `paraReais` devolve string formatada (convenção deste adapter).
-    expect(cap.corpo.transaction_amount).toBe('900.00');
+    expect(cap.corpo.transaction_amount).toBe(900);
+  });
+
+  it('⚠️ o valor vai como NÚMERO — a Payments API recusa string', async () => {
+    // Bug real (08/08), achado no 1º pagamento de verdade: o adapter mandava a
+    // string de `paraReais` (que é o formato da ORDERS API) e a Payments API
+    // respondia `400 transaction_amount attribute must be numeric`. Efeito na
+    // tela: o botão "Pagar" girava e não saía do lugar — sem mensagem nenhuma.
+    //
+    // ⚠️ E o teste acima ANTES afirmava `'900.00'`: ele travava o comportamento
+    // errado, porque conferia o que o nosso código fazia em vez do que a API
+    // exige. Esta asserção é sobre o TIPO, que é o que o MP recusa.
+    const cap: any = {};
+    stubFetch(aprovado, cap);
+    await mp.pagarComToken(cobranca, { token: 'tok_x' });
+    expect(typeof cap.corpo.transaction_amount).toBe('number');
+    // Sem resíduo binário: 90000 centavos é 900, não 899.9999999999999.
+    expect(cap.corpo.transaction_amount).toBe(900);
+  });
+
+  it('valor quebrado não vira dízima ao virar número', async () => {
+    const cap: any = {};
+    stubFetch(aprovado, cap);
+    await mp.pagarComToken({ ...cobranca, valor_centavos: 12345 }, { token: 'tok_x' });
+    expect(cap.corpo.transaction_amount).toBe(123.45);
   });
 
   it('exige token e recusa sem ele', async () => {

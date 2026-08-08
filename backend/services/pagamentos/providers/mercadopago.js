@@ -163,6 +163,22 @@ function paraReais(centavos) {
   return (Number(centavos) / 100).toFixed(2);
 }
 
+/**
+ * O MESMO valor, como NÚMERO.
+ *
+ * ⚠️⚠️ As duas APIs do MP discordam no tipo do dinheiro, e discordar aqui custa
+ * um pagamento: a **Orders API** quer STRING (`total_amount: "5.00"`) e a
+ * **Payments API** — que é por onde o cartão do Brick passa — quer NÚMERO, e
+ * responde `400 transaction_amount attribute must be numeric` se receber string.
+ * Foi exatamente isso que fazia o botão "Pagar" girar e não sair do lugar.
+ *
+ * Deriva de `paraReais` de propósito: `toFixed(2)` primeiro arredonda em decimal
+ * e só depois vira número, então não sobra resíduo binário de `centavos / 100`.
+ */
+function paraReaisNumero(centavos) {
+  return Number(paraReais(centavos));
+}
+
 function paraCentavos(valor) {
   if (valor === null || valor === undefined || valor === '') return null;
   return Math.round(Number(valor) * 100);
@@ -321,7 +337,7 @@ async function criarCobranca(c) {
       title: (c.descricao || 'Inscrição CBRio').slice(0, 250),
       quantity: 1,
       currency_id: 'BRL',
-      unit_price: Number(paraReais(c.valor_centavos)),
+      unit_price: paraReaisNumero(c.valor_centavos),
     }],
     payer: payerDaCobranca(c),
     external_reference: c.referencia || c.id,
@@ -730,7 +746,8 @@ async function pagarComToken(c, dados = {}) {
 
   const corpo = {
     // ⚠️ do BANCO, não do cliente.
-    transaction_amount: paraReais(c.valor_centavos),
+    // ⚠️ NÚMERO, não string — a Payments API recusa string (ver `paraReaisNumero`).
+    transaction_amount: paraReaisNumero(c.valor_centavos),
     token,
     installments: parcelas,
     description: c.descricao || 'Pagamento CBRio',
