@@ -409,8 +409,31 @@ describe('mercadopago · pagarComToken (cartão sem redirecionamento)', () => {
     stubFetch(aprovado, cap);
     // O cliente tentou pagar R$ 1,00 por uma inscrição de R$ 900,00.
     await mp.pagarComToken(cobranca, { token: 'tok_x', installments: 3, transaction_amount: 1 });
-    // `paraReais` devolve string formatada (convenção deste adapter).
-    expect(cap.corpo.transaction_amount).toBe('900.00');
+    expect(cap.corpo.transaction_amount).toBe(900);
+  });
+
+  it('⚠️ o valor vai como NÚMERO — a Payments API recusa string', async () => {
+    // Bug real (08/08), achado no 1º pagamento de verdade: o adapter mandava a
+    // string de `paraReais` (que é o formato da ORDERS API) e a Payments API
+    // respondia `400 transaction_amount attribute must be numeric`. Efeito na
+    // tela: o botão "Pagar" girava e não saía do lugar — sem mensagem nenhuma.
+    //
+    // ⚠️ E o teste acima ANTES afirmava `'900.00'`: ele travava o comportamento
+    // errado, porque conferia o que o nosso código fazia em vez do que a API
+    // exige. Esta asserção é sobre o TIPO, que é o que o MP recusa.
+    const cap: any = {};
+    stubFetch(aprovado, cap);
+    await mp.pagarComToken(cobranca, { token: 'tok_x' });
+    expect(typeof cap.corpo.transaction_amount).toBe('number');
+    // Sem resíduo binário: 90000 centavos é 900, não 899.9999999999999.
+    expect(cap.corpo.transaction_amount).toBe(900);
+  });
+
+  it('valor quebrado não vira dízima ao virar número', async () => {
+    const cap: any = {};
+    stubFetch(aprovado, cap);
+    await mp.pagarComToken({ ...cobranca, valor_centavos: 12345 }, { token: 'tok_x' });
+    expect(cap.corpo.transaction_amount).toBe(123.45);
   });
 
   it('exige token e recusa sem ele', async () => {
@@ -471,5 +494,272 @@ describe('mercadopago · pagarComToken (cartão sem redirecionamento)', () => {
   it('declara que sabe tokenizar (é o que a tela lê pra não redirecionar)', () => {
     expect(mp.capacidades.tokenizacao).toBe(true);
     expect(typeof mp.pagarComToken).toBe('function');
+  });
+});
+
+// ⚠️ A resposta mais confusa do MP: a credencial é válida, o que não bate é o
+// PAR. O navegador tokeniza o cartão com a Public Key (conta A) e o servidor
+// cobra com o Access Token (conta B) — acontece toda vez que se troca um dos
+// dois e esquece o outro. Sem tradução, o sintoma na tela é "o botão gira e nada
+// acontece", e a investigação começa pelo lugar errado (foi o que aconteceu em
+// 08/08). O teste trava a DICA, não o texto do MP.
+describe('mercadopago · erro de par de credenciais é traduzido', () => {
+  const cobranca = { id: 'cob-9', valor_centavos: 500, referencia: 'inscricao:z' };
+
+  it('401 de "live credentials" diz que Public Key e Access Token têm que ser do MESMO par', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: false, status: 401,
+      text: async () => JSON.stringify({ message: 'Unauthorized use of live credentials' }),
+    } as any)));
+
+    await expect(mp.pagarComToken(cobranca, { token: 'tok_x' }))
+      .rejects.toThrow(/MESMA aplicação/i);
+  });
+
+  it('erro comum NÃO ganha a dica (senão ela vira ruído e ninguém lê)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: false, status: 400,
+      text: async () => JSON.stringify({ message: 'invalid parameter' }),
+    } as any)));
+
+    await expect(mp.pagarComToken(cobranca, { token: 'tok_x' }))
+      .rejects.not.toThrow(/MESMA aplicação/i);
+  });
+});
+
+// ⚠️⚠️ A guarda que substitui a de `live_mode` quando o sandbox passa a usar
+// credencial de PRODUÇÃO de conta de teste (mudança do MP em 08/08). Sem ela, um
+// Access Token da conta REAL da igreja colado no preview cobra cartão de gente —
+// e não há mais `live_mode` pra denunciar, porque o ensaio TEM que se declarar
+// produção. O sinal que sobra é o id da conta no fim do token.
+describe('mercadopago · guarda de CONTA (o token é da conta declarada?)', () => {
+  const cobranca = { id: 'cob-c', valor_centavos: 500, referencia: 'inscricao:c' };
+  const tokenDaIgreja = 'APP_USR-1111111111111111-080812-abcdef-461374279';
+  const tokenDeTeste = 'APP_USR-2222222222222222-080812-abcdef-3599169464';
+
+  function stubOk() {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true, status: 200,
+      text: async () => JSON.stringify({ id: 1, status: 'approved', live_mode: true }),
+    } as any)));
+  }
+
+  it('⚠️ token da conta REAL num ambiente declarado de teste LANÇA', async () => {
+    stubOk();
+    vi.stubEnv('MERCADOPAGO_AMBIENTE', 'producao');
+    vi.stubEnv('MERCADOPAGO_CONTA_ID', '3599169464');   // preview = vendedor de teste
+    vi.stubEnv('MERCADOPAGO_ACCESS_TOKEN', tokenDaIgreja);
+
+    await expect(mp.pagarComToken(cobranca, { token: 'tok_x' }))
+      .rejects.toThrow(/conta 461374279.*conta 3599169464|cobraria dinheiro de verdade/is);
+  });
+
+  it('token da conta declarada passa', async () => {
+    stubOk();
+    vi.stubEnv('MERCADOPAGO_AMBIENTE', 'producao');
+    vi.stubEnv('MERCADOPAGO_CONTA_ID', '3599169464');
+    vi.stubEnv('MERCADOPAGO_ACCESS_TOKEN', tokenDeTeste);
+
+    await expect(mp.pagarComToken(cobranca, { token: 'tok_x' })).resolves.toBeTruthy();
+  });
+
+  it('sem a env, NÃO bloqueia — inventar erro onde não há sinal derruba pagamento por nada', async () => {
+    // Mesma régua do `live_mode` ausente. Produção rodou meses sem esta env.
+    stubOk();
+    vi.stubEnv('MERCADOPAGO_AMBIENTE', 'producao');
+    vi.stubEnv('MERCADOPAGO_CONTA_ID', '');
+    vi.stubEnv('MERCADOPAGO_ACCESS_TOKEN', tokenDaIgreja);
+
+    await expect(mp.pagarComToken(cobranca, { token: 'tok_x' })).resolves.toBeTruthy();
+  });
+
+  it('token em formato sem id de conta não bloqueia', async () => {
+    stubOk();
+    vi.stubEnv('MERCADOPAGO_AMBIENTE', 'producao');
+    vi.stubEnv('MERCADOPAGO_CONTA_ID', '3599169464');
+    vi.stubEnv('MERCADOPAGO_ACCESS_TOKEN', 'TEST-formato-desconhecido');
+
+    await expect(mp.pagarComToken(cobranca, { token: 'tok_x' })).resolves.toBeTruthy();
+  });
+});
+
+// ⚠️ Par de credenciais MISTURADO — a causa que segurou o teste de 08/08 por
+// horas. Cada aplicação tem DUAS versões de par: teste (`TEST-`) e produção
+// (`APP_USR-`). Misturar as versões falha igual a misturar contas, com a mesma
+// mensagem inútil do MP ("Unauthorized use of live credentials").
+describe('mercadopago · chavePublica só sai com o par coerente', () => {
+  it('par coerente (produção + produção) devolve a chave', () => {
+    vi.stubEnv('MERCADOPAGO_PUBLIC_KEY', 'APP_USR-pk-1');
+    vi.stubEnv('MERCADOPAGO_ACCESS_TOKEN', 'APP_USR-tok-1');
+    expect(mp.chavePublica()).toBe('APP_USR-pk-1');
+  });
+
+  it('par coerente (teste + teste) devolve a chave', () => {
+    vi.stubEnv('MERCADOPAGO_PUBLIC_KEY', 'TEST-pk-1');
+    vi.stubEnv('MERCADOPAGO_ACCESS_TOKEN', 'TEST-tok-1');
+    expect(mp.chavePublica()).toBe('TEST-pk-1');
+  });
+
+  it('⚠️ versões MISTURADAS desligam o cartão na página em vez de dar 401 a cada tentativa', () => {
+    // Sem chave, o núcleo cai no checkout hospedado — que precisa só do Access
+    // Token e FUNCIONA. Aba que sempre falha é pior que aba que não existe.
+    vi.stubEnv('MERCADOPAGO_PUBLIC_KEY', 'TEST-pk-1');
+    vi.stubEnv('MERCADOPAGO_ACCESS_TOKEN', 'APP_USR-tok-1');
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(mp.chavePublica()).toBeNull();
+  });
+
+  it('sem Access Token não inventa divergência', () => {
+    vi.stubEnv('MERCADOPAGO_PUBLIC_KEY', 'APP_USR-pk-1');
+    vi.stubEnv('MERCADOPAGO_ACCESS_TOKEN', '');
+    expect(mp.chavePublica()).toBe('APP_USR-pk-1');
+  });
+});
+
+// ⚠️ O MP RECUSA a nossa referência crua. Doc da Orders API, literal:
+// `external_reference` "é obrigatório, com no máximo 64 caracteres, apenas
+// letras, números, `-` e `_`". A nossa é `inscricao:<uuid>` — o `:` é inválido,
+// e o erro (`400 '$.external_reference' - does not match pattern`) não diz qual
+// caractere ofende. Foi o que segurou o Pix em 08/08, depois que a credencial
+// finalmente passou.
+describe('mercadopago · external_reference no formato que o MP aceita', () => {
+  const uuid = '9f0e4c2a-1b3d-4e5f-8a7b-6c5d4e3f2a1b';
+
+  it('troca `:` por `_` — os únicos separadores aceitos são - e _', () => {
+    expect(mp.refExterna(`inscricao:${uuid}`)).toBe(`inscricao_${uuid}`);
+    expect(mp.refExterna(`inscricao:${uuid}`)).toMatch(/^[A-Za-z0-9_-]+$/);
+  });
+
+  it('⚠️ a volta é EXATA — é por ela que o webhook reencontra a cobrança', () => {
+    const nossa = `inscricao:${uuid}:r1a2b3c4d`;
+    expect(mp.refDoExterno(mp.refExterna(nossa))).toBe(nossa);
+  });
+
+  it('as referências REAIS cabem nos 64 caracteres', () => {
+    // Se um formato novo estourar, é aqui que aparece — e não no webhook que
+    // não reencontra a cobrança seis meses depois.
+    for (const r of [
+      `inscricao:${uuid}`,                          // normal
+      `inscricao:${uuid}:r${Date.now().toString(36)}`,   // reemissão
+      `inscricao:${uuid}:b${Date.now().toString(36)}`,   // bolsa
+    ]) {
+      expect(mp.refExterna(r).length, `estourou: ${r}`).toBeLessThanOrEqual(64);
+      expect(mp.refDoExterno(mp.refExterna(r))).toBe(r);
+    }
+  });
+
+  it('caractere fora do alfabeto vira `-` em vez de ir sujo pro MP', () => {
+    expect(mp.refExterna('pedido#42 (novo)')).toMatch(/^[A-Za-z0-9_-]+$/);
+  });
+
+  it('sem referência, cai no id da cobrança', () => {
+    expect(mp.refExterna(null, 'cob-123')).toBe('cob-123');
+  });
+});
+
+// ⚠️ Regra que existe SÓ no sandbox: conta de teste do MP recusa pagador cujo
+// e-mail não termine em `@testuser.com`. Sem tradução, o ensaio trava com uma
+// mensagem que parece defeito da integração — e a tentação é "consertar" o
+// código, quando o que muda é o e-mail da inscrição de teste. O aviso diz
+// explicitamente pra NÃO mexer no código.
+describe('mercadopago · regra de e-mail do sandbox é traduzida', () => {
+  const cobranca = { id: 'cob-s', valor_centavos: 500, referencia: 'inscricao:s' };
+
+  it('diz que a regra é só de sandbox e que produção não muda', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: false, status: 400,
+      text: async () => JSON.stringify({
+        errors: [{ code: 'invalid_email_for_sandbox', message: "must contains '@testuser.com'." }],
+      }),
+    } as any)));
+
+    await expect(mp.pagarComToken(cobranca, { token: 'tok_x' }))
+      .rejects.toThrow(/SÓ DE SANDBOX[\s\S]*não mexa no código/i);
+  });
+});
+
+// ⚠️ As duas formas exigem credenciais INCOMPATÍVEIS entre si (doc do MP):
+//   · Pix/Orders API → credenciais de PRODUÇÃO de uma conta de TESTE
+//   · Cartão/Bricks  → credenciais de TESTE da conta REAL
+// Não dá pra ter as duas ao mesmo tempo. A guarda de conta precisa deixar a
+// segunda passar sem virar porta pra primeira.
+describe('mercadopago · guarda de conta × credencial de teste', () => {
+  const cobranca = { id: 'cob-t', valor_centavos: 500, referencia: 'inscricao:t' };
+
+  function stubOk(live: boolean) {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true, status: 200,
+      text: async () => JSON.stringify({ id: 1, status: 'approved', live_mode: live }),
+    } as any)));
+  }
+
+  it('token de TESTE da conta real passa — ele não move dinheiro de ninguém', async () => {
+    stubOk(false);
+    vi.stubEnv('MERCADOPAGO_AMBIENTE', 'teste');
+    vi.stubEnv('MERCADOPAGO_CONTA_ID', '3599169464');     // declarado: vendedor de teste
+    vi.stubEnv('MERCADOPAGO_ACCESS_TOKEN', 'TEST-999-080812-abc-461374279'); // conta da igreja
+    await expect(mp.pagarComToken(cobranca, { token: 'tok_x' })).resolves.toBeTruthy();
+  });
+
+  it('⚠️ mas o token de PRODUÇÃO da conta real segue barrado — é ele que cobra de verdade', async () => {
+    stubOk(true);
+    vi.stubEnv('MERCADOPAGO_AMBIENTE', 'producao');
+    vi.stubEnv('MERCADOPAGO_CONTA_ID', '3599169464');
+    vi.stubEnv('MERCADOPAGO_ACCESS_TOKEN', 'APP_USR-999-080812-abc-461374279');
+    await expect(mp.pagarComToken(cobranca, { token: 'tok_x' }))
+      .rejects.toThrow(/cobraria dinheiro de verdade/i);
+  });
+});
+
+// ⚠️⚠️ Bug medido no 1º pagamento REAL com cartão (08/08): cobrança de R$ 5,00
+// gravou `valor_pago = R$ 5,05`, porque o adapter preferia `total_paid_amount`
+// (o que o PAGADOR desembolsou, incluindo o custo de financiamento que fica com
+// o Mercado Pago) em vez de `transaction_amount` (o valor da NOSSA cobrança que
+// foi liquidado). Três estragos de uma vez: o e-mail de confirmação dizia R$ 5,05
+// pra quem se inscreveu num evento de R$ 5,00; `valor_pago > valor_centavos`
+// acusa na vw_pag_invariantes; e o arrecadado somaria juros que a igreja não
+// recebe — a classe de erro que a lei nº 6 existe pra impedir.
+describe('mercadopago · valor pago é o que QUITA a cobrança', () => {
+  const cobranca = { id: 'cob-v', valor_centavos: 500, referencia: 'inscricao:v' };
+
+  function stub(resposta: any) {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true, status: 200, text: async () => JSON.stringify(resposta),
+    } as any)));
+  }
+
+  it('juros do parcelado NÃO entram no valor pago', async () => {
+    stub({
+      id: 1, status: 'approved', live_mode: false,
+      transaction_amount: 5,                    // a nossa cobrança
+      transaction_details: {
+        total_paid_amount: 5.05,                // o que o pagador desembolsou
+        net_received_amount: 4.8,
+      },
+      fee_details: [{ amount: 0.15 }],
+      installments: 1,
+    });
+
+    const r = await mp.pagarComToken(cobranca, { token: 'tok_x' });
+    expect(r.valor_pago_centavos).toBe(500);    // não 505
+    expect(r.liquido_centavos).toBe(480);
+    expect(r.taxa_centavos).toBe(15);
+  });
+
+  it('sem transaction_amount, cai no total pago em vez de ficar sem valor', async () => {
+    stub({
+      id: 2, status: 'approved', live_mode: false,
+      transaction_details: { total_paid_amount: 5 },
+    });
+    const r = await mp.pagarComToken(cobranca, { token: 'tok_x' });
+    expect(r.valor_pago_centavos).toBe(500);
+  });
+
+  it('o payload CRU é devolvido pra razão auxiliar guardar', async () => {
+    // Sem ele, `pag_pagamentos.payload` fica NULL e conferir um valor divergente
+    // vira arqueologia — foi o que aconteceu com os 5 centavos.
+    stub({ id: 3, status: 'approved', live_mode: false, transaction_amount: 5 });
+    const r = await mp.pagarComToken(cobranca, { token: 'tok_x' });
+    expect(r.payload?.id).toBe(3);
   });
 });

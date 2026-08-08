@@ -127,7 +127,52 @@ function accessToken() {
       + 'consegue cobrar. (Sem a env, mantenha PAG_PROVIDER_PADRAO=manual.)',
     );
   }
+  conferirConta(t);
   return t;
+}
+
+/**
+ * ⚠️⚠️ A GUARDA DE CONTA — a que substitui a de ambiente quando o sandbox passa
+ * a usar credencial de PRODUÇÃO de conta de teste.
+ *
+ * Contexto (08/08/2026): o Mercado Pago aposentou as credenciais de teste na
+ * Orders API ("Test credentials are not supported, use test users with
+ * production credentials"). Isso obriga o preview a rodar com
+ * `MERCADOPAGO_AMBIENTE=producao` — e **neutraliza a guarda de `live_mode`**,
+ * que era o que impedia o ensaio de cobrar de verdade. Sem nada no lugar, um
+ * Access Token da conta REAL da igreja colado no preview cobraria cartão de
+ * gente.
+ *
+ * O sinal que sobra é a própria credencial: o ÚLTIMO segmento do Access Token do
+ * MP é o **id da conta** (`APP_USR-<app>-<data>-<hash>-<userId>`). Então a
+ * conferência é de igualdade contra `MERCADOPAGO_CONTA_ID`, setada por escopo:
+ * em Production o id da conta da igreja; em Preview o do vendedor de teste.
+ * Trocar a chave sem trocar o escopo passa a LANÇAR em vez de cobrar.
+ *
+ * ⚠️ Fail-OPEN em dois casos, de propósito (mesma régua do `live_mode`): env
+ * ausente e token em formato que não expõe o id. Inventar erro onde não há sinal
+ * derrubaria o pagamento por nada — e produção rodou meses sem esta env.
+ */
+function conferirConta(token) {
+  const esperada = String(process.env.MERCADOPAGO_CONTA_ID || '').replace(/\D/g, '');
+  if (!esperada) return;
+  // ⚠️ Credencial de TESTE (`TEST-…`) não passa por aqui, e isso não afrouxa a
+  // guarda: ela existe pra impedir COBRANÇA REAL num ambiente de ensaio, e token
+  // de teste não move dinheiro de conta nenhuma. Sem esta saída, testar cartão
+  // seria impossível — a doc do MP manda usar as credenciais de TESTE da conta
+  // REAL pra cartão (ver o cabeçalho), e o id delas é o da conta da igreja, que
+  // é justamente o que a guarda recusa quando o token é de produção.
+  if (String(token).startsWith('TEST-')) return;
+  const partes = String(token).split('-');
+  const daChave = String(partes[partes.length - 1] || '').replace(/\D/g, '');
+  if (!daChave) return;
+  if (daChave === esperada) return;
+  throw new Error(
+    'Mercado Pago: o Access Token é da conta ' + daChave + ', mas este ambiente '
+    + 'está declarado para a conta ' + esperada + ' (MERCADOPAGO_CONTA_ID). '
+    + '⚠️ Credencial da conta REAL num ambiente de ensaio cobraria dinheiro de '
+    + 'verdade — troque a chave ou o escopo da env antes de seguir.',
+  );
 }
 
 /**
@@ -163,9 +208,61 @@ function paraReais(centavos) {
   return (Number(centavos) / 100).toFixed(2);
 }
 
+/**
+ * O MESMO valor, como NÚMERO.
+ *
+ * ⚠️⚠️ As duas APIs do MP discordam no tipo do dinheiro, e discordar aqui custa
+ * um pagamento: a **Orders API** quer STRING (`total_amount: "5.00"`) e a
+ * **Payments API** — que é por onde o cartão do Brick passa — quer NÚMERO, e
+ * responde `400 transaction_amount attribute must be numeric` se receber string.
+ * Foi exatamente isso que fazia o botão "Pagar" girar e não sair do lugar.
+ *
+ * Deriva de `paraReais` de propósito: `toFixed(2)` primeiro arredonda em decimal
+ * e só depois vira número, então não sobra resíduo binário de `centavos / 100`.
+ */
+function paraReaisNumero(centavos) {
+  return Number(paraReais(centavos));
+}
+
 function paraCentavos(valor) {
   if (valor === null || valor === undefined || valor === '') return null;
   return Math.round(Number(valor) * 100);
+}
+
+// ── Referência externa ─────────────────────────────────────────────────────
+//
+// ⚠️⚠️ O MP RECUSA a nossa `referencia` crua. Doc da Orders API, literal:
+// `external_reference` "é obrigatório, com no máximo 64 caracteres, apenas
+// letras, números, `-` e `_`". A nossa é `inscricao:<uuid>` — o `:` é inválido,
+// e o erro é `400 property_value · '$.external_reference' - does not match
+// pattern`, que não diz qual caractere ofende.
+//
+// ⚠️ A conversão TEM que ser reversível: o `external_reference` é o vínculo
+// estável entre a preference e as N orders, e é por ele que o webhook reencontra
+// a cobrança quando o id é de outro objeto. Por isso `:` ↔ `_` e nada mais —
+// nenhuma referência nossa usa `_`, então a volta é exata.
+//
+// ⚠️ E não pode conter PII (a doc diz explicitamente). A nossa é
+// origem + uuid — nome/CPF/e-mail nunca entram aqui.
+
+const REF_MAX = 64;
+
+function refExterna(referencia, fallbackId) {
+  const cru = String(referencia || fallbackId || '');
+  const limpo = cru.replace(/:/g, '_').replace(/[^A-Za-z0-9_-]/g, '-');
+  if (limpo.length <= REF_MAX) return limpo;
+  // Não deveria acontecer com os formatos de hoje (o maior tem 56). Se um
+  // domínio novo estourar, o FIM é o que carrega a unicidade — e o aviso existe
+  // pra alguém encurtar a referência na origem em vez de descobrir pelo webhook
+  // que não reencontra a cobrança.
+  console.warn(`[mercadopago] external_reference acima de ${REF_MAX} — truncando: ${limpo}`);
+  return limpo.slice(-REF_MAX);
+}
+
+/** Volta do formato do MP pra nossa `referencia`. */
+function refDoExterno(externa) {
+  if (!externa) return null;
+  return String(externa).replace(/_/g, ':');
 }
 
 // ── HTTP ───────────────────────────────────────────────────────────────────
@@ -192,7 +289,32 @@ async function req(metodo, caminho, corpo, { idempotencyKey } = {}) {
 
   if (!r.ok) {
     const detalhe = json?.message || json?.error || txt.slice(0, 300) || `HTTP ${r.status}`;
-    const err = new Error(`Mercado Pago ${metodo} ${caminho} falhou (${r.status}): ${detalhe}`);
+    // ⚠️ `Unauthorized use of live credentials` é a MAIS confusa das respostas do
+    // MP, porque a credencial está válida — o que não bate é o PAR. A Public Key
+    // e o Access Token são de UMA aplicação ("cada par de credenciais é único
+    // para cada integração", doc de Credenciais): o navegador tokeniza o cartão
+    // com a Public Key (conta A) e o servidor tenta cobrar com o Access Token
+    // (conta B), e o MP recusa. Acontece sempre que se troca um dos dois e
+    // esquece o outro. Sem esta tradução, o sintoma é "o botão gira e nada
+    // acontece" e a investigação começa pelo lugar errado.
+    const par = /live credentials|invalid.*(public.?key|token)/i.test(String(detalhe));
+    // ⚠️ Regra de SANDBOX que não existe em produção: conta de teste do MP só
+    // aceita pagador com e-mail `@testuser.com`. Sem esta tradução, o ensaio
+    // trava com uma mensagem que parece defeito da integração — e a tentação é
+    // "consertar" o código, quando o que muda é o e-mail da inscrição de teste.
+    const emailSandbox = /invalid_email_for_sandbox|@testuser\.com/i.test(String(detalhe));
+    const err = new Error(
+      `Mercado Pago ${metodo} ${caminho} falhou (${r.status}): ${detalhe}`
+      + (par && r.status === 401
+        ? ' · ⚠️ MERCADOPAGO_PUBLIC_KEY e MERCADOPAGO_ACCESS_TOKEN precisam ser da'
+          + ' MESMA aplicação/conta — confira se os dois foram trocados juntos.'
+        : '')
+      + (emailSandbox
+        ? ' · ⚠️ REGRA SÓ DE SANDBOX: em conta de teste o e-mail do pagador tem'
+          + ' que terminar em @testuser.com. Isto NÃO vale em produção — não'
+          + ' mexa no código por causa disto, use um e-mail de teste na inscrição.'
+        : ''),
+    );
     err.status = r.status;
     err.corpo = json;
     throw err;
@@ -321,10 +443,10 @@ async function criarCobranca(c) {
       title: (c.descricao || 'Inscrição CBRio').slice(0, 250),
       quantity: 1,
       currency_id: 'BRL',
-      unit_price: Number(paraReais(c.valor_centavos)),
+      unit_price: paraReaisNumero(c.valor_centavos),
     }],
     payer: payerDaCobranca(c),
-    external_reference: c.referencia || c.id,
+    external_reference: refExterna(c.referencia, c.id),
     notification_url: `${base}/api/pagamentos-webhook/mercadopago`,
     back_urls: {
       success: `${base}/pagamento/${c.public_token}`,
@@ -397,7 +519,7 @@ async function definirMetodo(c, metodo, opcoes = {}) {
     type: 'online',
     processing_mode: 'automatic',
     total_amount: paraReais(c.valor_centavos),
-    external_reference: c.referencia || c.id,
+    external_reference: refExterna(c.referencia, c.id),
     payer: payerDaCobranca(c),
     transactions: {
       payments: [{
@@ -494,7 +616,7 @@ function dadosDaOrder(order) {
     liquido_centavos: null,
     repassado_em: null,
     metodo: metodoDeMp(pg.payment_method?.id) || metodoDeMp(pg.payment_method?.type) || null,
-    referencia: order.external_reference || null,
+    referencia: refDoExterno(order.external_reference),
   };
 }
 
@@ -639,12 +761,34 @@ async function normalizarEvento(payload, headers = {}) {
  * DE LIBERAÇÃO (fato nº 2) — e é por isso que o pagamento por cartão via
  * checkout hospedado alimenta a razão auxiliar melhor que o Pix.
  */
+/** Tira o bloco de cartão do payload antes de ele virar linha permanente. */
+function payloadSemCartao(p) {
+  if (!p || typeof p !== 'object') return null;
+  const { card, ...resto } = p;
+  return resto;
+}
+
 function dadosDoPayment(p) {
+
   if (!p) return {};
   const status = statusCanonico(p.status, p.status_detail, STATUS_POR_PAYMENT);
   const td = p.transaction_details || {};
 
-  const bruto = paraCentavos(td.total_paid_amount ?? p.transaction_amount);
+  // ⚠️⚠️ `transaction_amount`, NÃO `total_paid_amount` — e a diferença é dinheiro.
+  //
+  // `transaction_amount` é o valor da NOSSA cobrança que foi liquidado.
+  // `total_paid_amount` é o que o PAGADOR desembolsou, e inclui o custo de
+  // financiamento do parcelado, que vai pro Mercado Pago e NUNCA chega à igreja.
+  //
+  // Medido no 1º pagamento real (08/08): cobrança de R$ 5,00 gravou
+  // `valor_pago = R$ 5,05`. Três estragos ao mesmo tempo: (a) o e-mail de
+  // confirmação dizia "R$ 5,05" pra quem se inscreveu num evento de R$ 5,00;
+  // (b) `valor_pago > valor_centavos` acusa na `vw_pag_invariantes`; (c) o
+  // arrecadado do evento somaria juros que a igreja não recebeu — que é
+  // exatamente a classe de erro da lei nº 6.
+  //
+  // O que o pagador desembolsou fica no payload cru, pra quem precisar auditar.
+  const bruto = paraCentavos(p.transaction_amount ?? td.total_paid_amount);
   const liquido = paraCentavos(td.net_received_amount);
   // ⚠️ Taxa vem SOMADA de `fee_details` (é assim que o MP a expressa), nunca
   // derivada de tabela nossa. Sem `fee_details`, fica null.
@@ -665,7 +809,21 @@ function dadosDoPayment(p) {
     parcelas: Number(p.installments) > 0 ? Number(p.installments) : null,
     cartao_brand: p.card?.brand || p.payment_method_id || null,
     cartao_last4: p.card?.last_four_digits || null,
-    referencia: p.external_reference || null,
+    referencia: refDoExterno(p.external_reference),
+    // Payload pra razão auxiliar, SEM o bloco do cartão. ⚠️ Sem ele,
+    // `pag_pagamentos.payload` fica NULL e conferir um valor divergente vira
+    // arqueologia — foi o que aconteceu com os 5 centavos: só deu pra decidir
+    // pelos campos derivados, sem o número que o MP mandou.
+    //
+    // ⚠️⚠️ E o `card` SAI daqui, não é preciosismo: o `payment` do MP traz
+    // `expiration_month/year`, `first_six_digits` e `cardholder.name`, e a lei
+    // nº 5 proíbe ARMAZENAR validade e nome impresso. Guardar o payload cru
+    // colocaria os três em `pag_pagamentos.payload` — que é linha permanente de
+    // razão financeira. Bandeira e últimos 4 já saem nos campos próprios, que é
+    // tudo o que a UI e o comprovante mostram.
+    // (O teste "NUNCA devolve PAN, CVV, validade ou nome impresso" pegou
+    // exatamente esta regressão quando escrevi a versão sem o corte.)
+    payload: payloadSemCartao(p),
   };
 }
 
@@ -718,8 +876,42 @@ async function verificarChave() {
  * mesma nos dois ambientes — exatamente o cruzamento que a guarda de ambiente
  * existe pra impedir.
  */
+/**
+ * Public Key pro Brick tokenizar no navegador.
+ *
+ * ⚠️⚠️ A CONFERÊNCIA DE PAR, e ela decide se o formulário de cartão sequer
+ * aparece. Public Key e Access Token são de UM par (doc de Credenciais: "cada
+ * par de credenciais é único para cada integração") e existem em DUAS versões
+ * por aplicação — teste (`TEST-…`) e produção (`APP_USR-…`). Misturar as duas
+ * versões da MESMA aplicação falha igual a misturar contas: o navegador
+ * tokeniza com uma e o servidor cobra com a outra, e o MP responde
+ * `401 Unauthorized use of live credentials`.
+ *
+ * ⚠️ Devolver `null` (em vez de deixar tentar) é deliberado: sem chave o núcleo
+ * cai no checkout HOSPEDADO, que precisa só do Access Token e portanto FUNCIONA.
+ * Oferecer um formulário que vai dar 401 em 100% das tentativas é a mesma
+ * armadilha do boleto sem endereço — aba que sempre falha é pior que aba que
+ * não existe.
+ */
 function chavePublica() {
-  return process.env.MERCADOPAGO_PUBLIC_KEY || null;
+  const pk = (process.env.MERCADOPAGO_PUBLIC_KEY || '').trim();
+  if (!pk) return null;
+
+  const token = (process.env.MERCADOPAGO_ACCESS_TOKEN || '').trim();
+  if (!token) return pk;   // sem token não há par a conferir
+
+  const versao = (v) => (v.startsWith('TEST-') ? 'teste' : 'producao');
+  if (versao(pk) !== versao(token)) {
+    console.error(
+      '[mercadopago] ⚠️ MERCADOPAGO_PUBLIC_KEY é de ' + versao(pk) + ' e '
+      + 'MERCADOPAGO_ACCESS_TOKEN é de ' + versao(token) + '. Os dois têm que ser '
+      + 'do MESMO par (mesma aplicação E mesma versão — Credenciais de teste OU '
+      + 'de produção). Enquanto divergirem, o cartão na página é desligado e a '
+      + 'pessoa segue pelo checkout hospedado.',
+    );
+    return null;
+  }
+  return pk;
 }
 
 async function pagarComToken(c, dados = {}) {
@@ -730,11 +922,12 @@ async function pagarComToken(c, dados = {}) {
 
   const corpo = {
     // ⚠️ do BANCO, não do cliente.
-    transaction_amount: paraReais(c.valor_centavos),
+    // ⚠️ NÚMERO, não string — a Payments API recusa string (ver `paraReaisNumero`).
+    transaction_amount: paraReaisNumero(c.valor_centavos),
     token,
     installments: parcelas,
     description: c.descricao || 'Pagamento CBRio',
-    external_reference: c.referencia || c.id,
+    external_reference: refExterna(c.referencia, c.id),
     payer: {
       email: dados.payer?.email || c.pagador_email || undefined,
       identification: dados.payer?.identification?.number
@@ -782,6 +975,8 @@ module.exports = {
   estornar,
   pagarComToken,
   chavePublica,
+  refExterna,
+  refDoExterno,
   verificarAssinatura,
   normalizarEvento,
   verificarChave,

@@ -1150,7 +1150,9 @@ router.post('/eventos/:id/inscricoes/:inscricaoId/bolsa', authorizeModule('inscr
         const { cobranca } = await pagamentos.criarCobranca({
           origem_tipo: pagamentos.ORIGENS.INSCRICAO,
           origem_id: insc.id,
-          referencia: `inscricao:${insc.id}:bolsa:${Date.now()}`,
+          // ⚠️ `b` + base36: o external_reference do MP tem teto de 64 chars e
+          // `inscricao:<uuid>` já usa 46 — `:bolsa:<13 dígitos>` estourava.
+          referencia: `inscricao:${insc.id}:b${Date.now().toString(36)}`,
           valor_centavos: valorCobrado,
           descricao: `Inscrição (bolsa) · ${ev.nome}`,
           // ⚠️ Cruza com a capacidade do provider, igual à porta pública faz

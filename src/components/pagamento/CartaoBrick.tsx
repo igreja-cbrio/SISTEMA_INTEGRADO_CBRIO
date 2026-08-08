@@ -84,6 +84,8 @@ export default function CartaoBrick({
   // é o que faz a bandeira aparecer sozinha no desenho. O número completo segue
   // dentro do iframe do provedor (lei nº 5).
   const [bin, setBin] = useState<string | null>(null);
+  const [pagando, setPagando] = useState(false);
+  const [erroPagamento, setErroPagamento] = useState<string | null>(null);
   const controller = useRef<any>(null);
   // ⚠️ `onPagar` numa ref: o Brick é criado UMA vez e guarda o callback que
   // recebeu. Sem a ref, a versão capturada envelheceria e o submit mandaria
@@ -92,6 +94,40 @@ export default function CartaoBrick({
   onPagarRef.current = onPagar;
 
   const teto = Math.max(1, Math.min(Number(parcelasMax) > 0 ? Number(parcelasMax) : 1, 12));
+
+  /**
+   * Nosso botão de pagar (o do Brick está escondido).
+   *
+   * ⚠️ As duas falhas são DIFERENTES e não podem virar a mesma mensagem:
+   *  · `getFormData()` rejeitar = campo inválido/incompleto. O Brick JÁ pinta o
+   *    campo e diz o que falta — uma mensagem nossa por cima só competiria com a
+   *    dele, e apontando pra lugar nenhum.
+   *  · `onPagar` lançar = o pagamento foi tentado e não passou (recusa do
+   *    emissor, provedor fora do ar). Aí a pessoa PRECISA ler o motivo, senão o
+   *    botão só gira e ela não sabe se pagou.
+   */
+  async function pagarDaqui() {
+    if (pagando) return;
+    setErroPagamento(null);
+    setPagando(true);
+
+    let dados: any;
+    try {
+      dados = await controller.current?.getFormData?.();
+    } catch {
+      setPagando(false);
+      return;   // o Brick já sinalizou o campo
+    }
+    if (!dados) { setPagando(false); return; }
+
+    try {
+      await onPagarRef.current(dados);
+    } catch (e: any) {
+      setErroPagamento(e?.message || 'Não conseguimos concluir o pagamento. Tente de novo.');
+    } finally {
+      setPagando(false);
+    }
+  }
 
   useEffect(() => {
     let vivo = true;
@@ -122,6 +158,14 @@ export default function CartaoBrick({
               // cartão"). Sem isto aparecem dois títulos, e é o que faz o
               // formulário parecer um bloco colado de fora.
               hideFormTitle: true,
+              // ⚠️ O botão de pagar passa a ser NOSSO (`getFormData()` abaixo).
+              // Motivo: o espaço entre o último campo e o botão é interno ao
+              // Brick e não tem variável que o controle — o e-mail ficava colado
+              // no botão. E a doc do MP diz explicitamente pra NÃO estilizar por
+              // classe/id deles ("são gerados no build e mudam regularmente"),
+              // então mexer por CSS quebraria sozinho num dia qualquer.
+              // De quebra, o botão fica igual ao resto da página.
+              hidePaymentButton: true,
               style: {
                 theme: escuro ? 'dark' : 'default',
                 customVariables: {
@@ -136,9 +180,16 @@ export default function CartaoBrick({
                   borderRadiusMedium: '10px',
                   borderRadiusLarge: '12px',
                   borderRadiusFull: '999px',
-                  inputVerticalPadding: '12px',
-                  inputHorizontalPadding: '12px',
-                  formPadding: '0px',
+                  // Campo mais alto = alvo de toque maior no celular, que é onde
+                  // a maioria se inscreve.
+                  inputVerticalPadding: '14px',
+                  inputHorizontalPadding: '14px',
+                  // ⚠️ Era `0px`, e no celular isso fazia os campos encostarem na
+                  // borda do cartão branco da página (o `.pgto-card` só tem 14px
+                  // de folga lateral ali). Uma folga própria do formulário é o
+                  // que separa "formulário dentro do cartão" de "formulário
+                  // espremido contra a borda".
+                  formPadding: '4px',
                   fontSizeMedium: '16px',   // 16px evita o zoom automático do iOS
                 },
               },
@@ -218,6 +269,41 @@ export default function CartaoBrick({
       {/* `pgto-cartao` (definido no CSS da página) impede o iframe do SDK de
           empurrar a página no celular — iframe não encolhe sozinho. */}
       <div className="pgto-cartao" id={CONTAINER_ID} />
+
+      {estado === 'pronto' && (
+        <>
+          {erroPagamento && (
+            <p role="alert" style={{
+              fontSize: 13, color: '#ef4444', marginTop: 14, lineHeight: 1.5,
+            }}>
+              {erroPagamento}
+            </p>
+          )}
+          {/* ⚠️ 20px de respiro do último campo: era o botão do Brick colado no
+              e-mail que fazia a tela parecer apertada. Botão da casa (raio 999,
+              48px de alvo), igual ao resto da página. */}
+          <button
+            type="button"
+            className="pgto-acao"
+            onClick={pagarDaqui}
+            disabled={pagando}
+            style={{
+              width: '100%', marginTop: 20, padding: '14px 18px', borderRadius: 999,
+              border: 'none', background: pagando ? '#0d8d7d' : VERDE_CBRIO, color: '#fff',
+              fontSize: 16, fontWeight: 700,
+              cursor: pagando ? 'progress' : 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+            }}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" aria-hidden="true">
+              <rect x="4" y="10" width="16" height="11" rx="2.5" />
+              <path d="M8 10V7a4 4 0 018 0v3" />
+            </svg>
+            {pagando ? 'Processando…' : 'Pagar'}
+          </button>
+        </>
+      )}
+
       <p style={{ fontSize: 12.5, color: corTexto, marginTop: 10 }}>
         Você paga aqui mesmo, sem sair desta página.
       </p>

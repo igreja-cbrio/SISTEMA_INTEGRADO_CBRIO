@@ -253,7 +253,11 @@ async function reemitir({ adapter, camposLinha, referencia, anterior }) {
     }
   }
 
-  const novaRef = `${referencia}:r${Date.now()}`;
+  // ⚠️ Base36 em vez do epoch cru: o `external_reference` do Mercado Pago tem
+  // teto de 64 caracteres, e `inscricao:<uuid>` já usa 46. Com 13 dígitos de
+  // timestamp o total passaria do teto na próxima reemissão; com 8 (base36),
+  // sobra folga. Segue estritamente crescente, então continua ordenável.
+  const novaRef = `${referencia}:r${Date.now().toString(36)}`;
   const { data, error } = await supabase.from('pag_cobrancas')
     .insert({
       ...camposLinha,
