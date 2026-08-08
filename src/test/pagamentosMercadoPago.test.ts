@@ -656,3 +656,24 @@ describe('mercadopago · external_reference no formato que o MP aceita', () => {
     expect(mp.refExterna(null, 'cob-123')).toBe('cob-123');
   });
 });
+
+// ⚠️ Regra que existe SÓ no sandbox: conta de teste do MP recusa pagador cujo
+// e-mail não termine em `@testuser.com`. Sem tradução, o ensaio trava com uma
+// mensagem que parece defeito da integração — e a tentação é "consertar" o
+// código, quando o que muda é o e-mail da inscrição de teste. O aviso diz
+// explicitamente pra NÃO mexer no código.
+describe('mercadopago · regra de e-mail do sandbox é traduzida', () => {
+  const cobranca = { id: 'cob-s', valor_centavos: 500, referencia: 'inscricao:s' };
+
+  it('diz que a regra é só de sandbox e que produção não muda', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: false, status: 400,
+      text: async () => JSON.stringify({
+        errors: [{ code: 'invalid_email_for_sandbox', message: "must contains '@testuser.com'." }],
+      }),
+    } as any)));
+
+    await expect(mp.pagarComToken(cobranca, { token: 'tok_x' }))
+      .rejects.toThrow(/SÓ DE SANDBOX[\s\S]*não mexa no código/i);
+  });
+});

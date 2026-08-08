@@ -291,11 +291,21 @@ async function req(metodo, caminho, corpo, { idempotencyKey } = {}) {
     // esquece o outro. Sem esta tradução, o sintoma é "o botão gira e nada
     // acontece" e a investigação começa pelo lugar errado.
     const par = /live credentials|invalid.*(public.?key|token)/i.test(String(detalhe));
+    // ⚠️ Regra de SANDBOX que não existe em produção: conta de teste do MP só
+    // aceita pagador com e-mail `@testuser.com`. Sem esta tradução, o ensaio
+    // trava com uma mensagem que parece defeito da integração — e a tentação é
+    // "consertar" o código, quando o que muda é o e-mail da inscrição de teste.
+    const emailSandbox = /invalid_email_for_sandbox|@testuser\.com/i.test(String(detalhe));
     const err = new Error(
       `Mercado Pago ${metodo} ${caminho} falhou (${r.status}): ${detalhe}`
       + (par && r.status === 401
         ? ' · ⚠️ MERCADOPAGO_PUBLIC_KEY e MERCADOPAGO_ACCESS_TOKEN precisam ser da'
           + ' MESMA aplicação/conta — confira se os dois foram trocados juntos.'
+        : '')
+      + (emailSandbox
+        ? ' · ⚠️ REGRA SÓ DE SANDBOX: em conta de teste o e-mail do pagador tem'
+          + ' que terminar em @testuser.com. Isto NÃO vale em produção — não'
+          + ' mexa no código por causa disto, use um e-mail de teste na inscrição.'
         : ''),
     );
     err.status = r.status;
