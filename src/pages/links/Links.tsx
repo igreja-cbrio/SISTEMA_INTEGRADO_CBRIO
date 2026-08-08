@@ -144,8 +144,13 @@ function Editor({ link, onFechar, onSalvo }: {
 }
 
 export default function Links() {
-  const { getAccessLevel } = useAuth();
-  const nivel = getAccessLevel?.('links') ?? 1;
+  // ⚠️ getAccessLevel recebe um ARRAY e faz `moduleNames.some(...)` por dentro.
+  // Passar a string 'links' derrubava a página inteira com "some is not a
+  // function" — e o TypeScript não pegava porque o AuthContext é .jsx e o
+  // retorno chegava como `any`. O tipo abaixo é o que faz o compilador pegar
+  // isso da próxima vez.
+  const { getAccessLevel } = useAuth() as { getAccessLevel?: (m: string[]) => number };
+  const nivel = typeof getAccessLevel === 'function' ? getAccessLevel(['links']) : 1;
   const podeEditar = nivel >= 4;
 
   const [lista, setLista] = useState<Link[] | null>(null);
