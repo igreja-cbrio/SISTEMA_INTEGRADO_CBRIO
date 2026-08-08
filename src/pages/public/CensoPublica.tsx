@@ -51,8 +51,11 @@ export default function CensoPublica() {
   const [preenchido, setPreenchido] = useState(false);
   const [retomado, setRetomado] = useState(false);
 
-  // Identidade: `?t=` (link pessoal) ou o token que o /prefill devolve.
+  // Identidade: `?t=` (link pessoal ou app) ou o token que o /prefill devolve.
   const [identidade, setIdentidade] = useState<string | null>(searchParams.get('t'));
+  // Guarda o token que veio na URL: `identidade` muda quando o /prefill emite
+  // um, e o efeito abaixo não pode disparar de novo por causa disso.
+  const tokenDaUrl = useRef<string | null>(searchParams.get('t'));
   const canal = searchParams.get('canal') === 'app' ? 'app' : searchParams.get('t') ? 'link' : 'qr';
 
   const iniciadaEm = useRef(new Date().toISOString());
@@ -181,6 +184,26 @@ export default function CensoPublica() {
       return r?.itens || [];
     } catch { return []; }
   }, []);
+
+  // Chegou por link pessoal ou pelo app: a identidade já está provada, então
+  // buscamos o cadastro direto. Pedir CPF + nascimento a quem acabou de fazer
+  // login com senha seria atrito sem garantia nenhuma a mais.
+  useEffect(() => {
+    const t = tokenDaUrl.current;
+    if (!t || !slug || !pesquisa) return;
+    let vivo = true;
+    censoPublico.prefill(slug, { identidade: t })
+      .then((r) => {
+        if (!vivo || !r?.encontrado) return;
+        if (r.ja_respondeu) { setJaRespondeu(true); return; }
+        // Não sobrescreve o que a pessoa já digitou nesta sessão (rascunho
+        // local): o cadastro é ponto de partida, não a verdade final.
+        setRespostas((atuais) => ({ ...(r.valores || {}), ...atuais }));
+        setPreenchido(true);
+      })
+      .catch(() => {});
+    return () => { vivo = false; };
+  }, [slug, pesquisa]);
 
   function aoMudar(novas: Respostas) {
     setRespostas(novas);

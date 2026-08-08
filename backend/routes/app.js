@@ -30,6 +30,8 @@ const { gerarTokenComprovante } = require('../services/inscricaoComprovante');
 const { aprovarPedidoCore } = require('./grupos');
 const { registrarEventoPedido } = require('../services/grupoPedidoEventos');
 const appIdentidade = require('../services/appIdentidade');
+const { acharRespostaDaPessoa } = require('../services/censoJaRespondeu');
+const { gerarTokenIdentidade } = require('../utils/censoRespostaToken');
 // Reuso dos helpers de permissão granular pra resolver o nível do módulo
 // "grupos" do usuário do app (authApp é leve e não computa permissões).
 const { getModulos, getCargoMatrix, resolveEffectivePerms } = require('../middleware/auth');
@@ -1089,6 +1091,64 @@ router.post('/inscricoes', limiterStrict, tryAuth, async (req, res) => {
   } catch (e) {
     console.error('[APP] inscricoes:', e.message);
     res.status(500).json({ error: 'Erro ao registrar inscrição' });
+  }
+});
+
+
+// ── Censo · disponível SÓ para quem ainda não respondeu ───────────────────
+//
+// Pedido do Matheus (08/08): "o censo deve aparecer no app para os membros que
+// não fizeram; quem já fez, o sistema vai saber pelo CPF e mostra um aviso".
+//
+// Duas decisões que moldam este endpoint:
+//
+//  · A CHECAGEM olha membro_id E CPF (services/censoJaRespondeu.js). Só por
+//    membro_id, quem respondeu no culto e ainda não passou pelo
+//    pós-processamento seria convidado a responder de novo — e o segundo envio
+//    não é barrado por nada, porque a idempotência é por aparelho.
+//
+//  · O app NÃO reimplementa o formulário. Abre o mesmo formulário público num
+//    WebView, com um token de identidade assinado. São 108 perguntas com
+//    condicionais, rascunho, fila offline e bloco sensível, tudo já testado e
+//    no ar; uma segunda implementação em React Native seria uma segunda fonte
+//    de verdade — e a que ficasse para trás mentiria em silêncio.
+//
+// O token vai no `?t=` e é o backend que o emite para a sessão autenticada: o
+// membro_id NUNCA trafega cru, senão bastaria trocar o uuid para responder no
+// lugar de outra pessoa.
+router.get('/censo', authApp, limiterNormal, async (req, res) => {
+  try {
+    const membro = await resolveMembroApp(req).catch(() => null);
+    if (!membro) return res.json({ pesquisa: null, motivo: 'sem_cadastro' });
+
+    const { data: pesquisa } = await supabase
+      .from('cen_pesquisa')
+      .select('id, slug, titulo, subtitulo, fecha_em')
+      .eq('status', 'aberta').is('deleted_at', null)
+      .order('criado_em', { ascending: false }).limit(1).maybeSingle();
+    if (!pesquisa) return res.json({ pesquisa: null, motivo: 'nenhuma_aberta' });
+
+    const ja = await acharRespostaDaPessoa({
+      pesquisaId: pesquisa.id, membroId: membro.id, cpf: membro.cpf,
+    });
+
+    const token = ja ? null : gerarTokenIdentidade(membro.id);
+    const base = process.env.PUBLIC_BASE_URL || 'https://www.cbrio.org';
+
+    res.json({
+      pesquisa: {
+        slug: pesquisa.slug, titulo: pesquisa.titulo,
+        subtitulo: pesquisa.subtitulo, fecha_em: pesquisa.fecha_em,
+      },
+      ja_respondeu: !!ja,
+      respondida_em: ja?.concluida_em || null,
+      // Só emite o link para quem PODE responder. Sem isto, um app
+      // desatualizado que ignorasse `ja_respondeu` ainda abriria o formulário.
+      url: token ? `${base}/censo/p/${pesquisa.slug}?t=${token}&canal=app` : null,
+    });
+  } catch (e) {
+    console.error('[APP] censo:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar o censo' });
   }
 });
 
