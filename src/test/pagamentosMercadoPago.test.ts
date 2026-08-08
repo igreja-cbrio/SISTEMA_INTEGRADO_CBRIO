@@ -677,3 +677,36 @@ describe('mercadopago · regra de e-mail do sandbox é traduzida', () => {
       .rejects.toThrow(/SÓ DE SANDBOX[\s\S]*não mexa no código/i);
   });
 });
+
+// ⚠️ As duas formas exigem credenciais INCOMPATÍVEIS entre si (doc do MP):
+//   · Pix/Orders API → credenciais de PRODUÇÃO de uma conta de TESTE
+//   · Cartão/Bricks  → credenciais de TESTE da conta REAL
+// Não dá pra ter as duas ao mesmo tempo. A guarda de conta precisa deixar a
+// segunda passar sem virar porta pra primeira.
+describe('mercadopago · guarda de conta × credencial de teste', () => {
+  const cobranca = { id: 'cob-t', valor_centavos: 500, referencia: 'inscricao:t' };
+
+  function stubOk(live: boolean) {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true, status: 200,
+      text: async () => JSON.stringify({ id: 1, status: 'approved', live_mode: live }),
+    } as any)));
+  }
+
+  it('token de TESTE da conta real passa — ele não move dinheiro de ninguém', async () => {
+    stubOk(false);
+    vi.stubEnv('MERCADOPAGO_AMBIENTE', 'teste');
+    vi.stubEnv('MERCADOPAGO_CONTA_ID', '3599169464');     // declarado: vendedor de teste
+    vi.stubEnv('MERCADOPAGO_ACCESS_TOKEN', 'TEST-999-080812-abc-461374279'); // conta da igreja
+    await expect(mp.pagarComToken(cobranca, { token: 'tok_x' })).resolves.toBeTruthy();
+  });
+
+  it('⚠️ mas o token de PRODUÇÃO da conta real segue barrado — é ele que cobra de verdade', async () => {
+    stubOk(true);
+    vi.stubEnv('MERCADOPAGO_AMBIENTE', 'producao');
+    vi.stubEnv('MERCADOPAGO_CONTA_ID', '3599169464');
+    vi.stubEnv('MERCADOPAGO_ACCESS_TOKEN', 'APP_USR-999-080812-abc-461374279');
+    await expect(mp.pagarComToken(cobranca, { token: 'tok_x' }))
+      .rejects.toThrow(/cobraria dinheiro de verdade/i);
+  });
+});

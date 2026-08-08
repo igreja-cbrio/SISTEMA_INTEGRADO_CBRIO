@@ -156,6 +156,13 @@ function accessToken() {
 function conferirConta(token) {
   const esperada = String(process.env.MERCADOPAGO_CONTA_ID || '').replace(/\D/g, '');
   if (!esperada) return;
+  // ⚠️ Credencial de TESTE (`TEST-…`) não passa por aqui, e isso não afrouxa a
+  // guarda: ela existe pra impedir COBRANÇA REAL num ambiente de ensaio, e token
+  // de teste não move dinheiro de conta nenhuma. Sem esta saída, testar cartão
+  // seria impossível — a doc do MP manda usar as credenciais de TESTE da conta
+  // REAL pra cartão (ver o cabeçalho), e o id delas é o da conta da igreja, que
+  // é justamente o que a guarda recusa quando o token é de produção.
+  if (String(token).startsWith('TEST-')) return;
   const partes = String(token).split('-');
   const daChave = String(partes[partes.length - 1] || '').replace(/\D/g, '');
   if (!daChave) return;
