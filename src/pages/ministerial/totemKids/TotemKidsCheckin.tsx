@@ -389,6 +389,15 @@ export default function TotemKidsCheckin() {
 
   // Última etiqueta impressa · permite REIMPRIMIR sem novo check-in (se borrou/falhou).
   const [ultimaEtiqueta, setUltimaEtiqueta] = useState<Parameters<typeof imprimirEtiquetas>[0] | null>(null);
+  // Faixa some sozinha depois de 10s (pedido do usuário 2026-08-09): em culto
+  // com fila, deixar a opção de reimprimir disponível o tempo todo é risco de
+  // alguém mal-intencionado reimprimir a etiqueta de uma criança que não é sua
+  // enquanto o operador atende a próxima família.
+  useEffect(() => {
+    if (!ultimaEtiqueta) return;
+    const t = setTimeout(() => setUltimaEtiqueta(null), 10000);
+    return () => clearTimeout(t);
+  }, [ultimaEtiqueta]);
   // Fluxo do PAGER (gate mole · Mari 2026-07-22): criança obrigada de pager
   // (< 4 anos / espectro / limitação) → a IMPRESSÃO espera o voluntário digitar
   // o número do pager entregue. O check-in JÁ está salvo (presença nunca é
