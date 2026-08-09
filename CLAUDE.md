@@ -2661,6 +2661,54 @@ Kit de avaliação em `backend/scripts/_stax_export.js` + guia/rubricas em
   filas (follow-up: aba em `/assistente-ia`); Stax é pra iterar prompt/modelo
   offline e conhecer a ferramenta (dataset demo sintético no repo).
 
+## graphify · grafo de conhecimento do código (2026-08-09)
+
+Ferramenta externa (`Graphify-Labs/graphify` · PyPI `graphifyy`) que transforma o
+repositório num grafo consultável por AST determinístico (tree-sitter). Instalar:
+
+```bash
+pip install "graphifyy[sql]" && graphify install
+graphify extract . --code-only && graphify cluster-only . --no-label
+```
+
+**⚠️⚠️ LEI: neste repositório o graphify roda SEMPRE com `--code-only`.** Essa
+flag limita a extração ao AST **local** — nenhuma chamada de LLM, nada sai da
+máquina. Sem ela, a ferramenta manda documentos, PDFs e imagens pra um backend de
+LLM externo, e é exatamente isso que a lei do Stax (seção acima) proíbe: dado de
+igreja identifica convicção religiosa (LGPD art. 11, categoria especial). O
+`--code-only` custou **zero** aqui — o valor do grafo é o código, não os `.md`.
+
+- **`.graphifyignore` é a 2ª camada e está versionado.** O graphify respeita o
+  `.gitignore` por padrão, mas **`scratchpad/` NÃO está no `.gitignore`** — e é
+  onde as sessões despejam backup de dado REAL de pessoa (membresia, visitas
+  pastorais, pedidos de grupo). O `.graphifyignore` fecha `scratchpad/`,
+  `backup_*.json`, `backend/scripts/stax-export/` e os `.env`.
+- ⚠️ **`pip install graphifyy` puro deixa 795 migrations de fora**: sem o extra
+  `[sql]` o `tree_sitter_sql` não existe e todo `.sql` contribui **zero** pro
+  grafo — com um aviso fácil de não ler. Metade da memória deste sistema está nas
+  migrations. Com o extra: **9.864 → 13.385 nós**.
+- **`--no-label`**: nomear as 1.540 comunidades usa LLM. Sem chave no ambiente,
+  elas ficam "Community N" — o grafo funciona igual. Ligar isso é decisão
+  consciente (manda nome de função/arquivo pra fora, não PII).
+- ⚠️ **`graphify-out/` é gitignored** (~26 MB, derivado, reconstrói em ~3 min).
+  O que se versiona é o `.graphifyignore`.
+- ⚠️ **NÃO rodar `graphify claude install`** (diferente de `graphify install`):
+  ele ANEXA uma seção neste CLAUDE.md e instala um **PreToolUse hook** que
+  intercepta toda chamada de ferramenta. Este arquivo tem regra de manutenção
+  própria ("seção nova entra datada") e não recebe escrita automática de
+  terceiro. O `graphify install` (só a skill) é o caminho.
+
+**O que ele responde que nenhuma busca textual responde**, e por que importa
+aqui: `graphify affected "acharOuCriarGuardado"` devolveu, em 1 comando, os **19
+pontos** que chamam o matcher canônico (`aprovarPedidoCore`, `aprovarCadastroCore`,
+`promoverInscricaoLider`, `resolveOrCreateMembro`, as 8 portas públicas…). É
+literalmente a pergunta que o Contrato de porta obriga a fazer antes de mexer em
+identidade — e que hoje se responde no `grep`, correndo o risco de esquecer uma
+porta. Outros: `graphify god-nodes` (hubs · `notificar()` com 101 arestas,
+`authenticate()` com 92), `graphify explain <id>`, `graphify path "A" "B"`.
+⚠️ `explain`/`affected` pedem o **id do nó** (`backend_routes_grupos_aprovarpedidocore`),
+não o caminho do arquivo; nome ambíguo devolve a lista de candidatos.
+
 # ⚠️ REGRAS OBRIGATÓRIAS DE SEGURANÇA (não regredir · 2026-05-21)
 
 Esta seção é a lei do projeto após a Auditoria de Segurança 2026-05-21
