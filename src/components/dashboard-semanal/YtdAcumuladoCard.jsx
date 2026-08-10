@@ -121,16 +121,16 @@ export default function YtdAcumuladoCard({ indicador, indLabel, culto, anos, mes
                     {r.delta_media_pct != null && (
                       <Delta pct={r.delta_media_pct} base={r.base_ano} sufixo={`na média vs ${r.base_ano}`} />
                     )}
-                    {/* Só "cultos com dado" — o "N sem lançamento" saiu a pedido do
-                        Matheus (10/08/2026). Ele poluía o card sem servir aqui: este
-                        bloco responde "como está o ano contra os anteriores", e a
-                        pendência de lançamento se resolve na aba Cultos da Integração,
-                        que é onde alguém age sobre ela.
-                        ⚠️ `cultos_no_periodo` continua vindo do backend e é o
-                        denominador da média por culto — não remover do endpoint. */}
-                    <div className="text-[11px] text-muted-foreground">
-                      {nf(r.cultos_com_dado)} cultos com dado
-                    </div>
+                    {/* ⚠️ A contagem de cultos SAIU do card (Matheus · 10/08/2026):
+                        primeiro o "N sem lançamento", depois o "N cultos com dado".
+                        O card responde "como está o ano contra os anteriores" — o
+                        total e a média por culto bastam; contagem de cultos é
+                        assunto da aba Cultos da Integração, que é onde se age sobre
+                        ela.
+                        ⚠️ `cultos_com_dado` e `cultos_no_periodo` CONTINUAM vindo do
+                        endpoint `/dashboard-semanal/ytd` — são o denominador da
+                        média por culto, calculada no servidor. Não remover de lá:
+                        sem eles a média sai errada, não apenas ausente. */}
                   </div>
                 </div>
               ))}
