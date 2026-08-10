@@ -2777,8 +2777,18 @@ async function aprovarPedidoCore(pedidoId, user) {
           });
         }
 
-        // Notifica o líder — novo membro chegando
-        if (liderAuthUserId) {
+        // Notifica quem responde pelo grupo — novo membro chegando.
+        //
+        // ⚠️ O `liderAuthUserId` acima vem de `vol_profiles` (a tabela do
+        // VOLUNTARIADO) e por isso alcança 8 dos 100 grupos com líder, contra 12
+        // por `profiles.membro_id` — e nunca o supervisor. É a mesma
+        // sub-cobertura silenciosa consertada nos caminhos de pedido em 10/08:
+        // aqui ela deixava o líder sem saber que alguém entrou no grupo dele.
+        // A UNIÃO das duas fontes é o que existe de vínculo; mantenho o
+        // `liderAuthUserId` no conjunto pra não perder quem só ele alcança.
+        const donosDoDestino = await donosDoGrupo(grupo.id).catch(() => []);
+        const avisarEntrada = [...new Set([...donosDoDestino, liderAuthUserId].filter(Boolean))];
+        if (avisarEntrada.length) {
           await notificar({
             modulo: 'grupos',
             tipo: 'novo_membro_grupo',
@@ -2787,7 +2797,7 @@ async function aprovarPedidoCore(pedidoId, user) {
             link: `/grupos`,
             severidade: 'info',
             chaveDedup: `novo_membro_${pedido.id}`,
-            targetIds: [liderAuthUserId],
+            targetIds: avisarEntrada,
           });
         }
 
