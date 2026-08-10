@@ -88,25 +88,32 @@ function avaliarEntradaNoGrupo({ grupo, genero, temporadaAberta } = {}) {
   const exigido = CATEGORIAS_POR_SEXO[String(grupo.categoria || '').trim().toLowerCase()];
   if (exigido) {
     const meu = sexoNormalizado(genero);
-    // ⚠️⚠️ SEXO DESCONHECIDO **PEDE O DADO**, NÃO BLOQUEIA NEM DEIXA PASSAR.
-    // Medido em 10/08: das 54 contas do app com cadastro, **só 16 têm
-    // `genero`** — barrar quem não tem travaria 70% das pessoas nestes grupos,
-    // e deixar passar mantém exatamente o buraco que estamos fechando. O site
-    // resolve isso exigindo o sexo NO FORMULÁRIO; o app pede pra completar o
-    // perfil. Só os 16 grupos restritos (13 Mulheres + 3 Homens de 102 ativos)
-    // chegam aqui — nos outros 86 o sexo nunca é perguntado.
-    if (!meu) {
-      return {
-        ok: false, status: 422, codigo: 'sexo_necessario',
-        erro: 'Este grupo é só para um público. Complete seu sexo no perfil do app para se inscrever.',
-      };
-    }
+    // ⚠️⚠️ UMA REGRA SÓ: o sexo TEM que bater. Desconhecido não bate.
+    //
+    // Eu tinha feito diferente — um caminho especial (`sexo_necessario`) que
+    // deixava passar quem não tinha o dado, porque só 16 das 54 contas do app
+    // tinham `genero`. O Marcos derrubou isso em 10/08, e com razão:
+    // *"parece que estamos criando algo que é pra resolver 40 pessoas, mas que
+    // vai quebrar quando abrir pra igreja; prefiro que tenham pedidos errados e
+    // recusados dessas pessoas do que do restante todo da igreja."*
+    //
+    // ⚠️ E o que fecha o argumento: **o portão de identidade JÁ EXIGE o sexo.**
+    // `GET /app/identidade/status` põe `'sexo'` em `falta`, e `bloqueiam` só o
+    // dispensa nas contas de revisão da Apple (`contaDeRevisaoLoja`). Ou seja,
+    // quem consegue chegar na tela de grupo já passou pelo portão e TEM o dado.
+    // As contas sem `genero` são de antes do portão ligar e serão cobradas na
+    // próxima abertura. Não havia buraco a acomodar — só máquina a mais.
+    //
+    // A mensagem distingue os dois casos (não bate × não sabemos) porque isso é
+    // ser honesto com a pessoa, não um segundo caminho de decisão.
     if (meu !== exigido) {
       return {
         ok: false, status: 422, codigo: 'grupo_incompativel',
-        erro: exigido === 'feminino'
-          ? 'Este é um grupo só de mulheres, então sua inscrição não pode seguir nele.'
-          : 'Este é um grupo só de homens, então sua inscrição não pode seguir nele.',
+        erro: !meu
+          ? 'Complete seu cadastro no app (inclusive o sexo) para se inscrever neste grupo.'
+          : exigido === 'feminino'
+            ? 'Este é um grupo só de mulheres, então sua inscrição não pode seguir nele.'
+            : 'Este é um grupo só de homens, então sua inscrição não pode seguir nele.',
       };
     }
   }

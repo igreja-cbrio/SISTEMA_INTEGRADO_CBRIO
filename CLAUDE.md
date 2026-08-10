@@ -7150,13 +7150,35 @@ no formulário público; o app tem porta própria, que nasceu sem elas.
 **A régua agora vive num lugar só**: `backend/utils/entradaGrupoApp.js`,
 **37 asserções** em `src/test/entradaGrupoApp.test.ts`.
 
-⚠️ **DECISÃO DE DESENHO que os números forçaram**: das **54 contas do app com
-cadastro, só 16 têm `genero`** (70% sem). Barrar por sexo desconhecido travaria
-essas 70% nos 16 grupos restritos (13 Mulheres + 3 Homens de 102 ativos); deixar
-passar mantinha o buraco. Então sexo desconhecido devolve
-**`codigo='sexo_necessario'`** — *pede o dado*, não barra nem libera. O site
-resolve isso exigindo o sexo no formulário; o app pede pra completar o perfil.
-Tem mutante: categoria NÃO restritiva **nunca** pergunta o sexo.
+⚠️⚠️ **DESENHO CORRIGIDO PELO MARCOS NO MESMO DIA — e ele estava certo.**
+Eu tinha feito um caminho especial (`codigo='sexo_necessario'`) que **DEIXAVA
+PASSAR** quem não tinha `genero`, porque só 16 das 54 contas do app tinham o
+dado. Palavras dele: *"parece que estamos criando algo que é pra resolver 40
+pessoas, mas que vai quebrar quando abrir pra igreja; prefiro que tenham pedidos
+errados e recusados dessas pessoas do que do restante todo da igreja."*
+
+⇒ Agora é **UMA REGRA SÓ**: o sexo tem que BATER; desconhecido não bate. A
+mensagem distingue "não sabemos" de "não bate" (honestidade com a pessoa), mas o
+caminho de decisão é único.
+
+⚠️ **E o que fecha o argumento, que eu não tinha percebido**: o portão de
+identidade **JÁ EXIGE o sexo**. `GET /app/identidade/status` põe `'sexo'` em
+`falta`, e `bloqueiam` só o dispensa nas contas de revisão da Apple
+(`contaDeRevisaoLoja`). Ou seja: quem consegue chegar na tela de grupo já passou
+pelo portão e **tem** o dado. As 38 contas sem `genero` são de ANTES do portão
+ligar e serão cobradas na próxima abertura. **Não havia buraco a acomodar — só
+máquina a mais.**
+
+⚠️ Tem mutante: categoria NÃO restritiva **nunca** pergunta o sexo (se isso
+regredir, 70% das contas param de entrar em QUALQUER grupo).
+
+**BACKFILL (migration `20260810160000`)**: a base inteira tem `genero` em **499
+de 4.056 vivos (12%)** — não é problema do app, é da base. Recuperei o que a
+PRÓPRIA PESSOA já declarou em `mem_cadastros_pendentes` e que o matcher
+descartava ao vincular: **51 pessoas**. Idempotente, só escreve onde é NULO.
+⚠️⚠️ **NUNCA inferir sexo por NOME.** É pouco confiável e errar isso num cadastro
+de igreja constrange uma pessoa real, que depois vê o erro num grupo ou num
+crachá. Sem declaração, o campo fica NULO e o app pede.
 
 ⚠️ **A ORDEM das travas importa e tem teste**: grupo fechado responde "fechado",
 não "sexo". Senão a pessoa completa o perfil e continua sem conseguir entrar.
