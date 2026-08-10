@@ -67,19 +67,24 @@ const ORDENACOES_BENS = [
 function ordenarBens(lista, chave) {
   if (chave === 'padrao') return lista;
   const arr = [...lista];
-  const porValor = (a, b) => {
+  // desc só inverte a comparação NUMÉRICA — "sem valor" fica no fim nas 2
+  // direções (negar o comparador inteiro, como era antes, também invertia
+  // essa regra e jogava os sem-valor pro topo do "Maior valor" · achado do
+  // usuário 2026-08-10).
+  const porValor = (a, b, desc) => {
     const va = a.valor_aquisicao, vb = b.valor_aquisicao;
     if (va == null && vb == null) return 0;
     if (va == null) return 1; // sem valor sempre no fim, nas 2 direções
     if (vb == null) return -1;
-    return Number(va) - Number(vb);
+    const diff = Number(va) - Number(vb);
+    return desc ? -diff : diff;
   };
   switch (chave) {
     case 'recentes': return arr.sort((a, b) => (b.data_aquisicao || '').localeCompare(a.data_aquisicao || ''));
     case 'nome_asc': return arr.sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt-BR'));
     case 'nome_desc': return arr.sort((a, b) => (b.nome || '').localeCompare(a.nome || '', 'pt-BR'));
-    case 'valor_asc': return arr.sort(porValor);
-    case 'valor_desc': return arr.sort((a, b) => -porValor(a, b));
+    case 'valor_asc': return arr.sort((a, b) => porValor(a, b, false));
+    case 'valor_desc': return arr.sort((a, b) => porValor(a, b, true));
     case 'categoria_asc': return arr.sort((a, b) => (a.pat_categorias?.nome || 'zzz').localeCompare(b.pat_categorias?.nome || 'zzz', 'pt-BR'));
     default: return lista;
   }
