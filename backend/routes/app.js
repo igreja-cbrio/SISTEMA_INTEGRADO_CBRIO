@@ -3939,6 +3939,98 @@ router.delete('/grupos/:grupoId/foto', authApp, limiterNormal, async (req, res) 
   }
 });
 
+// ⚠️⚠️ FOTO DE PERFIL PELO APP — O ARQUIVO NUNCA CHEGAVA AO STORAGE (10/08/2026)
+//
+// Achado pelo Marcos no aparelho: *"quando tentei colocar minha foto de perfil
+// no sistema ele não recebeu, não alterou."*
+//
+// ⚠️ E NÃO era o mesmo defeito da capa de grupo — eu apostei nisso e estava
+// errado. Medido: **18 de 121 profiles TÊM `avatar_url`** e a RLS de UPDATE de
+// `profiles` é permissiva, ou seja o caminho de GRAVAÇÃO funciona. O que falhou
+// foi o UPLOAD: a pasta do Marcos **não existe** no bucket `avatars`.
+//
+// A causa é o mesmo padrão que a capa de grupo abandonou em 07/08: `perfil.tsx`
+// fazia `fetch(asset.uri)` → `.arrayBuffer()` → `storage.upload()`. No Android a
+// URI do `ImagePicker` é `content://…`, e ler os bytes por `fetch` é frágil ali
+// (buffer vazio sobe arquivo de 0 byte; exceção só pinta texto vermelho).
+//
+// Este endpoint recebe MULTIPART, que é o formato que o RN monta nativamente a
+// partir do `{uri, name, type}` — sem ler bytes no JS.
+//
+// ⚠️ Reusa `uploadCapaMw` e a régua `utils/grupoCapaApp.js` de propósito: mesmo
+// teto de 4MB (o corpo de request serverless tem limite ~4,5MB), mesma allowlist
+// de mime, e a MESMA função que decide a extensão pelo MIME e não pelo nome do
+// arquivo. Um lugar só pra as duas fotos do app.
+router.post('/membro/foto', authApp, limiterStrict, uploadCapaMw, async (req, res) => {
+  try {
+    if (!req.file?.buffer?.length) {
+      return res.status(400).json({ error: 'Nenhuma imagem foi enviada.' });
+    }
+    const ext = extensaoDaCapa(req.file.mimetype);
+    if (!ext) return res.status(400).json({ error: 'Use uma imagem JPG, PNG ou WEBP.' });
+
+    const uid = req.user.id;
+    // ⚠️ Caminho ÚNICO por upload, dentro da pasta da PESSOA. O `avatars` é
+    // público e o CDN guarda ~1h: caminho fixo faria a troca de foto não
+    // aparecer por uma hora (a mesma armadilha da capa). A pasta por `uid` é o
+    // que a policy do bucket já espera.
+    const path = `${uid}/avatar-${Date.now()}.${ext}`;
+
+    const { data: antes } = await supabase
+      .from('profiles').select('avatar_url').eq('id', uid).maybeSingle();
+
+    const { error: upErr } = await supabase.storage
+      .from('avatars')
+      .upload(path, req.file.buffer, { contentType: req.file.mimetype, upsert: true });
+    if (upErr) {
+      console.error('[APP] membro · foto · upload:', upErr.message);
+      return res.status(500).json({ error: 'Não foi possível enviar a imagem.' });
+    }
+
+    const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(path);
+    const avatar_url = urlData.publicUrl;
+
+    // ⚠️ `.select()` + conferir a linha: sem isso, 0 linhas afetadas voltam como
+    // sucesso e a tela diz "foto atualizada" sem ter gravado — a lição que custou
+    // duas vezes nesta semana (save do grupo e capa do grupo).
+    const { data: atualizado, error } = await supabase
+      .from('profiles')
+      .update({ avatar_url, updated_at: new Date().toISOString() })
+      .eq('id', uid)
+      .select('id, avatar_url')
+      .maybeSingle();
+
+    if (error || !atualizado) {
+      await supabase.storage.from('avatars').remove([path]).catch(() => {});
+      if (error) {
+        console.error('[APP] membro · foto · update:', error.message);
+        return res.status(500).json({ error: 'Não foi possível salvar a foto.' });
+      }
+      console.error('[APP] membro · foto: 0 linhas afetadas no profile', uid);
+      return res.status(409).json({ error: 'Não foi possível salvar a foto agora.' });
+    }
+
+    // Limpeza best-effort da foto anterior.
+    const marca = '/storage/v1/object/public/avatars/';
+    const s = String(antes?.avatar_url || '');
+    const i = s.indexOf(marca);
+    if (i >= 0) {
+      const antigo = s.slice(i + marca.length).split(/[?#]/)[0];
+      // ⚠️ Só apaga DENTRO da própria pasta — impede que uma URL colada à mão
+      // faça a limpeza remover o avatar de outra pessoa.
+      if (antigo && antigo.startsWith(`${uid}/`) && antigo !== path) {
+        supabase.storage.from('avatars').remove([antigo])
+          .catch((e) => console.warn('[APP] membro · foto · limpar antiga:', e.message));
+      }
+    }
+
+    return res.json({ ok: true, avatar_url: atualizado.avatar_url });
+  } catch (e) {
+    console.error('[APP] membro · foto:', e.message);
+    return res.status(500).json({ error: 'Não foi possível salvar a foto.' });
+  }
+});
+
 // ⚠️⚠️ DUAS COISAS DIFERENTES, e eu tinha confundido as duas (corrigido 05/08 por
 // esclarecimento do Marcos):
 //
