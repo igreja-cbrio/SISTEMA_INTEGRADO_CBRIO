@@ -1,4 +1,5 @@
 const { supabase } = require('../utils/supabase');
+const { donosDeVariosGrupos } = require('./gruposDestinatarios');
 const { notificar } = require('./notificar');
 const { calcularDepreciacao } = require('../utils/patrimonioDepreciacao');
 
@@ -923,8 +924,14 @@ async function gerarNotificacoesGrupos() {
     .select('id, nome, recorrencia, lider_id, mem_membros!lider_id(nome)')
     .eq('ativo', true);
 
+  // Contagem dos grupos em atraso que NÃO têm dono com conta de sistema — vira
+  // o resumo diário da coordenação no fim desta função, em vez de um aviso por
+  // grupo pra ~16 admins (1.717 notificações em 21 dias, medido em 10/08/2026).
+  const atrasadosSemDono = [];
+
   if (grupos?.length) {
     const grupoIds = grupos.map(g => g.id);
+    const donosPorGrupo = await donosDeVariosGrupos(grupoIds);
     const { data: encontros } = await supabase
       .from('mem_grupo_encontros')
       .select('grupo_id, data')
@@ -954,6 +961,11 @@ async function gerarNotificacoesGrupos() {
         ? `Grupo ${g.nome}${lider} esta sem encontro registrado ha ${dias} dias.`
         : `Grupo ${g.nome}${lider} ainda não teve encontro registrado.`;
 
+      // ⚠️ "SEU grupo está sem encontro" é cobrança do LÍDER, não notícia pra
+      // diretoria. Ia pro fan-out do módulo: cada grupo em atraso × ~16 pessoas.
+      const donos = donosPorGrupo.get(g.id) || [];
+      if (!donos.length) { atrasadosSemDono.push(g.nome); continue; }
+
       // Dedup em janelas de "limiteDias" para não alertar todo dia o mesmo grupo
       const janela = Math.floor(dias / limiteDias);
       count += await notificar({
@@ -964,6 +976,7 @@ async function gerarNotificacoesGrupos() {
         link: '/grupos',
         severidade: dias >= limiteDias * 2 ? 'urgente' : 'aviso',
         chaveDedup: `grupo_sem_encontro_${g.id}_${janela}`,
+        targetIds: donos,
       });
     }
   }
@@ -1005,18 +1018,94 @@ async function gerarNotificacoesGrupos() {
     }
     const semGrupo = membros.filter(m => !comGrupo.has(m.id));
 
-    for (const m of semGrupo) {
-      const dias = Math.floor((now - new Date(m.created_at).getTime()) / 86400000);
-      // Dedup mensal pra não spammar
-      const janela = Math.floor(dias / 30);
+    // ⚠️⚠️ UM AVISO, NÃO UM POR PESSOA (10/08/2026). Isto era 1 notificação por
+    // membro sem grupo × ~16 destinatários — 340 linhas em 21 dias, e ninguém
+    // trata "membro sem grupo" um a um pelo sino: trata pela lista em /grupos.
+    // Mesmo formato do agregado de "grupos sem visita" logo abaixo, que já
+    // funcionava assim. `semGrupo` continua sendo calculado igual, então a
+    // LISTA da tela não muda — só o aviso.
+    if (semGrupo.length) {
+      const antigos = semGrupo.filter(m => (now - new Date(m.created_at).getTime()) / 86400000 >= 180);
+      const nomes = semGrupo.slice(0, 5).map(m => m.nome).join(', ');
+      const resto = semGrupo.length > 5 ? ` e mais ${semGrupo.length - 5}` : '';
+      const semana = Math.floor(now / (7 * 86400000)); // dedup semanal
       count += await notificar({
         modulo: 'grupos',
         tipo: 'membro_sem_grupo',
-        titulo: `Membro sem grupo — ${m.nome}`,
-        mensagem: `${m.nome} e membro ha ${dias} dias mas ainda não esta em nenhum grupo de conexão.`,
+        titulo: `${semGrupo.length} membro${semGrupo.length !== 1 ? 's' : ''} sem grupo de conexão`,
+        mensagem: `Membros ativos há mais de 90 dias e sem grupo: ${nomes}${resto}.`
+          + (antigos.length ? ` ${antigos.length} passaram de 6 meses.` : ''),
         link: '/grupos',
-        severidade: dias >= 180 ? 'aviso' : 'info',
-        chaveDedup: `membro_sem_grupo_${m.id}_${janela}`,
+        severidade: antigos.length ? 'aviso' : 'info',
+        chaveDedup: `membros_sem_grupo_w${semana}`,
+      });
+    }
+  }
+
+  // ═════════════════════════════════════════════════════════════════════════
+  //  RESUMO DIÁRIO DA COORDENAÇÃO — a rede de segurança do que não tem dono
+  //
+  //  Decisão do Matheus (10/08/2026), quando mostrei que 86 dos 102 grupos
+  //  ativos têm líder SEM conta de sistema: em vez de um aviso por pedido pra
+  //  todo mundo com cargo alto, **um resumo por dia** pra coordenação de grupos.
+  //
+  //  ⚠️ Isto não é o canal principal e não deve virar um: o líder recebe o
+  //  pedido por WhatsApp com link de aprovação, e foi por lá que saíram 368 das
+  //  388 decisões dos últimos 90 dias. O resumo existe pra que uma fila parada
+  //  não fique invisível — não pra alguém aprovar no lugar do líder.
+  //
+  //  Quem recebe sai de `notificacao_regras` (módulo `grupos`), igual aos outros
+  //  13 módulos. Sem `targetIds` aqui de propósito: a lista é DADO, não código.
+  // ═════════════════════════════════════════════════════════════════════════
+  {
+    const { data: pendentes } = await supabase
+      .from('mem_grupo_pedidos')
+      .select('id, grupo_id, created_at')
+      .eq('status', 'pendente')
+      .is('deleted_at', null)
+      .not('grupo_id', 'is', null);
+
+    if (pendentes?.length) {
+      const donosPend = await donosDeVariosGrupos([...new Set(pendentes.map(p => p.grupo_id))]);
+      // Só o que NÃO tem dono avisado: pedido de grupo com líder no sistema já
+      // gerou notificação dirigida na hora, e contar de novo aqui seria cobrar
+      // duas vezes a mesma coisa.
+      const orfaos = pendentes.filter(p => !(donosPend.get(p.grupo_id) || []).length);
+      if (orfaos.length) {
+        const antigo = orfaos.reduce((maisVelho, p) => (
+          new Date(p.created_at) < new Date(maisVelho.created_at) ? p : maisVelho
+        ), orfaos[0]);
+        const diasAntigo = Math.floor((now - new Date(antigo.created_at).getTime()) / 86400000);
+        const hojeChave = new Date(now).toISOString().slice(0, 10);
+        const gruposDistintos = new Set(orfaos.map(p => p.grupo_id)).size;
+        count += await notificar({
+          modulo: 'grupos',
+          tipo: 'pedidos_aguardando_lider',
+          titulo: `${orfaos.length} pedido${orfaos.length !== 1 ? 's' : ''} de grupo aguardando o líder`,
+          mensagem: `${orfaos.length} pedido${orfaos.length !== 1 ? 's' : ''} pendente${orfaos.length !== 1 ? 's' : ''} em `
+            + `${gruposDistintos} grupo${gruposDistintos !== 1 ? 's' : ''} cujo líder não tem conta no sistema `
+            + `(ele é avisado pelo WhatsApp). O mais antigo espera há ${diasAntigo} dia${diasAntigo !== 1 ? 's' : ''}.`,
+          link: '/grupos?tab=entrada',
+          severidade: diasAntigo >= 7 ? 'aviso' : 'info',
+          chaveDedup: `pedidos_aguardando_lider_${hojeChave}`,
+        });
+      }
+    }
+
+    // Grupos em atraso cujo líder não tem conta: mesma lógica, um aviso por dia.
+    if (atrasadosSemDono.length) {
+      const nomes = atrasadosSemDono.slice(0, 5).join(', ');
+      const resto = atrasadosSemDono.length > 5 ? ` e mais ${atrasadosSemDono.length - 5}` : '';
+      const hojeChave = new Date(now).toISOString().slice(0, 10);
+      count += await notificar({
+        modulo: 'grupos',
+        tipo: 'grupos_sem_encontro_sem_lider',
+        titulo: `${atrasadosSemDono.length} grupo${atrasadosSemDono.length !== 1 ? 's' : ''} sem encontro e sem líder no sistema`,
+        mensagem: `Sem relatório de encontro no prazo: ${nomes}${resto}. `
+          + 'O líder não tem conta pra ser avisado — a cobrança precisa sair da coordenação.',
+        link: '/grupos',
+        severidade: 'aviso',
+        chaveDedup: `grupos_sem_encontro_sem_lider_${hojeChave}`,
       });
     }
   }

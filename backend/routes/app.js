@@ -7,6 +7,7 @@ const rateLimit = require('express-rate-limit');
 const multer = require('multer');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
+const { donosDoGrupo } = require('../services/gruposDestinatarios');
 const { dispararAuto } = require('../services/whatsappAuto');
 const wpp = require('../services/whatsappService');
 const { analisarOracao } = require('../services/oracaoAnalise');
@@ -4292,13 +4293,22 @@ router.post('/grupos/:grupoId/encontros', authApp, limiterNormal, async (req, re
     });
     if (error) throw error;
 
-    notificar({
-      modulo: 'grupos',
-      tipo: 'grupo_encontro_registrado',
-      titulo: 'Encontro registrado pelo app',
-      mensagem: `${g.grupo.nome}: ${presentes.length} presente(s) em ${data.split('-').reverse().join('/')}${req.body?.observacoes ? ' · com comentário do líder' : ''}.`,
-      link: '/grupos',
-      chaveDedup: `grupo_enc_${encontroId}`,
+    // ⚠️ Só quem responde pelo grupo, MENOS quem acabou de registrar — avisar a
+    // pessoa da ação que ela mesma fez é ruído puro. Na prática: o líder
+    // registra e o supervisor fica sabendo (e vice-versa). Ia pro fan-out do
+    // módulo, ou seja ~16 pessoas que não têm nada a ver com este grupo.
+    donosDoGrupo(g.grupo.id).then((donos) => {
+      const alvos = donos.filter((id) => id !== req.user?.id);
+      if (!alvos.length) return;
+      return notificar({
+        modulo: 'grupos',
+        tipo: 'grupo_encontro_registrado',
+        titulo: 'Encontro registrado pelo app',
+        mensagem: `${g.grupo.nome}: ${presentes.length} presente(s) em ${data.split('-').reverse().join('/')}${req.body?.observacoes ? ' · com comentário do líder' : ''}.`,
+        link: '/grupos',
+        chaveDedup: `grupo_enc_${encontroId}`,
+        targetIds: alvos,
+      });
     }).catch(e => console.warn('[APP] encontro · notificar:', e.message));
 
     res.status(201).json({ ok: true, encontro_id: encontroId, presentes: presentes.length });
@@ -4404,13 +4414,19 @@ router.post('/grupos/:grupoId/visitas', authApp, limiterNormal, async (req, res)
       .single();
     if (error) throw error;
 
-    notificar({
-      modulo: 'grupos',
-      tipo: 'grupo_visita_registrada',
-      titulo: 'Visita de supervisão registrada pelo app',
-      mensagem: `${g.grupo.nome}: visita em ${data.split('-').reverse().join('/')}${observacao ? ' · com comentário' : ''}.`,
-      link: '/grupos?tab=visitas',
-      chaveDedup: `grupo_visita_${linha.id}`,
+    // Idem: dono do grupo, menos quem registrou.
+    donosDoGrupo(gid).then((donos) => {
+      const alvos = donos.filter((id) => id !== req.user?.id);
+      if (!alvos.length) return;
+      return notificar({
+        modulo: 'grupos',
+        tipo: 'grupo_visita_registrada',
+        titulo: 'Visita de supervisão registrada pelo app',
+        mensagem: `${g.grupo.nome}: visita em ${data.split('-').reverse().join('/')}${observacao ? ' · com comentário' : ''}.`,
+        link: '/grupos?tab=visitas',
+        chaveDedup: `grupo_visita_${linha.id}`,
+        targetIds: alvos,
+      });
     }).catch(e => console.warn('[APP] visita · notificar:', e.message));
 
     res.status(201).json({ ok: true, visita: linha });

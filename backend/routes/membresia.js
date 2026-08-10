@@ -1840,21 +1840,21 @@ router.post('/totem/grupos/:id/entrar', async (req, res) => {
       require('../services/grupoPedidoEventos').registrarEventoPedido(pedido.id, 'criado', { grupo: grupo.nome, origem: 'totem' });
     } catch { /* best-effort */ }
 
-    let liderAuthUserId = null;
-    if (grupo.lider_id) {
-      const { data: liderProf } = await supabase.from('vol_profiles')
-        .select('auth_user_id').eq('membresia_id', grupo.lider_id).maybeSingle();
-      liderAuthUserId = liderProf?.auth_user_id || null;
-    }
-    notificar({
-      modulo: 'grupos',
-      tipo: 'pedido_grupo',
-      titulo: `Novo pedido para ${grupo.nome || 'grupo'}`,
-      mensagem: `${pessoa.nome} pediu para entrar no grupo pelo totem.`,
-      link: '/grupos?tab=entrada',
-      severidade: 'aviso',
-      chaveDedup: `pedido_grupo_${pedido.id}`,
-      extraTargetIds: liderAuthUserId ? [liderAuthUserId] : [],
+    // Só quem responde por ESTE grupo (líder + supervisor). Sem dono com conta
+    // de sistema, o aviso não sai — o líder recebe o WhatsApp e a coordenação vê
+    // no resumo diário. Ver services/gruposDestinatarios.js.
+    donosDoGrupo(grupoId).then((donos) => {
+      if (!donos.length) return;
+      return notificar({
+        modulo: 'grupos',
+        tipo: 'pedido_grupo',
+        titulo: `Novo pedido para ${grupo.nome || 'grupo'}`,
+        mensagem: `${pessoa.nome} pediu para entrar no grupo pelo totem.`,
+        link: '/grupos?tab=entrada',
+        severidade: 'aviso',
+        chaveDedup: `pedido_grupo_${pedido.id}`,
+        targetIds: donos,
+      });
     }).catch(() => {});
 
     res.status(201).json({ ok: true, pedido_id: pedido.id, grupo_nome: grupo.nome || null });
