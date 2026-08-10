@@ -1,7 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { amostraNomes, plural, MAX_AMOSTRA } from '../../backend/utils/avisoAgregado.js';
+// ⚠️ O extrator de `notificar({…})` e o strip de comentários VIVEM EM UM LUGAR SÓ
+// (10/08/2026): o segundo guarda desta família precisou do mesmo parser, e dois
+// parsers do mesmo texto divergem — aí um guarda protege uma gramática que o
+// outro não reconhece. Ver src/test/utils/notificarEstatico.ts.
+import { semComentarios, lerBackend, chamadasNotificar } from './utils/notificarEstatico';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Contexto (medido em 10/08/2026, com o cron de notificações JÁ rodando):
@@ -73,41 +76,7 @@ describe('plural · concordância sem inventar sufixo', () => {
 // errado como exemplo, e a checagem acusava a explicação como se fosse código.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function semComentarios(src: string): string {
-  return src
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/(^|[^:])\/\/[^\n]*/g, '$1'); // preserva o // de https://
-}
-
-const GERADOR = semComentarios(
-  readFileSync(resolve(__dirname, '../../backend/services/notificacaoGenerator.js'), 'utf-8'),
-);
-
-/**
- * Extrai cada chamada `notificar({ ... })` do arquivo, casando as chaves. Serve
- * pra perguntar de UM aviso específico "ele tem destinatário nomeado?" — coisa
- * que um regex sobre o arquivo inteiro não responde.
- */
-function chamadasNotificar(src: string): string[] {
-  const blocos: string[] = [];
-  const marca = 'notificar({';
-  let i = src.indexOf(marca);
-  while (i !== -1) {
-    let nivel = 0;
-    let fim = i + marca.length - 1; // aponta pro `{`
-    for (let j = fim; j < src.length; j += 1) {
-      if (src[j] === '{') nivel += 1;
-      else if (src[j] === '}') {
-        nivel -= 1;
-        if (nivel === 0) { fim = j; break; }
-      }
-    }
-    blocos.push(src.slice(i, fim + 1));
-    i = src.indexOf(marca, fim);
-  }
-  return blocos;
-}
-
+const GERADOR = lerBackend('backend/services/notificacaoGenerator.js');
 const CHAMADAS = chamadasNotificar(GERADOR);
 
 const AGREGADOS = [

@@ -6,7 +6,7 @@ const router   = require('express').Router();
 const rateLimit = require('express-rate-limit');
 const multer = require('multer');
 const { supabase } = require('../utils/supabase');
-const { notificar } = require('../services/notificar');
+const { notificar, resolverDestinatarios } = require('../services/notificar');
 const { donosDoGrupo } = require('../services/gruposDestinatarios');
 const { dispararAuto } = require('../services/whatsappAuto');
 const wpp = require('../services/whatsappService');
@@ -4129,7 +4129,7 @@ router.post('/grupos/:grupoId/membros/:rowId/transferir', authApp, limiterNormal
       return res.status(400).json({ error: 'Escolha um grupo de destino diferente.' });
     }
     const { data: destino } = await supabase.from('mem_grupos')
-      .select('id, nome, ativo').eq('id', destinoId).is('deleted_at', null).maybeSingle();
+      .select('id, nome, ativo, lider_id').eq('id', destinoId).is('deleted_at', null).maybeSingle();
     if (!destino || destino.ativo === false) {
       return res.status(404).json({ error: 'Grupo de destino não encontrado' });
     }
@@ -4165,14 +4165,71 @@ router.post('/grupos/:grupoId/membros/:rowId/transferir', authApp, limiterNormal
     }).select('id').single();
     if (error) throw error;
 
-    notificar({
-      modulo: 'grupos',
-      tipo: 'grupo_transferencia_pedida',
-      titulo: 'Transferência pedida entre grupos',
-      mensagem: `${pessoa?.nome || 'Alguém'} foi indicada de "${g.grupo.nome}" para "${destino.nome}" pelo app. O pedido está na fila do grupo de destino.`,
-      link: '/grupos?tab=entrada',
-      chaveDedup: `grupo_transf_${novo?.id}`,
-    }).catch(e => console.warn('[APP] transferir · notificar:', e.message));
+    // ⚠️⚠️ QUEM PRECISA SABER É O LÍDER DO DESTINO — e ele não era avisado por
+    // NADA (10/08/2026). O comentário no topo desta rota diz que a transferência
+    // "é o mesmo fluxo de quem se inscreve", mas só a criação do pedido foi
+    // igual: os dois avisos daquele fluxo ficaram de fora. O pedido nascia
+    // `pendente` na fila de um grupo cujo líder nunca ouvia falar dele, e a
+    // única notificação existente ia pro público do módulo — pessoas que não
+    // aprovam nada naquele grupo.
+    //
+    // ⚠️ A funcionalidade tem ZERO uso histórico (medido: nenhuma linha em
+    // `mem_grupo_pedidos` com observação de transferência, desde sempre). Então
+    // isto é gatilho armado, não incêndio — e é por isso que dá pra consertar
+    // sem migração nem varredura de dado velho.
+    (async () => {
+      const donosDestino = await donosDoGrupo(destino.id).catch(() => []);
+      if (donosDestino.length) {
+        await notificar({
+          modulo: 'grupos',
+          tipo: 'grupo_transferencia_pedida',
+          titulo: `Transferência para ${destino.nome}`,
+          mensagem: `${pessoa?.nome || 'Alguém'} foi indicada pelo líder de "${g.grupo.nome}" para o seu grupo. `
+            + 'O pedido está na sua fila, aguardando você aprovar ou recusar.',
+          link: '/grupos?tab=entrada',
+          severidade: 'aviso',
+          chaveDedup: `grupo_transf_${novo?.id}`,
+          targetIds: donosDestino,
+        });
+      }
+
+      // A coordenação continua sabendo (transferência entre grupos é assunto de
+      // triagem), MENOS quem já foi avisado como dono do destino — senão a mesma
+      // pessoa recebe duas linhas do mesmo fato, que é o defeito que esta leva
+      // de consertos existe pra tirar.
+      const coordenacao = (await resolverDestinatarios('grupos').catch(() => []))
+        .filter(id => !donosDestino.includes(id));
+      if (coordenacao.length) {
+        await notificar({
+          modulo: 'grupos',
+          tipo: 'grupo_transferencia_pedida',
+          titulo: 'Transferência pedida entre grupos',
+          mensagem: `${pessoa?.nome || 'Alguém'} foi indicada de "${g.grupo.nome}" para "${destino.nome}" pelo app. `
+            + 'O pedido está na fila do grupo de destino.',
+          link: '/grupos?tab=entrada',
+          chaveDedup: `grupo_transf_coord_${novo?.id}`,
+          targetIds: coordenacao,
+        });
+      }
+    })().catch(e => console.warn('[APP] transferir · notificar:', e.message));
+
+    // ⚠️ E O WHATSAPP, que é o canal que de fato funciona: 368 das 388 decisões
+    // de pedido dos últimos 90 dias saíram pelo link do WhatsApp do líder, não
+    // pelo sistema. Mandar só notificação in-app pra um líder que, em 86 dos 102
+    // grupos ativos, não tem conta no sistema, seria manter o pedido invisível.
+    // Mesma função dos outros caminhos de pedido — o template leva link de
+    // aprovar sem login, amarrado ao líder e ao pedido.
+    if (novo?.id) {
+      gruposWpp.notificarLiderNovoPedido({
+        grupo: destino,
+        pedidoId: novo.id,
+        pessoa: {
+          nome: pessoa?.nome || 'Participante',
+          telefone: pessoa?.telefone || null,
+          email: pessoa?.email || null,
+        },
+      }).catch(e => console.warn('[APP] transferir · wpp líder destino:', e.message));
+    }
 
     res.status(201).json({ ok: true, destino: destino.nome, pedido_id: novo?.id || null });
   } catch (e) {
