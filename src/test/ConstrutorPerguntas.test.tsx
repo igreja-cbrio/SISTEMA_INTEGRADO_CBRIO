@@ -3,7 +3,9 @@ import { render, screen, fireEvent } from '@testing-library/react';
 
 import ConstrutorPerguntas from '../components/censo/ConstrutorPerguntas';
 import type { Pergunta } from '../lib/censoConstrutor';
-import { trocarTipoPergunta, validarOrdem, renomearOpcao } from '../lib/censoConstrutor';
+import {
+  trocarTipoPergunta, validarOrdem, renomearOpcao, moverPergunta, indiceApos,
+} from '../lib/censoConstrutor';
 import { validarPerguntas } from '../../backend/utils/censoPerguntas.js';
 
 // O que está em teste aqui é a integridade do questionário quando alguém o
@@ -106,6 +108,49 @@ describe('construtor · protege as condicionais', () => {
     // Sem mudança, o botão de salvar nem aparece — é como a tela diz "nada mudou".
     expect(screen.queryByRole('button', { name: /Salvar perguntas/ })).toBeNull();
     vi.restoreAllMocks();
+  });
+
+  it('⚠️ arrastar MOVE, não troca — arrastar o 1º para o fim não embaralha o meio', () => {
+    const lista: Pergunta[] = [
+      { id: 'a', tipo: 'texto_curto', texto: 'A' },
+      { id: 'b', tipo: 'texto_curto', texto: 'B' },
+      { id: 'c', tipo: 'texto_curto', texto: 'C' },
+      { id: 'd', tipo: 'texto_curto', texto: 'D' },
+    ];
+    // Se isto fosse um swap (como o subir/descer podia ser), daria D,B,C,A —
+    // uma reordenação viraria três perguntas fora de lugar.
+    const r = moverPergunta(lista, 0, 3);
+    expect(r.erro).toBeNull();
+    expect(r.lista.map((p) => p.id)).toEqual(['b', 'c', 'd', 'a']);
+
+    const volta = moverPergunta(r.lista, 3, 0);
+    expect(volta.lista.map((p) => p.id)).toEqual(['a', 'b', 'c', 'd']);
+  });
+
+  it('arrastar que quebraria a condicional é RECUSADO e devolve a lista intacta', () => {
+    const r = moverPergunta(BASE, 2, 1);   // "Quantos?" para antes de "Tem filhos?"
+    expect(r.erro).toMatch(/pergunta anterior/i);
+    expect(r.lista).toBe(BASE);            // mesma referência: nada foi aplicado
+  });
+
+  it('soltar fora das bordas satura em vez de cancelar, e soltar no mesmo lugar é no-op', () => {
+    const lista: Pergunta[] = [
+      { id: 'a', tipo: 'texto_curto', texto: 'A' },
+      { id: 'b', tipo: 'texto_curto', texto: 'B' },
+    ];
+    expect(moverPergunta(lista, 0, 99).lista.map((p) => p.id)).toEqual(['b', 'a']);
+    expect(moverPergunta(lista, 1, -5).lista.map((p) => p.id)).toEqual(['b', 'a']);
+    expect(moverPergunta(lista, 1, 1).lista).toBe(lista);
+    expect(moverPergunta(lista, 7, 0).lista).toBe(lista);   // índice inexistente
+  });
+
+  it('o painel aberto segue a pergunta certa depois do movimento', () => {
+    // Sem isto, quem estava editando a pergunta 1 passa a digitar na de outra.
+    expect(indiceApos(0, 0, 3)).toBe(3);   // a própria aberta foi arrastada
+    expect(indiceApos(2, 0, 3)).toBe(1);   // estava no meio, arrasto desceu → sobe 1
+    expect(indiceApos(1, 3, 0)).toBe(2);   // arrasto subiu por cima dela → desce 1
+    expect(indiceApos(5, 0, 2)).toBe(5);   // fora do trecho movido, não muda
+    expect(indiceApos(null, 0, 2)).toBeNull();
   });
 
   it('não deixa remover uma pergunta de que outra depende', () => {

@@ -90,6 +90,54 @@ export function validarOrdem(lista: Pergunta[]): string | null {
 }
 
 /**
+ * Move a pergunta da posição `de` para `para` e devolve a lista nova, ou o erro
+ * que impede o movimento.
+ *
+ * ⚠️ MOVE, não troca. Subir/descer de 1 em 1 podia ser um swap (com vizinho dá
+ * no mesmo), mas arrastar da posição 1 para a 6 com swap embaralharia as outras
+ * quatro perguntas. É a diferença entre "reordenei uma" e "mexi em cinco".
+ *
+ * ⚠️ A ordem é validada AQUI, antes de aplicar: condicional só pode apontar
+ * para pergunta anterior, e arrastar é justamente o gesto que mais fácil quebra
+ * isso (o servidor recusaria no fim, com o trabalho já perdido de vista).
+ *
+ * `para` é saturado nas bordas em vez de recusado: soltar depois do último item
+ * significa "põe no fim", não "cancela".
+ */
+export function moverPergunta(
+  lista: Pergunta[],
+  de: number,
+  para: number,
+): { lista: Pergunta[]; erro: string | null } {
+  if (de < 0 || de >= lista.length) return { lista, erro: null };
+  const destino = Math.max(0, Math.min(lista.length - 1, para));
+  if (destino === de) return { lista, erro: null };
+
+  const proximo = [...lista];
+  const [movida] = proximo.splice(de, 1);
+  proximo.splice(destino, 0, movida);
+
+  const erro = validarOrdem(proximo);
+  if (erro) return { lista, erro };
+  return { lista: proximo, erro: null };
+}
+
+/**
+ * Para onde vai o índice da pergunta ABERTA depois de um movimento. Sem isto, o
+ * painel expandido passa a mostrar a edição de OUTRA pergunta — e quem estava
+ * editando não percebe que digitou no lugar errado.
+ */
+export function indiceApos(aberta: number | null, de: number, para: number): number | null {
+  if (aberta === null) return null;
+  if (aberta === de) return para;
+  // arrastou de cima para baixo: quem está no meio sobe uma posição
+  if (de < aberta && aberta <= para) return aberta - 1;
+  // arrastou de baixo para cima: quem está no meio desce uma
+  if (para <= aberta && aberta < de) return aberta + 1;
+  return aberta;
+}
+
+/**
  * Renomear uma opção precisa renomear a marca de "não conta" junto — senão a
  * marca aponta para um texto que não existe mais e o servidor recusa a gravação.
  */
