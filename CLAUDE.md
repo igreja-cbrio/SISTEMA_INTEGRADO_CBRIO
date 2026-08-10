@@ -7240,30 +7240,52 @@ tabela está **vazia** — gatilho armado, melhor momento pra construir.
 - ⚠️ Erro de carregamento **não se disfarça de fila vazia** na tela: "nenhum
   pedido" e "não conseguimos ler" são coisas diferentes.
 
-### ⚠️⚠️ ACHADO GRANDE DO LEVANTAMENTO: `gerarTodasNotificacoes` NÃO TEM CRON
+### ✅ RESOLVIDO · o cron do `gerarTodasNotificacoes` EXISTE e roda (10/08/2026)
 
-`/api/notificacoes/cron` (que chama o gerador) **não está no `vercel.json`** — o
-único cron de notificações agendado é `/cron/alerta-culto-dados` (semanal), e o
-outro caminho é o POST manual `/api/notificacoes/gerar`. Não é dedução do arquivo:
-**medido** — em **13.581** notificações desde 12/05, **nenhum tipo exclusivo do
-`notificacaoGenerator` jamais apareceu**, enquanto há **283 `identidade_pendencias`
-pendentes** que dispararia aviso e 5 cadastros pendentes (3 com ≥1 dia). Módulos
-inteiros nunca tiveram uma única notificação: solicitações, online, governança,
-tarefas, kpis, patrimônio, ritual, jornada.
+⚠️⚠️ **ESTA SEÇÃO DIZIA O CONTRÁRIO até 10/08 e o texto antigo virou FALSO.** Ele
+afirmava que `/api/notificacoes/cron` não estava no `vercel.json` e que ~20
+geradores só rodavam por clique manual. Medido em 10/08: o cron **está** no
+`vercel.json` (`0 9 * * *`), **está registrado** na Vercel (`vercel crons ls`) e
+todos os tipos exclusivos do `notificacaoGenerator` foram produzidos naquele dia
+às **09:00–09:03 UTC** (`membro_sem_grupo` 340 · `grupo_sem_encontro` 1.717 ·
+`ata_pendente` 464 · `kids_crianca_ausente` 422 · `grupos_sem_visita` 17 …).
+Alguma sessão agendou depois de 06/08 e o registro aqui não acompanhou.
+**Lição de método: antes de repetir um achado deste arquivo, medir de novo** — a
+nota de 06/08 estava correta no dia em que foi escrita e envelheceu em 4 dias.
 
-⇒ **~20 avisos periódicos do sistema (documento vencendo, membro sem grupo,
-jornada do convertido, grupo sem encontro, `cadastro_sem_nome_real`) só existem
-quando alguém clica em "gerar".** O que roda de verdade todo dia é
-`/api/monitor-automacoes/cron/checar` (prova: 17 `automacao_sem_atualizar`, a mais
-recente em 06/08 11:01 UTC) — e o comentário em `routes/monitorAutomacoes.js:13-14`
-dizendo que ele "também roda no cron diário de notificações" está DESATUALIZADO.
+### ⚠️⚠️ E a contenção que a nota antiga pedia virou necessária DE VERDADE
 
-`gerarNotificacoesLgpdExclusao()` foi escrito no padrão da casa (contagem, sem
-PII, dedup por dia, `urgente` quando passa dos 15 dias) e fica **dormente como os
-outros 20**. ⚠️ **Agendar `/api/notificacoes/cron` é o conserto certo do sistema,
-mas liga ~20 geradores de uma vez** — precisa de plano de contenção e é decisão do
-Marcos. Caminho barato de medir antes: rodar o POST manual `/notificacoes/gerar`
-uma vez e olhar o volume.
+Ligar ~20 geradores de uma vez encheu o sino, exatamente como previsto. Medido em
+10/08: **16.646 avisos NÃO LIDOS · 90 pessoas · média de 185 por pessoa** (543
+criados só naquele dia), com o módulo `grupos` respondendo por **9.782 (59%)**.
+Sino nesse estado não é lido — o efeito prático é o mesmo de não notificar.
+
+Duas causas somadas, e cada uma tem dono diferente:
+
+1. **38 dos 51 módulos ativos não têm regra em `notificacao_regras`** ⇒ cada aviso
+   cai no fallback de TODOS os admin/diretor (16 pessoas). Assinatura no dado:
+   os tipos de maior volume batem sempre em 15–18 pessoas. `kids`, que TEM regra,
+   entrega para 2. ⚠️ Configurar as regras é decisão de QUEM RECEBE (e quem deixa
+   de receber) — o Matheus assumiu isso em 10/08, em sessão própria.
+2. **Os geradores periódicos avisavam 1 POR ITEM.** `grupo_sem_encontro` eram 101
+   grupos atrasados × 16 pessoas POR DIA; `kids_crianca_ausente` chegou a 211
+   avisos não lidos para a MESMA pessoa. **Corrigido: os 4 de maior volume
+   passaram a avisar AGREGADO** (`grupo_sem_encontro`, `membro_sem_grupo`,
+   `ata_pendente`, `kids_crianca_ausente`) — 1 aviso com contagem + amostra de 5
+   + link pra tela. Régua e o porquê da chave de dedup ESTÁVEL:
+   **`backend/utils/avisoAgregado.js`**, com guarda em
+   `src/test/avisoAgregado.test.ts` (no gate, mutation-testado).
+
+⚠️ **NÃO agreguei `pedido_grupo` nem `nova_inscricao`** (os 2 maiores volumes
+depois de grupos): ali cada linha é um item de trabalho de uma PESSOA específica
+(o líder recebe por `extraTargetIds`), e o dedup por pedido é o que impede
+duplicar. O excesso deles é o fallback de 16, ou seja causa nº 1 — não se
+conserta agregando.
+
+`gerarNotificacoesLgpdExclusao()` segue no padrão da casa (contagem, sem PII) e
+**deixou de estar dormente** junto com os outros. O comentário em
+`routes/monitorAutomacoes.js:13-14` que a nota antiga acusava de desatualizado
+está, portanto, **correto** de novo.
 
 ## ⚠️ DECISÃO · o APP é o canal oficial do devocional (2026-08-06)
 
