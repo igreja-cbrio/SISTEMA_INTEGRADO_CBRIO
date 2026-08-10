@@ -15,6 +15,9 @@ const { escapePostgrestValue } = require('../utils/sanitize');
 const { fetchAllRows } = require('../utils/pagination');
 const { verificarTokenComprovanteAtivo, extrairToken } = require('../services/inscricaoComprovante');
 const { portasSatelites, fontesUnificadas, catalogoPublico } = require('../services/inscricaoPortas');
+// ⚠️ Contagem de inscritos NÃO usa o embed `inscricoes(count)` (não filtra
+// soft-delete — ver o cabeçalho do serviço).
+const { contarInscritosVivos } = require('../services/inscricaoContagem');
 const {
   previewTemplate,
   esqueletoPadrao,
@@ -757,11 +760,12 @@ router.patch('/qrs/:id/reativar', authorizeModule('inscricoes', 3), async (req, 
 router.get('/eventos', authorizeModule('inscricoes', 1), async (_req, res) => {
   try {
     const { data, error } = await supabase.from('insc_eventos')
-      .select('id, nome, slug, area, tipo, data, hora, local, capa_url, status, vagas, tem_sorteio, checkin_ativo, no_totem, pagamento_ativo, valor_centavos, edicao_rotulo, serie_id, serie:insc_series(id, nome, periodicidade, recorre_ate, slug_base), inscritos:inscricoes(count)')
+      .select('id, nome, slug, area, tipo, data, hora, local, capa_url, status, vagas, tem_sorteio, checkin_ativo, no_totem, pagamento_ativo, valor_centavos, edicao_rotulo, serie_id, serie:insc_series(id, nome, periodicidade, recorre_ate, slug_base)')
       .is('deleted_at', null)
       .order('data', { ascending: false, nullsFirst: false });
     if (error) throw error;
-    res.json((data || []).map(e => ({ ...e, inscritos: e.inscritos?.[0]?.count ?? 0 })));
+    const contagem = await contarInscritosVivos(supabase, (data || []).map((e) => e.id));
+    res.json((data || []).map(e => ({ ...e, inscritos: contagem.get(e.id) || 0 })));
   } catch (e) {
     console.error('[inscricoes] eventos:', e.message);
     res.status(500).json({ error: 'Erro ao listar eventos' });
@@ -772,12 +776,14 @@ router.get('/eventos', authorizeModule('inscricoes', 1), async (_req, res) => {
 router.get('/eventos/:id', authorizeModule('inscricoes', 1), async (req, res) => {
   try {
     const { data, error } = await supabase.from('insc_eventos')
-      .select('*, serie:insc_series(id, nome, periodicidade, slug_base), inscritos:inscricoes(count), sorteios:insc_sorteios(id, premio, numero_sorteado, inscricao_id, ganhador_nome, sorteado_em)')
+      .select('*, serie:insc_series(id, nome, periodicidade, slug_base), sorteios:insc_sorteios(id, premio, numero_sorteado, inscricao_id, ganhador_nome, sorteado_em)')
       .eq('id', req.params.id).is('deleted_at', null).maybeSingle();
     if (error) throw error;
     if (!data) return res.status(404).json({ error: 'Evento não encontrado' });
     const sorteios = (data.sorteios || []).sort((a, b) => String(b.sorteado_em).localeCompare(String(a.sorteado_em)));
-    res.json({ ...data, inscritos: data.inscritos?.[0]?.count ?? 0, sorteios });
+    // Mesmo helper da lista (o embed `inscricoes(count)` contava apagadas).
+    const contagem = await contarInscritosVivos(supabase, [data.id]);
+    res.json({ ...data, inscritos: contagem.get(data.id) || 0, sorteios });
   } catch (e) {
     console.error('[inscricoes] evento:', e.message);
     res.status(500).json({ error: 'Erro ao carregar evento' });
@@ -1491,14 +1497,17 @@ router.get('/eventos/:id/resumo', authorizeModule('inscricoes', 1), async (req, 
 router.get('/app/eventos', authorizeModule('inscricoes', 1), async (req, res) => {
   try {
     let q = supabase.from('insc_eventos')
-      .select('id, nome, slug, area, data, hora, local, status, vagas, pagamento_ativo, valor_centavos, checkin_ativo, edicao_rotulo, inscritos:inscricoes(count)')
+      .select('id, nome, slug, area, data, hora, local, status, vagas, pagamento_ativo, valor_centavos, checkin_ativo, edicao_rotulo')
       .is('deleted_at', null);
     // Rascunho e arquivado ficam fora por padrão: o app é pra acompanhar o que
     // está acontecendo, não pra ver esboço.
     if (req.query.todos !== '1') q = q.in('status', ['publicado', 'encerrado']);
     const { data, error } = await q.order('data', { ascending: false, nullsFirst: false }).limit(100);
     if (error) throw error;
-    res.json((data || []).map((e) => ({ ...e, inscritos: e.inscritos?.[0]?.count ?? 0 })));
+    // Mesmo helper da tela do sistema — o app do staff tinha o MESMO bug do
+    // embed: mostraria "14 inscritos" num evento com 14 inscrições apagadas.
+    const contagem = await contarInscritosVivos(supabase, (data || []).map((e) => e.id));
+    res.json((data || []).map((e) => ({ ...e, inscritos: contagem.get(e.id) || 0 })));
   } catch (e) {
     console.error('[inscricoes] app/eventos:', e.message);
     res.status(500).json({ error: 'Erro ao listar eventos' });
