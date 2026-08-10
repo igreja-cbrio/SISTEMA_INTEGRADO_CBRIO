@@ -9558,6 +9558,71 @@ acaso, não tem linha apagada).
 soft-delete, **`(count)` de embed é sempre errado**. Contar exige query própria
 com o filtro, ou `head: true` com `.is('deleted_at', null)`.
 
+## ⚠️⚠️ LEI · RPC chamada pelo CLIENTE precisa de grant pra `authenticated` (2026-08-10 · migration `20260810120000`)
+
+Reportado pelo Matheus com screenshot: o cartão de membro do app mostrava
+**"QR indisponível"**. O token DELE **existe** em `mem_qrcodes` — o que falhava
+era a chamada: `app_meu_qrcode()` estava com EXECUTE só pra `service_role`, e o
+app chama com o JWT da pessoa (papel `authenticated`).
+
+**Provado funcionalmente antes de escrever a migration**, não deduzido do
+catálogo: `set local role authenticated; select public.app_meu_qrcode();` →
+`permission denied for function app_meu_qrcode`. Depois do grant, o MESMO bloco
+passa. ⚠️ E o app **descarta o erro** (`const { data: tk } = await
+supabase.rpc(...)`, sem ler `error`), então o token virava null e a tela dizia
+"indisponível" — **falha perfeitamente silenciosa**.
+
+**⚠️ CAUSA:** o sweep de segurança que revogou `anon`/`authenticated` de ~114
+funções SECURITY DEFINER partiu de *"o backend usa service_role, logo é imune"*.
+A premissa vale pro backend e **não vale pro app mobile**, que fala direto com o
+PostgREST usando a chave pública. **4 RPCs do app foram pegas.**
+
+**⚠️⚠️ O RAIO ERA MAIOR QUE O SINTOMA:** além do QR, **o check-in de batismo pelo
+app estava quebrado** (`app_batismo_checkin`) e ninguém havia reportado, junto de
+marcar/desmarcar batismo em outra igreja. Das RPCs que o FRONT do ERP chama com a
+anon key, a única (`app_marcar_senha_trocada`) manteve o grant e segue de pé.
+
+**Por que re-conceder é SEGURO nas 4** (auditado uma a uma, não em bloco): todas
+resolvem o alvo pelo **`auth.uid()`** — o parâmetro nunca escolhe a PESSOA, então
+id de terceiro no argumento não alcança dado de terceiro.
+
+| RPC | como resolve o alvo |
+|---|---|
+| `app_meu_qrcode()` | sem parâmetro · `profiles.id = auth.uid()` |
+| `app_batismo_checkin(uuid)` | filtra `membro_id = v_membro` → id alheio devolve "Inscrição não encontrada" |
+| `app_marcar_batizado_outra(text)` | `update … where id = v_membro` |
+| `app_desmarcar_batizado_outra()` | idem |
+
+⚠️ **`anon` não recebeu nada** — as quatro exigem pessoa autenticada.
+
+- ⚠️⚠️ **A MARCA FICA NO CATÁLOGO** (`COMMENT ON FUNCTION` começando com
+  `[GRANT authenticated OBRIGATÓRIO]`), não só no arquivo da migration: a
+  varredura de segurança é feita **à mão no SQL Editor**, e quem varrer de novo
+  precisa ver o motivo no próprio objeto. Conferido no catálogo: 4 linhas com
+  `authenticated = true`, `anon = false`, marca presente.
+- ⚠️ A migration **só faz GRANT + COMMENT** — nenhum corpo de função é tocado, de
+  propósito: `CREATE OR REPLACE` a partir do arquivo do repo do app reverteria
+  ajuste feito em produção depois (a lição do patch dinâmico do fanout).
+- ⚠️ Os arquivos `supabase/*.sql` do **repo do APP** declaram esses grants, mas
+  são **cópia de leitura** (o cabeçalho deles diz isso desde 08/08): quem cria e
+  altera é a migration do ERP.
+- **Inventário + guarda no gate**: `backend/utils/rpcsCliente.js` lista as RPCs
+  chamadas com a chave pública, e `src/test/rpcsCliente.test.ts` (8 casos) exige
+  que **cada uma tenha `grant execute … to authenticated` declarado em migration**
+  — é a rede contra o erro mais provável (RPC nova no app sem o grant, que produz
+  exatamente a mesma falha silenciosa). **Mutation-testado**: apagar um grant da
+  migration deixa vermelho, e "consertar" com `service_role` **não** satisfaz.
+  O teste também varre `src/` e exige que toda `supabase.rpc()` do front esteja
+  no inventário.
+- ⚠️ **A checagem ignora COMENTÁRIO antes de casar** — nos dois lados (SQL e JS).
+  A 1ª versão do teste ficou vermelha por causa do comentário do PRÓPRIO teste,
+  que cita a chamada como exemplo: a mesma armadilha de 06/08, agora no JS. E o
+  `semComentariosJs` **não pode comer o `//` de uma URL** (`https://…`) — tem caso
+  cobrindo.
+- ⚠️ **NÃO listar no inventário RPC que só o BACKEND chama**: essas devem
+  continuar restritas a `service_role`, e ampliar o grant delas é regressão de
+  segurança. O critério é UM: *alguém chama isso com a chave pública?*
+
 ## ⚠️ Adapter do MERCADO PAGO (2026-08-06 · SEM migration)
 
 `providers/mercadopago.js` — o único arquivo que conhece a linguagem do MP.
