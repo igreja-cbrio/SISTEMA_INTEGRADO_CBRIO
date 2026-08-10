@@ -14,10 +14,22 @@ const { requireCron } = require('../utils/cronAuth');
 const { supabase } = require('../utils/supabase');
 const { sincronizarComMeta, seedDosEnvs } = require('../services/waTemplates');
 const { enfileirarLote } = require('../services/whatsappFila');
+const { AppError, ERROR_CODES } = require('../utils/appError');
+const { captureHandledException } = require('../utils/sentry');
+
+function communicationError(error, publicMessage) {
+  return new AppError(error?.message || publicMessage, {
+    code: ERROR_CODES.COMMUNICATION_OPERATION_FAILED,
+    publicMessage,
+    cause: error,
+    isOperational: false,
+  });
+}
+
 
 // Cron público (CRON_SECRET) declarado ANTES do authenticate.
 // Varredor das programadas: dispara agendamentos vencidos (único ou recorrente).
-router.get('/cron/agendamentos', requireCron, async (_req, res) => {
+router.get('/cron/agendamentos', requireCron, async (req, res, next) => {
   try {
     const agora = new Date(Date.now() - 3 * 3600 * 1000); // BRT
     const hojeISO = agora.toISOString().slice(0, 10);
@@ -67,13 +79,14 @@ router.get('/cron/agendamentos', requireCron, async (_req, res) => {
         resultados.push({ id: a.id, nome: a.nome, enfileirados: r.queued });
       } catch (e) {
         console.error('[comunicacao] agendamento %s:', a.id, e.message);
-        resultados.push({ id: a.id, erro: e.message });
+        captureHandledException(communicationError(e, 'Erro ao processar agendamento.'), req, 'communication.schedule.item');
+        resultados.push({ id: a.id, erro: 'falha_no_agendamento', request_id: req.requestId });
       }
     }
     res.json({ ok: true, disparados, resultados });
   } catch (e) {
     console.error('[comunicacao] cron agendamentos:', e.message);
-    res.status(500).json({ error: 'Erro no cron de agendamentos' });
+    next(communicationError(e, 'Erro no cron de agendamentos.'));
   }
 });
 
@@ -255,7 +268,7 @@ router.put('/tarifas/:categoria', authorizeModule('comunicacao', 5), async (req,
 });
 
 // ── Histórico central de envios (a fila de TODOS os módulos) ─────────
-router.get('/envios', async (req, res) => {
+router.get('/envios', async (req, res, next) => {
   try {
     const limite = Math.min(parseInt(req.query.limit, 10) || 100, 500);
     const offset = parseInt(req.query.offset, 10) || 0;
@@ -269,11 +282,11 @@ router.get('/envios', async (req, res) => {
     if (req.query.de) q = q.gte('criado_em', String(req.query.de));
     if (req.query.ate) q = q.lte('criado_em', String(req.query.ate) + 'T23:59:59');
     const { data, error, count } = await q;
-    if (error) return res.status(400).json({ error: error.message });
+    if (error) throw error;
     res.json({ envios: data || [], total: count || 0 });
   } catch (e) {
     console.error('[comunicacao] envios:', e.message);
-    res.status(500).json({ error: 'Erro ao listar envios' });
+    next(communicationError(e, 'Erro ao listar envios.'));
   }
 });
 
@@ -287,7 +300,7 @@ router.get('/envios', async (req, res) => {
 //
 // ⚠️ `?pessoas=1` exige nível 2: a lista carrega NOME e TELEFONE. "Quantos
 // recebem" é gestão; "quem recebe, com telefone" é cadastro de gente.
-router.get('/automaticas', async (req, res) => {
+router.get('/automaticas', async (req, res, next) => {
   try {
     const dias = Math.min(parseInt(req.query.dias, 10) || 30, 120);
     const querPessoas = req.query.pessoas === '1' || req.query.pessoas === 'true';
@@ -300,18 +313,19 @@ router.get('/automaticas', async (req, res) => {
     res.json({ ...r, pessoas_ocultas: querPessoas && !comPessoas });
   } catch (e) {
     console.error('[comunicacao] automaticas', e.message);
-    res.status(500).json({ error: 'Erro ao carregar os disparos automáticos' });
+    next(communicationError(e, 'Erro ao carregar os disparos automáticos.'));
   }
 });
 
-router.get('/envios/resumo', async (req, res) => {
+router.get('/envios/resumo', async (req, res, next) => {
   try {
     const dias = Math.min(parseInt(req.query.dias, 10) || 30, 120);
     const desde = new Date(Date.now() - dias * 86400000).toISOString();
     const conta = async (filtro) => {
       let q = supabase.from('whatsapp_envios').select('id', { count: 'exact', head: true }).gte('criado_em', desde);
       q = filtro(q);
-      const { count } = await q;
+      const { count, error } = await q;
+      if (error) throw error;
       return count || 0;
     };
     const [total, enviados, pendentes, erros, entregues, lidos, falhosMeta] = await Promise.all([
@@ -326,7 +340,7 @@ router.get('/envios/resumo', async (req, res) => {
     res.json({ dias, total, enviados, pendentes, erros, entregues, lidos, falhos_meta: falhosMeta });
   } catch (e) {
     console.error('[comunicacao] resumo:', e.message);
-    res.status(500).json({ error: 'Erro no resumo de envios' });
+    next(communicationError(e, 'Erro no resumo de envios.'));
   }
 });
 
@@ -337,7 +351,7 @@ router.get('/envios/resumo', async (req, res) => {
 //   Template sem categoria conhecida cai em 'nao_classificado' (tarifa 0 · mas
 //   COUNT exibido, com aviso pra classificar na aba Templates). É estimativa,
 //   não a fatura — as tarifas são editáveis em wa_tarifas.
-router.get('/custo', async (req, res) => {
+router.get('/custo', async (req, res, next) => {
   try {
     const meses = Math.min(parseInt(req.query.meses, 10) || 6, 12);
     const desde = new Date(); desde.setMonth(desde.getMonth() - (meses - 1)); desde.setDate(1);
@@ -360,9 +374,11 @@ router.get('/custo', async (req, res) => {
     })();
 
     // Mapa template(nome) → categoria; e categoria → tarifa.
-    const { data: tpls } = await supabase.from('wa_templates').select('nome, categoria');
+    const { data: tpls, error: tplsError } = await supabase.from('wa_templates').select('nome, categoria');
+    if (tplsError) throw tplsError;
     const catDoTemplate = new Map((tpls || []).map(t => [t.nome, t.categoria || null]));
-    const { data: tarifas } = await supabase.from('wa_tarifas').select('categoria, tarifa');
+    const { data: tarifas, error: tarifasError } = await supabase.from('wa_tarifas').select('categoria, tarifa');
+    if (tarifasError) throw tarifasError;
     const tarifaDaCat = new Map((tarifas || []).map(t => [t.categoria, Number(t.tarifa) || 0]));
 
     const porMes = {}, porModulo = {}, porCategoria = {};
@@ -397,14 +413,14 @@ router.get('/custo', async (req, res) => {
     });
   } catch (e) {
     console.error('[comunicacao] custo:', e.message);
-    res.status(500).json({ error: 'Erro ao calcular o custo' });
+    next(communicationError(e, 'Erro ao calcular o custo.'));
   }
 });
 
 // ── Erros (falha terminal da fila + failed da Meta + órfãos) ─────────
-router.get('/erros', async (_req, res) => {
+router.get('/erros', async (_req, res, next) => {
   try {
-    const [{ data: fila }, { data: falhosMeta }, { count: orfaos }] = await Promise.all([
+    const [filaResult, metaResult, orfaosResult] = await Promise.all([
       supabase.from('whatsapp_envios')
         .select('id, telefone, tipo, template, contexto, erro, tentativas, criado_em')
         .eq('status', 'erro').order('criado_em', { ascending: false }).limit(100),
@@ -413,16 +429,22 @@ router.get('/erros', async (_req, res) => {
         .not('failed_at', 'is', null).order('failed_at', { ascending: false }).limit(100),
       supabase.from('whatsapp_status_orfaos').select('id', { count: 'exact', head: true }),
     ]);
+    const sourceError = filaResult.error || metaResult.error || orfaosResult.error;
+    if (sourceError) throw sourceError;
+    const fila = filaResult.data;
+    const falhosMeta = metaResult.data;
+    const orfaos = orfaosResult.count;
     res.json({ falhas_fila: fila || [], falhas_meta: falhosMeta || [], orfaos: orfaos || 0 });
+
   } catch (e) {
     console.error('[comunicacao] erros:', e.message);
-    res.status(500).json({ error: 'Erro ao listar falhas' });
+    next(communicationError(e, 'Erro ao listar falhas.'));
   }
 });
 
 // Reenviar uma falha terminal (após corrigir o telefone, p.ex.): volta a linha
 // pra 'pendente' com telefone opcionalmente corrigido — o cron reprocessa.
-router.post('/erros/:id/reenviar', authorizeModule('comunicacao', 3), async (req, res) => {
+router.post('/erros/:id/reenviar', authorizeModule('comunicacao', 3), async (req, res, next) => {
   try {
     const patch = {
       status: 'pendente',
@@ -433,11 +455,11 @@ router.post('/erros/:id/reenviar', authorizeModule('comunicacao', 3), async (req
     if (req.body?.telefone) patch.telefone = String(req.body.telefone).replace(/\D/g, '');
     const { data, error } = await supabase.from('whatsapp_envios')
       .update(patch).eq('id', req.params.id).eq('status', 'erro').select('id').maybeSingle();
-    if (error) return res.status(400).json({ error: error.message });
+    if (error) throw error;
     if (!data) return res.status(404).json({ error: 'Envio não encontrado (ou não está em erro)' });
     res.json({ ok: true });
   } catch (e) {
-    res.status(500).json({ error: 'Erro ao reenviar' });
+    next(communicationError(e, 'Erro ao reenviar.'));
   }
 });
 

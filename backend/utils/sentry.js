@@ -134,12 +134,36 @@ function captureException(err, ctx) {
     scope.setTag('error.code', normalized.code);
     scope.setTag('http.status_code', String(normalized.status));
     if (ctx?.method) scope.setTag('http.request.method', String(ctx.method).toUpperCase());
+    if (ctx?.handled) scope.setTag('error.handled', 'true');
+    if (ctx?.operation) scope.setTag('cbrio.operation', String(ctx.operation).slice(0, 100));
     scope.setContext('cbrio_request', {
       requestId: ctx?.requestId || null,
       route: route || null,
+      operation: ctx?.operation ? String(ctx.operation).slice(0, 100) : null,
     });
     Sentry.captureException(err);
   });
+}
+
+function captureContextForRequest(req, operation) {
+  return {
+    requestId: req?.requestId,
+    method: req?.method,
+    route: typeof req?.route?.path === 'string'
+      ? `${req?.baseUrl || ''}${req.route.path}`
+      : req?.originalUrl || req?.path,
+    operation,
+    handled: true,
+  };
+}
+
+function captureHandledException(err, req, operation) {
+  try {
+    return captureException(err, captureContextForRequest(req, operation));
+  } catch (captureError) {
+    console.warn('[Sentry] falha ao capturar exceção tratada:', captureError.message);
+    return null;
+  }
 }
 
 module.exports = {
@@ -148,6 +172,8 @@ module.exports = {
   sentryErrorHandler,
   captureException,
   sanitizeSentryEvent,
+  captureHandledException,
+  captureContextForRequest,
   sanitizeRoute,
   shouldCaptureException,
 };
