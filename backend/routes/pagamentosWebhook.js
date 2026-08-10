@@ -31,6 +31,7 @@ const rateLimit = require('express-rate-limit');
 const pagamentos = require('../services/pagamentos');
 const { AppError, ERROR_CODES } = require('../utils/appError');
 const { captureHandledException } = require('../utils/sentry');
+const { outcomeFromSteps, setSystemJobOutcome } = require('../services/systemJobOutcome');
 
 function paymentCronError(error, publicMessage) {
   return new AppError(error?.message || publicMessage, {
@@ -137,6 +138,7 @@ router.get('/cron/tick', async (req, res) => {
     console.error('[pagamentosWebhook] tick/saude:', e.message);
     captureHandledException(paymentCronError(e, 'Erro ao verificar a credencial de pagamento.'), req, 'payments.tick.credential_health');
   }
+  setSystemJobOutcome(res, outcomeFromSteps(out, { errorCode: ERROR_CODES.PAYMENT_CRON_FAILED }));
   res.json({ ok: true, ...out });
 });
 

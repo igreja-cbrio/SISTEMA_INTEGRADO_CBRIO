@@ -15,6 +15,7 @@ const compression = require('compression');
 const path = require('path');
 const { requestContext } = require('./middleware/requestContext');
 const { systemJobTracking } = require('./middleware/systemJobTracking');
+const { setSystemJobOutcome } = require('./services/systemJobOutcome');
 const { recordServerError } = require('./services/serverErrorTelemetry');
 const { createCorsOriginValidator } = require('./utils/corsPolicy');
 const { createErrorHandler, requestRoute } = require('./middleware/errorHandler');
@@ -315,6 +316,10 @@ app.use('/api/feedback', require('./routes/feedback'));
 // Inclui status do Supabase client pra diagnóstico de "Não autorizado" em prod
 app.get('/api/health', (req, res) => {
   const { supabase } = require('./utils/supabase');
+  setSystemJobOutcome(res, {
+    status: 'success', effectStatus: 'confirmed', outputCount: 1,
+    result: 'api_healthy',
+  });
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),

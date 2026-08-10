@@ -22,6 +22,7 @@ const { matchOfxPix, classificarBatch } = require('../services/financeiroClassif
 const { isAuthorizedCron } = require('../utils/cronAuth');
 const { AppError, ERROR_CODES } = require('../utils/appError');
 const { captureHandledException } = require('../utils/sentry');
+const { setSystemJobOutcome } = require('../services/systemJobOutcome');
 
 function bankSyncError(error, publicMessage) {
   return new AppError(error?.message || publicMessage, {
@@ -91,6 +92,9 @@ async function handlerSync(req, res, next) {
 
   // 1. Verifica config Santander
   if (!isConfigured()) {
+    setSystemJobOutcome(res, {
+      status: 'skipped', effectStatus: 'not_applicable', result: 'santander_nao_configurado',
+    });
     return res.json({
       ok: true,
       skipped: 'santander_nao_configurado',
@@ -121,6 +125,10 @@ async function handlerSync(req, res, next) {
     }
 
     if (!contaLocal) {
+      setSystemJobOutcome(res, {
+        status: 'failed', effectStatus: 'failed', errorCode: 'BANK_ACCOUNT_NOT_FOUND',
+        errorMessage: 'Conta Santander nao cadastrada no Financeiro.', result: 'conta_santander_nao_cadastrada',
+      });
       return res.json({
         ok: false,
         erro: 'conta_santander_nao_cadastrada',
@@ -132,6 +140,10 @@ async function handlerSync(req, res, next) {
     const { transacoes } = await extratoNormalizado({ inicio, fim, usarCache: false });
 
     if (transacoes.length === 0) {
+      setSystemJobOutcome(res, {
+        status: 'success', effectStatus: 'confirmed', inputCount: 0, outputCount: 0,
+        result: 'sem_transacoes_no_periodo',
+      });
       return res.json({
         ok: true,
         conta_id: contaLocal.id,
@@ -213,6 +225,15 @@ async function handlerSync(req, res, next) {
         concluido_em: new Date().toISOString(),
       }).eq('id', uploadRow.id);
     }
+
+    setSystemJobOutcome(res, erros > 0 ? {
+      status: 'warning', effectStatus: 'failed', inputCount: extrato.transacoes.length,
+      outputCount: inseridos, discardedCount: erros, errorCode: 'BANK_SYNC_PARTIAL',
+      errorMessage: `${erros} lancamentos nao foram inseridos.`, result: 'sincronizacao_parcial',
+    } : {
+      status: 'success', effectStatus: 'confirmed', inputCount: extrato.transacoes.length,
+      outputCount: inseridos, discardedCount: 0, result: 'sincronizacao_concluida',
+    });
 
     res.json({
       ok: true,
