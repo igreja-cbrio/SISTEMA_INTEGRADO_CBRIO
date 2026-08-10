@@ -137,7 +137,13 @@ export function usePublicPalette() {
 }
 
 // Botao flutuante de troca de tema · canto superior direito.
-export function PublicThemeToggle() {
+/**
+ * @param emFluxo quando a página JÁ reserva um lugar para o botão (um flex no
+ *   topo, por exemplo), ele entra no fluxo em vez de flutuar. Fixo dentro de um
+ *   slot reservado é o pior dos dois mundos: o slot fica vazio e o botão
+ *   sobrepõe o título. Default `false` = comportamento das outras páginas.
+ */
+export function PublicThemeToggle({ emFluxo = false }: { emFluxo?: boolean } = {}) {
   const { isDark, toggle, C } = usePublicTheme();
   return (
     <button
@@ -146,7 +152,9 @@ export function PublicThemeToggle() {
       aria-label={isDark ? 'Mudar para tema claro' : 'Mudar para tema escuro'}
       title={isDark ? 'Tema claro' : 'Tema escuro'}
       style={{
-        position: 'fixed', top: 16, right: 16, zIndex: 50,
+        ...(emFluxo
+          ? { position: 'relative' as const, flexShrink: 0 }
+          : { position: 'fixed' as const, top: 16, right: 16, zIndex: 50 }),
         width: 40, height: 40, borderRadius: 999,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         background: C.card, color: C.text,
