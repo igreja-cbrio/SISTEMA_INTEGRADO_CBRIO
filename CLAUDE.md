@@ -9426,6 +9426,53 @@ devolver a terminal deixa 7 vermelhos; tirar a checagem de família deixa 1.
 DESESTRUTURA `supabase` no topo) — o teste usa `createRequire` e troca o
 `module.exports` antes do require. Vale pra qualquer teste novo sobre o núcleo.
 
+## ⚠️⚠️ LEI · o embed `tabela(count)` do PostgREST NÃO filtra soft-delete (2026-08-10)
+
+Reportado pelo Matheus: *"mesmo eu apagando as inscrições de teste que fiz, tá
+ficando como 14 pessoas inscritas no evento do retiro; sendo que se eu clicar não
+tem ninguém, pois apaguei os testes."* Os dois números estavam na mesma tela do
+sistema: o **card da série** dizia "14 no total" e o **detalhe do mesmo evento**
+dizia 0.
+
+**O detalhe estava CERTO** (`contadoresEvento` faz COUNT com
+`.is('deleted_at', null)`). Quem contava linha apagada era o card, que lia
+`inscritos:inscricoes(count)` — e o `count` de um recurso EMBUTIDO conta a tabela
+inteira, inclusive o que o `app_soft_delete` marcou. Medido antes de tocar:
+**RETIRO = 14 linhas, TODAS soft-deletadas** (11 cancelada + 2 confirmada + 1
+recebida) ⇒ resposta certa é 0; **Celebra 2026 = 201 exibido contra 200 vivas**
+(inflado em 1, e ninguém tinha percebido); Patrocinadores 15 = 15 (correto por
+acaso, não tem linha apagada).
+
+- **`backend/services/inscricaoContagem.js`** é o leitor ÚNICO
+  (`contarInscritosVivos(db, eventoIds)`), usado pelos **3** endpoints que
+  contavam por embed: `GET /inscricoes/eventos` (o card da série),
+  `GET /eventos/:id` e `GET /inscricoes/app/eventos` (**o app do staff tinha o
+  MESMO bug**). O cliente `db` é injetado — é isso que torna a régua testável
+  sem banco.
+- ⚠️ **A RÉGUA É A MESMA do `contadoresEvento.inscritos`**: linha VIVA, com
+  **cancelada INCLUSA**. É o que faz card e detalhe passarem a bater. Excluir
+  cancelada só aqui recriaria, do outro lado, exatamente a divergência que este
+  arquivo fecha. Se a igreja decidir que cancelada não conta, muda **nos DOIS**.
+- ⚠️ **Filtro no recurso embutido foi descartado de propósito**: não deu pra
+  verificar neste ambiente se o `count` do embed respeita filtro do embed, e
+  contagem que a liderança lê pra decidir não pode depender de suposição sobre o
+  PostgREST. A contagem é explícita, seleciona **só `evento_id`** (nenhuma PII),
+  pagina de 1.000 (cap server-side trunca em silêncio) e faz `.in()` em lotes de
+  200 (lista longa estoura a URL).
+- ⚠️ **Erro do banco PROPAGA** em vez de virar 0: contagem errada é pior que erro
+  visível — o zero silencioso é justamente o que ninguém investiga.
+- **Varredura do resto do sistema**: os outros dois `(count)` de embed são
+  `devocional_itens(count)` e `vol_escala_template_itens(count)`, e **nenhuma
+  das duas tabelas tem `deleted_at`** (conferido no `information_schema`) — ali o
+  embed está correto. Nenhum falso alarme aberto.
+- Testes: `src/test/inscricaoContagem.test.ts` (9 casos, banco falsificado com os
+  números reais de produção). **Mutation-testado**: tirar o
+  `.is('deleted_at', null)` deixa **4 vermelhos**.
+
+⚠️ **Régua que fica pra qualquer contagem nova**: em tabela da whitelist de
+soft-delete, **`(count)` de embed é sempre errado**. Contar exige query própria
+com o filtro, ou `head: true` com `.is('deleted_at', null)`.
+
 ## ⚠️ Adapter do MERCADO PAGO (2026-08-06 · SEM migration)
 
 `providers/mercadopago.js` — o único arquivo que conhece a linguagem do MP.
