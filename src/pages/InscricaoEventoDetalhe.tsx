@@ -24,6 +24,12 @@ import { idadeEmAnos, faixaLabel, sexoLabel } from '../lib/faixaEtaria';
 // Máscara/validação de CPF do canônico do Contrato de Inscrição — não recriar.
 import { mascaraCpf, cpfValido, soDigitos } from '../lib/inscricao';
 import { imprimirListaInscritos, type Agrupamento } from '../lib/imprimirListaInscritos';
+// Filtro pelos campos extras do form-builder (ex.: "Em qual ministério você
+// serve?" do Celebra). ⚠️ As opções são o catálogo do evento ∪ o que está
+// respondido — o porquê está no cabeçalho da lib.
+import {
+  camposFiltraveis, aplicarFiltroCampos, contarFiltrosAtivos, SEM_RESPOSTA, TODOS,
+} from '../lib/filtroCampoInscricao';
 
 const METODO_LABEL: Record<string, string> = {
   pix: 'Pix', cartao: 'Cartão', boleto: 'Boleto', apple_pay: 'Apple Pay',
@@ -83,6 +89,8 @@ export default function InscricaoEventoDetalhe() {
   const [editOpen, setEditOpen] = useState(false);
   const [qrOpen, setQrOpen] = useState(false);
   const [busca, setBusca] = useState('');
+  // { [key do campo]: valor cru escolhido } · vazio = não filtra por ele
+  const [filtrosCampo, setFiltrosCampo] = useState<Record<string, string>>({});
   const [inscSel, setInscSel] = useState<any>(null);
   // Cards recolhidos (só a linha principal) — melhora a visualização com
   // muitas inscrições. Set com os ids recolhidos + botão recolher/expandir todos.
@@ -134,16 +142,25 @@ export default function InscricaoEventoDetalhe() {
     () => (ev?.inscritos || []).filter((i: any) => i.status !== 'cancelada'),
     [ev],
   );
+  // Filtros pelos campos extras do evento. As contagens de cada opção são do
+  // evento INTEIRO (não do recorte atual) de propósito: número que muda a cada
+  // letra digitada na busca não serve pra decidir por qual opção filtrar.
+  const camposFiltro = useMemo(
+    () => camposFiltraveis(ev?.campos || [], ev?.inscritos || []),
+    [ev],
+  );
+  const filtrosAtivos = contarFiltrosAtivos(filtrosCampo);
+
   const inscritos = useMemo(() => {
-    const lista = ev?.inscritos || [];
+    const porCampo = aplicarFiltroCampos(ev?.inscritos || [], filtrosCampo);
     const q = busca.trim().toLowerCase();
-    if (!q) return lista;
-    return lista.filter((i: any) =>
+    if (!q) return porCampo;
+    return porCampo.filter((i: any) =>
       String(i.nome_completo || '').toLowerCase().includes(q)
       || String(i.telefone || '').includes(q.replace(/\D/g, '') || ' ')
       || String(i.numero_sorte || '') === q,
     );
-  }, [ev, busca]);
+  }, [ev, busca, filtrosCampo]);
 
   const premiosGanhos = (inscricaoId: string) =>
     (ev?.sorteios || []).filter((s: any) => s.inscricao_id === inscricaoId);
@@ -218,7 +235,11 @@ export default function InscricaoEventoDetalhe() {
       'Pagamento', 'Forma', 'Nº da sorte', 'Status', 'Inscrição em',
       ...campos.map((c: any) => c.label),
     ];
-    const linhas = (ev.inscritos || []).map((i: any) => [
+    // ⚠️ Exporta o RECORTE VISÍVEL (filtro + busca), não a base inteira: o botão
+    // fica ao lado dos filtros e "exportar" logo depois de filtrar significa
+    // "leva isto". Quando há recorte, o nome do arquivo diz que é um recorte —
+    // planilha parcial com nome de completa é a que engana meses depois.
+    const linhas = inscritos.map((i: any) => [
       i.codigo || '', i.nome_completo, i.telefone || '', i.email || '',
       i.data_nascimento ? new Date(`${i.data_nascimento}T00:00:00`).toLocaleDateString('pt-BR') : '',
       idadeEmAnos(i.data_nascimento) ?? '',
@@ -236,7 +257,8 @@ export default function InscricaoEventoDetalhe() {
     const csv = '﻿' + [header, ...linhas].map(l => l.map(esc).join(';')).join('\r\n');
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
     const a = document.createElement('a');
-    a.href = url; a.download = `inscritos-${ev.slug}.csv`; a.click();
+    const recorte = (filtrosAtivos > 0 || busca.trim()) ? '-recorte' : '';
+    a.href = url; a.download = `inscritos-${ev.slug}${recorte}.csv`; a.click();
     URL.revokeObjectURL(url);
   }
 
@@ -294,7 +316,11 @@ export default function InscricaoEventoDetalhe() {
     {imprimirOpen && (
       <ImprimirListaDialog
         evento={ev}
-        inscritos={ev.inscritos || []}
+        // Imprime o recorte visível — filtrar por ministério e imprimir é
+        // justamente o caso de uso (a folha de um ministério só).
+        inscritos={inscritos}
+        recorte={filtrosAtivos > 0 || !!busca.trim()}
+        totalEvento={(ev.inscritos || []).length}
         onClose={() => setImprimirOpen(false)}
       />
     )}
@@ -492,17 +518,58 @@ export default function InscricaoEventoDetalhe() {
                   </Button>
                 );
               })()}
+              {/* Um filtro por campo de escolha do formulário deste evento. */}
+              {camposFiltro.map(c => (
+                <select
+                  key={c.key}
+                  value={filtrosCampo[c.key] ?? TODOS}
+                  onChange={e => setFiltrosCampo(prev => ({ ...prev, [c.key]: e.target.value }))}
+                  title={c.label}
+                  aria-label={c.label}
+                  className={`h-8 rounded-md border bg-[var(--cbrio-input-bg)] text-sm px-2 max-w-[15rem] ${
+                    (filtrosCampo[c.key] ?? TODOS) !== TODOS ? 'border-primary text-primary' : 'border-border'
+                  }`}
+                >
+                  <option value={TODOS}>{c.label} · todos</option>
+                  {c.opcoes.map(o => (
+                    <option key={o.valor} value={o.valor}>
+                      {o.rotulo} ({o.total}){o.foraDoCatalogo ? ' · fora da lista' : ''}
+                    </option>
+                  ))}
+                  {c.semResposta > 0 && (
+                    <option value={SEM_RESPOSTA}>Sem resposta ({c.semResposta})</option>
+                  )}
+                </select>
+              ))}
+              {filtrosAtivos > 0 && (
+                <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={() => setFiltrosCampo({})}>
+                  Limpar {filtrosAtivos === 1 ? 'filtro' : 'filtros'}
+                </Button>
+              )}
               <div className="relative">
                 <Search className="h-3.5 w-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
                 <Input placeholder="Buscar por nome, telefone ou nº" value={busca} onChange={e => setBusca(e.target.value)} className="h-8 pl-8 text-sm w-64 max-w-full" />
               </div>
             </div>
           )}
+          {/* Quantos o recorte atual mostra — sem isso o filtro muda a lista e
+              não diz o tamanho do resultado, que é o número que a pessoa quer. */}
+          {(filtrosAtivos > 0 || busca.trim()) && (ev.inscritos || []).length > 0 && (
+            <p className="text-xs text-muted-foreground">
+              Mostrando <strong className="text-foreground">{inscritos.length}</strong> de {(ev.inscritos || []).length} inscritos.
+            </p>
+          )}
         </div>
         {(ev.inscritos || []).length === 0 ? (
           <p className="text-sm text-muted-foreground py-4 text-center">Ninguém se inscreveu ainda.</p>
         ) : inscritos.length === 0 ? (
-          <p className="text-sm text-muted-foreground py-4 text-center">Nenhum inscrito bate com a busca.</p>
+          <p className="text-sm text-muted-foreground py-4 text-center">
+            {filtrosAtivos > 0 && busca.trim()
+              ? 'Nenhum inscrito bate com o filtro e a busca.'
+              : filtrosAtivos > 0
+                ? 'Nenhum inscrito neste filtro.'
+                : 'Nenhum inscrito bate com a busca.'}
+          </p>
         ) : (
           <div className="space-y-2">
             {inscritos.map((i: any) => {
@@ -660,8 +727,8 @@ const AGRUPAMENTOS: { key: Agrupamento; label: string; dica: string }[] = [
   { key: 'nenhum', label: 'Sem agrupar', dica: 'Uma lista só, em ordem alfabética' },
 ];
 
-function ImprimirListaDialog({ evento, inscritos, onClose }: {
-  evento: any; inscritos: any[]; onClose: () => void;
+function ImprimirListaDialog({ evento, inscritos, recorte, totalEvento, onClose }: {
+  evento: any; inscritos: any[]; recorte?: boolean; totalEvento?: number; onClose: () => void;
 }) {
   const [ag, setAg] = useState<Agrupamento>('faixa');
   const [contato, setContato] = useState(false);
@@ -728,6 +795,13 @@ function ImprimirListaDialog({ evento, inscritos, onClose }: {
 
           <div className="rounded-lg border border-border bg-foreground/[0.03] p-2.5 text-[12px] space-y-1">
             <div><strong>{total}</strong> participante{total === 1 ? '' : 's'} na lista.</div>
+            {recorte && (
+              <div className="rounded-md border border-[var(--warning,#E0A24E)]/40 bg-[var(--warning,#E0A24E)]/10 px-2 py-1.5 text-[11px]">
+                Esta folha é o <strong>recorte que está na tela</strong> (filtro/busca ativos)
+                {typeof totalEvento === 'number' ? ` — o evento tem ${totalEvento} inscritos no total` : ''}.
+                Limpe o filtro antes de imprimir se quiser a lista completa.
+              </div>
+            )}
             {semNascimento > 0 && ag === 'faixa' && (
               // Sem nascimento não há faixa — dizer isso antes evita a pessoa
               // achar que a folha veio incompleta.
