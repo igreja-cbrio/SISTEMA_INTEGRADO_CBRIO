@@ -921,8 +921,15 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
         <Button variant="outline" onClick={() => setOrdenarAberto(o => !o)}>
           Ordenar {ordenacao !== 'padrao' ? `· ${ORDENACOES_BENS.find(o => o.key === ordenacao)?.label}` : ''} {ordenarAberto ? '▴' : '▾'}
         </Button>
-        <Button variant="outline" onClick={() => exportarBensCSV(bensOrdenados)}>Exportar CSV</Button>
-        <Button variant="outline" onClick={() => exportarBensPDF(bensOrdenados)}>Exportar PDF</Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline">Exportar <ChevronDown style={{ width: 14, height: 14, marginLeft: 4 }} /></Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={() => exportarBensCSV(bensOrdenados)}>Exportar CSV</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => exportarBensPDF(bensOrdenados)}>Exportar PDF</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
         {isDiretor && (
           <div style={{ marginLeft: 'auto' }}>
             <DropdownMenu>
