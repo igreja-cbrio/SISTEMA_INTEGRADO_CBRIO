@@ -83,6 +83,33 @@ const GERADOR = semComentarios(
   readFileSync(resolve(__dirname, '../../backend/services/notificacaoGenerator.js'), 'utf-8'),
 );
 
+/**
+ * Extrai cada chamada `notificar({ ... })` do arquivo, casando as chaves. Serve
+ * pra perguntar de UM aviso específico "ele tem destinatário nomeado?" — coisa
+ * que um regex sobre o arquivo inteiro não responde.
+ */
+function chamadasNotificar(src: string): string[] {
+  const blocos: string[] = [];
+  const marca = 'notificar({';
+  let i = src.indexOf(marca);
+  while (i !== -1) {
+    let nivel = 0;
+    let fim = i + marca.length - 1; // aponta pro `{`
+    for (let j = fim; j < src.length; j += 1) {
+      if (src[j] === '{') nivel += 1;
+      else if (src[j] === '}') {
+        nivel -= 1;
+        if (nivel === 0) { fim = j; break; }
+      }
+    }
+    blocos.push(src.slice(i, fim + 1));
+    i = src.indexOf(marca, fim);
+  }
+  return blocos;
+}
+
+const CHAMADAS = chamadasNotificar(GERADOR);
+
 const AGREGADOS = [
   { tipo: 'grupo_sem_encontro', chave: 'grupo_sem_encontro' },
   { tipo: 'membro_sem_grupo', chave: 'membro_sem_grupo' },
@@ -101,15 +128,49 @@ describe('geradores periódicos · 1 aviso agregado, não 1 por item', () => {
       expect(GERADOR).toContain(`chaveDedup: '${chave}'`);
     });
 
-    it(`⚠️ MUTATION-TEST: ${tipo} não volta a deduplicar por item`, () => {
-      // Voltar pra `chaveDedup: \`${chave}_${'${'}item.id}\`` deixa isto vermelho.
+    it(`⚠️ MUTATION-TEST: o aviso amplo de ${tipo} não volta a deduplicar por item`, () => {
+      // Trocar a chave estável do agregado por `\`${chave}_${'${'}item.id}\``
+      // deixa isto vermelho. A checagem é no bloco AMPLO (sem `targetIds`),
+      // porque no aviso dirigido a chave por item é o comportamento correto.
       const interpolaId = new RegExp('chaveDedup:\\s*`[^`]*' + chave, 'i');
-      expect(GERADOR).not.toMatch(interpolaId);
+      const amplos = CHAMADAS.filter(c => (
+        c.includes(`tipo: '${tipo}'`) && !/targetIds:/.test(c)
+      ));
+      for (const bloco of amplos) expect(bloco).not.toMatch(interpolaId);
     });
 
-    it(`${tipo} é notificado UMA vez no arquivo`, () => {
-      const ocorrencias = GERADOR.split(`tipo: '${tipo}'`).length - 1;
-      expect(ocorrencias).toBe(1);
+    // ⚠️⚠️ A INVARIANTE FOI REFINADA EM 10/08/2026, não afrouxada — leia antes
+    // de "consertar" isto.
+    //
+    // A versão anterior exigia UMA ocorrência de cada tipo no arquivo. O alvo
+    // dela era certo (volume), mas a régua pegava junto uma coisa legítima: o
+    // aviso POR ITEM mandado ao DONO do item. O que produziu 9.782 avisos não
+    // lidos não foi "um por item" — foi "um por item × as ~16 pessoas do
+    // fallback do módulo". Um por grupo indo pro líder daquele grupo é bounded
+    // pelo número de líderes e é justamente o que o Matheus pediu ("as pessoas
+    // só recebem notificação de grupos se for do seu grupo").
+    //
+    // Então a regra que vale é: **por item só com `targetIds`**. Quem cai no
+    // público do módulo TEM que ser agregado. Isto é mais forte que a régua
+    // antiga em uma dimensão — vale pros quatro tipos, e não só pela forma da
+    // chave.
+    it(`${tipo} · aviso por item existe só com destinatário nomeado`, () => {
+      const doTipo = CHAMADAS.filter(c => c.includes(`tipo: '${tipo}'`));
+      expect(doTipo.length).toBeGreaterThan(0);
+      for (const bloco of doTipo) {
+        const porItem = /chaveDedup:\s*`/.test(bloco);
+        if (porItem) {
+          expect(bloco, `${tipo}: aviso por item sem targetIds volta a explodir no fallback do módulo`)
+            .toMatch(/targetIds:/);
+        }
+      }
+    });
+
+    it(`${tipo} · o aviso agregado (sem targetIds) é único`, () => {
+      const amplos = CHAMADAS.filter(c => (
+        c.includes(`tipo: '${tipo}'`) && !/targetIds:/.test(c)
+      ));
+      expect(amplos.length).toBe(1);
     });
   }
 

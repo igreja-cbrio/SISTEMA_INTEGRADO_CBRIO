@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
+const { donosDoGrupo } = require('../services/gruposDestinatarios');
 const { uploadModuleFile, SHAREPOINT_CONFIGURED } = require('../services/storageService');
 const { acharMembroGuardado, ehNomeDerivadoDeEmail } = require('../services/membroMatch');
 const { registrarObservacaoSegura } = require('../services/identidadeProgressiva');
@@ -757,16 +758,23 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
         }
         const { data: pedido } = await supabase.from('mem_grupo_pedidos').insert(pedidoBase).select('id').single();
         if (pedido) {
-          // Notifica o(s) líder(es) do grupo
+          // ⚠️ O comentário aqui dizia "Notifica o(s) líder(es) do grupo" e o
+          // código não mandava target NENHUM — ia 100% pro fan-out de ~16
+          // admins, e o líder nunca era avisado. Bug de intenção, não de
+          // digitação: o comentário descrevia o que se queria, não o que fazia.
           const { data: grupo } = await supabase.from('mem_grupos').select('nome').eq('id', grupo_id).maybeSingle();
-          notificar({
-            modulo: 'grupos',
-            tipo: 'pedido_grupo',
-            titulo: `Novo pedido para ${grupo?.nome || 'grupo'}`,
-            mensagem: `${nome.trim()} pediu para entrar no grupo via cadastro de membresia.`,
-            link: '/grupos/pedidos',
-            severidade: 'aviso',
-            chaveDedup: `pedido_grupo_${pedido.id}`,
+          donosDoGrupo(grupo_id).then((donos) => {
+            if (!donos.length) return;
+            return notificar({
+              modulo: 'grupos',
+              tipo: 'pedido_grupo',
+              titulo: `Novo pedido para ${grupo?.nome || 'grupo'}`,
+              mensagem: `${nome.trim()} pediu para entrar no grupo via cadastro de membresia.`,
+              link: '/grupos/pedidos',
+              severidade: 'aviso',
+              chaveDedup: `pedido_grupo_${pedido.id}`,
+              targetIds: donos,
+            });
           }).catch(err => console.error('[PUBLIC CADASTRO pedido grupo notify]', err.message));
         }
       } catch (pedidoErr) {

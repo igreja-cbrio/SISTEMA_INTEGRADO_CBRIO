@@ -64,12 +64,41 @@ async function resolverDestinatarios(modulo) {
 
   if (regras?.length) return regras.map(r => r.profile_id);
 
-  // Fallback: admin + diretor
+  // Fallback: admin + diretor.
+  //
+  // ⚠️⚠️ CONTA DESATIVADA E CONTA-ROBÔ FICAM FORA (10/08/2026). As contas de
+  // agente (`agente.rh@`, `agente.financeiro@`, …) têm role `diretor` porque
+  // precisam do bypass de autorização para trabalhar — e por isso recebiam o
+  // fan-out inteiro. Medido só no módulo `grupos`, em 21 dias: **4.762 das
+  // 10.914 notificações foram escritas para robôs**, que nunca abrem o sino.
+  // Não é só desperdício: infla a fila, atrasa o insert de quem é gente
+  // (`CHUNK` de 8 por vez) e mente na contagem de "não lidas".
+  //
+  // ⚠️ O filtro é a COLUNA `profiles.is_servico` (migration 20260810180000), não
+  // um padrão de e-mail: `agente.%` é convenção de nome, e regra presa a nome de
+  // e-mail quebra no dia em que alguém batizar um robô de outro jeito.
+  //
+  // ⚠️⚠️ DEGRADA SOZINHO SE A COLUNA AINDA NÃO EXISTIR (deploy em 2 etapas).
+  // Pedir coluna inexistente faz o PostgREST recusar a query INTEIRA — e aqui
+  // isso não deixaria "algumas pessoas de fora", deixaria TODO MUNDO: nenhuma
+  // notificação do sistema seria criada, em módulo nenhum, até a migration
+  // rodar. É a lição do `event_id` (telemetria morta 5 dias em silêncio).
+  const comFlag = await supabase
+    .from('profiles')
+    .select('id, is_servico')
+    .in('role', ['admin', 'diretor'])
+    .eq('active', true);
+
+  if (!comFlag.error) {
+    return (comFlag.data || []).filter(a => a.is_servico !== true).map(a => a.id);
+  }
+
+  console.warn('[notificar] sem a coluna is_servico — usando o fallback antigo:', comFlag.error.message);
   const { data: admins } = await supabase
     .from('profiles')
     .select('id')
-    .in('role', ['admin', 'diretor']);
-
+    .in('role', ['admin', 'diretor'])
+    .eq('active', true);
   return (admins || []).map(a => a.id);
 }
 

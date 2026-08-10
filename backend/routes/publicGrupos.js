@@ -397,6 +397,7 @@ router.get('/lideres/:liderId/grupos', async (req, res) => {
 
 // ── Inscrição publica em grupo (POST sem auth) ──
 const { notificar } = require('../services/notificar');
+const { donosDoGrupo } = require('../services/gruposDestinatarios');
 
 function soDigitos(v) { return (v || '').toString().replace(/\D+/g, ''); }
 
@@ -1161,18 +1162,17 @@ router.post('/inscrever', async (req, res) => {
         }
       } catch (err) { console.error('[public grupos inscrever wpp]', err.message); }
 
-      // Notificação in-app da coordenação: fica fire-and-forget de propósito.
-      // Sem regra configurada em notificacao_regras, o fallback escreve pra ~16
-      // admins (1 count + 1 insert cada) — não vale segurar a resposta da pessoa
-      // por isso, e a coordenação tem a Caixa de entrada como caminho garantido.
+      // Notificação in-app de quem RESPONDE POR ESTE GRUPO (líder + supervisor),
+      // fire-and-forget de propósito — não vale segurar a resposta da pessoa que
+      // está preenchendo o formulário.
+      // ⚠️ Era aqui que estava o comentário admitindo o problema: "sem regra
+      // configurada em notificacao_regras, o fallback escreve pra ~16 admins".
+      // Agora não escreve: sem dono com conta de sistema o aviso não sai, porque
+      // o líder já recebe o link do WhatsApp e a coordenação vê no resumo diário.
       (async () => {
         try {
-          let liderAuthUserId = null;
-          if (grupo.lider_id) {
-            const { data: liderProf } = await supabase.from('vol_profiles')
-              .select('auth_user_id').eq('membresia_id', grupo.lider_id).maybeSingle();
-            liderAuthUserId = liderProf?.auth_user_id || null;
-          }
+          const donos = await donosDoGrupo(grupo.id);
+          if (!donos.length) return;
           await notificar({
             modulo: 'grupos',
             tipo: 'pedido_grupo',
@@ -1183,7 +1183,7 @@ router.post('/inscrever', async (req, res) => {
             link: '/grupos',
             severidade: 'aviso',
             chaveDedup: `pedido_grupo_${criados[0].pedidoId}`,
-            extraTargetIds: liderAuthUserId ? [liderAuthUserId] : [],
+            targetIds: donos,
           });
         } catch (err) { console.error('[public grupos inscrever notify]', err.message); }
       })();

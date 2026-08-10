@@ -1,4 +1,5 @@
 const { supabase } = require('../utils/supabase');
+const { donosDeVariosGrupos } = require('./gruposDestinatarios');
 const { notificar } = require('./notificar');
 const { calcularDepreciacao } = require('../utils/patrimonioDepreciacao');
 // ⚠️ Aviso periódico é AGREGADO (1 por tipo), nunca 1 por item — a lei, os
@@ -932,6 +933,7 @@ async function gerarNotificacoesGrupos() {
 
   if (grupos?.length) {
     const grupoIds = grupos.map(g => g.id);
+    const donosPorGrupo = await donosDeVariosGrupos(grupoIds);
     const { data: encontros } = await supabase
       .from('mem_grupo_encontros')
       .select('grupo_id, data')
@@ -955,6 +957,34 @@ async function gerarNotificacoesGrupos() {
         ? Math.floor((now - new Date(ultimo + 'T12:00:00').getTime()) / 86400000)
         : 999;
       if (dias < limiteDias) continue;
+
+      // ⚠️⚠️ "SEU grupo está sem encontro" É COBRANÇA DO LÍDER (10/08/2026).
+      // O agregado abaixo resolveu o VOLUME, mas manteve o destinatário errado:
+      // a lista ia pro fan-out do módulo e o líder — a única pessoa que pode
+      // registrar o encontro — não era avisado do próprio grupo. Quando existe
+      // dono com conta de sistema, ele recebe o aviso DELE, por grupo, com dedup
+      // por janela de prazo. Ver services/gruposDestinatarios.js.
+      const donos = donosPorGrupo.get(g.id) || [];
+      if (donos.length) {
+        const lider = g.mem_membros?.nome ? ` (líder: ${g.mem_membros.nome})` : '';
+        const janela = Math.floor(dias / limiteDias);
+        count += await notificar({
+          modulo: 'grupos',
+          tipo: 'grupo_sem_encontro',
+          titulo: `Grupo sem encontro — ${g.nome}`,
+          mensagem: ultimo
+            ? `${g.nome}${lider} está sem encontro registrado há ${dias} dias.`
+            : `${g.nome}${lider} ainda não teve encontro registrado.`,
+          link: '/grupos',
+          severidade: dias >= limiteDias * 2 ? 'urgente' : 'aviso',
+          chaveDedup: `grupo_sem_encontro_${g.id}_${janela}`,
+          targetIds: donos,
+        });
+        continue;
+      }
+
+      // Sem dono com conta: entra no agregado da coordenação, que é a única
+      // pessoa que pode cobrar esse líder por fora.
       atrasados.push({
         nome: g.nome,
         dias,
@@ -1039,6 +1069,55 @@ async function gerarNotificacoesGrupos() {
         link: '/grupos',
         severidade: antigos ? 'aviso' : 'info',
         chaveDedup: 'membro_sem_grupo',
+      });
+    }
+  }
+
+  // ═════════════════════════════════════════════════════════════════════════
+  //  PEDIDOS QUE ESPERAM UM LÍDER SEM CONTA — o resumo diário da coordenação
+  //
+  //  Decisão do Matheus (10/08/2026), ao ver que 86 dos 102 grupos ativos têm
+  //  líder SEM conta de sistema: nesses casos o aviso in-app não tem dono, e em
+  //  vez de um aviso por pedido pra todo mundo com cargo alto, vai **um resumo
+  //  por dia** pra coordenação de grupos.
+  //
+  //  ⚠️ Não é o canal principal e não deve virar um: o líder recebe o pedido por
+  //  WhatsApp com link de aprovação, e foi por lá que saíram 368 das 388
+  //  decisões dos últimos 90 dias. O resumo existe pra uma fila parada não ficar
+  //  invisível — não pra alguém aprovar no lugar do líder.
+  //
+  //  Sem `targetIds` de propósito: quem recebe sai de `notificacao_regras`
+  //  (módulo `grupos`), igual aos outros 13 módulos. A lista é DADO, não código.
+  // ═════════════════════════════════════════════════════════════════════════
+  const { data: pendentes } = await supabase
+    .from('mem_grupo_pedidos')
+    .select('id, grupo_id, created_at')
+    .eq('status', 'pendente')
+    .is('deleted_at', null)
+    .not('grupo_id', 'is', null);
+
+  if (pendentes?.length) {
+    const donosPend = await donosDeVariosGrupos([...new Set(pendentes.map(p => p.grupo_id))]);
+    // Só o que NÃO tem dono avisado: pedido em grupo com líder no sistema já
+    // gerou notificação dirigida na hora, e contar de novo aqui seria cobrar
+    // duas vezes a mesma coisa.
+    const orfaos = pendentes.filter(p => !(donosPend.get(p.grupo_id) || []).length);
+    if (orfaos.length) {
+      const diasDoMaisAntigo = Math.max(...orfaos.map(p => (
+        Math.floor((now - new Date(p.created_at).getTime()) / 86400000)
+      )));
+      const gruposDistintos = new Set(orfaos.map(p => p.grupo_id)).size;
+      count += await notificar({
+        modulo: 'grupos',
+        tipo: 'pedidos_aguardando_lider',
+        titulo: `${orfaos.length} ${plural(orfaos.length, 'pedido', 'pedidos')} de grupo aguardando o líder`,
+        mensagem: `${orfaos.length} ${plural(orfaos.length, 'pedido pendente', 'pedidos pendentes')} em `
+          + `${gruposDistintos} ${plural(gruposDistintos, 'grupo', 'grupos')} cujo líder não tem conta no `
+          + `sistema (ele é avisado pelo WhatsApp). O mais antigo espera há `
+          + `${diasDoMaisAntigo} ${plural(diasDoMaisAntigo, 'dia', 'dias')}.`,
+        link: '/grupos?tab=entrada',
+        severidade: diasDoMaisAntigo >= 7 ? 'aviso' : 'info',
+        chaveDedup: 'pedidos_aguardando_lider',
       });
     }
   }
