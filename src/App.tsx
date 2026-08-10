@@ -50,6 +50,15 @@ const queryClient = new QueryClient({
 //   Webpack     : "Loading chunk X failed" / "ChunkLoadError"
 const CHUNK_ERROR_RE = /Loading chunk|ChunkLoadError|Failed to fetch dynamically imported module|error loading dynamically imported module|Importing a module script failed|valid JavaScript MIME type|Expected a JavaScript(?: \w+)? module script/i;
 
+// Atalho do recarregamento forçado, por plataforma. `navigator.platform` está
+// depreciado mas é o único sinal disponível no navegador antigo que justamente
+// tende a cair aqui; qualquer coisa que não seja Mac cai no Ctrl.
+function atalhoRecarregarForcado() {
+  const mac = typeof navigator !== 'undefined'
+    && /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent || '');
+  return mac ? 'Cmd + Shift + R' : 'Ctrl + Shift + R';
+}
+
 // Conta tentativas via querystring (sobrevive ao reload, diferente de
 // sessionStorage que ficava preso entre deploys consecutivos e impedia
 // re-tentativas legítimas).
@@ -151,6 +160,18 @@ class ErrorBoundary extends Component<
               >
                 {this.state.updating ? 'Atualizando…' : 'Tentar atualizar agora'}
               </button>
+              {/* ⚠️ Quando as tentativas automáticas ACABARAM, "tente novamente" não
+                  é instrução suficiente — foi o que prendeu o Matheus em 10/08/2026:
+                  saíram 9 deploys de produção em 21 minutos (várias PRs mergeadas em
+                  sequência), e cada recarga suave caía num alvo em movimento. O
+                  recarregamento forçado ignora o cache do navegador e é o caminho que
+                  sempre sai dessa. Só aparece depois de o automático falhar, pra não
+                  ensinar atalho de teclado a quem não precisa. */}
+              {!this.state.updating && (
+                <p style={{ color: '#888', fontSize: 13, maxWidth: 480 }}>
+                  Se voltar a falhar, force o recarregamento: <b>{atalhoRecarregarForcado()}</b>.
+                </p>
+              )}
               <p style={{ color: '#aaa', fontSize: 12, marginTop: 8 }}>
                 Alterações ainda não salvas nesta página podem ser perdidas.
               </p>
