@@ -1181,11 +1181,25 @@ router.get('/censo', authApp, limiterNormal, async (req, res) => {
     const membro = await resolveMembroApp(req).catch(() => null);
     if (!membro) return res.json({ pesquisa: null, motivo: 'sem_cadastro' });
 
-    const { data: pesquisa } = await supabase
+    // ⚠️⚠️ A coluna é `created_at`. Ordenar por `criado_em` (que existe na VIEW
+    // do cuidado, não nesta tabela) faz o PostgREST recusar a consulta INTEIRA —
+    // e o `data` vem nulo. Foi assim que o app disse "Nenhum censo aberto" com o
+    // censo aberto e 43 perguntas no ar, por dias.
+    //
+    // ⚠️⚠️ E o motivo de ninguém notar: o erro era DESCARTADO. Falha de consulta
+    // não é ausência de dado — é a mesma lição do Cérebro (loader que engolia o
+    // `error` e o chamador concluía "entidade não encontrada"). Agora a falha
+    // tem motivo PRÓPRIO e vai pro log: "nenhuma_aberta" volta a significar
+    // exatamente isso.
+    const { data: pesquisa, error: erroPesquisa } = await supabase
       .from('cen_pesquisa')
       .select('id, slug, titulo, subtitulo, fecha_em')
       .eq('status', 'aberta').is('deleted_at', null)
-      .order('criado_em', { ascending: false }).limit(1).maybeSingle();
+      .order('created_at', { ascending: false }).limit(1).maybeSingle();
+    if (erroPesquisa) {
+      console.error('[APP] censo · consulta falhou:', erroPesquisa.message);
+      return res.status(500).json({ pesquisa: null, motivo: 'erro_consulta' });
+    }
     if (!pesquisa) return res.json({ pesquisa: null, motivo: 'nenhuma_aberta' });
 
     const ja = await acharRespostaDaPessoa({
