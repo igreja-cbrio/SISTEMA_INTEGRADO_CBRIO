@@ -1,5 +1,8 @@
 const router = require('express').Router();
 const multer = require('multer');
+const {
+  planoDaPagina, montarResposta, COLUNAS_LISTA,
+} = require('../utils/membrosPagina');
 const { authenticate, authorize, authorizeModule, getEffectiveLevel } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { uploadModuleFile, SHAREPOINT_CONFIGURED } = require('../services/storageService');
@@ -523,6 +526,52 @@ router.get('/membros', authorizeModule('membros', 1), async (req, res) => {
 });
 
 // GET /api/membresia/membros/:id (detalhe com trilha e histórico)
+// ══════════════════════════════════════════════════════════════════════════
+//  GET /membros/pagina · lista PAGINADA e ORDENÁVEL (o app do staff usa esta)
+// ══════════════════════════════════════════════════════════════════════════
+//
+// Por que não reusar `GET /membros`: ele devolve a base INTEIRA (pagina por
+// dentro até 20 mil) e ordena só A→Z. Medido em 10/08: 4.056 pessoas ativas,
+// 853 kB de dados crus — em JSON, com todas as colunas e o embed de família,
+// passa de 2 MB. É aceitável no navegador do ERP e é ruim no celular, a cada
+// abertura de tela, em rede de rua.
+//
+// Duas diferenças que importam:
+//  · PAGINA de verdade (range no banco), com `total` para a tela saber onde está.
+//  · ORDEM escolhível (A→Z ou Z→A), pedido do Matheus. O endpoint antigo tem a
+//    ordem fixa no código.
+//
+// ⚠️ O filtro por PAPEL não entra aqui de propósito. Ele depende de cruzar
+// `vw_pessoas_papeis` e é aplicado DEPOIS, em memória — com paginação no banco,
+// filtrar depois devolveria páginas de tamanho irregular e um `total` mentiroso
+// (a conta viria antes do filtro). Preferi não oferecer a não oferecer errado;
+// os filtros daqui são todos resolvidos no banco.
+router.get('/membros/pagina', authorizeModule('membros', 1), async (req, res) => {
+  try {
+    const p = planoDaPagina(req.query);
+
+    let q = supabase.from('mem_membros')
+      .select(COLUNAS_LISTA, { count: 'exact' })
+      .eq('active', true).is('deleted_at', null);
+
+    if (p.status) q = q.eq('status', p.status);
+    if (p.semCpf) q = q.is('cpf', null);
+    if (p.faixa?.gt) q = q.gt('data_nascimento', p.faixa.gt);
+    if (p.faixa?.lte) q = q.lte('data_nascimento', p.faixa.lte);
+    for (const t of p.tokens) q = q.ilike('nome', `%${t}%`);
+
+    const { data, error, count } = await q
+      .order('nome', { ascending: p.ascending })
+      .range(p.range[0], p.range[1]);
+    if (error) throw error;
+
+    res.json(montarResposta(data, { total: count, offset: p.offset, limite: p.limite }));
+  } catch (e) {
+    console.error('membresia/membros/pagina:', e.message);
+    res.status(500).json({ error: 'Erro ao buscar membros' });
+  }
+});
+
 router.get('/membros/:id', authorizeModule('membros', 1), async (req, res) => {
   try {
     const id = req.params.id;
