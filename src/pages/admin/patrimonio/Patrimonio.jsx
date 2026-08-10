@@ -423,7 +423,11 @@ export default function Patrimonio() {
           onReload={() => { loadBens(); loadDash(); loadIndicadores(); }}
         />
       )}
-      {tab === 2 && <CatLocTab categorias={categorias} localizacoes={localizacoes} locOptions={locOptions} newCat={newCat} setNewCat={setNewCat} addCat={addCat} removeCat={removeCat} updateCat={updateCat} addLoc={addLoc} removeLoc={removeLoc} updateLoc={updateLoc} isDiretor={podeEditar} podeExcluir={podeExcluir} />}
+      {tab === 2 && (
+        <CatLocTab categorias={categorias} localizacoes={localizacoes} locOptions={locOptions} newCat={newCat} setNewCat={setNewCat} addCat={addCat} removeCat={removeCat} updateCat={updateCat} addLoc={addLoc} removeLoc={removeLoc} updateLoc={updateLoc} isDiretor={podeEditar} podeExcluir={podeExcluir}
+          onIrParaBens={(localizacaoId) => { setFiltroStatus(''); setFiltroCat(''); setFiltroLoc(localizacaoId); setTab(1); }}
+        />
+      )}
       {tab === 3 && (
         <RevisaoTab ciclos={revisaoCiclos} indicadores={revisaoIndic}
           onNovoCiclo={() => setModalNovoCiclo(true)} onAbrirConvocacao={abrirConvocacao}
@@ -1026,13 +1030,20 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
 
 // Nó da árvore de localizações (expandir/colapsar filhas · pedido do usuário
 // 2026-07-29: "clique na localização-pai expande pra mostrar as salas").
-function LocTreeNode({ node, depth, expanded, toggleExpanded, isDiretor, podeExcluir, onEdit, removeLoc }) {
+// Localização FINAL (sem filhas) navega pra aba Bens já filtrada nela — pedido
+// do usuário 2026-08-08: achar rápido o que tem numa sala, sem passar pelo
+// select de filtro manual.
+function LocTreeNode({ node, depth, expanded, toggleExpanded, isDiretor, podeExcluir, onEdit, removeLoc, onIrParaBens }) {
   const temFilhas = node.children.length > 0;
   const aberto = expanded.has(node.id);
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', paddingLeft: depth * 18, borderBottom: `1px solid ${C.border}` }}>
-        <span style={{ fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 4, cursor: temFilhas ? 'pointer' : 'default' }} onClick={() => temFilhas && toggleExpanded(node.id)}>
+        <span
+          style={{ fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}
+          title={temFilhas ? undefined : 'Ver bens desta localização'}
+          onClick={() => (temFilhas ? toggleExpanded(node.id) : onIrParaBens?.(node.id))}
+        >
           {temFilhas ? <span style={{ width: 14, display: 'inline-block', fontSize: 11, color: C.text3 }}>{aberto ? '▾' : '▸'}</span> : <MapPin style={{ width: 14, height: 14, color: '#00B39D' }} />}
           {node.nome}
           {temFilhas && <span style={{ fontSize: 11, color: C.text3 }}>({node.children.length})</span>}
@@ -1045,13 +1056,13 @@ function LocTreeNode({ node, depth, expanded, toggleExpanded, isDiretor, podeExc
         )}
       </div>
       {temFilhas && aberto && node.children.map(c => (
-        <LocTreeNode key={c.id} node={c} depth={depth + 1} expanded={expanded} toggleExpanded={toggleExpanded} isDiretor={isDiretor} podeExcluir={podeExcluir} onEdit={onEdit} removeLoc={removeLoc} />
+        <LocTreeNode key={c.id} node={c} depth={depth + 1} expanded={expanded} toggleExpanded={toggleExpanded} isDiretor={isDiretor} podeExcluir={podeExcluir} onEdit={onEdit} removeLoc={removeLoc} onIrParaBens={onIrParaBens} />
       ))}
     </div>
   );
 }
 
-function CatLocTab({ categorias, localizacoes, locOptions, newCat, setNewCat, addCat, removeCat, updateCat, addLoc, removeLoc, updateLoc, isDiretor, podeExcluir }) {
+function CatLocTab({ categorias, localizacoes, locOptions, newCat, setNewCat, addCat, removeCat, updateCat, addLoc, removeLoc, updateLoc, isDiretor, podeExcluir, onIrParaBens }) {
   const [novoNomeLoc, setNovoNomeLoc] = useState('');
   const [novoPaiLoc, setNovoPaiLoc] = useState('');
   const [editLoc, setEditLoc] = useState(null); // { id, nome, pai_id }
@@ -1119,7 +1130,7 @@ function CatLocTab({ categorias, localizacoes, locOptions, newCat, setNewCat, ad
           )}
           {localizacoes.length === 0 && <div style={styles.empty}>Nenhuma localização</div>}
           {tree.map(node => (
-            <LocTreeNode key={node.id} node={node} depth={0} expanded={expanded} toggleExpanded={toggleExpanded} isDiretor={isDiretor} podeExcluir={podeExcluir} onEdit={setEditLoc} removeLoc={removeLoc} />
+            <LocTreeNode key={node.id} node={node} depth={0} expanded={expanded} toggleExpanded={toggleExpanded} isDiretor={isDiretor} podeExcluir={podeExcluir} onEdit={setEditLoc} removeLoc={removeLoc} onIrParaBens={onIrParaBens} />
           ))}
         </div>
       </div>
