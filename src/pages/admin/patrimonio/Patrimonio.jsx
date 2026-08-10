@@ -993,10 +993,10 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
             <Button variant="ghost" size="xs" onClick={selecionarTodosFiltrados}>Selecionar todos os {idsFiltrados.length} filtrados</Button>
           )}
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-            {mesmoLoteSelecionado && <Button variant="outline" size="xs" style={{ background: C.card, borderColor: C.primary }} onClick={() => setModalBulkEditar(true)}>Editar em massa</Button>}
-            {selecionados.size > 1 && <Button variant="outline" size="xs" style={{ background: C.card, borderColor: C.primary }} onClick={() => setModalBulkMov(true)}>Mover em massa</Button>}
-            <Button variant="outline" size="xs" style={{ background: C.card, borderColor: C.primary }} onClick={() => setModalBulkBaixa(true)}>Dar baixa em massa</Button>
-            <Button variant="ghost" size="xs" style={{ background: C.card }} onClick={limparSelecao}>Limpar</Button>
+            {mesmoLoteSelecionado && <Button variant="outline" size="xs" style={{ background: C.card, borderColor: C.primary, padding: '5px 12px', height: 'auto' }} onClick={() => setModalBulkEditar(true)}>Editar em massa</Button>}
+            {selecionados.size > 1 && <Button variant="outline" size="xs" style={{ background: C.card, borderColor: C.primary, padding: '5px 12px', height: 'auto' }} onClick={() => setModalBulkMov(true)}>Mover em massa</Button>}
+            <Button variant="outline" size="xs" style={{ background: C.card, borderColor: C.primary, padding: '5px 12px', height: 'auto' }} onClick={() => setModalBulkBaixa(true)}>Dar baixa em massa</Button>
+            <Button variant="ghost" size="xs" style={{ background: C.card, padding: '5px 12px', height: 'auto' }} onClick={limparSelecao}>Limpar</Button>
           </div>
           {selecionados.size > 1 && !mesmoLoteSelecionado && (
             <div style={{ width: '100%', fontSize: 11, color: C.text2 }}>
