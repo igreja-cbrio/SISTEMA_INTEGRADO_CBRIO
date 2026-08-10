@@ -982,6 +982,21 @@ router.post('/inscrever', async (req, res) => {
       }
     }
 
+    // ⚠️⚠️ ESTAS TRAVAS FORAM EXTRAÍDAS PRA `utils/entradaGrupoApp.js` (10/08/2026)
+    // O app tinha porta PRÓPRIA (`POST /api/app/inscricoes`) que não validava
+    // NADA — nem gênero, nem `ativo`, nem `aceitando_inscricoes`, nem
+    // `fechado`, nem temporada. A régua virou função pura testada (37
+    // asserções) e o app já usa dela.
+    // ⚠️ ESTE ARQUIVO AINDA TEM A CÓPIA, de propósito: ele é a porta pública
+    // principal (462 dos 463 pedidos) e trocar aqui no mesmo PR somaria risco.
+    // **AS DUAS TÊM QUE CONCORDAR.** Mudou uma, mude a outra — ou, melhor,
+    // troque este bloco pela chamada de `avaliarEntradaNoGrupo` quando houver
+    // uma janela pra testar o formulário público com calma.
+    // ⚠️ Uma diferença é DE PROPÓSITO: aqui o sexo é campo OBRIGATÓRIO do
+    // formulário (400 acima), então o caso "sexo desconhecido" não existe. No
+    // app ele existe (só 16 de 54 contas têm `genero`) e devolve
+    // `codigo='sexo_necessario'`, que pede pra completar o perfil.
+    //
     // ── Trava de compatibilidade (Marcos · 2026-07-14: SÓ GÊNERO bloqueia) ──
     // Gênero: categoria Homens/Mulheres não aceita o sexo oposto — única trava.
     // Idade fora da faixa, vários grupos ao mesmo tempo e grupos no mesmo

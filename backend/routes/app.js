@@ -38,6 +38,9 @@ const { getModulos, getCargoMatrix, resolveEffectivePerms } = require('../middle
 // Régua PURA da capa do grupo (allowlist de formato + o caminho que PODE ser
 // apagado do Storage). Testada em `src/test/grupoCapaApp.test.ts`.
 const { MIMES_CAPA, caminhoDaCapa, extensaoDaCapa, caminhoNovoDaCapa } = require('../utils/grupoCapaApp');
+// Régua PURA de quem pode PEDIR pra entrar num grupo — a MESMA do site
+// (extraída de publicGrupos.js). Testada em `src/test/entradaGrupoApp.test.ts`.
+const { avaliarEntradaNoGrupo } = require('../utils/entradaGrupoApp');
 
 // ── Auth middleware leve ───────────────────────────────────────────────────
 async function authApp(req, res, next) {
@@ -825,6 +828,62 @@ router.post('/inscricoes', limiterStrict, tryAuth, async (req, res) => {
       console.log(`[APP] inscricoes · payload saneado (${tipo}): ${saneado.ajustes.join(', ')}`);
     }
     dados = saneado.dados;
+
+    // ⚠️⚠️ TRAVA DE ENTRADA EM GRUPO — ESTE HANDLER NÃO VALIDAVA NADA (10/08/2026)
+    //
+    // Achado pelo Marcos testando no aparelho: *"eu sou homem e consigo ver os
+    // grupos apenas para mulheres e posso tentar me inscrever, e isso não é
+    // possível no nosso webapp."* Ele estava certo, e o buraco é MAIOR que a
+    // queixa: este `POST` não lia **categoria/gênero, `ativo`,
+    // `aceitando_inscricoes`, `modo_inscricao='fechado'` nem temporada** —
+    // cinco travas do site, nenhuma aqui. O app não "escapava" da trava do
+    // site: o site trava em `publicGrupos.js` (formulário público) e o app tem
+    // porta própria, que nasceu sem elas.
+    //
+    // A régua agora vive num lugar só (`utils/entradaGrupoApp.js`, 37 asserções
+    // no gate) e é a MESMA que o site usa. Duas cópias divergindo é a doença
+    // recorrente deste sistema.
+    //
+    // ⚠️ Roda DEPOIS do saneamento e ANTES do insert: recusar tem que acontecer
+    // sem deixar rastro, senão a coordenação passa a ver fila de pedido que
+    // nunca deveria ter existido.
+    if (tipo === 'grupos' && dados.grupo_id) {
+      const { data: grupoAlvo } = await supabase
+        .from('mem_grupos')
+        .select('id, nome, categoria, ativo, aceitando_inscricoes, modo_inscricao, temporada, deleted_at')
+        .eq('id', dados.grupo_id)
+        .maybeSingle();
+
+      // A temporada só é consultada quando o grupo depende dela — `null` diz
+      // "não havia o que consultar", que a régua trata diferente de "fechada".
+      let temporadaAberta = null;
+      if (grupoAlvo?.temporada && String(grupoAlvo.modo_inscricao || '') !== 'sempre_aberto') {
+        const { data: temp } = await supabase
+          .from('mem_temporadas')
+          .select('inscricoes_abertas')
+          .eq('id', grupoAlvo.temporada)
+          .maybeSingle();
+        temporadaAberta = temp?.inscricoes_abertas === true;
+      }
+
+      // ⚠️ O sexo NÃO vem de `resolveMembroApp` (ele seleciona só
+      // id/nome/cpf/email/telefone). Leitura ISOLADA: se falhar, a régua devolve
+      // `sexo_necessario` — pede o dado, em vez de deixar passar.
+      let genero = dados.genero || dados.sexo || null;
+      if (!genero && membroId) {
+        const { data: m } = await supabase
+          .from('mem_membros').select('genero').eq('id', membroId).maybeSingle();
+        genero = m?.genero || null;
+      }
+
+      const veredito = avaliarEntradaNoGrupo({ grupo: grupoAlvo, genero, temporadaAberta });
+      if (!veredito.ok) {
+        console.log(
+          `[APP] inscricoes · grupo recusado (${veredito.codigo}) · grupo=${dados.grupo_id} membro=${membroId || 'anon'}`,
+        );
+        return res.status(veredito.status).json({ error: veredito.erro, codigo: veredito.codigo });
+      }
+    }
 
     const { data: inserted, error } = await supabase
       .from('app_inscricoes')
