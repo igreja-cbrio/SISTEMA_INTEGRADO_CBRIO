@@ -334,6 +334,56 @@ function contaDeRevisaoLoja(email) {
 }
 
 // ── B · formulário completo (Contrato de porta) ─────────────────────────────
+/**
+ * Preenche em `mem_membros` os campos que `/identidade/status` cobra e que
+ * ficaram vazios — o resgate do que o matcher descarta quando ACHA a pessoa.
+ *
+ * Sem isto, a pessoa preenche o formulário, o endpoint responde ok, e o portão
+ * a devolve para a mesma tela para sempre: o campo foi validado e nunca gravado.
+ *
+ * ⚠️ Uma leitura + um UPDATE, montado só com o que está vazio. Fazer um UPDATE
+ * por campo com `.is(col, null)` seria mais simples de escrever e ERRADO de
+ * outra forma: cada `.is()` adicional vira um E lógico, então um único UPDATE
+ * com vários `.is()` só gravaria quando TODOS estivessem nulos.
+ */
+async function preencherOQuePortaoExige(membroId, d, emailDaConta) {
+  const { data: atual, error: eLer } = await supabase.from('mem_membros')
+    .select('nome, telefone, cpf, data_nascimento, genero')
+    .eq('id', membroId).is('deleted_at', null).maybeSingle();
+  if (eLer || !atual) {
+    console.warn('[appIdentidade] não consegui ler o cadastro para preencher:', eLer?.message);
+    return;
+  }
+
+  const patch = {};
+  if (!atual.telefone && d.telefone) patch.telefone = d.telefone;
+  if (!atual.data_nascimento && d.dataNascimento) patch.data_nascimento = d.dataNascimento;
+  if (!atual.genero && d.sexo) patch.genero = d.sexo;
+
+  // Nome derivado de e-mail é o que o portão REPROVA (não é ausência, é
+  // qualidade). Se a pessoa digitou um nome de gente, ele entra.
+  const { ehNomeDerivadoDeEmail } = require('./membroMatch');
+  if (d.nomeCompleto && ehNomeDerivadoDeEmail(atual.nome, emailDaConta || '')) {
+    patch.nome = d.nomeCompleto;
+  }
+
+  // ⚠️ CPF fica FORA deste patch de propósito. É a chave mais forte do matcher:
+  // se a pessoa tem CPF, `acharOuCriarGuardado` já casou por ele; se casou por
+  // outra chave, gravar um CPF aqui poderia colidir com outro cadastro (UNIQUE)
+  // ou grudar dois documentos na mesma pessoa. Quem escreve CPF é o serviço
+  // próprio dele, com a fila de conflito.
+
+  if (!Object.keys(patch).length) return;
+
+  const { error } = await supabase.from('mem_membros')
+    .update(patch).eq('id', membroId).is('deleted_at', null);
+  if (error) {
+    console.warn('[appIdentidade] preencher cadastro:', error.message, Object.keys(patch).join(','));
+    return;
+  }
+  console.log(`[appIdentidade] cadastro completado (${membroId}): ${Object.keys(patch).join(', ')}`);
+}
+
 async function completarCadastro({ payload, authUserId, email, ip, userAgent }) {
   // ⚠️ CPF e SEXO **SÃO exigidos** (gate ligado por decisão do Marcos em 05/08 ·
   // a tela já manda os dois campos). A única isenção é conta de revisão de loja —
@@ -389,21 +439,29 @@ async function completarCadastro({ payload, authUserId, email, ip, userAgent }) 
     console.warn('[appIdentidade] frequenta_area do metadata:', e.message);
   }
 
-  // ⚠️ O matcher (`acharOuCriarGuardado`) não escreve `genero` — ele resolve
-  // IDENTIDADE, não preenche cadastro. Sem este UPDATE o sexo seria validado e
-  // DESCARTADO: a pessoa preencheria, o endpoint responderia ok, e o
-  // `/identidade/status` continuaria dizendo que falta sexo — ela cairia na tela
-  // de completar cadastro pra sempre. É exatamente o bug que o CPF do censo teve
-  // em 04/08 (validado, aceito, nunca gravado).
-  // Preenche SÓ ONDE ESTÁ VAZIO: o app não sobrescreve o que a equipe corrigiu.
-  if (d.sexo) {
-    const { error: eSexo } = await supabase.from('mem_membros')
-      .update({ genero: d.sexo })
-      .eq('id', membroId)
-      .is('genero', null)
-      .is('deleted_at', null);
-    if (eSexo) console.warn('[appIdentidade] gravar genero:', eSexo.message);
-  }
+  // ⚠️⚠️ PREENCHE O QUE O PORTÃO EXIGE — e é aqui que morava o LOOP INFINITO
+  // (relatado em 10/08, terceiro relato do mesmo sintoma por causa diferente).
+  //
+  // `acharOuCriarGuardado` resolve IDENTIDADE, não preenche cadastro: quando ele
+  // ACHA a pessoa (`created: false`), tudo que a pessoa digitou é usado só para
+  // casar e depois DESCARTADO. Só o `genero` tinha o UPDATE de resgate — e a
+  // lista do `/identidade/status` cobra CINCO campos.
+  //
+  // Medido em produção: `toscano.milton@icloud.com` viu a tela de cadastro
+  // 9 VEZES e confirmou 3, e `bianevesss@gmail.com` 6 e 3 — as duas com
+  // `data_nascimento` NULL. A cada envio: o campo era validado, o endpoint
+  // respondia ok, o carimbo era gravado... e o status seguia dizendo
+  // `falta: ['nascimento']`. Beco sem saída por construção, exatamente como o
+  // do `genero` que o comentário antigo aqui descrevia — o conserto de então
+  // tratou a INSTÂNCIA e deixou a CLASSE de pé.
+  //
+  // Agora o resgate é da CLASSE: lê o cadastro uma vez e preenche TODO campo
+  // que o portão cobra e que está vazio.
+  // ⚠️ SÓ ONDE ESTÁ VAZIO — o app nunca sobrescreve o que a equipe corrigiu à
+  // mão. E é por isso que o `nome` é a exceção: nome derivado de e-mail
+  // ("joao.silva") não está "vazio", mas o portão o REPROVA, então trocá-lo por
+  // um nome de gente é a única forma de sair do loop nesse caso.
+  await preencherOQuePortaoExige(membroId, d, email);
 
   // Cadastro NOVO pelo app é o que o Marcos quer aproveitar ("pegar o cadastro
   // de quem não temos") — avisa a equipe pra conferir/enriquecer. Conflito de
@@ -437,6 +495,7 @@ async function completarCadastro({ payload, authUserId, email, ip, userAgent }) 
 
 module.exports = {
   contaDeRevisaoLoja,
+  preencherOQuePortaoExige,
   identificarPorCpf,
   confirmarCodigo,
   completarCadastro,
