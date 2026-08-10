@@ -334,7 +334,13 @@ router.get('/bens', async (req, res) => {
   try {
     const { status, categoria_id, localizacao_id, busca } = req.query;
     const montarQuery = (offset, pageSize) => {
-      let query = supabase.from('pat_bens').select('*, pat_categorias(nome, vida_util_meses), pat_localizacoes(nome), responsavel:profiles!responsavel_id(name), alerta:pat_revisao_itens!alerta_divergencia_item_id(data_revisao, localizacao_encontrada:pat_localizacoes!localizacao_encontrada_id(nome))').order('nome');
+      // .order('nome') sozinho não é estável entre páginas: bens com o mesmo
+      // nome (comum aqui — ex. "10 Un Luminaria...") podem trocar de ordem
+      // entre duas chamadas de range() separadas, fazendo a paginação repetir
+      // um bem em 2 páginas e pular outro. `id` como desempate garante ordem
+      // determinística (achado do usuário: "Selecionar todos" selecionava
+      // menos ids que o total filtrado).
+      let query = supabase.from('pat_bens').select('*, pat_categorias(nome, vida_util_meses), pat_localizacoes(nome), responsavel:profiles!responsavel_id(name), alerta:pat_revisao_itens!alerta_divergencia_item_id(data_revisao, localizacao_encontrada:pat_localizacoes!localizacao_encontrada_id(nome))').order('nome').order('id');
       if (status) query = query.eq('status', status);
       // Sentinela "__sem__" filtra bens SEM categoria/localização — pra
       // priorizar o saneamento de cadastro (pedido do usuário 2026-07-28).
