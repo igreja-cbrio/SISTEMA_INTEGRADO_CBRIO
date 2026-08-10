@@ -386,6 +386,38 @@ router.get('/respostas/:id', authorizeModule('censo', 2), async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Apaga a resposta de UMA pessoa e a libera para responder de novo.
+//
+// Pedido do Matheus (10/08): "apagando, é liberado pra ela fazer de novo".
+// ⚠️ É SOFT-DELETE, e não é economia de código: `acharRespostaDaPessoa` — a
+// régua única do "já respondeu?" — filtra `deleted_at IS NULL` nos DOIS
+// caminhos (membro_id e CPF do item). Então marcar a data já devolve o acesso,
+// pelo app e pelo QR, sem apagar a prova do que foi respondido nem o
+// consentimento que a pessoa deu.
+// ⚠️ Os ITENS ficam. Eles são a resposta em si; se um dia alguém apagar por
+// engano, `deleted_at = null` restaura tudo. Hard delete aqui seria perda
+// irreversível de dado de pesquisa.
+// ⚠️ Nível 4: apagar resposta de pesquisa é ato de gestão, não de leitura.
+router.delete('/respostas/:id', authorizeModule('censo', 4), async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('cen_resposta')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('id', req.params.id).is('deleted_at', null)
+      .select('id, membro_id, pesquisa_id')
+      .maybeSingle();
+    if (error) return res.status(400).json({ error: error.message });
+    // Já apagada (ou id inexistente) responde 404 em vez de fingir sucesso —
+    // quem clicou duas vezes precisa saber que a segunda não fez nada.
+    if (!data) return res.status(404).json({ error: 'Resposta não encontrada (ou já apagada)' });
+
+    console.log('[censo] resposta apagada', {
+      resposta: data.id, por: req.user?.email || req.user?.id,
+    });
+    res.json({ ok: true, id: data.id, liberada: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ══════════════════════════════════════════════════════════════════════════
 //  FILA DE CUIDADO
 // ══════════════════════════════════════════════════════════════════════════

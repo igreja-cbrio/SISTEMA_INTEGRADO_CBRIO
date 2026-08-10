@@ -11,6 +11,7 @@ import { useEffect, useState } from 'react';
 import type { Pergunta } from '@/lib/censoForm';
 import { NAO_SE_APLICA, alternarOpcao, ehNeutra } from '@/lib/censoForm';
 import { usePublicPalette } from '@/pages/public/publicTheme';
+import { mascaraCep } from '@/lib/cepAutopreenche';
 import { BirthDatePicker } from '@/components/ui/birth-date-picker';
 import { DatePicker } from '@/components/ui/date-picker';
 
@@ -219,9 +220,11 @@ export default function PerguntaCampo({ pergunta: p, valor, onChange, faltando, 
     <input
       style={base}
       type={formato === 'email' ? 'email' : 'text'}
-      inputMode={formato === 'telefone' ? 'tel' : formato === 'email' ? 'email' : 'text'}
-      autoComplete={formato === 'email' ? 'email' : formato === 'telefone' ? 'tel' : 'off'}
-      placeholder={formato === 'instagram' ? '@seuperfil' : formato === 'telefone' ? '(21) 99999-9999' : ''}
+      inputMode={formato === 'telefone' || formato === 'cep' ? 'numeric' : formato === 'email' ? 'email' : 'text'}
+      autoComplete={formato === 'email' ? 'email' : formato === 'telefone' ? 'tel' : formato === 'cep' ? 'postal-code' : 'off'}
+      placeholder={formato === 'instagram' ? '@seuperfil'
+        : formato === 'telefone' ? '(21) 99999-9999'
+        : formato === 'cep' ? '00000-000' : ''}
       value={typeof valor === 'string' ? valor : ''}
       onChange={(e) => {
         let v = e.target.value;
@@ -235,6 +238,10 @@ export default function PerguntaCampo({ pergunta: p, valor, onChange, faltando, 
             : `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
         }
         if (formato === 'instagram') v = v.replace(/\s/g, '');
+        // O CEP é o gatilho do preenchimento automático: quem consulta e
+        // espalha endereço/bairro/cidade é o CensoForm, que tem a lista de
+        // perguntas e o mapa de respostas. Aqui só a máscara.
+        if (formato === 'cep') v = mascaraCep(v);
         onChange(v);
       }}
     />
