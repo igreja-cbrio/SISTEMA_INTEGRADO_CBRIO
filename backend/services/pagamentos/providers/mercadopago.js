@@ -76,6 +76,7 @@
 
 const crypto = require('crypto');
 const { STATUS, METODOS } = require('../tipos');
+const { resilientFetch } = require('../../../utils/resilientFetch');
 
 const nome = 'mercadopago';
 
@@ -277,10 +278,14 @@ async function req(metodo, caminho, corpo, { idempotencyKey } = {}) {
   // vira uma segunda cobrança na conta de quem está pagando.
   if (idempotencyKey) headers['X-Idempotency-Key'] = String(idempotencyKey).slice(0, 64);
 
-  const r = await fetch(`${BASE}${caminho}`, {
+  const r = await resilientFetch(`${BASE}${caminho}`, {
     method: metodo,
     headers,
     body: corpo ? JSON.stringify(corpo) : undefined,
+  }, {
+    dependency: 'Mercado Pago',
+    timeoutMs: 8_000,
+    maxRetries: 1,
   });
 
   const txt = await r.text();

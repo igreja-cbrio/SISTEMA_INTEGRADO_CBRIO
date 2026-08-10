@@ -45,6 +45,7 @@
 
 const crypto = require('crypto');
 const { STATUS, METODOS } = require('../tipos');
+const { resilientFetch } = require('../../../utils/resilientFetch');
 
 const nome = 'asaas';
 
@@ -115,7 +116,7 @@ function paraCentavos(reais) {
 // ── HTTP ──────────────────────────────────────────────────────────────────
 
 async function req(metodo, caminho, corpo) {
-  const resp = await fetch(`${baseUrl()}${caminho}`, {
+  const resp = await resilientFetch(`${baseUrl()}${caminho}`, {
     method: metodo,
     headers: {
       'Content-Type': 'application/json',
@@ -124,6 +125,10 @@ async function req(metodo, caminho, corpo) {
       access_token: apiKey(),
     },
     body: corpo ? JSON.stringify(corpo) : undefined,
+  }, {
+    dependency: 'Asaas',
+    timeoutMs: 8_000,
+    maxRetries: 1,
   });
 
   const texto = await resp.text();
