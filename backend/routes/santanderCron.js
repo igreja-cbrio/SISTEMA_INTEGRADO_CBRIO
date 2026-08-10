@@ -20,10 +20,27 @@ const contasService = require('../services/santander/contasService');
 const pixApiService = require('../services/santander/pixApiService');
 const { matchOfxPix, classificarBatch } = require('../services/financeiroClassificador');
 const { isAuthorizedCron } = require('../utils/cronAuth');
+const { AppError, ERROR_CODES } = require('../utils/appError');
+const { captureHandledException } = require('../utils/sentry');
+
+function bankSyncError(error, publicMessage) {
+  return new AppError(error?.message || publicMessage, {
+    code: ERROR_CODES.BANK_SYNC_FAILED,
+    publicMessage,
+    cause: error,
+    isOperational: false,
+  });
+}
+
 
 function checkCronSecret(req, res, next) {
   if (!process.env.CRON_SECRET) {
-    return res.status(500).json({ error: 'CRON_SECRET nao configurado' });
+    return next(new AppError('CRON_SECRET nao configurado', {
+      status: 503,
+      code: ERROR_CODES.DEPENDENCY_UNAVAILABLE,
+      publicMessage: 'Serviço temporariamente indisponível.',
+      isOperational: false,
+    }));
   }
   // NAO confiar em User-Agent (header controlavel pelo cliente). So o secret vale.
   if (!isAuthorizedCron(req)) {
@@ -69,7 +86,7 @@ async function extratoNormalizado({ inicio, fim, usarCache = false } = {}) {
 // POST /api/santander/cron/sync · sync diario do extrato
 // ─────────────────────────────────────────────────────────────────────
 // Handler reutilizavel pra GET (Vercel cron) e POST (manual via secret)
-async function handlerSync(req, res) {
+async function handlerSync(req, res, next) {
   const startTime = Date.now();
 
   // 1. Verifica config Santander
@@ -209,7 +226,7 @@ async function handlerSync(req, res) {
     });
   } catch (e) {
     console.error('[SANTANDER-CRON] erro:', e.stack || e);
-    res.status(500).json({ error: e.message || 'Erro no sync' });
+    next(bankSyncError(e, 'Erro ao sincronizar o extrato bancário.'));
   }
 }
 
@@ -223,7 +240,7 @@ router.get('/sync', handlerSync);  // Vercel cron usa GET
 // as últimas 4h do extrato. Roda a cada 3min durante cultos pra alimentar
 // a aba "Culto ao Vivo". Idempotente · transacoes já inseridas viram
 // duplicados via FITID UNIQUE.
-router.post('/pix-sync', async (req, res) => {
+router.post('/pix-sync', async (req, res, next) => {
   const startTime = Date.now();
 
   if (!isConfigured()) {
@@ -277,6 +294,7 @@ router.post('/pix-sync', async (req, res) => {
       } catch (e) {
         console.warn('[pix-sync] API PIX erro:', e.message);
         pixApiResult = { erro: e.message };
+        captureHandledException(bankSyncError(e, 'Falha na estratégia PIX.'), req, 'bank.pix_sync.pix_api_fallback');
       }
     }
 
@@ -344,7 +362,7 @@ router.post('/pix-sync', async (req, res) => {
     });
   } catch (e) {
     console.error('[SANTANDER-PIX-SYNC] erro:', e);
-    res.status(500).json({ error: e.message || 'Erro no pix-sync' });
+    next(bankSyncError(e, 'Erro ao sincronizar recebimentos PIX.'));
   }
 });
 
@@ -352,7 +370,7 @@ router.post('/pix-sync', async (req, res) => {
 // GET/POST /api/santander/cron/saldo · atualiza snapshot do saldo + fin_contas
 // Roda de hora em hora pra manter o dashboard atualizado sem usuário sincronizar.
 // ─────────────────────────────────────────────────────────────────────
-async function handlerSaldoCron(req, res) {
+async function handlerSaldoCron(req, res, next) {
   if (!isConfigured()) {
     return res.json({ ok: true, skipped: 'santander_nao_configurado' });
   }
@@ -367,7 +385,7 @@ async function handlerSaldoCron(req, res) {
     });
   } catch (e) {
     console.error('[SANTANDER-CRON saldo]', e.message);
-    res.status(500).json({ ok: false, erro: e.message });
+    next(bankSyncError(e, 'Erro ao atualizar o saldo bancário.'));
   }
 }
 router.post('/saldo', handlerSaldoCron);
