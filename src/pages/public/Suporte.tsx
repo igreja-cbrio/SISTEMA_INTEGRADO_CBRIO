@@ -8,7 +8,16 @@ const C = {
   text: '#e6edf3', text2: '#9aa4b2', primary: '#00B39D',
 };
 const EMAIL_SUPORTE = 'gestao@cbrio.com.br';
-const WHATS = '5521999079031'; // número institucional CBRio
+// ⚠️⚠️ TROCADO EM 10/08/2026, por decisão do Marcos. Aqui estava
+// `5521999079031`, rotulado como "número institucional" — mas esse número **não
+// tem caixa nenhuma no sistema**: zero linhas em `wa_numeros` e zero conversas.
+// Quem escrevesse pro suporte da Apple falava com o vazio.
+// O número que a igreja de fato LÊ é este: 98 conversas em 21 dias no inbox do
+// CBZap (`/comunicacao` → aba Conversas). É o mesmo que o novo site já publica
+// (`novosite/shared.tsx:21`).
+// ⚠️ Esta é a Support URL exigida pela Apple (Guideline 1.5) — número errado
+// aqui é motivo de rejeição na revisão, além de deixar gente sem resposta.
+const WHATS = '5521997567770';
 
 export default function Suporte() {
   useEffect(() => { document.title = 'Suporte · CBRio'; }, []);

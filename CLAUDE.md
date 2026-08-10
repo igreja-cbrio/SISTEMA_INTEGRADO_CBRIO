@@ -7128,6 +7128,69 @@ o binário não tem Firebase — fica de fora até do **sino in-app**, não só 
 push. Trocar por "todo mundo com conta no app" muda o raio de alcance de ~23
 pra ~113 pessoas: é chamada do Marcos.
 
+### 3e · ⚠️⚠️ `POST /api/app/inscricoes` NÃO VALIDAVA NADA (10/08/2026)
+
+Achado pelo **Marcos testando no aparelho**: *"eu sou homem e consigo ver os
+grupos apenas para mulheres e posso tentar me inscrever, e isso não é possível
+no nosso webapp."* Ele estava certo — e o buraco é **maior que a queixa**.
+
+O handler (`backend/routes/app.js`) **não lia NENHUMA das 5 travas do site**:
+
+| trava | site (`publicGrupos.js`) | app (antes) |
+|---|---|---|
+| categoria/gênero | 422 `grupo_incompativel` | — |
+| `ativo = false` | 403 | — |
+| `aceitando_inscricoes = false` | 403 | — |
+| `modo_inscricao = 'fechado'` | 403 "por convite do líder" | — |
+| temporada fechada | 403 | — |
+
+⚠️ **O app não "escapava" da trava do site — ele nunca chegava lá.** O site trava
+no formulário público; o app tem porta própria, que nasceu sem elas.
+
+**A régua agora vive num lugar só**: `backend/utils/entradaGrupoApp.js`,
+**37 asserções** em `src/test/entradaGrupoApp.test.ts`.
+
+⚠️ **DECISÃO DE DESENHO que os números forçaram**: das **54 contas do app com
+cadastro, só 16 têm `genero`** (70% sem). Barrar por sexo desconhecido travaria
+essas 70% nos 16 grupos restritos (13 Mulheres + 3 Homens de 102 ativos); deixar
+passar mantinha o buraco. Então sexo desconhecido devolve
+**`codigo='sexo_necessario'`** — *pede o dado*, não barra nem libera. O site
+resolve isso exigindo o sexo no formulário; o app pede pra completar o perfil.
+Tem mutante: categoria NÃO restritiva **nunca** pergunta o sexo.
+
+⚠️ **A ORDEM das travas importa e tem teste**: grupo fechado responde "fechado",
+não "sexo". Senão a pessoa completa o perfil e continua sem conseguir entrar.
+
+⚠️ **`sempre_aberto` entra MESMO com a temporada fechada** — é o que permite
+grupo de porta aberta fora do ciclo. Tem mutante.
+
+⚠️ **`resolveMembroApp` NÃO traz `genero`** (só id/nome/cpf/email/telefone). A
+leitura do sexo é ISOLADA e, se falhar, cai em `sexo_necessario` — nunca em
+"deixa passar".
+
+⚠️⚠️ **AINDA HÁ DUAS CÓPIAS DA RÉGUA, de propósito**: `publicGrupos.js` continua
+com a dele porque é a porta pública principal (**462 dos 463 pedidos**) e trocar
+no mesmo PR somaria risco. **AS DUAS TÊM QUE CONCORDAR** — há ponteiro no
+arquivo. Trocar pela chamada da função quando houver janela pra testar o
+formulário com calma.
+
+⚠️ **PENDENTE DE GENTE, e é dado**: o grupo **"NEW HEART - RECOMEÇO 40+ -
+Solteiros/Divorciados"** está `categoria='Homens'` com **4 mulheres no roster e
+6 pedidos de mulheres já aprovados** (10 dos 13 casos incompatíveis da base são
+dele, e os 13 vieram de `formulario_publico` — é CADASTRO errado, não bypass).
+Quem já está no grupo **não é afetado** (a trava é só no pedido NOVO), mas
+mulher nova é recusada. Acertar a categoria com a coordenação.
+
+### 3f · Suporte da Apple apontava pro número vazio (10/08)
+
+`src/pages/public/Suporte.tsx:11` publicava `5521999079031`, rotulado "número
+institucional" — mas esse número **não tem caixa nenhuma no sistema** (zero em
+`wa_numeros`, zero conversas). Quem escrevia pro suporte falava com o vazio.
+Trocado pelo **21 99756-7770**, o inbox que a igreja de fato lê (98 conversas em
+21 dias) e o mesmo que o novo site publica.
+⚠️ Esta é a **Support URL exigida pela Apple** (Guideline 1.5) — número errado
+aqui é motivo de rejeição, além de deixar gente sem resposta.
+
 ### 4 · Pedido de exclusão de conta (LGPD) ganhou fila — e SÓ leitor
 
 O app insere em `app_solicitacoes_exclusao` e promete "em breve sua conta será
