@@ -7,7 +7,7 @@
 //   { id, tipo, texto, descricao?, obrigatoria?,
 //     opcoes?, opcoes_neutras?,          // fechadas
 //     rotulos?: {min,max}, max?,         // escalas
-//     formato?,                          // texto_curto: telefone|email|instagram
+//     formato?,                          // texto_curto: telefone|email|instagram|cpf|cep
 //     min_num?, max_num?,                // numero
 //     mostrar_se?: {pergunta, valores[]},// condicional
 //     sensivel?,                         // trava leitura NOMINAL
@@ -48,7 +48,7 @@ const TIPOS_NUMERICOS = Object.freeze(['numero', 'escala_5', 'estrelas_5', 'nps'
 // 07/08): é a CHAVE FORTE que liga a resposta à pessoa na base — sem ela, o
 // vínculo depende de casar nome+nascimento, que erra com homônimo e com a
 // família que compartilha telefone.
-const FORMATOS = Object.freeze(['texto', 'telefone', 'email', 'instagram', 'cpf']);
+const FORMATOS = Object.freeze(['texto', 'telefone', 'email', 'instagram', 'cpf', 'cep']);
 
 // Catálogos que o tipo `busca` pode consultar. Lista fechada de propósito: nome
 // livre aqui viraria um endpoint público que consulta o que o cliente pedir.

@@ -54,6 +54,8 @@ const CUIDADO_LABEL: Record<string, string> = {
 const FORMATO_LABEL: Record<string, string> = {
   texto: 'Texto comum', telefone: 'Telefone (com máscara)',
   email: 'E-mail (validado)', instagram: 'Instagram (@)',
+  // Preenche endereço, bairro e cidade das perguntas com `preenche_de`.
+  cep: 'CEP (preenche o endereço)',
 };
 
 type Props = {

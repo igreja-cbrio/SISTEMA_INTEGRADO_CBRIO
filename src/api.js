@@ -311,6 +311,9 @@ export const censo = {
   respostas: (pesquisaId, limite) =>
     get(`/censo/respostas?pesquisa_id=${pesquisaId}${limite ? `&limite=${limite}` : ''}`),
   resposta: (id) => get(`/censo/respostas/${id}`),
+  // Apaga a resposta de uma pessoa e a LIBERA para responder de novo (nível 4).
+  // Soft-delete no servidor: a régua do "já respondeu?" filtra deleted_at.
+  removerResposta: (id) => del(`/censo/respostas/${id}`),
   // Fila de cuidado: nominal é restrito à equipe designada; o resumo (contagens,
   // sem PII) é aberto para quem tem o módulo.
   cuidadoResumo: (pesquisaId) => get(`/censo/cuidado/resumo?pesquisa_id=${pesquisaId}`),
