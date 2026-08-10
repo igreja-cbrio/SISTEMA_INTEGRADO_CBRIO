@@ -1129,7 +1129,11 @@ function CatLocTab({ categorias, localizacoes, locOptions, newCat, setNewCat, ad
   }
   function salvarEdicaoLoc() {
     if (!editLoc.nome.trim()) return;
-    updateLoc(editLoc.id, { nome: editLoc.nome, pai_id: editLoc.pai_id || null });
+    updateLoc(editLoc.id, {
+      nome: editLoc.nome, pai_id: editLoc.pai_id || null,
+      revisao_intervalo_dias: editLoc.revisao_intervalo_dias === '' ? null : editLoc.revisao_intervalo_dias,
+      revisao_prazo_dias: editLoc.revisao_prazo_dias === '' ? null : editLoc.revisao_prazo_dias,
+    });
     setEditLoc(null);
   }
   function salvarEdicaoCat() {
@@ -1193,6 +1197,13 @@ function CatLocTab({ categorias, localizacoes, locOptions, newCat, setNewCat, ad
               <option value="">— Nenhuma (raiz) —</option>
               {locOptions.filter(l => l.id !== editLoc.id).map(l => <option key={l.id} value={l.id}>{locIndent(l.depth)}{l.nome}</option>)}
             </Select>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              <Input label="Tempo de análise (dias)" type="number" min="1" placeholder="padrão do ciclo" value={editLoc.revisao_prazo_dias ?? ''} onChange={e => setEditLoc(p => ({ ...p, revisao_prazo_dias: e.target.value }))} />
+              <Input label="Intervalo até a próxima revisão (dias)" type="number" min="1" placeholder="todo ciclo" value={editLoc.revisao_intervalo_dias ?? ''} onChange={e => setEditLoc(p => ({ ...p, revisao_intervalo_dias: e.target.value }))} />
+            </div>
+            <div style={{ fontSize: 11, color: C.text3 }}>
+              Deixe em branco pra manter o padrão: entra em todo ciclo de revisão, com prazo distribuído dentro do período do ciclo.
+            </div>
           </>
         )}
       </Modal>
@@ -1791,7 +1802,7 @@ function NovoCicloModal({ open, responsaveis, onClose, onSave }) {
   return (
     <Modal open={open} onClose={onClose} title="Novo ciclo de revisão" footer={<Button onClick={handleSave}>Criar ciclo</Button>}>
       <div style={{ fontSize: 13, color: C.text2, marginBottom: 12 }}>
-        Cria um ciclo trimestral (3 meses) e gera automaticamente uma convocação por localização com bens ativos, com prazos distribuídos ao longo do período.
+        Cria um ciclo trimestral (3 meses) e gera automaticamente uma convocação por localização com bens ativos. Localização sem intervalo/prazo próprios configurados (aba Categorias/Localizações) entra em todo ciclo, com prazo distribuído ao longo do período; localização com intervalo configurado só entra quando já passou o número de dias definido desde a última revisão concluída, com o prazo próprio dela.
       </div>
       <Select label="Responsável pelas revisões *" value={f.responsavel_id || ''} onChange={e => upd('responsavel_id', e.target.value)}>
         <option value="">Selecionar</option>
