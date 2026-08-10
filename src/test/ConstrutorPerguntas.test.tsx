@@ -5,6 +5,7 @@ import ConstrutorPerguntas from '../components/censo/ConstrutorPerguntas';
 import type { Pergunta } from '../lib/censoConstrutor';
 import {
   trocarTipoPergunta, validarOrdem, renomearOpcao, moverPergunta, indiceApos,
+  removerPerguntas, selecionadasComResposta, moverOpcao,
 } from '../lib/censoConstrutor';
 import { validarPerguntas } from '../../backend/utils/censoPerguntas.js';
 
@@ -151,6 +152,71 @@ describe('construtor · protege as condicionais', () => {
     expect(indiceApos(1, 3, 0)).toBe(2);   // arrasto subiu por cima dela → desce 1
     expect(indiceApos(5, 0, 2)).toBe(5);   // fora do trecho movido, não muda
     expect(indiceApos(null, 0, 2)).toBeNull();
+  });
+
+  it('⚠️ apagar em LOTE: junto é permitido onde sozinho não é', () => {
+    // "Quantos?" depende de "Tem filhos?". Apagar só a "Tem filhos?" é proibido…
+    const soUma = removerPerguntas(BASE, [1]);
+    expect(soUma.erro).toMatch(/depende de uma pergunta da seleção/i);
+    expect(soUma.lista).toBe(BASE);
+
+    // …mas apagar as DUAS juntas é legítimo, porque não sobra ninguém órfão.
+    const asDuas = removerPerguntas(BASE, [1, 2]);
+    expect(asDuas.erro).toBeNull();
+    expect(asDuas.lista.map((p) => p.id)).toEqual(['b1']);
+  });
+
+  it('o aviso do lote NOMEIA quem ficaria órfã', () => {
+    const r = removerPerguntas(BASE, [1]);
+    expect(r.erro).toContain('Quantos?');
+  });
+
+  it('conta quantas da seleção já foram gravadas — é o que tem resposta a perder', () => {
+    const comNova = [...BASE, { tipo: 'texto_curto', texto: 'Nova' } as Pergunta];
+    expect(selecionadasComResposta(comNova, [1, 2, 3])).toBe(2);   // a nova não tem id
+    expect(selecionadasComResposta(comNova, [3])).toBe(0);
+  });
+
+  it('a UI apaga as selecionadas e o botão de salvar aparece', () => {
+    montar();
+    const caixas = screen.getAllByRole('checkbox');
+    fireEvent.click(caixas[1]);   // "Tem filhos?"
+    fireEvent.click(caixas[2]);   // "Quantos?"
+    expect(screen.getByText(/2 pergunta\(s\) selecionada/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /Apagar selecionadas/ }));
+    expect(screen.queryByText('Tem filhos?')).toBeNull();
+    expect(screen.queryByText('Quantos?')).toBeNull();
+    expect(screen.getAllByRole('button', { name: /Salvar perguntas/ })[0]).toBeTruthy();
+  });
+
+  it('⚠️ reordenar LIMPA a seleção — índice guardado apontaria para outra pergunta', () => {
+    montar();
+    const caixas = screen.getAllByRole('checkbox');
+    fireEvent.click(caixas[0]);
+    expect(screen.getByText(/1 pergunta\(s\) selecionada/)).toBeTruthy();
+    fireEvent.click(screen.getAllByTitle('Descer')[0]);   // move a selecionada
+    expect(screen.queryByText(/selecionada/)).toBeNull();
+  });
+
+  it('reordenar OPÇÃO move e não toca na marca de "não conta"', () => {
+    // A marca aponta pelo TEXTO. Se ela fosse reescrita por índice, "não conta"
+    // pousaria na opção errada — e o percentual passaria a excluir a resposta
+    // errada, sem nada na tela denunciando.
+    const p: Pergunta = {
+      id: 'x', tipo: 'opcao_unica', texto: 'Cor?',
+      opcoes: ['Azul', 'Verde', 'Prefiro não dizer'],
+      opcoes_neutras: ['Prefiro não dizer'],
+    };
+    const patch = moverOpcao(p, 2, 0);
+    expect(patch.opcoes).toEqual(['Prefiro não dizer', 'Azul', 'Verde']);
+    expect(patch.opcoes_neutras).toBeUndefined();   // não é reescrita
+  });
+
+  it('mover opção para o mesmo lugar (ou índice inválido) não devolve mudança', () => {
+    const p: Pergunta = { id: 'x', tipo: 'multipla', texto: 'Q', opcoes: ['A', 'B'] };
+    expect(moverOpcao(p, 1, 1)).toEqual({});
+    expect(moverOpcao(p, 9, 0)).toEqual({});
+    expect(moverOpcao(p, 0, 99).opcoes).toEqual(['B', 'A']);   // satura na borda
   });
 
   it('não deixa remover uma pergunta de que outra depende', () => {

@@ -123,6 +123,72 @@ export function moverPergunta(
 }
 
 /**
+ * Remove VÁRIAS perguntas de uma vez.
+ *
+ * ⚠️ A guarda é calculada sobre o que SOBRA, e isso muda o resultado: apagar a
+ * pergunta "Tem filhos?" sozinha é proibido enquanto "Quantos?" depender dela —
+ * mas apagar as DUAS juntas é legítimo. Reaproveitar a regra do apagar-um
+ * (que olha a lista inteira) recusaria a seleção certa e obrigaria a pessoa a
+ * apagar na ordem exata, sem dizer qual é.
+ *
+ * Devolve o erro nomeando quem ficaria órfã — "não é possível" sem dizer quem
+ * é o mesmo que não explicar nada.
+ */
+export function removerPerguntas(
+  lista: Pergunta[],
+  indices: number[],
+): { lista: Pergunta[]; erro: string | null } {
+  const alvo = new Set(indices.filter((i) => i >= 0 && i < lista.length));
+  if (!alvo.size) return { lista, erro: null };
+
+  const idsRemovidos = new Set(
+    [...alvo].map((i) => lista[i].id).filter((id): id is string => !!id),
+  );
+  const restantes = lista.filter((_, i) => !alvo.has(i));
+
+  const orfas = restantes.filter(
+    (q) => q.mostrar_se?.pergunta && idsRemovidos.has(q.mostrar_se.pergunta),
+  );
+  if (orfas.length) {
+    const nomes = orfas.map((o) => `“${o.texto || 'sem texto'}”`).join(', ');
+    return {
+      lista,
+      erro: `Não é possível apagar: ${nomes} ${orfas.length > 1 ? 'dependem' : 'depende'} de uma pergunta da seleção. Inclua ${orfas.length > 1 ? 'essas perguntas' : 'essa pergunta'} na seleção ou remova a condicional ${orfas.length > 1 ? 'delas' : 'dela'} primeiro.`,
+    };
+  }
+  return { lista: restantes, erro: null };
+}
+
+/**
+ * Reordena as OPÇÕES de resposta de uma pergunta.
+ *
+ * ⚠️ Seguro para dado já coletado: a resposta é gravada pelo TEXTO da opção
+ * (`cen_resposta_item.valor_texto` / `valor_opcoes`), não pela posição — então
+ * mudar a ordem não mexe em resposta nenhuma. Se algum dia a resposta passar a
+ * guardar índice, esta função vira destrutiva e precisa de outra régua.
+ *
+ * ⚠️ `opcoes_neutras` também aponta pelo texto, por isso NÃO é tocada aqui —
+ * reescrevê-la por índice é justamente o que faria a marca de "não conta"
+ * pousar na opção errada.
+ */
+export function moverOpcao(p: Pergunta, de: number, para: number): Partial<Pergunta> {
+  const opcoes = p.opcoes || [];
+  if (de < 0 || de >= opcoes.length) return {};
+  const destino = Math.max(0, Math.min(opcoes.length - 1, para));
+  if (destino === de) return {};
+  const proximo = [...opcoes];
+  const [movida] = proximo.splice(de, 1);
+  proximo.splice(destino, 0, movida);
+  return { opcoes: proximo };
+}
+
+/** Quantas da seleção JÁ FORAM gravadas (têm id) — são as que têm resposta a perder. */
+export function selecionadasComResposta(lista: Pergunta[], indices: number[]): number {
+  const alvo = new Set(indices);
+  return lista.filter((p, i) => alvo.has(i) && !!p.id).length;
+}
+
+/**
  * Para onde vai o índice da pergunta ABERTA depois de um movimento. Sem isto, o
  * painel expandido passa a mostrar a edição de OUTRA pergunta — e quem estava
  * editando não percebe que digitou no lugar errado.
