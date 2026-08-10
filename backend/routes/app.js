@@ -1216,6 +1216,11 @@ router.get('/censo', authApp, limiterNormal, async (req, res) => {
       },
       ja_respondeu: !!ja,
       respondida_em: ja?.concluida_em || null,
+      // O TOKEN cru, para o app montar o formulário NATIVO e mandar a resposta
+      // pelos mesmos endpoints públicos da web (é ele que dá
+      // `identificado_por='cpf_nascimento'` sem a pessoa digitar CPF).
+      // Só sai para quem PODE responder — mesma régua da `url`.
+      token: token || null,
       // Só emite o link para quem PODE responder. Sem isto, um app
       // desatualizado que ignorasse `ja_respondeu` ainda abriria o formulário.
       url: token ? `${base}/censo/p/${pesquisa.slug}?t=${token}&canal=app` : null,
