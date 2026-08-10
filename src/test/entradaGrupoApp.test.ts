@@ -90,16 +90,29 @@ describe('avaliarEntradaNoGrupo · a trava de sexo (a queixa do Marcos)', () => 
     expect(avaliarEntradaNoGrupo({ grupo: SO_HOMENS, genero: 'masculino' })).toEqual({ ok: true });
   });
 
-  it('⚠️⚠️ MUTATION GUARD · sexo DESCONHECIDO pede o dado, não passa nem barra', () => {
-    // Medido 10/08: só 16 das 54 contas do app têm `genero`. Barrar travaria
-    // 70%; deixar passar mantém o buraco. O código `sexo_necessario` é o que
-    // permite a tela pedir pra completar o perfil.
+  it('⚠️⚠️ MUTATION GUARD · sexo DESCONHECIDO não passa — uma regra só', () => {
+    // Decisão do Marcos (10/08), derrubando a minha: eu tinha feito um caminho
+    // especial que DEIXAVA PASSAR quem não tinha o dado, porque só 16 das 54
+    // contas do app tinham `genero`. Palavras dele: "parece que estamos criando
+    // algo que é pra resolver 40 pessoas, mas que vai quebrar quando abrir pra
+    // igreja". E o que fecha: o portão de identidade JÁ exige o sexo, então quem
+    // chega aqui tem o dado — não havia buraco a acomodar, só máquina a mais.
     for (const v of [null, undefined, '', '   ', 'outro', 'nao_informado']) {
       const r = avaliarEntradaNoGrupo({ grupo: SO_MULHERES, genero: v });
       expect(r.ok).toBe(false);
-      expect(r.codigo).toBe('sexo_necessario');
       expect(r.status).toBe(422);
+      expect(r.codigo).toBe('grupo_incompativel');
+      // a MENSAGEM distingue "não sabemos" de "não bate" — isso é honestidade
+      // com a pessoa, não um segundo caminho de decisão.
+      expect(r.erro).toContain('Complete seu cadastro');
     }
+  });
+
+  it('quem tem o sexo e não bate recebe a mensagem do PÚBLICO, não a de cadastro', () => {
+    expect(avaliarEntradaNoGrupo({ grupo: SO_MULHERES, genero: 'masculino' }).erro)
+      .toContain('só de mulheres');
+    expect(avaliarEntradaNoGrupo({ grupo: SO_HOMENS, genero: 'feminino' }).erro)
+      .toContain('só de homens');
   });
 
   it('⚠️ MUTATION GUARD · categoria NÃO restritiva nunca pergunta o sexo', () => {
