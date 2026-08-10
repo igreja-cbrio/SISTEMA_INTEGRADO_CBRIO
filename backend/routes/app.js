@@ -3628,7 +3628,11 @@ router.get('/grupos/:grupoId/membros', authApp, limiterNormal, async (req, res) 
     // não conseguia distinguir `funcao='lider'` (cadastro, pode ter vários) da
     // pessoa protegida — e escondia o menu de ações de TODOS os líderes.
     const { data: grupo } = await supabase.from('mem_grupos')
-      .select('id, nome, dia_semana, horario, local, endereco, bairro, descricao, categoria, aceitando_inscricoes, lider_id')
+      // ⚠️ `modo_inscricao` vai pro app desde 10/08: é ele que decide se o
+      // botão "Convidar" manda o link DIRETO do grupo ou o link geral. Sem
+      // ele, os 9 grupos 'fechado' (por convite do líder) distribuiriam um
+      // link que devolve 403 pra todo mundo. Ver `lib/convite.ts` no app.
+      .select('id, nome, dia_semana, horario, local, endereco, bairro, descricao, categoria, aceitando_inscricoes, modo_inscricao, lider_id')
       .eq('id', gid).is('deleted_at', null).maybeSingle();
     if (!grupo) return res.status(404).json({ error: 'Grupo não encontrado' });
 
