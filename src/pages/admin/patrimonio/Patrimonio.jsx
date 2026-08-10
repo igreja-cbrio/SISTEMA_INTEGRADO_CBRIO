@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Tag, ClipboardList, Trash2, Archive, Pencil, MapPin, ScanLine } from 'lucide-react';
+import { Tag, ClipboardList, Trash2, Archive, Pencil, MapPin, ScanLine, ChevronDown } from 'lucide-react';
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import {
   PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, LabelList,
@@ -64,6 +65,20 @@ const ORDENACOES_BENS = [
   { key: 'valor_asc', label: 'Menor valor' },
   { key: 'categoria_asc', label: 'Categoria A-Z' },
 ];
+// "Editar em massa"/"Renomear em massa" só fazem sentido pra um LOTE de itens
+// idênticos (mesmo produto) — nunca pra uma seleção heterogênea, onde mexer
+// em categoria/localização/nome de todos de uma vez seria arriscado (pedido
+// do usuário 2026-08-10). Campos que legitimamente VARIAM dentro de um lote
+// (nº de série, valor, data de aquisição, NF, origem/doador, garantia,
+// responsável) ficam de fora da comparação — são exatamente os que o cadastro
+// em lote já deixa variar por unidade.
+const CAMPOS_MESMO_LOTE = ['nome', 'descricao', 'categoria_id', 'localizacao_id', 'marca', 'modelo', 'status', 'observacoes'];
+function mesmoLote(itens) {
+  if (itens.length < 2) return false;
+  const base = itens[0];
+  return itens.every(it => CAMPOS_MESMO_LOTE.every(campo => (it[campo] ?? null) === (base[campo] ?? null)));
+}
+
 function ordenarBens(lista, chave) {
   if (chave === 'padrao') return lista;
   const arr = [...lista];
@@ -844,6 +859,8 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
 
   const idsFiltrados = useMemo(() => bens.map(b => b.id), [bens]);
   const todosPaginaMarcados = bensPag.length > 0 && bensPag.every(b => selecionados.has(b.id));
+  const bensSelecionados = useMemo(() => bens.filter(b => selecionados.has(b.id)), [bens, selecionados]);
+  const mesmoLoteSelecionado = useMemo(() => mesmoLote(bensSelecionados), [bensSelecionados]);
 
   function toggleSelecionado(id) {
     setSelecionados(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -906,7 +923,19 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
         </Button>
         <Button variant="outline" onClick={() => exportarBensCSV(bensOrdenados)}>Exportar CSV</Button>
         <Button variant="outline" onClick={() => exportarBensPDF(bensOrdenados)}>Exportar PDF</Button>
-        {isDiretor && <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}><Button variant="outline" onClick={onNewLote}>+ Em massa</Button><Button onClick={onNew}>+ Novo Bem</Button></div>}
+        {isDiretor && (
+          <div style={{ marginLeft: 'auto' }}>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button>+ Novo Bem <ChevronDown style={{ width: 14, height: 14, marginLeft: 4 }} /></Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={onNew}>Cadastro individual</DropdownMenuItem>
+                <DropdownMenuItem onClick={onNewLote}>Cadastro em massa (lote)</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        )}
       </div>
 
       {/* Ordenação por "pills" (pedido do usuário 2026-07-31, inspirado num
@@ -944,19 +973,29 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
       )}
 
       {/* Barra de ação em massa (pedido do usuário 2026-07-31) — some quando
-          não há seleção; some por completo pra quem não edita (isDiretor). */}
+          não há seleção; some por completo pra quem não edita (isDiretor).
+          "Mover em massa" pede >1 item (mover 1 é o fluxo individual do bem).
+          "Editar em massa" (que por dentro também cobre "renomear") só
+          aparece pra um LOTE de itens idênticos — ver mesmoLote() (pedido do
+          usuário 2026-08-10: heterogêneo não deveria oferecer editar/renomear
+          em massa, só mover/dar baixa, que fazem sentido pra qualquer seleção). */}
       {isDiretor && selecionados.size > 0 && (
         <div style={{ ...styles.card, marginBottom: 16, padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', background: C.primaryBg, border: `1px solid ${C.primary}` }}>
           <span style={{ fontSize: 13, fontWeight: 700 }}>{selecionados.size} selecionado{selecionados.size > 1 ? 's' : ''}</span>
           {selecionados.size < idsFiltrados.length && (
             <Button variant="ghost" size="xs" onClick={selecionarTodosFiltrados}>Selecionar todos os {idsFiltrados.length} filtrados</Button>
           )}
-          <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            <Button variant="outline" size="xs" onClick={() => setModalBulkEditar(true)}>Editar em massa</Button>
-            <Button variant="outline" size="xs" onClick={() => setModalBulkMov(true)}>Mover em massa</Button>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+            {mesmoLoteSelecionado && <Button variant="outline" size="xs" onClick={() => setModalBulkEditar(true)}>Editar em massa</Button>}
+            {selecionados.size > 1 && <Button variant="outline" size="xs" onClick={() => setModalBulkMov(true)}>Mover em massa</Button>}
             <Button variant="outline" size="xs" onClick={() => setModalBulkBaixa(true)}>Dar baixa em massa</Button>
             <Button variant="ghost" size="xs" onClick={limparSelecao}>Limpar</Button>
           </div>
+          {selecionados.size > 1 && !mesmoLoteSelecionado && (
+            <div style={{ width: '100%', fontSize: 11, color: C.text2 }}>
+              Editar/renomear em massa aparece só quando os selecionados são o mesmo item (nome, categoria, localização, marca/modelo, status e observações iguais) — nº de série, valor, data, NF, origem, garantia e responsável podem variar.
+            </div>
+          )}
         </div>
       )}
 
