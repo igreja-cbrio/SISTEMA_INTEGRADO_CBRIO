@@ -7,6 +7,7 @@ const { enviarTexto } = require('./whatsappSend');
 const { normalizarTelefone } = require('./whatsappService');
 const waInbox = require('./waInbox');
 const { notificar } = require('./notificar');
+const { ehSoAgradecimento } = require('../utils/agradecimento');
 
 function primeiroNome(nome) { return String(nome || '').trim().split(/\s+/)[0] || ''; }
 
@@ -57,6 +58,40 @@ async function tratar({ telefone, texto }) {
   if (!setores.length) return false; // sem menu configurado → institucional
 
   const estado = conv.bot_estado || null;
+
+  // ⚠️⚠️ AGRADECIMENTO NÃO ABRE O MENU (Matheus · 11/08/2026).
+  // A igreja dispara uma mensagem, a pessoa responde "Obrigado" — e o bot abria
+  // o menu de setores como se ela quisesse atendimento. Medido no inbox: 102
+  // conversas não lidas, boa parte só de gente agradecendo um disparo.
+  //
+  // Aqui o bot responde uma cortesia e ENSINA o caminho: manda um "oi" quando
+  // quiser falar de algo. E NÃO entra em `aguardando_setor` — se entrasse, a
+  // próxima mensagem dela seria interpretada como escolha de setor.
+  // ⚠️ `concluido` fica FORA: ali a conversa já foi triada e a área vai
+  // responder. Mandar "manda um oi" depois de a pessoa agradecer o atendimento
+  // que ela acabou de receber reabriria um loop com o bot. Nesse estado o bot
+  // continua calado, como já era.
+  if (estado !== 'concluido' && ehSoAgradecimento(texto)) {
+    // Já agradeceu antes e agradeceu de novo: o bot CALA. Repetir a mesma
+    // cortesia a cada "🙏" é a versão automática de não ouvir.
+    if (estado === 'cortesia') return true;
+    const oi = primeiroNome(conv.nome) ? `${primeiroNome(conv.nome)}, ` : '';
+    await responder(
+      telefone,
+      `${oi}nós que agradecemos! 🙏\n\nSe precisar falar com a gente sobre alguma coisa, manda um *oi* aqui que eu te ajudo a chegar na pessoa certa.`,
+    );
+    await supabase.from('wa_conversas').update({ bot_estado: 'cortesia' }).eq('id', conv.id);
+    return true;
+  }
+
+  // Agradeceu antes e agora escreveu de verdade → é a primeira mensagem que
+  // pede atendimento. Cai no menu, e é por isso que o estado 'cortesia' não
+  // pode ser um beco sem saída.
+  if (estado === 'cortesia') {
+    await responder(telefone, montarMenu(setores, conv.nome));
+    await supabase.from('wa_conversas').update({ bot_estado: 'aguardando_setor' }).eq('id', conv.id);
+    return true;
+  }
 
   // 1) primeira mensagem → menu
   if (!estado) {
