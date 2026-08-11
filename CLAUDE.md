@@ -7580,8 +7580,31 @@ no formato novo), o domingo passa de **4 para 3 cultos**: o **08:30 encerra** e
 passa a existir um **09:30**. Quarta, AMI e Bridge **não** mudam.
 
 **Contexto COMPLETO — ler antes de tocar em qualquer coisa de culto de domingo:
-`docs/cultos-domingo/contexto-e-plano.md`** (estado medido em produção, decisões,
-perguntas abertas, inventário e armadilhas).
+`docs/cultos-domingo/contexto-e-plano.md`** (estado medido, decisões e plano) **+
+`docs/cultos-domingo/varredura-2026-08-11.md`** (inventário de 113 achados, 53
+confirmados em verificação adversarial · **é a fonte para executar**).
+
+⚠️ Os 5 achados que mais matam, da varredura:
+
+1. **O voluntariado DESCARTA culto desconhecido, não zera.** A régua é prefixo de
+   texto do nome, em **5 cópias**, nenhuma com `'Domingo 09%'` → check-in
+   desaparece do dashboard **sem erro, sem log e sem zero visível**. A correção
+   vai ao ar **ANTES** de o tipo existir.
+2. **`POST /service-types` descarta `has_kids`/`has_online`/`presencial_label`** →
+   tipo criado pela UI nasce sem Kids e **nenhuma criança faz check-in**, sem
+   caminho de UI para ligar. O tipo novo **nasce por SQL**.
+3. **Existem 4 fontes de horário sem FK**: o catálogo, o snapshot em
+   `cultos.hora`/`nome`, o `fin_culto_slots` (que roteia dízimo pra conta
+   contábil) e o `batismo_horarios` (porta pública). ⚠️ **09:30 cai EXATAMENTE na
+   fronteira de dois slots financeiros** — o dízimo de um culto parte em duas
+   contas de cultos extintos, por trigger.
+4. **72 cultos futuros já gravados** com hora antiga · `gerar_cultos_recorrentes`
+   é INSERT-ONLY e **nunca corrige** · `cultos.hora` está fora da allowlist do
+   `PUT /cultos/:id` (só por SQL).
+5. 🔴 **`DELETE /service-types/:id` é guardado por `membresia` nível 1 (LEITURA)**,
+   alcançável por 27 cargos: um clique anula `service_type_id` em **209 cultos**
+   (saem dos KPIs) e apaga em CASCADE roteiro de produção, checklist e o vínculo
+   do template de escala. **Nunca usar "Remover" em tipo de culto.**
 
 O essencial para não fazer besteira:
 

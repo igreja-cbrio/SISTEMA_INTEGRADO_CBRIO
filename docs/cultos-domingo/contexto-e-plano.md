@@ -241,10 +241,102 @@ para as duas frentes não conflitarem no mesmo arquivo.
 
 ## 8. Inventário técnico
 
-⚠️ **EM LEVANTAMENTO.** Está rodando uma varredura multi-agente do sistema
-(banco/schema, coletores de KPI, voluntariado, frontend, kids+produção,
-crons+integrações), com verificação adversarial dos achados graves. Esta seção
-será complementada quando ela fechar.
+✅ **VARREDURA CONCLUÍDA (2026-08-11).** 6 dimensões · 113 achados · **53
+confirmados** e **14 refutados** em verificação adversarial contra o código e o
+banco vivos. **Relatório íntegro: `docs/cultos-domingo/varredura-2026-08-11.md`
+(371 linhas) — é a fonte, leia antes de executar.** Resumo do que ele muda:
+
+### 8.1 Existem QUATRO fontes de horário de culto, sem FK entre si
+
+Mexer só no catálogo conserta menos da metade do sistema:
+
+| Fonte | O que é |
+|---|---|
+| `vol_service_types.recurrence_time` | o catálogo |
+| `cultos.hora` + `cultos.nome` | **snapshots congelados** por linha |
+| `fin_culto_slots` | janelas de horário do **financeiro**, que roteiam dízimo/oferta para contas contábeis |
+| `batismo_horarios` | catálogo de texto da **porta pública de batismo** |
+
+### 8.2 ⚠️ Três itens com PESSOAS REAIS e prazo ANTES de 24/08
+
+- **Batismo público** — oferece 08:30 e 10:00 como `aberto=true`. A partir de
+  24/08 o formulário agenda o batismo de **27/09** (já no formato novo)
+  oferecendo um culto extinto, e o cron da véspera manda "você será batizada às
+  08:30". **As 6 inscrições de 23/08 estão CORRETAS e não devem ser tocadas.**
+- **Bot do WhatsApp** — responde "Domingo: 08h30, 10h00, 11h30 e 19h00" a
+  qualquer visitante, **por palavra-chave, sem IA**, direto de `whatsapp_config`.
+  É dado, sem deploy: a janela é editar **em 24/08**.
+- **84 escalas de voluntário já publicadas** para 30/08 e 06/09 ancoradas em
+  08:30. ⚠️ **Elas vivem no Planning Center** (`vol_services` com
+  `service_type_id` NULL) — um UPDATE no banco é **revertido pelo sync horário**.
+  A correção é **no PCO**, não no banco.
+
+### 8.3 ⚠️ O 09:30 cai exatamente na fronteira das janelas financeiras
+
+`fin_culto_slots`: "Domingo 8:30" = 06:00→09:30 · "Domingo 10:00" = 09:30→11:00.
+Testado em produção com `fin_identifica_culto` para 30/08: **09:29 → conta
+`3.01.01.08 Dizimos Domingo 8:30`; 09:30 → `3.01.01.09 Dizimo Domingo 10:00`**.
+O dízimo de **um único culto** parte em **duas contas de cultos extintos**, por
+trigger automático, sem gente no caminho. `fin_culto_slots` **tem que ser
+recortado** independente de qualquer decisão de nome.
+
+### 8.4 ⚠️ O voluntariado DESCARTA o culto desconhecido (não zera)
+
+A régua é **prefixo de texto do nome**, em **5 cópias**
+(`fn_dash_vol_service_no_bloco`, `vw_dashboard_voluntariado`,
+`fn_dashboard_voluntariado_composicao`, `_resumo`, `_pessoas`, mais
+`volMatch.ts:37`). Nenhuma tem `'Domingo 09%'`. Culto novo → bloco `NULL` →
+`WHERE bloco_id IS NOT NULL` → **os check-ins desaparecem do dashboard sem erro,
+sem log e sem virar zero visível**. ~520 check-ins já dependem dos nomes
+literais.
+
+**Consequência para a ORDEM: a correção da régua vai ao ar ANTES de o tipo
+existir.** Se o tipo nascer primeiro, os check-ins do primeiro domingo somem.
+
+### 8.5 ⚠️ O tipo novo nasce quebrado se for criado pela UI
+
+`POST /service-types` **descarta** `has_kids`, `has_online`,
+`has_online_stream`, `presencial_label` e `meta_duracao_min`. Sem `has_kids=true`,
+**nenhuma criança consegue fazer check-in no culto principal de domingo** — e
+**não existe caminho de UI para ligar depois**. Logo: o tipo novo **precisa**
+nascer por SQL/migration.
+
+### 8.6 Outros achados que mudam decisão
+
+- **72 cultos futuros** (30/08→27/12) já gravados com hora/nome antigos.
+  `gerar_cultos_recorrentes` é **INSERT-ONLY** e dedupa por `(service_type_id,
+  data)` **sem comparar hora** → nunca corrige. `cultos.hora` está **fora da
+  allowlist** do `PUT /cultos/:id` → só dá para corrigir por SQL.
+- **Totem Kids**: com 09:30/11:30 o espaçamento vira 120 min e abre um **buraco
+  novo 10:30–11:00** onde a criança é lançada na sessão do 09:30 **já
+  encerrada** — e as 4 travas da tela caem juntas. Hoje funciona por acidente
+  aritmético (90 min = 60+30).
+- **Cultos fantasma** aparecem no totem Kids (`/cultos-do-dia` filtra só
+  `has_kids`) e a tela **cria sessão** neles; ao encerrar, o consolidado vai pro
+  culto fantasma e o real fica 0. **Soft-delete não resolve.**
+- **Apresentação de bebês** amarrada a `startsWith('10:00')` → sem 10:00 cai no
+  culto **mais cedo** (o fantasma 08:30), com texto "às 10h" hardcoded. Datas:
+  **13/09, 11/10, 08/11**.
+- **8 contas contábeis** com horário no nome e **6.828 transações**;
+  `vw_fin_dre_mensal` lê o nome **ao vivo** e não há snapshot do rótulo.
+- **Dois apps fora do deploy do ERP**: app de membros lê `cultos.hora` direto
+  pelo Supabase (anon key) e o **CBRio-Staff tem a grade hardcoded**
+  (`index.tsx:276`) — exige **OTA**, não sai no merge.
+- 🔴 **ACHADO DE SEGURANÇA**: `DELETE /service-types/:id` é guardado por
+  `authorizeModule('membresia', 1)` = **nível de LEITURA**, alcançável por 27
+  cargos, atrás de um `confirm()` seco. Um clique **anula `service_type_id` em
+  209 cultos** (FK SET NULL → saem retroativamente dos KPIs e do centro da
+  mandala) e **apaga em CASCADE** o roteiro de produção, o checklist e o vínculo
+  do template de escala. Corrigir o guard é item da Fase 1.
+- **`bloco_servico` é armadilha de correção falsa** (D1): 0 leitores, não é
+  criada por migration nenhuma (drift), e tem `COMMENT` descrevendo a semântica
+  desejada. **Preencher no 09:30 é no-op comprovado** — a minha proposta da
+  seção 9.2 de usá-la como chave de turno exige **escrever os leitores do
+  zero**, não é "só preencher".
+- **Refutados** (não usar como verdade): os crons do `online-live-monitor`
+  **não** precisam mudar (09:30 já está coberto); as cores do voluntariado já
+  colidem hoje (~94% cai no fallback), logo cor nunca foi identidade ali; e
+  parte do achado do WiFi caiu na verificação.
 
 Áreas que a varredura precisa cobrir, e por que cada uma é suspeita:
 
@@ -330,6 +422,30 @@ escopo** desta mudança — anotar, não resolver agora.
 
 Cada fase diz o que faz, onde, o risco e como verificar. **Nada começa antes da
 validação do plano** (pedido do Matheus).
+
+⚠️ **ESTE PLANO FOI ESCRITO ANTES DA VARREDURA E ESTÁ INCOMPLETO.** A ordem
+detalhada, com datas e reversibilidade item a item, está no **§5 do
+`varredura-2026-08-11.md`** — use aquela. As correções que a varredura impôs
+sobre o que está escrito abaixo:
+
+1. **A ordem inverte:** o **código vai ao ar ANTES de qualquer mudança de dado**
+   (21–23/08), em especial a régua do voluntariado (§8.4). Meu plano original
+   colocava migration na Fase 1 — errado.
+2. **O tipo novo nasce por SQL com todas as flags** (§8.5), nunca pela UI.
+3. **Quatro pré-requisitos** sem os quais "criar tipo novo" fica **pior** que
+   retimar: as flags, o nome no padrão `"Domingo 09:30"` (exigido por
+   `isSedeCulto`, pelos 2 ramos de `kpi_calcular_valor_auto` e pela regex do
+   pager), a régua do voluntariado antes do tipo, e o vínculo em
+   `vol_escala_template_tipos` (senão a escala de 30/08 sai vazia).
+4. **`fin_culto_slots` e `batismo_horarios` entram no escopo** — meu plano nem
+   os mencionava.
+5. **`is_active=false` É o mecanismo correto** para tirar o culto do check-in e
+   do dropdown (D15 confirma), mas **não limpa linha já materializada** e tem o
+   trade-off do §C16 (o histórico do 08:30 deixa de ser filtrável isoladamente),
+   que precisa ser aceito por escrito. Ver 9.1 — o ponto sobre leitura histórica
+   segue valendo.
+6. **Fazer o UPDATE das 72 linhas em LOTES**: o trigger `cultos_recalc_kpis` é
+   `FOR EACH ROW`.
 
 ### Fase 0 · Alinhamento (antes de tocar em código)
 
