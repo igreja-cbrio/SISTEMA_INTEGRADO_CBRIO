@@ -2044,43 +2044,45 @@ router.delete('/indicadores-custom/:id', async (req, res) => {
   }
 });
 
-// GET /next-presenca-mensal?meses=12 · quantas pessoas estiveram PRESENTES no
-// NEXT por mês (aba simples do Dashboard Semanal). Presença = inscrição do NEXT
-// com check-in feito (next_inscricoes.check_in_at) — mesma régua do módulo /next.
-// Agrupa pelo mês do EVENTO (next_eventos.data · "no NEXT de tal mês"); se o
-// evento não tiver data, cai no mês do próprio check-in. Paginado (cap 1000).
+// GET /next-presenca-mensal?meses=12 · quantas PESSOAS estiveram presentes no
+// NEXT por mês (aba simples do Dashboard Semanal).
+//
+// ⚠️⚠️ A FONTE É A CHAMADA DOS ENCONTROS (`vw_next_presenca_mes` · migration
+// 20260811150000), não mais `next_inscricoes.check_in_at`. Aquele é o modelo
+// ANTERIOR ao cutover de turmas (17/06/2026) e sua última data é 2026-04 — era
+// por isso que mai/2026 em diante aparecia "sem dado" e jun/jul tiveram que ser
+// digitados na mão. Pedido do Matheus em 11/08: "a presença do NEXT inputada de
+// forma automática, a partir da presença das pessoas."
+//
+// ⚠️ O número do histórico DIMINUI, e está certo: o legado contava LINHAS
+// (participações — a mesma pessoa nos 2 encontros do mês contava 2) e a pergunta
+// do card é quantas PESSOAS estiveram. set/2025 eram 44 linhas de 31 pessoas.
+//
+// ⚠️ A view devolve o mês inteiro (12 linhas hoje); a janela é recortada aqui.
+// ⚠️ Se a view ainda não existir (deploy em 2 etapas), o automático vira 0 e o
+// ajuste MANUAL segue mandando — a aba não quebra (lição do `parcelas_max`).
 router.get('/next-presenca-mensal', async (req, res) => {
   try {
     const meses = Math.min(Math.max(parseInt(req.query.meses, 10) || 12, 1), 36);
     // Janela: início do mês, `meses` meses atrás.
     const hoje = new Date();
     const inicio = new Date(Date.UTC(hoje.getUTCFullYear(), hoje.getUTCMonth() - (meses - 1), 1));
+    const mesInicio = inicio.toISOString().slice(0, 7);
 
-    // Puxa os check-ins do NEXT (volume pequeno) paginando pra fugir do cap de 1000.
-    let linhas = [];
-    let offset = 0;
-    const page = 1000;
-    while (true) {
-      const { data, error } = await supabase
-        .from('next_inscricoes')
-        .select('id, check_in_at, evento:next_eventos(data)')
-        .not('check_in_at', 'is', null)
-        .range(offset, offset + page - 1);
-      if (error) throw error;
-      if (!data || !data.length) break;
-      linhas = linhas.concat(data);
-      if (data.length < page) break;
-      offset += page;
-    }
-
-    // Agrupa por mês (AAAA-MM) do evento; fallback pro mês do check-in.
     const porMes = {};
-    for (const l of linhas) {
-      const ref = l.evento?.data || l.check_in_at;
-      if (!ref) continue;
-      const ym = String(ref).slice(0, 7); // AAAA-MM
-      if (ym < inicio.toISOString().slice(0, 7)) continue; // fora da janela
-      porMes[ym] = (porMes[ym] || 0) + 1;
+    let avisoFonte = null;
+    {
+      const { data, error } = await supabase
+        .from('vw_next_presenca_mes')
+        .select('ano_mes, pessoas')
+        .gte('ano_mes', mesInicio);
+      if (error) {
+        // ⚠️ Falha de CONSULTA não é ausência de PRESENÇA: declara em vez de
+        // devolver zero com cara de "ninguém foi ao NEXT".
+        console.error('[DASH-SEM] vw_next_presenca_mes', error.message);
+        avisoFonte = 'Não foi possível ler a chamada dos encontros do NEXT — o automático está indisponível neste carregamento.';
+      }
+      for (const l of data || []) porMes[l.ano_mes] = l.pessoas || 0;
     }
 
     // Ajuste MANUAL por mês (lista de presença · quando o check-in não foi
@@ -2105,11 +2107,11 @@ router.get('/next-presenca-mensal', async (req, res) => {
         presentes: temManual ? manual[ym] : auto,
         auto,
         manual: temManual ? manual[ym] : null,
-        fonte: temManual ? 'manual' : 'checkin',
+        fonte: temManual ? 'manual' : 'chamada',
       });
     }
     const total = serie.reduce((s, m) => s + m.presentes, 0);
-    res.json({ serie, total });
+    res.json({ serie, total, aviso: avisoFonte });
   } catch (e) {
     console.error('[DASH-SEM] next-presenca-mensal', e.message);
     res.status(500).json({ error: 'Erro ao carregar presença do NEXT' });
