@@ -26,6 +26,7 @@
 // teto de 30/15min a pessoa tomaria 429 no meio do próprio pagamento.
 // ============================================================================
 const express = require('express');
+const { semCache } = require('../middleware/semCache');
 const router = express.Router();
 const rateLimit = require('express-rate-limit');
 const { notificar } = require('../services/notificar');
@@ -151,6 +152,12 @@ function referenciaDaTentativa(bruta) {
 const TOKEN_RE = /^[0-9a-f]{32}$/i;
 
 // ── GET /config ────────────────────────────────────────────────────────────
+
+// ⚠️ Router INTEIRO: a tela de doação faz polling do status igual à da
+// inscrição, e servir estado velho aqui é dizer "ainda não caiu" pra quem já
+// pagou. `/config` também entra — o custo é nenhum, e assim rota de estado nova
+// nasce protegida sem ninguém precisar lembrar. Ver `middleware/semCache.js`.
+router.use(semCache);
 
 router.get('/config', (_req, res) => {
   const aviso = bloqueio();

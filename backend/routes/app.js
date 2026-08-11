@@ -3,6 +3,7 @@
  * Auth: Supabase JWT leve (sem sistema de permissões do ERP interno)
  */
 const router   = require('express').Router();
+const { semCache } = require('../middleware/semCache');
 const rateLimit = require('express-rate-limit');
 const multer = require('multer');
 const { supabase } = require('../utils/supabase');
@@ -163,16 +164,11 @@ const limiterNormal = limiterApp({
 //
 // Vale pro router INTEIRO de propósito: qualquer GET novo do app nasce sem
 // cache, sem ninguém precisar lembrar disso.
-router.use((req, res, next) => {
-  res.set('Cache-Control', 'no-store');
-  const enviarJson = (body) => {
-    if (!res.get('Content-Type')) res.type('application/json');
-    res.end(JSON.stringify(body));
-    return res;
-  };
-  res.json = enviarJson;
-  next();
-});
+// A régua vive em `middleware/semCache.js` — a MESMA que protege as telas
+// públicas de pagamento (que também fazem polling de estado). Duas cópias desta
+// lógica divergiriam, e o modo de divergir é silencioso: uma delas volta a
+// emitir ETag e ninguém percebe até a tela mostrar estado velho.
+router.use(semCache);
 
 // ── Versão mínima do app (PÚBLICO) · Onda 3 (07/08/2026) ──────────────────
 //
