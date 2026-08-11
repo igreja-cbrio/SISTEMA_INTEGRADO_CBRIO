@@ -15,7 +15,18 @@ name: Santander · Sync extrato (diario)
 on:
   schedule:
     - cron: '0 9 * * *'   # 09:00 UTC = 06:00 BRT diario
-  workflow_dispatch:      # permite run manual via UI
+  workflow_dispatch:
+    inputs:
+      dias:
+        description: 'Quantidade de dias a consultar'
+        required: true
+        default: '3'
+        type: string
+      dry_run:
+        description: 'Somente simular, sem gravar dados'
+        required: true
+        default: true
+        type: boolean
 
 concurrency:
   group: santander-cron-sync
@@ -30,16 +41,19 @@ jobs:
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
+          DIAS: ${{ inputs.dias || '3' }}
+          DRY_RUN: ${{ inputs.dry_run || false }}
         run: |
           if [ -z "$CRON_SECRET" ] || [ -z "$APP_BASE_URL" ]; then
             echo "::warning::CRON_SECRET ou APP_BASE_URL nao configurados"
             exit 0
           fi
           echo "Calling sync endpoint at $APP_BASE_URL/api/santander/cron/sync"
+          payload=$(jq -n --argjson dias "$DIAS" --argjson dry_run "$DRY_RUN" '{ dias: $dias, dry_run: $dry_run }')
           response=$(curl --location -sS -w "\n%{http_code}" -X POST \
             -H "X-Cron-Secret: $CRON_SECRET" \
             -H "Content-Type: application/json" \
-            -d '{"dias": 3}' \
+            -d "$payload" \
             "$APP_BASE_URL/api/santander/cron/sync")
           body=$(echo "$response" | head -n -1)
           status=$(echo "$response" | tail -n 1)
