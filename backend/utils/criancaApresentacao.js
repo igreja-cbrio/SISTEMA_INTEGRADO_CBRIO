@@ -18,16 +18,26 @@
 // do SPA da Vercel. `apresentacao_bebes` tem **0 linhas** — ninguém nunca
 // conseguiu se inscrever, por porta nenhuma.
 //
-// ⚠️⚠️ O QUE ESTA PORTA **NÃO** FAZ: não cria `kids_criancas`, não cria
-// `kids_responsaveis` e não liga `autorizado_buscar`. Autorização de RETIRADA de
-// criança no totem é decisão de proteção de criança que o Marcos arquivou em
-// 11/08 pra conversar com a Mari. Vínculo de FAMÍLIA (o que ele pediu aqui) é
-// outra coisa. Não juntar as duas.
+// ⚠️⚠️ O QUE ESTA PORTA **NÃO** FAZ: não cria `kids_responsaveis` e não liga
+// `autorizado_buscar`. Autorização de RETIRADA de criança no totem é decisão de
+// proteção de criança que o Marcos arquivou em 11/08 pra conversar com a Mari.
+// Vínculo de FAMÍLIA (o que ele pediu aqui) e ficha do Kids são outra coisa —
+// nenhuma das duas autoriza ninguém a buscar criança nenhuma.
 // ============================================================================
 
 // ⚠️ `cpfValido` faz o DV oficial da Receita e recusa sequência repetida. Vive em
 // `utils/` (não carrega o Supabase), então entra no gate junto com esta régua.
 const { cpfValido, soDigitos } = require('./cpf');
+// ⚠️ As 3 perguntas de saúde são as MESMAS do formulário público
+// (`utils/saudeCrianca`). Duas listas de perguntas fariam a criança entrar
+// com dado diferente conforme a porta — que é exatamente o que o Marcos
+// mandou consertar.
+const { normalizarSaude } = require('./saudeCrianca');
+// ⚠️⚠️ `mem_membros.genero` guarda **masculino/feminino**, nunca M/F (medido em
+// 11/08: 579 pessoas com sexo, ZERO com valor curto). Comparar com 'M' aqui era
+// condição sempre FALSA — e é ela que decide se quem preencheu entra como pai ou
+// como mãe no snapshot que o balcão lê no domingo. `sexoPara` traduz.
+const { sexoPara } = require('./dadosDoCadastro');
 
 /** ⚠️ CPF nunca entra aqui PRA A CRIANÇA — ela é identificada pelo responsável. */
 const CAMPOS_PROIBIDOS_CRIANCA = ['cpf', 'cnpj'];
@@ -145,7 +155,9 @@ function validarPedido(body, membro) {
     if (c[campo]) return { ok: false, erro: 'Não pedimos documento da criança' };
   }
 
-  const sexo = c.sexo === 'M' || c.sexo === 'F' ? c.sexo : null;
+  // A tela do app manda M/F; guardamos no formato CURTO porque o destino imediato
+  // é `kids_criancas.sexo` (M/F). Quem precisa do canônico converte na hora.
+  const sexo = sexoPara('curto', c.sexo);
 
   if (propria) {
     if (!membro?.id) return { ok: false, erro: 'Complete seu cadastro antes de apresentar uma criança' };
@@ -159,12 +171,12 @@ function validarPedido(body, membro) {
       ok: true,
       dados: {
         propria: true,
-        crianca: { nome, data_nascimento: nasc, sexo },
+        crianca: { nome, data_nascimento: nasc, sexo, saude: normalizarSaude(c) },
         responsavel: {
           membro_id: membro.id,
           nome: membro.nome || null,
           telefone: membro.telefone || null,
-          sexo: membro.genero === 'M' || membro.genero === 'F' ? membro.genero : null,
+          sexo: sexoPara('curto', membro.genero),
         },
         responsavel_extra: ex.dados,
         observacoes: obs(body?.observacoes),
@@ -182,7 +194,7 @@ function validarPedido(body, membro) {
     ok: true,
     dados: {
       propria: false,
-      crianca: { nome, data_nascimento: nasc, sexo },
+      crianca: { nome, data_nascimento: nasc, sexo, saude: normalizarSaude(c) },
       responsavel: {
         membro_id: null,
         nome: rNome,
@@ -229,7 +241,7 @@ function validarResponsavelExtra(v) {
       // ⚠️ Telefone só entra se for alcançável: 9 dígitos sem DDD (o caso real do
       // saneamento de 31/07) é pior que campo vazio — a equipe liga e não completa.
       telefone: tel.length >= 10 && tel.length <= 11 ? tel : null,
-      sexo: v.sexo === 'M' || v.sexo === 'F' ? v.sexo : null,
+      sexo: sexoPara('curto', v.sexo),
     },
   };
 }
@@ -280,7 +292,11 @@ function pessoaDaCrianca(crianca, igrejaId = null) {
   return {
     nome: crianca.nome,
     data_nascimento: crianca.data_nascimento,
-    genero: crianca.sexo || null,
+    // ⚠️ CANÔNICO aqui. `mem_membros.genero` é masculino/feminino em 100% das 579
+    // linhas preenchidas — gravar 'M' criaria a única pessoa da base num
+    // vocabulário que nenhum filtro do sistema procura (a régua de gênero dos
+    // grupos, entre outros).
+    genero: sexoPara('canonico', crianca.sexo),
     status: 'visitante',
     active: true,
     origem_cadastro: 'apresentacao_crianca_app',
