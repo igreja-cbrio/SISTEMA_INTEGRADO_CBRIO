@@ -7573,6 +7573,45 @@ Filtros em `isAmiCulto` (AMI ou sábado, exclui Bridge) e `isBridgeCulto`
 (qualquer culto com 'bridge' no nome). Ajustar se nomenclatura de
 cultos mudar.
 
+## ⚠️ EM CURSO · mudança dos cultos de DOMINGO · handoff pro MARCOS PAULO (2026-08-05)
+
+A partir da semana de **24/08/2026** (segunda — para o domingo **30/08** já sair
+no formato novo), o domingo passa de **4 para 3 cultos**: o **08:30 encerra** e
+passa a existir um **09:30**. Quarta, AMI e Bridge **não** mudam.
+
+**Contexto COMPLETO — ler antes de tocar em qualquer coisa de culto de domingo:
+`docs/cultos-domingo/contexto-e-plano.md`** (estado medido em produção, decisões,
+perguntas abertas, inventário e armadilhas).
+
+O essencial para não fazer besteira:
+
+- ⚠️ **NADA foi executado ainda** (nem migration, nem dado, nem código) e há
+  **5 perguntas abertas** com o Matheus que travam a execução.
+- ⚠️ **NÃO renomear `name` nem `recurrence_time` de tipo existente.** A decisão do
+  Matheus é ter **duas lentes** — "o 10:00 virou 09:30" (continuidade) **e** "o
+  09:30 nasceu novo, o 10:00 encerrou" (separada) — como FILTRO, porque a
+  diretoria vai escolher o caminho com o tempo. Renomear queima a lente separada.
+  O caminho é **criar o `Domingo 09:30` como tipo novo + linhagem explícita**
+  ligando 10:00 → 09:30.
+- ⚠️ **NUNCA deletar `vol_service_types`.** `producao_roteiro_etapas.service_type_id`
+  é **ON DELETE CASCADE** — apagar o tipo apaga o roteiro de produção em cascata.
+  O 08:30 é **encerrado**, nunca deletado.
+- **A tabela de slots logo abaixo desta seção descreve o formato ATUAL (4 cultos)
+  e continua válida até 23/08/2026.**
+- **Turno já existe** — reusar os blocos da migration `20260705140000`
+  (Domingo Manhã / Domingo Noite / Quarta / AMI / Bridge), não inventar um segundo
+  vocabulário. É o que o Dashboard Semanal já usa no voluntariado.
+- ⚠️ **A média por culto sobe ~33% por aritmética** (mesmo público, denominador
+  menor: ~440 → ~587 · medido nos últimos 10 domingos). Imunes à mudança: total
+  absoluto, por turno, por domingo. Por isso a data da mudança tem de ficar
+  **marcada nos gráficos**. Nos níveis de turno e de domingo as duas lentes dão o
+  MESMO número — a divergência existe só na visão por culto.
+- **`cultos.hora` existe e está 100% preenchida**, mas quase todo o sistema exibe
+  o `recurrence_time` do TIPO (`totemKids.js` 14×, `voluntariado.js` 12×,
+  `dashboardSemanal.js` 9×, `kpis.js` 6×…). Só o `CalendarioCultos.jsx` mostra a
+  hora da própria linha do culto. É isso que faz rename reescrever o passado na
+  tela mesmo com o dado correto guardado.
+
 ## Cultos recorrentes — slots fixos e identidade única
 
 Os horários de culto vivem em `vol_service_types` com `recurrence_day`
