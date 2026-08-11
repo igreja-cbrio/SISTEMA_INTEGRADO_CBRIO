@@ -4712,6 +4712,207 @@ router.delete('/tarefas/:id', authApp, limiterNormal, async (req, res) => {
   }
 });
 
+// ── Apresentação de criança · a porta que o app nunca teve ─────────────────
+// Pedido do Marcos (11/08/2026): *"Apresentação de Bebês está fora do app, quero
+// que tudo seja dentro do app. Quando a pessoa marcar que quer apresentar bebê,
+// já que já temos os dados dela, tem que perguntar se o filho é dela; se sim,
+// indicar o vínculo, completar os dados se a criança não existir como família
+// já. Se for outra pessoa, ela tem que preencher os dados completos dos
+// responsáveis e criança."*
+//
+// E a regra de identidade, dele: *"quando cadastrar uma criança deve gerar pessoa
+// no sistema que aparece em minha família, com as regras de criança, SEM CPF,
+// identificamos pelo pai."*
+//
+// ⚠️ A porta anterior era um LINK MORTO: `inscricoes.tsx` abria
+// `cbrio.org/apresentacao-criancas`, rota que NÃO existe no ERP (0 referências
+// em `src/`) e responde 200 só pelo catch-all do SPA. `apresentacao_bebes` tem
+// 0 linhas — ninguém nunca conseguiu se inscrever, por porta nenhuma.
+const {
+  proximoSegundoDomingo: _proxSegDom,
+  iso: _isoData,
+  acharCriancaNaFamilia,
+  validarPedido: _validarPedidoCrianca,
+  pessoaDaCrianca,
+} = require('../utils/criancaApresentacao');
+
+// GET /api/app/apresentacao-crianca — data da próxima cerimônia + o que já pedi
+router.get('/apresentacao-crianca', authApp, limiterNormal, async (req, res) => {
+  try {
+    const membro = await resolveMembroApp(req);
+    const data = _isoData(_proxSegDom());
+
+    // ⚠️ A FAMÍLIA VAI NA RESPOSTA de propósito, com os nomes. É a guarda contra
+    // o caso Benjamin/Mariane Gaia (lei de 22/07): quem está agrupada na família
+    // da irmã pela Membresia colocaria o próprio filho na família errada, e o
+    // único jeito honesto de evitar isso é a pessoa VER em qual família a criança
+    // vai entrar antes de confirmar.
+    let familia = null;
+    if (membro?.id) {
+      try {
+        const dados = await carregarFamiliaDoMembro(membro.id);
+        familia = {
+          nome: dados.familia?.nome || null,
+          membros: (dados.familiares || []).map((f) => f.nome).filter(Boolean).slice(0, 8),
+        };
+      } catch (e) { console.warn('[APP] apres familia:', e.message); }
+    }
+
+    let pedidos = [];
+    if (membro?.id) {
+      const { data: rows } = await supabase.from('apresentacao_bebes')
+        .select('id, bebe_nome, data_apresentacao, status')
+        .eq('responsavel_membro_id', membro.id)
+        .is('deleted_at', null)
+        .gte('data_apresentacao', _isoData(new Date()))
+        .order('data_apresentacao');
+      pedidos = rows || [];
+    }
+
+    res.json({
+      proxima_data: data,
+      familia,
+      pedidos,
+      // A tela usa isto pra decidir se pode oferecer o caminho "é meu filho".
+      pode_indicar_vinculo: !!membro?.id,
+    });
+  } catch (e) {
+    console.error('[APP] apresentacao-crianca GET:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar a apresentação de crianças' });
+  }
+});
+
+// POST /api/app/apresentacao-crianca
+// body: { propria: bool, crianca: {nome, data_nascimento, sexo?},
+//         responsavel?: {nome, telefone, email?, nome_pai?, nome_mae?}, observacoes? }
+router.post('/apresentacao-crianca', authApp, limiterStrict, async (req, res) => {
+  try {
+    const membro = await resolveMembroApp(req);
+    const v = _validarPedidoCrianca(req.body, membro);
+    if (!v.ok) return res.status(400).json({ error: v.erro });
+    const p = v.dados;
+
+    const dataApres = _isoData(_proxSegDom());
+
+    // Culto de domingo daquele dia (informativo · o balcão confirma)
+    let cultoId = null;
+    try {
+      const { data: cultos } = await supabase.from('cultos')
+        .select('id').eq('data', dataApres).is('deleted_at', null).order('id').limit(1);
+      if (cultos && cultos[0]) cultoId = cultos[0].id;
+    } catch (e) { /* informativo · não trava o pedido */ }
+
+    let criancaMembroId = null;
+    let reusou = false;
+    let familiaNome = null;
+
+    if (p.propria) {
+      // ── A criança vira PESSOA e entra na família de quem está pedindo ──────
+      //
+      // ⚠️ DEDUP PELA FAMÍLIA, não por quem preencheu: o pai e a mãe cadastrando
+      // o MESMO filho criariam duas pessoas, e a criança apareceria duplicada em
+      // "Minha família" das duas contas. Não existe CPF pra desempatar (é a regra
+      // do Marcos), então nome + nascimento DENTRO da família é a chave.
+      const { data: eu } = await supabase.from('mem_membros')
+        .select('id, familia_id, igreja_id').eq('id', membro.id).maybeSingle();
+
+      if (eu?.familia_id) {
+        const { data: naFamilia } = await supabase.from('mem_membros')
+          .select('id, nome, data_nascimento')
+          .eq('familia_id', eu.familia_id).is('deleted_at', null);
+        const achada = acharCriancaNaFamilia(naFamilia, p.crianca.nome, p.crianca.data_nascimento);
+        if (achada) { criancaMembroId = achada.id; reusou = true; }
+      }
+
+      if (!criancaMembroId) {
+        // ⚠️ NÃO passa pelo matcher canônico DE PROPÓSITO. O matcher liga por
+        // CPF → e-mail+nome → telefone+nome → nascimento+nome, e uma criança não
+        // tem nenhuma dessas chaves: o único ramo que alcançaria ela é
+        // nascimento+nome, que casaria com QUALQUER homônimo da mesma data. A
+        // identidade dela é o VÍNCULO com o responsável, que é o que o Marcos
+        // definiu ("identificamos pelo pai") e é o que gravamos abaixo.
+        const { data: nova, error: errNova } = await supabase.from('mem_membros')
+          .insert(pessoaDaCrianca(p.crianca, eu?.igreja_id || null))
+          .select('id').single();
+        if (errNova) throw errNova;
+        criancaMembroId = nova.id;
+      }
+
+      // Household + parentesco recíproco, pelos MESMOS helpers do convite de
+      // familiar (`services/familiaVinculo`) — duas réguas de "entrar na família"
+      // divergiriam, e é a de lá que a tela de Minha família lê.
+      const fam = await entrarNaFamilia(supabase, {
+        membroId: criancaMembroId, anfitriaoId: membro.id, userId: req.user?.id || null,
+      });
+      if (fam?.ok) familiaNome = fam.familia_nome || null;
+      await vincularParentesco(supabase, {
+        pessoaId: criancaMembroId, relacionadoId: membro.id, tipo: 'filho',
+        userId: req.user?.id || null,
+      });
+    }
+
+    // ── O pedido em si (o que a equipe Kids/pastoral lê) ───────────────────
+    const linha = {
+      responsavel_membro_id: p.propria ? membro.id : null,
+      responsavel_nome: p.responsavel.nome,
+      responsavel_telefone: p.responsavel.telefone,
+      responsavel_email: p.responsavel.email || null,
+      bebe_nome: p.crianca.nome,
+      bebe_data_nascimento: p.crianca.data_nascimento,
+      bebe_sexo: p.crianca.sexo,
+      nome_pai: p.responsavel.nome_pai || null,
+      nome_mae: p.responsavel.nome_mae || null,
+      observacoes: p.observacoes,
+      data_apresentacao: dataApres,
+      culto_id: cultoId,
+      registrado_por: req.user?.id || null,
+    };
+
+    // ⚠️ Idempotência: reenviar o formulário não cria segundo pedido pra mesma
+    // criança na mesma cerimônia. Sem isso, um toque duplo no botão põe a família
+    // duas vezes na lista do domingo.
+    if (p.propria) {
+      const { data: jaTem } = await supabase.from('apresentacao_bebes')
+        .select('id').eq('responsavel_membro_id', membro.id)
+        .eq('data_apresentacao', dataApres)
+        .ilike('bebe_nome', p.crianca.nome)
+        .is('deleted_at', null).maybeSingle();
+      if (jaTem) {
+        return res.json({
+          ok: true, ja_inscrito: true, id: jaTem.id,
+          data_apresentacao: dataApres, crianca_membro_id: criancaMembroId,
+          familia: familiaNome, reusou_crianca: reusou,
+        });
+      }
+    }
+
+    const { data: criada, error } = await supabase.from('apresentacao_bebes')
+      .insert(linha).select('id').single();
+    if (error) throw error;
+
+    // Aviso pra quem cuida do Kids — AWAITED (a lei de 31/07: em porta pública
+    // serverless o container congela na resposta e fire-and-forget se perde).
+    try {
+      await notificar({
+        modulo: 'kids', tipo: 'apresentacao_crianca',
+        titulo: 'Apresentação de criança pelo app',
+        mensagem: `${p.responsavel.nome} pediu a apresentação de ${p.crianca.nome} em ${dataApres.split('-').reverse().join('/')}.`,
+        link: '/kids', severidade: 'info',
+        chaveDedup: `apres_app_${criada.id}`,
+      });
+    } catch (e2) { console.warn('[APP] apres notif:', e2.message); }
+
+    res.status(201).json({
+      ok: true, id: criada.id, data_apresentacao: dataApres,
+      crianca_membro_id: criancaMembroId, familia: familiaNome,
+      reusou_crianca: reusou,
+    });
+  } catch (e) {
+    console.error('[APP] apresentacao-crianca POST:', e.message);
+    res.status(500).json({ error: 'Não foi possível registrar a apresentação agora' });
+  }
+});
+
 // ── Família · convite de familiar pelo app ──────────────────────────────────
 // Uma pessoa gera um convite (código + link), envia pro familiar; o familiar
 // aceita LOGADO no app → entra na mesma família + ganha o vínculo de parentesco.
