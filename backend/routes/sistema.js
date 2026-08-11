@@ -21,7 +21,7 @@ const { isAuthorizedCron } = require('../utils/cronAuth');
 //
 // ⚠️ A liberação é POR CAMINHO e só com segredo de cron válido. Um `next()`
 // solto aqui abriria todas as rotas de super-admin deste arquivo.
-const CAMINHOS_DE_CRON = new Set(['/cron/push-receipts']);
+const CAMINHOS_DE_CRON = new Set(['/cron/push-receipts', '/cron/incident-triage']);
 router.use((req, res, next) => (
   CAMINHOS_DE_CRON.has(req.path) && isAuthorizedCron(req)
     ? next('router') // sai deste router e deixa o sistemaV1 atender

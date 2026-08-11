@@ -21,6 +21,8 @@ const {
   alertarSaudeDoPush,
 } = require('../services/systemMobileOps');
 const { requireCron } = require('../utils/cronAuth');
+const { setSystemJobOutcome } = require('../services/systemJobOutcome');
+const { runIncidentTriage } = require('../services/systemIncidentTriage');
 const {
   getGovernanceCommandCenter,
   updateGovernanceControl,
@@ -83,6 +85,30 @@ router.get('/cron/push-receipts', requireCron, async (_req, res) => {
     }
   }
   res.json({ ok: true, ...saida });
+});
+
+// Agente de incidentes - etapa 1: somente triagem e atualizacao de estado.
+// Nao altera codigo, nao executa migrations e nao realiza acoes de producao.
+router.get('/cron/incident-triage', requireCron, async (_req, res) => {
+  try {
+    const result = await runIncidentTriage();
+    const outputCount = result.errors.opened + result.feedback.opened + result.incidents.promoted;
+    setSystemJobOutcome(res, {
+      status: 'success',
+      effectStatus: 'confirmed',
+      inputCount: result.errors.scanned + result.feedback.scanned + result.incidents.scanned,
+      outputCount,
+      discardedCount: 0,
+      result: String(outputCount) + ' incidente(s) triado(s)',
+    });
+    res.json(result);
+  } catch (error) {
+    console.error('[cron incident-triage]', error.message);
+    setSystemJobOutcome(res, {
+      status: 'failed', effectStatus: 'failed', errorCode: 'INCIDENT_TRIAGE_FAILED', errorMessage: error.message,
+    });
+    res.status(500).json({ ok: false, error: 'Falha na triagem automatica de incidentes.' });
+  }
 });
 
 router.use(authenticate);

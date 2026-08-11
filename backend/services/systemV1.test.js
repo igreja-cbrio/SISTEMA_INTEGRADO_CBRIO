@@ -5,7 +5,7 @@ const { sanitizeText, sanitizeMetadata } = require('./systemJobRuns');
 const { legacyRow } = require('./serverErrorTelemetry');
 const { TRANSITIONS } = require('../routes/sistemaV1');
 
-assert.equal(jobsByPath.size, 45);
+assert.equal(jobsByPath.size, 46);
 for (const job of JOBS) {
   assert.ok(jobsByPath.has(job.path.split('?')[0]), `job sem tracking: ${job.path}`);
 }

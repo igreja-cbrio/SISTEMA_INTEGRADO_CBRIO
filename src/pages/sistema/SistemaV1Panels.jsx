@@ -339,6 +339,9 @@ export function IncidentsPanel() {
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(null);
+  const [expanded, setExpanded] = useState(null);
+  const [eventsByIncident, setEventsByIncident] = useState({});
+  const [loadingEvents, setLoadingEvents] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -368,6 +371,24 @@ export function IncidentsPanel() {
     }
   };
 
+  const toggleTimeline = async (incident) => {
+    if (expanded === incident.id) {
+      setExpanded(null);
+      return;
+    }
+    setExpanded(incident.id);
+    if (eventsByIncident[incident.id]) return;
+    setLoadingEvents(incident.id);
+    try {
+      const events = await sistemaApi.incidentEvents(incident.id);
+      setEventsByIncident((current) => ({ ...current, [incident.id]: events }));
+    } catch (err) {
+      toast.error(err.message || 'Erro ao carregar a analise do incidente');
+    } finally {
+      setLoadingEvents(null);
+    }
+  };
+
   return (
     <div className="space-y-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -375,7 +396,10 @@ export function IncidentsPanel() {
           <h2 className="text-xl font-semibold">Incidentes</h2>
           <p className="mt-1 text-sm text-muted-foreground">Do primeiro sinal ao monitoramento pós-resolução.</p>
         </div>
-        <IncidentForm onCreated={load} />
+        <div className="flex items-center gap-2">
+          <Badge variant="outline" className="border-cyan-500/40 bg-cyan-500/10 text-cyan-700">Agente ativo · 5 min</Badge>
+          <IncidentForm onCreated={load} />
+        </div>
       </div>
 
       <div className="flex gap-2 overflow-x-auto">
@@ -423,6 +447,9 @@ export function IncidentsPanel() {
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
+                      <Button variant="ghost" size="sm" onClick={() => toggleTimeline(incident)}>
+                        {expanded === incident.id ? 'Ocultar análise' : 'Ver análise'}
+                      </Button>
                       {NEXT_STATUS[incident.status]?.length > 0 && (
                         <select
                           aria-label={`Atualizar status de ${incident.title}`}
@@ -440,6 +467,30 @@ export function IncidentsPanel() {
                       {updating === incident.id && <Loader2 className="h-4 w-4 animate-spin" />}
                     </div>
                   </div>
+                  {expanded === incident.id && (
+                    <div className="mt-4 rounded-xl border bg-muted/30 p-4">
+                      <div className="grid gap-3 text-sm sm:grid-cols-2">
+                        <div><span className="text-muted-foreground">Impacto</span><p className="mt-1">{incident.impact_summary || 'Em avaliação'}</p></div>
+                        <div><span className="text-muted-foreground">Responsável</span><p className="mt-1">{incident.owner_email || 'Tecnologia · triagem automática'}</p></div>
+                      </div>
+                      <div className="mt-4 border-t pt-4">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Linha do tempo</p>
+                        {loadingEvents === incident.id ? <Loader2 className="mt-3 h-4 w-4 animate-spin" /> : (
+                          <div className="mt-3 space-y-3">
+                            {(eventsByIncident[incident.id] || []).map((event) => (
+                              <div key={event.id} className="flex gap-3 text-sm">
+                                <CircleDot className="mt-0.5 h-4 w-4 shrink-0 text-cyan-500" />
+                                <div>
+                                  <p>{event.message || (String(event.from_status || '') + ' → ' + String(event.to_status || ''))}</p>
+                                  <p className="mt-0.5 text-xs text-muted-foreground">{event.actor_email || 'sistema'} · {relativeTime(event.created_at)}</p>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </article>
               ))}
             </div>

@@ -192,6 +192,10 @@
     {
       "path": "/api/sistema/cron/push-receipts",
       "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/sistema/cron/incident-triage",
+      "schedule": "*/5 * * * *"
     }
   ],
   "rewrites": [
