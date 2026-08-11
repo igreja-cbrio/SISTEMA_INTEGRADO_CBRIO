@@ -5,6 +5,7 @@
 const router   = require('express').Router();
 const rateLimit = require('express-rate-limit');
 const { supabase } = require('../utils/supabase');
+const { resolverPerfilVoluntario, estaServindo } = require('../utils/perfilVoluntarioApp');
 const { notificar } = require('../services/notificar');
 
 // ── Auth middleware leve ───────────────────────────────────────────────────
@@ -399,9 +400,10 @@ router.get('/voluntariado/me', authApp, limiterNormal, async (req, res) => {
   try {
     const membro = await resolveMembroApp(req);
 
-    const { data: vp } = await supabase.from('vol_profiles')
-      .select('id, full_name, allocation_status, planning_center_id')
-      .eq('auth_user_id', req.user.id).maybeSingle();
+    // ⚠️ Resolve por auth_user_id -> membresia_id -> email, e CONSERTA a coluna
+    // quando acha por vinculo fraco. `auth_user_id` estava preenchido em 20 de
+    // 928 perfis, e era so isso que separava "voluntario" de "quero ser".
+    const { vp } = await resolverPerfilVoluntario(req, membro);
 
     // Inscrição mais recente (por membro_id ou e-mail)
     let inscricao = null;
@@ -415,7 +417,9 @@ router.get('/voluntariado/me', authApp, limiterNormal, async (req, res) => {
       inscricao = ins || null;
     }
 
-    const ativo = vp?.allocation_status === 'active';
+    // ⚠️ `allocation_status` e 'active' em 928 de 928 perfis — nao discrimina
+    // ninguem. Quem separa e `arquivado` (793 false x 135 true).
+    const ativo = estaServindo(vp);
     const [escalas, indispRes] = await Promise.all([
       escalasDoVoluntario(vp),
       vp ? supabase.from('vol_availability').select('*').eq('volunteer_profile_id', vp.id).order('unavailable_from') : Promise.resolve({ data: [] }),
@@ -489,8 +493,8 @@ router.post('/voluntariado/solicitar-area', authApp, limiterStrict, async (req, 
 // GET /api/app/voluntariado/escalas — próximas escalas do voluntário
 router.get('/voluntariado/escalas', authApp, limiterNormal, async (req, res) => {
   try {
-    const { data: vp } = await supabase.from('vol_profiles')
-      .select('id, planning_center_id').eq('auth_user_id', req.user.id).maybeSingle();
+    const membro = await resolveMembroApp(req);
+    const { vp } = await resolverPerfilVoluntario(req, membro);
     res.json(await escalasDoVoluntario(vp));
   } catch (e) {
     console.error('[APP vol/escalas]', e.message);
@@ -505,8 +509,8 @@ router.post('/voluntariado/escalas/:id/responder', authApp, limiterNormal, async
     if (!['confirmed', 'declined'].includes(status)) {
       return res.status(400).json({ error: "status deve ser 'confirmed' ou 'declined'" });
     }
-    const { data: vp } = await supabase.from('vol_profiles')
-      .select('id').eq('auth_user_id', req.user.id).maybeSingle();
+    const membro = await resolveMembroApp(req);
+    const { vp } = await resolverPerfilVoluntario(req, membro);
     if (!vp) return res.status(404).json({ error: 'Perfil de voluntário não encontrado' });
     // só responde escala própria
     const { data, error } = await supabase.from('vol_schedules')
@@ -524,8 +528,8 @@ router.post('/voluntariado/escalas/:id/responder', authApp, limiterNormal, async
 // GET /api/app/voluntariado/indisponibilidades
 router.get('/voluntariado/indisponibilidades', authApp, limiterNormal, async (req, res) => {
   try {
-    const { data: vp } = await supabase.from('vol_profiles')
-      .select('id').eq('auth_user_id', req.user.id).maybeSingle();
+    const membro = await resolveMembroApp(req);
+    const { vp } = await resolverPerfilVoluntario(req, membro);
     if (!vp) return res.json([]);
     const { data } = await supabase.from('vol_availability')
       .select('*').eq('volunteer_profile_id', vp.id).order('unavailable_from');
@@ -541,8 +545,8 @@ router.get('/voluntariado/indisponibilidades', authApp, limiterNormal, async (re
 router.post('/voluntariado/indisponibilidade', authApp, limiterNormal, async (req, res) => {
   try {
     const { service_id, inicio, fim, motivo } = req.body || {};
-    const { data: vp } = await supabase.from('vol_profiles')
-      .select('id').eq('auth_user_id', req.user.id).maybeSingle();
+    const membro = await resolveMembroApp(req);
+    const { vp } = await resolverPerfilVoluntario(req, membro);
     if (!vp) return res.status(404).json({ error: 'Perfil de voluntário não encontrado' });
 
     let from = inicio; let to = fim || inicio;
@@ -568,8 +572,8 @@ router.post('/voluntariado/indisponibilidade', authApp, limiterNormal, async (re
 // DELETE /api/app/voluntariado/indisponibilidade/:id
 router.delete('/voluntariado/indisponibilidade/:id', authApp, limiterNormal, async (req, res) => {
   try {
-    const { data: vp } = await supabase.from('vol_profiles')
-      .select('id').eq('auth_user_id', req.user.id).maybeSingle();
+    const membro = await resolveMembroApp(req);
+    const { vp } = await resolverPerfilVoluntario(req, membro);
     if (!vp) return res.status(404).json({ error: 'Perfil não encontrado' });
     const { error } = await supabase.from('vol_availability')
       .delete().eq('id', req.params.id).eq('volunteer_profile_id', vp.id);
