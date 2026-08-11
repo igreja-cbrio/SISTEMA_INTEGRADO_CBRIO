@@ -116,7 +116,9 @@ const EVENTO_VAZIO = {
   // Formas que ESTE evento aceita. Não é enfeite: a escolha da pessoa é o que
   // faz o provedor preparar o meio de pagamento (QR do Pix, boleto), e o que
   // não estiver aqui não é oferecido nem por chamada direta.
-  pagamento_metodos: ['pix', 'cartao'], parcelas_max: '',
+  // ⚠️ 1 = à vista. NUNCA nascer vazio: campo em branco significava "o provedor
+  // decide", que no Mercado Pago é 36x. Parcelamento é decisão da igreja.
+  pagamento_metodos: ['pix', 'cartao'], parcelas_max: 1,
   pagamento_expira_horas: '',
   status: 'rascunho',
 };
@@ -147,7 +149,9 @@ export function EventoModal({ evento, areas, onClose, onSaved }: {
     valor_centavos: evento.valor_centavos != null ? String(evento.valor_centavos / 100) : '',
     pagamento_metodos: Array.isArray(evento.pagamento_metodos) && evento.pagamento_metodos.length
       ? evento.pagamento_metodos : ['pix', 'cartao'],
-    parcelas_max: evento.parcelas_max ?? '',
+    // Evento antigo sem teto gravado abre como À VISTA — que é o que a tela
+    // sempre dizia que ele era, e agora é também o que o servidor aplica.
+    parcelas_max: evento.parcelas_max ?? 1,
     pagamento_expira_horas: evento.pagamento_expira_horas ?? '',
     inscricoes_encerram_em: isoParaInputLocal(evento.inscricoes_encerram_em),
   } : { ...EVENTO_VAZIO });
@@ -331,11 +335,35 @@ export function EventoModal({ evento, areas, onClose, onSaved }: {
                 </p>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* ⚠️ SELETOR, não campo livre: o valor daqui é política de
+                    preço do evento, e campo em branco significava "o provedor
+                    decide" (36x no Mercado Pago) enquanto o rótulo dizia "sem
+                    parcelar". Com a lista fechada não existe estado ambíguo —
+                    à vista é uma OPÇÃO, não a ausência de resposta. */}
                 <div>
-                  <label className="text-xs text-muted-foreground">Parcelas no cartão (vazio = sem parcelar)</label>
-                  <Input value={f.parcelas_max} onChange={set('parcelas_max')} placeholder="12" inputMode="numeric"
-                    disabled={!f.pagamento_metodos?.includes('cartao')} />
-                  <p className="text-[11px] text-muted-foreground mt-1">Os juros são pagos por quem se inscreve.</p>
+                  <label className="text-xs text-muted-foreground">Parcelamento no cartão</label>
+                  <select
+                    value={f.parcelas_max === '' || f.parcelas_max == null ? '1' : String(f.parcelas_max)}
+                    onChange={e => setF((s: any) => ({ ...s, parcelas_max: Number(e.target.value) }))}
+                    disabled={!f.pagamento_metodos?.includes('cartao')}
+                    className="w-full rounded-md border border-border bg-[var(--cbrio-input-bg)] px-2 py-1.5 text-sm disabled:opacity-50"
+                  >
+                    <option value="1">À vista (sem parcelar)</option>
+                    {Array.from({ length: 11 }, (_, i) => i + 2).map(n => (
+                      <option key={n} value={n}>Em até {n}x</option>
+                    ))}
+                  </select>
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    {f.pagamento_metodos?.includes('cartao')
+                      ? 'Quem se inscreve escolhe em quantas vezes, até este limite.'
+                      : 'Marque "Cartão" acima para liberar o parcelamento.'}
+                  </p>
+                  {Number(f.parcelas_max) > 3 && (
+                    <p className="text-[11px] text-amber-600 dark:text-amber-500 mt-1">
+                      ⚠️ Acima de 3x a taxa do provedor sobe bastante (chega a 13%). Confirme
+                      com o financeiro quem assume esse custo antes de publicar.
+                    </p>
+                  )}
                 </div>
                 <div>
                   <label className="text-xs text-muted-foreground">Reserva a vaga por (horas)</label>
