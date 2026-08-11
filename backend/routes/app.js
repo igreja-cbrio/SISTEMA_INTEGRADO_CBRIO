@@ -32,6 +32,13 @@ const { aprovarPedidoCore } = require('./grupos');
 const { registrarEventoPedido } = require('../services/grupoPedidoEventos');
 const appIdentidade = require('../services/appIdentidade');
 const { acharRespostaDaPessoa } = require('../services/censoJaRespondeu');
+// ⚠️⚠️ O vocabulário de sexo DIVERGE por tabela, e a diferença é medida, não
+// suposta: `mem_membros.genero` é **masculino/feminino** (579 pessoas, ZERO com
+// M/F), `kids_criancas.sexo` e `batismo_inscricoes.sexo` são **M/F**, e
+// `vol_inscricoes.sexo`/`next_matriculas.sexo` voltam ao canônico do Contrato.
+// `sexoPara` traduz por destino; copiar cru grava valor que nenhum filtro acha.
+const { sexoPara, patchDoCadastro } = require('../utils/dadosDoCadastro');
+const { precisaPagerPorInclusao } = require('../utils/saudeCrianca');
 const { gerarTokenIdentidade } = require('../utils/censoRespostaToken');
 // Reuso dos helpers de permissão granular pra resolver o nível do módulo
 // "grupos" do usuário do app (authApp é leve e não computa permissões).
@@ -709,6 +716,81 @@ const LINK_POR_TIPO_INSCRICAO = {
   grupos: '/grupos?tab=entrada', batismo: '/batismo',
   next: '/ministerial/next?tab=turmas', voluntariado: '/ministerial/voluntariado/inscricoes',
 };
+/**
+ * Onde o fanout pousa cada tipo, e como o Contrato se chama LÁ.
+ *
+ * ⚠️⚠️ O VOCABULÁRIO E OS NOMES DE COLUNA DIVERGEM POR TABELA, e isso foi
+ * conferido no banco (não decorado): `vol_inscricoes.sexo` e
+ * `next_matriculas.sexo` são canônicos (`masculino`/`feminino`), mas
+ * `batismo_inscricoes.sexo` é **curto** (`M`/`F` — 5 F e 1 M em produção).
+ * Copiar cru de um pro outro grava valor que nenhum filtro encontra depois.
+ *
+ * ⚠️ `grupos` fica FORA de propósito: `mem_grupo_pedidos` **não tem** coluna de
+ * CPF, nascimento nem sexo (introspectado em 11/08) — o que o pedido de grupo faz
+ * com o CPF já é outro caminho, o `reconciliarCpfTardio` de 06/08. Inventar
+ * coluna aqui faria o PostgREST recusar o UPDATE inteiro (42703).
+ */
+const DESTINO_CONTRATO = {
+  voluntariado: {
+    tabela: 'vol_inscricoes',
+    mapa: { cpf: 'cpf', data_nascimento: 'data_nascimento', sexo: 'sexo' },
+    sexo: 'canonico',
+  },
+  batismo: {
+    tabela: 'batismo_inscricoes',
+    mapa: { cpf: 'cpf', data_nascimento: 'data_nascimento', sexo: 'sexo' },
+    sexo: 'curto',
+  },
+  next: {
+    tabela: 'next_matriculas',
+    mapa: { cpf: 'cpf', data_nascimento: 'data_nascimento', sexo: 'sexo' },
+    sexo: 'canonico',
+  },
+};
+
+/**
+ * Preenche, na linha que o fanout acabou de criar, o que o CADASTRO da pessoa já
+ * sabe e o app não mandou.
+ *
+ * ⚠️ Acha a linha por (membro, recém-criada) porque o fanout roda na MESMA
+ * transação do insert em `app_inscricoes` — sem a janela curta, uma inscrição
+ * ANTIGA da mesma pessoa seria reescrita a cada nova.
+ * ⚠️ Lê as colunas do mapa no SELECT: `patchDoCadastro` só toca campo que veio na
+ * linha, e é assim que ele sobrevive a tabela sem a coluna em vez de derrubar
+ * tudo com 42703.
+ */
+async function completarComCadastro(tipo, membroId) {
+  const destino = DESTINO_CONTRATO[tipo];
+  if (!destino) return null;
+
+  const { data: membro } = await supabase
+    .from('mem_membros')
+    .select('cpf, data_nascimento, genero, email, telefone')
+    .eq('id', membroId)
+    .is('deleted_at', null)
+    .maybeSingle();
+  if (!membro) return null;
+
+  const colunas = ['id', ...Object.values(destino.mapa)].join(', ');
+  const desde = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+  const { data: linha } = await supabase
+    .from(destino.tabela)
+    .select(colunas)
+    .eq('membro_id', membroId)
+    .gte('created_at', desde)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!linha) return null;
+
+  const patch = patchDoCadastro(linha, membro, destino.mapa, { sexo: destino.sexo });
+  if (!Object.keys(patch).length) return null;
+
+  const { error } = await supabase.from(destino.tabela).update(patch).eq('id', linha.id);
+  if (error) throw error;
+  return { tabela: destino.tabela, campos: Object.keys(patch) };
+}
+
 const LABEL_CUIDADOS = { aconselhamento: 'aconselhamento', oracao: 'oração', sos: 'SOS' };
 // Mapeia a urgência pra cor do sino (SEV_COLORS no AppShell)
 const SEV_CUIDADOS = { sos: 'urgente', aconselhamento: 'aviso', oracao: 'info' };
@@ -965,6 +1047,30 @@ router.post('/inscricoes', limiterStrict, tryAuth, async (req, res) => {
           + 'e vai resolver — se preferir, tente novamente em alguns minutos.',
         codigo: 'fanout_falhou',
       });
+    }
+
+    // ⚠️⚠️ O APP PASSA A CARREGAR O QUE O CADASTRO JÁ TEM (11/08/2026).
+    //
+    // Pedido do Marcos, depois da auditoria das 7 portas: *"caso alguém tenha
+    // baixado e não tenha esses campos, já colocamos a tela de preencher; quando
+    // elas voltarem terão, e aí vamos passar isso."*
+    //
+    // O fanout grava nome/telefone/e-mail e **deixa CPF, nascimento e sexo
+    // vazios** — mas o CADASTRO da pessoa costuma ter os três (medido em 11/08:
+    // 10 das 12 linhas incompletas de origem `app` têm cadastro completo). O dado
+    // existia; o app é que não o carregava. Então **preencher, não exigir**:
+    // exigir na porta reprovaria as contas que ainda não passaram pelo portão de
+    // identidade e derrubaria inclusive o SOS.
+    //
+    // ⚠️ SÓ-ONDE-VAZIO e best-effort — a régua pura vive em
+    // `utils/dadosDoCadastro` (testável, sem Supabase). Nunca sobrescreve o que a
+    // pessoa digitou, e falhar aqui não desfaz a inscrição, que já está gravada.
+    if (membroId && DESTINO_CONTRATO[tipo]) {
+      try {
+        await completarComCadastro(tipo, membroId);
+      } catch (e) {
+        console.warn('[APP] inscricoes · completar do cadastro:', e.message);
+      }
     }
 
     // ⚠️⚠️ INSCRIÇÃO DE GRUPO PELO APP AGORA AVISA O LÍDER (06/08/2026).
@@ -4728,6 +4834,15 @@ router.delete('/tarefas/:id', authApp, limiterNormal, async (req, res) => {
 // `cbrio.org/apresentacao-criancas`, rota que NÃO existe no ERP (0 referências
 // em `src/`) e responde 200 só pelo catch-all do SPA. `apresentacao_bebes` tem
 // 0 linhas — ninguém nunca conseguiu se inscrever, por porta nenhuma.
+//
+// ⚠️⚠️ ESCREVE EM `apresentacao_criancas`, NÃO em `apresentacao_bebes` (corrigido
+// 11/08). **É `apresentacao_criancas` que a tela do Kids lê** (`totemKids.js`
+// `GET /apresentacoes` → aba Apresentação de crianças do `/kids`); ninguém lê
+// `apresentacao_bebes` além do próprio totem, pro dedup dele. Escolher a tabela
+// errada faria o pedido feito no app **nunca aparecer pra equipe** — a família
+// veria "recebemos" e o balcão não saberia de nada no domingo. E é ela que tem
+// `crianca_id` (o elo com a ficha do Kids) e os campos que o Contrato pede.
+// Troca sem custo: `apresentacao_bebes` tem 0 linhas (medido em 11/08).
 const {
   proximoSegundoDomingo: _proxSegDom,
   iso: _isoData,
@@ -4785,8 +4900,8 @@ router.get('/apresentacao-crianca', authApp, limiterNormal, async (req, res) => 
 
     let pedidos = [];
     if (membro?.id) {
-      const { data: rows } = await supabase.from('apresentacao_bebes')
-        .select('id, bebe_nome, data_apresentacao, status')
+      const { data: rows } = await supabase.from('apresentacao_criancas')
+        .select('id, crianca_nome, data_apresentacao, status')
         .eq('responsavel_membro_id', membro.id)
         .is('deleted_at', null)
         .gte('data_apresentacao', _isoData(new Date()))
@@ -4844,9 +4959,13 @@ router.post('/apresentacao-crianca', authApp, limiterStrict, async (req, res) =>
       // ⚠️ `genero` é lido AQUI porque `resolveMembroApp` não o traz (ele seleciona
       // id/nome/cpf/email/telefone). É o que decide se quem preencheu entra como
       // mãe ou como pai no snapshot do balcão — sem sexo, fica em branco.
+      // ⚠️⚠️ Passa por `sexoPara`: a coluna guarda **masculino/feminino** e a
+      // comparação direta com 'M'/'F' que estava aqui **nunca era verdade**, então
+      // nome_pai/nome_mae saíam sempre nulos.
       const { data: eu } = await supabase.from('mem_membros')
         .select('id, familia_id, igreja_id, genero').eq('id', membro.id).maybeSingle();
-      if (eu?.genero === 'M' || eu?.genero === 'F') p.responsavel.sexo = eu.genero;
+      const meuSexo = sexoPara('curto', eu?.genero);
+      if (meuSexo) p.responsavel.sexo = meuSexo;
 
       // ── O outro responsável (o outro pai/mãe), quando informado ────────────
       //
@@ -4947,15 +5066,66 @@ router.post('/apresentacao-crianca', authApp, limiterStrict, async (req, res) =>
       }
     }
 
+    // ── A FICHA DO KIDS (`kids_criancas`) ─────────────────────────────────
+    //
+    // ⚠️⚠️ É aqui que as 3 respostas de saúde POUSAM, e é por isso que elas foram
+    // pedidas: `tem_espectro` e `tem_limitacao_fisica` são a **régua do PAGER** no
+    // totem (`totemKids.js`), obrigatória desde 03/08. Criança apresentada que
+    // chega no domingo com esses campos NULOS não cai na regra.
+    // ⚠️ Best-effort: falhar aqui NÃO pode custar a apresentação, que é o que a
+    // família veio pedir. Sem ficha, o pedido entra com `crianca_id` nulo — a
+    // equipe cadastra no check-in, como sempre fez.
+    let kidsCriancaId = null;
+    try {
+      // Mesma dedup do formulário público (nome + nascimento + ativa) — duas
+      // réguas fariam a mesma criança nascer duas vezes conforme a porta.
+      const { data: kidDup } = await supabase.from('kids_criancas')
+        .select('id, tem_alergia, alergia_qual, tem_espectro, espectro_qual, tem_limitacao_fisica, limitacao_fisica_qual')
+        .ilike('nome', p.crianca.nome)
+        .eq('data_nascimento', p.crianca.data_nascimento)
+        .eq('ativo', true)
+        .limit(1);
+      if (kidDup && kidDup.length) {
+        kidsCriancaId = kidDup[0].id;
+        // SÓ-ONDE-VAZIO: a ficha já existe e a família acabou de responder.
+        // Nunca sobrescreve — o que está lá pode ter sido corrigido no balcão.
+        const patch = {};
+        for (const [k, val] of Object.entries(p.crianca.saude || {})) {
+          if (kidDup[0][k] === null || kidDup[0][k] === undefined) patch[k] = val;
+        }
+        if (Object.keys(patch).length) {
+          await supabase.from('kids_criancas').update(patch).eq('id', kidsCriancaId);
+        }
+      } else {
+        const { data: kid } = await supabase.from('kids_criancas')
+          .insert({
+            nome: p.crianca.nome,
+            data_nascimento: p.crianca.data_nascimento,
+            sexo: p.crianca.sexo || null,            // Kids fala M/F, igual ao app
+            visitante: true,
+            observacoes_internas: `Cadastrado pela Apresentação de Crianças no app (${dataApres}).`,
+            ...(p.crianca.saude || {}),
+          })
+          .select('id').single();
+        kidsCriancaId = kid?.id || null;
+      }
+    } catch (e2) {
+      console.warn('[APP] apres ficha kids:', e2.message);
+    }
+
     // ── O pedido em si (o que a equipe Kids/pastoral lê) ───────────────────
     const linha = {
       responsavel_membro_id: p.propria ? membro.id : null,
       responsavel_nome: p.responsavel.nome,
       responsavel_telefone: p.responsavel.telefone,
       responsavel_email: p.responsavel.email || null,
-      bebe_nome: p.crianca.nome,
-      bebe_data_nascimento: p.crianca.data_nascimento,
-      bebe_sexo: p.crianca.sexo,
+      crianca_nome: p.crianca.nome,
+      crianca_data_nascimento: p.crianca.data_nascimento,
+      // ⚠️ canônico aqui (a coluna do Contrato), M/F na ficha do Kids acima
+      crianca_sexo: sexoPara('canonico', p.crianca.sexo),
+      crianca_id: kidsCriancaId,
+      origem: 'app',
+      status: 'pendente',
       // ⚠️ No caminho "é meu filho" os nomes são DERIVADOS do sexo dos responsáveis,
       // e ficam NULOS quando não se sabe — chutar quem é pai e quem é mãe num
       // registro que o balcão lê em voz alta no culto é pior que deixar em branco.
@@ -4966,18 +5136,21 @@ router.post('/apresentacao-crianca', authApp, limiterStrict, async (req, res) =>
         : { nome_pai: p.responsavel.nome_pai || null, nome_mae: p.responsavel.nome_mae || null }),
       observacoes: p.observacoes,
       data_apresentacao: dataApres,
-      culto_id: cultoId,
       registrado_por: req.user?.id || null,
     };
+    // ⚠️ `culto_id` só existe em `apresentacao_bebes`; a tabela do Kids não tem a
+    // coluna, e mandar coluna inexistente faz o PostgREST recusar o INSERT
+    // INTEIRO (42703) — a família perderia o pedido por causa de um informativo.
+    void cultoId;
 
     // ⚠️ Idempotência: reenviar o formulário não cria segundo pedido pra mesma
     // criança na mesma cerimônia. Sem isso, um toque duplo no botão põe a família
     // duas vezes na lista do domingo.
     if (p.propria) {
-      const { data: jaTem } = await supabase.from('apresentacao_bebes')
+      const { data: jaTem } = await supabase.from('apresentacao_criancas')
         .select('id').eq('responsavel_membro_id', membro.id)
         .eq('data_apresentacao', dataApres)
-        .ilike('bebe_nome', p.crianca.nome)
+        .ilike('crianca_nome', p.crianca.nome)
         .is('deleted_at', null).maybeSingle();
       if (jaTem) {
         return res.json({
@@ -4988,7 +5161,7 @@ router.post('/apresentacao-crianca', authApp, limiterStrict, async (req, res) =>
       }
     }
 
-    const { data: criada, error } = await supabase.from('apresentacao_bebes')
+    const { data: criada, error } = await supabase.from('apresentacao_criancas')
       .insert(linha).select('id').single();
     if (error) throw error;
 
@@ -5008,6 +5181,9 @@ router.post('/apresentacao-crianca', authApp, limiterStrict, async (req, res) =>
       ok: true, id: criada.id, data_apresentacao: dataApres,
       crianca_membro_id: criancaMembroId, familia: familiaNome,
       reusou_crianca: reusou,
+      // A tela AVISA a família que vai receber pager — quem decide é o totem no
+      // check-in; aqui é só não deixar a novidade pro domingo de manhã.
+      pager_inclusao: precisaPagerPorInclusao(p.crianca.saude),
       // A tela precisa dizer a VERDADE sobre o outro responsável: entrou na
       // família, ficou na dele, ou não entrou.
       responsavel_extra: p.responsavel_extra

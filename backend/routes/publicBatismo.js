@@ -97,6 +97,43 @@ router.get('/textos', (_req, res) => {
   });
 });
 
+/**
+ * Tem vaga neste horário?
+ *
+ * ⚠️⚠️ ISTO NÃO EXISTIA, e o estrago está no banco: **28/06 às 10:00 teve 12
+ * inscritos num limite de 11** (medido em 11/08). O mecanismo de limite existe
+ * desde sempre — `batismo_horarios.limite` e o `GET /horarios`, que já esconde do
+ * seletor o horário lotado — mas o `POST /inscrever` **não conferia nada**: quem
+ * enviasse o formulário com a página aberta de antes, ou postasse direto,
+ * entrava. Decisão do Marcos (11/08): *"caso um horário esteja cheio, liberar
+ * apenas o outro, o limite é 11 pessoas."*
+ *
+ * ⚠️ `limite` NULO = sem teto, de propósito: é como a coordenação abre um horário
+ * sem limite. Tratar nulo como 0 fecharia o horário; como 11, inventaria uma
+ * regra que ninguém escreveu.
+ *
+ * ⚠️ RESÍDUO DECLARADO: a conferência é um SELECT seguido de INSERT, sem lock —
+ * dois envios no mesmo instante podem passar os dois. Não usei
+ * `pg_advisory_xact_lock` (a técnica da espinha) porque isso exige função SQL e
+ * migration, e o buraco de hoje **não é corrida**: os 12 de 28/06 entraram porque
+ * NÃO HAVIA conferência nenhuma. Com ~6 inscrições por cerimônia, a janela é
+ * pequena; se um dia estourar por 1, é aqui que vira RPC com lock.
+ */
+async function vagaNoHorario(dataBatismo, horario) {
+  if (!dataBatismo || !horario) return { ok: true };  // sem horário escolhido, nada a conferir
+  const { data: h } = await supabase
+    .from('batismo_horarios')
+    .select('horario, label, limite')
+    .eq('horario', horario)
+    .is('deleted_at', null)
+    .maybeSingle();
+  if (!h || h.limite == null) return { ok: true };    // horário sem teto
+  const ocup = await ocupacaoPorHorario(dataBatismo);
+  const usadas = ocup[horario] || 0;
+  if (usadas < h.limite) return { ok: true, restantes: h.limite - usadas };
+  return { ok: false, label: h.label || horario, limite: h.limite };
+}
+
 // Conta inscrições ativas por horário numa data (pra calcular vagas restantes).
 async function ocupacaoPorHorario(dataBatismo) {
   const { data } = await supabase
@@ -353,6 +390,21 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
       cep: cepNorm,
       sexo: sexoNorm,
     };
+
+    // ⚠️ A vaga é conferida DEPOIS de toda a validação e IMEDIATAMENTE antes do
+    // insert — quanto menor a distância entre conferir e gravar, menor a janela.
+    const vaga = await vagaNoHorario(payload.data_batismo, payload.horario_culto);
+    if (!vaga.ok) {
+      // 409, não 400: não é erro de preenchimento, é o horário que encheu
+      // enquanto a pessoa preenchia. E a mensagem manda ela pro OUTRO horário,
+      // que é o que o Marcos pediu — dizer só "lotado" deixa a pessoa sem saída.
+      return res.status(409).json({
+        error: `O horário ${vaga.label} já está completo (${vaga.limite} pessoas). `
+          + 'Escolha outro horário — os que ainda têm vaga aparecem na lista.',
+        codigo: 'horario_lotado',
+        campo: 'horario_culto',
+      });
+    }
 
     const { data, error } = await supabase
       .from('batismo_inscricoes')

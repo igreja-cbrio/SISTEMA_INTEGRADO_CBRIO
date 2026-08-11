@@ -7321,6 +7321,127 @@ inventar pessoa.
   (`whatsapp_envios` não tem NENHUMA linha de devocional hoje); o **push**, que é o
   canal que importa agora, está entregando.
 
+## ⚠️⚠️ As 4 portas de criança/inscrição alinhadas (2026-08-11 · migration `20260811120000`)
+
+Pedido do Marcos, depois da auditoria das 7 portas: *"eu só não quero ter crianças
+ou pessoas com dados faltando porque em um lugar pede uma coisa e no outro pede
+outra"* — mais *"em outra sessão o Claude me disse que você não usa os limites de
+pessoas por culto no batismo, pode ver isso? Caso um horário esteja cheio, liberar
+apenas o outro; o limite é 11 pessoas."*
+
+### 1 · ⚠️⚠️ A porta do app escrevia na tabela que a equipe do Kids NÃO lê
+
+Achado ao ligar os campos de saúde. Existem DUAS tabelas de apresentação e elas
+têm leitores diferentes:
+
+| tabela | quem escreve | quem LÊ |
+|---|---|---|
+| `apresentacao_criancas` | formulário público · **app (desde hoje)** | **`totemKids.js GET /apresentacoes` → a aba do `/kids`** |
+| `apresentacao_bebes` | totem de membros | só o próprio totem, pro dedup dele |
+
+A porta que nasceu em 10/08 escrevia em `apresentacao_bebes`: a família veria
+"recebemos" e **o balcão não saberia de nada no domingo**. Trocado — e a troca é
+de custo zero porque `apresentacao_bebes` tem **0 linhas** (medido em 11/08). De
+brinde, `apresentacao_criancas` tem `crianca_id` (o elo com a ficha do Kids) e os
+campos do Contrato, que era o que faltava pro item 2.
+⚠️ `culto_id` **não existe** em `apresentacao_criancas` — mandar coluna
+inexistente faz o PostgREST recusar o INSERT INTEIRO (42703) e a família perderia
+o pedido por causa de um informativo.
+
+### 2 · Saúde/inclusão: régua ÚNICA nas duas portas (`utils/saudeCrianca.js`)
+
+Medição que fecha o argumento dele, no recorte justo (crianças criadas **desde
+28/07**, quando o formulário do Kids ganhou os campos): **34 pela porta do Kids ·
+100% respondidas** contra **2 pela apresentação · 0%**.
+
+⚠️⚠️ **E o dano é operacional, não estético:** `tem_espectro` e
+`tem_limitacao_fisica` são a **régua do PAGER** no totem (`totemKids.js`), e o
+pager de inclusão é OBRIGATÓRIO desde 03/08 (decisão da Mari). Criança com
+autismo que entra pela apresentação chegava no Kids com o campo NULO e **não caía
+na regra**, a menos que o voluntário percebesse e editasse a ficha na hora.
+
+- **São 3 perguntas, não 8.** `kids_criancas` tem 8 campos de saúde; entram as 3
+  que MOVEM o domingo (alergia → lanche; TEA e limitação → pager). As outras duas
+  são texto livre que a equipe preenche no atendimento — pedir 8 campos numa tela
+  de autoatendimento troca dado bom por formulário abandonado.
+- ⚠️⚠️ **`null` e `false` são coisas diferentes, e é disso que o buraco é feito.**
+  `null` = ninguém perguntou (98% da base); `false` = a família respondeu que não.
+  Pergunta em branco **não entra no payload** — gravar `false` faria a régua do
+  pager EXCLUIR ativamente criança sobre a qual não se sabe nada. Mutation-testado.
+- **Nenhuma é obrigatória**: travar o envio empurraria a família a responder
+  qualquer coisa pra passar.
+- **Só-onde-vazio** quando a ficha já existe: a equipe do Kids pode ter corrigido
+  no balcão, e formulário não sobrescreve correção humana.
+- A tela AVISA ("vocês vão receber um pager") na hora do "sim" — quem decide o
+  pager continua sendo o totem, no check-in.
+
+### 3 · ⚠️⚠️ `mem_membros.genero` é `masculino`/`feminino` — NUNCA `M`/`F`
+
+Medido na base inteira em 11/08: **4.045 vivos · 579 com sexo · ZERO com valor
+curto**, nas 14 origens que preenchem. Vários comentários deste arquivo afirmavam
+o contrário, e o código acreditou neles: `if (genero === 'M')` **nunca é verdade
+em produção**.
+
+Consequência real, na porta escrita na véspera: a derivação de pai/mãe da
+apresentação estava morta — `nome_pai`/`nome_mae` saíam sempre nulos e o balcão
+receberia a criança sem o nome de nenhum dos dois. E `pessoaDaCrianca` gravaria
+`genero: 'M'`, criando a única pessoa da base num vocabulário que nenhum filtro
+do sistema procura (a régua de gênero dos grupos, entre outros).
+
+`utils/dadosDoCadastro.sexoPara(destino, valor)` é o tradutor único: aceita as
+duas formas na ENTRADA e emite a do DESTINO. O vocabulário curto existe de
+verdade, mas noutras tabelas — `kids_criancas.sexo` (867 M / 1.058 F) e
+`batismo_inscricoes.sexo`; `vol_inscricoes.sexo` e `next_matriculas.sexo` são
+canônicos. Mutation-testado: "simplificar" aceitando só M/F na entrada ressuscita
+o bug.
+
+### 4 · O app carrega o que o cadastro JÁ TEM (`patchDoCadastro`)
+
+Decisão dele: *"caso alguém tenha baixado e não tenha esses campos, já colocamos a
+tela de preencher; quando elas voltarem terão, e aí vamos passar isso."*
+
+O fanout grava nome/telefone/e-mail e deixa CPF, nascimento e sexo vazios — mas
+**10 das 12 linhas incompletas de origem `app` têm o cadastro completo**. O dado
+existia; o app é que não o carregava. Então **preencher, não exigir**: exigir na
+porta reprovaria as contas que ainda não passaram pelo portão de identidade e
+derrubaria inclusive o SOS.
+
+- Roda **depois** da releitura do fanout, best-effort, só-onde-vazio.
+- ⚠️ `grupos` fica FORA: `mem_grupo_pedidos` **não tem** coluna de CPF, nascimento
+  nem sexo (introspectado, não decorado) — inventar coluna derruba o UPDATE
+  inteiro com 42703. O CPF do pedido de grupo já tem caminho próprio desde 06/08.
+- ⚠️ A janela de 2 min ao localizar a linha não é enfeite: sem ela, uma inscrição
+  ANTIGA da mesma pessoa seria reescrita a cada nova.
+
+### 5 · O direcionamento do Next passa o Contrato adiante
+
+`services/nextDirecionar.js` criava `vol_inscricoes` e `batismo_inscricoes` sem
+**sexo** (o formulário do Next passou a exigi-lo em 28/07 e o dado morria na
+matrícula) e o batismo ainda ia sem **nascimento e e-mail**. Agora a matrícula é a
+fonte preferida e o cadastro entra só onde ela está vazia.
+
+### 6 · ⚠️⚠️ BATISMO · o limite de 11 era só enfeite de tela
+
+Ele estava certo pela metade, e a metade que faltava é a pior:
+
+- o mecanismo EXISTE (`batismo_horarios.limite` + `GET /horarios`, que já esconde
+  do seletor o horário lotado) e 08:30/10:00 tinham limite 11;
+- **11:30 e 19:00 estavam com `limite` NULO** = sem teto nenhum;
+- e **`POST /inscrever` não conferia NADA**. Prova no banco: **28/06 às 10:00
+  fechou com 12 inscritos num limite de 11.**
+
+Agora `vagaNoHorario` trava antes do insert e responde **409 `horario_lotado`**
+com a mensagem mandando pro OUTRO horário — que é o que ele pediu; dizer só
+"lotado" deixa a pessoa sem saída. A migration preenche o teto onde está NULO
+(só onde está: capacidade é decisão da equipe do batismo, não deste script).
+
+⚠️ **RESÍDUO DECLARADO**: a conferência é SELECT-depois-INSERT, sem lock — dois
+envios no mesmo instante passam os dois. Não usei `pg_advisory_xact_lock` (a
+técnica da espinha) porque exige função SQL + migration, e o buraco de hoje **não
+é corrida**: os 12 de 28/06 entraram porque não havia conferência nenhuma. Com
+~6 inscrições por cerimônia a janela é pequena; se um dia estourar por 1, é aqui
+que vira RPC com lock.
+
 ## Devocionais · módulo do Matheus (no ar)
 
 Módulo existe e roda: `backend/routes/devocionalPlanos.js` (CRUD + geração de
