@@ -120,6 +120,8 @@ const EVENTO_VAZIO = {
   // decide", que no Mercado Pago é 36x. Parcelamento é decisão da igreja.
   pagamento_metodos: ['pix', 'cartao'], parcelas_max: 1,
   pagamento_expira_horas: '',
+  // Cartão numa plataforma externa (e-Inscrição). Vazio = cobrado aqui.
+  checkout_externo_url: '', checkout_externo_nome: '',
   status: 'rascunho',
 };
 
@@ -152,6 +154,8 @@ export function EventoModal({ evento, areas, onClose, onSaved }: {
     // Evento antigo sem teto gravado abre como À VISTA — que é o que a tela
     // sempre dizia que ele era, e agora é também o que o servidor aplica.
     parcelas_max: evento.parcelas_max ?? 1,
+    checkout_externo_url: evento.checkout_externo_url || '',
+    checkout_externo_nome: evento.checkout_externo_nome || '',
     pagamento_expira_horas: evento.pagamento_expira_horas ?? '',
     inscricoes_encerram_em: isoParaInputLocal(evento.inscricoes_encerram_em),
   } : { ...EVENTO_VAZIO });
@@ -200,6 +204,11 @@ export function EventoModal({ evento, areas, onClose, onSaved }: {
         valor_centavos: f.pagamento_ativo && f.valor_centavos !== '' ? Math.round(Number(String(f.valor_centavos).replace(',', '.')) * 100) : null,
         pagamento_metodos: f.pagamento_ativo ? f.pagamento_metodos : [],
         parcelas_max: f.pagamento_ativo && f.parcelas_max !== '' ? Number(f.parcelas_max) : null,
+        // ⚠️ Só faz sentido com pagamento ligado — e mandar '' com o pagamento
+        // desligado LIMPA o link, que é o certo: evento que deixou de ser pago
+        // não pode manter gente sendo mandada pra um checkout.
+        checkout_externo_url: f.pagamento_ativo ? String(f.checkout_externo_url || '').trim() : '',
+        checkout_externo_nome: f.pagamento_ativo ? String(f.checkout_externo_nome || '').trim() : '',
       };
       // ⚠️ `pagamento_expira_horas` é NOT NULL no banco (default 48), então mandar
       // `null` — o que acontecia com o pagamento desligado ou o campo vazio —
@@ -370,6 +379,35 @@ export function EventoModal({ evento, areas, onClose, onSaved }: {
                   <Input value={f.pagamento_expira_horas} onChange={set('pagamento_expira_horas')} placeholder="48" inputMode="numeric" />
                   <p className="text-[11px] text-muted-foreground mt-1">Sem pagamento no prazo, a vaga volta pra fila.</p>
                 </div>
+              </div>
+              {/* ⚠️ Cartão numa plataforma externa (e-Inscrição). Preenchido, o
+                  cartão deixa de existir no NOSSO checkout — não é só um link:
+                  a cobrança nasce sem 'cartao' em `metodos_ofertados`. */}
+              <div className="rounded-lg border border-dashed border-border p-3">
+                <label className="text-xs text-muted-foreground">
+                  Cartão de crédito por outra plataforma (opcional)
+                </label>
+                <Input value={f.checkout_externo_url || ''} onChange={set('checkout_externo_url')}
+                  placeholder="https://www.e-inscricao.com/… (link da inscrição deste evento)" />
+                {f.checkout_externo_url ? (
+                  <div className="mt-2">
+                    <label className="text-xs text-muted-foreground">Nome da plataforma (aparece pra pessoa)</label>
+                    <Input value={f.checkout_externo_nome || ''} onChange={set('checkout_externo_nome')}
+                      placeholder="e-Inscrição" />
+                  </div>
+                ) : null}
+                <p className="text-[11px] text-muted-foreground mt-1.5">
+                  {f.checkout_externo_url
+                    ? 'A página do evento vai perguntar a forma de pagamento antes do formulário: Pix segue aqui (com QR), cartão vai para este link. Enquanto ele estiver preenchido, o cartão NÃO é cobrado pelo nosso checkout.'
+                    : 'Em branco, o cartão é cobrado aqui mesmo, junto com o Pix.'}
+                </p>
+                {f.checkout_externo_url && !f.pagamento_metodos?.filter((m: string) => m !== 'cartao').length ? (
+                  <p className="text-[11px] text-amber-600 dark:text-amber-500 mt-1">
+                    ⚠️ Só o cartão está marcado acima: toda a inscrição vai acontecer na outra
+                    plataforma, e quem se inscrever por lá <b>não aparece na lista deste evento</b>.
+                    Marque também o Pix se quiser receber inscrições por aqui.
+                  </p>
+                ) : null}
               </div>
             </div>
           )}

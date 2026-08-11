@@ -18,6 +18,7 @@ const { portasSatelites, fontesUnificadas, catalogoPublico } = require('../servi
 // ⚠️ Contagem de inscritos NÃO usa o embed `inscricoes(count)` (não filtra
 // soft-delete — ver o cabeçalho do serviço).
 const { contarInscritosVivos } = require('../services/inscricaoContagem');
+const checkoutExterno = require('../utils/checkoutExterno');
 const {
   previewTemplate,
   esqueletoPadrao,
@@ -106,6 +107,9 @@ const CAMPOS_EVENTO = [
   // Aparece na lista do totem do lounge? Default false no banco: publicar um
   // evento NÃO o expõe no hall (migration 20260805150000).
   'no_totem',
+  // Cartão cobrado FORA (e-Inscrição) · migration 20260811180000. Preenchido,
+  // remove 'cartao' do nosso checkout — ver backend/utils/checkoutExterno.js.
+  'checkout_externo_url', 'checkout_externo_nome',
 ];
 
 // ⚠️ INCIDENTE 2026-08-04 · colunas NOT NULL da whitelist acima.
@@ -136,6 +140,33 @@ function aplicarCamposEvento(b, patch) {
     patch[k] = b[k];
   }
   return patch;
+}
+
+/**
+ * Link do checkout externo: recusa ANTES do banco, com mensagem que diz o que
+ * fazer. O CHECK da migration é a rede de segurança; quem tem que explicar o
+ * erro é a rota — 23514 cru chega na tela como "Erro ao salvar evento".
+ *
+ * ⚠️ Limpar é edição legítima (string vazia ⇒ NULL ⇒ o cartão volta pro nosso
+ * checkout), então vazio NÃO é erro. Distinguir "não mandou o campo"
+ * (`undefined`, não mexe) de "mandou vazio" (limpa) é o que permite tirar o
+ * e-Inscrição de um evento sem ter que apagar o evento.
+ */
+function conferirCheckoutExterno(patch) {
+  if (patch.checkout_externo_url === undefined) return null;
+  const bruto = String(patch.checkout_externo_url ?? '').trim();
+  if (!bruto) { patch.checkout_externo_url = null; return null; }
+  const url = checkoutExterno.linkExternoValido(bruto);
+  if (!url) {
+    return 'O link do checkout externo precisa começar com https:// e apontar para um site '
+      + '(ex.: https://www.e-inscricao.com/…). Deixe em branco para cobrar o cartão por aqui.';
+  }
+  patch.checkout_externo_url = url;
+  if (patch.checkout_externo_nome !== undefined) {
+    const nome = String(patch.checkout_externo_nome ?? '').trim();
+    patch.checkout_externo_nome = nome ? nome.slice(0, 40) : null;
+  }
+  return null;
 }
 
 // `pagamento_metodos` é TEXT[] e fica FORA do loop de whitelist de propósito:
@@ -1961,6 +1992,8 @@ router.post('/eventos', authorizeModule('inscricoes', 3), async (req, res) => {
     }
     const metodos = sanitizeMetodos(b.pagamento_metodos);
     if (metodos) payload.pagamento_metodos = metodos;
+    const erroCheckout = conferirCheckoutExterno(payload);
+    if (erroCheckout) return res.status(400).json({ error: erroCheckout });
 
     const { data, error } = await supabase.from('insc_eventos').insert(payload).select('id, slug').single();
     if (error) throw error;
@@ -2014,6 +2047,8 @@ router.put('/eventos/:id', authorizeModule('inscricoes', 3), async (req, res) =>
       const metodos = sanitizeMetodos(b.pagamento_metodos);
       if (metodos) patch.pagamento_metodos = metodos;
     }
+    const erroCheckout = conferirCheckoutExterno(patch);
+    if (erroCheckout) return res.status(400).json({ error: erroCheckout });
     if (b.status !== undefined) {
       if (!['rascunho', 'publicado', 'encerrado', 'arquivado'].includes(b.status)) {
         return res.status(400).json({ error: 'Status inválido' });
