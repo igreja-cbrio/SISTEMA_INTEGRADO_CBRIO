@@ -27,6 +27,7 @@ const { chaveMesMembro } = require('../services/nextMatricula');
 const { inscreverEspinha, eventoEspinhaPorId } = require('./publicEventoExterno');
 const { TEXTOS: TEXTOS_INSCRICAO } = require('../services/inscricaoContrato');
 const { gerarTokenComprovante } = require('../services/inscricaoComprovante');
+const checkoutExterno = require('../utils/checkoutExterno');
 // Reuso: núcleo de aprovação de pedidos de grupo (claim atômico + vínculo +
 // notificação) já validado no módulo web de grupos.
 const { aprovarPedidoCore } = require('./grupos');
@@ -5427,7 +5428,7 @@ router.get('/eventos', authApp, limiterNormal, async (req, res) => {
   try {
     const nowIso = new Date().toISOString();
     const { data, error } = await supabase.from('insc_eventos')
-      .select('id, nome, slug, descricao, area, tipo, data, hora, local, capa_url, vagas, valor_centavos, pagamento_ativo, parcelas_max, inscricoes_abrem_em, inscricoes_encerram_em, tem_sorteio, campos, msg_sucesso_titulo, msg_sucesso_texto, created_at')
+      .select('id, nome, slug, descricao, area, tipo, data, hora, local, capa_url, vagas, valor_centavos, pagamento_ativo, pagamento_metodos, parcelas_max, inscricoes_abrem_em, inscricoes_encerram_em, tem_sorteio, campos, msg_sucesso_titulo, msg_sucesso_texto, checkout_externo_url, checkout_externo_nome, created_at')
       .eq('status', 'publicado').is('deleted_at', null)
       .order('data', { ascending: true, nullsFirst: false })
       .limit(100);
@@ -5504,6 +5505,16 @@ router.get('/eventos', authApp, limiterNormal, async (req, res) => {
       inscrito: inscritos.has(e.id),
       // Link do form público — fallback (build antigo do app) e compartilhamento.
       url: `https://www.cbrio.org/evento/${e.slug}`,
+      // ⚠️⚠️ Cartão cobrado numa plataforma externa (e-Inscrição): o app NÃO
+      // reimplementa a escolha de forma. `so_web` manda a tela abrir o
+      // formulário público, que é quem sabe perguntar Pix × cartão e mandar
+      // pra fora — o mesmo tratamento que o campo `imagem` já tem. Sem isto o
+      // app inscreveria por dentro e a pessoa cairia numa página de pagamento
+      // sem a opção de cartão, sem nunca saber que ela existia noutro lugar.
+      checkout_externo: checkoutExterno.temCheckoutExterno(e) ? {
+        nome: checkoutExterno.nomeExterno(e.checkout_externo_nome),
+      } : null,
+      so_web: checkoutExterno.temCheckoutExterno(e),
     }));
     res.json({
       eventos,
