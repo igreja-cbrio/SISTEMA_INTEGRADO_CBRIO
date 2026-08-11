@@ -9,6 +9,47 @@ const SERVICES = [
   { id: 'observability', name: 'Erros e performance', surface: 'observability', runtime: 'Sentry', state: 'external_pending' },
 ];
 
+const ALERT_POLICY_DEFAULT = Object.freeze({
+  enabled: true,
+  threshold: 3,
+  recoveryThreshold: 2,
+  severity: 'warning',
+  ownerLabel: 'Tecnologia e responsavel do modulo',
+  runbook: 'Abra Sistema, correlacione o request ID com o Sentry e valide a dependencia da rotina antes de reexecutar.',
+  runbookUrl: '/sistema?view=incidents',
+});
+
+const ALERT_POLICY_BY_CATEGORY = Object.freeze({
+  platform: {
+    threshold: 3, severity: 'critical', ownerLabel: 'Tecnologia',
+    runbook: 'Valide API, Vercel, Supabase e o release atual; use o request ID para localizar a causa no Sentry.',
+  },
+  payments: {
+    threshold: 2, severity: 'error', ownerLabel: 'Financeiro e Tecnologia',
+    runbook: 'Confira Asaas e Mercado Pago, identifique a etapa que falhou e nao reenvie cobrancas sem reconciliar o estado.',
+  },
+  finance: {
+    threshold: 2, severity: 'error', ownerLabel: 'Financeiro e Tecnologia',
+    runbook: 'Confira credenciais e disponibilidade bancaria; antes de repetir, valide se os lancamentos ja foram importados.',
+  },
+  data: {
+    threshold: 3, severity: 'error', ownerLabel: 'Tecnologia e Dados',
+    runbook: 'Valide Supabase e a origem dos dados; confira contagens e duplicidade antes de repetir a rotina.',
+  },
+  agents: {
+    threshold: 3, severity: 'warning', ownerLabel: 'Tecnologia e dono do agente',
+    runbook: 'Valide a fila, o worker Railway e o provedor de IA; confirme idempotencia antes de reprocessar.',
+  },
+});
+
+function alertPolicyFor(path, category) {
+  const categoryPolicy = ALERT_POLICY_BY_CATEGORY[category] || {};
+  const healthOverride = path === '/api/health'
+    ? { threshold: 3, severity: 'critical', ownerLabel: 'Tecnologia' }
+    : {};
+  return { ...ALERT_POLICY_DEFAULT, ...categoryPolicy, ...healthOverride };
+}
+
 const JOBS = [
   ['/api/health', '*/5 * * * *', 'platform'],
   ['/api/voluntariado/cron/emails', '*/5 * * * *', 'volunteers'],
@@ -62,6 +103,7 @@ const JOBS = [
   path,
   schedule,
   category,
+  alertPolicy: alertPolicyFor(path, category),
   executionState: 'awaiting_canonical_runs',
 }));
 
@@ -156,6 +198,9 @@ module.exports = {
   JOBS,
   WORKFLOWS,
   INTEGRATIONS,
+  ALERT_POLICY_DEFAULT,
+  ALERT_POLICY_BY_CATEGORY,
+  alertPolicyFor,
   getReleaseInfo,
   getFoundationPayload,
 };
