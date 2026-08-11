@@ -15,16 +15,10 @@ function balanceId() {
   return `${padAgencia(AGENCIA)}.${padConta(CONTA)}`;
 }
 
-function statementPath({ bankId = BANK_ID, agencia = AGENCIA, conta = CONTA } = {}) {
-  if (!bankId || !agencia || !conta) throw new Error('SANTANDER_BANK_ID / SANTANDER_AGENCIA / SANTANDER_CONTA nao configurados');
-  const statementId = padAgencia(agencia) + '.' + padConta(conta);
-  return BASE + '/banks/banks/' + bankId + '/statements/' + statementId;
-}
-
-function statementCompatibilityPath({ bankId = BANK_ID, agencia = AGENCIA, conta = CONTA } = {}) {
-  if (!bankId || !agencia || !conta) throw new Error('SANTANDER_BANK_ID / SANTANDER_AGENCIA / SANTANDER_CONTA nao configurados');
-  const statementId = padAgencia(agencia) + '.' + padConta(conta);
-  return BASE + '/banks/' + bankId + '/statements/' + statementId;
+function transactionsPath({ agencia = AGENCIA, conta = CONTA } = {}) {
+  if (!agencia || !conta) throw new Error('SANTANDER_AGENCIA / SANTANDER_CONTA nao configurados');
+  const transactionId = padAgencia(agencia) + '.' + padConta(conta);
+  return BASE + '/transactions/' + transactionId;
 }
 
 async function listarContas({ userId } = {}) {
@@ -162,13 +156,25 @@ function fatiarPeriodo(inicio, fim) {
 }
 
 async function buscarExtratoSantander({ inicio, fim, userId }) {
-  const options = { query: { initialDate: inicio, finalDate: fim }, userId };
-  try {
-    return await callApi(statementPath(), options);
-  } catch (error) {
-    if (error.status !== 404) throw error;
-    return callApi(statementCompatibilityPath(), options);
+  const limit = 50;
+  let offset = 0;
+  const content = [];
+
+  for (let page = 0; page < 100; page += 1) {
+    const response = await callApi(transactionsPath(), {
+      query: { initialDate: inicio, finalDate: fim, _limit: limit, _offset: offset },
+      userId,
+    });
+    const pageContent = Array.isArray(response?._content) ? response._content : [];
+    content.push(...pageContent);
+
+    if (!response?._pageable?._moreElements || pageContent.length === 0) {
+      return { ...response, _content: content };
+    }
+    offset += pageContent.length;
   }
+
+  throw new Error('Limite de paginacao do extrato Santander excedido');
 }
 
 async function consultarExtrato({ inicio, fim, usarCache = true, userId } = {}) {
@@ -222,6 +228,5 @@ module.exports = {
   snapshotSaldoDoDia,
   historicoSaldo,
   consultarExtrato,
-  statementPath,
-  statementCompatibilityPath,
+  transactionsPath,
 };
