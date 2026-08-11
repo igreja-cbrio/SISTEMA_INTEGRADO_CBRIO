@@ -66,13 +66,28 @@ function estadoBasePagamento(cobranca) {
 /**
  * Teto de parcelas EFETIVO desta cobrança.
  *
- * ⚠️ `parcelas_max` NULL = vale o teto da conta do PSP (decisão registrada), e
- * NÃO 1 — tratar NULL como 1x tiraria o parcelado de todo evento que não
- * configurou teto.
+ * ⚠️⚠️ SEM TETO GRAVADO = **À VISTA (1x)**, nunca o teto da conta do PSP
+ * (mudado em 11/08/2026 · pedido do Matheus de definir o parcelamento pelo
+ * sistema). A regra anterior era o oposto e mentia na direção CARA:
+ *
+ *   · a tela do evento dizia, com todas as letras, *"vazio = sem parcelar"*;
+ *   · o servidor, com o campo vazio, liberava **o teto do provedor** — 36x no
+ *     Mercado Pago, 21x no Asaas;
+ *   · e o custo do parcelado é da IGREJA enquanto não estiver confirmado que o
+ *     Mercado Pago repassa juros ao pagador (4–13% conforme as parcelas).
+ *
+ * Ou seja: quem criasse um evento pago e não preenchesse o campo — que é o
+ * default do formulário — abria 36x sem saber. Agora **quem decide política de
+ * preço é a igreja, no evento**; provedor define capacidade, não política.
+ *
+ * ⚠️ Isto NÃO tira parcelamento de ninguém que o tenha configurado: teto
+ * gravado continua mandando. E a generosidade não é afetada — ela grava
+ * `parcelas_max` explícito na cobrança (`publicGenerosidade.js`), então nunca
+ * dependeu deste fallback.
  */
 function tetoParcelas(cobranca) {
   if (Number(cobranca.parcelas_max) > 0) return Number(cobranca.parcelas_max);
-  return pagamentos.capacidades(cobranca.provider)?.parcelas_max || 1;
+  return 1;
 }
 
 /**
@@ -98,10 +113,10 @@ function tetoParcelas(cobranca) {
  * rede e sem mock (o padrão do `censoConvite`/`prontidaoCadastro`). Devolve
  * `{ acao: 'recusar' | 'ja_pago' | 'aplicar' }`.
  *
- * `tetoProvider` entra como NÚMERO, não como consulta: assim a régua não sabe o
- * que é um provider.
+ * `tetoEfetivo` entra como NÚMERO já resolvido (`tetoParcelas`), não como
+ * consulta: assim a régua não sabe o que é um provider.
  */
-function decidirForma(cobranca, { metodo: metodoBruto, parcelas: parcelasBrutas } = {}, tetoProvider = 1) {
+function decidirForma(cobranca, { metodo: metodoBruto, parcelas: parcelasBrutas } = {}, tetoEfetivo = 1) {
   const metodo = String(metodoBruto || '').trim();
   const ofertados = Array.isArray(cobranca.metodos_ofertados) ? cobranca.metodos_ofertados : [];
 
@@ -118,8 +133,11 @@ function decidirForma(cobranca, { metodo: metodoBruto, parcelas: parcelasBrutas 
   // deixaria alguém parcelar em 21x algo configurado para 3x.
   // ⚠️ Só CARTÃO parcela: mandar plano numa forma que não parcela é como o
   // adapter acaba criando N cobranças e a primeira "quita" a cobrança inteira.
+  // ⚠️ O teto vem PRONTO do `tetoParcelas` (parâmetro), e a régua não o
+  // recalcula: recalcular aqui era uma 2ª cópia da mesma decisão, e foi assim
+  // que "sem teto" significou 1x num lugar e 36x no outro.
   const pedidas = Math.floor(Number(parcelasBrutas) || 1);
-  const teto = Number(cobranca.parcelas_max) > 0 ? Number(cobranca.parcelas_max) : tetoProvider;
+  const teto = Number(tetoEfetivo) > 0 ? Number(tetoEfetivo) : 1;
   const parcelas = metodo === 'cartao' && pedidas > 1 ? Math.min(pedidas, teto) : 1;
 
   return { acao: 'aplicar', metodo, parcelas };
