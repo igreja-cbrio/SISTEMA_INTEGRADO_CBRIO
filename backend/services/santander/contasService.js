@@ -21,6 +21,12 @@ function statementPath({ bankId = BANK_ID, agencia = AGENCIA, conta = CONTA } = 
   return BASE + '/banks/banks/' + bankId + '/statements/' + statementId;
 }
 
+function statementCompatibilityPath({ bankId = BANK_ID, agencia = AGENCIA, conta = CONTA } = {}) {
+  if (!bankId || !agencia || !conta) throw new Error('SANTANDER_BANK_ID / SANTANDER_AGENCIA / SANTANDER_CONTA nao configurados');
+  const statementId = padAgencia(agencia) + '.' + padConta(conta);
+  return BASE + '/banks/' + bankId + '/statements/' + statementId;
+}
+
 async function listarContas({ userId } = {}) {
   return callApi(`${BASE}/banks/${BANK_ID}/accounts`, { userId });
 }
@@ -156,13 +162,13 @@ function fatiarPeriodo(inicio, fim) {
 }
 
 async function buscarExtratoSantander({ inicio, fim, userId }) {
-  return callApi(statementPath(), {
-    query: {
-      initialDate: inicio,
-      finalDate: fim,
-    },
-    userId,
-  });
+  const options = { query: { initialDate: inicio, finalDate: fim }, userId };
+  try {
+    return await callApi(statementPath(), options);
+  } catch (error) {
+    if (error.status !== 404) throw error;
+    return callApi(statementCompatibilityPath(), options);
+  }
 }
 
 async function consultarExtrato({ inicio, fim, usarCache = true, userId } = {}) {
@@ -217,4 +223,5 @@ module.exports = {
   historicoSaldo,
   consultarExtrato,
   statementPath,
+  statementCompatibilityPath,
 };
