@@ -168,7 +168,9 @@ async function buscarExtratoSantander({ inicio, fim, userId }) {
     const pageContent = Array.isArray(response?._content) ? response._content : [];
     content.push(...pageContent);
 
-    if (!response?._pageable?._moreElements || pageContent.length === 0) {
+    // O gateway nem sempre sinaliza _moreElements corretamente. Uma pagina
+    // cheia exige consultar o proximo offset; pagina parcial encerra o lote.
+    if (pageContent.length < limit) {
       return { ...response, _content: content };
     }
     offset += pageContent.length;
