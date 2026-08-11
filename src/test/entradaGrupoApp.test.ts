@@ -49,10 +49,30 @@ describe('avaliarEntradaNoGrupo · os 5 buracos que estavam abertos', () => {
     expect(r.codigo).toBe('inscricoes_fechadas');
   });
 
-  it('[3] `modo_inscricao=fechado` → 403 "por convite do líder"', () => {
-    const r = avaliarEntradaNoGrupo({ grupo: { ...ABERTO, modo_inscricao: 'fechado' } });
-    expect(r.status).toBe(403);
-    expect(r.erro).toContain('convite do líder');
+  it('⚠️ [3] `fechado` NÃO barra mais — é o convite do líder (Marcos · 11/08)', () => {
+    // Este teste travava o 403 até 10/08. A decisão mudou, e a razão importa:
+    // a mensagem antiga mandava "fale com ele para participar" e o líder **não
+    // tinha como** trazer ninguém — o link do grupo caía justamente em 403.
+    // Palavras dele: "libera o link direto para os grupos por convite também,
+    // mesmo fechados. eles não devem ser achados na lista de grupos públicos,
+    // mas se o líder quiser convidar alguém, deve poder."
+    //
+    // O que segura a porta continua de pé, e foi conferido: o grupo não aparece
+    // em NENHUMA lista pública (`publicGrupos.js` filtra com `.neq` no form e no
+    // `/buscar` que alimenta o app), e a inscrição vira PEDIDO pendente que o
+    // líder aprova. Ter o link é o convite.
+    expect(avaliarEntradaNoGrupo({ grupo: { ...ABERTO, modo_inscricao: 'fechado' } }))
+      .toEqual({ ok: true });
+  });
+
+  it('⚠️ mas `fechado` continua obedecendo as OUTRAS travas', () => {
+    // Liberar o convite não pode virar "grupo fechado aceita tudo": pausado,
+    // não-aceitando e temporada fechada seguem barrando igual.
+    const fechado = { ...ABERTO, modo_inscricao: 'fechado' };
+    expect(avaliarEntradaNoGrupo({ grupo: { ...fechado, ativo: false } }).status).toBe(403);
+    expect(avaliarEntradaNoGrupo({ grupo: { ...fechado, aceitando_inscricoes: false } }).status).toBe(403);
+    expect(avaliarEntradaNoGrupo({ grupo: { ...fechado, temporada: 't1' }, temporadaAberta: false }).status).toBe(403);
+    expect(avaliarEntradaNoGrupo({ grupo: { ...fechado, categoria: 'Mulheres' }, genero: 'masculino' }).status).toBe(422);
   });
 
   it('[4] `aceitando_inscricoes=false` → 403', () => {
