@@ -21,7 +21,37 @@ const uploadFotoRef = multer({
   },
 });
 
-router.use(authenticate);
+// ⚠️⚠️ O `authenticate` ENGOLIA O CRON ANTES DO HANDLER (conserto de 11/08/2026).
+//
+// O `router.use(authenticate)` roda antes de qualquer rota deste arquivo. O
+// Vercel Cron chama com `Authorization: Bearer <CRON_SECRET>`; o `authenticate`
+// tenta validar isso como JWT do Supabase, falha, e devolve **401**. Resultado:
+// a checagem `isAuthorizedCron(req) || isAdmin` escrita dentro dos handlers era
+// CÓDIGO MORTO para cron — nunca era alcançada.
+//
+// Medido antes do conserto, em `system_job_runs`: HTTP_401 em **11 de 11**
+// execuções de `/api/kpis/youtube/sync` e o mesmo em `/api/kpis/cultos/auto-create`
+// e `/api/governanca/cron/lembrete`. Três rotinas que não faziam nada, todos os
+// dias, em silêncio — quem percebeu foi o alarme de incidente, não uma pessoa.
+//
+// ⚠️ A LISTA É EXPLÍCITA de propósito. Deixar qualquer requisição com
+// CRON_SECRET passar por todo o router transformaria o segredo do cron numa
+// chave-mestra para as dezenas de rotas autenticadas daqui. Só entram caminhos
+// que TÊM cron no `vercel.json`, e o handler continua fazendo a própria
+// verificação (agora alcançável).
+//
+// ⚠️ Sem segredo válido nada muda: cai no `authenticate` normal, então admin e
+// diretor seguem podendo disparar a rotina à mão pela tela.
+// ⚠️ LISTA, e não o prefixo `/cron/` usado em governanca.js e totemKids.js: esta
+// rotina se chama `/cultos/auto-create` (a tela chama o MESMO caminho por POST),
+// então não cai na convenção. Renomear pra `/cron/...` quebraria o botão da tela.
+// Rota de cron NOVA neste arquivo deve nascer sob `/cron/` — aí some a lista.
+const CAMINHOS_DE_CRON = new Set(['/cultos/auto-create']);
+router.use((req, res, next) => (
+  CAMINHOS_DE_CRON.has(req.path) && isAuthorizedCron(req)
+    ? next()
+    : authenticate(req, res, next)
+));
 
 // Helper: permite escrita em cultos/decisoes/batismos pra admin/diretor OU
 // quem tem 'integração' em kpi_areas (Lorena, líder de Integração).
@@ -530,7 +560,12 @@ router.delete('/decisoes-pessoas/:id', authorizeIntegracao, async (req, res) => 
 // Cria cultos da semana corrente a partir de vol_service_types (recurrence_day, recurrence_time).
 // Idempotente: ON CONFLICT DO NOTHING via índice único (service_type_id, data, hora).
 // weeks=N: backfill das últimas N semanas (default 1 = só semana corrente).
-router.post('/cultos/auto-create', async (req, res) => {
+// ⚠️ GET **E** POST: o Vercel Cron chama sempre por GET, e rota só-POST não dá
+// "não autorizado" — dá NÃO ENCONTRADO, que é ainda mais difícil de diagnosticar
+// (o job registra o erro HTTP e ninguém suspeita do verbo). O
+// `/api/kpis/v2/cron/coletar` já registrava os dois; aqui tinha ficado só POST.
+// A tela continua chamando por POST.
+async function cultosAutoCreate(req, res) {
   const isAdmin = ['admin', 'diretor'].includes(req.user?.role);
   if (!isAuthorizedCron(req) && !isAdmin) {
     return res.status(401).json({ error: 'Não autorizado' });
@@ -604,7 +639,9 @@ router.post('/cultos/auto-create', async (req, res) => {
   }
 
   res.json({ weeks, created: created.length, skipped: skipped.length, items: created, skippedItems: skipped });
-});
+}
+router.get('/cultos/auto-create', cultosAutoCreate);
+router.post('/cultos/auto-create', cultosAutoCreate);
 
 // ── Batismos ──────────────────────────────────────────────────────────────────
 router.get('/batismos', async (req, res) => {
@@ -1237,127 +1274,38 @@ router.put('/metas/:id', authorize('admin', 'diretor'), async (req, res) => {
   res.json(data);
 });
 
-// ── YouTube status (verifica se a API key está configurada e quando rodou a última sync) ──
-router.get('/youtube/status', async (req, res) => {
-  const apiKeyConfigured = !!process.env.YOUTUBE_API_KEY;
-  const { data: ultimo } = await supabase
-    .from('cultos')
-    .select('ds_coletado_em, ddus_coletado_em')
-    .or('ds_coletado_em.not.is.null,ddus_coletado_em.not.is.null')
-    .order('ds_coletado_em', { ascending: false, nullsFirst: false })
-    .limit(1)
-    .maybeSingle();
-  const lastSync = ultimo
-    ? (ultimo.ds_coletado_em && ultimo.ddus_coletado_em
-        ? (ultimo.ds_coletado_em > ultimo.ddus_coletado_em ? ultimo.ds_coletado_em : ultimo.ddus_coletado_em)
-        : (ultimo.ds_coletado_em || ultimo.ddus_coletado_em))
-    : null;
-  res.json({ apiKeyConfigured, lastSync });
-});
+// ⚠️⚠️ OS DOIS ENDPOINTS DE YOUTUBE FORAM REMOVIDOS AQUI (11/08/2026) — e a
+// razão é o oposto de "limpeza": eles eram a ÚNICA manifestação viva de uma
+// rotina morta, na forma de um alarme diário no celular do Matheus.
+//
+// O que foi medido antes de apagar:
+//  · `POST /kpis/youtube/sync` rodava por cron às 13h e falhava com HTTP 401 em
+//    **11 de 11 execuções** registradas (desde 01/08, quando o system_job_runs
+//    começou a gravar). Nunca teve um sucesso.
+//  · a causa do 401 é o `router.use(authenticate)` do topo deste arquivo: ele
+//    roda ANTES do handler, tenta validar o `Authorization: Bearer <CRON_SECRET>`
+//    do Vercel como JWT do Supabase, falha e devolve 401. A checagem
+//    `isAuthorizedCron(req) || isAdmin` que o handler fazia era CÓDIGO MORTO pra
+//    cron — nunca era alcançada. (Somado a isso, a rota era POST e o Vercel Cron
+//    chama por GET: dois defeitos empilhados.)
+//  · o dado que ela ia buscar JÁ É COLETADO, e por fonte melhor: os coletores do
+//    módulo `online` (`/api/online/cron/ds-collect` e `ddus-collect`, verdes
+//    todos os dias) gravam `cultos.online_ds`, `online_ddus` e `online_pico`
+//    pela YouTube **Analytics** API, contra o `videos?part=statistics` público
+//    daqui. Conferido em produção: os cultos das últimas 3 semanas estão com os
+//    três campos preenchidos.
+//  · e NENHUMA tela chamava: `youtubeSync`/`youtubeStatus` existiam em
+//    `src/api.js` sem um único consumidor.
+//
+// Consertar o 401 para uma rotina redundante seria manter de pé um segundo
+// escritor dos mesmos campos, com fonte pior, só para calar um alarme. O alarme
+// estava certo: a rotina não funcionava. O que estava errado era ela existir.
+//
+// ⚠️ `cultos.ds_coletado_em` / `ddus_coletado_em` continuam existindo e
+// permanentemente NULL: só esta rotina os escrevia, e ela nunca rodou. Não vale
+// migration pra derrubar coluna vazia — mas quem for usá-las precisa saber que
+// não significam "nunca coletado", significam "ninguém nunca estampou".
 
-// ── YouTube sync (chamado pelo cron Vercel) ───────────────────────────────────
-router.post('/youtube/sync', async (req, res) => {
-  const isAdmin = ['admin', 'diretor'].includes(req.user?.role);
-  if (!isAuthorizedCron(req) && !isAdmin) {
-    return res.status(401).json({ error: 'Não autorizado' });
-  }
-
-  const apiKey = process.env.YOUTUBE_API_KEY;
-  if (!apiKey) return res.status(500).json({ error: 'YOUTUBE_API_KEY não configurada' });
-
-  const ontem = new Date();
-  ontem.setDate(ontem.getDate() - 1);
-  const ontemStr = ontem.toISOString().split('T')[0];
-
-  const seteDias = new Date();
-  seteDias.setDate(seteDias.getDate() - 7);
-  const seteDiasStr = seteDias.toISOString().split('T')[0];
-
-  // Tipos de culto que têm transmissão online (filtro p/ ignorar Bridge etc.)
-  const { data: onlineTypes } = await supabase
-    .from('vol_service_types')
-    .select('id')
-    .eq('has_online_stream', true);
-  const onlineTypeIds = new Set((onlineTypes || []).map(t => t.id));
-  const isOnline = (c) => !c.service_type_id || onlineTypeIds.has(c.service_type_id);
-
-  // Backfill-friendly: pega TODOS os cultos com vídeo pendente até a data limite,
-  // não so a data exata. Se o cron falhou em algum dia, na próxima execucao ele
-  // ainda recupera o dado (best-effort com viewCount atual). O cron diario
-  // limita o backlog a poucos itens.
-  //
-  // D+1 (online_ds): cultos com data <= ontem, com vídeo, sem online_ds
-  // D+7 (online_ddus): cultos com data <= 7 dias atras, com vídeo, com online_ds, sem online_ddus
-  const [{ data: cultosDSRaw }, { data: cultosDDUSRaw }] = await Promise.all([
-    supabase.from('cultos').select('id, data, youtube_video_id, service_type_id').is('deleted_at', null).lte('data', ontemStr).not('youtube_video_id', 'is', null).is('online_ds', null).order('data', { ascending: false }).limit(50),
-    supabase.from('cultos').select('id, data, youtube_video_id, online_ds, service_type_id').is('deleted_at', null).lte('data', seteDiasStr).not('youtube_video_id', 'is', null).not('online_ds', 'is', null).is('online_ddus', null).order('data', { ascending: false }).limit(50),
-  ]);
-  const cultosDS = (cultosDSRaw || []).filter(isOnline);
-  const cultosDDUS = (cultosDDUSRaw || []).filter(isOnline);
-
-  const fetchStats = async (videoId) => {
-    const url = `https://www.googleapis.com/youtube/v3/videos?part=statistics&id=${videoId}&key=${apiKey}`;
-    const r = await fetch(url);
-    const json = await r.json();
-    return json.items?.[0]?.statistics;
-  };
-
-  const results = [];
-
-  for (const culto of (cultosDS || [])) {
-    try {
-      const stats = await fetchStats(culto.youtube_video_id);
-      if (stats?.viewCount) {
-        await supabase.from('cultos').update({ online_ds: parseInt(stats.viewCount), ds_coletado_em: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', culto.id);
-        results.push({ id: culto.id, tipo: 'DS', views: stats.viewCount });
-      }
-    } catch (e) {
-      results.push({ id: culto.id, tipo: 'DS', error: e.message });
-    }
-  }
-
-  for (const culto of (cultosDDUS || [])) {
-    try {
-      const stats = await fetchStats(culto.youtube_video_id);
-      if (stats?.viewCount) {
-        const ddus = Math.max(0, parseInt(stats.viewCount) - (culto.online_ds || 0));
-        await supabase.from('cultos').update({ online_ddus: ddus, ddus_coletado_em: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', culto.id);
-        results.push({ id: culto.id, tipo: 'DDUS', ddus });
-      }
-    } catch (e) {
-      results.push({ id: culto.id, tipo: 'DDUS', error: e.message });
-    }
-  }
-
-  // Cultos do dia anterior SEM youtube_video_id → notifica para vincular
-  // (apenas para tipos que têm transmissão online — ignora Bridge etc.)
-  const { data: cultosSemVideoRaw } = await supabase
-    .from('cultos')
-    .select('id, nome, data, service_type_id')
-    .eq('data', ontemStr)
-    .is('youtube_video_id', null);
-  const cultosSemVideo = (cultosSemVideoRaw || []).filter(isOnline);
-
-  for (const c of cultosSemVideo) {
-    try {
-      const fmt = new Date(c.data + 'T12:00:00').toLocaleDateString('pt-BR');
-      await notificar({
-        modulo: 'kpis',
-        tipo: 'culto_sem_video',
-        titulo: 'Culto sem vídeo do YouTube',
-        mensagem: `"${c.nome}" (${fmt}) não tem ID de vídeo vinculado. Sem isso, D+1 não será coletado.`,
-        link: '/kpis',
-        severidade: 'aviso',
-        chaveDedup: `culto_sem_video_sync_${c.id}`,
-      });
-      results.push({ id: c.id, tipo: 'ALERT', msg: 'sem video_id' });
-    } catch (e) {
-      results.push({ id: c.id, tipo: 'ALERT', error: e.message });
-    }
-  }
-
-  res.json({ synced: results.length, results, semVideo: cultosSemVideo.length });
-});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // MANDALA CULTURA — 5 valores CBRio + Decisões (centro)
