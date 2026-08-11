@@ -14,6 +14,7 @@
 // Montado ANTES do publicLimiter global (evento presencial em massa = 1 IP).
 // ============================================================================
 const express = require('express');
+const { semCache } = require('../middleware/semCache');
 const router = express.Router();
 const rateLimit = require('express-rate-limit');
 const multer = require('multer');
@@ -407,6 +408,19 @@ function respostaCobranca(cobranca, ev) {
     tem_sorteio: ev.tem_sorteio,
   };
 }
+
+// ⚠️ Estas duas famílias devolvem ESTADO e são consultadas em POLLING: a tela de
+// pagamento pergunta de 6 em 6 segundos "já caiu?", e o comprovante é o que a
+// portaria lê na entrada. Resposta cacheada aqui mostra o estado de ANTES do
+// pagamento — a mesma classe do incidente do app em 05/08 (ver
+// `middleware/semCache.js`).
+//
+// ⚠️ Escopo por PREFIXO, não no router inteiro, e isso é decisão: `GET /:slug`
+// (a página do evento) é o endereço que leva a multidão no lançamento, e ali um
+// pouco de cache AJUDA. O `vagas_restantes` dela já é declaradamente aproximado
+// — quem decide a vaga é o advisory lock da RPC, não o número na tela.
+router.use('/pagamento', semCache);
+router.use('/comprovante', semCache);
 
 // GET /textos — textos canônicos de consentimento (o front EXIBE estes; o
 // snapshot gravado vem sempre do backend, então tela e registro nunca divergem)
