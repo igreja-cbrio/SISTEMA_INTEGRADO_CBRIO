@@ -52,6 +52,13 @@ function alertPolicyFor(path, category) {
 
 const JOBS = [
   ['/api/health', '*/5 * * * *', 'platform'],
+  // ⚠️ ENTROU NO CATÁLOGO EM 11/08/2026 e o motivo é a lição do próprio caso:
+  // este cron existia no vercel.json, era interceptado pelo `authenticate` do
+  // `routes/sistema.js` e levava 401 a cada 15 minutos — invisível, porque cron
+  // fora do catálogo não tem política de alerta e não abre incidente. Resultado
+  // medido: 0 de 4.509 tickets de push com `receipt_status`, dois meses depois
+  // de um conserto que acreditou ter resolvido isso.
+  ['/api/sistema/cron/push-receipts', '*/15 * * * *', 'platform'],
   ['/api/voluntariado/cron/emails', '*/5 * * * *', 'volunteers'],
   ['/api/pagamentos-webhook/cron/tick', '*/10 * * * *', 'payments'],
   ['/api/totem-kids/cron/age-out', '0 5 * * *', 'kids'],
@@ -60,7 +67,6 @@ const JOBS = [
   ['/api/integracao/cron/gerar-cultos-recorrentes', '0 4 1 * *', 'ministry'],
   ['/api/cerebro/processar', '0 3 * * *', 'data'],
   ['/api/cerebro/sync-erp', '30 3 * * *', 'data'],
-  ['/api/kpis/youtube/sync', '0 13 * * *', 'online'],
   ['/api/governanca/cron/lembrete', '0 10 * * 1', 'governance'],
   ['/api/public/grupos/cron/frequencia-mensal', '0 15 28 * *', 'groups'],
   ['/api/kpis/cultos/auto-create', '5 3 * * 0', 'ministry'],

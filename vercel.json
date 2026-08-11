@@ -46,10 +46,6 @@
       "schedule": "30 3 * * *"
     },
     {
-      "path": "/api/kpis/youtube/sync",
-      "schedule": "0 13 * * *"
-    },
-    {
       "path": "/api/governanca/cron/lembrete",
       "schedule": "0 10 * * 1"
     },
