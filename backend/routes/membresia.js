@@ -187,10 +187,18 @@ router.get('/qr-lookup/:token', async (req, res) => {
       const [grupoAtualRes, ministeriosRes, ultContribRes, ultCheckinRes, trilhaRes] = await Promise.all([
         supabase
           .from('mem_grupo_membros')
-          .select('grupo:mem_grupos(id, nome, categoria, local, dia_semana, horario)')
+          // !inner + filtros no embed: sem eles, quem tem vinculo aberto em
+          // grupo ja ENCERRADO mostrava grupo morto no cartao — e .maybeSingle()
+          // sem limit ERRAVA ("multiple rows") pra quem tem 2+ vinculos abertos
+          // (257 pessoas medidas em 11/08). Mostra o vinculo mais recente.
+          .select('grupo:mem_grupos!inner(id, nome, categoria, local, dia_semana, horario)')
           .is('deleted_at', null)
           .eq('membro_id', membro.id)
           .is('saiu_em', null)
+          .eq('grupo.ativo', true)
+          .is('grupo.deleted_at', null)
+          .order('entrou_em', { ascending: false })
+          .limit(1)
           .maybeSingle(),
         supabase
           .from('mem_voluntarios')
@@ -326,10 +334,18 @@ router.get('/cpf-lookup/:cpf', authorizeModule('membros-totem', 1), async (req, 
       const [grupoAtualRes, ministeriosRes, ultContribRes, ultCheckinRes, trilhaRes] = await Promise.all([
         supabase
           .from('mem_grupo_membros')
-          .select('grupo:mem_grupos(id, nome, categoria, local, dia_semana, horario)')
+          // !inner + filtros no embed: sem eles, quem tem vinculo aberto em
+          // grupo ja ENCERRADO mostrava grupo morto no cartao — e .maybeSingle()
+          // sem limit ERRAVA ("multiple rows") pra quem tem 2+ vinculos abertos
+          // (257 pessoas medidas em 11/08). Mostra o vinculo mais recente.
+          .select('grupo:mem_grupos!inner(id, nome, categoria, local, dia_semana, horario)')
           .is('deleted_at', null)
           .eq('membro_id', membro.id)
           .is('saiu_em', null)
+          .eq('grupo.ativo', true)
+          .is('grupo.deleted_at', null)
+          .order('entrou_em', { ascending: false })
+          .limit(1)
           .maybeSingle(),
         supabase
           .from('mem_voluntarios')
