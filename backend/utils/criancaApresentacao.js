@@ -25,7 +25,11 @@
 // outra coisa. Não juntar as duas.
 // ============================================================================
 
-/** ⚠️ CPF nunca entra aqui: a criança é identificada pelo responsável. */
+// ⚠️ `cpfValido` faz o DV oficial da Receita e recusa sequência repetida. Vive em
+// `utils/` (não carrega o Supabase), então entra no gate junto com esta régua.
+const { cpfValido, soDigitos } = require('./cpf');
+
+/** ⚠️ CPF nunca entra aqui PRA A CRIANÇA — ela é identificada pelo responsável. */
 const CAMPOS_PROIBIDOS_CRIANCA = ['cpf', 'cnpj'];
 
 /**
@@ -72,16 +76,44 @@ function chaveCrianca(nome, dataNascimento) {
   const n = String(nome ?? '')
     .toLowerCase()
     .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
+    .replace(/[\u0300-\u036f]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
   return `${n}|${String(dataNascimento ?? '').slice(0, 10)}`;
 }
 
-/** A criança já existe nesta família? Compara pela chave, não por id. */
-function acharCriancaNaFamilia(pessoas, nome, dataNascimento) {
+/**
+ * A criança já existe nesta família?
+ *
+ * ⚠⚠ A CHAVE TEM TRÊS PARTES, e a terceira é o PAI/MÃE. Refinamento do Marcos
+ * (11/08): *"a criança não tem match, mas o pai tem — não deve gerar duplicidade
+ * os homônimos com data de nascimento igual, se tiverem pais diferentes; se os 3
+ * forem iguais, aí sim passa pelo match."*
+ *
+ * Sem a 3ª parte, dois PRIMOS com o mesmo nome e a mesma data de nascimento numa
+ * família estendida (avós, tios — há households com 9 pessoas) seriam fundidos
+ * numa criança só, e um deles desapareceria da lista do domingo.
+ *
+ * ⚠️ `paisPorCrianca` é um Map id-da-criança → [ids de quem é pai/mãe dela].
+ * Candidata **sem pai registrado** CASA: aí não sabemos que os pais são
+ * diferentes, e estamos DENTRO da família — recusar criaria a duplicata que esta
+ * função existe pra evitar (o caso real: criança que entrou por outra porta, como o
+ * import do Kids, tem `familia_id` e não tem vínculo). Candidata com pai
+ * registrado que **não está entre os nossos** é recusada — essa é a regra dele.
+ */
+function acharCriancaNaFamilia(pessoas, nome, dataNascimento, paisPorCrianca = null, paisEsperados = []) {
   const alvo = chaveCrianca(nome, dataNascimento);
-  return (pessoas || []).find((p) => chaveCrianca(p.nome, p.data_nascimento) === alvo) || null;
+  const nossos = new Set((paisEsperados || []).filter(Boolean));
+  const candidatas = (pessoas || []).filter((p) => chaveCrianca(p.nome, p.data_nascimento) === alvo);
+
+  for (const c of candidatas) {
+    if (!paisPorCrianca || !nossos.size) return c;      // sem como comparar ⇒ família manda
+    const pais = paisPorCrianca.get?.(c.id) ?? paisPorCrianca[c.id];
+    if (!pais || !pais.length) return c;                // não sabemos ⇒ casa
+    if (pais.some((id) => nossos.has(id))) return c;     // pai em comum ⇒ mesma criança
+    // pais registrados e NENHUM é nosso ⇒ outra criança (homônima). Segue olhando.
+  }
+  return null;
 }
 
 /**
@@ -117,12 +149,24 @@ function validarPedido(body, membro) {
 
   if (propria) {
     if (!membro?.id) return { ok: false, erro: 'Complete seu cadastro antes de apresentar uma criança' };
+    // ⚠️ O responsável ADICIONAL só existe neste caminho. Quem pede pra criança
+    // de OUTRA pessoa não pode montar a família de terceiros — foi a linha que o
+    // Marcos concordou em manter ("se não for a mãe ou pai, melhor não gerar
+    // família, mais seguro").
+    const ex = validarResponsavelExtra(body?.responsavel_extra);
+    if (!ex.ok) return { ok: false, erro: ex.erro };
     return {
       ok: true,
       dados: {
         propria: true,
         crianca: { nome, data_nascimento: nasc, sexo },
-        responsavel: { membro_id: membro.id, nome: membro.nome || null, telefone: membro.telefone || null },
+        responsavel: {
+          membro_id: membro.id,
+          nome: membro.nome || null,
+          telefone: membro.telefone || null,
+          sexo: membro.genero === 'M' || membro.genero === 'F' ? membro.genero : null,
+        },
+        responsavel_extra: ex.dados,
         observacoes: obs(body?.observacoes),
       },
     };
@@ -150,6 +194,63 @@ function validarPedido(body, membro) {
       observacoes: obs(body?.observacoes),
     },
   };
+}
+
+/**
+ * O responsável ADICIONAL (o outro pai/mãe), pedido pelo Marcos em 11/08:
+ * *"preciso que esse formulário tenha a opção de adicionar responsável, e aí já
+ * vamos criar essa família no sistema e se esse pai baixar o app já aparece lá
+ * pra ele a sua família alinhada, **tem que ter CPF**."*
+ *
+ * ⚠️⚠️ Aqui o CPF é **OBRIGATÓRIO**, o oposto da criança — e não é incoerência:
+ * é ADULTO, e adulto entra no sistema pelo Contrato de porta, onde o CPF é a
+ * chave mais forte do matcher. É justamente ele que faz "se esse pai baixar o
+ * app" reencontrar o cadastro em vez de criar um segundo.
+ *
+ * ⚠️ DV conferido no SERVIDOR: CPF sem DV vira identidade errada na base, e é a
+ * chave que o matcher usa com mais confiança — errar aqui contamina tudo.
+ */
+function validarResponsavelExtra(v) {
+  if (!v) return { ok: true, dados: null };          // é opcional
+  const nome = String(v.nome ?? '').trim();
+  const cpf = soDigitos(v.cpf);
+  if (!nome && !cpf) return { ok: true, dados: null }; // bloco em branco = não quis
+  if (nome.length < 2) return { ok: false, erro: 'Informe o nome do outro responsável' };
+  if (!nome.includes(' ')) return { ok: false, erro: 'Informe o nome COMPLETO do outro responsável' };
+  if (!cpf) return { ok: false, erro: 'O CPF do outro responsável é obrigatório' };
+  if (!cpfValido(cpf)) return { ok: false, erro: 'O CPF do outro responsável não é válido' };
+
+  const tel = soDigitos(v.telefone);
+  return {
+    ok: true,
+    dados: {
+      nome,
+      cpf,
+      // ⚠️ Telefone só entra se for alcançável: 9 dígitos sem DDD (o caso real do
+      // saneamento de 31/07) é pior que campo vazio — a equipe liga e não completa.
+      telefone: tel.length >= 10 && tel.length <= 11 ? tel : null,
+      sexo: v.sexo === 'M' || v.sexo === 'F' ? v.sexo : null,
+    },
+  };
+}
+
+/**
+ * Quem vai em `nome_pai` e quem vai em `nome_mae` na linha do pedido.
+ *
+ * ⚠️ Deriva do SEXO e, sem sexo, deixa NULO em vez de chutar. Marcos: *"se for
+ * uma mulher preenchendo e coloque como filho, ela entra como mãe"* — o sistema
+ * não tem tipo `mae`/`pai` em `mem_vinculos_familiares` (o CHECK é `pai_mae`), e
+ * inventar valor de enum quebraria o insert. Então o parentesco é `pai_mae` pros
+ * dois e estes dois campos de TEXTO é que carregam quem é quem, pro balcão.
+ */
+function nomesDosPais(principal, extra) {
+  const slot = { nome_pai: null, nome_mae: null };
+  for (const p of [principal, extra]) {
+    if (!p?.nome) continue;
+    if (p.sexo === 'M' && !slot.nome_pai) slot.nome_pai = p.nome;
+    else if (p.sexo === 'F' && !slot.nome_mae) slot.nome_mae = p.nome;
+  }
+  return slot;
 }
 
 function obs(v) {
@@ -188,6 +289,8 @@ function pessoaDaCrianca(crianca, igrejaId = null) {
 }
 
 module.exports = {
+  validarResponsavelExtra,
+  nomesDosPais,
   proximoSegundoDomingo,
   iso,
   chaveCrianca,
