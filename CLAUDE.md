@@ -7442,6 +7442,60 @@ técnica da espinha) porque exige função SQL + migration, e o buraco de hoje *
 ~6 inscrições por cerimônia a janela é pequena; se um dia estourar por 1, é aqui
 que vira RPC com lock.
 
+## ⚠️ Identidade · o nome MAIS COMPLETO vence (2026-08-11 · SEM migration)
+
+Decisão do Marcos, no caso Thiago (candidatura de líder de 10/08): o matcher
+ligou o formulário "Thiago dos Santos Nogueira" ao cadastro existente "Thiago
+Nogueira" (stub do auth de 10/07 · match por CPF) — comportamento CORRETO, mas
+o nome declarado pela própria pessoa era descartado e o sistema mostrava um
+nome no pedido e outro na membresia. *"Ele não pode mostrar um nome em um lugar
+e outro em outro lugar — os nomes devem ser juntados e o mais completo deve ser
+mantido."*
+
+- **`nomeMaisCompleto(atual, declarado)`** em `services/identidadeProgressiva.js`
+  — regra conservadora: promove SÓ quando o atual é subsequência (mesma ordem)
+  dos tokens do declarado e o declarado acrescenta algo. Nunca troca token
+  ("Maria Silva" × "Maria Souza" → null), nunca encurta, nunca reordena;
+  inicial de 1 letra expande ("Ana P" → "Ana Paula"); placeholder
+  "Contribuinte…" e e-mail no campo de nome nunca viram nome. Contrato em
+  `nomeMaisCompleto.test.js` (**no gate de deploy** · `test:nome-completo`),
+  mutation-testado: containment de conjunto (aceitaria reordenação) e
+  containment parcial (derrubaria token) deixam vermelho.
+- **Roda em `registrarObservacaoIdentidade`** — o ponto que TODAS as portas
+  atravessam quando ligam num membro (o `_observar` do matcher guardado E o
+  `registrarObservacaoSegura` das portas read-only). Best-effort, ANTES da
+  gravação da observação (não depende da tabela existir), com `.eq('nome',
+  atual)` contra corrida (padrão #2257). Sincroniza `profiles.name` ligado ao
+  membro pela MESMA régua (precedente do gatilho do auth: nome só na membresia
+  deixa o app mostrando o antigo).
+- **O passado**: `backend/scripts/_reparo_nomes_mais_completos.cjs` (dry-run /
+  `--exec` · backup em Downloads) varre observações de identidade + pedidos de
+  grupo + candidaturas de líder e aplica a régua em cadeia (a mais completa de
+  todas vence).
+- ⚠️ **A aba de Entrada segue exibindo o nome DIGITADO no pedido**
+  (`insc.nome`), não o cadastro resolvido — Marcos decidiu NÃO mexer na tela;
+  com a promoção do nome os dois convergem no caso comum.
+
+## Grupos · faxina de vínculos abertos em grupo INATIVO + cartão da ficha (2026-08-11 · SEM migration)
+
+Caso Eliandra: 4 vínculos abertos ao mesmo tempo, 3 em grupos `ativo=false` —
+cada tela mostrava um grupo diferente e nenhum era onde ela está. Medido:
+**1.443 vínculos abertos · 375 em grupo inativo · 257 pessoas com 2+ abertos**.
+
+- **`backend/scripts/_faxina_vinculos_grupos_inativos.cjs`** (dry-run/`--exec` ·
+  backup em Downloads): fecha (`saiu_em` + `motivo_saida`) os vínculos abertos
+  de grupos inativos/deletados, com `.is('saiu_em', null)` de guarda. ⚠️ NÃO
+  toca nos vínculos em grupos ATIVOS de temporada encerrada (os ~402 do
+  handoff de 04/08 — decisão ainda aberta) nem em `mem_grupos.lider_id`.
+- **Cartão "grupo de conexão atual" da ficha** (`membresia.js` ×2): o
+  `.maybeSingle()` sem limit ERRAVA ("multiple rows") pra quem tem 2+ vínculos
+  abertos, e sem filtro de grupo mostrava grupo morto. Agora
+  `mem_grupos!inner` + `ativo=true` + `deleted_at null` + mais recente
+  (`order entrou_em desc · limit 1`).
+- ⚠️ Régua de leitura que fica: vínculo aberto NÃO significa grupo vivo —
+  qualquer tela que derive "o grupo da pessoa" precisa filtrar
+  `mem_grupos.ativo` ou aceitar mostrar grupo encerrado.
+
 ## Devocionais · módulo do Matheus (no ar)
 
 Módulo existe e roda: `backend/routes/devocionalPlanos.js` (CRUD + geração de

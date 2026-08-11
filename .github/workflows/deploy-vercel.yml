@@ -47,6 +47,9 @@ jobs:
       - name: Contrato do detector de nome derivado do e-mail
         run: npm run test:nome-email
 
+      - name: Contrato do nome mais completo (promoção no matcher)
+        run: npm run test:nome-completo
+
       - name: Politica de duplicidade (fila das Entradas)
         run: npm run test:duplicidade
 
