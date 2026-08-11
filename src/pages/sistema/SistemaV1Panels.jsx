@@ -212,6 +212,15 @@ export function AutomationRunsPanel() {
             <div className="min-w-0">
               <p className="truncate font-mono text-xs">{run.job_id}</p>
               <p className="mt-1 text-xs text-muted-foreground">{relativeTime(run.started_at)}</p>
+              {run.owner_label && <p className="mt-1 text-xs text-muted-foreground">Responsavel: {run.owner_label}</p>}
+              {(run.error_code || run.request_id) && (
+                <p className="mt-1 truncate font-mono text-[11px] text-muted-foreground">
+                  {[run.error_code, run.request_id].filter(Boolean).join(' / ')}
+                </p>
+              )}
+              {run.runbook_url && (
+                <a href={run.runbook_url} className="mt-1 inline-block text-xs text-primary hover:underline">Abrir runbook operacional</a>
+              )}
             </div>
             <Badge variant="outline">{run.status}</Badge>
             <span className="text-xs text-muted-foreground">efeito: {run.effect_status}</span>
