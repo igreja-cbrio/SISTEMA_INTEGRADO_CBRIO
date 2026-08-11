@@ -95,6 +95,70 @@ async function donosDoGrupo(grupoId) {
 }
 
 /**
+ * Profiles que respondem por um grupo **NO APP DO MEMBRO**.
+ *
+ * ⚠️⚠️ É a irmã de `donosDoGrupo` SEM o filtro de `is_membro_only`, e é isso que
+ * importa. A de cima EXCLUI conta só-de-membro de propósito, porque escreve em
+ * `notificacoes` (sino do ERP web + app do staff) e linha lá pra conta assim é
+ * linha que ninguém abre. Usá-la pra alimentar o app entregaria **zero avisos, por
+ * construção** — justamente o líder que só tem o app é quem ela descarta.
+ *
+ * ⚠️ Aqui NÃO se filtra o contrário: é SUPERCONJUNTO, não espelho. Conta de staff
+ * também pode ter o app de membros instalado, e exigir `is_membro_only = true`
+ * excluiria esse líder. Quem separa os apps na hora do push é o agrupamento por
+ * `projeto_id` do `lotesDePush`.
+ *
+ * ⚠️ `active = true` continua valendo (conta desativada não recebe), e o
+ * complemento por `vol_profiles` NÃO entra: ali o vínculo é do voluntariado e o
+ * `auth_user_id` pode ser conta de staff, que não tem o app do membro.
+ *
+ * ⚠️ Medido em 11/08: dos **89 líderes** de grupos ativos, **15 têm conta no app**
+ * e 6 têm push token. Devolver lista vazia é o caso COMUM aqui — quem chama tem
+ * que tratar isso como normal, não como erro, e o WhatsApp segue sendo o canal
+ * que alcança os 89.
+ *
+ * @param {string} grupoId
+ * @param {{incluirSupervisor?: boolean}} [opcoes] O supervisor recebe junto?
+ *   Default **false**: `donosDoGrupo` junta os dois porque o sino do ERP é da
+ *   coordenação, mas no app o pedido é trabalho do LÍDER — e a tela de supervisor
+ *   (`/grupo-visita`) nem tem aba de Pedidos. Ligar isso é decisão do Marcos.
+ * @returns {Promise<string[]>} profile ids (sem repetição)
+ */
+async function donosDoGrupoApp(grupoId, { incluirSupervisor = false } = {}) {
+  if (!grupoId) return [];
+  const { data: grupo, error: eg } = await supabase
+    .from('mem_grupos')
+    .select('lider_id, supervisor_id')
+    .eq('id', grupoId)
+    .maybeSingle();
+  // ⚠️ Erro de leitura NÃO é "ninguém responde por este grupo": propaga pra quem
+  // chama poder logar a diferença. Silenciar aqui faria "o líder não tem conta" e
+  // "o banco falhou" virarem a mesma coisa — e só o primeiro é normal.
+  if (eg) throw eg;
+  if (!grupo) return [];
+
+  const membros = [grupo.lider_id, ...(incluirSupervisor ? [grupo.supervisor_id] : [])]
+    .filter(Boolean);
+  if (!membros.length) return [];
+
+  const { data: profs, error } = await supabase
+    .from('profiles')
+    .select('id')
+    .in('membro_id', membros)
+    .eq('active', true);
+  if (error) throw error;
+
+  // ⚠️ O `Set` protege contra id repetido na resposta, não contra pessoa
+  // repetida: `profiles.membro_id` **não é UNIQUE**, então a mesma pessoa pode
+  // ter DUAS contas (ids diferentes) apontando pro mesmo cadastro — e as duas
+  // recebem. É deliberado: sem sinal de qual conta ela usa hoje, escolher uma
+  // arriscaria mandar pra abandonada e ela não receber NADA. Aviso em duplicata
+  // incomoda; aviso que não chega é o defeito que este arquivo existe pra
+  // consertar.
+  return [...new Set((profs || []).map((p) => p.id).filter(Boolean))];
+}
+
+/**
  * Igual ao `donosDoGrupo`, para vários grupos de uma vez — o cron precisa disso
  * (um round-trip por grupo × 100 grupos por rodada é o que fazia a geração de
  * notificação levar minutos).
@@ -139,4 +203,4 @@ async function donosDeVariosGrupos(grupoIds) {
   return mapa;
 }
 
-module.exports = { donosDoGrupo, donosDeVariosGrupos };
+module.exports = { donosDoGrupo, donosDeVariosGrupos, donosDoGrupoApp };

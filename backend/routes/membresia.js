@@ -15,6 +15,14 @@ const { montarPatchFusao } = require('../services/fusaoCampos');
 const { normalizarCpf: normCpf11, cpfValido } = require('../utils/cpf');
 const censoDisparo = require('../services/censoDisparo');
 const { avaliarProntidao } = require('../utils/prontidaoCadastro');
+// ⚠️⚠️ `donosDoGrupo` era CHAMADO em `/totem/grupos/:id/entrar` e NUNCA foi
+// importado neste arquivo — ReferenceError latente. O insert do pedido roda
+// ANTES, então o primeiro uso real do totem gravaria o pedido e responderia
+// 500 pra pessoa. Medido em 11/08: **0 pedidos com origem 'totem'** na base
+// inteira (570 do formulário público, 2 do app), ou seja a rota nunca foi
+// exercitada e o erro nunca disparou. Achado ao ligar o sino do app.
+const { donosDoGrupo } = require('../services/gruposDestinatarios');
+const { avisarPedidoNovoNoApp } = require('../services/gruposAvisoApp');
 
 const uploadMw = multer({
   storage: multer.memoryStorage(),
@@ -1843,6 +1851,12 @@ router.post('/totem/grupos/:id/entrar', async (req, res) => {
     // Só quem responde por ESTE grupo (líder + supervisor). Sem dono com conta
     // de sistema, o aviso não sai — o líder recebe o WhatsApp e a coordenação vê
     // no resumo diário. Ver services/gruposDestinatarios.js.
+    // Sino do app do líder (ver services/gruposAvisoApp.js) — AWAITED, como nas
+    // outras origens: é o canal do líder que só tem o app do membro.
+    await avisarPedidoNovoNoApp({
+      grupoId, pedidoId: pedido.id, grupoNome: grupo.nome, pessoaNome: pessoa.nome,
+    });
+
     donosDoGrupo(grupoId).then((donos) => {
       if (!donos.length) return;
       return notificar({
