@@ -7496,6 +7496,45 @@ cada tela mostrava um grupo diferente e nenhum era onde ela está. Medido:
   qualquer tela que derive "o grupo da pessoa" precisa filtrar
   `mem_grupos.ativo` ou aceitar mostrar grupo encerrado.
 
+## ⚠️⚠️ Dashboard Semanal · a presença do NEXT vinha da camada MORTA (2026-08-11 · migration `20260811150000`)
+
+Pedido do Matheus na aba NEXT: *"a presença do next seja inputada de forma
+automática aqui, a partir da presença das pessoas."*
+
+**O automático existia e lia a camada APOSENTADA.** `next-presenca-mensal`
+(`dashboardSemanal.js`) contava `next_inscricoes.check_in_at` com o mês de
+`next_eventos` — o modelo anterior ao cutover de turmas (17/06/2026). Medido:
+
+| camada | última data com presença |
+|---|---|
+| `next_inscricoes.check_in_at` (a que o painel lia) | **2026-04** |
+| `next_presencas` (a chamada real · matrícula × encontro) | **2026-08** |
+
+Daí mai/2026 em diante nascer "sem dado" e jun/jul terem sido **digitados na
+mão**. É a MESMA doença do #2288 (que consertou as rotas `/next/*` do app) e da
+Edge Function `notify-lembretes`: consumidor apontado pra camada morta.
+
+- **`vw_next_presenca_mes`** conta **PESSOAS distintas** por mês do ENCONTRO.
+- ⚠️⚠️ **O histórico DIMINUI e está certo**: o legado contava **LINHAS**
+  (participações — a mesma pessoa nos 2 encontros do mês contava 2) e a pergunta
+  do card é quantas PESSOAS estiveram. set/2025 eram **44 linhas de 31 pessoas**.
+  Quem comparar com print antigo vai achar que sumiu dado; não sumiu.
+- ⚠️ **Medido ANTES de escrever**: a união com a camada legada é **idêntica** à
+  view em todos os meses (o backfill da `20260729190000` já subiu o legado) —
+  ler só da view não perde histórico nenhum. Sem essa medição, o desenho natural
+  seria um `UNION` que traria dupla contagem de volta.
+- ⚠️ **Matrícula soft-deletada fica FORA** (a equipe apaga duplicata/teste) e a
+  identidade é `membro_id` com fallback na matrícula (151 de 1.998 sem membro):
+  sem chave, contar 2 é menos grave que fundir gente diferente.
+- ⚠️ **Falha de consulta NÃO vira zero**: devolve `aviso` e a aba mostra faixa
+  âmbar. "Ninguém foi ao NEXT" é a leitura errada de uma query que falhou.
+- ⚠️ **O ajuste MANUAL continua vencendo o automático** — e agora a tela mostra a
+  chamada AO LADO dele, senão o manual vira número que ninguém revisita.
+  jul/2026: manual 35 × chamada 34. **jun/2026: manual 66 × chamada 24** — lista
+  contada à mão que nunca virou chamada no sistema; o manual dele FICA.
+- ⚠️ `next_presencas` tem `presente boolean` e hoje **0 linhas com false** — o
+  filtro está lá pela semântica, não porque haja ausente gravado.
+
 ## Devocionais · módulo do Matheus (no ar)
 
 Módulo existe e roda: `backend/routes/devocionalPlanos.js` (CRUD + geração de
