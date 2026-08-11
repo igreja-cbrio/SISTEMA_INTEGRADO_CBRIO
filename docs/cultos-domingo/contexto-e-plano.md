@@ -237,6 +237,57 @@ dono do produto — não reabrir sem ele:**
 validado**, e **toda etapa deve ser alinhada com o Matheus E com o Marcos Paulo**
 para as duas frentes não conflitarem no mesmo arquivo.
 
+### 7.1 As 5 decisões do §2 da varredura (respondidas em 2026-08-11)
+
+O conjunto de decisões está **COMPLETO**. Nenhuma delas é para ser reaberta por
+quem implementa.
+
+**D1 · Quem é o 09:30?** → **tipo NOVO + linhagem** (a varredura chama de "opção
+B", e é o que o desenho das duas lentes exige). ⚠️ Com os **4 pré-requisitos** do
+§2 da varredura — sem eles, a opção B fica **pior** que retimar.
+
+**D2 · Plano de contas** → **conta NOVA para o horário novo +
+`aceita_lancamento=false` na antiga, mantendo `ativo=true`**. Preserva a DRE de
+2024/2025 com o rótulo verdadeiro e rotula o futuro certo.
+⚠️ **Pendência de alinhamento (não bloqueio técnico):** essas contas são
+alimentadas pelo **sistema contábil externo** via `codigo_legado`. Precisa do
+"ok" do **financeiro** e de quem opera o contábil, senão a conta nova nasce sem
+correspondente do outro lado e a conciliação passa a divergir.
+⚠️ **Independente desta decisão, `fin_culto_slots` TEM que ser recortado** — é ele
+que roteia o dinheiro futuro, e ele **não segue o catálogo**.
+
+**D3 · Apresentação de bebês** → **11:30**. É o **segundo dos dois cultos da
+manhã** na grade nova, e o maior da casa (~724). Confirmado explicitamente para
+remover a ambiguidade com o 09:30 (que herda o lugar do 10:00, e portanto era "o
+segundo" na grade antiga). Datas afetadas: **13/09, 11/10, 08/11**.
+⚠️ Hoje a regra é `startsWith('10:00')` e o fallback pega o culto **mais cedo em
+silêncio** — trocar por 11:30 tem de ser explícito, e o texto "às 10h" está
+**hardcoded** em duas telas e no WhatsApp.
+
+**D4 · Redistribuição ou queda?** → **REDISTRIBUIÇÃO** (preferência/expectativa do
+Matheus). Consequências para o sistema:
+- as **metas de total NÃO mudam** (`dashboard_metas`, 5 linhas, todas globais);
+- o que muda é a **média por culto**, e por isso o corte de **24/08/2026 precisa
+  estar marcado** nos gráficos;
+- ⚠️ **NÃO recalibrar meta agora.** Só em **outubro/2026** existe um mês inteiro
+  na grade nova; recalibrar com base híbrida produz meta que não descreve nem um
+  formato nem o outro. Até lá, anotar o corte no `rotulo` da meta.
+- ⚠️ Se na prática houver queda, o medidor de setembro fica âmbar e **vai ser lido
+  como igreja encolhendo**. A margem é apertada: meta semanal **2.081** contra
+  média real **2.028** = folga de **2,6%**, menor que o culto que sai.
+
+**D5 · Batismo** → **fechar 08:30 e 10:00 (`aberto=false`, NUNCA soft-delete)
+após a cerimônia de 23/08** e **adicionar os horários novos**.
+- ⚠️ **O rótulo passa a ser só o horário** ("Domingo · 09:30"), **sem os ordinais
+  "1º/2º/3º culto da manhã"**. Decisão do Matheus, e é a mais robusta: ordinal
+  quebra a cada mudança de grade, horário não.
+- **Assumido** (corrigir se estiver errado): abrir **09:30 e 11:30**, espelhando o
+  padrão atual de duas opções com limite 11 cada.
+- ⚠️ **As 6 inscrições pendentes de 23/08 (2 em 08:30 + 4 em 10:00) estão CORRETAS
+  e não devem ser tocadas.**
+- ⚠️ Conferir se sobrou inscrição `pendente` para **27/09** nos horários velhos, e
+  reagendar **antes de 26/09**, quando o cron do lembrete dispara.
+
 ---
 
 ## 8. Inventário técnico
