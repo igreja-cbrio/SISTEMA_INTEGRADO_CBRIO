@@ -577,3 +577,113 @@ Lições já registradas no CLAUDE.md que valem exatamente para esta mudança:
 - **Teste vermelho bloqueia deploy** (gate de Vitest + contratos). Teste novo
   aqui tem de ser determinístico: **nada de depender da hora da execução** — foi
   o que mordeu no `faixaEtaria.test.ts`.
+
+---
+
+## 11 · Decisões de 11/08 — Marcos Paulo (+ pedidos do Pr. Juninho)
+
+> Registrado pela sessão do Marcos Paulo em 11/08, depois de ler este doc e a
+> varredura inteiros. Fecha as Decisões 1, 3 e 5 do §2 da varredura; a 2 segue
+> aberta COM PRAZO; a 4 fica no default do plano (não recalibrar antes de
+> outubro). Verificações novas citadas aqui foram medidas em produção /
+> `origin/main` em 11/08.
+
+### 11.1 Eventos especiais (batismo, apresentação de bebês, ativações): **09:30 primário; overflow para 11:30 por limite**
+
+- **Batismo**: o overflow já é automático no auto-serviço — o GET público
+  esconde horário lotado (`publicBatismo.js:126-131`) e o POST recusa com 409
+  no limite (`:282-289`; o caminho do totem idem em `kpis.js:901-925`). Falta:
+  criar a linha **09:30** em `batismo_horarios` (⚠️ a tela admin NÃO cria
+  horário — o `POST /kpis/batismos/horarios` existe sem botão; SQL ou um botão
+  novo), fechar 08:30/10:00 após a cerimônia de 23/08 (§5 F2) e corrigir os
+  ordinais dos labels.
+- **Limite medido em produção (11/08): 11** nos dois horários abertos (a
+  memória do Marcos era 8 — prevalece o medido). ⚠️ 11:30 e 19:00 estão com
+  `limite = NULL` = **sem limite, nunca lota** — ao abrir o 11:30 como
+  overflow, definir limite explícito, senão a regra nunca "fecha a torneira".
+- ⚠️ **Buraco descoberto na verificação**: inscrição de batismo **via APP**
+  entra por fan-out (`app_inscricoes` → trigger → `batismo_inscricoes`) **sem
+  `horario_culto` e sem validar limite** — não conta na lotação e não é
+  barrada. Entra no escopo (ou o app passa a mandar horário, ou a equipe
+  realoca essas linhas manualmente).
+- **Apresentação de bebês: SEM limite por enquanto → a regra vira "sempre
+  09:30"** (decisão do Marcos 11/08). Implementar o helper já com limite
+  `NULL = ilimitado` (mesma semântica do batismo) para o overflow 11:30 virar
+  só mudança de dado no futuro. Escopo confirmado pela verificação: **3 portas
+  de escrita divergentes hoje** — totem (`membresia.js:2296-2313`, prefere
+  10:00 com fallback no culto mais cedo), app (`app.js:4798-4803`, pega o
+  culto de menor id) e formulário público (grava em `apresentacao_criancas`,
+  sem culto) — convergem num helper único; + `GET /status` devolvendo o
+  horário calculado, os 2 textos "às 10h"/"no culto das 10h" do
+  `TotemMembro.tsx:3049/:3107` e o `{{4}}` do WhatsApp
+  (`membresia.js:2383-2388`) dinâmicos. ⚠️ Conferir na Meta se o corpo do
+  template `apresentacao_bebes_confirmacao` menciona "10h" fora do parâmetro
+  (se sim, é template `_v2`). Prazo: **13/09** (primeira apresentação afetada).
+
+### 11.2 Plano de contas (Decisão 2): segue aberta, **com deadline 20/08 e fallback combinado**
+
+Vamos conversar com o financeiro. Mas o recorte de `fin_culto_slots` acontece
+em 24/08 de qualquer jeito e o slot novo precisa apontar para alguma conta:
+**sem resposta até 20/08, fallback interino = slot do 09:30 apontando para as
+contas do 10:00**, registrado como temporário. O que não pode é chegar 24/08
+sem resposta e sem fallback (dízimo partindo em duas contas extintas, §8.3).
+
+### 11.3 Pedidos do Pr. Juninho (dashboard)
+
+1. **Lente "consolidação"**: nas médias do Dash Semanal, opção de ver
+   **08:30+10:00 SOMADOS no passado vs o 09:30** — para medir se a
+   consolidação perdeu ou ganhou gente. Não conflita com as duas lentes já
+   decididas: é uma **terceira**, e muda o desenho num ponto — em vez de UMA
+   `linhagem_key`, o mecanismo precisa de **duas chaves de agrupamento**
+   (continuidade: 10:00+09:30 · consolidação: 08:30+10:00+09:30) ou uma
+   tabelinha de lentes. ⚠️ Pegadinha verificada no código: na média histórica
+   (média em JS por chave, `dashboardSemanal.js`), as linhas de 08:30 e 10:00
+   da MESMA semana têm de ser **somadas por semana ANTES de entrar na média**,
+   senão a média da série consolidada sai pela metade. Rótulo explícito
+   ("08:30+10:00 somados") + marca de 24/08 no gráfico.
+2. **% de ocupação sempre visível ao lado da frequência total de domingo** —
+   os dois recortes imunes à aritmética do denominador.
+
+### 11.4 Indicador novo: ocupação sobre lugares OFERECIDOS (Marcos)
+
+`presencial_adulto ÷ (capacidade × nº de cultos VIGENTES no período)` — mede
+otimização do espaço, não lotação: hoje ~37,0% (1.553/4.200), vira ~49,3%
+(÷3.150) com o mesmo público. Regras de nascimento:
+
+- **Capacidade oficial = 1050** (decisão do Marcos 11/08: é a contagem do
+  térreo, "e nós não somamos" o nível de cima). Os **1300** dormentes em
+  `vw_culto_stats` não são a régua — não usar.
+- ⚠️ Pré-requisito: **fonte única de capacidade** (tabela/config; hoje 1050
+  está hardcoded em ≥6 pontos — constante no backend, telas, função SQL do
+  OKR, prompt de IA — e não existe tabela). Todo leitor passa a ler de lá,
+  inclusive o gauge atual, que divide o total da SEMANA pela capacidade de UM
+  culto (quebrado; este indicador é o conserto dele).
+- Numerador SÓ `presencial_adulto` (kids tem salas e régua próprias — 250);
+  denominador conta cultos **vigentes**, nunca os pré-agendados com 0; sempre
+  pareado com o total absoluto + marca de 24/08; rótulo com a janela na frase
+  ("X% dos 3.150 lugares ofertados no domingo").
+
+### 11.5 Catálogo central de cultos = **projeto de SETEMBRO** (não entra no corte)
+
+Visão do Marcos: um lugar único com todos os cultos (ativos e inativos) de onde
+TUDO deriva — adicionar/inativar ali propaga pelo sistema. É o remédio para o
+diagnóstico do §8.1/§B2 (e é a "opção C" da Decisão 1, que não cabe até 24/08 —
+o corte sai como planejado, que já planta vigência+linhagem+flags). Teto
+realista: ~80% automático (matar a régua de texto em 5 cópias, gerar
+`fin_culto_slots`/`batismo_horarios`/texto do bot a partir do catálogo,
+endpoint de grade para os apps) + **checklist gerado** dos satélites externos
+(PCO, contabilidade, template na Meta, OTA dos apps). A tela de Tipos de Culto
+do voluntariado é o embrião — assumir, blindar (F1 já corrige o guard do
+DELETE) e crescer, em vez de criar uma segunda coisa escondida.
+
+### 11.6 Divisão de frentes (Fase 0)
+
+- **Matheus**: dono de `dashboardSemanal.js` / `DashSemanalAba.jsx` / `kpis.js`
+  / `voluntariado.js` — as lentes (incluindo a consolidação do Juninho, 11.3)
+  entram no desenho dele (Fases 1/3/4).
+- **Marcos Paulo**: bebês + batismo (`membresia.js`, `app.js`,
+  `publicBatismo.js`, `TotemMembro.tsx`) + o buraco do batismo via app + OTA
+  do CBRio-Staff (25–29/08) + conferência do app de membros pós-corte. O
+  indicador de ocupação ofertada (capacidade→dado + gauge) é PR separada,
+  sequenciada DEPOIS da F1, coordenada porque toca `DashSemanalAba`.
+- Metas: não recalibrar antes de outubro (mantido — Decisão 4 no default).

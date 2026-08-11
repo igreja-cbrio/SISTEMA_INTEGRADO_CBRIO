@@ -7635,6 +7635,27 @@ O essencial para não fazer besteira:
   hora da própria linha do culto. É isso que faz rename reescrever o passado na
   tela mesmo com o dado correto guardado.
 
+**Atualização 11/08 · decisões do MARCOS PAULO (detalhe no §11 do
+`contexto-e-plano.md` — as "perguntas abertas" citadas acima FECHARAM, menos o
+plano de contas):** eventos especiais (batismo/bebês/ativações) →
+**09:30 primário, overflow 11:30 por limite** (no batismo o overflow já é
+automático: GET esconde lotado + POST recusa 409 · **limite medido em prod:
+11**, não 8 · ⚠️ 11:30/19:00 têm `limite=NULL` = nunca lota — definir ao abrir
+· ⚠️ batismo via APP fura a lotação, fan-out sem horário/limite); **bebês SEM
+limite por ora = sempre 09:30** (helper com limite NULL pra ligar o overflow
+depois · 3 portas de escrita divergentes hoje · prazo 13/09); plano de contas
+ABERTO com **deadline 20/08** (fallback interino: slot 09:30 → contas do
+10:00); pedidos do **Pr. Juninho**: **3ª lente "consolidação"** (08:30+10:00
+somados vs 09:30 — exige 2ª chave de agrupamento além da linhagem, e somar POR
+SEMANA antes da média) + % de ocupação sempre ao lado da frequência total de
+domingo; **capacidade oficial = 1050** (térreo; os 1300 da `vw_culto_stats`
+não são a régua) com **fonte única a criar** (hoje hardcoded em ≥6 pontos);
+indicador novo de **ocupação sobre lugares OFERECIDOS** (só adulto ÷
+1050×cultos vigentes — conserta o gauge que divide a semana por 1050);
+**catálogo central de cultos = projeto de setembro**, não entra no corte.
+Divisão de frentes: Matheus segue dono dos 4 arquivos em disputa (lentes);
+Marcos Paulo leva bebês/batismo/apps/ocupação.
+
 ## Cultos recorrentes — slots fixos e identidade única
 
 Os horários de culto vivem em `vol_service_types` com `recurrence_day`
