@@ -763,3 +763,50 @@ describe('mercadopago · valor pago é o que QUITA a cobrança', () => {
     expect(r.payload?.id).toBe(3);
   });
 });
+
+// ⚠️⚠️ Custou o PRIMEIRO Pix de produção (11/08). A order do Pix voltou 402
+// `processing_error`, o MP notificou `order.failed`, o webhook mapeou pra
+// `falhou` — TERMINAL e ABSORVENTE — e a inscrição CBR-2026-000245 ficou sem
+// NENHUM caminho de pagamento, com a tela dizendo "você pode tentar de novo com
+// outro cartão ou por Pix". Era mentira.
+//
+// É a MESMA classe que a #2320 consertou na Payments API (`rejected: null`) e
+// que não tinha sido aplicada na Orders API. Uma ORDER é UMA TENTATIVA: cada
+// troca de forma cria outra order com o mesmo external_reference.
+describe('mercadopago · order que FALHA não mata a cobrança', () => {
+  function stubOrder(status: string, statusPagamento?: string) {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true, status: 200,
+      text: async () => JSON.stringify({
+        // `live_mode: false` porque o ambiente declarado no teste é `teste` —
+        // a guarda de ambiente LANÇA se divergir, e foi ela que pegou a 1ª
+        // versão deste stub. É o comportamento certo dela.
+        id: 'ORD01KZRWGVCN9NEGDZBW0T3QYVT9', status, live_mode: false,
+        external_reference: 'inscricao_321709e5',
+        total_amount: '5.00',
+        transactions: { payments: [{ id: 'PAY01', status: statusPagamento || status, amount: '5.00' }] },
+      }),
+    } as any)));
+  }
+
+  it('`failed` NÃO vira status terminal — devolve "sem novidade"', async () => {
+    stubOrder('failed');
+    const r = await mp.consultarStatus({ id: 'c1', provider_cobranca_id: 'ORD01', referencia: 'inscricao:x' });
+    // null/sem status = o núcleo não mexe na cobrança, que segue pagável.
+    expect(r?.status ?? null).toBeNull();
+  });
+
+  it('os status que REALMENTE encerram continuam encerrando', async () => {
+    for (const [ordem, esperado] of [['expired', 'expirada'], ['canceled', 'cancelada']] as const) {
+      stubOrder(ordem);
+      const r = await mp.consultarStatus({ id: 'c1', provider_cobranca_id: 'ORD01', referencia: 'inscricao:x' });
+      expect(r?.status, `${ordem} deveria virar ${esperado}`).toBe(esperado);
+    }
+  });
+
+  it('e o pagamento aprovado segue chegando a pago', async () => {
+    stubOrder('processed');
+    const r = await mp.consultarStatus({ id: 'c1', provider_cobranca_id: 'ORD01', referencia: 'inscricao:x' });
+    expect(r?.status).toBe('pago');
+  });
+});
