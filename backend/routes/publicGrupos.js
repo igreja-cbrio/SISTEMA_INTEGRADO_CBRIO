@@ -955,14 +955,27 @@ router.post('/inscrever', async (req, res) => {
     if (!grupo || !grupo.ativo) {
       return res.status(404).json({ error: 'Grupo não encontrado ou inativo.' });
     }
-    // Grupo por convite do líder (Marcos · 15/07): nunca aceita inscrição
-    // pública — não aparece no form, e um deep-link antigo cai aqui.
-    if (grupo.modo_inscricao === 'fechado') {
-      return res.status(403).json({
-        error: 'Este grupo é por convite do líder — fale com ele para participar.',
-        codigo: 'inscricoes_fechadas',
-      });
-    }
+    // ⚠️⚠️ 'fechado' NÃO BLOQUEIA MAIS A INSCRIÇÃO POR LINK (Marcos · 11/08/2026)
+    //
+    // A regra de 15/07 era "nunca aceita inscrição pública". Ela criava um beco:
+    // a própria mensagem mandava "fale com ele para participar", e o líder **não
+    // tinha como** trazer ninguém — o app agora gera o link do grupo (apontamento
+    // 2), e nesses grupos ele caía aqui em 403.
+    //
+    // Palavras dele: *"libera o link direto para os grupos por convite também,
+    // mesmo fechados. eles não devem ser achados na lista de grupos públicos,
+    // mas se o líder quiser convidar alguém, deve poder."*
+    //
+    // ⚠️ O QUE MANTÉM ISSO SEGURO, e foi conferido antes de mudar:
+    //  1. grupo 'fechado' **continua fora de toda lista pública** — `:132` (form
+    //     do site) e `:386` (`/buscar`, que alimenta o app) filtram com `.neq`.
+    //     Só chega quem recebeu o link do líder: o UUID não é adivinhável.
+    //  2. a inscrição **não vincula ninguém** — cria `mem_grupo_pedidos` com
+    //     status 'pendente' (`:808`), e o líder continua aprovando um a um.
+    // ⇒ ter o link é o convite; a aprovação segue sendo do líder.
+    //
+    // ⚠️ Se um dia for preciso barrar link VAZADO, o caminho é expirar/assinar o
+    // convite — não voltar o 403, que barra junto o convite legítimo.
     if (grupo.aceitando_inscricoes === false) {
       return res.status(403).json({
         error: 'Este grupo não está recebendo novas inscrições no momento.',

@@ -61,12 +61,11 @@ function avaliarEntradaNoGrupo({ grupo, genero, temporadaAberta } = {}) {
     };
   }
 
-  if (String(grupo.modo_inscricao || '') === 'fechado') {
-    return {
-      ok: false, status: 403, codigo: 'inscricoes_fechadas',
-      erro: 'Este grupo é por convite do líder — fale com ele para participar.',
-    };
-  }
+  // ⚠️⚠️ 'fechado' NÃO barra mais (Marcos · 11/08/2026 — ver o cabeçalho do
+  // mesmo trecho em `routes/publicGrupos.js`). O grupo continua invisível em
+  // toda lista pública; quem tem o link foi convidado pelo líder, e a inscrição
+  // ainda vira PEDIDO que ele aprova. Bloquear aqui deixava o líder sem nenhuma
+  // forma de convidar — que é o oposto do que 'por convite do líder' promete.
 
   if (grupo.aceitando_inscricoes === false) {
     return {
