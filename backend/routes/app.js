@@ -5270,6 +5270,18 @@ router.get('/eventos', authApp, limiterNormal, async (req, res) => {
     // "Todos | Meus eventos" usa, e o que decide form × minha inscrição.
     const membro = await resolveMembroApp(req).catch(() => null);
     const inscritos = new Set();
+    // ⚠️⚠️ VAGA RESERVADA NÃO É INSCRIÇÃO. `recebida` significa "a vaga está
+    // segura, o pagamento não veio" — e o app mostrava **"Inscrito"** pra quem
+    // nunca pagou, porque aqui só se excluía `cancelada`. Em evento pago isso é
+    // a pior mentira que a tela pode contar: a pessoa fecha o app achando que
+    // tem lugar no retiro.
+    //
+    // A régua canônica é a mesma da porta pública e da notificação da equipe
+    // ("reservou vaga e está aguardando o pagamento" × "se inscreveu"). Quem
+    // decide o que é válido é o BACKEND — o app só exibe (lei da auditoria de
+    // 05/08). Por isso vão os DOIS sinais, e `inscrito` continua significando o
+    // que sempre significou pra não quebrar bundle antigo.
+    const pendentes = new Set();
     if (membro && abertos.length) {
       const { data: minhas } = await supabase.from('inscricoes')
         .select('evento_id, status')
@@ -5277,7 +5289,10 @@ router.get('/eventos', authApp, limiterNormal, async (req, res) => {
         .in('evento_id', abertos.map((e) => e.id))
         .neq('status', 'cancelada')
         .is('deleted_at', null);
-      (minhas || []).forEach((i) => inscritos.add(i.evento_id));
+      (minhas || []).forEach((i) => {
+        inscritos.add(i.evento_id);
+        if (i.status === 'recebida') pendentes.add(i.evento_id);
+      });
     }
 
     // Vagas RESTANTES pela régua canônica (`fn_insc_vagas`, a MESMA do lock de
@@ -5302,6 +5317,9 @@ router.get('/eventos', authApp, limiterNormal, async (req, res) => {
       // simplesmente não era devolvido.
       inscricoes_encerram_em: e.inscricoes_encerram_em || null,
       vagas_restantes: restantes.has(e.id) ? restantes.get(e.id) : null,
+      // ⚠️ `pagamento_pendente` é o que separa "tem vaga garantida" de "reservou
+      // e não pagou". Sem ele o app não TEM como saber — e mostrava "Inscrito".
+      pagamento_pendente: pendentes.has(e.id),
       pago: !!e.pagamento_ativo,
       valor_centavos: e.pagamento_ativo ? (e.valor_centavos || null) : null,
       // Teto de parcelas do EVENTO (null = teto da conta do PSP). Só faz sentido
