@@ -212,22 +212,30 @@ não vale naquela view. Não confundir as duas chaves.
 
 ---
 
-## 7. ⚠️ O que está ABERTO (trava a execução)
+## 7. Decisões do Matheus (respondidas em 2026-08-05)
 
-Perguntas feitas ao Matheus em 05/08 e **ainda sem resposta**. Não decidir por
-conta — cada uma muda código:
+As 5 perguntas que travavam a execução foram respondidas. **Estas são decisões do
+dono do produto — não reabrir sem ele:**
 
-1. **Quando o número precisa ser único, qual lente vale?** Gráfico aceita filtro;
-   **KPI da matriz, meta e NSM não** — têm um valor só. A maioria dos coletores
-   soma totais (idênticos nas duas lentes), mas qualquer indicador "por culto"
-   precisa de régua fixa. *Sugestão feita:* os indicadores oficiais medem por
-   **turno ou por domingo** (imunes), e a visão por culto fica como análise.
-2. **Qual lente abre por padrão?** *Sugestão feita:* a **separada** (dado cru),
-   com o botão de troca visível.
-3. **Rótulos:** o culto novo chama "Domingo 09:30"? E a série da lente
-   continuidade — "Domingo 09:30 (antes 10:00)" ou algo como "2º culto da manhã"?
-4. **O 10:00 encerra no mesmo dia que o 08:30** (23/08)? — confirmar.
-5. **Só domingo muda?** — confirmar (os dados dizem que sim).
+1. **Indicadores oficiais (KPI da matriz, meta, NSM) medem por turno ou por
+   domingo** — os níveis imunes à mudança. ✅ Concordado.
+   ⚠️ **MAS**: o **Dashboard Semanal** e a **Frequência da Integração** precisam
+   **também** ter análise **por culto**. Ou seja: por culto continua existindo
+   como ANÁLISE nessas duas telas (com a lente), e não é o que alimenta
+   indicador oficial.
+2. **Abre na lente SEPARADA** (dado cru), com o botão de troca visível.
+3. **Nome do culto novo: "Domingo 09:30"** — mesmo padrão de sempre.
+   **O rótulo da lente continuidade fica a critério de quem implementa**, desde
+   que dê para entender. *Proposta:* legenda **"Domingo 09:30 (era 10:00)"** e o
+   botão da lente com os textos **"Cultos separados"** × **"10:00 e 09:30 como o
+   mesmo culto"** — nomeia o que a lente faz, em vez de usar jargão.
+4. **O 10:00 encerra no mesmo dia que o 08:30**: último domingo dos dois é
+   **23/08/2026**. ✅ Confirmado.
+5. **Só o domingo muda.** ✅ Confirmado.
+
+**Processo, pedido explicitamente:** ⚠️ **nada é implementado antes de o plano ser
+validado**, e **toda etapa deve ser alinhada com o Matheus E com o Marcos Paulo**
+para as duas frentes não conflitarem no mesmo arquivo.
 
 ---
 
@@ -268,21 +276,168 @@ será complementada quando ela fechar.
 
 ---
 
-## 9. Ordem de execução proposta
+## 9. ⚠️ Duas armadilhas descobertas no schema (leia antes do plano)
 
-1. **Migration aditiva**: cria `Domingo 09:30`, a linhagem, e a marcação de
-   vigência (`encerrado_em` nos tipos que saem). Aditiva = reversível.
-2. **Cultos futuros**: a partir de 24/08, remover os do 08:30 e do 10:00 e criar
-   os do 09:30. ⚠️ Conferir que nenhum tem dado lançado **no momento da
-   execução** (hoje não têm, mas alguém pode lançar antes).
-3. **Backend**: parâmetro de lente e de agrupamento (culto/turno/domingo) nos
-   endpoints de agregação.
-4. **Frontend**: filtro de lente, visão por turno, visão por domingo, marca da
-   data no gráfico.
-5. **Satélites**: voluntariado, kids, produção, crons — conforme o inventário.
+### 9.1 `is_active` NÃO serve para encerrar o 08:30
 
-**Reversível:** 1, 3, 4. **Exige cuidado:** 2 (apagar culto futuro com dado
-lançado seria perda real) e qualquer coisa que toque o plano de contas.
+`vol_service_types.is_active` já existe, e a tentação óbvia é `is_active = false`
+no 08:30. **Não funciona**, porque leituras HISTÓRICAS filtram por ele:
+
+| Onde | O que acontece se `is_active = false` |
+|---|---|
+| `backend/routes/dashboardSemanal.js:84` | o 08:30 **desaparece do Dashboard Semanal**, histórico incluído |
+| `backend/routes/kpis.js:81` e `:544` | idem nos KPIs |
+| `backend/routes/voluntariado.js:2301` | sai da lista de cultos de domingo de manhã |
+
+Isso é o oposto do requisito ("o histórico do 08:30 deve ser preservado").
+
+**A causa raiz:** hoje `is_active` responde **duas perguntas diferentes** com um
+booleano — *"este culto ainda acontece?"* (agendamento futuro) e *"este culto deve
+aparecer em análise histórica?"* (leitura do passado). Enquanto nenhum culto tinha
+encerrado, as duas respostas coincidiam. **Esta mudança é a primeira vez que elas
+divergem** — e é o coração técnico do trabalho.
+
+**Solução:** vigência por DATA (`vigente_de` / `vigente_ate`), e cada leitura
+escolhe a pergunta certa:
+- **listar cultos que existem/existiram** (gráfico, KPI, histórico) → **não filtra
+  vigência**; o recorte é a data do culto;
+- **oferecer slot para agendar / gerar culto novo / escalar voluntário** → filtra
+  **vigente na data em questão**.
+
+`is_active` fica como está (todos `true`) para não quebrar nada, e passa a
+significar só "tipo não foi arquivado". ⚠️ **Não sobrecarregar `is_active` de novo.**
+
+### 9.2 `bloco_servico` existe, tem o formato certo — e está MORTO
+
+`vol_service_types.bloco_servico` já contém `'dom_manha'` nos três cultos da manhã
+e `NULL` no 19:00 / Quarta / Bridge / AMI. **Nenhuma linha de código lê essa
+coluna** (grep em `backend/` e `src/`: zero ocorrências).
+
+Ou seja: o turno que o Dashboard Semanal mostra no voluntariado **não vem daqui** —
+vem dos blocos `b10c0000-…` da migration `20260705140000`. Existem, portanto, **dois
+vocabulários de turno** no sistema, um deles dormente.
+
+**Decisão proposta:** usar `bloco_servico` como chave de turno da frequência
+(está na mesma tabela do tipo, dispensa join) e **completá-la** (`dom_noite` no
+19:00, e os demais), mantendo os **rótulos idênticos** aos do voluntariado
+("Domingo Manhã", "Domingo Noite") para não haver dois nomes para a mesma coisa na
+cara do usuário. A unificação dos dois mecanismos é dívida técnica **fora do
+escopo** desta mudança — anotar, não resolver agora.
+
+---
+
+## 10. Plano de execução
+
+Cada fase diz o que faz, onde, o risco e como verificar. **Nada começa antes da
+validação do plano** (pedido do Matheus).
+
+### Fase 0 · Alinhamento (antes de tocar em código)
+
+Combinar com o **Marcos Paulo** quem mexe em quê, porque as duas frentes
+disputam os mesmos arquivos: `dashboardSemanal.js`, `DashSemanalAba.jsx`,
+`kpis.js`, `voluntariado.js`. Sugestão: uma frente por vez nesses quatro, com PRs
+pequenas e sequenciais em vez de uma PR grande.
+
+### Fase 1 · Migration aditiva (reversível)
+
+1. Colunas de vigência em `vol_service_types`: `vigente_de date`, `vigente_ate date`
+   (ambas NULL = "sempre valeu / ainda vale").
+2. Coluna de linhagem: `linhagem_key text`.
+   ⚠️ **Texto, não FK.** Um `sucessor_id uuid REFERENCES vol_service_types(id)`
+   exigiria FK (lei nº 10) e cairia direto na armadilha documentada do
+   `ADD COLUMN IF NOT EXISTS … REFERENCES`, que engole a constraint quando a
+   coluna já existe. `linhagem_key` também é usável direto como `GROUP BY`.
+3. Novo tipo **"Domingo 09:30"**: `recurrence_day = 0`, `recurrence_time = '09:30'`,
+   `presencial_label = 'Sede'`, `has_kids = true`, `has_online = true`,
+   `bloco_servico = 'dom_manha'`, `vigente_de = '2026-08-24'`, cor nova (as
+   ocupadas: `#00B39D` 08:30 · `#10b981` 10:00 · `#3b82f6` 11:30 · `#8b5cf6` 19:00).
+4. `vigente_ate = '2026-08-23'` no **08:30** e no **10:00**.
+5. `linhagem_key`: o **10:00 e o 09:30** recebem a mesma chave (ex.:
+   `'dom_2o_manha'`). O 08:30 recebe a sua própria; 11:30 e 19:00 idem.
+6. Completar `bloco_servico`: `dom_noite` no 19:00 (e os demais tipos), com os
+   rótulos batendo com os do voluntariado.
+
+**Verificar:** conferir no **catálogo** (`information_schema` / `pg_constraint`),
+não no arquivo — lição registrada. **Reverter:** dropar as 2 colunas e o tipo novo
+(que ainda não tem culto).
+
+### Fase 2 · Cultos futuros (a fase que exige mais cuidado)
+
+A partir de **2026-08-24**: apagar os cultos do 08:30 e do 10:00, criar os do 09:30.
+
+⚠️ **Reconferir na hora da execução que nenhum tem dado lançado.** Hoje são 18 por
+tipo, todos zerados — mas alguém pode lançar antes. A query de guarda tem de rodar
+**na transação**, não no dia anterior. Se houver dado, **parar e perguntar**.
+
+⚠️ `gerar_cultos_recorrentes` precisa **respeitar a vigência**, senão o próximo
+cron recria o 08:30. Ler a função antes de mexer.
+
+⚠️ Conferir se apagar culto futuro tem cascata (kids_sessoes, culto_producao,
+vol_schedules). **Auditar no catálogo.**
+
+**Não reversível** se apagar culto com dado. Reversível enquanto zerado (basta
+regerar).
+
+### Fase 3 · Backend: lente e agrupamento
+
+Parâmetros novos nos endpoints de agregação: `lente = separada | continuidade` e
+`agrupar = culto | turno | domingo`.
+
+- `separada` → agrupa por `service_type_id` (dado cru, **padrão**)
+- `continuidade` → agrupa por `coalesce(linhagem_key, id::text)`
+- `turno` → agrupa por `bloco_servico`
+- `domingo` → agrupa por `data`
+
+Endpoints: `dashboardSemanal.js` (resumo / mensal / ytd / série), a frequência da
+Integração, e as séries do `painel.js`.
+
+⚠️ **Remover o filtro `is_active` das leituras históricas** (`dashboardSemanal.js:84`,
+`kpis.js:81`, `kpis.js:544`) — ver 9.1. É a mudança mais delicada do backend,
+porque hoje ela é o que esconde tipo arquivado; conferir caso a caso o que cada
+uma quis dizer com `is_active`.
+
+⚠️ Cap de 1000 do PostgREST: qualquer leitura nova de `cultos` usa paginação.
+
+### Fase 4 · Frontend
+
+- **Dashboard Semanal** e **Frequência da Integração**: seletor de lente
+  (`Cultos separados` × `10:00 e 09:30 como o mesmo culto`) + seletor de
+  agrupamento (Culto / Turno / Domingo). Por culto **continua existindo** nas duas
+  telas — pedido explícito.
+- **Marca da data** em **24/08/2026** nos gráficos de série (`ReferenceLine` do
+  recharts, que o projeto já usa para o alvo de 60 min na Produção).
+- `CORES_CULTO` e mapas nome→cor: acrescentar o 09:30, senão a série nasce **sem
+  cor** (armadilha já registrada no CLAUDE.md: cor fora do array do
+  `ChartGradients` renderiza barra vazia e o build não pega).
+
+### Fase 5 · Satélites
+
+Conforme o inventário da seção 8. Os que já sei que precisam de atenção:
+
+- **Voluntariado** — `voluntariado.js:2301` lista os cultos de domingo de manhã com
+  `recurrence_day = 0 AND is_active AND recurrence_time < '14:00'`. A régua do
+  `< 14:00` **pega o 09:30 sozinha** (bom), mas o `is_active` volta a ser problema
+  se ele for usado para encerrar. Escalas futuras precisam ser conferidas.
+- **Produção** — o 09:30 nasce **sem roteiro**; decidir se copia o do 10:00.
+- **Kids** — janela de sessão do culto atual.
+- **Crons** — janelas em UTC do `online-live-monitor.yml`.
+- **Plano de contas** — contas nomeadas por horário. **Decisão do financeiro**, não
+  nossa.
+
+### Ordem sugerida e reversibilidade
+
+| Fase | Reversível? |
+|---|---|
+| 1 · migration aditiva | **Sim** (dropar colunas + tipo sem culto) |
+| 2 · cultos futuros | **Sim enquanto zerados**; não, se houver dado lançado |
+| 3 · backend | **Sim** (parâmetro novo, comportamento antigo é o padrão) |
+| 4 · frontend | **Sim** |
+| 5 · satélites | caso a caso |
+
+**Fases 1, 3 e 4 podem ir para produção antes de 24/08 sem efeito visível** — o
+tipo novo não tem culto, e a lente separada reproduz exatamente o comportamento
+atual. Isso permite validar em produção **antes** da virada, que é o oposto de
+virar tudo no dia.
 
 ---
 
