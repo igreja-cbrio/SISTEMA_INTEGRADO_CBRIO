@@ -99,6 +99,7 @@ export function OperationsPanel() {
   if (error || !data) return <ErrorState error={error} retry={load} />;
 
   const runs = data.runs?.data || {};
+  const slo = runs.slo || {};
   const incidents = data.incidents?.data || {};
   const errors = data.errors?.data || {};
   const feedback = data.feedback?.data || {};
@@ -139,6 +140,38 @@ export function OperationsPanel() {
           </div>
         ))}
       </div>
+
+      {runs.slo && (
+        <div className="border-t p-5">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h3 className="text-sm font-semibold">Confiabilidade e cobertura das automações</h3>
+              <p className="mt-1 text-xs text-muted-foreground">Janela de {slo.windowHours}h. Sucesso só conta quando há prova do efeito esperado.</p>
+            </div>
+            <div className="flex flex-wrap gap-2 text-xs">
+              <Badge variant="outline">Confiabilidade: {slo.successRatePct ?? '—'}%</Badge>
+              <Badge variant="outline">Cobertura de prova: {slo.proofCoveragePct ?? '—'}%</Badge>
+              <Badge variant="outline" className={slo.jobsBreached ? SEVERITY_STYLE.critical : SEVERITY_STYLE.info}>{slo.jobsBreached || 0} metas violadas</Badge>
+              <Badge variant="outline" className={slo.jobsMissing ? SEVERITY_STYLE.error : SEVERITY_STYLE.info}>{slo.jobsMissing || 0} atrasadas</Badge>
+            </div>
+          </div>
+          <div className="mt-4 grid gap-2 lg:grid-cols-2">
+            {(slo.items || []).slice(0, 8).map((item) => {
+              const stateLabel = { breached: 'meta violada', missing: 'atrasada', at_risk: 'atenção', unproven: 'sem prova', healthy: 'saudável' }[item.state] || item.state;
+              const stateStyle = { breached: SEVERITY_STYLE.critical, missing: SEVERITY_STYLE.error, at_risk: SEVERITY_STYLE.warning, unproven: SEVERITY_STYLE.warning, healthy: SEVERITY_STYLE.info }[item.state];
+              return (
+                <div key={item.jobId} className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium">{item.name}</p>
+                    <p className="truncate text-xs text-muted-foreground">{item.ownerLabel || 'Responsável não definido'} · {item.runs} execuções · {item.successRatePct ?? '—'}%</p>
+                  </div>
+                  <Badge variant="outline" className={stateStyle}>{stateLabel}</Badge>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <div className="border-t p-5">
         <h3 className="text-sm font-semibold">Sinais legados de recência</h3>

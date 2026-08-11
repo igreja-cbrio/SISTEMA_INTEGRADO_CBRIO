@@ -36,7 +36,7 @@ jobs:
             exit 0
           fi
           echo "Calling sync endpoint at $APP_BASE_URL/api/santander/cron/sync"
-          response=$(curl -sS -w "\n%{http_code}" -X POST \
+          response=$(curl --location -sS -w "\n%{http_code}" -X POST \
             -H "X-Cron-Secret: $CRON_SECRET" \
             -H "Content-Type: application/json" \
             -d '{"dias": 3}' \
@@ -45,7 +45,11 @@ jobs:
           status=$(echo "$response" | tail -n 1)
           echo "HTTP $status"
           echo "$body" | head -c 2000
-          if [ "$status" -ge 400 ]; then
+          if [ "$status" -lt 200 ] || [ "$status" -ge 300 ]; then
             echo "::error::Sync falhou com HTTP $status"
+            exit 1
+          fi
+          if ! echo "$body" | jq -e '.ok == true' >/dev/null; then
+            echo "::error::Sync respondeu sem confirmacao ok=true"
             exit 1
           fi

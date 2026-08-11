@@ -1,5 +1,7 @@
 const { supabase } = require('../utils/supabase');
 const { checarSaude } = require('./monitorAutomacoes');
+const { JOBS } = require('../config/systemCatalog');
+const { summarizeJobSlo } = require('./systemJobSlo');
 
 const ACTIVE_INCIDENT_STATUSES = [
   'novo', 'reconhecido', 'investigando', 'mitigado', 'monitorado',
@@ -28,20 +30,43 @@ async function queryCount(query) {
 
 async function getOverview(hours = 24) {
   const since = new Date(Date.now() - hours * 3600000).toISOString();
+  const sloWindowHours = 48;
+  const sloUntilMs = Date.now();
+  const runsSinceMs = sloUntilMs - sloWindowHours * 3600000;
 
   const [runs, incidents, errors, feedback, pipelines] = await Promise.all([
     safe('runs', async () => {
-      const rows = await queryRows(
-        supabase.from('system_job_runs')
-          .select('id,job_id,status,effect_status,started_at,finished_at,duration_ms,request_id')
-          .gte('started_at', since)
-          .order('started_at', { ascending: false })
-          .limit(500),
-      );
+      const sliceHours = 12;
+      const slices = Array.from({ length: sloWindowHours / sliceHours }, (_, index) => {
+        const start = new Date(runsSinceMs + index * sliceHours * 3600000).toISOString();
+        const end = new Date(Math.min(runsSinceMs + (index + 1) * sliceHours * 3600000, sloUntilMs)).toISOString();
+        return queryRows(
+          supabase.from('system_job_runs')
+            .select('id,job_id,status,effect_status,started_at,finished_at,duration_ms,request_id')
+            .gte('started_at', start)
+            .lt('started_at', end)
+            .order('started_at', { ascending: false })
+            .limit(1000),
+        );
+      });
+      const rows = (await Promise.all(slices))
+        .flat()
+        .sort((a, b) => new Date(b.started_at) - new Date(a.started_at));
+      let visibleRows = rows.filter((row) => row.started_at >= since);
+      if (hours > sloWindowHours) {
+        visibleRows = await queryRows(
+          supabase.from('system_job_runs')
+            .select('id,job_id,status,effect_status,started_at,finished_at,duration_ms,request_id')
+            .gte('started_at', since)
+            .order('started_at', { ascending: false })
+            .limit(2000),
+        );
+      }
+
       const byStatus = {};
-      for (const row of rows) byStatus[row.status] = (byStatus[row.status] || 0) + 1;
-      return { total: rows.length, byStatus, recent: rows.slice(0, 12) };
-    }, { total: 0, byStatus: {}, recent: [] }),
+      for (const row of visibleRows) byStatus[row.status] = (byStatus[row.status] || 0) + 1;
+      return { total: visibleRows.length, byStatus, recent: visibleRows.slice(0, 12), slo: summarizeJobSlo(JOBS, rows, { windowHours: sloWindowHours }) };
+    }, { total: 0, byStatus: {}, recent: [], slo: null }),
     safe('incidents', async () => {
       const rows = await queryRows(
         supabase.from('system_incidents')

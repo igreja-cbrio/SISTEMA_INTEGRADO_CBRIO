@@ -15,6 +15,12 @@ function balanceId() {
   return `${padAgencia(AGENCIA)}.${padConta(CONTA)}`;
 }
 
+function statementPath({ bankId = BANK_ID, agencia = AGENCIA, conta = CONTA } = {}) {
+  if (!bankId || !agencia || !conta) throw new Error('SANTANDER_BANK_ID / SANTANDER_AGENCIA / SANTANDER_CONTA nao configurados');
+  const statementId = padAgencia(agencia) + '.' + padConta(conta);
+  return BASE + '/banks/banks/' + bankId + '/statements/' + statementId;
+}
+
 async function listarContas({ userId } = {}) {
   return callApi(`${BASE}/banks/${BANK_ID}/accounts`, { userId });
 }
@@ -150,10 +156,8 @@ function fatiarPeriodo(inicio, fim) {
 }
 
 async function buscarExtratoSantander({ inicio, fim, userId }) {
-  return callApi(`${BASE}/banks/${BANK_ID}/statements`, {
+  return callApi(statementPath(), {
     query: {
-      branchCode: padAgencia(AGENCIA),
-      accountNumber: padConta(CONTA),
       initialDate: inicio,
       finalDate: fim,
     },
@@ -212,4 +216,5 @@ module.exports = {
   snapshotSaldoDoDia,
   historicoSaldo,
   consultarExtrato,
+  statementPath,
 };
