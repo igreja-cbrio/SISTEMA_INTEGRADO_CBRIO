@@ -9961,15 +9961,59 @@ confirmada **sem festejar**. Virou `aplicarPagamento()`, por onde passam os trê
 caminhos (carga, polling e cartão). ⚠️ A LEI segue intacta: só com
 `pago === true` LIDO DO SERVIDOR.
 
+### ⚠️ O comprovante (QR da portaria) só existe com a inscrição CONFIRMADA (2026-08-11)
+
+Pedido do Matheus: *"o QR code de comprovante que tem na inscrição no app deve
+aparecer apenas quando confirmar o pagamento da pessoa."*
+
+`GET /app/eventos/minhas` montava `comprovante_url` para **qualquer** inscrição
+viva — inclusive `recebida`, que é **vaga reservada e não paga**, e `cancelada`.
+É o MESMO QR que a portaria lê na entrada. O site já era gatilhado
+(`cobranca.status === 'pago'` no `/pagamento/:token`; o token do e-mail só sai no
+caminho gratuito) — **o app era a única porta sem a trava**.
+
+- **Régua ÚNICA: `status === 'confirmada'`.** Ela cobre evento gratuito (nasce
+  assim), bolsa integral/gratuidade por CPF (idem) e evento pago (o handler
+  confirma no `pago`). ⚠️ **NÃO conferir o pagamento em separado**: pagamento
+  manual e gratuidade não têm cobrança, então a 2ª checagem esconderia o QR de
+  quem a igreja já confirmou — duas verdades sobre o mesmo fato.
+- **Esconder sem dizer o motivo é bug**: o endpoint devolve
+  `comprovante_bloqueado` (`aguardando_pagamento` | `cancelada`) e o app troca o
+  QR por uma frase. Card que some sem explicação faz a pessoa procurar o
+  comprovante achando que perdeu.
+- ⚠️ **A ordem de entrega importava**: o servidor foi primeiro, e é ele quem
+  decide — com o app antigo o QR simplesmente deixa de ser emitido. O inverso
+  não existe.
+
+### ⚠️ O ritmo do polling do Pix é "tem alguém olhando?", não tempo decorrido (2026-08-11)
+
+Pedido dele logo depois: *"na hora que o Pix for feito, preciso que a página da
+pessoa atualize o mais rápido possível, sem ficar recarregando."*
+
+O backoff antigo (6s→15s→30s→60s por tempo decorrido) era **lento pra quem
+esperava** (até 60s com o QR na frente) e **caro por causa de quem tinha ido
+embora** (aba esquecida consultando a noite toda). Agora: **aba escondida =
+polling PARADO** · **aba visível = 3s no 1º minuto → 8s → teto de 20s**. Dá menos
+carga que antes e resolve em ~3s.
+
+- ⚠️ No celular o caminho comum nem depende do intervalo: sair pro app do banco
+  **esconde** a aba, e voltar dispara consulta imediata no `visibilitychange`. Os
+  3s existem pra quem paga em **outro aparelho** (QR no computador), em que a aba
+  nunca perde o foco e nada avisaria a página.
+- ⚠️ **`PARADA_MS` (rede de segurança de 2 min que consulta o PSP) NÃO mudou**:
+  ela cobre webhook perdido, e encurtá-la faria cada pessoa esperando bater na API
+  do provedor com mais frequência, sem ganho no caminho normal — quem traz o
+  "pago" em segundos é o webhook; o gargalo era o cliente.
+- Pré-requisito que foi junto (#2392): sem `no-store` a rota respondia **304** e o
+  polling recebia o corpo ANTIGO — mais rápido não adiantaria nada.
+
 ### ⏳ Aberto (não é código)
 
 - **Devolver as envs do Preview** pra configuração de Pix depois de testar cartão
   (as duas se excluem — ver tabela acima).
 - **Produção segue no Asaas.** `PAG_PROVIDER_PADRAO` só muda por decisão do
   Matheus, e produção não tem credencial do MP.
-- **`GET /pagamento/:token` responde 304** (cache condicional) numa rota que faz
-  polling. Não causou estrago no teste, mas é a MESMA classe do que travou o app
-  em 05/08 (resposta cacheada devolvendo estado velho). Olhar em PR própria.
+- ✅ **O 304 do polling foi resolvido** (#2392 · `no-store` + `res.end` sem ETag).
 
 ### O que a doc NÃO confirmou (não preencher por conta própria)
 
