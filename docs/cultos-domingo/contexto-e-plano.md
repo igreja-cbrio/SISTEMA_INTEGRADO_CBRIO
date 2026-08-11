@@ -256,10 +256,12 @@ correspondente do outro lado e a conciliação passa a divergir.
 ⚠️ **Independente desta decisão, `fin_culto_slots` TEM que ser recortado** — é ele
 que roteia o dinheiro futuro, e ele **não segue o catálogo**.
 
-**D3 · Apresentação de bebês** → **11:30**. É o **segundo dos dois cultos da
-manhã** na grade nova, e o maior da casa (~724). Confirmado explicitamente para
-remover a ambiguidade com o 09:30 (que herda o lugar do 10:00, e portanto era "o
-segundo" na grade antiga). Datas afetadas: **13/09, 11/10, 08/11**.
+**D3 · Apresentação de bebês** → **09:30 primário, com overflow para 11:30 por
+limite** (a decisão do Marcos Paulo do §11.1). ⚠️ **RESOLVIDO — ver §12.1.**
+Houve um conflito: esta sessão havia registrado **11:30** (o Matheus respondeu
+"segundo culto da manhã", e na grade nova o segundo é o 11:30). Apresentado o
+conflito, **o Matheus optou pela decisão do Marcos Paulo**. Vale o 09:30.
+Datas afetadas: **13/09, 11/10, 08/11**.
 ⚠️ Hoje a regra é `startsWith('10:00')` e o fallback pega o culto **mais cedo em
 silêncio** — trocar por 11:30 tem de ser explícito, e o texto "às 10h" está
 **hardcoded** em duas telas e no WhatsApp.
@@ -749,7 +751,19 @@ DELETE) e crescer, em vez de criar uma segunda coisa escondida.
 > dois** — e nenhuma das duas respostas está errada, elas partem de premissas
 > diferentes.
 
-### 12.1 🔴 Apresentação de bebês: **09:30 (Marcos Paulo) × 11:30 (Matheus)**
+### 12.1 ✅ RESOLVIDO — Apresentação de bebês: vale **09:30** (a do Marcos Paulo)
+
+> **Resolução (Matheus, 11/08, depois de ver o conflito): "pode seguir com o que
+> o Marcos Paulo decidiu."** Vale **09:30 primário, com overflow para 11:30 por
+> limite**. Como bebês não têm limite hoje, na prática é **sempre 09:30** — e o
+> helper deve nascer já com a semântica `limite NULL = ilimitado` (a mesma do
+> batismo), para que ligar o overflow no futuro seja **só mudança de dado**.
+>
+> ⚠️ O registro do conflito abaixo fica **de propósito**: ele documenta que a
+> frase "segundo culto da manhã" é ambígua neste contexto, e é o tipo de
+> ambiguidade que reaparece na próxima mudança de grade.
+
+**Histórico do conflito (para leitura, não para decidir):**
 
 | Quem | Decisão | Raciocínio registrado |
 |---|---|---|
@@ -810,7 +824,7 @@ chave só significa refazer a migration.
 |---|---|
 | D1 · quem é o 09:30 | ✅ fechada (tipo novo + linhagem) |
 | D2 · plano de contas | ✅ fechada (conta nova + `aceita_lancamento=false`) · ⏳ aguarda "ok" do financeiro, com fallback combinado |
-| D3 · apresentação de bebês | 🔴 **CONFLITO** — 09:30 × 11:30 |
+| D3 · apresentação de bebês | ✅ fechada — **09:30** primário, overflow 11:30 por limite (conflito resolvido em favor da decisão do Marcos Paulo) |
 | D4 · redistribuição ou queda | ✅ fechada (redistribuição) |
 | D5 · batismo | ✅ fechada (fechar após 23/08 + abrir novos; **rótulo = só o horário, sem ordinais**) |
 
