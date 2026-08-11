@@ -5403,7 +5403,21 @@ router.get('/eventos/minhas', authApp, limiterNormal, async (req, res) => {
         respostas: i.dados && typeof i.dados === 'object' ? i.dados : {},
         // Comprovante (QR da portaria) — token HMAC derivado do id, vale
         // retroativo pra inscrição migrada, sem coluna nova.
-        comprovante_url: `${baseUrl()}/i/c/${gerarTokenComprovante(i.id)}`,
+        // ⚠️ SÓ para inscrição `confirmada` (pedido do Matheus em 11/08/2026):
+        // `recebida` é VAGA RESERVADA, não inscrição — mostrar o QR ali entrega
+        // um comprovante de quem ainda não pagou, e é o mesmo QR que a portaria
+        // lê. Uma régua só: `confirmada` cobre evento gratuito (nasce assim),
+        // bolsa integral (idem) e evento pago (o handler confirma no `pago`);
+        // conferir o pagamento em separado criaria uma 2ª verdade que discorda
+        // do domínio em pagamento manual e em gratuidade (que não têm cobrança).
+        comprovante_url: i.status === 'confirmada'
+          ? `${baseUrl()}/i/c/${gerarTokenComprovante(i.id)}`
+          : null,
+        // Por que o comprovante não veio — a tela precisa dizer o motivo em vez
+        // de simplesmente não mostrar nada (some sem explicação se lê como bug).
+        comprovante_bloqueado: i.status === 'confirmada'
+          ? null
+          : (i.status === 'cancelada' ? 'cancelada' : 'aguardando_pagamento'),
         pagamento: pg ? {
           status: pg.status_pagamento, metodo: pg.metodo,
           valor_centavos: pg.valor_centavos, pago_em: pg.pago_em, expira_em: pg.expira_em,
