@@ -59,6 +59,7 @@ const JOBS = [
   // medido: 0 de 4.509 tickets de push com `receipt_status`, dois meses depois
   // de um conserto que acreditou ter resolvido isso.
   ['/api/sistema/cron/push-receipts', '*/15 * * * *', 'platform'],
+  ['/api/sistema/cron/incident-triage', '*/5 * * * *', 'agents'],
   ['/api/voluntariado/cron/emails', '*/5 * * * *', 'volunteers'],
   ['/api/pagamentos-webhook/cron/tick', '*/10 * * * *', 'payments'],
   ['/api/totem-kids/cron/age-out', '0 5 * * *', 'kids'],
