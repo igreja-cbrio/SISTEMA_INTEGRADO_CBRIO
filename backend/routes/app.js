@@ -4734,7 +4734,32 @@ const {
   acharCriancaNaFamilia,
   validarPedido: _validarPedidoCrianca,
   pessoaDaCrianca,
+  nomesDosPais,
 } = require('../utils/criancaApresentacao');
+
+/**
+ * Quem são os pais/mães de cada criança da lista (id → [ids dos responsáveis]).
+ *
+ * ⚠️ A direção importa: `vincularParentesco` grava a linha da CRIANÇA como
+ * `pessoa_id = criança, tipo = 'filho', relacionado_id = pai/mãe` (e a recíproca
+ * como `pai_mae`). Ler a direção errada devolveria os FILHOS de cada um.
+ */
+async function paisDasCriancas(ids) {
+  const mapa = new Map();
+  if (!ids?.length) return mapa;
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data } = await supabase.from('mem_vinculos_familiares')
+      .select('pessoa_id, relacionado_id')
+      .eq('tipo', 'filho')
+      .in('pessoa_id', ids.slice(i, i + 200))
+      .is('deleted_at', null);
+    for (const v of data || []) {
+      if (!mapa.has(v.pessoa_id)) mapa.set(v.pessoa_id, []);
+      mapa.get(v.pessoa_id).push(v.relacionado_id);
+    }
+  }
+  return mapa;
+}
 
 // GET /api/app/apresentacao-crianca — data da próxima cerimônia + o que já pedi
 router.get('/apresentacao-crianca', authApp, limiterNormal, async (req, res) => {
@@ -4805,6 +4830,9 @@ router.post('/apresentacao-crianca', authApp, limiterStrict, async (req, res) =>
     let criancaMembroId = null;
     let reusou = false;
     let familiaNome = null;
+    let extraMembroId = null;
+    let extraEmOutraFamilia = false;
+    let extraFalhou = false;
 
     if (p.propria) {
       // ── A criança vira PESSOA e entra na família de quem está pedindo ──────
@@ -4813,14 +4841,72 @@ router.post('/apresentacao-crianca', authApp, limiterStrict, async (req, res) =>
       // o MESMO filho criariam duas pessoas, e a criança apareceria duplicada em
       // "Minha família" das duas contas. Não existe CPF pra desempatar (é a regra
       // do Marcos), então nome + nascimento DENTRO da família é a chave.
+      // ⚠️ `genero` é lido AQUI porque `resolveMembroApp` não o traz (ele seleciona
+      // id/nome/cpf/email/telefone). É o que decide se quem preencheu entra como
+      // mãe ou como pai no snapshot do balcão — sem sexo, fica em branco.
       const { data: eu } = await supabase.from('mem_membros')
-        .select('id, familia_id, igreja_id').eq('id', membro.id).maybeSingle();
+        .select('id, familia_id, igreja_id, genero').eq('id', membro.id).maybeSingle();
+      if (eu?.genero === 'M' || eu?.genero === 'F') p.responsavel.sexo = eu.genero;
+
+      // ── O outro responsável (o outro pai/mãe), quando informado ────────────
+      //
+      // ⚠⚠ ADULTO PASSA PELO MATCHER CANÔNICO — o oposto da criança, e de
+      // propósito: ele TEM CPF, que é a chave mais forte do Contrato de porta. É
+      // isso que faz "se esse pai baixar o app" reencontrar o cadastro em vez de
+      // criar um segundo. `soChaveForte` porque nome sozinho nunca identifica.
+      if (p.responsavel_extra) {
+        try {
+          const achou = await acharOuCriarGuardado({
+            cpf: p.responsavel_extra.cpf,
+            nome: p.responsavel_extra.nome,
+            telefone: p.responsavel_extra.telefone,
+            status: 'visitante',
+            extra: p.responsavel_extra.sexo ? { genero: p.responsavel_extra.sexo } : {},
+            origem: 'apresentacao_crianca_app',
+            origemId: membro.id,
+          });
+          if (achou?.id) {
+            extraMembroId = achou.id;
+            const { data: dele } = await supabase.from('mem_membros')
+              .select('familia_id').eq('id', achou.id).maybeSingle();
+
+            // ⚠⚠ NÃO ARRANCA NINGUÉM DA FAMÍLIA QUE JÁ TEM. `entrarNaFamilia` faz o
+            // convidado ADOTAR a família do anfitrião — se este pai já está agrupado
+            // com os pais dele, chamá-la o tiraria de lá em silêncio. Nesse caso
+            // gravamos só o parentesco (que é verdade e não destrói nada) e
+            // DECLARAMOS pra tela: a equipe alinha. Medido: 999 de 4.072 têm
+            // família, então o caso comum é ninguém ter e o caminho ficar limpo.
+            if (!dele?.familia_id || dele.familia_id === eu?.familia_id) {
+              const fx = await entrarNaFamilia(supabase, {
+                membroId: achou.id, anfitriaoId: membro.id, userId: req.user?.id || null,
+              });
+              if (fx?.ok) familiaNome = fx.familia_nome || familiaNome;
+            } else {
+              extraEmOutraFamilia = true;
+            }
+          }
+        } catch (e2) {
+          // ⚠️ Best-effort: falhar aqui não pode custar a apresentação da criança,
+          // que é o que a família veio pedir. A tela avisa que o outro responsável
+          // não entrou, em vez de fingir que entrou.
+          console.warn('[APP] apres responsavel extra:', e2.message);
+          extraFalhou = true;
+        }
+      }
 
       if (eu?.familia_id) {
         const { data: naFamilia } = await supabase.from('mem_membros')
           .select('id, nome, data_nascimento')
           .eq('familia_id', eu.familia_id).is('deleted_at', null);
-        const achada = acharCriancaNaFamilia(naFamilia, p.crianca.nome, p.crianca.data_nascimento);
+
+        // ⚠⚠ A CHAVE TEM 3 PARTES: nome + nascimento + PAI/MÃE (Marcos · 11/08).
+        // Sem a 3ª, dois primos homônimos de mesma data numa família estendida
+        // seriam fundidos e um deles sumiria da lista do domingo.
+        const paisPor = await paisDasCriancas((naFamilia || []).map((x) => x.id));
+        const achada = acharCriancaNaFamilia(
+          naFamilia, p.crianca.nome, p.crianca.data_nascimento,
+          paisPor, [membro.id, extraMembroId].filter(Boolean),
+        );
         if (achada) { criancaMembroId = achada.id; reusou = true; }
       }
 
@@ -4849,6 +4935,16 @@ router.post('/apresentacao-crianca', authApp, limiterStrict, async (req, res) =>
         pessoaId: criancaMembroId, relacionadoId: membro.id, tipo: 'filho',
         userId: req.user?.id || null,
       });
+      // ⚠️ O parentesco com o outro responsável é gravado MESMO quando ele ficou
+      // na família dele: é fato ("esta criança é filha dele") e não destrói nada.
+      // O que depende do household é a criança APARECER em "Minha família" dele —
+      // e é disso que a tela avisa quando não dá.
+      if (extraMembroId) {
+        await vincularParentesco(supabase, {
+          pessoaId: criancaMembroId, relacionadoId: extraMembroId, tipo: 'filho',
+          userId: req.user?.id || null,
+        });
+      }
     }
 
     // ── O pedido em si (o que a equipe Kids/pastoral lê) ───────────────────
@@ -4860,8 +4956,14 @@ router.post('/apresentacao-crianca', authApp, limiterStrict, async (req, res) =>
       bebe_nome: p.crianca.nome,
       bebe_data_nascimento: p.crianca.data_nascimento,
       bebe_sexo: p.crianca.sexo,
-      nome_pai: p.responsavel.nome_pai || null,
-      nome_mae: p.responsavel.nome_mae || null,
+      // ⚠️ No caminho "é meu filho" os nomes são DERIVADOS do sexo dos responsáveis,
+      // e ficam NULOS quando não se sabe — chutar quem é pai e quem é mãe num
+      // registro que o balcão lê em voz alta no culto é pior que deixar em branco.
+      // ⚠⚠ No caminho de TERCEIRO valem os nomes que a pessoa DIGITOU — ali ela está
+      // informando os pais da criança, e derivar apagaria o que ela escreveu.
+      ...(p.propria
+        ? nomesDosPais(p.responsavel, p.responsavel_extra)
+        : { nome_pai: p.responsavel.nome_pai || null, nome_mae: p.responsavel.nome_mae || null }),
       observacoes: p.observacoes,
       data_apresentacao: dataApres,
       culto_id: cultoId,
@@ -4906,6 +5008,15 @@ router.post('/apresentacao-crianca', authApp, limiterStrict, async (req, res) =>
       ok: true, id: criada.id, data_apresentacao: dataApres,
       crianca_membro_id: criancaMembroId, familia: familiaNome,
       reusou_crianca: reusou,
+      // A tela precisa dizer a VERDADE sobre o outro responsável: entrou na
+      // família, ficou na dele, ou não entrou.
+      responsavel_extra: p.responsavel_extra
+        ? {
+            entrou: !!extraMembroId && !extraEmOutraFamilia && !extraFalhou,
+            em_outra_familia: extraEmOutraFamilia,
+            falhou: extraFalhou,
+          }
+        : null,
     });
   } catch (e) {
     console.error('[APP] apresentacao-crianca POST:', e.message);
