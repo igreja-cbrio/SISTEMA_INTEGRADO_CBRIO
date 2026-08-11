@@ -738,3 +738,83 @@ DELETE) e crescer, em vez de criar uma segunda coisa escondida.
   indicador de ocupação ofertada (capacidade→dado + gauge) é PR separada,
   sequenciada DEPOIS da F1, coordenada porque toca `DashSemanalAba`.
 - Metas: não recalibrar antes de outubro (mantido — Decisão 4 no default).
+
+---
+
+## 12 · ⚠️ CONFLITO A RESOLVER entre Matheus e Marcos Paulo (11/08, fim do dia)
+
+> Registrado pela sessão do **Matheus** depois do commit `a69be1d5`. As duas
+> sessões responderam as mesmas decisões **em paralelo** e divergem em UMA.
+> ⚠️ **Não implementar a apresentação de bebês até isto ser resolvido entre os
+> dois** — e nenhuma das duas respostas está errada, elas partem de premissas
+> diferentes.
+
+### 12.1 🔴 Apresentação de bebês: **09:30 (Marcos Paulo) × 11:30 (Matheus)**
+
+| Quem | Decisão | Raciocínio registrado |
+|---|---|---|
+| **Marcos Paulo** (§11.1) | **09:30 primário**, overflow 11:30 por limite | Trata como "evento especial": 09:30 é o primário da manhã e, como bebês **não têm limite** hoje, a regra vira "sempre 09:30" |
+| **Matheus** (§7.1 · D3) | **11:30** | Respondeu "segundo culto da manhã"; na grade nova a manhã tem **dois** cultos, então o segundo é o 11:30 — e é o maior da casa (~724) |
+
+**A origem da divergência é uma ambiguidade real na frase "segundo culto da
+manhã":** o Matheus foi perguntado explicitamente e confirmou **11:30**, mas na
+grade ANTIGA o "segundo culto da manhã" era o **10:00** — cujo lugar o 09:30
+herda. Quem pensa em continuidade de slot chega no 09:30; quem conta os cultos da
+grade nova chega no 11:30.
+
+**O que NÃO muda com a resolução** (pode ser implementado já): o helper único que
+substitui as **3 portas de escrita divergentes** (totem, app, formulário público),
+o `GET /status` devolvendo o horário calculado, os 2 textos "às 10h" hardcoded no
+`TotemMembro.tsx` e o `{{4}}` do WhatsApp — tudo isso é necessário nos dois
+cenários. **Só o valor do horário-alvo fica pendente**, e é 1 linha.
+
+**Prazo real: 13/09** (primeira apresentação afetada). Não é urgente hoje, mas
+precisa de uma conversa entre os dois — não de uma escolha minha.
+
+### 12.2 Plano de contas: a Decisão 2 **foi respondida** pelo Matheus
+
+O §11.2 registra a D2 como "segue aberta com deadline 20/08". Depois disso, o
+**Matheus respondeu**: **conta NOVA para o horário novo + `aceita_lancamento=false`
+na antiga, mantendo `ativo=true`** (§7.1 · D2). Isso **supera** o "aberta".
+
+⚠️ **O fallback interino do §11.2 continua valendo como rede**: o recorte de
+`fin_culto_slots` acontece em 24/08 de qualquer jeito, e se o **financeiro** não
+confirmar a conta nova até 20/08, o slot do 09:30 aponta interinamente para as
+contas do 10:00, registrado como temporário. A decisão está tomada; o que falta é
+o "ok" do financeiro e de quem opera o contábil externo (`codigo_legado`).
+
+### 12.3 Decisão 4 saiu do default: **redistribuição**
+
+O §11.3/§11.4 deixou a D4 "no default do plano". O **Matheus respondeu
+explicitamente: redistribuição** (§7.1 · D4). Consequência prática: as metas de
+total **não mudam**, o corte de 24/08 **tem** de estar marcado nos gráficos, e
+segue valendo **não recalibrar antes de outubro** — que era justamente o default.
+Ou seja: a resposta **confirma** o comportamento planejado e acrescenta a
+expectativa registrada por escrito, útil para ler setembro.
+
+### 12.4 A terceira lente do Pr. Juninho muda o mecanismo de linhagem
+
+O §11.3 registra o pedido de uma lente de **consolidação** (08:30+10:00 somados no
+passado × 09:30). Isso **não conflita** com as duas lentes decididas, mas
+invalida uma premissa do meu desenho da §3: **uma única `linhagem_key` não
+expressa três agrupamentos**.
+
+O mecanismo passa a precisar de **duas chaves** (continuidade: 10:00+09:30 ·
+consolidação: 08:30+10:00+09:30) ou de uma tabelinha de lentes. ⚠️ Quem
+implementar a Fase 1 deve ler o §11.3 **antes** de criar a coluna — nascer com uma
+chave só significa refazer a migration.
+
+### 12.5 Estado do conjunto de decisões
+
+| Decisão | Estado |
+|---|---|
+| D1 · quem é o 09:30 | ✅ fechada (tipo novo + linhagem) |
+| D2 · plano de contas | ✅ fechada (conta nova + `aceita_lancamento=false`) · ⏳ aguarda "ok" do financeiro, com fallback combinado |
+| D3 · apresentação de bebês | 🔴 **CONFLITO** — 09:30 × 11:30 |
+| D4 · redistribuição ou queda | ✅ fechada (redistribuição) |
+| D5 · batismo | ✅ fechada (fechar após 23/08 + abrir novos; **rótulo = só o horário, sem ordinais**) |
+
+⚠️ **Ainda pendente antes de qualquer implementação:** validação do plano pelo
+Matheus, o alinhamento da Fase 0 entre as duas frentes (as duas sessões acabaram
+de escrever no MESMO arquivo em paralelo — a prova de que a Fase 0 não é
+formalidade), e a correção das 84 escalas no **Planning Center**, que não é código.
