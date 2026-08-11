@@ -143,7 +143,7 @@ function fatiarPeriodo(inicio, fim) {
   const fimDate = new Date(fim);
   while (cursor <= fimDate) {
     const proxFim = new Date(cursor);
-    proxFim.setDate(proxFim.getDate() + 29);
+    proxFim.setDate(proxFim.getDate());
     const fimFatia = proxFim > fimDate ? fimDate : proxFim;
     fatias.push({
       inicio: cursor.toISOString().slice(0, 10),
