@@ -363,6 +363,25 @@ router.get('/conversas/:id/mensagens', authorizeModule('conversas', 1), async (r
       .select('id, direcao, tipo, texto, media_url, autor_id, criado_em')
       .eq('conversa_id', conv.id).order('criado_em', { ascending: false }).limit(500);
     (msgs || []).reverse();
+    // Mídia RECEBIDA vive em bucket PRIVADO e a linha guarda o PATH (não URL):
+    // assina em LOTE por 15 min só pra esta leitura. URL http (outbound público
+    // + histórico anterior à migração) passa direto. Arquivo já expurgado pela
+    // retenção → ponteiro vira null e o front mostra o placeholder [tipo].
+    const paths = (msgs || []).filter(m => m.media_url && !/^https?:\/\//i.test(m.media_url)).map(m => m.media_url);
+    if (paths.length) {
+      try {
+        const { data: assinadas } = await supabase.storage.from('wa-inbox-privado').createSignedUrls(paths, 900);
+        const porPath = new Map((assinadas || []).filter(s => s.signedUrl).map(s => [s.path, s.signedUrl]));
+        for (const m of msgs) {
+          if (m.media_url && !/^https?:\/\//i.test(m.media_url)) {
+            m.media_url = porPath.get(m.media_url) || null;
+          }
+        }
+      } catch (e) {
+        console.warn('[wa-inbox] assinar mídia:', e.message);
+        for (const m of msgs) if (m.media_url && !/^https?:\/\//i.test(m.media_url)) m.media_url = null;
+      }
+    }
     if (conv.nao_lidas > 0) await supabase.from('wa_conversas').update({ nao_lidas: 0 }).eq('id', conv.id);
     res.json({ conversa: comJanela({ ...conv, nao_lidas: 0 }), mensagens: msgs || [] });
   } catch (e) {

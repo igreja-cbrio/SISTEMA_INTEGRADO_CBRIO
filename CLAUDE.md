@@ -2091,15 +2091,44 @@ Os médios que morderiam o atendimento real do CBZap, na mesma leva:
   disparar** (trocar `quando` zera `ultimo_disparo`; recorrente NÃO zera, senão
   dispararia 2× no mesmo dia).
 
+### Lote 3 · mídia RECEBIDA em bucket privado + retenção (2026-08-12 · migration `20260812190000`)
+
+Decisões do Marcos (12/08): mídia inbound privada = SIM · Realtime por área =
+**NÃO MEXER ainda** · e a pergunta dele "existe política de apagar depois de um
+tempo?" virou a retenção (não existia nenhuma — anexo vivia pra sempre).
+
+- **Bucket `wa-inbox-privado`** (migration `20260812190000` · public=false ·
+  nenhuma policy de propósito — só o backend/service_role toca): foto/documento
+  que o MEMBRO manda deixa de ter URL pública permanente. A linha de
+  `wa_mensagens` guarda o **PATH** (não URL); a thread assina em LOTE por 15
+  min na leitura (`createSignedUrls`). ⚠️ **OUTBOUND continua no bucket público
+  `wa-inbox` DE PROPÓSITO** — a Meta busca o anexo pelo link no envio; privar
+  quebraria o envio de anexo. Histórico antigo (URL http) passa direto.
+  Fallback de deploy em 2 etapas: bucket privado ausente → upload cai no
+  público (comportamento histórico), nada quebra.
+- **Retenção**: `limparMidiasAntigas` (services/waInbox.js) apaga do storage
+  anexos com mais de `WA_INBOX_MEDIA_RETENCAO_DIAS` (default **90** · 0
+  desliga) e zera `media_url` — **o TEXTO da conversa fica pra sempre; o que
+  expira é o ARQUIVO** (o front já mostra o placeholder `[image]`/`[document]`).
+  Vale pros DOIS buckets (privado + público). Ordem deliberada: arquivo
+  primeiro, ponteiro depois (morrer no meio deixa ponteiro pra arquivo morto,
+  que a assinatura trata como null — o inverso deixaria arquivo órfão eterno);
+  efeito em blocos de 100 (lei de 04/08). `pathDoBucketPublico` só extrai path
+  do NOSSO bucket — URL de outro bucket/externa devolve null e nunca é apagada
+  (mutation-testado em `waInboxMesmoNumero.test.ts`).
+- **Roda 1×/dia às ~4h05 BRT de CARONA no cron `/comunicacao/cron/agendamentos`**
+  (horário) — sem slot novo no vercel.json (45 crons · lição dos pagamentos).
+  Cap 400 anexos/dia (backlog drena em dias).
+
 ⚠️ Ficam da revisão (médios · ainda abertos): statuses órfãos write-only +
-status de outbound do CHAT descartado · mídia inbound em bucket público ·
-Realtime sem filtro por área (payload integral pra qualquer conversas≥1) ·
-`nao_lidas` read-modify-write · custo cego aos ~15 call sites fora da fila ·
-2 `is_default` possíveis em wa_numeros (e nada lê a tabela) · aba Conversas
-exige módulo `conversas` (matrizes editáveis separadamente) · badge do header
-gated por `conversas` navegando pra rota gated por `comunicacao` · dashboard
-sem "respostas recebidas". Lista completa com file:line na memória da sessão
-de 05/08 ("revisão da comunicação").
+status de outbound do CHAT descartado · **Realtime sem filtro por área —
+decisão explícita do Marcos (12/08) de NÃO mexer por ora** · `nao_lidas`
+read-modify-write · custo cego aos ~15 call sites fora da fila · 2 `is_default`
+possíveis em wa_numeros (e nada lê a tabela) · aba Conversas exige módulo
+`conversas` (matrizes editáveis separadamente) · badge do header gated por
+`conversas` navegando pra rota gated por `comunicacao` · dashboard sem
+"respostas recebidas". Lista completa com file:line na memória da sessão de
+05/08 ("revisão da comunicação").
 
 ## ⚠️ Módulo de Comunicação (WhatsApp central) · handoff pro MATHEUS (2026-07-28)
 
