@@ -226,6 +226,7 @@ app.use('/api/dashboard-semanal', require('./routes/dashboardSemanal'));
 app.use('/api/nps', require('./routes/nps'));
 // (/api/public/nps montado acima, antes do publicLimiter estrito)
 app.use('/api/planejamento', require('./routes/planejamento'));
+app.use('/api/planejamento-anual', require('./routes/planejamentoAnual'));
 // Apresentações: módulo DESATIVADO (2026-07-06 · pedido do Matheus) — mount comentado.
 // app.use('/api/apresentacoes', require('./routes/apresentacoes'));
 app.use('/api/lgpd', require('./routes/lgpd'));
