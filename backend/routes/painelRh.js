@@ -60,13 +60,33 @@ router.get('/eventos', async (req, res) => {
     const idsAutomaticos = (cats || []).map((c) => c.id);
 
     const hoje = new Date().toISOString().slice(0, 10);
-    const { data, error } = await supabase
-      .from('events')
-      .select('id, name, date, location, category_id, visivel_painel_rh, event_categories(name, color)')
-      .gte('date', hoje)
-      .order('date')
-      .limit(50);
-    if (error) throw error;
+    // visivel_painel_rh é aditivo (migration 20260812200000) — se ainda não
+    // aplicada, pedir a coluna faz o PostgREST recusar a query INTEIRA (lição
+    // do parcelas_max). Tenta com ela; em 42703, cai sem ela e assume null
+    // (== regra automática por categoria) pra todo evento.
+    let data;
+    {
+      const r1 = await supabase
+        .from('events')
+        .select('id, name, date, location, category_id, visivel_painel_rh, event_categories(name, color)')
+        .gte('date', hoje)
+        .order('date')
+        .limit(50);
+      if (r1.error && r1.error.code === '42703') {
+        const r2 = await supabase
+          .from('events')
+          .select('id, name, date, location, category_id, event_categories(name, color)')
+          .gte('date', hoje)
+          .order('date')
+          .limit(50);
+        if (r2.error) throw r2.error;
+        data = (r2.data || []).map((e) => ({ ...e, visivel_painel_rh: null }));
+      } else if (r1.error) {
+        throw r1.error;
+      } else {
+        data = r1.data;
+      }
+    }
 
     const visiveis = (data || []).filter((e) => {
       if (e.visivel_painel_rh === true) return true;

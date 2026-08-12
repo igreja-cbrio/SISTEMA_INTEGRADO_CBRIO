@@ -48,13 +48,32 @@ router.get('/simple-templates', async (req, res) => {
 router.get('/', async (req, res) => {
   try {
     const { status, category_id, year } = req.query;
-    let query = supabase.from('events').select('id, name, date, status, category_id, description, location, responsible, budget_planned, budget_spent, expected_attendance, actual_attendance, recurrence, project_id, created_by, created_at, visivel_painel_rh, event_categories(name, color)').order('date');
-    if (status) query = query.eq('status', status);
-    if (category_id && isUUID(category_id)) query = query.eq('category_id', category_id);
-    if (year && /^\d{4}$/.test(year)) query = query.gte('date', `${year}-01-01`).lte('date', `${year}-12-31`);
+    const baseFields = 'id, name, date, status, category_id, description, location, responsible, budget_planned, budget_spent, expected_attendance, actual_attendance, recurrence, project_id, created_by, created_at';
+    const applyFilters = (q) => {
+      if (status) q = q.eq('status', status);
+      if (category_id && isUUID(category_id)) q = q.eq('category_id', category_id);
+      if (year && /^\d{4}$/.test(year)) q = q.gte('date', `${year}-01-01`).lte('date', `${year}-12-31`);
+      return q;
+    };
 
-    const { data: events, error } = await query.limit(200);
-    if (error) throw error;
+    // visivel_painel_rh é aditivo (migration 20260812200000) — se ainda não foi
+    // aplicada, pedir a coluna faria o PostgREST recusar a query INTEIRA
+    // (lição do parcelas_max). Tenta com ela; em 42703, cai sem ela.
+    let events;
+    {
+      const q1 = applyFilters(supabase.from('events').select(`${baseFields}, visivel_painel_rh, event_categories(name, color)`).order('date'));
+      const { data, error } = await q1.limit(200);
+      if (error && error.code === '42703') {
+        const q2 = applyFilters(supabase.from('events').select(`${baseFields}, event_categories(name, color)`).order('date'));
+        const { data: data2, error: error2 } = await q2.limit(200);
+        if (error2) throw error2;
+        events = (data2 || []).map((e) => ({ ...e, visivel_painel_rh: null }));
+      } else if (error) {
+        throw error;
+      } else {
+        events = data;
+      }
+    }
 
     const ids = events.map(e => e.id);
     if (ids.length === 0) return res.json([]);
