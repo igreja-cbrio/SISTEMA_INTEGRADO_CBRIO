@@ -988,13 +988,24 @@ function etapasDoItem(item) {
   // (dispensada ou nula = fluxo sem o portão · linhas antigas).
   const passaAprovacao = !!item.aprovacao_origem_status && item.aprovacao_origem_status !== 'dispensada';
   const temCotacao = ['compras', 'servico'].includes(item.categoria);
-  const temFinanceiro = !!item.precisa_aprovacao_financeira;
+  // O portão financeiro aparece quando ele é exigido OU quando foi
+  // explicitamente DISPENSADO por valor (≤ R$ 1.000 · 12/08). Some-lo no caso
+  // da dispensa faria a linha do tempo parecer incompleta, quando na verdade o
+  // portão foi pulado de propósito — e isso precisa ficar visível.
+  const financeiroDispensado = !!item.financeiro_dispensado_em;
+  const temFinanceiro = !!item.precisa_aprovacao_financeira || financeiroDispensado;
   const temEntrega = item.categoria === 'compras';
 
   const etapas = [{ key: 'enviada', label: 'Enviada', data: item.created_at }];
   if (passaAprovacao) etapas.push({ key: 'aprovacao', label: 'Aprovação', data: item.aprovacao_origem_em });
   if (temCotacao) etapas.push({ key: 'cotacao', label: 'Cotação', data: item.cotacao_em });
-  if (temFinanceiro) etapas.push({ key: 'financeiro', label: 'Financeiro', data: item.aprovado_financeiro_em });
+  if (temFinanceiro) {
+    etapas.push({
+      key: 'financeiro',
+      label: financeiroDispensado ? 'Financeiro · dispensado' : 'Financeiro',
+      data: financeiroDispensado ? item.financeiro_dispensado_em : item.aprovado_financeiro_em,
+    });
+  }
   etapas.push({ key: 'atendimento', label: 'Atendimento', data: item.respondido_em });
   if (temEntrega) etapas.push({ key: 'entrega', label: 'Entrega', data: null });
   etapas.push({ key: 'concluida', label: 'Concluída', data: item.concluido_em });
@@ -1006,7 +1017,13 @@ function etapasDoItem(item) {
   // cotação · o status já avançou).
   let atualIdx = etapas.findIndex(e => e.key === ETAPA_DO_STATUS[item.status]);
   if (atualIdx < 0) {
-    const gates = { aprovacao: item.aprovacao_origem_em, cotacao: item.cotacao_em, financeiro: item.aprovado_financeiro_em };
+    // Dispensado conta como portão CUMPRIDO — senão a solicitação ficaria
+    // eternamente "parada no financeiro" numa etapa que ela nunca vai ter.
+    const gates = {
+      aprovacao: item.aprovacao_origem_em,
+      cotacao: item.cotacao_em,
+      financeiro: item.aprovado_financeiro_em || item.financeiro_dispensado_em,
+    };
     atualIdx = etapas.findIndex(e => e.key in gates && !gates[e.key]);
     if (atualIdx < 0) atualIdx = etapas.findIndex(e => e.key === 'atendimento');
   }
@@ -2081,7 +2098,11 @@ function CardMacro({ item, canAgir, concluido = false, rejeitado = false, onStat
   // status que caia num portão do fluxo · o backend recusa em_cotacao/financeiro/
   // origem/mérito/sobrestada). Compra pós-aprovação-financeira: cartão → o Amaury
   // marca "comprado"; demais → o financeiro marca "pago"; depois confirma entrega.
-  const posAprov = ['compras', 'servico'].includes(item.categoria) && !!item.aprovado_financeiro_em;
+  // "Passou do portão financeiro" = o financeiro aprovou OU a regra dispensou
+  // (compra de até R$ 1.000 · 12/08). Sem o segundo caso, a compra dispensada
+  // ficaria em 'pendente' na fila do Amaury sem o botão de comprar — travada.
+  const posAprov = ['compras', 'servico'].includes(item.categoria)
+    && (!!item.aprovado_financeiro_em || !!item.financeiro_dispensado_em);
   const ehAguardandoCompra = posAprov && item.status === 'pendente' && item.area_responsavel === 'logistica_compras';
   const ehAguardandoPagamento = posAprov && item.status === 'em_atendimento' && item.area_responsavel === 'financeiro';
   const acao = !canAgir ? null
@@ -2653,12 +2674,24 @@ function CotacaoBlock({ item, canCotar, onChanged }) {
     catch (e) { toast.error(e.message || 'Erro ao marcar sugerida'); }
   }
 
-  async function enviarFinanceiro(comEmail = false) {
+  async function enviarFinanceiro(comEmail = false, forcarFinanceiro = false) {
     // Fluxo "um botão": sem cotação formal na lista, manda o valor digitado
     // direto (o servidor cria a cotação na hora · fornecedor opcional).
     // Principal = PELO SISTEMA (chega na fila do financeiro/Alberto). O e-mail
     // é opcional (botão discreto) via comEmail.
-    const payload = { plano_contas_id: planoId || undefined, centro_custo_id: centroId || undefined, enviar_email: comEmail };
+    //
+    // ⚠️ Compra/serviço cotado até R$ 1.000 NÃO vai pro financeiro — a logística
+    // executa direto (12/08). Quem decide é o SERVIDOR, sobre o valor cotado; o
+    // rótulo do botão aqui é só antecipação. `forcarFinanceiro` é a válvula:
+    // manda pro Alberto mesmo sendo compra pequena (não vai no cartão, quer
+    // segunda opinião). O botão de e-mail força, porque pedir aprovação por
+    // e-mail de algo que o sistema liberou sozinho não faz sentido.
+    const payload = {
+      plano_contas_id: planoId || undefined,
+      centro_custo_id: centroId || undefined,
+      enviar_email: comEmail,
+      forcar_financeiro: (comEmail || forcarFinanceiro) ? true : undefined,
+    };
     if (!cotacoes.length) {
       const v = Number(form.valor);
       if (form.valor === '' || Number.isNaN(v) || v < 0) { toast.error('Informe o valor pra enviar ao financeiro.'); return; }
@@ -2674,7 +2707,10 @@ function CotacaoBlock({ item, canCotar, onChanged }) {
     setEnviando(true);
     try {
       const r = await api.enviarCotacoesFinanceiro(item.id, payload);
-      if (!comEmail) {
+      // A verdade é a do servidor (`destino`), não a do rótulo que o botão tinha.
+      if (r?.destino === 'compra_direta') {
+        toast.success('Liberado pra compra — dentro do limite, não precisa do financeiro. Compre e marque como comprado.');
+      } else if (!comEmail) {
         toast.success('Enviado ao financeiro — o Alberto vai aprovar na fila do sistema.');
       } else if (r?.email_ok) {
         toast.success('E-mail enviado ao financeiro.');
@@ -2804,6 +2840,22 @@ function CotacaoBlock({ item, canCotar, onChanged }) {
         const vNum = Number(form.valor);
         const valorInlineValido = !cotacoes.length && form.valor !== '' && !Number.isNaN(vNum) && vNum >= 0;
         const podeEnviar = cotacoes.length > 0 || valorInlineValido;
+
+        // Espelho de LEITURA da régua do servidor (backend/utils/alcadaCompra.js),
+        // só pra o botão não prometer o destino errado. Quem decide é o servidor:
+        // se este espelho divergir, o toast conta a verdade e nada é liberado por
+        // engano — a decisão nunca vem do cliente.
+        const LIMITE_COMPRA_DIRETA = 1000;
+        const refValor = cotacoes.length
+          ? Number((cotacoes.find(c => c.sugerida)
+              || [...cotacoes].sort((a, b) => (Number(a.valor) || 0) - (Number(b.valor) || 0))[0])?.valor)
+          : vNum;
+        // Só a 1ª ida dispensa — reenvio de algo que já está no financeiro fica lá.
+        const dispensaProvavel = ['compras', 'servico'].includes(item.categoria)
+          && item.status === 'em_cotacao'
+          && podeEnviar
+          && Number.isFinite(refValor) && refValor >= 0 && refValor <= LIMITE_COMPRA_DIRETA;
+
         return (
           <div className="space-y-1.5">
             <Button
@@ -2812,8 +2864,27 @@ function CotacaoBlock({ item, canCotar, onChanged }) {
               className="w-full bg-teal-600 hover:bg-teal-700 text-white"
             >
               <ArrowRight className="h-4 w-4 mr-2" />
-              {enviando ? 'Enviando...' : jaEnviado ? 'Reenviar ao financeiro' : 'Enviar ao financeiro'}
+              {enviando ? 'Enviando...'
+                : dispensaProvavel ? 'Registrar cotação e liberar pra compra'
+                : jaEnviado ? 'Reenviar ao financeiro' : 'Enviar ao financeiro'}
             </Button>
+            {dispensaProvavel && (
+              <p className="text-[11px] text-muted-foreground text-center">
+                Até {LIMITE_COMPRA_DIRETA.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} você
+                compra direto, sem passar pelo financeiro. O financeiro é avisado.
+              </p>
+            )}
+            {/* Válvula: compra pequena que, mesmo assim, deve ir pro Alberto. */}
+            {dispensaProvavel && (
+              <button
+                type="button"
+                onClick={() => enviarFinanceiro(false, true)}
+                disabled={enviando}
+                className="w-full text-[11px] text-muted-foreground hover:text-foreground inline-flex items-center justify-center gap-1 py-1 disabled:opacity-50"
+              >
+                <ArrowRight className="h-3 w-3" /> Prefiro enviar ao financeiro mesmo assim
+              </button>
+            )}
             {/* Discreto: além do sistema, avisar por e-mail também */}
             <button
               type="button"
@@ -2821,14 +2892,14 @@ function CotacaoBlock({ item, canCotar, onChanged }) {
               disabled={enviando || !podeEnviar}
               className="w-full text-[11px] text-muted-foreground hover:text-foreground inline-flex items-center justify-center gap-1 py-1 disabled:opacity-50"
             >
-              <Mail className="h-3 w-3" /> {jaEnviado ? 'Reenviar avisando por e-mail' : 'Enviar avisando por e-mail também'}
+              <Mail className="h-3 w-3" /> {jaEnviado ? 'Reenviar avisando por e-mail' : 'Enviar ao financeiro avisando por e-mail'}
             </button>
             {jaEnviado && (
               <p className="text-[11px] text-muted-foreground text-center">
                 Enviado em {new Date(item.cotacoes_email_em).toLocaleString('pt-BR')}
               </p>
             )}
-            {!podeEnviar && <p className="text-[11px] text-muted-foreground text-center">Informe o valor acima e clique em enviar ao financeiro.</p>}
+            {!podeEnviar && <p className="text-[11px] text-muted-foreground text-center">Informe o valor acima e clique no botão pra seguir.</p>}
           </div>
         );
       })()}
@@ -3268,7 +3339,9 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
             // COMPRA; demais → financeiro (Cristina) PAGA; depois confirma entrega.
             // Comprado e pago caem no MESMO marco (aguardando_entrega).
             const ehCompraServico = ['compras', 'servico'].includes(item.categoria);
-            const posAprov = ehCompraServico && !!item.aprovado_financeiro_em;
+            // Aprovado pelo financeiro OU dispensado por valor (≤ R$ 1.000 · 12/08).
+            const posAprov = ehCompraServico
+              && (!!item.aprovado_financeiro_em || !!item.financeiro_dispensado_em);
             const ehAguardandoCompra = posAprov && item.status === 'pendente' && item.area_responsavel === 'logistica_compras';
             const ehAguardandoPagamento = posAprov && item.status === 'em_atendimento' && item.area_responsavel === 'financeiro';
             const ehAguardandoEntrega = item.status === 'aguardando_entrega';

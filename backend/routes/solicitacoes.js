@@ -15,6 +15,12 @@ const crypto = require('crypto');
 const { extrairNotaFiscal, sugerirCategoria } = require('../services/nfScanner');
 const { lancarDespesaConciliando } = require('../services/finLancamento');
 const { aprenderClassificacao } = require('../services/financeiroClassificador');
+const {
+  COMPRA_DIRETA_LIMITE,
+  DESTINO_COMPRA_DIRETA,
+  decidirDestinoCotacao,
+  motivoDispensaTexto,
+} = require('../utils/alcadaCompra');
 const uploadNfSolic = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
 
 // Dispara o WhatsApp pro solicitante quando a solicitação muda de status
@@ -646,10 +652,12 @@ const SETOR_GESTAO = 'Gestao';
 
 // Compra de até R$ 1.000 vai DIRETO pra cotação (decisão do Matheus · 2026-07-15):
 // dispensa aprovação de origem, carimbo de Gestão e mérito, planejada ou não.
-// O controle acontece DEPOIS, sobre o valor REAL: a logística (Amaury) cota e o
-// o financeiro aprova sobre o valor cotado (registrar-cotacao/enviar-cotacoes).
 // Valor nulo/zero NÃO é elegível (fail-closed · segue o fluxo normal).
-const COMPRA_COTACAO_DIRETA_LIMITE = 1000;
+//
+// ⚠️ Desde 2026-08-12 a MESMA cifra também dispensa o SEGUNDO portão (o
+// financeiro), agora sobre o valor COTADO — a régua vive em utils/alcadaCompra.js
+// e o número vem de lá, pra não existirem dois "mil reais" que podem divergir.
+const COMPRA_COTACAO_DIRETA_LIMITE = COMPRA_DIRETA_LIMITE;
 const COMPRA_COTACAO_DIRETA_MOTIVO = 'Compra de até R$ 1.000 · direto para cotação';
 
 // Override do 2º portão POR CATEGORIA (migration 20260708180000). Ex.: TI →
@@ -2132,6 +2140,15 @@ async function podeCotar(req, sol) {
   return !!data;
 }
 
+// ⚠️ DORMENTE: nenhuma tela chama este endpoint (conferido em 2026-08-12 —
+// `api.registrarCotacao` existe em src/api.js e não tem um único chamador; o
+// caminho vivo é POST /:id/enviar-cotacoes-financeiro, disparado pelo botão
+// "Enviar ao financeiro" do Amaury).
+// Por isso a dispensa de até R$ 1.000 (utils/alcadaCompra.js) NÃO foi replicada
+// aqui: ele manda tudo pro financeiro, que é o lado SEGURO da régua — mais
+// estrito, nunca mais frouxo. Se um dia alguém ligar este endpoint numa tela,
+// tem que trazer `decidirDestinoCotacao` junto, senão a compra pequena volta a
+// cair na fila do financeiro sem ninguém entender por quê.
 router.post('/:id/registrar-cotacao', async (req, res) => {
   try {
     const { valor_cotado, fornecedor, observacao } = req.body || {};
@@ -2568,11 +2585,26 @@ router.post('/:id/enviar-cotacoes-financeiro', async (req, res) => {
       }
     }
 
+    // ── Compra pequena executa sem o financeiro (decisão do Matheus · 12/08) ──
+    // A régua é pura e vive em utils/alcadaCompra.js. Quem decide é o SERVIDOR
+    // sobre o valor COTADO — o corpo do POST diz quanto custa, nunca "se pode".
+    //
+    // ⚠️ Só na PRIMEIRA ida (status em_cotacao). Reenvio de uma solicitação que
+    // já está na fila do financeiro NÃO a puxa de volta: ela já apareceu pro
+    // Alberto, e sumir de lá porque o valor caiu é o tipo de mudança que faz o
+    // aprovador achar que perdeu um pedido.
+    const decisao = decidirDestinoCotacao({
+      categoria: sol.categoria,
+      valorCotado: refCot.valor,
+      forcarFinanceiro: req.body?.forcar_financeiro === true || sol.status !== 'em_cotacao',
+    });
+    const vaiExecutarDireto = decisao.destino === DESTINO_COMPRA_DIRETA;
+
     // Atualiza a solicitação (retrocompat inline + carimbo do e-mail).
     const updates = {
       valor_cotado: Number(refCot.valor),
       valor_estimado: Number(refCot.valor),
-      precisa_aprovacao_financeira: true,
+      precisa_aprovacao_financeira: !vaiExecutarDireto,
       cotacao_fornecedor: refCot.fornecedor || null,
       cotacao_observacao: refCot.observacao || null,
       cotacao_em: new Date().toISOString(),
@@ -2582,22 +2614,57 @@ router.post('/:id/enviar-cotacoes-financeiro', async (req, res) => {
     };
     if (planoId) updates.plano_contas_id = planoId;
     if (centroId) updates.centro_custo_id = centroId;
-    // Só muda o status na 1ª ida (em_cotacao); reenvio mantém o status atual.
-    if (sol.status === 'em_cotacao') updates.status = 'aguardando_aprovacao_financeira';
+    if (vaiExecutarDireto) {
+      // Volta pra própria logística executar. É o MESMO destino do ramo
+      // "cartão" do aprovar-financeiro (área logistica_compras + pendente), que
+      // é o que faz o botão "Marcar como comprado" aparecer pro Amaury.
+      updates.status = 'pendente';
+      updates.area_responsavel = 'logistica_compras';
+      updates.forma_pagamento = 'cartao_credito';
+      updates.financeiro_dispensado_em = new Date().toISOString();
+      updates.financeiro_dispensa_motivo = motivoDispensaTexto(decisao.limite);
+      updates.financeiro_dispensa_limite = decisao.limite;
+    } else if (sol.status === 'em_cotacao') {
+      // Só muda o status na 1ª ida (em_cotacao); reenvio mantém o status atual.
+      updates.status = 'aguardando_aprovacao_financeira';
+    }
 
-    const { data: solAtualizada, error: upErr } = await supabase
+    const aplicar = (payload) => supabase
       .from('solicitacoes')
-      .update(updates)
+      .update(payload)
       .eq('id', sol.id)
       .in('status', ['em_cotacao', 'aguardando_aprovacao_financeira'])
       .is('aprovado_financeiro_em', null)
       .is('deleted_at', null)
       .select('*')
       .maybeSingle();
+
+    let { data: solAtualizada, error: upErr } = await aplicar(updates);
+
+    // ⚠️ Deploy em 2 etapas: sem a migration 20260812210000 as 3 colunas da
+    // dispensa não existem e o PostgREST recusa o UPDATE INTEIRO (42703/PGRST204),
+    // derrubando o envio da cotação — a lição do `parcelas_max`. Aqui a queda é
+    // pro lado seguro: sem onde REGISTRAR a dispensa, não se dispensa. A compra
+    // segue pro financeiro, como antes, e ninguém perde a cotação.
+    let dispensaIndisponivel = false;
+    if (upErr && vaiExecutarDireto && /financeiro_dispensa|42703|PGRST204|schema cache/i.test(upErr.message || '')) {
+      console.warn('[SOLICITACOES] dispensa financeira indisponível (migration 20260812210000 ausente):', upErr.message);
+      dispensaIndisponivel = true;
+      const semDispensa = { ...updates };
+      delete semDispensa.financeiro_dispensado_em;
+      delete semDispensa.financeiro_dispensa_motivo;
+      delete semDispensa.financeiro_dispensa_limite;
+      semDispensa.precisa_aprovacao_financeira = true;
+      semDispensa.status = sol.status === 'em_cotacao' ? 'aguardando_aprovacao_financeira' : sol.status;
+      delete semDispensa.area_responsavel;
+      delete semDispensa.forma_pagamento;
+      ({ data: solAtualizada, error: upErr } = await aplicar(semDispensa));
+    }
     if (upErr) throw upErr;
     if (!solAtualizada) {
       return res.status(409).json({ error: 'Esta solicitação foi alterada por outra pessoa. Atualize antes de reenviar as cotações.' });
     }
+    const executouDireto = vaiExecutarDireto && !dispensaIndisponivel;
 
     // Itens do pedido (opcional no e-mail).
     const { data: itens } = await supabase
@@ -2643,7 +2710,11 @@ router.post('/:id/enviar-cotacoes-financeiro', async (req, res) => {
     // E-mail é OPCIONAL (botão discreto). O caminho principal é PELO SISTEMA:
     // status aguardando_aprovacao_financeira + notificação (o Alberto aprova na
     // fila do financeiro). Só manda e-mail quando explicitamente pedido.
-    const querEmail = req.body?.enviar_email === true;
+    // ⚠️ Compra dispensada não manda o e-mail "cotações para aprovação": seria
+    // pedir ao Alberto que aprovasse algo que o sistema acabou de liberar. Na
+    // prática a tela nem chega aqui (o botão de e-mail força o financeiro), mas
+    // a guarda fica no servidor, que é quem decide.
+    const querEmail = req.body?.enviar_email === true && !executouDireto;
     let emailResultado = { ok: false, error: 'nao_solicitado' };
     if (querEmail && to.length) {
       emailResultado = await enviarEmail({
@@ -2654,11 +2725,19 @@ router.post('/:id/enviar-cotacoes-financeiro', async (req, res) => {
     }
 
     // Notificação no sistema (email:false · o e-mail rico já foi enviado acima).
+    // ⚠️ Compra dispensada NÃO pede aprovação — mas o financeiro é AVISADO
+    // (decisão do Matheus · 12/08): ele continua enxergando o dinheiro que sai,
+    // sem virar gargalo. Silenciar aqui esconderia o gasto miúdo até a
+    // conciliação do cartão.
     notificar({
       modulo: 'financeiro',
       tipo: 'cotacao_financeiro',
-      titulo: 'Cotações prontas para aprovação',
-      mensagem: `${cotacoes.length} ${cotacoes.length === 1 ? 'cotação' : 'cotações'} de "${sol.titulo}" · sugerida ${fmtBRLServer(refCot.valor)} (${refCot.fornecedor}).`,
+      titulo: executouDireto
+        ? 'Compra liberada sem aprovação financeira'
+        : 'Cotações prontas para aprovação',
+      mensagem: executouDireto
+        ? `"${sol.titulo}" · ${fmtBRLServer(refCot.valor)} (${refCot.fornecedor}) · dentro do limite de ${fmtBRLServer(decisao.limite)}, a logística executa direto. Você não precisa aprovar — este aviso é só pra você saber do gasto.`
+        : `${cotacoes.length} ${cotacoes.length === 1 ? 'cotação' : 'cotações'} de "${sol.titulo}" · sugerida ${fmtBRLServer(refCot.valor)} (${refCot.fornecedor}).`,
       link: linkFilaFinanceira(sol.id),
       severidade: 'info',
       chaveDedup: `solicitacao_cotacoes_${sol.id}`,
@@ -2666,9 +2745,47 @@ router.post('/:id/enviar-cotacoes-financeiro', async (req, res) => {
       email: false,
     }).catch(err => console.error('[SOLICITACOES] notify cotacoes:', err.message));
 
+    if (executouDireto) {
+      // Timeline com o ator certo: quem dispensou foi a REGRA, e quem cotou foi
+      // a logística. Sem este evento, a solicitação pularia do "em cotação" pro
+      // "pendente" sem explicar por que o financeiro não aparece no histórico.
+      registrarEvento(solAtualizada.id, {
+        statusAnterior: 'em_cotacao',
+        statusNovo: 'pendente',
+        atorId: req.user.userId,
+        observacao: `${motivoDispensaTexto(decisao.limite)} · cotado ${fmtBRLServer(refCot.valor)}`,
+      });
+      // Avisa quem pediu que a compra já foi liberada (não vai esperar o financeiro).
+      notificar({
+        modulo: CATEGORIA_MODULO[sol.categoria] || 'logistica',
+        tipo: 'solicitacao_status',
+        titulo: `Liberado pra compra: ${sol.titulo}`,
+        mensagem: `Cotado em ${fmtBRLServer(refCot.valor)} · dentro do limite de ${fmtBRLServer(decisao.limite)}, então a logística compra direto, sem passar pelo financeiro.`,
+        link: '/solicitacoes',
+        severidade: 'info',
+        chaveDedup: `solicitacao_compra_direta_${sol.id}`,
+        extraTargetIds: [sol.solicitante_id].filter(Boolean),
+      }).catch(err => console.error('[SOLICITACOES] notify compra direta:', err.message));
+
+      return res.json({
+        ok: true,
+        destino: 'compra_direta',
+        limite: decisao.limite,
+        email_solicitado: false,
+        solicitacao: solAtualizada,
+      });
+    }
+
     // Caminho principal (sistema): sem e-mail solicitado → já está com o financeiro.
     if (!querEmail) {
-      return res.json({ ok: true, email_solicitado: false, solicitacao: solAtualizada });
+      return res.json({
+        ok: true,
+        destino: 'financeiro',
+        motivo_destino: decisao.motivo,
+        dispensa_indisponivel: dispensaIndisponivel || undefined,
+        email_solicitado: false,
+        solicitacao: solAtualizada,
+      });
     }
     if (!to.length) {
       return res.json({
