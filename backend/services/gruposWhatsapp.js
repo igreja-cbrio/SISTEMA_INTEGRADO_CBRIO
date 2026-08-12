@@ -12,7 +12,6 @@
 // Envio: delega ao whatsappService.sendTemplate, que já é gated por
 // WHATSAPP_ENABLED === 'true' + credenciais (sem elas, loga DRY-RUN e não
 // envia — o fluxo do sistema fica idêntico ao de hoje).
-const crypto = require('crypto');
 const { supabase } = require('../utils/supabase');
 const { configurado } = require('./whatsappService');
 // Fila com reenvio automático: enfileirar() grava e tenta na hora; se o envio
@@ -23,10 +22,11 @@ const { enfileirar } = require('./whatsappFila');
 // (sem require circular). Checado no topo de cada função de envio.
 const { bloqueioTotalAtivo } = require('./gruposEnviosConfig');
 
-// GRUPOS_TOKEN_SECRET (opcional) isola esta superfície dos demais usos do
-// CRON_SECRET (bearer de crons, clientState do Graph no Cérebro — que é
-// ecoado a terceiro). Sem ela, cai no CRON_SECRET como o resto do repo.
-const SECRET = process.env.GRUPOS_TOKEN_SECRET || process.env.CRON_SECRET;
+// Token dos links sem login: régua ÚNICA em utils/ (testável no gate).
+const {
+  APROV_TTL_MS, RENOV_TTL_MS, CONFIRA_TTL_MS,
+  assinarToken, verificarToken,
+} = require('../utils/gruposToken');
 // Gate = a MESMA condição que faz o sendTemplate enviar de verdade
 // (ENABLED + token + phone id). Um gate mais estreito (só ENABLED) deixaria
 // o sendTemplate cair em dry-run e logar o link-capability em produção.
@@ -73,17 +73,6 @@ function rotuloMes(m) {
 }
 
 const DIAS_SEMANA = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
-const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 dias
-// Renovação de temporada: a janela entre o fim de uma temporada e a abertura
-// da próxima passa de 7 dias (e a fila pode segurar o envio por dias no
-// backoff — o token é assinado no MONTAR, não no entregar). A revogação real
-// é server-side: geração do token × linha + inscrições abertas + triagem.
-const RENOV_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 dias
-// Conferência da lista: mesma razão do TTL longo da renovação (o token é
-// assinado no MONTAR, e a fila pode segurar a entrega por dias no backoff). A
-// revogação real é server-side: geração do token × linha, liderança atual e
-// linha não triada.
-const CONFIRA_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 dias
 
 // URL local (dev) NUNCA vira link de WhatsApp — quem recebe é sempre externo.
 // Incidente 29/07/2026: redisparo local montou o link com localhost:5173.
@@ -101,30 +90,9 @@ function baseUrl() {
 }
 
 // ── Token ────────────────────────────────────────────────────────────────
-// ttlMs opcional (default 7d) — a renovação de temporada usa 30d.
-function assinarToken(tipo, pedidoId, extra, ttlMs) {
-  if (!SECRET) throw new Error('CRON_SECRET ausente — token de grupos não pode ser assinado');
-  const payload = { t: tipo, p: pedidoId, exp: Date.now() + (ttlMs || TOKEN_TTL_MS), ...(extra || {}) };
-  const json = Buffer.from(JSON.stringify(payload)).toString('base64url');
-  const sig = crypto.createHmac('sha256', SECRET).update(json).digest('base64url').slice(0, 24);
-  return `${json}.${sig}`;
-}
-
-function verificarToken(token, tipoEsperado) {
-  try {
-    if (!SECRET) return null;
-    const [json, sig] = String(token || '').split('.');
-    if (!json || !sig) return null;
-    const expected = crypto.createHmac('sha256', SECRET).update(json).digest('base64url').slice(0, 24);
-    const a = Buffer.from(sig);
-    const b = Buffer.from(expected);
-    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
-    const payload = JSON.parse(Buffer.from(json, 'base64url').toString('utf8'));
-    if (payload.t !== tipoEsperado) return null;
-    if (!payload.exp || Date.now() > payload.exp) return null;
-    return payload;
-  } catch { return null; }
-}
+// A régua vive em `utils/gruposToken.js` (pura · no gate de deploy) e é
+// RE-EXPORTADA aqui pra não quebrar nenhum import existente. NÃO reimplementar
+// assinatura/validade neste arquivo — duas cópias divergiriam.
 
 // ── Formatação compartilhada ─────────────────────────────────────────────
 function formatarQuando(grupo) {
@@ -161,9 +129,9 @@ async function notificarLiderNovoPedido({ grupo, pedidoId, pessoa }) {
     let link;
     try {
       // `l` amarra o token ao líder que o recebeu: se a liderança do grupo
-      // trocar dentro dos 7 dias, o link antigo deixa de valer (verificado
+      // trocar dentro da validade, o link antigo deixa de valer (verificado
       // nos endpoints públicos).
-      link = `${baseUrl()}/g/a/${assinarToken('aprov', pedidoId, { l: grupo.lider_id })}`;
+      link = `${baseUrl()}/g/a/${assinarToken('aprov', pedidoId, { l: grupo.lider_id }, APROV_TTL_MS)}`;
     } catch (e) {
       console.error('[GruposWPP] token não assinado:', e.message);
       return { sent: false, reason: 'sem_secret' };
