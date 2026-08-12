@@ -15,13 +15,15 @@
 --   tg_kpi_recalc_nativo()        → fn_kpi_recalc_dado_tipos(text[])
 --                                        → recalcular_kpi(...)
 --
--- `fn_kpi_recalc_dado_tipos` nasceu (20260610180000) com GRANT EXECUTE apenas
--- para `service_role`. Isso funcionou por dois meses porque no PostgreSQL toda
--- função nasce com EXECUTE para PUBLIC e um GRANT explícito NÃO revoga esse
--- default. A varredura de segurança que revogou anon/authenticated de ~114
--- funções SECURITY DEFINER derrubou esse acesso, e o INSERT inteiro passou a
--- falhar com 42501 (permission denied for function) — exceção em trigger AFTER
--- aborta o statement, então o check-in não grava nada.
+-- ⚠️ CAUSA MEDIDA NA APLICAÇÃO (12/08, INSERT real como `authenticated` com
+-- JWT simulado, em subtransação revertida): `42501 permission denied for
+-- function nsm_inserir_evento`. O elo quebrado é **nsm_inserir_evento** (acl
+-- viva: só postgres/service_role — a varredura de segurança que revogou
+-- anon/authenticated de ~114 funções SECURITY DEFINER a alcançou), chamada
+-- pelo gatilho do NSM que rodava como a pessoa. `fn_kpi_recalc_dado_tipos`
+-- e `recalcular_kpi` NÃO perderam o EXECUTE público (hipótese original deste
+-- arquivo, corrigida após medir). Exceção em trigger AFTER aborta o statement,
+-- então o check-in não gravava nada.
 --
 -- ⚠️ O RAIO É MAIOR QUE O DEVOCIONAL: `tg_kpi_recalc_nativo` está em 11 tabelas
 -- (mem_grupos, mem_grupo_membros, mem_voluntarios, mem_devocionais,
@@ -102,10 +104,11 @@ COMMENT ON FUNCTION public.tg_kpi_recalc_nativo() IS
   '[SECURITY DEFINER OBRIGATÓRIO] Gatilho statement-level em 11 tabelas, várias '
   'delas escritas DIRETO pelo app de membros com a chave pública (papel '
   'authenticated): mem_devocionais, mem_grupo_membros, batismo_inscricoes... '
-  'Chama fn_kpi_recalc_dado_tipos, que é restrita a service_role. Sem SECURITY '
-  'DEFINER, o INSERT do cliente aborta com 42501 e o check-in nem grava '
-  '(incidente do devocional em 12/08/2026). TG_ARGV[0] = CSV de dado_tipos, '
-  'fixo na definição do trigger — nada aqui vem do usuário.';
+  'A cadeia fn_kpi_recalc_dado_tipos -> recalcular_kpi escreve nas tabelas de '
+  'KPI, que o papel authenticated nao alcanca — como invoker, o INSERT do '
+  'cliente aborta e o check-in nem grava (familia do incidente do devocional '
+  'em 12/08/2026, medido em nsm_inserir_evento). TG_ARGV[0] = CSV de '
+  'dado_tipos, fixo na definição do trigger — nada aqui vem do usuário.';
 
 COMMENT ON FUNCTION public.tg_nsm_devocional_investir() IS
   '[SECURITY DEFINER OBRIGATÓRIO] Gatilho AFTER INSERT em mem_devocionais, que '
