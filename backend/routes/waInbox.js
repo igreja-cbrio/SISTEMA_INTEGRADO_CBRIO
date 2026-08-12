@@ -394,12 +394,15 @@ router.post('/conversas/nova', authorizeModule('conversas', 2), async (req, res)
     if (!conv) return res.status(400).json({ error: 'Telefone inválido.' });
 
     const dentro = waInbox.dentroJanela24h(conv.last_inbound_at);
+    // Multi-número: responde pelo número da CONVERSA (institucional × CBZap).
+    // conv vem de select('*') — a coluna flui quando a migration existir.
+    const numOpts = conv.phone_number_id ? { phoneNumberId: conv.phone_number_id } : {};
     let r, tipo, textoLog;
     if (dentro && texto && String(texto).trim()) {
-      r = await wpp.sendText(conv.telefone, String(texto).trim());
+      r = await wpp.sendText(conv.telefone, String(texto).trim(), numOpts);
       tipo = 'text'; textoLog = String(texto).trim();
     } else if (template_name) {
-      r = await wpp.sendTemplate(conv.telefone, template_name, 'pt_BR', Array.isArray(template_params) ? template_params : []);
+      r = await wpp.sendTemplate(conv.telefone, template_name, 'pt_BR', Array.isArray(template_params) ? template_params : [], numOpts);
       tipo = 'template'; textoLog = `[template: ${template_name}]`;
     } else {
       return res.status(400).json({
@@ -424,17 +427,20 @@ router.post('/conversas/nova', authorizeModule('conversas', 2), async (req, res)
 router.post('/conversas/:id/responder', authorizeModule('conversas', 2), async (req, res) => {
   try {
     const { texto, template_name, template_params } = req.body || {};
+    // select('*'): o phone_number_id (multi-número) entra quando a migration
+    // existir — pedir a coluna nominalmente derrubaria a rota antes dela.
     const { data: conv } = await supabase.from('wa_conversas')
-      .select('id, telefone, last_inbound_at').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+      .select('*').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
     if (!conv) return res.status(404).json({ error: 'Conversa não encontrada' });
 
     const dentro = waInbox.dentroJanela24h(conv.last_inbound_at);
+    const numOpts = conv.phone_number_id ? { phoneNumberId: conv.phone_number_id } : {};
     let r, tipo, textoLog;
     if (dentro && texto && String(texto).trim()) {
-      r = await wpp.sendText(conv.telefone, String(texto).trim());
+      r = await wpp.sendText(conv.telefone, String(texto).trim(), numOpts);
       tipo = 'text'; textoLog = String(texto).trim();
     } else if (template_name) {
-      r = await wpp.sendTemplate(conv.telefone, template_name, 'pt_BR', Array.isArray(template_params) ? template_params : []);
+      r = await wpp.sendTemplate(conv.telefone, template_name, 'pt_BR', Array.isArray(template_params) ? template_params : [], numOpts);
       tipo = 'template'; textoLog = `[template: ${template_name}]`;
     } else {
       return res.status(400).json({
@@ -456,7 +462,7 @@ router.post('/conversas/:id/anexo', authorizeModule('conversas', 2), uploadAnexo
   try {
     if (!req.file) return res.status(400).json({ error: 'Arquivo obrigatório.' });
     const { data: conv } = await supabase.from('wa_conversas')
-      .select('id, telefone, last_inbound_at').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+      .select('*').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
     if (!conv) return res.status(404).json({ error: 'Conversa não encontrada' });
     if (!waInbox.dentroJanela24h(conv.last_inbound_at)) {
       return res.status(400).json({ error: 'Fora da janela de 24h — anexos só dentro da janela.', code: 'fora_janela' });
@@ -466,7 +472,10 @@ router.post('/conversas/:id/anexo', authorizeModule('conversas', 2), uploadAnexo
     // sobe pro bucket público → o WhatsApp busca pelo link
     const urlPub = await waInbox.subirMedia({ buffer: req.file.buffer, mime, conversaId: conv.id, origem: 'out', filename: req.file.originalname });
     if (!urlPub) return res.status(500).json({ error: 'Falha ao subir o arquivo.' });
-    const r = await wpp.sendMedia(conv.telefone, kind, urlPub, { filename: req.file.originalname });
+    const r = await wpp.sendMedia(conv.telefone, kind, urlPub, {
+      filename: req.file.originalname,
+      ...(conv.phone_number_id ? { phoneNumberId: conv.phone_number_id } : {}),
+    });
     if (!r?.sent) return res.status(502).json({ error: 'O WhatsApp não aceitou o anexo.', detail: r?.reason || r?.detail || null });
     await waInbox.registrarOutbound({
       telefone: conv.telefone, tipo: kind, autorId: uid(req), mediaUrl: urlPub,
@@ -493,7 +502,7 @@ router.post('/conversas/:id/ler', authorizeModule('conversas', 1), async (req, r
 router.patch('/conversas/:id', authorizeModule('conversas', 2), async (req, res) => {
   try {
     const { data: antes } = await supabase.from('wa_conversas')
-      .select('id, telefone, protocolo, resolvida, last_inbound_at').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+      .select('*').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
     if (!antes) return res.status(404).json({ error: 'Conversa não encontrada' });
 
     const patch = {};
@@ -508,7 +517,8 @@ router.patch('/conversas/:id', authorizeModule('conversas', 2), async (req, res)
     let pesquisaEnviada = false;
     if (patch.resolvida === true && !antes.resolvida && waInbox.dentroJanela24h(antes.last_inbound_at)) {
       const msg = `Sua conversa foi finalizada! 🙏\nProtocolo: *${antes.protocolo || '—'}*\n\nDe *0 a 5*, como você avalia nosso atendimento? Responda só com o número (0 = péssimo · 5 = excelente).`;
-      const r = await wpp.sendText(antes.telefone, msg).catch(() => ({ sent: false }));
+      const r = await wpp.sendText(antes.telefone, msg,
+        antes.phone_number_id ? { phoneNumberId: antes.phone_number_id } : {}).catch(() => ({ sent: false }));
       if (r?.sent) {
         pesquisaEnviada = true;
         patch.pesquisa_estado = 'aguardando';
@@ -551,7 +561,7 @@ router.post('/conversas/:id/transferir', authorizeModule('conversas', 2), async 
         modulo: 'conversas', tipo: 'conversa_transferida',
         titulo: `Conversa transferida · ${area}`,
         mensagem: `${conv.nome || conv.telefone} (${conv.protocolo || '—'}) foi transferida pra ${area}.`,
-        link: `/conversas?area=${encodeURIComponent(area)}`,
+        link: `/comunicacao?tab=conversas&area=${encodeURIComponent(area)}`,
         chaveDedup: `conversa_transf_${conv.id}_${area}`,
         targetIds: alvos.length ? alvos : undefined,
       });
