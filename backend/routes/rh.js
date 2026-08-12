@@ -778,6 +778,11 @@ const RH_FIELD_TYPES = {
   data_admissao: 'date', data_demissao: 'date', data_enquadramento: 'date', data_nascimento: 'date',
   grau_id: 'uuid',
   admissao_dados: 'json', // jsonb com dados extras do onboarding (RG, PJ, contrato…) · não sensível
+  // Modernização do cadastro (revisão Feedz/HRIS, 2026-08-12): matrícula,
+  // cargo visível e endereço estruturado (padrão do censo · cepAutopreenche.ts).
+  matricula: 'text', cargo_visivel: 'text',
+  endereco: 'text', cep: 'text', numero: 'text', complemento: 'text',
+  bairro: 'text', cidade: 'text', uf: 'text',
 };
 function coerceRh(val, type) {
   if (val === undefined) return undefined;       // nao veio no body → nao mexe na coluna
