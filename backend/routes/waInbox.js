@@ -356,9 +356,13 @@ router.get('/conversas/:id/mensagens', authorizeModule('conversas', 1), async (r
     const { data: conv } = await supabase.from('wa_conversas')
       .select('*, membro:mem_membros(foto_url)').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
     if (!conv) return res.status(404).json({ error: 'Conversa não encontrada' });
+    // ⚠️ desc + reverse: a conversa é 1 por telefone PRA SEMPRE — com asc+limit,
+    // um histórico >500 devolvia as 500 mais ANTIGAS e a mensagem de HOJE nunca
+    // aparecia na thread (a prévia da lista subia e o time respondia no escuro).
     const { data: msgs } = await supabase.from('wa_mensagens')
       .select('id, direcao, tipo, texto, media_url, autor_id, criado_em')
-      .eq('conversa_id', conv.id).order('criado_em', { ascending: true }).limit(500);
+      .eq('conversa_id', conv.id).order('criado_em', { ascending: false }).limit(500);
+    (msgs || []).reverse();
     if (conv.nao_lidas > 0) await supabase.from('wa_conversas').update({ nao_lidas: 0 }).eq('id', conv.id);
     res.json({ conversa: comJanela({ ...conv, nao_lidas: 0 }), mensagens: msgs || [] });
   } catch (e) {
@@ -514,21 +518,40 @@ router.patch('/conversas/:id', authorizeModule('conversas', 2), async (req, res)
 
     // Ao FINALIZAR (resolvida: false → true): manda a pesquisa de satisfação 0-5
     // com o protocolo. Só dá pra mandar texto livre dentro da janela de 24h.
+    // ⚠️ CLAIM ATÔMICO primeiro: duplo-clique no Finalizar (ou dois atendentes ao
+    // mesmo tempo) fazia as DUAS requisições lerem resolvida=false e a pessoa
+    // recebia a pesquisa 2×. Só quem realmente transiciona (o UPDATE guardado
+    // por .eq('resolvida', false) devolve linha) envia.
     let pesquisaEnviada = false;
-    if (patch.resolvida === true && !antes.resolvida && waInbox.dentroJanela24h(antes.last_inbound_at)) {
-      const msg = `Sua conversa foi finalizada! 🙏\nProtocolo: *${antes.protocolo || '—'}*\n\nDe *0 a 5*, como você avalia nosso atendimento? Responda só com o número (0 = péssimo · 5 = excelente).`;
-      const r = await wpp.sendText(antes.telefone, msg,
-        antes.phone_number_id ? { phoneNumberId: antes.phone_number_id } : {}).catch(() => ({ sent: false }));
-      if (r?.sent) {
-        pesquisaEnviada = true;
-        patch.pesquisa_estado = 'aguardando';
-        patch.pesquisa_em = new Date().toISOString();
-        await waInbox.registrarOutbound({ telefone: antes.telefone, texto: msg, tipo: 'pesquisa' }).catch(() => {});
+    if (patch.resolvida === true && !antes.resolvida) {
+      const { data: claim } = await supabase.from('wa_conversas')
+        .update({ resolvida: true }).eq('id', req.params.id)
+        .eq('resolvida', false).select('id');
+      delete patch.resolvida; // já aplicada (ou o concorrente aplicou)
+      if (claim?.length && waInbox.dentroJanela24h(antes.last_inbound_at)) {
+        const msg = `Sua conversa foi finalizada! 🙏\nProtocolo: *${antes.protocolo || '—'}*\n\nDe *0 a 5*, como você avalia nosso atendimento? Responda só com o número (0 = péssimo · 5 = excelente).`;
+        const r = await wpp.sendText(antes.telefone, msg,
+          antes.phone_number_id ? { phoneNumberId: antes.phone_number_id } : {}).catch(() => ({ sent: false }));
+        if (r?.sent) {
+          pesquisaEnviada = true;
+          patch.pesquisa_estado = 'aguardando';
+          patch.pesquisa_em = new Date().toISOString();
+          await waInbox.registrarOutbound({ telefone: antes.telefone, texto: msg, tipo: 'pesquisa' }).catch(() => {});
+        }
       }
     }
 
-    const { data, error } = await supabase.from('wa_conversas').update(patch).eq('id', req.params.id).select().single();
-    if (error) throw error;
+    let data;
+    if (Object.keys(patch).length) {
+      const r2 = await supabase.from('wa_conversas').update(patch).eq('id', req.params.id).select().single();
+      if (r2.error) throw r2.error;
+      data = r2.data;
+    } else {
+      // patch era só o resolvida (já aplicado no claim) → relê o estado atual
+      const r2 = await supabase.from('wa_conversas').select('*').eq('id', req.params.id).single();
+      if (r2.error) throw r2.error;
+      data = r2.data;
+    }
     res.json({ ...comJanela(data), pesquisa_enviada: pesquisaEnviada });
   } catch (e) {
     console.error('[wa-inbox] patch:', e.message);

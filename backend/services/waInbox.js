@@ -8,6 +8,25 @@ const JANELA_24H_MS = 24 * 60 * 60 * 1000; // WhatsApp só deixa texto livre den
 
 function soDigitos(v) { return String(v || '').replace(/\D+/g, ''); }
 
+// Mesmo número BR módulo o NONO DÍGITO: o wa_id da Meta pode vir SEM o 9 do
+// celular (12 dígitos) enquanto o outbound grava COM (13) — match exato criava
+// DUAS conversas pra mesma pessoa, e a janela de 24h abria na conversa que o
+// time não estava olhando. Regra: mesmo DDI 55 + mesmo DDD + mesmo local de 8
+// dígitos (ignorando um 9 à frente de local de 9). Pura e exportada (testada).
+function mesmoNumeroBR(a, b) {
+  const da = soDigitos(a);
+  const db = soDigitos(b);
+  if (!da || !db) return false;
+  if (da === db) return true;
+  const pa = da.startsWith('55') && da.length >= 12 ? da.slice(2) : da;
+  const pb = db.startsWith('55') && db.length >= 12 ? db.slice(2) : db;
+  if (pa.length < 10 || pa.length > 11 || pb.length < 10 || pb.length > 11) return false;
+  if (pa.slice(0, 2) !== pb.slice(0, 2)) return false; // DDD
+  const la = pa.slice(2).replace(/^9(?=\d{8}$)/, '');
+  const lb = pb.slice(2).replace(/^9(?=\d{8}$)/, '');
+  return la.length === 8 && la === lb;
+}
+
 // Janela de 24h aberta? (texto livre permitido; fora dela, só template aprovado)
 function dentroJanela24h(lastInboundAt) {
   if (!lastInboundAt) return false;
@@ -63,8 +82,19 @@ async function gravarNumeroConversa(convId, phoneNumberId) {
 async function acharOuCriarConversa(telefone, phoneNumberId = null) {
   const tel = wpp.normalizarTelefone(telefone) || soDigitos(telefone);
   if (!tel) return null;
-  const { data: existente } = await supabase.from('wa_conversas')
+  let { data: existente } = await supabase.from('wa_conversas')
     .select('*').eq('telefone', tel).maybeSingle();
+  if (!existente) {
+    // Reconciliação do 9º dígito: antes de criar, procura a MESMA pessoa
+    // gravada na outra forma (com/sem o 9) pelos 8 últimos dígitos. Sem isso,
+    // "Nova conversa" com 13 dígitos + resposta da Meta com 12 = 2 conversas.
+    const suf = tel.slice(-8);
+    if (suf.length === 8) {
+      const { data: candidatos } = await supabase.from('wa_conversas')
+        .select('*').ilike('telefone', `%${suf}`).limit(5);
+      existente = (candidatos || []).find(c => mesmoNumeroBR(c.telefone, tel)) || null;
+    }
+  }
   if (existente) {
     if (phoneNumberId && existente.phone_number_id !== String(phoneNumberId)) {
       await gravarNumeroConversa(existente.id, phoneNumberId);
@@ -84,10 +114,22 @@ async function acharOuCriarConversa(telefone, phoneNumberId = null) {
     return existente;
   }
   const c = await acharContato(tel);
-  const { data } = await supabase.from('wa_conversas')
+  let { data, error } = await supabase.from('wa_conversas')
     .insert({ telefone: tel, nome: c.nome || null, membro_id: c.membro_id || null })
     .select('*').single();
-  if (data && phoneNumberId) {
+  if (error) {
+    // Corrida na criação: número NOVO manda 2 mensagens juntas → a 2ª toma
+    // 23505 do UNIQUE(telefone) e a MENSAGEM ERA DESCARTADA em silêncio
+    // (registrarInbound recebia null). Relê e segue com a linha do vencedor.
+    const { data: denovo } = await supabase.from('wa_conversas')
+      .select('*').eq('telefone', tel).maybeSingle();
+    if (!denovo) {
+      console.error('[waInbox] criar conversa:', error.message);
+      return null;
+    }
+    data = denovo;
+  }
+  if (data && phoneNumberId && data.phone_number_id !== String(phoneNumberId)) {
     await gravarNumeroConversa(data.id, phoneNumberId);
     data.phone_number_id = String(phoneNumberId);
   }
@@ -149,4 +191,5 @@ async function registrarOutbound({ telefone, texto, tipo = 'text', autorId = nul
 module.exports = {
   registrarInbound, registrarOutbound, acharOuCriarConversa, subirMedia,
   dentroJanela24h, JANELA_24H_MS, soDigitos,
+  mesmoNumeroBR, // pura · exportada pro teste (decide se 2 formas = 1 conversa)
 };

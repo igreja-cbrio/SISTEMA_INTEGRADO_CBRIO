@@ -222,6 +222,25 @@ router.put('/agendamentos/:id', authorizeModule('comunicacao', 3), async (req, r
   const patch = {};
   ['nome', 'template_nome', 'texto', 'params', 'audiencia', 'quando', 'recorrencia', 'dia_semana', 'dia_mes', 'hora', 'ativo']
     .forEach(k => { if (k in b) patch[k] = b[k]; });
+
+  const { data: atual, error: errAtual } = await supabase.from('wa_agendamentos')
+    .select('*').eq('id', req.params.id).maybeSingle();
+  if (errAtual) return res.status(400).json({ error: errAtual.message });
+  if (!atual) return res.status(404).json({ error: 'Agendamento não encontrado' });
+
+  // Edição passa pela MESMA régua da criação — o teto de 500 telefones e a
+  // coerência dia×recorrência só valiam no POST (criar com 10 e editar colando
+  // 600 salvava sem erro e o cron disparava pros 600). Valida o estado FINAL.
+  const erro = validarAgendamento({ ...atual, ...patch });
+  if (erro) return res.status(400).json({ error: erro });
+
+  // Reagendar um disparo ÚNICO já executado precisa voltar a disparar: o cron
+  // exige ultimo_disparo NULO pra única, e a coluna não era limpável por
+  // nenhum caminho — reagendar+reativar mostrava "ativa" e ficava mudo pra
+  // sempre. Trocar a data (quando) zera o marcador; recorrente NÃO zera
+  // (zeraria o "já saiu hoje" e dispararia 2× no mesmo dia).
+  if ('quando' in patch && patch.quando) patch.ultimo_disparo = null;
+
   const { data, error } = await supabase.from('wa_agendamentos')
     .update(patch).eq('id', req.params.id).select().maybeSingle();
   if (error) return res.status(400).json({ error: error.message });
@@ -378,9 +397,13 @@ router.get('/custo', async (req, res, next) => {
     const envios = await (async () => {
       const out = []; let from = 0; const page = 1000;
       while (true) {
+        // ⚠️ .order() obrigatório: range() sem ORDER BY tem ordem indefinida no
+        // PostgREST — páginas podiam duplicar/perder linhas e o custo estimado
+        // saía errado em silêncio. id no desempate (criado_em pode empatar).
         const { data, error } = await supabase.from('whatsapp_envios')
           .select('tipo, template, contexto, criado_em')
           .eq('status', 'enviado').gte('criado_em', desdeISO)
+          .order('criado_em', { ascending: true }).order('id', { ascending: true })
           .range(from, from + page - 1);
         if (error) throw error;
         out.push(...(data || []));
