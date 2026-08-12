@@ -270,6 +270,59 @@ function obs(v) {
   return s ? s.slice(0, 1000) : null;
 }
 
+/** '09:30'/'09:30:00' → '9h30' · '10:00' → '10h' · sem hora → null. */
+function rotuloHora(hhmm) {
+  const m = /^(\d{1,2}):(\d{2})/.exec(String(hhmm ?? ''));
+  if (!m) return null;
+  const h = String(Number(m[1]));
+  return m[2] === '00' ? `${h}h` : `${h}h${m[2]}`;
+}
+
+/**
+ * Qual culto recebe a apresentação de bebês.
+ *
+ * D3 da mudança dos cultos de domingo (docs/cultos-domingo · §7.1 + §12.1 ·
+ * decidido por Marcos e Matheus em 11/08): **09:30 primário, transborda pro
+ * 11:30 por LIMITE** — e bebês estão SEM limite por enquanto (Marcos 12/08),
+ * então `limite` nulo = nunca transborda e a regra efetiva é "sempre 09:30".
+ * Antes do corte de 24/08 o 09:30 não existe e a régua cai no 10:00 (a regra
+ * vigente desde 23/07) — é o que deixa este código ir ao ar HOJE com
+ * comportamento IDÊNTICO até o corte.
+ *
+ * ⚠️ SEM candidato ⇒ null, NUNCA "o culto mais cedo do dia": era esse fallback
+ * que, pós-corte, penduraria a cerimônia no fantasma de 08:30 com texto
+ * "às 10h" (achado B9 da varredura). null = agenda sem culto vinculado e os
+ * textos OMITEM o horário — melhor ausente que errado.
+ *
+ * ⚠️ Match por PREFIXO de `recurrence_time` ('09:30' casa '09:30:00' — a
+ * coluna é `time`). `contagem` (culto_id → nº de apresentações agendadas) só
+ * é consultada quando há `limite`; quem conta é o CHAMADOR — esta régua é
+ * pura de propósito (entra no gate de deploy sem banco).
+ */
+function escolherCultoApresentacao(cultosDia, { limite = null, contagem = null } = {}) {
+  const porHora = (pref) =>
+    (cultosDia || []).find((c) => String(c?.service_type?.recurrence_time || '').startsWith(pref)) || null;
+  const cheio = (c) => {
+    if (!limite || !c) return false;
+    const n = (contagem && (contagem.get?.(c.id) ?? contagem[c.id])) || 0;
+    return n >= limite;
+  };
+  const hora = (c) => String(c.service_type.recurrence_time).slice(0, 5);
+  const escolha = (c, transbordou) => ({ culto: c, hora: hora(c), transbordou });
+
+  const overflow = porHora('11:30');
+  const primario = porHora('09:30');
+  if (primario && !cheio(primario)) return escolha(primario, false);
+  if (primario && overflow && !cheio(overflow)) return escolha(overflow, true);
+
+  // Pré-corte (até 23/08): o 09:30 ainda não existe — vale a regra vigente.
+  const dez = porHora('10:00');
+  if (dez && !cheio(dez)) return escolha(dez, false);
+  if (dez && overflow && !cheio(overflow)) return escolha(overflow, true);
+
+  return { culto: null, hora: null, transbordou: false };
+}
+
 /**
  * O que a criança vira em `mem_membros`.
  *
@@ -313,5 +366,7 @@ module.exports = {
   acharCriancaNaFamilia,
   validarPedido,
   pessoaDaCrianca,
+  escolherCultoApresentacao,
+  rotuloHora,
   CAMPOS_PROIBIDOS_CRIANCA,
 };

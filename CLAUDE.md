@@ -7549,6 +7549,36 @@ técnica da espinha) porque exige função SQL + migration, e o buraco de hoje *
 ~6 inscrições por cerimônia a janela é pequena; se um dia estourar por 1, é aqui
 que vira RPC com lock.
 
+## Apresentação de bebês · o culto vem da régua D3 (2026-08-12 · SEM migration)
+
+Lote 1 da EXECUÇÃO da mudança dos cultos de domingo (estratégia completa no §13
+de `docs/cultos-domingo/contexto-e-plano.md`, branch `claude/cultos-domingo-handoff`
+— modo piloto aprovado pelo Marcos em 12/08). A regra "SEMPRE 10:00" (23/07)
+morre junto com o culto em 24/08; a nova é a **D3: 09:30 primário, overflow pro
+11:30 por LIMITE** — e bebês estão **SEM limite por enquanto** (Marcos 12/08),
+então na prática "sempre 09:30".
+
+- **`escolherCultoApresentacao`/`rotuloHora`** em `utils/criancaApresentacao.js`
+  (régua PURA · `src/test/cultoApresentacao.test.ts`, 13 casos **no gate**, 2
+  mutantes): 09:30 → (lotado com limite) 11:30 → (pré-corte) 10:00 → **null**.
+  ⚠️ O fallback antigo "primeiro culto por horário" MORREU — pós-corte ele
+  penduraria a cerimônia no **fantasma de 08:30** (achado B9 da varredura). Sem
+  candidato, a linha nasce com `culto_id` nulo e os textos OMITEM o horário.
+- **Comportamento IDÊNTICO até 24/08**: sem 09:30 na grade, a régua resolve o
+  10:00 — é o que permite este código ir ao ar ANTES do corte, aberto, sem véu.
+- `GET /totem/apresentacao-bebe/status` devolve `horario_previsto` +
+  `horario_rotulo` e o `TotemMembro.tsx` deixou de hardcodar "10h" (2 textos ·
+  omitidos quando o servidor não manda horário); o `{{4}}` do WhatsApp sai do
+  culto escolhido. ⚠️ **Pendência de GENTE**: conferir na Meta se o CORPO do
+  template `apresentacao_bebes_confirmacao` cita "10h" fora do `{{4}}` — se
+  citar, é template `_v2` (editar aprovado volta pra revisão e o envio para).
+- **Limite por env `APRESENTACAO_LIMITE_POR_CULTO`** (vazia = ilimitado, o
+  estado atual): ligar o overflow do 11:30 no futuro é setar a env, sem mudança
+  de regra. Cancelada não ocupa vaga na contagem.
+- ⚠️ Esta régua é SÓ do TOTEM (único escritor de `apresentacao_bebes`): a porta
+  do app e o formulário público escrevem em `apresentacao_criancas`, que **não
+  tem `culto_id`** (alinhamento de 11/08).
+
 ## ⚠️ Identidade · o nome MAIS COMPLETO vence (2026-08-11 · SEM migration)
 
 Decisão do Marcos, no caso Thiago (candidatura de líder de 10/08): o matcher
