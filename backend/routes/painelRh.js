@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
+const { proximoQuartoDomingoISO } = require('./publicBatismo');
 
 // Painel informativo de RH exibido na home (Dashboard). Leitura liberada a
 // qualquer autenticado — é um painel geral, não uma tela do módulo RH. Só as
@@ -60,30 +61,89 @@ router.get('/eventos', async (req, res) => {
     const idsAutomaticos = (cats || []).map((c) => c.id);
 
     const hoje = new Date().toISOString().slice(0, 10);
-    const { data, error } = await supabase
-      .from('events')
-      .select('id, name, date, location, category_id, visivel_painel_rh, event_categories(name, color)')
-      .gte('date', hoje)
-      .order('date')
-      .limit(50);
-    if (error) throw error;
 
-    const visiveis = (data || []).filter((e) => {
+    // Busca eventos únicos com data futura + TODOS os recorrentes (que podem
+    // ter events.date antiga — a ocorrência de verdade vive em
+    // event_occurrences, mesmo padrão usado no PATCH /:id/status "reabrir").
+    // visivel_painel_rh é aditivo (migration 20260812200000) — se ainda não
+    // aplicada, pedir a coluna faz o PostgREST recusar a query INTEIRA (lição
+    // do parcelas_max). Tenta com ela; em 42703, cai sem ela.
+    async function buscarEventos(comVisivelPainelRh) {
+      const campos = comVisivelPainelRh
+        ? 'id, name, date, location, category_id, recurrence, visivel_painel_rh, event_categories(name, color)'
+        : 'id, name, date, location, category_id, recurrence, event_categories(name, color)';
+      const [unicos, recorrentes] = await Promise.all([
+        supabase.from('events').select(campos).eq('recurrence', 'unico').gte('date', hoje).order('date').limit(50),
+        supabase.from('events').select(campos).neq('recurrence', 'unico').limit(100),
+      ]);
+      if (unicos.error) throw unicos.error;
+      if (recorrentes.error) throw recorrentes.error;
+      const porId = new Map();
+      [...(unicos.data || []), ...(recorrentes.data || [])].forEach((e) => porId.set(e.id, e));
+      return [...porId.values()];
+    }
+
+    let eventos;
+    try {
+      eventos = await buscarEventos(true);
+    } catch (err) {
+      if (err.code !== '42703') throw err;
+      eventos = (await buscarEventos(false)).map((e) => ({ ...e, visivel_painel_rh: null }));
+    }
+
+    // Pra recorrentes, a data efetiva é a próxima ocorrência PENDENTE — não a
+    // events.date (que guarda só a data da 1ª ocorrência, ficando no passado
+    // pra sempre depois que o evento começa a se repetir).
+    const idsRecorrentes = eventos.filter((e) => e.recurrence !== 'unico').map((e) => e.id);
+    const proximaOcorrenciaPorEvento = new Map();
+    if (idsRecorrentes.length > 0) {
+      const { data: occs } = await supabase
+        .from('event_occurrences')
+        .select('event_id, date')
+        .in('event_id', idsRecorrentes)
+        .eq('status', 'pendente')
+        .gte('date', hoje)
+        .order('date');
+      (occs || []).forEach((o) => {
+        if (!proximaOcorrenciaPorEvento.has(o.event_id)) proximaOcorrenciaPorEvento.set(o.event_id, o.date);
+      });
+    }
+
+    const comDataEfetiva = eventos
+      .map((e) => ({ ...e, data_efetiva: e.recurrence === 'unico' ? e.date : proximaOcorrenciaPorEvento.get(e.id) || null }))
+      .filter((e) => e.data_efetiva && e.data_efetiva >= hoje);
+
+    const visiveis = comDataEfetiva.filter((e) => {
       if (e.visivel_painel_rh === true) return true;
       if (e.visivel_painel_rh === false) return false;
       return idsAutomaticos.includes(e.category_id);
     });
 
-    res.json(
-      visiveis.slice(0, 10).map((e) => ({
+    const lista = visiveis
+      .sort((a, b) => a.data_efetiva.localeCompare(b.data_efetiva))
+      .slice(0, 9)
+      .map((e) => ({
         id: e.id,
         nome: e.name,
-        data: e.date,
+        data: e.data_efetiva,
         local: e.location,
         categoria: e.event_categories?.name || null,
         categoria_cor: e.event_categories?.color || null,
-      }))
-    );
+      }));
+
+    // Batismo não é uma linha em `events` — a data é calculada (próximo 4º
+    // domingo, mesma régua do formulário público de inscrição).
+    lista.push({
+      id: 'batismo',
+      nome: 'Batismo',
+      data: proximoQuartoDomingoISO(),
+      local: null,
+      categoria: 'Batismo',
+      categoria_cor: null,
+    });
+    lista.sort((a, b) => a.data.localeCompare(b.data));
+
+    res.json(lista.slice(0, 10));
   } catch (e) {
     console.error('[PainelRH eventos]', e.message);
     res.status(500).json({ error: 'Erro ao buscar eventos' });

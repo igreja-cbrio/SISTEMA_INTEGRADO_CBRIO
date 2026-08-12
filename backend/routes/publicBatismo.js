@@ -528,3 +528,6 @@ router.get('/acesso', acessoLimiter, async (req, res) => {
 });
 
 module.exports = router;
+// Exposta pra fora do módulo (painelRh.js usa pra mostrar "próximo batismo"
+// no painel de RH da home) — mesma função, sem duplicar a régua do 4º domingo.
+module.exports.proximoQuartoDomingoISO = proximoQuartoDomingoISO;
