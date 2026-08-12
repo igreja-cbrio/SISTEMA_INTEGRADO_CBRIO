@@ -252,6 +252,8 @@ export const events = {
   deleteSimpleTemplate: (id) => del(`/events/simple-templates/${id}`),
   toggleSimpleTemplate: (id) => patch(`/events/simple-templates/${id}/toggle`, {}),
   applySimpleTemplates: (eventId) => post(`/events/${eventId}/apply-simple-templates`, {}),
+  // null = automático por categoria · true = forçar mostrar · false = forçar esconder
+  setVisivelPainelRh: (id, visivel_painel_rh) => patch(`/events/${id}/visivel-painel-rh`, { visivel_painel_rh }),
 };
 
 // Módulo Propostas · ciclo anual (Fase 1A: configuração)
@@ -1959,6 +1961,19 @@ export const comunicados = {
     fd.append('arquivo', file);
     return requestFile('/comunicados/upload-foto', fd);
   },
+};
+
+// ── Painel informativo de RH (home/Dashboard) ──
+export const painelRh = {
+  aniversariantes: () => get('/painel-rh/aniversariantes'),
+  eventos: () => get('/painel-rh/eventos'),
+  comunicados: () => get('/painel-rh/comunicados'),
+  comunicadosAdmin: () => get('/painel-rh/comunicados/admin'),
+  criarComunicado: (data) => post('/painel-rh/comunicados', data),
+  atualizarComunicado: (id, data) => put(`/painel-rh/comunicados/${id}`, data),
+  publicarComunicado: (id) => post(`/painel-rh/comunicados/${id}/publicar`, {}),
+  arquivarComunicado: (id) => post(`/painel-rh/comunicados/${id}/arquivar`, {}),
+  removerComunicado: (id) => del(`/painel-rh/comunicados/${id}`),
 };
 
 export const painelArea = {

@@ -1,5 +1,5 @@
 const router = require('express').Router();
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, authorize, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const { enqueueSync } = require('../services/cerebroSync');
@@ -48,7 +48,7 @@ router.get('/simple-templates', async (req, res) => {
 router.get('/', async (req, res) => {
   try {
     const { status, category_id, year } = req.query;
-    let query = supabase.from('events').select('id, name, date, status, category_id, description, location, responsible, budget_planned, budget_spent, expected_attendance, actual_attendance, recurrence, project_id, created_by, created_at, event_categories(name, color)').order('date');
+    let query = supabase.from('events').select('id, name, date, status, category_id, description, location, responsible, budget_planned, budget_spent, expected_attendance, actual_attendance, recurrence, project_id, created_by, created_at, visivel_painel_rh, event_categories(name, color)').order('date');
     if (status) query = query.eq('status', status);
     if (category_id && isUUID(category_id)) query = query.eq('category_id', category_id);
     if (year && /^\d{4}$/.test(year)) query = query.gte('date', `${year}-01-01`).lte('date', `${year}-12-31`);
@@ -388,6 +388,32 @@ router.patch('/:id/status', async (req, res) => {
     const detail = [e?.message, e?.code && `code=${e.code}`, e?.details && `details=${e.details}`, e?.hint && `hint=${e.hint}`].filter(Boolean).join(' | ');
     console.error('[Events PATCH status] exceção:', { eventId, message: e?.message, code: e?.code, details: e?.details, hint: e?.hint, stack: e?.stack });
     res.status(500).json({ error: detail || 'Erro ao atualizar status', _v: 'patch-status-resilient-v1' });
+  }
+});
+
+// PATCH /api/events/:id/visivel-painel-rh — RH decide se o evento aparece no
+// painel informativo da home (Dashboard). null = volta pra regra automática
+// por categoria (Rotina de Liturgia/Série/Geracional/Rotina Staff/Feriado).
+router.patch('/:id/visivel-painel-rh', authorizeModule('rh', 3), async (req, res) => {
+  const eventId = req.params.id;
+  try {
+    if (!isUUID(eventId)) return res.status(400).json({ error: 'ID inválido' });
+    const { visivel_painel_rh } = req.body;
+    if (visivel_painel_rh !== null && typeof visivel_painel_rh !== 'boolean') {
+      return res.status(400).json({ error: 'visivel_painel_rh precisa ser true, false ou null' });
+    }
+    const { data, error } = await supabase
+      .from('events')
+      .update({ visivel_painel_rh })
+      .eq('id', eventId)
+      .select('id, visivel_painel_rh')
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Evento não encontrado' });
+    res.json(data);
+  } catch (e) {
+    console.error('[Events PATCH visivel-painel-rh]', e.message);
+    res.status(500).json({ error: 'Erro ao atualizar visibilidade no painel de RH' });
   }
 });
 
