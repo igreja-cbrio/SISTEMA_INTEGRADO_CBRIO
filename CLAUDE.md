@@ -2064,14 +2064,42 @@ file:line) apontou 5 críticos; Marcos aprovou corrigir. O que mudou:
    `ultimo_disparo`/desativa único quando `queued > 0` (antes consumia o
    disparo no vazio) + erro de consulta virou 500 (não mais `ok:true`).
 
-⚠️ Ficam da revisão (médios · não corrigidos ainda): programada única editada
-nunca re-dispara (`ultimo_disparo` fora da whitelist do PUT) · PUT de
-agendamento sem `validarAgendamento` · thread do chat capada nas 500 mais
-ANTIGAS · duplicata de conversa pelo 9º dígito · pesquisa 2× no duplo-clique
-Finalizar · 1ª mensagem perdida na corrida de criação · statuses órfãos
-write-only · mídia inbound em bucket público · Realtime sem filtro por área ·
-custo com ~15 call sites fora da fila. Lista completa com file:line na memória
-da sessão de 05/08 ("revisão da comunicação").
+### Lote 2 · médios do atendimento corrigidos (2026-08-12 · SEM migration)
+
+Os médios que morderiam o atendimento real do CBZap, na mesma leva:
+
+- **Thread mostra as 500 mais RECENTES** (`routes/waInbox.js` /mensagens):
+  era `asc+limit` — conversa >500 mensagens nunca exibia a mensagem de hoje
+  (a conversa é 1 por telefone PRA SEMPRE, então era inevitável). Virou
+  `desc+limit+reverse`.
+- **Nono dígito não duplica mais conversa**: `mesmoNumeroBR` em
+  `services/waInbox.js` (pura · `src/test/waInboxMesmoNumero.test.ts`, 7 casos,
+  mutation-testado) — antes de CRIAR conversa, reconcilia pelos 8 últimos
+  dígitos (o wa_id da Meta pode vir SEM o 9; match exato criava 2 conversas e
+  a janela de 24h abria na errada). ⚠️ Estrangeiro/ambíguo NÃO casa (lição do
+  suíço `41765764538` × DDD 41 de Curitiba).
+- **Pesquisa de satisfação com CLAIM atômico** (PATCH /conversas/:id): o
+  UPDATE `resolvida=true` guardado por `.eq('resolvida', false)` decide QUEM
+  transicionou — duplo-clique/2 atendentes não mandam mais a pesquisa 2×.
+- **Corrida de criação não descarta mais a 1ª mensagem**: 23505 do
+  UNIQUE(telefone) → relê e segue com a linha do vencedor (antes
+  `registrarInbound` recebia null e a mensagem sumia).
+- **`/comunicacao/custo` paginado com `.order()`** (criado_em + id): range sem
+  ORDER BY duplicava/perdia linhas entre páginas.
+- **Programadas: PUT valida como o POST** (estado final linha+patch — teto de
+  500 telefones valia só na criação) e **reagendar única já disparada volta a
+  disparar** (trocar `quando` zera `ultimo_disparo`; recorrente NÃO zera, senão
+  dispararia 2× no mesmo dia).
+
+⚠️ Ficam da revisão (médios · ainda abertos): statuses órfãos write-only +
+status de outbound do CHAT descartado · mídia inbound em bucket público ·
+Realtime sem filtro por área (payload integral pra qualquer conversas≥1) ·
+`nao_lidas` read-modify-write · custo cego aos ~15 call sites fora da fila ·
+2 `is_default` possíveis em wa_numeros (e nada lê a tabela) · aba Conversas
+exige módulo `conversas` (matrizes editáveis separadamente) · badge do header
+gated por `conversas` navegando pra rota gated por `comunicacao` · dashboard
+sem "respostas recebidas". Lista completa com file:line na memória da sessão
+de 05/08 ("revisão da comunicação").
 
 ## ⚠️ Módulo de Comunicação (WhatsApp central) · handoff pro MATHEUS (2026-07-28)
 
