@@ -80,7 +80,16 @@ async function processarEvento(req) {
   }
 
   // Respeita o toggle global da IA
-  const { data: cfg } = await supabase.from('whatsapp_config').select('ia_ativa, institucional').eq('id', 1).maybeSingle();
+  // ⚠️⚠️ `ia_ativa === false` corta o webhook INTEIRO — inclusive o
+  // `registrarInbound`, ou seja a mensagem da pessoa não aparece na aba
+  // Conversas. É o freio de emergência, não o jeito de "calar o bot": pra isso
+  // existe `respostas_automaticas` (migration 20260812130000), lida em
+  // `processarMensagem`, que desliga só o que o bot RESPONDE e mantém o inbox
+  // recebendo.
+  const { data: cfg } = await supabase
+    .from('whatsapp_config')
+    .select('ia_ativa, institucional, respostas_automaticas')
+    .eq('id', 1).maybeSingle();
   if (cfg && cfg.ia_ativa === false) return;
 
   const entry = req.body?.entry || [];
@@ -405,6 +414,24 @@ async function processarMensagem(m, cfg, pnid = null) {
       phoneNumberId: pnid,
     }).catch(e => console.error('[whatsapp webhook] inbox in:', e.message));
     if (m.type !== 'text') return; // mídia: já no inbox; não custa LLM institucional
+
+    // ⚠️⚠️ SEM RESPOSTA AUTOMÁTICA (Matheus · 12/08/2026): *"não quero bot; o que
+    // a pessoa falar não deve abrir o menu. Será apenas atendimento humanizado
+    // por enquanto."* A mensagem JÁ está no inbox (logo acima) — daqui pra
+    // frente é gente que responde.
+    // ⚠️ O gate é AQUI e não no topo do webhook: `ia_ativa` faz `return` ANTES
+    // do `registrarInbound`, então usá-lo calaria o bot CEGANDO a aba Conversas.
+    // ⚠️ E é depois do `podeColetar`: o formulário de números de culto dos
+    // COORDENADORES é ferramenta de trabalho, não atendimento — não é o "bot"
+    // de que ele está falando.
+    if (cfg && cfg.respostas_automaticas === false) {
+      await supabase.from('whatsapp_coletas').insert({
+        whatsapp_message_id: messageId, telefone, raw_text: texto,
+        status: 'ignorado', erro: 'respostas_automaticas_desligadas',
+        modulo_destino: 'conversas',
+      }).catch(() => {});
+      return;
+    }
 
     // ── BOT DE TRIAGEM ── número realmente desconhecido (não-líder): o bot
     // pergunta o setor + nome, tria pra área e notifica a equipe. Substitui a

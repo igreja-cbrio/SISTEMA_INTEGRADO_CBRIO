@@ -253,8 +253,26 @@ router.get('/conversas/:id/perfil', authorizeModule('conversas', 1), async (req,
     const { data: conv } = await supabase.from('wa_conversas')
       .select('membro_id, telefone').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
     if (!conv) return res.status(404).json({ error: 'Conversa não encontrada' });
+
+    // ── DE QUAL DISPARO ELA VEIO (Matheus · 12/08/2026) ──────────────────
+    // Com o bot calado, quem responde é gente — e responder sem saber o que a
+    // igreja mandou antes é responder no escuro. Medido: 88 das 110 conversas
+    // (80%) têm um disparo que as explica.
+    // ⚠️ Best-effort e SEPARADO do resto: falha aqui não pode derrubar o perfil
+    // da pessoa. `origem_erro` diz que não deu pra ler — a tela não pode mostrar
+    // "não veio de disparo" quando a consulta falhou.
+    let origem = [];
+    let origemErro = null;
+    try {
+      const { disparosDoTelefone } = require('../services/whatsappOrigemConversa');
+      origem = await disparosDoTelefone(conv.telefone);
+    } catch (e) {
+      console.error('[wa-inbox] origem do disparo:', e.message);
+      origemErro = 'Não foi possível ler os disparos anteriores.';
+    }
+
     const mid = conv.membro_id;
-    if (!mid) return res.json({ membro: null, telefone: conv.telefone });
+    if (!mid) return res.json({ membro: null, telefone: conv.telefone, origem, origem_erro: origemErro });
 
     const { data: m } = await supabase.from('mem_membros')
       .select('id, nome, foto_url, telefone, email, data_nascimento, status, batizado')
@@ -304,6 +322,8 @@ router.get('/conversas/:id/perfil', authorizeModule('conversas', 1), async (req,
       serve: ministerios.length > 0,
       ministerios,
       fez_next: fezNext,
+      origem,
+      origem_erro: origemErro,
     });
   } catch (e) {
     console.error('[wa-inbox] perfil:', e.message);
