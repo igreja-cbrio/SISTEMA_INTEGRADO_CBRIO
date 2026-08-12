@@ -132,15 +132,21 @@ router.get('/eventos', async (req, res) => {
       }));
 
     // Batismo não é uma linha em `events` — a data é calculada (próximo 4º
-    // domingo, mesma régua do formulário público de inscrição).
-    lista.push({
-      id: 'batismo',
-      nome: 'Batismo',
-      data: proximoQuartoDomingoISO(),
-      local: null,
-      categoria: 'Batismo',
-      categoria_cor: null,
-    });
+    // domingo, mesma régua do formulário público de inscrição). Mas pode
+    // TAMBÉM existir um evento "Batismo" cadastrado manualmente no módulo
+    // Eventos pra essa mesma data — sem essa checagem ele apareceria 2x.
+    const dataBatismo = proximoQuartoDomingoISO();
+    const jaTemBatismoNaLista = lista.some((e) => e.data === dataBatismo && /batismo/i.test(e.nome));
+    if (!jaTemBatismoNaLista) {
+      lista.push({
+        id: 'batismo',
+        nome: 'Batismo',
+        data: dataBatismo,
+        local: null,
+        categoria: 'Batismo',
+        categoria_cor: null,
+      });
+    }
     lista.sort((a, b) => a.data.localeCompare(b.data));
 
     res.json(lista.slice(0, 10));
