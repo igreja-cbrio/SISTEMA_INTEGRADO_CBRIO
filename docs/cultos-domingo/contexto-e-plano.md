@@ -832,3 +832,42 @@ chave só significa refazer a migration.
 Matheus, o alinhamento da Fase 0 entre as duas frentes (as duas sessões acabaram
 de escrever no MESMO arquivo em paralelo — a prova de que a Fase 0 não é
 formalidade), e a correção das 84 escalas no **Planning Center**, que não é código.
+
+---
+
+## 13 · ESTRATÉGIA DE EXECUÇÃO — aprovada pelo Marcos Paulo em 12/08 ("modo piloto")
+
+> Registrado pela sessão do Marcos Paulo. Ele decidiu **antecipar a implementação
+> inteira** para não "mudar tudo e testar no mesmo dia": tudo vai ao ar esta
+> semana, a parte VISÍVEL fica atrás de um véu que só ele e o Matheus enxergam,
+> os dois testam com dados reais, e no dia 24 o destrave é um flip — não um
+> deploy. **Divisão revista por decisão dele (12/08): a sessão do Claude
+> implementa TODOS os lotes, inclusive os 4 arquivos do dash, em PRs pequenos e
+> sequenciais** — Matheus acompanha por aqui e pelos PRs; qualquer objeção dele
+> tem prioridade (este arquivo continua sendo o canal).
+
+### 13.1 As três camadas (o que fica onde)
+
+| Camada | Tratamento | Por quê |
+|---|---|---|
+| **Fixes da Fase 1** (régua voluntariado + 'Domingo 09%', totem Kids, guards, isSedeCulto) | **Abertos, sem véu** | São invisíveis por natureza — não mudam nada enquanto o tipo 09:30 não existe. Véu aqui só criaria o risco de esquecer de destravar (e régua em view SQL nem tem como ser gateada por usuário). |
+| **UI nova** (seletores de lente, agrupamento, ocupação ofertada, marca de 24/08) | **Atrás do véu**: flag no banco (default OFF); com OFF, só super-admin (`is_super_admin()`) vê | Testável com dado real de domingo (17/08) sem ninguém mais ver. No dia 24: **1 UPDATE** liga pra todos — zero deploy de domingo. Rollback = desligar. |
+| **Dado do corte** (tipo 09:30, is_active=false nos 2, 72 cultos, fin_culto_slots, batismo_horarios, whatsapp_config) | **Script ÚNICO ensaiado** (dry-run + backups + invariantes §4.2), executado em 24/08 | Dado não tem permissão: o tipo novo aparece pra todo mundo assim que existe (a régua `< 14:00` o absorve sozinha). O dia 24 continua sendo o interruptor — mas vira "rodar 1 script revisado", não "escrever coisas". |
+
+### 13.2 Cronograma revisto
+
+| Quando | O quê |
+|---|---|
+| 12–15/08 | Lotes no ar: (1) bebês 09:30 · (2) Fase 1 fixes abertos · (3) migration aditiva (vigência + **2 chaves**: `linhagem_key` E `consolidacao_key` — ver §12.4) + flag do véu · (4) lentes + ocupação atrás do véu |
+| Dom 17/08 | **Ensaio geral**: Marcos + Matheus testam lentes/ocupação com os dados reais do domingo, atrás do véu. Limite honesto: consolidação e ocupação testam por completo (usam histórico); a lente continuidade só diverge da separada com dado pós-corte |
+| 18–20/08 | Correções do ensaio · ok do financeiro (D2 · fallback = contas do 10:00) · script do corte escrito, revisado, dry-run |
+| 23/08 (pós-cerimônia) | `batismo_horarios` (fechar 08:30/10:00 · abrir 09:30 e 11:30, limite 11, rótulo sem ordinais) + hora dos planos no PCO |
+| 24/08 | Rodar o script + **ligar a flag** + invariantes §4.2 |
+| 25–29/08 | OTA do CBRio-Staff · PR cosmético (§5 F4.2) |
+| 30/08 | Verificação de campo §4.3 (o que nenhum ensaio cobre: totem no buraco 10:30–11:00, continuidade com dado novo) |
+
+### 13.3 O que o ensaio de 17/08 NÃO cobre (fica pro dia 30)
+
+Lente continuidade divergindo (precisa de dado do 09:30) · totem Kids em sessão
+real de 09:30 · sync do PCO pós-mudança de hora · fluxo financeiro do slot novo.
+A verificação de campo do §4.3 permanece obrigatória.
