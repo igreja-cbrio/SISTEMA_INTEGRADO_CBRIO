@@ -275,6 +275,79 @@ const TEXTOS_FALLBACK = {
   aviso_optin: AVISO_OPTIN,
 };
 
+/**
+ * Como o valor é apresentado antes de a pessoa preencher: as formas REAIS deste
+ * evento, não uma frase fixa. Dizer "Pix, cartão ou boleto" num evento que só
+ * aceita Pix é a tela prometendo o que o servidor vai recusar.
+ */
+function rotuloMetodos(evento: any): string {
+  const m: string[] = Array.isArray(evento?.pagamento_metodos) ? evento.pagamento_metodos : [];
+  const nomes: string[] = [];
+  if (m.includes('pix')) nomes.push('Pix');
+  if (m.includes('cartao')) {
+    nomes.push(`cartão${evento?.parcelas_max > 1 ? ` (em até ${evento.parcelas_max}x)` : ''}`);
+  }
+  if (m.includes('boleto')) nomes.push('boleto');
+  if (!nomes.length) return 'Pagamento online.';
+  const lista = nomes.length === 1 ? nomes[0] : `${nomes.slice(0, -1).join(', ')} ou ${nomes[nomes.length - 1]}`;
+  return `Pagamento por ${lista}.`;
+}
+
+/**
+ * A escolha da forma ANTES do formulário, quando o cartão foi terceirizado.
+ *
+ * ⚠️ Os dois caminhos são HONESTOS sobre o que acontece: "continua aqui" x "vai
+ * para outro site". Botão que muda de site sem avisar é como a pessoa desiste no
+ * meio — ela acha que errou o clique.
+ *
+ * ⚠️ `exclusivo` (não sobrou forma nossa) mostra UM botão só: perguntar entre
+ * uma alternativa é atrito puro, e a resposta seria sempre a mesma.
+ */
+function EscolhaPagamento({ C, evento, onProprio }: { C: any; evento: any; onProprio: () => void }) {
+  const ext = evento.checkout_externo;
+  const so = !!ext?.exclusivo;
+  const btn = (destaque: boolean) => ({
+    display: 'block', width: '100%', textAlign: 'left' as const, cursor: 'pointer',
+    padding: '14px 16px', borderRadius: 14, marginTop: 10,
+    background: destaque ? '#00B39D14' : C.card,
+    border: `1px solid ${destaque ? '#00B39D55' : C.cardBorder}`,
+    color: C.text, font: 'inherit',
+  });
+  return (
+    <div style={{ padding: '4px 0 8px' }}>
+      <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>Como você quer pagar?</div>
+      <p style={{ fontSize: 13, color: C.text3, marginTop: 4, lineHeight: 1.5 }}>
+        {so
+          ? `A inscrição deste evento é feita pelo ${ext.nome}.`
+          : 'A forma muda o lugar onde você preenche a inscrição — por isso a gente pergunta antes.'}
+      </p>
+
+      {!so && (
+        <button type="button" onClick={onProprio} style={btn(true)}>
+          <div style={{ fontSize: 15, fontWeight: 700 }}>Pix</div>
+          <div style={{ fontSize: 12.5, color: C.text3, marginTop: 2 }}>
+            Você preenche a inscrição aqui e recebe o QR Code na hora.
+          </div>
+        </button>
+      )}
+
+      {/* ⚠️ Link de verdade (`<a>`), não window.open: o navegador mostra o
+          destino no toque longo, e bloqueador de pop-up não engole a navegação.
+          `rel="noopener"` porque a outra página não pode mexer nesta. */}
+      <a href={ext.url} target="_blank" rel="noopener noreferrer" style={{ ...btn(so), textDecoration: 'none' }}>
+        <div style={{ fontSize: 15, fontWeight: 700 }}>Cartão de crédito</div>
+        <div style={{ fontSize: 12.5, color: C.text3, marginTop: 2 }}>
+          Sua inscrição é feita no {ext.nome} — você sai desta página e preenche por lá.
+        </div>
+      </a>
+
+      <p style={{ fontSize: 11.5, color: C.text3, marginTop: 12, lineHeight: 1.5 }}>
+        Quem se inscreve pelo {ext.nome} recebe a confirmação por lá.
+      </p>
+    </div>
+  );
+}
+
 export default function EventoExterno() {
   const { slug = '' } = useParams();
   const navigate = useNavigate();
@@ -296,6 +369,11 @@ export default function EventoExterno() {
   const [website, setWebsite] = useState('');
   const [erro, setErro] = useState('');
   const [enviando, setEnviando] = useState(false);
+  // Forma escolhida ANTES do formulário, quando o cartão é cobrado por uma
+  // plataforma externa (e-Inscrição). null = ainda não escolheu · 'proprio' =
+  // escolheu pagar por aqui (o formulário abre). Quem escolhe cartão sai da
+  // página, então não há um terceiro estado.
+  const [formaPropria, setFormaPropria] = useState(false);
   const [subindoImg, setSubindoImg] = useState(0);
   const [resultado, setResultado] = useState<{ numero: number | null; jaInscrito?: boolean; temSorteio?: boolean; comprovanteToken?: string | null; isento?: boolean } | null>(null);
   const marcarBusy = (b: boolean) => setSubindoImg(n => Math.max(0, n + (b ? 1 : -1)));
@@ -461,6 +539,17 @@ export default function EventoExterno() {
             </div>
           ) : (evento.inscricoes_encerradas ?? !evento.form_ativo) ? (
             <p style={{ textAlign: 'center', color: C.text3, fontSize: 14, padding: '20px 0' }}>{evento.aviso || 'As inscrições deste evento estão encerradas.'}</p>
+          ) : evento.checkout_externo && !formaPropria ? (
+            /* ⚠️ A PERGUNTA VEM ANTES DO FORMULÁRIO (pedido do Matheus · 11/08):
+               quem vai pagar no cartão se inscreve na OUTRA plataforma, então
+               pedir CPF, nascimento e endereço aqui seria coletar dado de gente
+               que não vai se inscrever aqui — e ainda deixaria a pessoa preencher
+               tudo pra só no fim descobrir que precisa recomeçar lá fora. */
+            <EscolhaPagamento
+              C={C}
+              evento={evento}
+              onProprio={() => setFormaPropria(true)}
+            />
           ) : (
             <form onSubmit={enviar}>
               {/* Vagas limitadas: mostrar ANTES de preencher. A conferência que
@@ -490,7 +579,7 @@ export default function EventoExterno() {
                     {(evento.valor_centavos / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                   </div>
                   <div style={{ fontSize: 12, color: C.text3, marginTop: 4 }}>
-                    Pagamento por Pix, cartão{evento.parcelas_max > 1 ? ` (em até ${evento.parcelas_max}x)` : ''} ou boleto.
+                    {rotuloMetodos(evento)}
                     {' '}Ao enviar, você vai para a página de pagamento.
                   </div>
                   {evento.pagamento_expira_horas > 0 && (

@@ -26,14 +26,16 @@ function traduz(r) {
 }
 
 // Envia texto simples. Retorna { ok, message_id?, error? }.
-async function enviarTexto(telefone, texto) {
-  return traduz(await waSender.sendText(telefone, texto));
+// opts.phoneNumberId (multi-número): responde pelo número que RECEBEU a
+// mensagem — sem ele, tudo sai pelo número default da env.
+async function enviarTexto(telefone, texto, opts = {}) {
+  return traduz(await waSender.sendText(telefone, texto, opts));
 }
 
 // Envia TEMPLATE aprovado. Retorna { ok, message_id?, error? }.
-async function enviarTemplate(telefone, templateName, language, params = []) {
+async function enviarTemplate(telefone, templateName, language, params = [], opts = {}) {
   if (!templateName) return { ok: false, error: 'template_nao_configurado' };
-  return traduz(await waSender.sendTemplate(telefone, templateName, language, params));
+  return traduz(await waSender.sendTemplate(telefone, templateName, language, params, opts));
 }
 
 module.exports = { enviarTexto, enviarTemplate, normalizarTelefone, isConfigured };

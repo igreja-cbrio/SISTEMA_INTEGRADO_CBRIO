@@ -111,6 +111,94 @@ function tabelaAusente(error) {
   return /mem_identidade_(observacoes|pares)|schema cache|does not exist/i.test(error?.message || '');
 }
 
+// nomeMaisCompleto · decide se o nome DECLARADO numa porta deve substituir o
+// nome do cadastro (decisão do Marcos 2026-08-11, caso Thiago Nogueira ×
+// "Thiago dos Santos Nogueira": "os nomes devem ser juntados e o mais completo
+// deve ser mantido"). Regra conservadora: só promove quando o nome atual é uma
+// VERSÃO ABREVIADA do declarado — todos os tokens do atual aparecem no
+// declarado, NA MESMA ORDEM (subsequência), e o declarado acrescenta algo.
+// Nunca troca token por token ("Maria Silva" × "Maria Souza" → null), nunca
+// encurta, nunca reordena. Token de 1 letra no atual casa com token que começa
+// por ela ("Ana P" → "Ana Paula"). Devolve o nome a gravar ou null.
+const CONECTIVOS_NOME = new Set(['de', 'da', 'do', 'das', 'dos', 'e']);
+
+// Nome digitado todo em minúsculas ganha capitalização simples (conectivos
+// ficam minúsculos). Misto e CAIXA ALTA ficam como a pessoa digitou — a base
+// tem os dois estilos e "corrigir" caixa alta seria reescrever metade dela.
+function _capitalizarSeMinusculo(nome) {
+  if (nome !== nome.toLowerCase()) return nome;
+  return nome.split(' ')
+    .map((t, i) => ((i > 0 && CONECTIVOS_NOME.has(t)) ? t : t.charAt(0).toUpperCase() + t.slice(1)))
+    .join(' ');
+}
+
+function nomeMaisCompleto(nomeAtual, nomeDeclarado) {
+  const declarado = String(nomeDeclarado || '').replace(/\s+/g, ' ').trim();
+  if (!declarado || declarado.length > 250) return null;
+  if (/^contribuinte\b/i.test(declarado)) return null;   // placeholder do financeiro não é nome
+  if (declarado.includes('@')) return null;               // e-mail no campo de nome não é nome
+  const declNorm = nomeNormalizado(declarado);
+  const tDecl = declNorm.split(' ').filter(Boolean);
+  if (tDecl.length < 2) return null;                       // 1 token não é nome completo
+  // Token repetido (fora conectivo) = concatenação suja de formulário
+  // ("Carlos Goncalves Silva Junior Carlos Junior", caso real de 11/08) —
+  // nome de gente não repete sobrenome; isso nunca substitui um nome limpo.
+  const naoConectivos = tDecl.filter((t) => !CONECTIVOS_NOME.has(t));
+  if (new Set(naoConectivos).size !== naoConectivos.length) return null;
+
+  const atualNorm = nomeNormalizado(nomeAtual);
+  if (!atualNorm || atualNorm === 'sem nome') return declarado; // cadastro sem nome real adota
+  if (atualNorm === declNorm) return null;                 // mesmo nome (caixa/acento) — não mexe
+
+  const tAtual = atualNorm.split(' ').filter(Boolean);
+  if (tDecl.length < tAtual.length) return null;           // declarado mais curto nunca vence
+
+  // subsequência: cada token do atual precisa aparecer no declarado, em ordem
+  let i = 0;
+  let expandiuInicial = false;
+  for (const tok of tDecl) {
+    if (i >= tAtual.length) break;
+    if (tok === tAtual[i]) { i += 1; continue; }
+    if (tAtual[i].length === 1 && tok.startsWith(tAtual[i])) {
+      expandiuInicial = true;
+      i += 1;
+    }
+  }
+  if (i !== tAtual.length) return null;                    // algum token do atual não está no declarado
+  if (tDecl.length === tAtual.length && !expandiuInicial) return null; // nada foi acrescentado
+  return _capitalizarSeMinusculo(declarado);
+}
+
+// _promoverNomeSeMaisCompleto · roda a cada observação de identidade LIGADA a
+// um membro (todas as portas passam por aqui — matcher guardado e read-only).
+// Best-effort: falha nunca derruba a porta. O UPDATE leva .eq('nome', atual)
+// contra corrida (padrão do #2257) e o profiles.name ligado ao membro é
+// sincronizado pela MESMA régua (precedente: gatilho do auth corrige os dois —
+// nome novo só na membresia deixaria o app/ERP mostrando o antigo).
+async function _promoverNomeSeMaisCompleto(membroId, nomeDeclarado, origem) {
+  if (!membroId || !nomeDeclarado) return;
+  try {
+    const { data: mem } = await supabase.from('mem_membros')
+      .select('id, nome').eq('id', membroId).is('deleted_at', null).maybeSingle();
+    if (!mem) return;
+    const novo = nomeMaisCompleto(mem.nome, nomeDeclarado);
+    if (!novo) return;
+    const { error } = await supabase.from('mem_membros')
+      .update({ nome: novo }).eq('id', mem.id).eq('nome', mem.nome);
+    if (error) return;
+    console.log(`[identidade] nome promovido via ${origem}: "${mem.nome}" -> "${novo}" (${mem.id})`);
+    const { data: profs } = await supabase.from('profiles')
+      .select('id, name').eq('membro_id', mem.id).limit(5);
+    for (const p of profs || []) {
+      if (nomeMaisCompleto(p.name, novo)) {
+        await supabase.from('profiles').update({ name: novo }).eq('id', p.id).eq('name', p.name);
+      }
+    }
+  } catch (e) {
+    console.warn('[identidade] promoção de nome falhou:', e.message);
+  }
+}
+
 async function registrarObservacaoIdentidade({
   membroId = null, origem = 'cadastro', origemId = null,
   nome, cpf, telefone, email, dataNascimento, dados = {},
@@ -128,6 +216,10 @@ async function registrarObservacaoIdentidade({
     dados: dados && typeof dados === 'object' ? dados : {},
   };
   if (!obs.nome && !obs.cpf && !obs.telefone && !obs.email && !obs.data_nascimento) return null;
+
+  // Nome mais completo vence (2026-08-11) — antes da gravação da observação de
+  // propósito: a promoção não pode depender da tabela de observações existir.
+  await _promoverNomeSeMaisCompleto(obs.membro_id, obs.nome, obs.origem);
 
   let inserida;
   const gravacao = obs.origem_id
@@ -201,4 +293,5 @@ async function registrarObservacaoSegura(entrada) {
 module.exports = {
   cpfValido, normalizarCpf, normalizarTelefone, normalizarEmail, nomeNormalizado,
   similaridadeNome, pontuarPar, registrarObservacaoIdentidade, registrarObservacaoSegura,
+  nomeMaisCompleto,
 };

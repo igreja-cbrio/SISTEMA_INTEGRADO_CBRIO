@@ -2023,6 +2023,56 @@ que segue pendente:
   sexo/motivo/termos — os seletores #nome/#sobrenome estavam mortos); ⚠️ e2e
   não foi EXECUTADO nesta entrega (exige app rodando + cria inscrição real).
 
+## ⚠️ Comunicação · os 5 críticos da revisão de 05/08 corrigidos (2026-08-12 · migration `20260812150000`)
+
+Revisão profunda do módulo (05/08 · 3 agentes + verificação manual, achados com
+file:line) apontou 5 críticos; Marcos aprovou corrigir. O que mudou:
+
+1. **Leitura do módulo = nível 1** (`routes/comunicacao.js`): o `router.use`
+   usava `authorizeModule('comunicacao')` → default **2** do middleware, e
+   front/menu/RLS assumem leitura 1 — cargo com comunicacao=1 via as 9 abas em
+   403. Escritas seguem com guard próprio (3/4/5).
+2. **Aba Bot só aparece pra quem pode**: ela embute telas cujo backend exige
+   `whatsapp-admin` (= integracao OU grupos ≥3) — usuário com comunicacao=5 sem
+   isso via a aba inteira em 403. Fix é de EXIBIÇÃO (`podeBot` em
+   `Comunicacao.tsx`); ampliar o mapa `whatsapp-admin` no auth.js pra incluir
+   `comunicacao` é decisão pendente do Marcos (lei "parar e perguntar" de auth).
+3. **Deep-link `?telefone=&texto=` ressuscitado**: os redirects de `/conversas`,
+   `/admin/whatsapp` e `/admin/conversas-setores` viraram `RedirectComunicacao`
+   (App.tsx · preserva a query); `Conversas.tsx` remove SÓ telefone/texto (o
+   `setSearchParams({})` apagava o `?tab` e a página voltava pro dashboard);
+   `hrefConversa` (usado em ~13 telas) aponta direto pra
+   `/comunicacao?tab=conversas&…`; o link de transferência do waInbox idem.
+4. **Multi-número (preparo do CBZap)**: o webhook lê
+   `value.metadata.phone_number_id`. Número ≠ institucional → **`inboxDireto`**
+   (nada de opt-out/triagem/coleta/institucional — personas são do número do
+   bot; só pesquisa de satisfação, que é da CONVERSA, + inbox). A conversa
+   grava `wa_conversas.phone_number_id` (migration `20260812150000` ·
+   **best-effort/isolado** — o inbox funciona sem a coluna, lição do
+   parcelas_max) e TODAS as respostas do inbox (`routes/waInbox.js` nova/
+   responder/anexo/pesquisa) saem pelo número da conversa via
+   `opts.phoneNumberId`, que agora atravessa `whatsappService`/`whatsappSend` →
+   `waSender`. A pesquisa 0-5 virou função única `tratarPesquisaSatisfacao`
+   (publicWhatsapp.js), usada pelo bot E pelo multi-número. ⚠️ Payload sem
+   metadata conta como número do bot (comportamento histórico).
+5. **Kill-switch não engole mais mensagem** (`whatsappFila.js`): com CREDENCIAL
+   presente + `WHATSAPP_ENABLED` desligado, `enfileirar`/`enfileirarLote`
+   REGISTRAM como `pendente` (sai quando religar — o contrato documentado do
+   notificarMembro); sem credencial (dev/preview) segue não gravando nada, pra
+   ambiente sem WhatsApp não encher a fila que o cron DE PROD drenaria. E o
+   cron de agendamentos (`/comunicacao/cron/agendamentos`) só marca
+   `ultimo_disparo`/desativa único quando `queued > 0` (antes consumia o
+   disparo no vazio) + erro de consulta virou 500 (não mais `ok:true`).
+
+⚠️ Ficam da revisão (médios · não corrigidos ainda): programada única editada
+nunca re-dispara (`ultimo_disparo` fora da whitelist do PUT) · PUT de
+agendamento sem `validarAgendamento` · thread do chat capada nas 500 mais
+ANTIGAS · duplicata de conversa pelo 9º dígito · pesquisa 2× no duplo-clique
+Finalizar · 1ª mensagem perdida na corrida de criação · statuses órfãos
+write-only · mídia inbound em bucket público · Realtime sem filtro por área ·
+custo com ~15 call sites fora da fila. Lista completa com file:line na memória
+da sessão de 05/08 ("revisão da comunicação").
+
 ## ⚠️ Módulo de Comunicação (WhatsApp central) · handoff pro MATHEUS (2026-07-28)
 
 Decisão do Marcos (bloco C da revisão estrutural): fundir Conversas + Menu das
@@ -7442,6 +7492,98 @@ técnica da espinha) porque exige função SQL + migration, e o buraco de hoje *
 ~6 inscrições por cerimônia a janela é pequena; se um dia estourar por 1, é aqui
 que vira RPC com lock.
 
+## ⚠️ Identidade · o nome MAIS COMPLETO vence (2026-08-11 · SEM migration)
+
+Decisão do Marcos, no caso Thiago (candidatura de líder de 10/08): o matcher
+ligou o formulário "Thiago dos Santos Nogueira" ao cadastro existente "Thiago
+Nogueira" (stub do auth de 10/07 · match por CPF) — comportamento CORRETO, mas
+o nome declarado pela própria pessoa era descartado e o sistema mostrava um
+nome no pedido e outro na membresia. *"Ele não pode mostrar um nome em um lugar
+e outro em outro lugar — os nomes devem ser juntados e o mais completo deve ser
+mantido."*
+
+- **`nomeMaisCompleto(atual, declarado)`** em `services/identidadeProgressiva.js`
+  — regra conservadora: promove SÓ quando o atual é subsequência (mesma ordem)
+  dos tokens do declarado e o declarado acrescenta algo. Nunca troca token
+  ("Maria Silva" × "Maria Souza" → null), nunca encurta, nunca reordena;
+  inicial de 1 letra expande ("Ana P" → "Ana Paula"); placeholder
+  "Contribuinte…" e e-mail no campo de nome nunca viram nome. Contrato em
+  `nomeMaisCompleto.test.js` (**no gate de deploy** · `test:nome-completo`),
+  mutation-testado: containment de conjunto (aceitaria reordenação) e
+  containment parcial (derrubaria token) deixam vermelho.
+- **Roda em `registrarObservacaoIdentidade`** — o ponto que TODAS as portas
+  atravessam quando ligam num membro (o `_observar` do matcher guardado E o
+  `registrarObservacaoSegura` das portas read-only). Best-effort, ANTES da
+  gravação da observação (não depende da tabela existir), com `.eq('nome',
+  atual)` contra corrida (padrão #2257). Sincroniza `profiles.name` ligado ao
+  membro pela MESMA régua (precedente do gatilho do auth: nome só na membresia
+  deixa o app mostrando o antigo).
+- **O passado**: `backend/scripts/_reparo_nomes_mais_completos.cjs` (dry-run /
+  `--exec` · backup em Downloads) varre observações de identidade + pedidos de
+  grupo + candidaturas de líder e aplica a régua em cadeia (a mais completa de
+  todas vence).
+- ⚠️ **A aba de Entrada segue exibindo o nome DIGITADO no pedido**
+  (`insc.nome`), não o cadastro resolvido — Marcos decidiu NÃO mexer na tela;
+  com a promoção do nome os dois convergem no caso comum.
+
+## Grupos · faxina de vínculos abertos em grupo INATIVO + cartão da ficha (2026-08-11 · SEM migration)
+
+Caso Eliandra: 4 vínculos abertos ao mesmo tempo, 3 em grupos `ativo=false` —
+cada tela mostrava um grupo diferente e nenhum era onde ela está. Medido:
+**1.443 vínculos abertos · 375 em grupo inativo · 257 pessoas com 2+ abertos**.
+
+- **`backend/scripts/_faxina_vinculos_grupos_inativos.cjs`** (dry-run/`--exec` ·
+  backup em Downloads): fecha (`saiu_em` + `motivo_saida`) os vínculos abertos
+  de grupos inativos/deletados, com `.is('saiu_em', null)` de guarda. ⚠️ NÃO
+  toca nos vínculos em grupos ATIVOS de temporada encerrada (os ~402 do
+  handoff de 04/08 — decisão ainda aberta) nem em `mem_grupos.lider_id`.
+- **Cartão "grupo de conexão atual" da ficha** (`membresia.js` ×2): o
+  `.maybeSingle()` sem limit ERRAVA ("multiple rows") pra quem tem 2+ vínculos
+  abertos, e sem filtro de grupo mostrava grupo morto. Agora
+  `mem_grupos!inner` + `ativo=true` + `deleted_at null` + mais recente
+  (`order entrou_em desc · limit 1`).
+- ⚠️ Régua de leitura que fica: vínculo aberto NÃO significa grupo vivo —
+  qualquer tela que derive "o grupo da pessoa" precisa filtrar
+  `mem_grupos.ativo` ou aceitar mostrar grupo encerrado.
+
+## ⚠️⚠️ Dashboard Semanal · a presença do NEXT vinha da camada MORTA (2026-08-11 · migration `20260811150000`)
+
+Pedido do Matheus na aba NEXT: *"a presença do next seja inputada de forma
+automática aqui, a partir da presença das pessoas."*
+
+**O automático existia e lia a camada APOSENTADA.** `next-presenca-mensal`
+(`dashboardSemanal.js`) contava `next_inscricoes.check_in_at` com o mês de
+`next_eventos` — o modelo anterior ao cutover de turmas (17/06/2026). Medido:
+
+| camada | última data com presença |
+|---|---|
+| `next_inscricoes.check_in_at` (a que o painel lia) | **2026-04** |
+| `next_presencas` (a chamada real · matrícula × encontro) | **2026-08** |
+
+Daí mai/2026 em diante nascer "sem dado" e jun/jul terem sido **digitados na
+mão**. É a MESMA doença do #2288 (que consertou as rotas `/next/*` do app) e da
+Edge Function `notify-lembretes`: consumidor apontado pra camada morta.
+
+- **`vw_next_presenca_mes`** conta **PESSOAS distintas** por mês do ENCONTRO.
+- ⚠️⚠️ **O histórico DIMINUI e está certo**: o legado contava **LINHAS**
+  (participações — a mesma pessoa nos 2 encontros do mês contava 2) e a pergunta
+  do card é quantas PESSOAS estiveram. set/2025 eram **44 linhas de 31 pessoas**.
+  Quem comparar com print antigo vai achar que sumiu dado; não sumiu.
+- ⚠️ **Medido ANTES de escrever**: a união com a camada legada é **idêntica** à
+  view em todos os meses (o backfill da `20260729190000` já subiu o legado) —
+  ler só da view não perde histórico nenhum. Sem essa medição, o desenho natural
+  seria um `UNION` que traria dupla contagem de volta.
+- ⚠️ **Matrícula soft-deletada fica FORA** (a equipe apaga duplicata/teste) e a
+  identidade é `membro_id` com fallback na matrícula (151 de 1.998 sem membro):
+  sem chave, contar 2 é menos grave que fundir gente diferente.
+- ⚠️ **Falha de consulta NÃO vira zero**: devolve `aviso` e a aba mostra faixa
+  âmbar. "Ninguém foi ao NEXT" é a leitura errada de uma query que falhou.
+- ⚠️ **O ajuste MANUAL continua vencendo o automático** — e agora a tela mostra a
+  chamada AO LADO dele, senão o manual vira número que ninguém revisita.
+  jul/2026: manual 35 × chamada 34. **jun/2026: manual 66 × chamada 24** — lista
+  contada à mão que nunca virou chamada no sistema; o manual dele FICA.
+- ⚠️ `next_presencas` tem `presente boolean` e hoje **0 linhas com false** — o
+  filtro está lá pela semântica, não porque haja ausente gravado.
 ## ⚠️⚠️ O SINO DE GRUPO no app do membro (2026-08-11 · migration `20260811150000`)
 
 Autorizado pelo Marcos (item 3 dos 16 apontamentos): *"pode ligar claude"*.
