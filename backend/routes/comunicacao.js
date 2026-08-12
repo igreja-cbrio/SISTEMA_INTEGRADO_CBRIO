@@ -97,7 +97,20 @@ router.get('/cron/agendamentos', requireCron, async (req, res, next) => {
         resultados.push({ id: a.id, erro: 'falha_no_agendamento', request_id: req.requestId });
       }
     }
-    res.json({ ok: true, disparados, resultados });
+    // Faxina diária da mídia do inbox (retenção · decisão do Marcos 12/08:
+    // "acaba vindo muito lixo"). Pega carona neste cron HORÁRIO de propósito —
+    // o vercel.json já tem 45 crons e slot novo é risco (lição dos pagamentos).
+    // Roda 1×/dia na janela das 4h BRT (o cron dispara a cada hora no :05).
+    let faxina_midia = null;
+    if (horaAtual === 4) {
+      faxina_midia = await require('../services/waInbox').limparMidiasAntigas()
+        .catch((e) => ({ ok: false, erro: e.message }));
+      if (faxina_midia && faxina_midia.ok === false) {
+        console.error('[comunicacao] faxina de mídia:', faxina_midia.erro);
+      }
+    }
+
+    res.json({ ok: true, disparados, resultados, ...(faxina_midia ? { faxina_midia } : {}) });
   } catch (e) {
     console.error('[comunicacao] cron agendamentos:', e.message);
     next(communicationError(e, 'Erro no cron de agendamentos.'));

@@ -136,17 +136,99 @@ async function acharOuCriarConversa(telefone, phoneNumberId = null) {
   return data;
 }
 
-// Sobe um buffer de mídia pro bucket público wa-inbox e devolve a URL pública.
+function extDaMidia(mime, filename) {
+  let ext = ((mime || '').split(';')[0].split('/')[1] || 'bin').replace('jpeg', 'jpg');
+  if (filename && filename.includes('.')) ext = filename.split('.').pop().toLowerCase().slice(0, 8);
+  return ext;
+}
+
+// Sobe um buffer de mídia pro bucket PÚBLICO wa-inbox e devolve a URL pública.
+// Uso: OUTBOUND (anexo que o time envia) — público DE PROPÓSITO: a Meta busca
+// o arquivo pelo link no envio. Mídia RECEBIDA vai no privado (abaixo).
 async function subirMedia({ buffer, mime, conversaId, origem = 'in', filename }) {
   try {
-    let ext = ((mime || '').split(';')[0].split('/')[1] || 'bin').replace('jpeg', 'jpg');
-    if (filename && filename.includes('.')) ext = filename.split('.').pop().toLowerCase().slice(0, 8);
+    const ext = extDaMidia(mime, filename);
     const path = `${conversaId}/${origem}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
     const { error } = await supabase.storage.from('wa-inbox')
       .upload(path, buffer, { contentType: mime || 'application/octet-stream', upsert: true });
     if (error) { console.error('[waInbox] upload media:', error.message); return null; }
     return supabase.storage.from('wa-inbox').getPublicUrl(path).data.publicUrl;
   } catch (e) { console.error('[waInbox] subirMedia:', e.message); return null; }
+}
+
+// Mídia RECEBIDA (foto/documento que o MEMBRO manda — conteúdo potencialmente
+// sensível) vai pro bucket PRIVADO e a mensagem guarda o PATH, não URL: a
+// thread assina por 15 min na leitura (rota /conversas/:id/mensagens). Bucket
+// ausente (migration 20260812190000 ainda não aplicada) → cai no público, que
+// é o comportamento histórico — nada quebra no deploy em 2 etapas.
+async function subirMediaPrivada({ buffer, mime, conversaId, filename }) {
+  try {
+    const ext = extDaMidia(mime, filename);
+    const path = `${conversaId}/in-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+    const { error } = await supabase.storage.from('wa-inbox-privado')
+      .upload(path, buffer, { contentType: mime || 'application/octet-stream', upsert: true });
+    if (!error) return path;
+    console.warn('[waInbox] bucket privado indisponível (%s) — usando o público', error.message);
+  } catch (e) { console.warn('[waInbox] subirMediaPrivada:', e.message); }
+  return subirMedia({ buffer, mime, conversaId, origem: 'in', filename });
+}
+
+// ── Retenção de mídia (decisão do Marcos · 12/08: "acaba vindo muito lixo") ──
+// Apaga do storage os anexos com mais de N dias (default 90 · env
+// WA_INBOX_MEDIA_RETENCAO_DIAS · 0 desliga) e zera o ponteiro da mensagem —
+// o TEXTO da conversa fica pra sempre; o que expira é o ARQUIVO. A thread
+// mostra "[image]/[document]" no lugar (degradação já existente do front).
+// Ordem: arquivo primeiro, ponteiro depois (morrer no meio deixa ponteiro
+// pra arquivo morto, que a assinatura já trata como nulo — o inverso
+// deixaria arquivo órfão pra sempre). Efeito gravado em BLOCOS (lei 04/08).
+const RETENCAO_MIDIA_DIAS = parseInt(process.env.WA_INBOX_MEDIA_RETENCAO_DIAS || '90', 10);
+
+function pathDoBucketPublico(url) {
+  const marca = '/storage/v1/object/public/wa-inbox/';
+  const i = String(url || '').indexOf(marca);
+  return i === -1 ? null : decodeURIComponent(String(url).slice(i + marca.length));
+}
+
+async function limparMidiasAntigas({ limite = 400 } = {}) {
+  if (!Number.isFinite(RETENCAO_MIDIA_DIAS) || RETENCAO_MIDIA_DIAS < 1) {
+    return { ok: true, pulado: 'retencao_desligada' };
+  }
+  const corte = new Date(Date.now() - RETENCAO_MIDIA_DIAS * 86400000).toISOString();
+  const { data: msgs, error } = await supabase.from('wa_mensagens')
+    .select('id, media_url')
+    .not('media_url', 'is', null)
+    .lt('criado_em', corte)
+    .order('criado_em', { ascending: true })
+    .limit(limite);
+  if (error) return { ok: false, erro: error.message };
+
+  let arquivos = 0, ponteiros = 0;
+  const lote = 100;
+  for (let i = 0; i < (msgs || []).length; i += lote) {
+    const fatia = msgs.slice(i, i + lote);
+    const privados = [];
+    const publicos = [];
+    for (const m of fatia) {
+      const u = String(m.media_url);
+      if (!/^https?:\/\//i.test(u)) privados.push(u);
+      else {
+        const p = pathDoBucketPublico(u);
+        if (p) publicos.push(p);
+      }
+    }
+    if (privados.length) {
+      const { error: e1 } = await supabase.storage.from('wa-inbox-privado').remove(privados);
+      if (!e1) arquivos += privados.length; else console.warn('[waInbox] retenção (privado):', e1.message);
+    }
+    if (publicos.length) {
+      const { error: e2 } = await supabase.storage.from('wa-inbox').remove(publicos);
+      if (!e2) arquivos += publicos.length; else console.warn('[waInbox] retenção (público):', e2.message);
+    }
+    const { error: e3 } = await supabase.from('wa_mensagens')
+      .update({ media_url: null }).in('id', fatia.map(m => m.id));
+    if (!e3) ponteiros += fatia.length; else console.warn('[waInbox] retenção (ponteiro):', e3.message);
+  }
+  return { ok: true, retencao_dias: RETENCAO_MIDIA_DIAS, candidatas: (msgs || []).length, arquivos, ponteiros };
 }
 
 // Mensagem que CHEGOU (do contato). Marca não-lida, reabre e abre a janela de 24h.
@@ -161,8 +243,9 @@ async function registrarInbound({ telefone, texto, tipo = 'text', messageId, med
   if (mediaId && ins.data?.id && ['image', 'document', 'audio'].includes(tipo)) {
     const media = await wpp.baixarMedia(mediaId);
     if (media?.buffer) {
-      const url = await subirMedia({ buffer: media.buffer, mime: media.mime, conversaId: c.id, origem: 'in' });
-      if (url) await supabase.from('wa_mensagens').update({ media_url: url }).eq('id', ins.data.id);
+      // Recebida → bucket PRIVADO (guarda o PATH; a thread assina na leitura).
+      const ref = await subirMediaPrivada({ buffer: media.buffer, mime: media.mime, conversaId: c.id });
+      if (ref) await supabase.from('wa_mensagens').update({ media_url: ref }).eq('id', ins.data.id);
     }
   }
   const previa = (texto || (tipo === 'image' ? '[imagem]' : tipo === 'audio' ? '[áudio]' : tipo === 'document' ? '[documento]' : '[mídia]')).slice(0, 140);
@@ -190,6 +273,8 @@ async function registrarOutbound({ telefone, texto, tipo = 'text', autorId = nul
 
 module.exports = {
   registrarInbound, registrarOutbound, acharOuCriarConversa, subirMedia,
+  limparMidiasAntigas,
   dentroJanela24h, JANELA_24H_MS, soDigitos,
   mesmoNumeroBR, // pura · exportada pro teste (decide se 2 formas = 1 conversa)
+  pathDoBucketPublico, // pura · exportada pro teste (retenção do bucket público)
 };
