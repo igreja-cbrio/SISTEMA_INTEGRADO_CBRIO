@@ -3668,6 +3668,81 @@ pessoa de grupo, **sem autorização do líder**.
   confirmação de aprovado enfileirada na `whatsapp_envios` pra quem tem opt-in —
   Rafaela ficou de fora por `whatsapp_optin=false`).
 
+## ⚠️ Grupos · link de aprovação 7d → 30d + PRORROGAÇÃO dos já entregues (2026-08-12 · SEM migration)
+
+Pedido da Natasha: *"o link de aprovação de pessoas em grupos fique válido por
+mais de 7 dias, os líderes estão aprendendo e alguns deixaram muito tempo sem
+aprovar; revalide o link novamente e renove ele até o fim do mês."*
+
+**Medido em produção antes de mexer (12/08): dos 90 pedidos pendentes, 51 (57%)
+já tinham passado dos 7 dias** — ou seja, o link mais cobrado era exatamente o
+que não abria mais. 35 líderes, 36 grupos, **0 com opt-out**, 0 líder sem
+telefone (1 pedido em grupo sem `lider_id`: JOVENS - GRUPO DE JIU-JITSU). O TTL
+de 7 dias briga com o próprio fluxo que a casa adotou em 29/07 (o template v2
+manda o líder **LIGAR** pra pessoa antes de aceitar).
+
+### ⚠️⚠️ O `exp` vive DENTRO do token assinado — subir o TTL não revalida nada
+
+Essa é a parte que engana: `APROV_TTL_MS` de 30 dias só vale pra link **NOVO**.
+Os 51 já entregues continuariam mortos, e "revalidar" pareceria exigir
+**reenviar ~90 mensagens** — 8 pra um mesmo líder (Cristiano), 7 pro Pr. Nélio,
+6 pra Camila. É o padrão que a Meta lê como spam, e **a nota de qualidade é o
+que decide a subida de tier** que a igreja quer.
+
+⇒ Quem revalida é o **SERVIDOR**: `verificarToken` aceita token `'aprov'`
+vencido **até uma data-limite**. O líder abre a mensagem que já está no WhatsApp
+dele e funciona. **Zero envio, zero custo, nenhum líder incomodado.**
+
+- ⚠️ **NÃO é afrouxamento geral**, e o teste existe pra que virar um seja
+  decisão consciente: a assinatura HMAC continua obrigatória, vale **SÓ** pro
+  tipo `'aprov'` (que dá acesso a UM pedido) e as duas travas de
+  `publicGrupos.js` seguem mandando — pedido tem que estar **`pendente`** e
+  `payload.l` tem que ser o **líder ATUAL** do grupo (trocou a liderança, o link
+  morre na hora, prorrogado ou não). É a mesma tese já aplicada à renovação e à
+  conferência: *"a validade real é decidida no servidor a cada uso"*.
+- ⚠️ **Tem PRAZO e morre sozinha** (`2026-08-31T23:59:59-03:00` — o "fim do mês"
+  que ela pediu): remendo datado, não porta permanente. Depois disso link
+  vencido volta a ser recusado e o TTL de 30d passa a bastar. Env
+  `GRUPOS_APROV_PRORROGADO_ATE` (ISO) estica sem deploy; **data inválida ou
+  vazia DESLIGA** (fail-closed).
+- ⚠️ **Data com fuso, não ingênua**: `'2026-08-31'` seria meia-noite UTC = 20h51
+  do dia 30 no Rio, e a prorrogação morreria um dia antes do combinado. Tem
+  teste em cima disso.
+- ⚠️ **O default de 7 dias NÃO subiu junto** (`TOKEN_TTL_MS` intocado): sugestão
+  (`/g/s/`) e chamada do mês (`/g/f/`) não foram pedidas, e subir o default
+  esticaria TRÊS fluxos de uma vez sem ninguém pedir.
+- `payload.prorrogado = true` marca quem entrou pela exceção (sem a marca, não
+  há como distinguir depois o que passou pela tolerância).
+
+**A régua saiu de `services/gruposWhatsapp.js` para `backend/utils/gruposToken.js`**
+(pura: só `crypto` + env) — é o que a coloca no **gate de deploy**; o serviço
+**re-exporta** `assinarToken`/`verificarToken`, então nenhum import mudou. NÃO
+reimplementar assinatura/validade no serviço: duas cópias divergiriam.
+`src/test/gruposToken.test.ts` (14 casos, `agora` **injetado**) é
+**mutation-testado** — estender a tolerância a qualquer tipo, tirar a
+data-limite ou deixar token sem `exp` passar deixa o gate vermelho.
+
+### ⚠️ Quem NÃO tem mensagem antiga pra revalidar são 3, não 9 (alarme meu, medido de novo)
+
+9 pendentes estavam sem envio PRÓPRIO e eu ia reportar isso como "9 líderes sem
+aviso". **6 deles são o CÔNJUGE de uma inscrição de casal** — e ali o desenho é
+mandar **UM aviso só**, no pedido do titular, com os dois nomes em `{{3}}`
+(decisão de 30/07). O par foi avisado; o pedido do cônjuge nunca teria envio
+próprio. Régua que fica: **ao auditar entrega de aviso de grupo, conferir
+`casal_pedido_id` antes de contar** — senão todo grupo de casais aparece como
+falha de entrega.
+
+Sobram **3** (follow-up de gente · envio é ação externa, fica com a coordenação):
+- **ROTEIRO DA MENSAGEM DE DOMINGO** (Rodrigo Paula Silva · líder Roberto da
+  Silva Franco Neto) — pedido de 27/07, **nenhum envio**. Data anterior ao fix
+  de 31/07 que passou o aviso ao líder a ser **awaited**; é o sintoma exato
+  daquele bug (serverless congela na resposta e descarta o trabalho pendente).
+- **JOVENS - GRUPO DE JIU-JITSU** (Rodrigo Costa) — o **grupo não tem
+  `lider_id`**, então não há a quem avisar. É cadastro: resolver na aba Pessoas.
+- **SER MULHER** (Mayla Marçal Portela Seoud · líder Márcia Trigo) — envio
+  recusado com **`invalid_phone`**. Telefone da líder precisa ser corrigido na
+  Membresia (a normalização da porta só vale pra dado novo).
+
 ## ⚠️ Grupos · membro existente ganha o que digitou no formulário (2026-08-06 · SEM migration)
 
 Pedido do Marcos, depois da auditoria da temporada: *"recupere esses que já
