@@ -9,6 +9,7 @@ const multer = require('multer');
 const { supabase } = require('../utils/supabase');
 const { notificar, resolverDestinatarios } = require('../services/notificar');
 const { donosDoGrupo } = require('../services/gruposDestinatarios');
+const { avisarPedidoNovoNoApp } = require('../services/gruposAvisoApp');
 const { dispararAuto } = require('../services/whatsappAuto');
 const wpp = require('../services/whatsappService');
 const { analisarOracao } = require('../services/oracaoAnalise');
@@ -1127,6 +1128,16 @@ router.post('/inscricoes', limiterStrict, tryAuth, async (req, res) => {
             if (!r?.sent) {
               console.log('[APP] inscricoes · aviso ao líder não enviado:', r?.reason || r?.status);
             }
+
+            // ⚠️ O sino do APP, além do WhatsApp. São canais DIFERENTES: o
+            // WhatsApp alcança os 89 líderes, o sino alcança os 15 que têm
+            // conta — e é o único que funciona no Android sem Firebase.
+            await avisarPedidoNovoNoApp({
+              grupoId: grupo.id,
+              pedidoId: pedido.id,
+              grupoNome: grupo.nome,
+              pessoaNome: pedido.nome || dados.nome,
+            });
           }
         } else {
           console.warn('[APP] inscricoes · pedido de grupo não localizado pra avisar o líder:', inserted.id);

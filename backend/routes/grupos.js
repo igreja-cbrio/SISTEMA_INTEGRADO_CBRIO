@@ -11,6 +11,7 @@ const multer = require('multer');
 const { uploadModuleFile, SHAREPOINT_CONFIGURED } = require('../services/storageService');
 const { notificar } = require('../services/notificar');
 const { donosDoGrupo, donosDeVariosGrupos } = require('../services/gruposDestinatarios');
+const { avisarPedidoNovoNoApp } = require('../services/gruposAvisoApp');
 const { importarParticipantes } = require('../services/gruposImporter');
 const { notificarPessoaAprovada, notificarPessoaSugestao, montarEnvioRenovacao } = require('../services/gruposWhatsapp');
 const { enfileirarLote } = require('../services/whatsappFila');
@@ -1214,6 +1215,17 @@ router.post('/:id/pedidos', async (req, res) => {
     // Avisa QUEM RESPONDE POR ESTE GRUPO (líder + supervisor) — nunca o fan-out
     // do módulo. Ver services/gruposDestinatarios.js: sem lista nomeada em
     // `notificacao_regras`, o fallback escrevia para ~16 admins, uma linha cada.
+    // Sino do app do líder (ver services/gruposAvisoApp.js). Aqui NÃO precisa
+    // ser awaited: é rota autenticada de tela interna, não porta pública
+    // serverless — mas fica awaited de qualquer forma porque o custo é 1 insert
+    // e a lei da casa é "o que não pode se perder vai awaited".
+    try {
+      const { data: gApp } = await supabase.from('mem_grupos').select('nome').eq('id', grupoId).maybeSingle();
+      await avisarPedidoNovoNoApp({
+        grupoId, pedidoId: data.id, grupoNome: gApp?.nome, pessoaNome: b.nome,
+      });
+    } catch (err) { console.warn('[Pedidos] aviso app:', err.message); }
+
     (async () => {
       try {
         const { data: grupo } = await supabase.from('mem_grupos').select('nome').eq('id', grupoId).single();

@@ -7584,6 +7584,85 @@ Edge Function `notify-lembretes`: consumidor apontado pra camada morta.
   contada à mão que nunca virou chamada no sistema; o manual dele FICA.
 - ⚠️ `next_presencas` tem `presente boolean` e hoje **0 linhas com false** — o
   filtro está lá pela semântica, não porque haja ausente gravado.
+## ⚠️⚠️ O SINO DE GRUPO no app do membro (2026-08-11 · migration `20260811150000`)
+
+Autorizado pelo Marcos (item 3 dos 16 apontamentos): *"pode ligar claude"*.
+
+**Medido antes de escrever: 459 pedidos de grupo desde 01/07 e `app_notificacoes`
+(825 linhas, 8 tipos) com ZERO de qualquer tipo de grupo.** O líder nunca soube
+pelo app que alguém pediu pra entrar no grupo dele — e é ele quem deve LIGAR pra
+pessoa antes de aprovar (lei dos templates v2, 29/07).
+
+### ⚠️⚠️ São DUAS tabelas e DOIS vocabulários — INVERTIDOS
+
+| | tabela | tipo emitido | quem lê |
+|---|---|---|---|
+| `notificar()` | `notificacoes` | **`pedido_grupo`** | ERP web + app do STAFF |
+| `notificarApp()` | `app_notificacoes` | **`grupo_pedido`** | app do MEMBRO |
+
+Copiar o tipo de um pro outro faz o aviso chegar e **não abrir tela nenhuma**.
+`utils/avisoGrupoApp.js` é a régua (no gate, mutation-testada) e
+`services/gruposAvisoApp.js` o serviço — **um só**, porque são CINCO origens
+(formulário público, app, tela interna do /grupos, totem, cadastro de membresia)
+e cinco cópias é a doença que este módulo já teve.
+
+⚠️ **`grupo_pedido` é o ÚNICO ligado agora**, e é decisão: é o único tipo que os
+DOIS mapas do app já roteiam (`notifTap.ts` + o `abrir()` de `notificacoes.tsx`,
+mais ícone e categoria) ⇒ **chega por merge, no binário que já está no campo, sem
+esperar OTA**. Os outros eventos de grupo entram depois da unificação dos mapas —
+ligar antes faria o aviso cair em "Outros" e o toque não levar a lugar nenhum.
+
+### ⚠️⚠️ `donosDoGrupo` EXCLUI quem tem o app — por construção
+
+`gruposDestinatarios.donosDoGrupo` filtra `is_membro_only` de propósito (linha em
+`notificacoes` pra conta só-de-membro é linha que ninguém abre). Usá-la pra
+alimentar o app entregaria **zero avisos**. A irmã `donosDoGrupoApp` não tem esse
+filtro — e é **superconjunto, não espelho**: conta de staff também pode ter o app
+instalado, e exigir `is_membro_only = true` excluiria esse líder. Quem separa os
+dois apps no push é o agrupamento por `projeto_id` do `lotesDePush`.
+
+⚠️ **Alcance real, medido: dos 89 líderes de grupos ativos, 15 têm conta no app e
+6 têm push token** (os 42 tokens da base são 100% iOS — Android sem Firebase).
+Lista vazia é o caso COMUM aqui, não erro; o WhatsApp segue alcançando os 89.
+
+### `chave_dedup` em `app_notificacoes` (a tabela não tinha dedup nenhum)
+
+A irmã do ERP tem `chave_dedup` desde sempre; a do app nasceu sem — não havia
+como escrever escritor idempotente. Agora `notificarApp({chaveDedup})` amarra o
+aviso ao FATO (`grupo_pedido:<id do pedido>`).
+⚠️ **Índice ÚNICO e SEM PREDICADO**: `ON CONFLICT` do PostgREST não infere índice
+parcial (lição do `mem_censo_convites`, 04/08). Seguro porque `NULLS DISTINCT` é
+o padrão — as 825 linhas legadas e os avisos sem fato único nunca conflitam.
+⚠️ **O que ela NÃO resolve**: a Edge Function `notify-grupo-pedido` está
+**DEPLOYADA** (sonda de 11/08: 401, não 404) e insere sem `chave_dedup` ⇒ se o
+webhook dela for ligado, duplica mesmo assim. Fechar exige mexer nela ou derrubar
+o trigger — o diagnóstico está no fim da migration, pendente de olho humano.
+
+### Consertos que a revisão adversarial pegou (e valem além disto)
+
+- ⚠️⚠️ **O resgate linha-a-linha do `notificarApp` reusava a query que acabara de
+  falhar** — em erro de coluna ele repetiria o mesmo erro em cada linha e o log
+  culparia `chave_dedup` no lugar da causa real (um `user_id` órfão viola a FK de
+  `auth.users` e derruba o LOTE; é pra salvar os válidos que o resgate existe).
+  Agora o resgate **herda a forma** da última tentativa, tem **teto de 25** (a
+  mesma função serve o broadcast de 500 do evento publicado) e a guarda é por
+  **código** (`42703`/`PGRST204`/`42P10`), não por texto de terceiro — `42P10`
+  não cita `chave_dedup` e passaria batido.
+- ⚠️⚠️ **`fetch` da Expo ganhou timeout de 8s** (`AbortSignal.timeout`). Desde
+  hoje essa cadeia é AWAITED no formulário público de grupos: sem teto, exp.host
+  lento seguraria quem está se inscrevendo até o `maxDuration`, e a pessoa veria
+  ERRO num pedido que FOI gravado — o dano exato que a lei do awaited evita.
+- ⚠️ **`membresia.js` chamava `donosDoGrupo` SEM NUNCA TER IMPORTADO** —
+  ReferenceError latente em `/totem/grupos/:id/entrar`. O insert roda antes do
+  erro, então o primeiro uso real gravaria o pedido e responderia 500. Medido:
+  **0 pedidos com origem `totem`** na base (570 do formulário público, 2 do app),
+  ou seja a rota nunca foi exercitada. Achado ao ligar o sino.
+
+⚠️ **Risco residual declarado**: `donosDoGrupoApp` resolve `mem_grupos.lider_id`
+e **não confere o roster** — e 30 dos 97 grupos ativos têm a principal fora dele
+(follow-up de 31/07, ainda aberto). Não é regressão (o WhatsApp já tinha o risco);
+a diferença é que agora chega numa tela navegável. E o corpo do aviso cita o
+primeiro nome de quem pediu + o nome do grupo, que aparece na tela de bloqueio.
 
 ## Devocionais · módulo do Matheus (no ar)
 

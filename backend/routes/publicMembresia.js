@@ -5,6 +5,7 @@ const rateLimit = require('express-rate-limit');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const { donosDoGrupo } = require('../services/gruposDestinatarios');
+const { avisarPedidoNovoNoApp } = require('../services/gruposAvisoApp');
 const { uploadModuleFile, SHAREPOINT_CONFIGURED } = require('../services/storageService');
 const { acharMembroGuardado, ehNomeDerivadoDeEmail } = require('../services/membroMatch');
 const { registrarObservacaoSegura } = require('../services/identidadeProgressiva');
@@ -763,6 +764,12 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
           // admins, e o líder nunca era avisado. Bug de intenção, não de
           // digitação: o comentário descrevia o que se queria, não o que fazia.
           const { data: grupo } = await supabase.from('mem_grupos').select('nome').eq('id', grupo_id).maybeSingle();
+          // Sino do app do líder — a 5ª origem de pedido de grupo (o cadastro de
+          // membresia). Awaited pelo mesmo motivo das outras.
+          await avisarPedidoNovoNoApp({
+            grupoId: grupo_id, pedidoId: pedido.id,
+            grupoNome: grupo?.nome, pessoaNome: nome,
+          });
           donosDoGrupo(grupo_id).then((donos) => {
             if (!donos.length) return;
             return notificar({
