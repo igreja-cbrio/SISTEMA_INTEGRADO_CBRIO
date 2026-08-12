@@ -37,8 +37,14 @@ router.get('/cron/agendamentos', requireCron, async (req, res, next) => {
     const diaSemana = agora.getUTCDay();
     const diaMes = agora.getUTCDate();
 
-    const { data: ativos } = await supabase.from('wa_agendamentos')
-      .select('*').eq('ativo', true).limit(200);
+    const { data: ativos, error: errAtivos } = await supabase.from('wa_agendamentos')
+      .select('*').eq('ativo', true).order('created_at', { ascending: true }).limit(200);
+    if (errAtivos) {
+      // Falha de consulta NÃO é "zero agendamentos" — responder ok esconderia
+      // um cron morto (lição do cerebroSync).
+      console.error('[comunicacao] cron agendamentos query:', errAtivos.message);
+      return res.status(500).json({ error: 'Falha ao consultar os agendamentos' });
+    }
 
     let disparados = 0;
     const resultados = [];
@@ -72,6 +78,14 @@ router.get('/cron/agendamentos', requireCron, async (req, res, next) => {
           refId: a.id,
         }));
         const r = await enfileirarLote(itens);
+        // Só consome o disparo se ALGO entrou na fila. Antes, com o kill-switch
+        // WHATSAPP_ENABLED desligado, enfileirarLote devolvia queued=0 e mesmo
+        // assim o agendamento era marcado como disparado (único até se
+        // auto-desativava) — a mensagem sumia sem rastro.
+        if (!r.queued) {
+          resultados.push({ id: a.id, nome: a.nome, pulado: r.motivo || 'nada_enfileirado' });
+          continue;
+        }
         await supabase.from('wa_agendamentos')
           .update({ ultimo_disparo: new Date().toISOString(), ...(a.quando ? { ativo: false } : {}) })
           .eq('id', a.id);
@@ -90,7 +104,10 @@ router.get('/cron/agendamentos', requireCron, async (req, res, next) => {
   }
 });
 
-router.use(authenticate, authorizeModule('comunicacao'));
+// Leitura = nível 1 (front, menu e RLS da migration 20260728230000 já assumem
+// isso; o default 2 do middleware deixava as 9 abas em 403 pra quem tem nível 1).
+// As escritas seguem com guard próprio por rota (3/4/5).
+router.use(authenticate, authorizeModule('comunicacao', 1));
 
 // ── Números ──────────────────────────────────────────────────────────
 router.get('/numeros', async (_req, res) => {

@@ -25,7 +25,9 @@ function normalizarTelefone(raw) {
   return waSender.normalizarTelefone(raw, { strict: true });
 }
 
-async function sendTemplate(toRaw, templateName, language, parameters) {
+// opts (multi-número): { phoneNumberId } — responde pelo número da conversa;
+// sem ele, sai pelo número default da env. Repassado cru pro waSender.
+async function sendTemplate(toRaw, templateName, language, parameters, opts = {}) {
   const to = normalizarTelefone(toRaw);
   if (!to) {
     return { sent: false, reason: 'invalid_phone', raw: toRaw };
@@ -35,35 +37,35 @@ async function sendTemplate(toRaw, templateName, language, parameters) {
       templateName, language, to, parameters);
     return { sent: false, reason: 'disabled', to };
   }
-  return waSender.sendTemplate(to, templateName, language, parameters || []);
+  return waSender.sendTemplate(to, templateName, language, parameters || [], opts);
 }
 
 // Texto livre (janela de 24h). Fora da janela, a Meta exige template.
-async function sendText(toRaw, texto) {
+async function sendText(toRaw, texto, opts = {}) {
   const to = normalizarTelefone(toRaw);
   if (!to) return { sent: false, reason: 'invalid_phone' };
   if (!configurado()) {
     console.log('[WPP][DRY-RUN] text to=%s: %s', to, texto);
     return { sent: false, reason: 'disabled', to };
   }
-  return waSender.sendText(to, texto);
+  return waSender.sendText(to, texto, opts);
 }
 
 // Mensagem INTERATIVA com botões (janela de 24h · máx 3 · title <= 20).
-async function sendButtons(toRaw, corpo, botoes) {
+async function sendButtons(toRaw, corpo, botoes, opts = {}) {
   const to = normalizarTelefone(toRaw);
   if (!to) return { sent: false, reason: 'invalid_phone' };
   if (!configurado()) { console.log('[WPP][DRY-RUN] buttons to=%s: %s', to, corpo); return { sent: false, reason: 'disabled', to }; }
-  return waSender.sendButtons(to, corpo, botoes);
+  return waSender.sendButtons(to, corpo, botoes, opts);
 }
 
 // Mídia (imagem/documento) por LINK público. `kind` = 'image'|'document'.
-async function sendMedia(toRaw, kind, link, { filename, caption } = {}) {
+async function sendMedia(toRaw, kind, link, { filename, caption, ...opts } = {}) {
   const to = normalizarTelefone(toRaw);
   if (!to) return { sent: false, reason: 'invalid_phone' };
   if (!link) return { sent: false, reason: 'sem_link' };
   if (!configurado()) { console.log('[WPP][DRY-RUN] %s to=%s: %s', kind, to, link); return { sent: false, reason: 'disabled', to }; }
-  return waSender.sendMedia(to, kind, link, { filename, caption });
+  return waSender.sendMedia(to, kind, link, { filename, caption, ...opts });
 }
 
 // Baixa a mídia recebida da Meta. Sem gate ENABLED (histórico · webhook usa).

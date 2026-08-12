@@ -1059,12 +1059,18 @@ export default function Comunicacao() {
   const { getAccessLevel } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const tabUrl = searchParams.get('tab') || 'dashboard';
-  const tab = TABS.includes(tabUrl) ? tabUrl : 'dashboard';
 
   const nivel = getAccessLevel(['comunicacao']);
   const podeNvl3 = nivel >= 3;
   const podeNvl4 = nivel >= 4;
   const podeNvl5 = nivel >= 5;
+  // ⚠️ A aba Bot embute telas cujo backend exige 'whatsapp-admin' = integracao
+  // OU grupos ≥3 (middleware/auth.js) — NÃO o módulo comunicacao. Sem esse
+  // nível, a aba inteira responderia 403; então ela só aparece pra quem pode
+  // (mudar o mapa de permissão do backend é decisão do Marcos, não daqui).
+  const podeBot = getAccessLevel(['integracao', 'grupos']) >= 3;
+  const tabsVisiveis = podeBot ? TABS : TABS.filter(t => t !== 'bot');
+  const tab = tabsVisiveis.includes(tabUrl) ? tabUrl : 'dashboard';
 
   function setTab(v: string) {
     const p = new URLSearchParams(searchParams);
@@ -1088,7 +1094,7 @@ export default function Comunicacao() {
           <TabsTrigger value="templates"><FileText className="mr-1.5 h-3.5 w-3.5" />Templates</TabsTrigger>
           <TabsTrigger value="numeros"><Phone className="mr-1.5 h-3.5 w-3.5" />Números</TabsTrigger>
           <TabsTrigger value="atendentes"><Users className="mr-1.5 h-3.5 w-3.5" />Atendentes</TabsTrigger>
-          <TabsTrigger value="bot"><Bot className="mr-1.5 h-3.5 w-3.5" />Bot</TabsTrigger>
+          {podeBot && <TabsTrigger value="bot"><Bot className="mr-1.5 h-3.5 w-3.5" />Bot</TabsTrigger>}
           <TabsTrigger value="erros"><AlertTriangle className="mr-1.5 h-3.5 w-3.5" />Erros</TabsTrigger>
         </TabsList>
 
@@ -1101,7 +1107,7 @@ export default function Comunicacao() {
         <TabsContent value="templates"><Templates podeSync={podeNvl3} podeEditar={podeNvl3} /></TabsContent>
         <TabsContent value="numeros"><Numeros podeEscrever={podeNvl5} /></TabsContent>
         <TabsContent value="atendentes"><Atendentes podeEscrever={podeNvl3} /></TabsContent>
-        <TabsContent value="bot"><BotAdmin /></TabsContent>
+        {podeBot && <TabsContent value="bot"><BotAdmin /></TabsContent>}
         <TabsContent value="erros"><Erros podeReenviar={podeNvl3} /></TabsContent>
       </Tabs>
     </div>

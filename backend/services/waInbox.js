@@ -41,15 +41,35 @@ async function acharContato(telefone) {
   return { membro_id: null, nome: null };
 }
 
+// Multi-número: grava em qual número da WABA a conversa acontece (coluna
+// `wa_conversas.phone_number_id` · migration 20260812150000). É UPDATE ISOLADO
+// e best-effort DE PROPÓSITO: a coluna pode não existir antes da migration, e
+// incluí-la no INSERT/SELECT principal derrubaria o inbox inteiro (lição do
+// parcelas_max). 42703 = coluna ausente → silêncio; o resto loga.
+async function gravarNumeroConversa(convId, phoneNumberId) {
+  if (!convId || !phoneNumberId) return;
+  try {
+    const { error } = await supabase.from('wa_conversas')
+      .update({ phone_number_id: String(phoneNumberId) }).eq('id', convId);
+    if (error && error.code !== '42703') console.warn('[waInbox] phone_number_id:', error.message);
+  } catch { /* best-effort */ }
+}
+
 // Acha-ou-cria a conversa do número (1 por telefone). Faz backfill do nome/cadastro
 // quando a conversa já existe mas nasceu sem contato resolvido (ex.: criada antes
-// do match, ou voluntário que virou membro depois).
-async function acharOuCriarConversa(telefone) {
+// do match, ou voluntário que virou membro depois). `phoneNumberId` (opcional) =
+// número da WABA por onde a mensagem passou — fica registrado na conversa pra
+// resposta sair pelo MESMO número (institucional × CBZap).
+async function acharOuCriarConversa(telefone, phoneNumberId = null) {
   const tel = wpp.normalizarTelefone(telefone) || soDigitos(telefone);
   if (!tel) return null;
   const { data: existente } = await supabase.from('wa_conversas')
     .select('*').eq('telefone', tel).maybeSingle();
   if (existente) {
+    if (phoneNumberId && existente.phone_number_id !== String(phoneNumberId)) {
+      await gravarNumeroConversa(existente.id, phoneNumberId);
+      existente.phone_number_id = String(phoneNumberId);
+    }
     if (!existente.membro_id || !existente.nome) {
       const c = await acharContato(tel);
       const patch = {};
@@ -67,6 +87,10 @@ async function acharOuCriarConversa(telefone) {
   const { data } = await supabase.from('wa_conversas')
     .insert({ telefone: tel, nome: c.nome || null, membro_id: c.membro_id || null })
     .select('*').single();
+  if (data && phoneNumberId) {
+    await gravarNumeroConversa(data.id, phoneNumberId);
+    data.phone_number_id = String(phoneNumberId);
+  }
   return data;
 }
 
@@ -85,8 +109,8 @@ async function subirMedia({ buffer, mime, conversaId, origem = 'in', filename })
 
 // Mensagem que CHEGOU (do contato). Marca não-lida, reabre e abre a janela de 24h.
 // Se vier `mediaId` (imagem/documento/áudio), baixa da Meta e guarda a URL.
-async function registrarInbound({ telefone, texto, tipo = 'text', messageId, mediaId }) {
-  const c = await acharOuCriarConversa(telefone);
+async function registrarInbound({ telefone, texto, tipo = 'text', messageId, mediaId, phoneNumberId = null }) {
+  const c = await acharOuCriarConversa(telefone, phoneNumberId);
   if (!c) return;
   const ins = await supabase.from('wa_mensagens').insert({
     conversa_id: c.id, direcao: 'in', tipo, texto: texto || null, wa_message_id: messageId || null,
@@ -110,8 +134,8 @@ async function registrarInbound({ telefone, texto, tipo = 'text', messageId, med
 // Mensagem que SAIU (bot ou humano). Não mexe em não-lidas nem na janela.
 // Envio humano (autorId) ou template → marca a conversa como "assumida por
 // humano" (as respostas passam a voltar pro inbox, não pro bot).
-async function registrarOutbound({ telefone, texto, tipo = 'text', autorId = null, mediaUrl = null }) {
-  const c = await acharOuCriarConversa(telefone);
+async function registrarOutbound({ telefone, texto, tipo = 'text', autorId = null, mediaUrl = null, phoneNumberId = null }) {
+  const c = await acharOuCriarConversa(telefone, phoneNumberId);
   if (!c) return null;
   await supabase.from('wa_mensagens').insert({
     conversa_id: c.id, direcao: 'out', tipo, texto: texto || null, autor_id: autorId, media_url: mediaUrl,

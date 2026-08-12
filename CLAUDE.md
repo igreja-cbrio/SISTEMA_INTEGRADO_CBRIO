@@ -2023,6 +2023,56 @@ que segue pendente:
   sexo/motivo/termos — os seletores #nome/#sobrenome estavam mortos); ⚠️ e2e
   não foi EXECUTADO nesta entrega (exige app rodando + cria inscrição real).
 
+## ⚠️ Comunicação · os 5 críticos da revisão de 05/08 corrigidos (2026-08-12 · migration `20260812150000`)
+
+Revisão profunda do módulo (05/08 · 3 agentes + verificação manual, achados com
+file:line) apontou 5 críticos; Marcos aprovou corrigir. O que mudou:
+
+1. **Leitura do módulo = nível 1** (`routes/comunicacao.js`): o `router.use`
+   usava `authorizeModule('comunicacao')` → default **2** do middleware, e
+   front/menu/RLS assumem leitura 1 — cargo com comunicacao=1 via as 9 abas em
+   403. Escritas seguem com guard próprio (3/4/5).
+2. **Aba Bot só aparece pra quem pode**: ela embute telas cujo backend exige
+   `whatsapp-admin` (= integracao OU grupos ≥3) — usuário com comunicacao=5 sem
+   isso via a aba inteira em 403. Fix é de EXIBIÇÃO (`podeBot` em
+   `Comunicacao.tsx`); ampliar o mapa `whatsapp-admin` no auth.js pra incluir
+   `comunicacao` é decisão pendente do Marcos (lei "parar e perguntar" de auth).
+3. **Deep-link `?telefone=&texto=` ressuscitado**: os redirects de `/conversas`,
+   `/admin/whatsapp` e `/admin/conversas-setores` viraram `RedirectComunicacao`
+   (App.tsx · preserva a query); `Conversas.tsx` remove SÓ telefone/texto (o
+   `setSearchParams({})` apagava o `?tab` e a página voltava pro dashboard);
+   `hrefConversa` (usado em ~13 telas) aponta direto pra
+   `/comunicacao?tab=conversas&…`; o link de transferência do waInbox idem.
+4. **Multi-número (preparo do CBZap)**: o webhook lê
+   `value.metadata.phone_number_id`. Número ≠ institucional → **`inboxDireto`**
+   (nada de opt-out/triagem/coleta/institucional — personas são do número do
+   bot; só pesquisa de satisfação, que é da CONVERSA, + inbox). A conversa
+   grava `wa_conversas.phone_number_id` (migration `20260812150000` ·
+   **best-effort/isolado** — o inbox funciona sem a coluna, lição do
+   parcelas_max) e TODAS as respostas do inbox (`routes/waInbox.js` nova/
+   responder/anexo/pesquisa) saem pelo número da conversa via
+   `opts.phoneNumberId`, que agora atravessa `whatsappService`/`whatsappSend` →
+   `waSender`. A pesquisa 0-5 virou função única `tratarPesquisaSatisfacao`
+   (publicWhatsapp.js), usada pelo bot E pelo multi-número. ⚠️ Payload sem
+   metadata conta como número do bot (comportamento histórico).
+5. **Kill-switch não engole mais mensagem** (`whatsappFila.js`): com CREDENCIAL
+   presente + `WHATSAPP_ENABLED` desligado, `enfileirar`/`enfileirarLote`
+   REGISTRAM como `pendente` (sai quando religar — o contrato documentado do
+   notificarMembro); sem credencial (dev/preview) segue não gravando nada, pra
+   ambiente sem WhatsApp não encher a fila que o cron DE PROD drenaria. E o
+   cron de agendamentos (`/comunicacao/cron/agendamentos`) só marca
+   `ultimo_disparo`/desativa único quando `queued > 0` (antes consumia o
+   disparo no vazio) + erro de consulta virou 500 (não mais `ok:true`).
+
+⚠️ Ficam da revisão (médios · não corrigidos ainda): programada única editada
+nunca re-dispara (`ultimo_disparo` fora da whitelist do PUT) · PUT de
+agendamento sem `validarAgendamento` · thread do chat capada nas 500 mais
+ANTIGAS · duplicata de conversa pelo 9º dígito · pesquisa 2× no duplo-clique
+Finalizar · 1ª mensagem perdida na corrida de criação · statuses órfãos
+write-only · mídia inbound em bucket público · Realtime sem filtro por área ·
+custo com ~15 call sites fora da fila. Lista completa com file:line na memória
+da sessão de 05/08 ("revisão da comunicação").
+
 ## ⚠️ Módulo de Comunicação (WhatsApp central) · handoff pro MATHEUS (2026-07-28)
 
 Decisão do Marcos (bloco C da revisão estrutural): fundir Conversas + Menu das
