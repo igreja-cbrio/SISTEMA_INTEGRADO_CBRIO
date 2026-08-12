@@ -775,7 +775,7 @@ const RH_FIELD_TYPES = {
   fgts: 'num', ir: 'num', inss: 'num',
   remuneracao_liquida: 'num', custo_total_mensal: 'num',
   bonus_anual_50: 'num', bonus_anual_integral: 'num', ferias_integral: 'num',
-  data_admissao: 'date', data_demissao: 'date', data_enquadramento: 'date',
+  data_admissao: 'date', data_demissao: 'date', data_enquadramento: 'date', data_nascimento: 'date',
   grau_id: 'uuid',
   admissao_dados: 'json', // jsonb com dados extras do onboarding (RG, PJ, contrato…) · não sensível
 };

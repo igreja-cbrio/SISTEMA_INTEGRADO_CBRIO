@@ -2888,7 +2888,7 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = t
               </>
             ) : (
               <Button variant="outline" size="sm" className="gap-1.5" onClick={() => {
-                setEditForm({ nome: data.nome, cargo: data.cargo, area: data.area || '', email: data.email || '', telefone: data.telefone || '', cpf: data.cpf || '', tipo_contrato: data.tipo_contrato, status: data.status, data_admissao: data.data_admissao || '', salario: data.salario || '', gestor_id: data.gestor_id || '' });
+                setEditForm({ nome: data.nome, cargo: data.cargo, area: data.area || '', email: data.email || '', telefone: data.telefone || '', cpf: data.cpf || '', tipo_contrato: data.tipo_contrato, status: data.status, data_admissao: data.data_admissao || '', data_nascimento: data.data_nascimento || '', salario: data.salario || '', gestor_id: data.gestor_id || '' });
                 setAba('geral');
                 setEditMode(true);
               }}><Pencil className="h-3.5 w-3.5" />Editar</Button>
@@ -2975,6 +2975,7 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = t
             { key: 'telefone', label: 'Telefone' },
             { key: 'cpf', label: 'CPF' },
             { key: 'data_admissao', label: 'Admissão', type: 'date' },
+            { key: 'data_nascimento', label: 'Nascimento', type: 'date' },
             { key: 'salario', label: 'Salário (R$)', type: 'number' },
           ].filter(f => podeRemun || !['cpf', 'salario'].includes(f.key)).map(f => (
             <div key={f.key} style={f.full ? { gridColumn: '1 / -1' } : undefined}>
