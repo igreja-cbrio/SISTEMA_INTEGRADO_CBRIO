@@ -2319,6 +2319,11 @@ export const solicitacoes = {
   retomar:        (id) => post(`/solicitacoes/${id}/retomar`, {}),
   // Cotação (compras/serviço) · logística registra valor+fornecedor antes do financeiro
   registrarCotacao: (id, payload) => post(`/solicitacoes/${id}/registrar-cotacao`, payload),
+  // Aprovação por ALÇADA · quem atende a área aprova a compra dentro do teto,
+  // sem passar pelo financeiro. MESMO endpoint da aprovação financeira (uma
+  // régua só de dinheiro) — quem decide qual caminho vale é o servidor.
+  aprovarNaAlcada: (id, { observacao, forma_pagamento } = {}) =>
+    post(`/solicitacoes/${id}/aprovar-financeiro`, { observacao, forma_pagamento }),
   // Cotações múltiplas · lista de fornecedores + botão de envio ao financeiro
   listarCotacoes:   (id) => get(`/solicitacoes/${id}/cotacoes`),
   adicionarCotacao: (id, payload) => post(`/solicitacoes/${id}/cotacoes`, payload),
