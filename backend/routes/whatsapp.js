@@ -403,9 +403,11 @@ router.post('/broadcast', podeGerir, async (req, res) => {
 router.get('/config', podeGerir, async (req, res) => {
   try {
     const { data, error } = await supabase
-      .from('whatsapp_config').select('ia_ativa, institucional, updated_at').eq('id', 1).maybeSingle();
+      .from('whatsapp_config')
+      .select('ia_ativa, institucional, respostas_automaticas, updated_at')
+      .eq('id', 1).maybeSingle();
     if (error) return res.status(400).json({ error: error.message });
-    res.json(data || { ia_ativa: true, institucional: {} });
+    res.json(data || { ia_ativa: true, respostas_automaticas: true, institucional: {} });
   } catch (e) {
     console.error('[whatsapp] config get', e.message);
     res.status(500).json({ error: 'Erro ao carregar config' });
@@ -417,6 +419,12 @@ router.put('/config', podeGerir, async (req, res) => {
   try {
     const patch = { updated_at: new Date().toISOString(), updated_by: req.user?.userId || null };
     if (typeof req.body?.ia_ativa === 'boolean') patch.ia_ativa = req.body.ia_ativa;
+    // Desliga só o que o bot RESPONDE (menu de triagem + institucional). Os
+    // disparos de template e o registro no inbox seguem — ver a migration
+    // 20260812130000 e o gate em routes/publicWhatsapp.js.
+    if (typeof req.body?.respostas_automaticas === 'boolean') {
+      patch.respostas_automaticas = req.body.respostas_automaticas;
+    }
     if (req.body?.institucional && typeof req.body.institucional === 'object') {
       patch.institucional = req.body.institucional;
     }
