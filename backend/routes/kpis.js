@@ -8,6 +8,9 @@ const { coletarTodos } = require('../services/kpiAutoCollector');
 const { acharOuCriarGuardado } = require('../services/membroMatch');
 const { reconciliarCpfTardio, propagarCpfConvertido } = require('../services/cpfReconciliar');
 const { cpfValido } = require('../utils/cpf');
+// Divisor da média de frequência da mandala = nº de DOMINGOS (régua pura · o
+// cabeçalho de utils/divisorMandala.js tem o porquê e os números medidos).
+const { divisorDomingos } = require('../utils/divisorMandala');
 const painelCache = require('../services/painelCache');
 const { isAuthorizedCron } = require('../utils/cronAuth');
 
@@ -1399,7 +1402,7 @@ function parseMes(input) {
 // GET /kpis/cultura?mes=YYYY-MM
 router.get('/cultura', async (req, res) => {
   try {
-    const { mesISO, inicioStr, fimInclusivoStr, diasNoMes, semanasNoMes } = parseMes(req.query.mes);
+    const { y: anoRef, m: mesRef, mesISO, inicioStr, fimInclusivoStr, diasNoMes, semanasNoMes } = parseMes(req.query.mes);
 
     // Hoje - 90d para Servir
     const noventaDias = new Date();
@@ -1473,6 +1476,15 @@ router.get('/cultura', async (req, res) => {
     };
     const semanasComCulto = new Set(cultos.map((c) => c.data && chaveSemana(c.data)).filter(Boolean)).size;
     const divisorSemanas = semanasComCulto || semanasNoMes;
+
+    // ⚠️ A MÉDIA DE FREQUÊNCIA é por DOMINGO, não por semana (decisão do Marcos ·
+    // 2026-08-12). A semana ISO das bordas do mês entrava na conta trazendo a
+    // quarta sem o domingo dela, e isso derrubava a média em ~25% nos meses de 4
+    // domingos (jan/fev/abr/jul de 2026). Só a média MUDA: meta, semáforo e
+    // periodicidade de KPI seguem intactos, e nenhum outro valor da mandala usa
+    // este divisor. `divisorSemanas` continua sendo o que a resposta publica em
+    // `semanas_no_mes` (informativo).
+    const divisorFrequencia = divisorDomingos(cultos, { ano: anoRef, mes: mesRef });
     // Decisões: presencial + online + KIDS (kids passou a entrar na conta ·
     // pedido do Matheus 2026-07-29). Guardamos o detalhe pra exibir no clique.
     const decisoesPresencial = cultos.reduce((s, c) => s + (c.decisoes_presenciais || 0), 0);
@@ -1516,16 +1528,19 @@ router.get('/cultura', async (req, res) => {
     // cultos · permite lancar mês consolidado sem cultos individuais.
     const presencialSemanal = cm?.freq_presencial_semanal != null
       ? cm.freq_presencial_semanal
-      : Math.round(presencialTotal / divisorSemanas);
+      : Math.round(presencialTotal / divisorFrequencia);
     const onlineSemanal = cm?.freq_online_semanal != null
       ? cm.freq_online_semanal
-      : Math.round(onlineDsTotal / divisorSemanas);
+      : Math.round(onlineDsTotal / divisorFrequencia);
     const decisoesMes = cm?.decisoes_total != null ? cm.decisoes_total : decisoesTotal;
     const conectarMes = cm?.freq_grupos_total != null ? cm.freq_grupos_total : conectarPessoas;
 
     res.json({
       mes: mesISO,
       semanas_no_mes: divisorSemanas,
+      // Divisor REAL da média de frequência. `semanas_no_mes` fica só como
+      // informação do mês — quem divide é este.
+      domingos_no_mes: divisorFrequencia,
       dias_no_mes: diasNoMes,
       seguir_jesus: {
         presencial: presencialSemanal,

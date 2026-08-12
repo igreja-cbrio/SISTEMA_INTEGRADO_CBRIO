@@ -7649,6 +7649,68 @@ Migration de referência: `20260515520000_normalizar_meta_periodicidade.sql`.
 4. KPIs com checkpoints granulares em `kpi_trajetoria` continuam com a meta
    do checkpoint (não passam pela normalização) · checkpoint já é por período
 
+## ⚠️ Mandala · a média de FREQUÊNCIA divide por DOMINGO, não por semana (2026-08-12)
+
+Pedido do Marcos: *"na mandala do sistema, preciso que na frequência (seguir a
+Jesus) seja dividido pela quantidade de domingos do mês, e não semanas"*. Escopo
+que ele mesmo delimitou quando perguntei: **"Só Média exibida. Mas apenas para
+frequência isso"** e **"Apenas frequência q será dividido pelo número de
+domingos"** — meta, semáforo e periodicidade de KPI **não** foram tocados.
+
+A mandala é a do `/dashboard` (`MandalaCultura` → `GET /kpis/cultura`), não as 6
+do `/painel` (aquelas pintam pétala por status de KPI e não exibem frequência).
+
+**A distorção era real e sempre no mesmo sentido.** O divisor era o nº de semanas
+ISO (seg→dom) com culto, e a semana das BORDAS do mês entra na conta trazendo a
+**quarta** sem trazer o **domingo** dela. Janeiro/2026: a semana de 29/12–04/01
+tem a quarta 01/01, mas o domingo dela (28/12) é de dezembro → 5 semanas contra 4
+domingos. Medido em produção (presencial · online DS):
+
+| mês | semanas | domingos | antes | depois |
+|---|---|---|---|---|
+| jan/26 | 5 | 4 | 1.809 · 3.608 | **2.262 · 4.510** |
+| fev/26 | 5 | 4 | 1.715 · 3.830 | **2.144 · 4.787** |
+| mar/26 | 5 | 5 | 2.416 · 5.107 | *(igual)* |
+| abr/26 | 5 | 4 | 2.128 · 4.503 | **2.660 · 5.629** |
+| jul/26 | 5 | 4 | 1.649 · 3.869 | **2.061 · 4.836** |
+
+⚠️ **Evidência de que a régua nova é a que a equipe já usava**: o único lançamento
+MANUAL de `cultura_mensal` (abril/2026) tem **`freq_presencial_semanal = 2660`** —
+exatamente a média por domingo, não a por semana (2.128). O automático é que
+divergia do número que a própria equipe escrevia à mão.
+
+- **`backend/utils/divisorMandala.js`** = régua PURA no gate (13 casos em
+  `src/test/divisorMandala.test.ts`). Conta **domingos DISTINTOS com culto**
+  (são 4 cultos por domingo — contar linha daria 16) e cai no calendário quando
+  o mês não tem culto nenhum. **Nunca devolve 0** — divisor zero viraria
+  `Infinity` na tela.
+- ⚠️ **Mutation-testado de verdade, não afirmado**: os dois mutantes foram
+  rodados. (1) Voltar a contar semanas ISO → 4 casos vermelhos. (2) Trocar
+  `getUTCDay()` por `getDay()` → vermelho **porque o teste força
+  `process.env.TZ='America/Sao_Paulo'` dentro do caso** (com restauração no
+  `finally`): o gate roda em UTC, onde os dois são idênticos, e sem forçar o
+  fuso a guarda passaria despercebida. `2026-01-04T00:00:00Z` é sábado 21h no
+  Rio — com `getDay()`, nenhum domingo do mês seria contado.
+- ⚠️ **O NUMERADOR não mudou**: segue somando TODOS os cultos do mês (domingo,
+  quarta, AMI, Bridge). Foi o pedido literal — só o divisor virou domingos.
+  Trocar o numerador junto seria outra métrica ("frequência de domingo"), que
+  ninguém pediu.
+- A resposta ganhou **`domingos_no_mes`** (o divisor REAL); `semanas_no_mes`
+  continua sendo publicado como informação do mês. Rótulo e divisor andam
+  juntos no `PetalDetailDialog` ("Média presencial / domingo") — foi a
+  divergência entre os dois que fez a média parecer baixa.
+- **Valor manual de `cultura_mensal` continua vencendo** o cálculo automático,
+  como antes.
+
+⚠️ **PENDENTE de decisão (pré-existente, NÃO introduzido aqui):** os cultos do
+mês corrente nascem **pré-agendados com frequência 0**, e eles entram no divisor
+— em 12/08 agosto conta **5 domingos** com só 2 realizados, então a média do mês
+em curso aparece como **801** em vez de ~2.003. Isso já acontecia com o divisor
+por semana (a contagem de semanas com culto também pegava os pré-agendados).
+Consertar exige definir o que "média do mês corrente" significa: contar só
+domingo com dado lançado **infla** a média quando a Integração atrasa o
+lançamento; contar todos **deprime** até o mês fechar. É chamada do Marcos.
+
 ## Sistema OKR/NSM 2026 (arquitetura consolidada · fases 1-6 mergeadas em maio)
 
 Sistema unificado OKR/KPI/NSM. **Conceito**: 1 NSM ("novos convertidos
