@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { Users, Pencil, Trash2, Palmtree, X, Save, Check, AlertTriangle, Download, UserPlus, Briefcase, Calendar, Search, Filter, Eye, Edit, MoreVertical, LayoutDashboard, Network, Receipt, Star, Clock, CalendarDays, Scale, Camera, UserMinus, RotateCcw, Sparkles, ShieldCheck, FileText, GraduationCap, StickyNote, Wallet, Mail, Phone } from 'lucide-react';
+import { Users, Pencil, Trash2, Palmtree, X, Save, Check, AlertTriangle, Download, UserPlus, Briefcase, Calendar, Search, Filter, Eye, Edit, MoreVertical, LayoutDashboard, Network, Receipt, Star, Clock, CalendarDays, Scale, Camera, UserMinus, RotateCcw, Sparkles, ShieldCheck, FileText, GraduationCap, StickyNote, Wallet, Mail, Phone, Megaphone } from 'lucide-react';
 import { toast as sonnerToast } from 'sonner';
 import { Button } from '../../../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../../components/ui/card';
@@ -20,6 +20,7 @@ import TabAvaliacoes from './TabAvaliacoes';
 import TabExtras from './TabExtras';
 import TabFeriasCalendar from './TabFeriasCalendar';
 import TabPCS from './TabPCS';
+import TabPainelRH from './TabPainelRH';
 import { DatePicker } from '@/components/ui/date-picker';
 
 // ── Toast de feedback ───────────────────────────────────────
@@ -293,6 +294,7 @@ const TABS = [
   { key: 'treinamentos', label: 'Treinamentos', icon: Briefcase },
   { key: 'ferias', label: 'Férias/Licenças', icon: CalendarDays },
   { key: 'extras', label: 'Extras', icon: Clock },
+  { key: 'painel', label: 'Painel da home', icon: Megaphone },
 ];
 
 // ═══════════════════════════════════════════════════════════
@@ -304,7 +306,7 @@ export default function RH() {
   // backend (podeEditarRemuneracao): admin/diretor ou RH nível ≥4. Padrão conservador,
   // ajustável quando a política de confidencialidade for definida com o RH.
   const podeRemun = isAdmin || getAccessLevel(['rh']) >= 4;
-  const [tab, setTab] = useState('dashboard');
+  const [tab, setTab] = useState(() => new URLSearchParams(window.location.search).get('tab') || 'dashboard');
   const [dash, setDash] = useState(null);
   const [funcs, setFuncs] = useState([]);
   const [acessos, setAcessos] = useState(null); // relatório de acesso ao sistema (cruza ativos × usuários × cargos)
@@ -595,6 +597,9 @@ export default function RH() {
         </TabsContent>
         <TabsContent value="ferias">
           <TabFeriasCalendar funcs={funcs} onAprovar={aprovarFerias} />
+        </TabsContent>
+        <TabsContent value="painel">
+          <TabPainelRH />
         </TabsContent>
         <TabsContent value="extras">
           <div style={{ minHeight: 200, padding: '4px 0' }}>
