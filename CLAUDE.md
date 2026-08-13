@@ -1763,6 +1763,29 @@ tempo?" virou a retenção (não existia nenhuma — anexo vivia pra sempre).
   (horário) — sem slot novo no vercel.json (45 crons · lição dos pagamentos).
   Cap 400 anexos/dia (backlog drena em dias).
 
+### Reorganização das abas · F1 (2026-08-13 · SEM migration · decisão do Marcos)
+
+Pedido dele: otimizar o uso interno do módulo. 10 abas viraram **6**
+(`Comunicacao.tsx` · deep-links antigos caem na aba nova via `TAB_LEGADO`):
+
+- **Disparos** = Programadas ∪ Automáticas com UM filtro (chips Agendadas ×
+  Automáticas) — os componentes internos são os mesmos; a fusão é de navegação.
+- **Envios absorveu a aba Erros**: filtro de status ganhou `erro`/`falha_meta`
+  (`falha_meta` no backend = `failed_at NOT NULL` — envio ACEITO que a Meta
+  depois recusou, não é status da fila), Reenviar na própria linha (só
+  `status='erro'`, mesma regra de sempre), tooltip do status mostra o motivo,
+  e selo de órfãos quando > 0 (`/envios/resumo` ganhou `orfaos` — ⚠️ a coluna
+  da tabela é `criado_em`, não `created_at`). O endpoint `GET /erros` segue
+  existindo (compat), mas a UI antiga foi removida.
+- **Configurações** = Templates · Números · Atendentes · **Tarifas** (o
+  backend de tarifas existia desde julho SEM tela — o custo do Dashboard lê
+  daqui; edição nível 5).
+
+F2 (a caminho): aposentar Coletas (decisão do Marcos 13/08 — "os líderes de
+integração não compraram a ideia") e Avisos; aba **Contatos** = universo
+opt-in + líderes (com a ORIGEM de cada contato). F3: fluxos por opção do menu
+do bot, visual inspirado no /atlas/fluxograma.
+
 ⚠️ Ficam da revisão (médios · ainda abertos): statuses órfãos write-only +
 status de outbound do CHAT descartado · **Realtime sem filtro por área —
 decisão explícita do Marcos (12/08) de NÃO mexer por ora** · `nao_lidas`
