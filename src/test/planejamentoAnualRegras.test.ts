@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
-// @ts-expect-error módulo JS do backend sem tipos (padrão volCheckinResolver)
-import {
-  SUPOSICOES,
+// Service do backend (CommonJS) — regras puras do Planejamento Anual.
+import * as PA from '../../backend/services/planejamentoAnualRegras.js';
+
+const {
   CRITERIOS,
   somarDias,
   horariosSobrepoem,
@@ -24,7 +25,7 @@ import {
   caixaLivreMensal,
   orcamentoDoPastor,
   projetarProposta,
-} from '../../backend/services/planejamentoAnualRegras.js';
+} = PA;
 
 // ── Fixtures ─────────────────────────────────────────────────────────────
 const DIRETORIAS = ['ministerial', 'operacoes', 'financeiro', 'criativo'];
