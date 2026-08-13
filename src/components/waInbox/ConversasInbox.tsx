@@ -25,7 +25,7 @@ import {
   Loader2, Send, Search, Check, MessageCircle, RefreshCw, ExternalLink, Clock,
   User, CheckCheck, UserPlus, ChevronDown, UserCheck, Tag, Plus, Inbox, Filter,
   Users, Droplets, HandHelping, Sparkles, StickyNote, Paperclip, ArrowLeftRight, Hash, Star,
-  Zap, Megaphone,
+  Zap, Megaphone, AlertTriangle,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -39,7 +39,21 @@ type Conversa = {
   protocolo: string | null; satisfacao: number | null; pesquisa_estado: string | null;
   dentro_janela: boolean; janela_expira_em: string | null;
 };
-type Msg = { id: string; direcao: 'in' | 'out'; tipo: string; texto: string | null; media_url: string | null; criado_em: string };
+type Msg = {
+  id: string; direcao: 'in' | 'out'; tipo: string; texto: string | null; media_url: string | null; criado_em: string;
+  delivered_at?: string | null; read_at?: string | null; failed_at?: string | null; erro_status?: string | null;
+};
+
+// Recibo VERDADEIRO da Meta (antes o ✓✓ era decorativo — aparecia sempre):
+// ✓ aceito · ✓✓ entregue · ✓✓ azul lido · ⚠ NÃO chegou (com o motivo no hover).
+function ReciboMsg({ m }: { m: Msg }) {
+  if (m.failed_at) {
+    return <AlertTriangle className="h-3 w-3 text-red-300" aria-label="não entregue" />;
+  }
+  if (m.read_at) return <CheckCheck className="h-3 w-3 text-sky-300" aria-label="lida" />;
+  if (m.delivered_at) return <CheckCheck className="h-3 w-3" aria-label="entregue" />;
+  return <Check className="h-3 w-3 opacity-70" aria-label="enviada" />;
+}
 type Perfil = {
   membro: { id: string; nome: string; foto_url: string | null; data_nascimento: string | null; status: string | null } | null;
   grupo?: string | null; grupo_funcao?: string | null; batizado?: boolean;
@@ -454,7 +468,12 @@ export default function ConversasInbox({
                         {m.tipo === 'document' && m.media_url && <a href={m.media_url} target="_blank" rel="noreferrer" className="mb-1 flex items-center gap-1 underline"><ExternalLink className="h-3.5 w-3.5" />documento</a>}
                         {m.texto && <p className="leading-relaxed">{m.texto}</p>}
                         {!m.texto && !m.media_url && <p className="italic opacity-60">[{m.tipo}]</p>}
-                        <div className={`mt-1 flex items-center justify-end gap-1 text-[10px] ${m.direcao === 'out' ? 'text-primary-foreground/70' : 'text-muted-foreground'}`}>{horaCurta(m.criado_em)}{m.direcao === 'out' && <CheckCheck className="h-3 w-3" />}</div>
+                        {m.failed_at && (
+                          <p className="mt-1 text-[10px] font-medium text-red-200" title={m.erro_status || undefined}>
+                            ⚠ não entregue{m.erro_status ? ` · ${String(m.erro_status).slice(0, 60)}` : ''}
+                          </p>
+                        )}
+                        <div className={`mt-1 flex items-center justify-end gap-1 text-[10px] ${m.direcao === 'out' ? 'text-primary-foreground/70' : 'text-muted-foreground'}`} title={m.read_at ? 'lida' : m.delivered_at ? 'entregue' : m.failed_at ? 'não entregue' : 'enviada'}>{horaCurta(m.criado_em)}{m.direcao === 'out' && <ReciboMsg m={m} />}</div>
                       </div>
                     </div>
                   ))}
