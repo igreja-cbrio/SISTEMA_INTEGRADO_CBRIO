@@ -100,5 +100,8 @@ NOTIFY pgrst, 'reload schema';
 --   --           'domingo-0930' + ate 2026-08-23 · 11:30/19:00 → tudo NULL
 --
 --   select * from public.cultos_config;   -- 1 linha · lentes_domingo_publicas = false
---   select polname from pg_policies where tablename = 'cultos_config';
+--   select policyname from pg_policies where tablename = 'cultos_config';
+--   -- (⚠️ a view pg_policies chama a coluna de policyname; "polname" é o nome
+--   --  no catálogo pg_policy cru — usar aqui dava 42703. Conferido em prod
+--   --  13/08: cultos_config_service + cultos_config_super_admin presentes.)
 -- ============================================================================

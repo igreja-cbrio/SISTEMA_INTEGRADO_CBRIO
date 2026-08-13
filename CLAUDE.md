@@ -6458,6 +6458,55 @@ Semanal que **só existe pra quem pode ver** — o backend decide.
   dormente) ficou mapeado na sessão de 13/08 — unificar é follow-up separado,
   não deste lote.
 
+## ⚠️⚠️ Cultos de domingo · Lote 5 · O SCRIPT DO CORTE (2026-08-13 · NÃO é migration)
+
+Fecha o modo piloto (§13 de `docs/cultos-domingo/contexto-e-plano.md` — o
+handoff AGORA ESTÁ NA MAIN, mergeado em 13/08 junto com a régua central do
+voluntariado `20260811120000_vol_bloco_fonte_unica.sql`, que commitou a
+refatoração que a sessão de 13/08 tinha achado só em prod).
+
+**`backend/scripts/corte-cultos-domingo-20260824.sql`** — vive em
+`backend/scripts/` DE PROPÓSITO (em `supabase/migrations/` alguém o aplicaria
+antes do dia). É UM DO block com `v_executar constant boolean := false`:
+
+- **ENSAIO** (qualquer dia): rodar como está → faz TUDO e termina com
+  `RAISE EXCEPTION 'ENSAIO OK — resumo…'` = ROLLBACK TOTAL, o resumo aparece na
+  mensagem de erro do editor. **CORTE REAL (24/08)**: trocar UMA linha
+  (`v_executar := true`) e rodar — tudo numa transação; invariante violada
+  aborta e desfaz tudo. Guarda extra: execução real ANTES de 24/08 aborta.
+- Passos: pré-condições (Lote 2/3 aplicados · régua aceita 09:30 · guarda de
+  bloqueadores: culto futuro com dado/satélite ABORTA com contagem) → backups
+  `_bk_20260824_*` → tipo novo por SQL herdando flags do 10:00 (mina nº 2) +
+  vigente_de/linhagem/consolidação → is_active=false ANTES de limpar linhas
+  (senão o auto-create recria) → clone dos vínculos de template de escala →
+  INSERT dos 09:30 por data + repoint de apresentacao_bebes + DELETE dos
+  futuros → fin_culto_slots (desativa 8h30/10h, cria 'Domingo 9:30' 06:00–11:00
+  slug `domingo-9h30`; slot NUNCA é deletado — FK de fin_pix_detalhe/
+  fin_transacoes) → batismo (fecha 08:30/10:00 · abre 09:30+11:30 limite 11 ·
+  labels sem ordinal · find-or-insert porque o UNIQUE de horario é índice
+  PARCIAL e ON CONFLICT não infere) → anchor da vw_dashboard_voluntariado
+  '08:30:00'→'09:30:00' (patch DINÂMICO na def viva · guard: exatamente 1
+  ocorrência — a `20260811120000` deixou o anchor de fora DE PROPÓSITO pra
+  esta fase) → véu aberto (`lentes_domingo_publicas=true`) → invariantes §4.2
+  como asserts (fantasmas=0 · órfãos não cresceram · grade da manhã =
+  {09:30, 11:30} · `fin_identifica_culto` 09:29/10:59→'Domingo 9:30' e
+  11:00→'Domingo 11:30' · batismo aberto = {09:30, 11:30}).
+- **D2 (financeiro)**: `v_conta_dizimo_0930`/`v_conta_oferta_0930` no topo do
+  DO block — NULL = fallback interim nas contas do 10:00 (3.01.01.09/.09);
+  se o ok da conta nova sair até 20/08, preencher os 2 uuids antes de rodar.
+- **`backend/scripts/_corte_cultos_domingo_ensaio.cjs`** (SEM --exec, nunca
+  escreve): backup JSON do estado anterior em ~/Downloads + pré-condições via
+  RPC + lista de bloqueadores (a guarda do passo 0, antecipada) + o plano com
+  os números de hoje. Rodar antes do dia 24 e no dia, antes do SQL.
+- ⚠️ **O que o script NÃO cobre (checklist de GENTE, no header do SQL)**: PCO
+  (planos 30/08 e 06/09 → 09:30; as 84 escalas não se movem), whatsapp_config
+  "Horários de culto" (única superfície pública que EXPLICA a mudança),
+  template Meta `apresentacao_bebes_confirmacao` (conferir "10h" no corpo),
+  OTA do CBRio-Staff (`index.tsx:276`), verificação de campo 30/08 (totem Kids
+  08:50/09:35/10:45/11:15 · PIX da manhã → slot 9:30 · online_pico do 09:30),
+  dashboard_metas (recalibrar em OUTUBRO, só anotar o corte no rótulo).
+- Rollback pós-commit: tabelas `_bk_20260824_*` guardam o estado anterior.
+
 ## ⚠️ Identidade · o nome MAIS COMPLETO vence (2026-08-11 · SEM migration)
 
 Decisão do Marcos, no caso Thiago (candidatura de líder de 10/08): o matcher
