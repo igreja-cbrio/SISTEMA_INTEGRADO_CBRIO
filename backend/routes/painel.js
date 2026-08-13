@@ -146,7 +146,11 @@ function _isBridgeCulto(c) {
 }
 function _isSedeCulto(c) {
   const t = (c.service_type_name || '').toLowerCase();
-  return t.startsWith('domingo') || t === 'quarta com deus';
+  if (t) return t.startsWith('domingo') || t === 'quarta com deus';
+  // fallback por nome (espelha _isAmi/_isBridge): culto sem service_type não
+  // some da área Sede em silêncio (docs/cultos-domingo/ · F1)
+  const n = (c.nome || '').toLowerCase();
+  return n.startsWith('domingo') || n.includes('quarta');
 }
 
 // Decisões do mês repartidas por área de culto (presencial → sede/ami/bridge ·

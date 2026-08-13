@@ -383,6 +383,21 @@ router.post('/coleta/:id/aprovar', authorizeModule('integracao', 3), async (req,
       return res.status(409).json({ error: `Submissao já esta ${sub.status}` });
     }
 
+    // (docs/cultos-domingo/ · F1) Submissão de KIDS só aplica em culto cujo tipo
+    // TEM Kids — em has_kids=false ela gravaria presencial_kids fantasma num
+    // culto que o totem nunca alimenta. Leitura isolada e best-effort: só recusa
+    // quando o banco DIZ has_kids=false (falha de leitura não bloqueia a fila).
+    if (sub.ambiente !== 'templo') {
+      try {
+        const { data: cultoAlvo } = await supabase.from('cultos')
+          .select('id, service_type:vol_service_types(has_kids)')
+          .eq('id', sub.culto_id).maybeSingle();
+        if (cultoAlvo?.service_type && cultoAlvo.service_type.has_kids === false) {
+          return res.status(409).json({ error: 'Este culto não tem Kids — a submissão de kids não pode ser aplicada nele.' });
+        }
+      } catch { /* não bloqueia por falha de leitura */ }
+    }
+
     // A submissão mobile traz presencial + decisões do ambiente · marca as duas
     // seções como lançadas (incl. 0) pro culto não cair em "incompleto".
     const updateCulto = sub.ambiente === 'templo'

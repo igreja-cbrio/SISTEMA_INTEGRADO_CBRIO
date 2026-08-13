@@ -7579,6 +7579,61 @@ então na prática "sempre 09:30".
   do app e o formulário público escrevem em `apresentacao_criancas`, que **não
   tem `culto_id`** (alinhamento de 11/08).
 
+## Cultos de domingo · Lote 2 · Fase 1 aberta: régua do voluntariado + totem Kids + guards (2026-08-13 · migration `20260813120000`)
+
+Lote 2 do modo piloto (§13 de `docs/cultos-domingo/contexto-e-plano.md` ·
+branch `claude/cultos-domingo-handoff`). Tudo **INVISÍVEL até o corte de
+24/08**: 'Domingo 09%' não casa com culto nenhum enquanto o tipo "Domingo
+09:30" não existir, e a grade atual se comporta byte-idêntica (travado em
+teste). Regra do Marcos honrada: ninguém consegue se inscrever/fazer check-in
+em horário que ainda não existe.
+
+- **Migration `20260813120000` = PATCH DINÂMICO** (`pg_get_functiondef`/
+  `pg_get_viewdef` + `regexp_replace` · técnica da 20260729060000): acrescenta
+  `OR … ~~* 'Domingo 09%'` após cada comparação com `'Domingo 08%'` no gate
+  `fn_dash_vol_service_no_bloco` (obrigatório), na `vw_dashboard_voluntariado`
+  (obrigatória) e em composicao/resumo/pessoas (lenientes — versões novas
+  delegam ao gate). Idempotente (já tem 'Domingo 09' → NOTICE) · **ABORTA** se
+  a forma viva divergir · checagem ignora comentário (régua 06/08) · smoke: o
+  gate aceita 'Domingo 09:30' E segue aceitando 08:30/11:30. ⚠️ NUNCA colar
+  corpo estático de arquivo (reverteria patch de prod). ⚠️ **Aplicar ANTES de
+  24/08.** ⚠️ O anchor do bloco 'Domingo Manhã' (`'08:30:00'` no VALUES da
+  view) NÃO muda aqui — é visível; fica pro script do corte (Lote 5).
+- **volMatch.ts** (espelho JS da régua) ganhou `m(/^domingo 09/)` no bloco da
+  manhã + `src/test/volMatch.test.ts` (mutante: 09 na noite fica vermelho).
+- **Totem Kids** — régua do relógio virou PURA em `src/lib/cultoRelogioKids.ts`
+  ('agora' injetado · `src/test/cultoRelogioKids.test.ts`, 3 mutantes): a grade
+  nova 09:30+11:30 deixaria BURACO 10:30–11:00 sem culto de agora → **regra do
+  buraco zero**: a antecedência do PRÓXIMO estica até o fim da janela do
+  anterior, SÓ entre cultos do MESMO período (12:30–18:00 segue vazio) e NUNCA
+  esticando o fim do anterior (criança das 10:45 não cai no culto que acabou).
+  E **sessão única VENCIDA deixou de ser adotada em silêncio**
+  (`seletorCultosNecessario`/`faltaEscolherCulto` no TSX): única sessão só é
+  destino implícito quando é o culto de AGORA; senão o seletor aparece e trava
+  o confirmar — vale pro modo ensaio também (1 toque a mais, explícito).
+  `/cultos-do-dia` filtra `deleted_at` + `is_active !== false`; `POST
+  /sessoes/garantir` recusa culto apagado/tipo encerrado/sem Kids (falha de
+  LEITURA não bloqueia — instabilidade não trava o culto).
+- **Guards**: POST/PUT/DELETE `/voluntariado/service-types` →
+  `authorizeModule('voluntariado', 5)` (herdavam `membresia` nível 1 =
+  LEITURA, 27 cargos alcançavam). **DELETE com culto vinculado → 409** mandando
+  encerrar (mina nº 5: o DELETE anula `service_type_id` em 209 cultos e apaga
+  roteiro de produção/escala em CASCADE). Contagem head-only, fail-closed.
+  ⚠️ O POST segue NÃO cobrindo has_kids/has_online/presencial_label — tipo de
+  culto novo nasce por SQL (comentado na rota).
+- **kpis.js auto-create**: pré-check de idempotência = `(service_type_id,
+  data)`, a MESMA chave do índice único (lei 04/08 — com `hora` no pré-check,
+  culto existente com hora divergente estourava o UNIQUE e a falha sumia nos
+  skipped); insert com erro vai em `erroItems` + console.error.
+- **integracao.js `/coleta/:id/aprovar`**: submissão de KIDS recusa 409 em
+  culto com `has_kids=false` (só recusa quando o banco DIZ).
+- **CalendarioCultos.jsx**: campo que o tipo não usa é OMITIDO do payload, não
+  zerado — zerar apagava o que o totem Kids consolidou se a config do tipo
+  estivesse errada/incompleta (tipo novo antes das flags).
+- **isSedeCulto ×3** (kpiAutoCollector/painel/painelArea): fallback por `nome`
+  quando não há `service_type_name` (espelha isAmi/isBridge) — culto sem tipo
+  não some da Sede em silêncio.
+
 ## ⚠️ Identidade · o nome MAIS COMPLETO vence (2026-08-11 · SEM migration)
 
 Decisão do Marcos, no caso Thiago (candidatura de líder de 10/08): o matcher

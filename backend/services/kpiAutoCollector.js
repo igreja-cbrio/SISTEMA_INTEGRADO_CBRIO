@@ -86,10 +86,15 @@ function isBridgeCulto(c) {
   return n.includes('bridge');
 }
 
-// Sede · 4 horarios de domingo + Quarta com Deus
+// Sede · horarios de domingo (o "Domingo 09:30" do corte de 24/08 entra pelo
+// prefixo) + Quarta com Deus. Fallback por NOME espelha isAmi/isBridge: culto
+// sem service_type (avulso, ou tipo anulado por engano) não pode sumir dos
+// KPIs em silêncio (docs/cultos-domingo/ · F1).
 function isSedeCulto(c) {
   const t = (c.service_type_name || '').toLowerCase();
-  return t.startsWith('domingo') || t === 'quarta com deus';
+  if (t) return t.startsWith('domingo') || t === 'quarta com deus';
+  const n = (c.nome || '').toLowerCase();
+  return n.startsWith('domingo') || n.includes('quarta');
 }
 
 // Mantido por compat retroativa: cultos AMI ou Bridge (consolidacao antiga).

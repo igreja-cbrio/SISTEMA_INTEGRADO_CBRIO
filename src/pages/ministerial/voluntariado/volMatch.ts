@@ -34,7 +34,9 @@ export const dateOfSP = (iso?: string | null): string | null => {
 export function blocoDoServico(nome?: string | null): string | null {
   const n = (nome || '').toLowerCase().trim();
   const m = (re: RegExp) => re.test(n);
-  if (m(/^domingo - manh/) || m(/^cbkids - manh/) || m(/^domingo 08/) || m(/^domingo 10/) || m(/^domingo 11/)) return 'Domingo Manhã';
+  // 'domingo 09' cobre o "Domingo 09:30" que nasce no corte de 24/08/2026
+  // (docs/cultos-domingo/) — espelho do patch dinâmico 20260813120000 no SQL.
+  if (m(/^domingo - manh/) || m(/^cbkids - manh/) || m(/^domingo 08/) || m(/^domingo 09/) || m(/^domingo 10/) || m(/^domingo 11/)) return 'Domingo Manhã';
   if (m(/^domingo - noite/) || m(/^cbkids - noite/) || m(/^domingo 18/) || m(/^domingo 19/) || m(/^domingo 20/)) return 'Domingo Noite';
   if (m(/^quarta/) || m(/^cbkids - quarta/)) return 'Quarta';
   if (m(/^ami/) || m(/^culto ami/)) return 'AMI';
