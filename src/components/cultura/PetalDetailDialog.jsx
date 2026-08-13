@@ -5,7 +5,7 @@ const fmt = (n) => (n == null ? '—' : Intl.NumberFormat('pt-BR').format(n));
 const META = {
   seguir: {
     title: 'Seguir a Jesus',
-    desc: 'Frequência média semanal — presencial e online (DS).',
+    desc: 'Frequência média por domingo — presencial e online (DS).',
     color: '#3B82F6',
   },
   conectar: {
@@ -43,9 +43,12 @@ export default function PetalDetailDialog({ open, onClose, petalKey, data }) {
           <>
             <Row label="Presencial total" value={fmt(data.seguir_jesus?.presencial_total)} />
             <Row label="Online (DS) total" value={fmt(data.seguir_jesus?.online_total)} />
-            <Row label="Semanas no mês" value={fmt(data.semanas_no_mes)} />
-            <Row label="Média presencial / semana" value={fmt(data.seguir_jesus?.presencial)} accent={meta.color} />
-            <Row label="Média online / semana" value={fmt(data.seguir_jesus?.online)} accent={meta.color} />
+            {/* ⚠️ O divisor da média é o nº de DOMINGOS, não de semanas (decisão
+                do Marcos · 12/08/2026). Rótulo e divisor têm que andar juntos —
+                foi a divergência entre os dois que fez a média parecer baixa. */}
+            <Row label="Domingos no mês" value={fmt(data.domingos_no_mes)} />
+            <Row label="Média presencial / domingo" value={fmt(data.seguir_jesus?.presencial)} accent={meta.color} />
+            <Row label="Média online / domingo" value={fmt(data.seguir_jesus?.online)} accent={meta.color} />
           </>
         );
       case 'conectar':

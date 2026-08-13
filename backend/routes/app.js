@@ -96,6 +96,12 @@ async function tryAuth(req, _res, next) {
 const { chaveLimiteApp, ehChaveAnonima } = require('../utils/appRateLimit');
 // Saneamento do payload de inscrição do app (régua PURA · no gate de deploy).
 const { sanearDadosApp } = require('../utils/saneamentoInscricaoApp');
+const { avaliarHorarioBatismo, horariosDisponiveis } = require('../utils/batismoHorario');
+const {
+  horariosConfigurados: batismoHorariosConfigurados,
+  ocupacaoPorHorario: batismoOcupacaoPorHorario,
+  dataProximoBatismo,
+} = require('../services/batismoHorarios');
 // Régua PURA da edição de grupo pelo app (allowlist + categoria fechada + horário).
 const { validarEdicaoGrupoApp } = require('../utils/grupoEdicaoApp');
 
@@ -873,6 +879,31 @@ router.post('/inscricoes', limiterStrict, tryAuth, async (req, res) => {
       // fan-out é no-op hoje (não há evento agendado), então não duplica.
     }
 
+    // ⚠️ Horário do batismo · MESMA régua do formulário público
+    // (`utils/batismoHorario` + `services/batismoHorarios`). O app é um cliente
+    // novo da porta, não uma 2ª régua — reproduzir a decisão aqui é como o app
+    // passa a oferecer horário que o servidor recusa.
+    //
+    // ⚠️ O campo é OPCIONAL, e tem que continuar sendo: o binário da loja e todo
+    // bundle que ainda não aplicou o OTA não sabem que horário existe. Exigir
+    // aqui trancaria essa gente fora do batismo — a mecânica do portão que
+    // trancou todo mundo em 06/08.
+    if (tipo === 'batismo' && dados.horario_culto && String(dados.horario_culto).trim()) {
+      const dataBat = await dataProximoBatismo();
+      const [configurados, ocupacao] = await Promise.all([
+        batismoHorariosConfigurados(),
+        // Sem a data não dá pra contar ocupação; `configurados: null` já força a
+        // recusa, mas passamos {} pra não fingir que o horário está vazio.
+        dataBat ? batismoOcupacaoPorHorario(dataBat) : Promise.resolve({}),
+      ]);
+      const av = avaliarHorarioBatismo(dados.horario_culto, {
+        configurados: dataBat ? configurados : null, // falha na data = falha fechada
+        ocupacao,
+      });
+      if (!av.ok) return res.status(409).json({ error: av.mensagem });
+      dados.horario_culto = av.horario;
+    }
+
     // Pedido de oração: a IA classifica o tema (pra insights) já no insert.
     if (tipo === 'oracao') {
       const msgOra = extrairMensagem(extras);
@@ -1044,6 +1075,23 @@ router.post('/inscricoes', limiterStrict, tryAuth, async (req, res) => {
           'Não conseguimos concluir sua solicitação agora. Nossa equipe já foi avisada '
           + 'e vai resolver — se preferir, tente novamente em alguns minutos.',
         codigo: 'fanout_falhou',
+      });
+    }
+
+    // ⚠️ `duplicado` caía no caminho de SUCESSO — a pessoa lia "Solicitação
+    // recebida! Nossa equipe entrará em contato." tendo o fan-out reconhecido
+    // que ela JÁ está inscrita, e a equipe recebia um aviso de "nova inscrição"
+    // que não existe. É o mesmo defeito do `erro`, na versão silenciosa: a lei
+    // do Contrato de Inscrição diz que `ja_inscrito`/`duplicado` são EXIBIDOS,
+    // nunca engolidos como confirmação.
+    if (posFanout?.status === 'duplicado') {
+      return res.status(200).json({
+        ok: true,
+        id: inserted.id,
+        duplicado: true,
+        message:
+          `Você já tem uma inscrição de ${LABEL_INSCRICAO_WPP[tipo] || tipo} em andamento — `
+          + 'não precisa se inscrever de novo. Nossa equipe já está com o seu pedido.',
       });
     }
 
