@@ -762,6 +762,8 @@ export const integracao = {
 
 export const dashboardSemanal = {
   cultos: () => get('/dashboard-semanal/cultos'),
+  // Prévia do novo formato de domingo (atrás do véu · docs/cultos-domingo/)
+  lentesDomingo: (params = {}) => get('/dashboard-semanal/lentes-domingo?' + new URLSearchParams(params)),
   semanasDisponiveis: (ano) => get(`/dashboard-semanal/semanas-disponiveis?ano=${ano}`),
   semanal: (params) => get('/dashboard-semanal/semanal?' + new URLSearchParams(params)),
   resumoSemana: (ano, semana) => get(`/dashboard-semanal/resumo-semana?ano=${ano}&semana=${semana}`),

@@ -7649,6 +7649,51 @@ em horário que ainda não existe.
   quando não há `service_type_name` (espelha isAmi/isBridge) — culto sem tipo
   não some da Sede em silêncio.
 
+## Cultos de domingo · Lotes 3+4 · lentes + ocupação ofertada ATRÁS DO VÉU (2026-08-13 · migration `20260813150000`)
+
+Continuação do modo piloto (§13 de `docs/cultos-domingo/contexto-e-plano.md`).
+É a "página teste" pedida pelo Marcos em 13/08: um card de prévia no Dashboard
+Semanal que **só existe pra quem pode ver** — o backend decide.
+
+- **Migration `20260813150000`** (aditiva/idempotente · nada existente a lê):
+  `vol_service_types` += `vigente_de`/`vigente_ate` (janela de vigência ·
+  seeds: 08:30 e 10:00 com `vigente_ate='2026-08-23'`), `linhagem_key` (lente
+  continuidade · seed: 10:00 = `'domingo-0930'`) e `consolidacao_key` (lente
+  consolidação · seeds: 08:30 e 10:00 = `'domingo-0930'`). + tabela
+  **`cultos_config`** (singleton padrão app_config · RLS service_role +
+  super-admin) com **`lentes_domingo_publicas` = O VÉU** (default false).
+  ⚠️ O script do corte (Lote 5) completa: INSERT do tipo "Domingo 09:30" com
+  as 2 chaves + `vigente_de='2026-08-24'`, e o destrave do véu = `UPDATE
+  cultos_config SET lentes_domingo_publicas = true` (1 UPDATE, sem deploy).
+- **`GET /dashboard-semanal/lentes-domingo`**: responde `{visivel:false}` (e
+  NADA mais) a menos que a flag esteja ligada OU o usuário seja super-admin
+  (`isSuperAdminEmail` · falha ao ler a config = véu FECHADO). Colunas do Lote
+  3 em SELECT ISOLADO (lição parcelas_max): sem a migration o endpoint segue
+  de pé com `chaves_ok:false` e as lentes degradam pra separada. Leitura da
+  `vw_dashboard_semanal` paginada (2 anos ISO × tipos passa do cap de 1000).
+- **Régua PURA em `backend/utils/lentesDomingo.js`** (`montarLentes` ·
+  `src/test/lentesDomingo.test.ts`, 3 mutantes): lente **separada** (dado cru ·
+  padrão) · **continuidade** (linhagem_key: 10:00 → 09:30 = UMA série que
+  atravessa o corte, rótulo "Domingo 10:00 → Domingo 09:30") · **consolidação**
+  (consolidacao_key: 08:30+10:00 **SOMADOS POR SEMANA antes de qualquer
+  média** — mutante trava a pegadinha do Pr. Juninho). **Ocupação sobre
+  lugares OFERECIDOS** (ideia do Marcos): freq_adulto ÷ (1050 × cultos
+  VIGENTES no domingo, pela janela vigente_de/ate + is_active) — o denominador
+  cai de 4200 pra 3150 no corte SOZINHO (mutante). Eixo se estende até o 1º
+  domingo do formato novo pra `ReferenceLine` do corte aparecer já na prévia.
+- **`LentesDomingoCard.jsx`** montado no topo do main da `DashSemanalAba`
+  (após o ResumoSemanaCard): pills das 3 lentes + LineChart com ReferenceLine
+  "novo formato" (30/08) + `OcupacaoGauge` sobre a capacidade OFERECIDA +
+  médias por série + tabela de vigência/chaves (os dados do Lote 3 à vista).
+  Badge "atrás do véu" enquanto a flag está OFF. Card com `visivel:false`
+  renderiza **null** — usuário comum não vê nem espaço em branco.
+- ⚠️ Capacidade: o endpoint usa o `CAPACIDADE_TEMPLO = 1050` do próprio
+  dashboardSemanal.js e o card usa a capacidade QUE O ENDPOINT DEVOLVE (sem
+  hardcode novo no front). O inventário completo dos 1050/1300 hardcoded
+  (painel.js ×2, prompts de IA ×2, fn_monitoramento_okr_raw, vw_culto_stats
+  dormente) ficou mapeado na sessão de 13/08 — unificar é follow-up separado,
+  não deste lote.
+
 ## ⚠️ Identidade · o nome MAIS COMPLETO vence (2026-08-11 · SEM migration)
 
 Decisão do Marcos, no caso Thiago (candidatura de líder de 10/08): o matcher
