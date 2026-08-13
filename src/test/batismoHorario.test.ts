@@ -31,6 +31,52 @@ describe('avaliarHorarioBatismo', () => {
     }
   });
 
+  // ⚠️⚠️ MUTANTE: trocar o default de `exigir` para `true` faz este teste e o de
+  // cima ficarem vermelhos JUNTOS — e é essa a mudança de boa-fé que trancaria
+  // fora do batismo o binário da loja e todo bundle do app sem o OTA.
+  it('o default de `exigir` é FALSE (o público e o app dependem disso)', () => {
+    const r = avaliarHorarioBatismo(null, { configurados: CONFIG, ocupacao: {} });
+    expect(r.ok).toBe(true);
+  });
+
+  // ── `exigir: true` · direcionamento do NEXT (13/08) ───────────────────────
+  // Medido em produção antes do fix: as 3 inscrições `origem='next'` estavam
+  // 100% sem horário E sem data — logo, fora da contagem por culto e fora do
+  // lembrete de véspera do WhatsApp.
+  it('exigir: SEM horário é recusa, com motivo `obrigatorio`', () => {
+    for (const vazio of [null, undefined, '', '   ']) {
+      const r = avaliarHorarioBatismo(vazio, { configurados: CONFIG, ocupacao: {}, exigir: true });
+      expect(r.ok).toBe(false);
+      expect(r.motivo).toBe('obrigatorio');
+      expect(r.mensagem).toBeTruthy();
+    }
+  });
+
+  // ⚠️ "Você esqueceu de escolher" ≠ "não há o que escolher". A segunda é
+  // trabalho da EQUIPE (abrir horário no painel da Integração) — mandar a pessoa
+  // "escolher" um horário que não existe é beco sem saída, e a tela usa este
+  // motivo pra desligar o destino dizendo por quê.
+  it('exigir: nada aberto/com vaga → `sem_horario_aberto`, não `obrigatorio`', () => {
+    const tudoFechado = [{ horario: '11:30', aberto: false, limite: 11 }];
+    expect(avaliarHorarioBatismo(null, { configurados: tudoFechado, exigir: true }).motivo)
+      .toBe('sem_horario_aberto');
+    // aberto porém LOTADO conta como "não há o que escolher"
+    expect(avaliarHorarioBatismo(null, { configurados: CONFIG, ocupacao: { '08:30': 11, '10:00': 11 }, exigir: true }).motivo)
+      .toBe('sem_horario_aberto');
+  });
+
+  it('exigir: catálogo ilegível é `indisponivel` (falha fechada), não `obrigatorio`', () => {
+    const r = avaliarHorarioBatismo(null, { configurados: null, exigir: true });
+    expect(r.ok).toBe(false);
+    expect(r.motivo).toBe('indisponivel');
+  });
+
+  it('exigir NÃO muda nada quando o horário veio: aceita o válido, recusa o cheio', () => {
+    expect(avaliarHorarioBatismo('10:00', { configurados: CONFIG, ocupacao: { '10:00': 3 }, exigir: true }).ok).toBe(true);
+    expect(avaliarHorarioBatismo('10:00', { configurados: CONFIG, ocupacao: { '10:00': 11 }, exigir: true }).motivo).toBe('lotado');
+    expect(avaliarHorarioBatismo('11:30', { configurados: CONFIG, exigir: true }).motivo).toBe('fechado');
+  });
+
   it('recusa horário fechado', () => {
     const r = avaliarHorarioBatismo('11:30', { configurados: CONFIG, ocupacao: {} });
     expect(r.ok).toBe(false);

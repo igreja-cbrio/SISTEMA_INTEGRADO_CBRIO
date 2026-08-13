@@ -33,18 +33,51 @@ function normalizarHorario(valor) {
  *        linhas VIVAS de `batismo_horarios` (deleted_at IS NULL). `null` = não
  *        foi possível ler → falha fechada.
  * @param {Record<string, number>} ctx.ocupacao  horário → nº de inscritos na data
+ * @param {boolean} [ctx.exigir=false]  ver o bloco de ausência abaixo.
  * @returns {{ok: boolean, horario: string|null, motivo: string|null, mensagem: string|null}}
  */
-function avaliarHorarioBatismo(escolhido, { configurados, ocupacao = {} } = {}) {
+function avaliarHorarioBatismo(escolhido, { configurados, ocupacao = {}, exigir = false } = {}) {
   const horario = normalizarHorario(escolhido);
 
-  // ⚠️ Ausência NÃO é erro — é o estado de quem não escolheu. O público sempre
-  // tratou o campo como opcional, e o app de bundle antigo (que não aplicou o
-  // OTA e nem sabe que existe horário) continua mandando sem. Exigir aqui
-  // trancaria essa gente fora do batismo, que é a mecânica do portão que
-  // trancou todo mundo em 06/08.
+  // ⚠️ Ausência NÃO é erro POR PADRÃO — é o estado de quem não escolheu. O
+  // formulário público sempre tratou o campo como opcional, e o app de bundle
+  // antigo (que não aplicou o OTA e nem sabe que existe horário) continua
+  // mandando sem. Exigir ALI trancaria essa gente fora do batismo, que é a
+  // mecânica do portão que trancou todo mundo em 06/08.
+  //
+  // ⚠️⚠️ `exigir: true` é do DIRECIONAMENTO DO NEXT (13/08 · pedido do Matheus:
+  // "chega inscrição de batismo do Next sem horário definido"). Ali o opcional
+  // não se justifica: os 3 clientes são telas WEB deste mesmo bundle (deploy
+  // atômico, sem OTA), então quem marca "quero me batizar" tem o seletor na
+  // frente. Medido em 13/08: as 3 inscrições `origem='next'` estão 100% sem
+  // horário E sem data.
   if (horario === null) {
-    return { ok: true, horario: null, motivo: null, mensagem: null };
+    if (!exigir) return { ok: true, horario: null, motivo: null, mensagem: null };
+    if (!Array.isArray(configurados)) {
+      return {
+        ok: false,
+        horario: null,
+        motivo: 'indisponivel',
+        mensagem: 'Não conseguimos confirmar os horários agora. Tente de novo em instantes.',
+      };
+    }
+    // ⚠️ Distingue "você esqueceu de escolher" de "não há o que escolher": a
+    // segunda é trabalho da EQUIPE (abrir horário no painel da Integração), e
+    // mandar a pessoa "escolher" um horário que não existe é beco sem saída.
+    if (horariosDisponiveis(configurados, ocupacao).length === 0) {
+      return {
+        ok: false,
+        horario: null,
+        motivo: 'sem_horario_aberto',
+        mensagem: 'Não há horário de batismo aberto no momento. Fale com a equipe da Integração.',
+      };
+    }
+    return {
+      ok: false,
+      horario: null,
+      motivo: 'obrigatorio',
+      mensagem: 'Escolha o horário do batismo.',
+    };
   }
 
   if (!Array.isArray(configurados)) {

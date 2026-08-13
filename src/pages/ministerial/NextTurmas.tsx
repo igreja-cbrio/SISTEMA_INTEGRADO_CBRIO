@@ -59,6 +59,12 @@ const STATUS_COLOR: Record<Status, string> = {
 // Direcionamento pros valores DENTRO do Next (Fase 1B · Marcos · 2026-06-25). Os flags
 // indicou_* vivem na matrícula. Grupos/Voluntários → caixa da área; Batismo → inscrição
 // pendente; Devocional → registra a escolha. Sem Dízimo (decisão do Marcos).
+// Horários do batismo · catálogo que a Integração gerencia na aba Batismos.
+type BatismoInfoNext = {
+  data_batismo?: string | null;
+  horarios: { horario: string; label: string; vagas_restantes: number | null }[];
+};
+
 const NEXT_VALORES: { v: string; flag: keyof Matricula; l: string }[] = [
   { v: 'grupos',      flag: 'indicou_grupo',      l: 'Grupos' },
   { v: 'voluntarios', flag: 'indicou_servir',     l: 'Voluntários' },
@@ -745,14 +751,30 @@ function DirecionarValoresModal({ m, onClose, onDone }: { m: { id: string; nome:
   const jaFeito = (flag: string) => !!(m as any)[flag];
   const [sel, setSel] = useState<Record<string, boolean>>({});
   const [saving, setSaving] = useState(false);
+  // Horários do batismo · catálogo da Integração (aba Batismos). Carregado só
+  // quando o modal abre — a lista muda de ocupação a cada inscrição.
+  const [batismo, setBatismo] = useState<BatismoInfoNext>({ horarios: [] });
+  const [horarioBatismo, setHorarioBatismo] = useState('');
   const nomeC = `${m.nome} ${m.sobrenome || ''}`.trim();
+
+  useEffect(() => {
+    nextApi.batismoHorarios()
+      .then((r: BatismoInfoNext) => setBatismo(r && Array.isArray(r.horarios) ? r : { horarios: [] }))
+      .catch(() => setBatismo({ horarios: [] }));
+  }, []);
+
+  const batismoIndisponivel = batismo.horarios.length === 0;
 
   async function save() {
     const destinos = NEXT_VALORES.filter(x => sel[x.v] && !jaFeito(x.flag)).map(x => x.v);
     if (destinos.length === 0) { toast.error('Escolha ao menos um destino novo'); return; }
+    // ⚠️ O servidor recusa batismo sem horário (a inscrição sem horário some da
+    // contagem por culto e do lembrete de véspera). Aviso aqui pra não gastar
+    // round-trip nem mostrar erro cru.
+    if (destinos.includes('batismo') && !horarioBatismo) { toast.error('Escolha o horário do batismo'); return; }
     setSaving(true);
     try {
-      await nextApi.matriculas.direcionar(m.id, destinos);
+      await nextApi.matriculas.direcionar(m.id, destinos, [], horarioBatismo || null);
       toast.success('Direcionado');
       onDone();
     } catch (e: any) { toast.error(e?.message || 'Erro ao direcionar'); }
@@ -765,18 +787,47 @@ function DirecionarValoresModal({ m, onClose, onDone }: { m: { id: string; nome:
         <DialogHeader><DialogTitle>Direcionar — {nomeC}</DialogTitle></DialogHeader>
         <p className="text-xs text-muted-foreground">
           Pra onde a pessoa segue ao fim do Next. Grupos/Voluntários caem na caixa da área;
-          Batismo vira inscrição pendente; Devocional registra a escolha.
+          Batismo vira inscrição pendente no horário escolhido; Devocional registra a escolha.
         </p>
         <div className="space-y-2 py-1">
           {NEXT_VALORES.map(x => {
             const feito = jaFeito(x.flag);
+            const bloqueado = x.v === 'batismo' && batismoIndisponivel;
             return (
-              <label key={x.v} className={`flex items-center gap-2 text-sm rounded-md border border-border p-2 ${feito ? 'opacity-60' : 'cursor-pointer'}`}>
-                <input type="checkbox" disabled={feito} checked={feito || !!sel[x.v]}
-                  onChange={e => setSel(s => ({ ...s, [x.v]: e.target.checked }))}
-                  className="h-4 w-4 accent-[#00B39D]" />
-                {x.l}{feito && <span className="text-[10px] text-muted-foreground">· já direcionado</span>}
-              </label>
+              <div key={x.v}>
+                <label className={`flex items-center gap-2 text-sm rounded-md border border-border p-2 ${feito || bloqueado ? 'opacity-60' : 'cursor-pointer'}`}>
+                  <input type="checkbox" disabled={feito || bloqueado} checked={feito || !!sel[x.v]}
+                    onChange={e => setSel(s => ({ ...s, [x.v]: e.target.checked }))}
+                    className="h-4 w-4 accent-[#00B39D]" />
+                  {x.l}
+                  {feito && <span className="text-[10px] text-muted-foreground">· já direcionado</span>}
+                  {!feito && bloqueado && (
+                    <span className="text-[10px] text-muted-foreground">· nenhum horário aberto (abra na aba Batismos)</span>
+                  )}
+                </label>
+
+                {/* Horário do batismo — obrigatório: é ele que faz a inscrição
+                    entrar na contagem por culto e no lembrete de véspera. */}
+                {x.v === 'batismo' && !feito && !bloqueado && sel.batismo && (
+                  <div className="mt-1.5 ml-6 space-y-1">
+                    <p className="text-[11px] text-muted-foreground">
+                      Horário do batismo
+                      {batismo.data_batismo ? ` (${new Date(batismo.data_batismo + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'long' })})` : ''}
+                    </p>
+                    {batismo.horarios.map(h => (
+                      <label key={h.horario} className="flex items-center gap-2 text-xs rounded-md border border-border p-1.5 cursor-pointer">
+                        <input type="radio" name="horario-batismo" className="h-3.5 w-3.5 accent-[#00B39D]"
+                          checked={horarioBatismo === h.horario}
+                          onChange={() => setHorarioBatismo(h.horario)} />
+                        <span className="flex-1">{h.label}</span>
+                        {h.vagas_restantes != null && (
+                          <span className="text-[10px] text-muted-foreground">{h.vagas_restantes} vaga{h.vagas_restantes === 1 ? '' : 's'}</span>
+                        )}
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
             );
           })}
         </div>
