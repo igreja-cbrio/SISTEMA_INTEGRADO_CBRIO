@@ -96,6 +96,7 @@ async function tryAuth(req, _res, next) {
 const { chaveLimiteApp, ehChaveAnonima } = require('../utils/appRateLimit');
 // Saneamento do payload de inscrição do app (régua PURA · no gate de deploy).
 const { sanearDadosApp } = require('../utils/saneamentoInscricaoApp');
+const { mascaraTelefone } = require('../utils/camposContato');
 const { avaliarHorarioBatismo, horariosDisponiveis } = require('../utils/batismoHorario');
 const {
   horariosConfigurados: batismoHorariosConfigurados,
@@ -565,11 +566,37 @@ router.put('/membro/perfil', authApp, limiterNormal, async (req, res) => {
     // Vínculo via profiles.membro_id (fallback e-mail) — mem_membros não tem
     // auth_user_id. Sem isto o save 404 sempre ("Não foi possível salvar").
     const membro = await resolveMembroApp(req);
-    if (!membro) return res.status(404).json({ error: 'Membro não encontrado' });
+    if (!membro) {
+      // Conta criada sem cadastro vinculado (/completar-cadastro ainda não
+      // rodou): não há mem_membros pra atualizar, mas o telefone que a pessoa
+      // digitou NÃO pode se perder — a tela de perfil é onde ela o preenche.
+      // Grava só em profiles, já no formato canônico. (O 404 continua: a tela
+      // mostra que o cadastro ainda não existe.)
+      if ('telefone' in update) {
+        const telefonePerfil = update.telefone ? mascaraTelefone(update.telefone) : null;
+        supabase.from('profiles').update({ telefone: telefonePerfil }).eq('id', req.user.id)
+          .then(() => {}).catch((err) => console.log(`[APP] perfil · sync profiles.telefone (sem membro): ${err.message}`));
+      }
+      return res.status(404).json({ error: 'Membro não encontrado' });
+    }
 
     const { data, error } = await supabase
       .from('mem_membros').update(update).eq('id', membro.id).select().single();
     if (error) throw error;
+
+    // ⚠️⚠️ `profiles.telefone` também é fonte canônica de telefone (fanout,
+    // dedup, waInbox, totem Kids) e a tela de perfil do app gravava o valor
+    // CRU ("+55 (21) …" · 13 dígitos com código de país) direto na linha do
+    // profile — o dedup compara 11 dígitos e não casa (mesmo bug do update de
+    // mem_membros acima, já saneado). O `/perfil` do sistema grava MASCARADO
+    // `(21) 99999-9999`; espelhar aqui mantém o app no MESMO formato canônico.
+    // Best-effort de propósito: o update de mem_membros é o primário.
+    if ('telefone' in update) {
+      const telefonePerfil = update.telefone ? mascaraTelefone(update.telefone) : null;
+      supabase.from('profiles').update({ telefone: telefonePerfil }).eq('id', req.user.id)
+        .then(() => {}).catch((err) => console.log(`[APP] perfil · sync profiles.telefone: ${err.message}`));
+    }
+
     res.json(data);
   } catch (e) {
     res.status(500).json({ error: 'Erro ao atualizar perfil' });
