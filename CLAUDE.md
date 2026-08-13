@@ -1805,9 +1805,33 @@ Pedido dele: otimizar o uso interno do módulo. 10 abas viraram **6**
   toggle de lembretes do líder (endpoints `whatsapp-admin`, botão gated).
 - Aba Bot enxugou: Menu do bot + Configuração (2 sub-abas).
 
-F3 (a caminho): fluxos por opção do menu do bot, visual inspirado no
-/atlas/fluxograma — cada opção com caminho completo (mensagem própria →
-pede nome? → área OU atendente).
+### Reorganização · F3 — FLUXOS por opção do menu (2026-08-13 · migration `20260813150000`)
+
+Diagnóstico que motivou (confirmado no código): escolher "1" ou "4" no menu
+fazia A MESMA coisa — pede nome → grava área → notifica; a única diferença era
+a etiqueta. Agora cada opção de `conversas_setores` carrega o CAMINHO:
+
+- **Colunas novas**: `mensagem_resposta` (confirmação própria · NULL = padrão ·
+  o protocolo é acrescentado no fim), `pedir_nome` (false = encaminha direto —
+  ex.: oração), `destino_tipo` (`area` | `atendente`) e `atendente_id` (FK
+  profiles · lei nº 10: CHECK/FK em bloco próprio, não no ADD COLUMN).
+- **Motor** (`whatsappTriagem.js`): `concluirTriagem()` única pros 2 caminhos;
+  destino atendente ⇒ a conversa NASCE atribuída (`atribuido_a`) e o aviso vai
+  SÓ pro atendente (`targetIds`). ⚠️ `bot_area_pendente` passou a guardar o
+  **ID da opção** (2 opções podem apontar pra mesma área com fluxos
+  diferentes); conversa em andamento com a ÁREA antiga resolve por fallback.
+  `setoresAtivos()` usa `select('*')` de propósito (tolera a migration
+  ausente — lição do parcelas_max; sem as colunas, tudo cai no fluxo padrão).
+- **Rotas** (`waInbox.js` setores): POST/PUT aceitam os campos de fluxo;
+  destino atendente sem `atendente_id` = 400; pré-migration, salvar campos
+  de fluxo AVISA e ignora (42703 → retry só com o básico + `aviso` na
+  resposta) — nunca silêncio.
+- **Tela** (`ConversasSetores.jsx` reescrita · "Fluxos do menu"): cada opção é
+  um TRILHO de nós (pessoa escolhe → pede nome? → bot confirma → destino →
+  aviso · linguagem do /atlas/fluxograma) + prévia do menu como a pessoa vê +
+  editor com os passos na ordem do caminho e prévia ao vivo.
+- V2 futura (combinada): sub-menus de 2 níveis, mensagem fora-de-horário
+  (escala dos atendentes), opção que envia link/formulário.
 
 ⚠️ Ficam da revisão (médios · ainda abertos): statuses órfãos write-only +
 status de outbound do CHAT descartado · **Realtime sem filtro por área —
