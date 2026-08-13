@@ -325,7 +325,10 @@ router.get('/envios', async (req, res, next) => {
       .select('id, telefone, tipo, template, texto, contexto, status, tentativas, erro, erro_status, message_id, criado_em, enviado_em, delivered_at, read_at, failed_at', { count: 'exact' })
       .order('criado_em', { ascending: false })
       .range(offset, offset + limite - 1);
-    if (req.query.status) q = q.eq('status', String(req.query.status));
+    // 'falha_meta' não é um status da fila: é envio ACEITO (status=enviado) que
+    // a Meta depois reportou como não entregue — o recorte é pelo failed_at.
+    if (req.query.status === 'falha_meta') q = q.not('failed_at', 'is', null);
+    else if (req.query.status) q = q.eq('status', String(req.query.status));
     if (req.query.contexto) q = q.ilike('contexto', `${String(req.query.contexto)}%`);
     if (req.query.telefone) q = q.ilike('telefone', `%${String(req.query.telefone).replace(/\D/g, '')}%`);
     if (req.query.de) q = q.gte('criado_em', String(req.query.de));
@@ -386,7 +389,16 @@ router.get('/envios/resumo', async (req, res, next) => {
       conta(q => q.not('read_at', 'is', null)),
       conta(q => q.not('failed_at', 'is', null)),
     ]);
-    res.json({ dias, total, enviados, pendentes, erros, entregues, lidos, falhos_meta: falhosMeta });
+    // Órfãos (recibo da Meta sem envio correspondente) — best-effort: a aba
+    // Envios (que absorveu a Erros) mostra o selo quando > 0.
+    let orfaos = 0;
+    try {
+      const { count, error: errOrf } = await supabase.from('whatsapp_status_orfaos')
+        .select('id', { count: 'exact', head: true }).gte('criado_em', desde);
+      if (errOrf) console.warn('[comunicacao] resumo orfaos:', errOrf.message);
+      orfaos = count || 0;
+    } catch { /* tabela ausente → 0 */ }
+    res.json({ dias, total, enviados, pendentes, erros, entregues, lidos, falhos_meta: falhosMeta, orfaos });
   } catch (e) {
     console.error('[comunicacao] resumo:', e.message);
     next(communicationError(e, 'Erro no resumo de envios.'));
