@@ -127,10 +127,18 @@ async function pushExpoParaUsers(userIds, { title, body, data } = {}) {
         data: data || {},
       }));
       try {
+        // ⚠️⚠️ TIMEOUT OBRIGATÓRIO. Desde 11/08 esta cadeia é AWAITED no
+        // formulário público de grupos, ou seja está no caminho da resposta de
+        // quem está se inscrevendo. `fetch` sem `signal` não tem teto: exp.host
+        // lento seguraria a pessoa até o `maxDuration` da função, e ela veria
+        // ERRO num pedido que FOI gravado — exatamente o dano que a lei do
+        // awaited existe pra evitar. 8s é folgado (a média medida é ~1,16s).
+        // ⚠️ O push é o que pode se perder aqui; o SINO já foi gravado antes.
         const response = await fetch('https://exp.host/--/api/v2/push/send', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
           body: JSON.stringify(chunk),
+          signal: AbortSignal.timeout(8000),
         });
         const payload = await response.json().catch(() => ({}));
         const tickets = Array.isArray(payload?.data) ? payload.data : [];
@@ -190,17 +198,95 @@ async function pushExpoParaUsers(userIds, { title, body, data } = {}) {
   }
 }
 
+/**
+ * Grava o aviso no sino do app e dispara o push.
+ *
+ * ⚠️ A ORDEM É LEI: o insert em `app_notificacoes` vem ANTES de olhar token. É o
+ * que faz o aviso funcionar no **Android sem Firebase** — hoje 100% dos 42 tokens
+ * da base são iOS, então pra a maioria da frota o sino É o canal. Inverter a
+ * ordem transformaria "sem push" em "sem aviso nenhum".
+ *
+ * @param {string[]} userIds profiles.id (= auth.users.id)
+ * @param {{tipo,titulo,body,data?,chaveDedup?}} payload
+ *   `chaveDedup` amarra o aviso ao FATO (ex.: `grupo_pedido:<id do pedido>`), não
+ *   ao instante — ver o comentário do upsert abaixo.
+ */
 async function notificarApp(userIds, payload) {
   try {
     const ids = [...new Set((userIds || []).filter(Boolean))];
     if (!ids.length) return { enviados: 0 };
 
     // 1) histórico in-app (1 por user)
+    const dedup = payload.chaveDedup || null;
     const rows = ids.map((u) => ({
       user_id: u, tipo: payload.tipo, titulo: payload.titulo,
       body: payload.body, data: payload.data || {},
+      ...(dedup ? { chave_dedup: dedup } : {}),
     }));
-    await supabase.from('app_notificacoes').insert(rows);
+
+    // ⚠️⚠️ O ERRO DO INSERT ERA DESCARTADO — e `user_id` é FK pra `auth.users`.
+    // Como o insert é em LOTE, um id ruim (profile órfão) fazia o PostgREST
+    // recusar a operação INTEIRA e **ninguém** recebia, em silêncio. Agora, em
+    // erro de lote, reinsere linha a linha: quem dá pra avisar é avisado, e quem
+    // não dá aparece no log com o motivo.
+    let persistidos = 0;
+    const semDedup = (ls) => ls.map(({ chave_dedup: _fora, ...r }) => r);
+    const gravar = async (lote) => {
+      // `upsert` + `onConflict` só quando há chave: sem ela não há alvo pra
+      // inferir e o upsert não teria o que deduplicar.
+      const q = dedup
+        ? supabase.from('app_notificacoes')
+          .upsert(lote, { onConflict: 'user_id,chave_dedup', ignoreDuplicates: true })
+        : supabase.from('app_notificacoes').insert(lote);
+      return q;
+    };
+
+    // ⚠️⚠️ A GUARDA É POR CÓDIGO, NÃO POR TEXTO. Casar a MENSAGEM do PostgREST
+    // é depender do idioma de um terceiro: `42P10` ("no unique or exclusion
+    // constraint matching the ON CONFLICT") **não cita `chave_dedup`** e passaria
+    // batido — cenário real se a migration for meia-aplicada (coluna criada, o
+    // `create unique index` falhando em tabela viva). O idioma de código já é o
+    // canônico do repo (`inscricoes.js` colunaAusente, `censoDisparo.js`).
+    const semColuna = (e) => ['42703', 'PGRST204', '42P10'].includes(e?.code);
+
+    let { error } = await gravar(rows);
+    let degradado = false;
+    if (error && semColuna(error)) {
+      // ⚠️ Deploy em 2 etapas: sem a migration `20260811150000` a coluna não
+      // existe e o PostgREST recusa a query inteira por coluna desconhecida.
+      // Degrada pro comportamento antigo (avisar sem dedup) em vez de não avisar
+      // — é a lição do `parcelas_max`, e aqui o aviso é o que importa.
+      console.warn('[appPush] sem chave_dedup (migration pendente) — gravando sem dedup');
+      degradado = true;
+      ({ error } = await supabase.from('app_notificacoes').insert(semDedup(rows)));
+      if (!error) persistidos = rows.length;
+    } else if (!error) {
+      persistidos = rows.length;
+    }
+
+    if (error) {
+      console.error('[appPush] insert em lote falhou:', error.code, error.message);
+      // ⚠️⚠️ O RESGATE HERDA A FORMA DA ÚLTIMA TENTATIVA. Reusar a query que
+      // acabou de falhar por coluna ausente refaria o MESMO erro em cada linha,
+      // e o log culparia `chave_dedup` no lugar do motivo real (o caso concreto:
+      // um `user_id` órfão viola a FK de `auth.users` e derruba o LOTE, aí o
+      // resgate linha-a-linha existe justamente pra salvar os válidos).
+      const linhas = degradado ? semDedup(rows) : rows;
+      // ⚠️ TETO: esta função também serve o broadcast de evento publicado, que
+      // manda em lotes de 500 — sem teto, uma falha de lote viraria 500
+      // round-trips sequenciais dentro de um request.
+      const TETO_RESGATE = 25;
+      for (const r of linhas.slice(0, TETO_RESGATE)) {
+        const { error: e1 } = degradado
+          ? await supabase.from('app_notificacoes').insert([r])
+          : await gravar([r]);
+        if (e1) console.warn(`[appPush] aviso perdido user=${r.user_id}: ${e1.code} ${e1.message}`);
+        else persistidos += 1;
+      }
+      if (linhas.length > TETO_RESGATE) {
+        console.warn(`[appPush] resgate parou no teto: ${linhas.length - TETO_RESGATE} avisos não gravados`);
+      }
+    }
 
     // 2) push Expo pros tokens
     const { enviados } = await pushExpoParaUsers(ids, {
@@ -208,7 +294,7 @@ async function notificarApp(userIds, payload) {
       body: payload.body,
       data: { tipo: payload.tipo, ...(payload.data || {}) },
     });
-    return { enviados, persistidos: rows.length };
+    return { enviados, persistidos };
   } catch (e) {
     console.error('[appPush] erro:', e.message);
     return { enviados: 0 };

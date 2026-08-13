@@ -8,7 +8,7 @@ const {
   temAbreviacaoNome, splitNomeCompleto, validarNascimento, honeypotPreenchido,
   registrarConsentimentos, TEXTOS, cpfValido, emailValido,
 } = require('../services/inscricaoContrato');
-const { avaliarHorarioBatismo, horariosDisponiveis } = require('../utils/batismoHorario');
+const { avaliarHorarioBatismo, horariosDisponiveis, normalizarHorario } = require('../utils/batismoHorario');
 const { horariosConfigurados, ocupacaoPorHorario } = require('../services/batismoHorarios');
 
 // Limiter GENEROSO do router (padrão grupos/NPS/eventos): o form roda em
@@ -99,8 +99,34 @@ router.get('/textos', (_req, res) => {
   });
 });
 
-// ⚠️ `horariosConfigurados` e `ocupacaoPorHorario` vivem em
-// `services/batismoHorarios.js` — o app de membros usa as MESMAS consultas.
+/**
+ * ⚠️ `vagaNoHorario` (11/08) foi ABSORVIDA por `avaliarHorarioBatismo`
+ * (`utils/batismoHorario.js`) — não foi descartada. O que ela trouxe está
+ * preservado, e o que faltava nela entrou junto:
+ *
+ * - **Mantido**: o ponto da chamada (imediatamente antes do insert, pra encurtar
+ *   a janela de corrida), a mensagem que manda a pessoa pro OUTRO horário, e
+ *   `limite` NULO = sem teto.
+ * - **Somado**: confere também `aberto` (ela só olhava o limite — horário
+ *   FECHADO passava), **falha FECHADA** quando o catálogo não pode ser lido (ela
+ *   fazia `if (!h) return {ok:true}`, ou seja, liberava), e ocupação PAGINADA.
+ *
+ * A evidência que justificou aquele conserto continua valendo e não pode se
+ * perder: **28/06 às 10:00 teve 12 inscritos num limite de 11** (medido em
+ * 11/08), porque o `POST /inscrever` não conferia nada — o limite só existia no
+ * `GET /horarios`, que apenas esconde do seletor. Decisão do Marcos (11/08):
+ * *"caso um horário esteja cheio, liberar apenas o outro, o limite é 11
+ * pessoas."*
+ *
+ * ⚠️ RESÍDUO DECLARADO (herdado, segue igual): a conferência é SELECT seguido de
+ * INSERT, sem lock — dois envios no mesmo instante podem passar os dois. Não é
+ * `pg_advisory_xact_lock` porque o buraco de 28/06 não foi corrida: era ausência
+ * total de conferência. Com ~6 inscrições por cerimônia a janela é pequena; se
+ * um dia estourar por 1, é aqui que vira RPC com lock.
+ *
+ * As consultas (`horariosConfigurados`/`ocupacaoPorHorario`) moraram aqui e agora
+ * vivem em `services/batismoHorarios.js` — o app de membros usa AS MESMAS.
+ */
 
 // GET /api/public/batismo/horarios
 // Horários ABERTOS e COM VAGA pro próximo batismo · alimenta o seletor do form.
@@ -253,25 +279,9 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
 
     const dataBatismo = proximoQuartoDomingoISO();
 
-    // Horário escolhido · régua ÚNICA em utils/batismoHorario (compartilhada com
-    // o GET /horarios e com o POST /app/inscricoes).
-    // ⚠️ FALHA FECHADA: a versão anterior envolvia a validação num `if (!hErr)`,
-    // então consulta que falhava PULAVA a regra e gravava em `horario_culto` o
-    // texto cru do cliente — campo que alimenta o {{2}} do lembrete enviado pelo
-    // número oficial da igreja. Não conseguir conferir agora RECUSA.
-    // Ausência de horário segue passando (o campo é opcional desde sempre).
-    // As 2 consultas só rodam quando há horário a conferir — quem não escolheu
-    // não paga round-trip nenhum.
-    let horarioEscolhido = null;
-    if (horario_culto && String(horario_culto).trim()) {
-      const [configurados, ocupacao] = await Promise.all([
-        horariosConfigurados(),
-        ocupacaoPorHorario(dataBatismo),
-      ]);
-      const av = avaliarHorarioBatismo(horario_culto, { configurados, ocupacao });
-      if (!av.ok) return res.status(409).json({ error: av.mensagem });
-      horarioEscolhido = av.horario;
-    }
+    // Só normaliza aqui — quem CONFERE é o bloco logo antes do insert (a janela
+    // de corrida encurta quanto mais perto da gravação).
+    const horarioEscolhido = normalizarHorario(horario_culto);
 
     // Observações agora so guarda o que não tem coluna própria.
     // CEP e horário (Culto) têm colunas dedicadas (cep, horario_culto) → não entram aqui.
@@ -335,6 +345,29 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
       cep: cepNorm,
       sexo: sexoNorm,
     };
+
+    // ⚠️ O horário é conferido DEPOIS de toda a validação e IMEDIATAMENTE antes
+    // do insert — quanto menor a distância entre conferir e gravar, menor a
+    // janela de corrida. (Ponto herdado do `vagaNoHorario` de 11/08.)
+    // Régua ÚNICA em `utils/batismoHorario` — a MESMA do `GET /horarios` e do
+    // `POST /app/inscricoes`. As 2 consultas só rodam quando há horário a
+    // conferir: quem não escolheu não paga round-trip nenhum.
+    if (payload.horario_culto) {
+      const [configurados, ocupacao] = await Promise.all([
+        horariosConfigurados(),
+        ocupacaoPorHorario(payload.data_batismo),
+      ]);
+      const av = avaliarHorarioBatismo(payload.horario_culto, { configurados, ocupacao });
+      if (!av.ok) {
+        // 409, não 400: não é erro de preenchimento — é o horário que fechou ou
+        // encheu enquanto a pessoa preenchia.
+        return res.status(409).json({
+          error: av.mensagem,
+          codigo: av.motivo === 'lotado' ? 'horario_lotado' : `horario_${av.motivo}`,
+          campo: 'horario_culto',
+        });
+      }
+    }
 
     const { data, error } = await supabase
       .from('batismo_inscricoes')
@@ -458,3 +491,6 @@ router.get('/acesso', acessoLimiter, async (req, res) => {
 });
 
 module.exports = router;
+// Exposta pra fora do módulo (painelRh.js usa pra mostrar "próximo batismo"
+// no painel de RH da home) — mesma função, sem duplicar a régua do 4º domingo.
+module.exports.proximoQuartoDomingoISO = proximoQuartoDomingoISO;

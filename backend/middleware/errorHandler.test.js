@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const { AppError, ERROR_CODES, normalizeError } = require('../utils/appError');
 const { createCorsOriginValidator, isAllowedOrigin } = require('../utils/corsPolicy');
-const { sanitizeSentryEvent, shouldCaptureException } = require('../utils/sentry');
+const { captureContextForRequest, sanitizeSentryEvent, shouldCaptureException } = require('../utils/sentry');
 const {
   createErrorHandler,
   normalizeRoutePath,
@@ -45,6 +45,20 @@ assert.equal(corsError.status, 403);
 assert.equal(shouldCaptureException(corsError), false);
 assert.equal(shouldCaptureException(Object.assign(new SyntaxError('JSON ruim'), { type: 'entity.parse.failed' })), false);
 assert.equal(shouldCaptureException(new Error('bug inesperado')), true);
+
+assert.deepEqual(captureContextForRequest({
+  requestId: 'request-handled-test',
+  method: 'POST',
+  baseUrl: '/api/pagamentos-webhook',
+  route: { path: '/:provider' },
+  originalUrl: '/api/pagamentos-webhook/asaas?token=segredo',
+}, 'payments.webhook.accepted_with_failure'), {
+  requestId: 'request-handled-test',
+  method: 'POST',
+  route: '/api/pagamentos-webhook/:provider',
+  operation: 'payments.webhook.accepted_with_failure',
+  handled: true,
+});
 
 const sentryEvent = sanitizeSentryEvent({
   message: 'Falha para admin@cbrio.org CPF 123.456.789-09 token=segredo',

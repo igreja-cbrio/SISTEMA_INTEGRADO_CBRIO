@@ -1,6 +1,11 @@
 const { supabase } = require('../utils/supabase');
+const { donosDeVariosGrupos } = require('./gruposDestinatarios');
 const { notificar } = require('./notificar');
 const { calcularDepreciacao } = require('../utils/patrimonioDepreciacao');
+// ⚠️ Aviso periódico é AGREGADO (1 por tipo), nunca 1 por item — a lei, os
+// números medidos e o porquê da chave de dedup estável estão no cabeçalho de
+// `utils/avisoAgregado.js`. A régua vive em utils/ pra entrar no gate de deploy.
+const { amostraNomes, plural } = require('../utils/avisoAgregado');
 
 /**
  * Gera todas as notificações automáticas de todos os módulos.
@@ -123,21 +128,24 @@ async function gerarNotificacoesGovernanca() {
     return 0;
   }
 
-  for (const r of reunioes || []) {
-    if (r.ata && r.ata.trim().length) continue; // já tem ata
-    const tipo = r.governance_meeting_types || {};
-    const nome = tipo.nome || 'Reunião';
-    const dataBr = String(r.date).split('-').reverse().join('/');
-    await notificar({
+  // Agregado: 1 aviso com a contagem, não 1 por reunião (ver a lei no topo).
+  const semAta = (reunioes || []).filter(r => !(r.ata && r.ata.trim().length));
+  if (semAta.length) {
+    const rotulos = semAta.map(r => {
+      const tipo = r.governance_meeting_types || {};
+      const nome = tipo.nome || 'Reunião';
+      const dataBr = String(r.date).split('-').reverse().join('/');
+      return `${nome}${tipo.sigla ? ` (${tipo.sigla})` : ''} de ${dataBr}`;
+    });
+    count += await notificar({
       modulo: 'governanca',
       tipo: 'ata_pendente',
-      titulo: `Ata pendente · ${nome}`,
-      mensagem: `A reunião ${nome}${tipo.sigla ? ` (${tipo.sigla})` : ''} de ${dataBr} ainda está sem ata registrada.`,
+      titulo: `${semAta.length} ${plural(semAta.length, 'reunião', 'reuniões')} sem ata registrada`,
+      mensagem: `Ainda sem ata: ${amostraNomes(rotulos)}. Registre em Governança.`,
       link: '/governanca',
       severidade: 'info',
-      chaveDedup: `gov_ata_${r.id}_${hoje}`,
+      chaveDedup: 'gov_ata_pendente',
     });
-    count++;
   }
   return count;
 }
@@ -925,6 +933,7 @@ async function gerarNotificacoesGrupos() {
 
   if (grupos?.length) {
     const grupoIds = grupos.map(g => g.id);
+    const donosPorGrupo = await donosDeVariosGrupos(grupoIds);
     const { data: encontros } = await supabase
       .from('mem_grupo_encontros')
       .select('grupo_id, data')
@@ -937,33 +946,69 @@ async function gerarNotificacoesGrupos() {
       if (!ultimoPorGrupo[e.grupo_id]) ultimoPorGrupo[e.grupo_id] = e.data;
     }
 
+    // Agregado: 1 aviso com a contagem, não 1 por grupo (ver a lei no topo).
+    const atrasados = [];
     for (const g of grupos) {
       const recorrencia = g.recorrencia || 'semanal';
       const limiteDias = limites[recorrencia] || 14;
       const ultimo = ultimoPorGrupo[g.id];
-      let dias;
-      if (ultimo) {
-        dias = Math.floor((now - new Date(ultimo + 'T12:00:00').getTime()) / 86400000);
-      } else {
-        dias = 999; // grupo sem nenhum encontro registrado
-      }
+      // Sem nenhum encontro registrado entra como o pior caso da fila.
+      const dias = ultimo
+        ? Math.floor((now - new Date(ultimo + 'T12:00:00').getTime()) / 86400000)
+        : 999;
       if (dias < limiteDias) continue;
 
-      const lider = g.mem_membros?.nome ? ` (lider: ${g.mem_membros.nome})` : '';
-      const msg = ultimo
-        ? `Grupo ${g.nome}${lider} esta sem encontro registrado ha ${dias} dias.`
-        : `Grupo ${g.nome}${lider} ainda não teve encontro registrado.`;
+      // ⚠️⚠️ "SEU grupo está sem encontro" É COBRANÇA DO LÍDER (10/08/2026).
+      // O agregado abaixo resolveu o VOLUME, mas manteve o destinatário errado:
+      // a lista ia pro fan-out do módulo e o líder — a única pessoa que pode
+      // registrar o encontro — não era avisado do próprio grupo. Quando existe
+      // dono com conta de sistema, ele recebe o aviso DELE, por grupo, com dedup
+      // por janela de prazo. Ver services/gruposDestinatarios.js.
+      const donos = donosPorGrupo.get(g.id) || [];
+      if (donos.length) {
+        const lider = g.mem_membros?.nome ? ` (líder: ${g.mem_membros.nome})` : '';
+        const janela = Math.floor(dias / limiteDias);
+        count += await notificar({
+          modulo: 'grupos',
+          tipo: 'grupo_sem_encontro',
+          titulo: `Grupo sem encontro — ${g.nome}`,
+          mensagem: ultimo
+            ? `${g.nome}${lider} está sem encontro registrado há ${dias} dias.`
+            : `${g.nome}${lider} ainda não teve encontro registrado.`,
+          link: '/grupos',
+          severidade: dias >= limiteDias * 2 ? 'urgente' : 'aviso',
+          chaveDedup: `grupo_sem_encontro_${g.id}_${janela}`,
+          targetIds: donos,
+        });
+        continue;
+      }
 
-      // Dedup em janelas de "limiteDias" para não alertar todo dia o mesmo grupo
-      const janela = Math.floor(dias / limiteDias);
+      // Sem dono com conta: entra no agregado da coordenação, que é a única
+      // pessoa que pode cobrar esse líder por fora.
+      atrasados.push({
+        nome: g.nome,
+        dias,
+        nunca: !ultimo,
+        urgente: dias >= limiteDias * 2,
+      });
+    }
+
+    if (atrasados.length) {
+      atrasados.sort((a, b) => b.dias - a.dias); // pior primeiro na amostra
+      const rotulos = atrasados.map(a => (
+        a.nunca ? `${a.nome} (nunca registrou)` : `${a.nome} (${a.dias} dias)`
+      ));
+      const urgentes = atrasados.filter(a => a.urgente).length;
       count += await notificar({
         modulo: 'grupos',
         tipo: 'grupo_sem_encontro',
-        titulo: `Grupo sem encontro — ${g.nome}`,
-        mensagem: msg,
+        titulo: `${atrasados.length} ${plural(atrasados.length, 'grupo', 'grupos')} sem encontro registrado`,
+        mensagem: `Passaram do prazo de registro: ${amostraNomes(rotulos)}.`
+          + (urgentes ? ` ${urgentes} ${plural(urgentes, 'passou', 'passaram')} do dobro do prazo.` : '')
+          + ' A lista completa está em Grupos.',
         link: '/grupos',
-        severidade: dias >= limiteDias * 2 ? 'urgente' : 'aviso',
-        chaveDedup: `grupo_sem_encontro_${g.id}_${janela}`,
+        severidade: urgentes ? 'urgente' : 'aviso',
+        chaveDedup: 'grupo_sem_encontro',
       });
     }
   }
@@ -1005,18 +1050,74 @@ async function gerarNotificacoesGrupos() {
     }
     const semGrupo = membros.filter(m => !comGrupo.has(m.id));
 
-    for (const m of semGrupo) {
-      const dias = Math.floor((now - new Date(m.created_at).getTime()) / 86400000);
-      // Dedup mensal pra não spammar
-      const janela = Math.floor(dias / 30);
+    // Agregado: 1 aviso com a contagem, não 1 por membro (ver a lei no topo).
+    if (semGrupo.length) {
+      const comDias = semGrupo
+        .map(m => ({
+          nome: m.nome,
+          dias: Math.floor((now - new Date(m.created_at).getTime()) / 86400000),
+        }))
+        .sort((a, b) => b.dias - a.dias); // há mais tempo esperando primeiro
+      const antigos = comDias.filter(m => m.dias >= 180).length;
       count += await notificar({
         modulo: 'grupos',
         tipo: 'membro_sem_grupo',
-        titulo: `Membro sem grupo — ${m.nome}`,
-        mensagem: `${m.nome} e membro ha ${dias} dias mas ainda não esta em nenhum grupo de conexão.`,
+        titulo: `${comDias.length} ${plural(comDias.length, 'membro', 'membros')} sem grupo de conexão`,
+        mensagem: `Membros ativos há 90+ dias e ainda fora de um grupo: `
+          + `${amostraNomes(comDias.map(m => `${m.nome} (${m.dias} dias)`))}.`
+          + (antigos ? ` ${antigos} ${plural(antigos, 'já passou', 'já passaram')} de 180 dias.` : ''),
         link: '/grupos',
-        severidade: dias >= 180 ? 'aviso' : 'info',
-        chaveDedup: `membro_sem_grupo_${m.id}_${janela}`,
+        severidade: antigos ? 'aviso' : 'info',
+        chaveDedup: 'membro_sem_grupo',
+      });
+    }
+  }
+
+  // ═════════════════════════════════════════════════════════════════════════
+  //  PEDIDOS QUE ESPERAM UM LÍDER SEM CONTA — o resumo diário da coordenação
+  //
+  //  Decisão do Matheus (10/08/2026), ao ver que 86 dos 102 grupos ativos têm
+  //  líder SEM conta de sistema: nesses casos o aviso in-app não tem dono, e em
+  //  vez de um aviso por pedido pra todo mundo com cargo alto, vai **um resumo
+  //  por dia** pra coordenação de grupos.
+  //
+  //  ⚠️ Não é o canal principal e não deve virar um: o líder recebe o pedido por
+  //  WhatsApp com link de aprovação, e foi por lá que saíram 368 das 388
+  //  decisões dos últimos 90 dias. O resumo existe pra uma fila parada não ficar
+  //  invisível — não pra alguém aprovar no lugar do líder.
+  //
+  //  Sem `targetIds` de propósito: quem recebe sai de `notificacao_regras`
+  //  (módulo `grupos`), igual aos outros 13 módulos. A lista é DADO, não código.
+  // ═════════════════════════════════════════════════════════════════════════
+  const { data: pendentes } = await supabase
+    .from('mem_grupo_pedidos')
+    .select('id, grupo_id, created_at')
+    .eq('status', 'pendente')
+    .is('deleted_at', null)
+    .not('grupo_id', 'is', null);
+
+  if (pendentes?.length) {
+    const donosPend = await donosDeVariosGrupos([...new Set(pendentes.map(p => p.grupo_id))]);
+    // Só o que NÃO tem dono avisado: pedido em grupo com líder no sistema já
+    // gerou notificação dirigida na hora, e contar de novo aqui seria cobrar
+    // duas vezes a mesma coisa.
+    const orfaos = pendentes.filter(p => !(donosPend.get(p.grupo_id) || []).length);
+    if (orfaos.length) {
+      const diasDoMaisAntigo = Math.max(...orfaos.map(p => (
+        Math.floor((now - new Date(p.created_at).getTime()) / 86400000)
+      )));
+      const gruposDistintos = new Set(orfaos.map(p => p.grupo_id)).size;
+      count += await notificar({
+        modulo: 'grupos',
+        tipo: 'pedidos_aguardando_lider',
+        titulo: `${orfaos.length} ${plural(orfaos.length, 'pedido', 'pedidos')} de grupo aguardando o líder`,
+        mensagem: `${orfaos.length} ${plural(orfaos.length, 'pedido pendente', 'pedidos pendentes')} em `
+          + `${gruposDistintos} ${plural(gruposDistintos, 'grupo', 'grupos')} cujo líder não tem conta no `
+          + `sistema (ele é avisado pelo WhatsApp). O mais antigo espera há `
+          + `${diasDoMaisAntigo} ${plural(diasDoMaisAntigo, 'dia', 'dias')}.`,
+        link: '/grupos?tab=entrada',
+        severidade: diasDoMaisAntigo >= 7 ? 'aviso' : 'info',
+        chaveDedup: 'pedidos_aguardando_lider',
       });
     }
   }
@@ -1465,20 +1566,23 @@ async function gerarNotificacoesKids() {
     .rpc('fn_kids_ausentes_consecutivos', { p_min: 3 });
   if (error) { console.error('[Notificações] Kids rpc:', error.message); return 0; }
 
-  for (const c of ausentes || []) {
-    const ult = c.ultima_presenca
-      ? new Date(c.ultima_presenca + 'T12:00:00').toLocaleDateString('pt-BR')
-      : '—';
+  // Agregado: 1 aviso com a contagem, não 1 por criança (ver a lei no topo).
+  // Medido em 10/08/2026: eram 211 avisos não lidos de uma vez para a mesma
+  // pessoa — quem cuida do Kids não consegue agir sobre uma fila desse tamanho.
+  const lista = (ausentes || [])
+    .map(c => ({ nome: c.nome, perdidos: Number(c.cultos_perdidos) || 0 }))
+    .sort((a, b) => b.perdidos - a.perdidos); // ausência mais longa primeiro
+  if (lista.length) {
     count += await notificar({
       modulo: 'kids',
       tipo: 'kids_crianca_ausente',
-      titulo: `Criança faltando: ${c.nome}`,
-      mensagem: `${c.nome} está há ${c.cultos_perdidos} cultos seguidos sem check-in no Kids (última presença em ${ult}). Vale um contato com a família.`,
+      titulo: `${lista.length} ${plural(lista.length, 'criança', 'crianças')} faltando no Kids`,
+      mensagem: `Sem check-in há 3 cultos seguidos ou mais: `
+        + `${amostraNomes(lista.map(c => `${c.nome} (${c.perdidos} cultos)`))}.`
+        + ' Vale um contato com as famílias — a lista completa está em Crianças.',
       link: '/ministerial/totem-kids/criancas',
       severidade: 'aviso',
-      // 1 alerta por streak (ancorado na última presença); se voltar e sumir de
-      // novo, a última presença muda → novo alerta.
-      chaveDedup: `kids_ausente_${c.crianca_id}_${c.ultima_presenca}`,
+      chaveDedup: 'kids_crianca_ausente',
     });
   }
   return count;
@@ -1488,19 +1592,20 @@ async function gerarNotificacoesKids() {
 // Online (routes/online.js /cron/verificar) — sem o export, aquele cron caía
 // com "gerarNotificacoesOnline is not a function" todo dia desde 04/07.
 // ── LGPD · pedidos de exclusao de conta sem tratamento ──────────────────────
-// ⚠️⚠️ ESTE GERADOR ESTA DORMENTE, e nao e por esquecimento: `gerarTodasNotificacoes`
-// **NAO TEM CRON NENHUM**. `/api/notificacoes/cron` (que a chama) nao esta no
-// `vercel.json` — o unico cron de notificacoes agendado e
-// `/cron/alerta-culto-dados` (semanal), e o outro caminho e o POST manual
-// `/api/notificacoes/gerar`. Medido em 06/08: em 13.581 notificacoes desde
-// 12/05, NENHUM tipo exclusivo deste arquivo jamais apareceu — enquanto ha 283
-// `identidade_pendencias` pendentes que dispariam aviso. Ou seja: ~20 geradores
-// deste arquivo nunca rodaram sozinhos.
+// ⚠️ CORRIGIDO EM 10/08/2026 — o texto anterior deste bloco dizia que
+// `gerarTodasNotificacoes` "NAO TEM CRON NENHUM". **Isso ficou FALSO**: o cron
+// `/api/notificacoes/cron` está no `vercel.json` (`0 9 * * *`) E registrado na
+// Vercel (conferido com `vercel crons ls`), e em 10/08 todos os tipos exclusivos
+// deste arquivo foram produzidos às 09:00–09:03 UTC. O gerador RODA sozinho hoje.
 //
-// Por isso a fila de exclusao de conta e PULL (tela + contador em
-// /ministerial/membresia?tab=cadastros). Este gerador existe pra que, no dia em
-// que o cron for agendado (decisao do Marcos — liga ~20 geradores de uma vez e
-// pede plano de contencao), o aviso da LGPD ja esteja no padrao da casa.
+// A contenção que a nota antiga pedia virou necessária de verdade e foi feita:
+// ligar ~20 geradores de uma vez encheu o sino (16.646 avisos não lidos · 185
+// por pessoa), e os 4 geradores de maior volume passaram a avisar AGREGADO —
+// ver a lei em `utils/avisoAgregado.js`.
+//
+// A fila de exclusão de conta continua sendo PULL (tela + contador em
+// /ministerial/membresia?tab=cadastros): o aviso aqui é complemento, não o
+// caminho principal, porque desativar conta é ato humano e não tem automação.
 //
 // ⚠️ A mensagem leva CONTAGEM, nunca nome de quem pediu: e dado de pessoa saindo,
 // e o sino tem fan-out de push/e-mail.

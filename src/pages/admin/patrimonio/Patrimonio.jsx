@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Tag, ClipboardList, Trash2, Archive, Pencil, MapPin, ScanLine } from 'lucide-react';
+import { Tag, ClipboardList, Trash2, Archive, Pencil, MapPin, ScanLine, ChevronDown } from 'lucide-react';
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import {
   PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, LabelList,
@@ -64,22 +65,41 @@ const ORDENACOES_BENS = [
   { key: 'valor_asc', label: 'Menor valor' },
   { key: 'categoria_asc', label: 'Categoria A-Z' },
 ];
+// "Editar em massa"/"Renomear em massa" só fazem sentido pra um LOTE de itens
+// idênticos (mesmo produto) — nunca pra uma seleção heterogênea, onde mexer
+// em categoria/localização/nome de todos de uma vez seria arriscado (pedido
+// do usuário 2026-08-10). Campos que legitimamente VARIAM dentro de um lote
+// (nº de série, valor, data de aquisição, NF, origem/doador, garantia,
+// responsável) ficam de fora da comparação — são exatamente os que o cadastro
+// em lote já deixa variar por unidade.
+const CAMPOS_MESMO_LOTE = ['nome', 'descricao', 'categoria_id', 'localizacao_id', 'marca', 'modelo', 'status', 'observacoes'];
+function mesmoLote(itens) {
+  if (itens.length < 2) return false;
+  const base = itens[0];
+  return itens.every(it => CAMPOS_MESMO_LOTE.every(campo => (it[campo] ?? null) === (base[campo] ?? null)));
+}
+
 function ordenarBens(lista, chave) {
   if (chave === 'padrao') return lista;
   const arr = [...lista];
-  const porValor = (a, b) => {
+  // desc só inverte a comparação NUMÉRICA — "sem valor" fica no fim nas 2
+  // direções (negar o comparador inteiro, como era antes, também invertia
+  // essa regra e jogava os sem-valor pro topo do "Maior valor" · achado do
+  // usuário 2026-08-10).
+  const porValor = (a, b, desc) => {
     const va = a.valor_aquisicao, vb = b.valor_aquisicao;
     if (va == null && vb == null) return 0;
     if (va == null) return 1; // sem valor sempre no fim, nas 2 direções
     if (vb == null) return -1;
-    return Number(va) - Number(vb);
+    const diff = Number(va) - Number(vb);
+    return desc ? -diff : diff;
   };
   switch (chave) {
     case 'recentes': return arr.sort((a, b) => (b.data_aquisicao || '').localeCompare(a.data_aquisicao || ''));
     case 'nome_asc': return arr.sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt-BR'));
     case 'nome_desc': return arr.sort((a, b) => (b.nome || '').localeCompare(a.nome || '', 'pt-BR'));
-    case 'valor_asc': return arr.sort(porValor);
-    case 'valor_desc': return arr.sort((a, b) => -porValor(a, b));
+    case 'valor_asc': return arr.sort((a, b) => porValor(a, b, false));
+    case 'valor_desc': return arr.sort((a, b) => porValor(a, b, true));
     case 'categoria_asc': return arr.sort((a, b) => (a.pat_categorias?.nome || 'zzz').localeCompare(b.pat_categorias?.nome || 'zzz', 'pt-BR'));
     default: return lista;
   }
@@ -423,7 +443,11 @@ export default function Patrimonio() {
           onReload={() => { loadBens(); loadDash(); loadIndicadores(); }}
         />
       )}
-      {tab === 2 && <CatLocTab categorias={categorias} localizacoes={localizacoes} locOptions={locOptions} newCat={newCat} setNewCat={setNewCat} addCat={addCat} removeCat={removeCat} updateCat={updateCat} addLoc={addLoc} removeLoc={removeLoc} updateLoc={updateLoc} isDiretor={podeEditar} podeExcluir={podeExcluir} />}
+      {tab === 2 && (
+        <CatLocTab categorias={categorias} localizacoes={localizacoes} locOptions={locOptions} newCat={newCat} setNewCat={setNewCat} addCat={addCat} removeCat={removeCat} updateCat={updateCat} addLoc={addLoc} removeLoc={removeLoc} updateLoc={updateLoc} isDiretor={podeEditar} podeExcluir={podeExcluir}
+          onIrParaBens={(localizacaoId) => { setFiltroStatus(''); setFiltroCat(''); setFiltroLoc(localizacaoId); setTab(1); }}
+        />
+      )}
       {tab === 3 && (
         <RevisaoTab ciclos={revisaoCiclos} indicadores={revisaoIndic}
           onNovoCiclo={() => setModalNovoCiclo(true)} onAbrirConvocacao={abrirConvocacao}
@@ -835,6 +859,8 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
 
   const idsFiltrados = useMemo(() => bens.map(b => b.id), [bens]);
   const todosPaginaMarcados = bensPag.length > 0 && bensPag.every(b => selecionados.has(b.id));
+  const bensSelecionados = useMemo(() => bens.filter(b => selecionados.has(b.id)), [bens, selecionados]);
+  const mesmoLoteSelecionado = useMemo(() => mesmoLote(bensSelecionados), [bensSelecionados]);
 
   function toggleSelecionado(id) {
     setSelecionados(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -895,9 +921,28 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
         <Button variant="outline" onClick={() => setOrdenarAberto(o => !o)}>
           Ordenar {ordenacao !== 'padrao' ? `· ${ORDENACOES_BENS.find(o => o.key === ordenacao)?.label}` : ''} {ordenarAberto ? '▴' : '▾'}
         </Button>
-        <Button variant="outline" onClick={() => exportarBensCSV(bensOrdenados)}>Exportar CSV</Button>
-        <Button variant="outline" onClick={() => exportarBensPDF(bensOrdenados)}>Exportar PDF</Button>
-        {isDiretor && <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}><Button variant="outline" onClick={onNewLote}>+ Em massa</Button><Button onClick={onNew}>+ Novo Bem</Button></div>}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline">Exportar <ChevronDown style={{ width: 14, height: 14, marginLeft: 4 }} /></Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={() => exportarBensCSV(bensOrdenados)}>Exportar CSV</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => exportarBensPDF(bensOrdenados)}>Exportar PDF</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        {isDiretor && (
+          <div style={{ marginLeft: 'auto' }}>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button>+ Novo Bem <ChevronDown style={{ width: 14, height: 14, marginLeft: 4 }} /></Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={onNew}>Cadastro individual</DropdownMenuItem>
+                <DropdownMenuItem onClick={onNewLote}>Cadastro em massa (lote)</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        )}
       </div>
 
       {/* Ordenação por "pills" (pedido do usuário 2026-07-31, inspirado num
@@ -935,19 +980,29 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
       )}
 
       {/* Barra de ação em massa (pedido do usuário 2026-07-31) — some quando
-          não há seleção; some por completo pra quem não edita (isDiretor). */}
+          não há seleção; some por completo pra quem não edita (isDiretor).
+          "Mover em massa" pede >1 item (mover 1 é o fluxo individual do bem).
+          "Editar em massa" (que por dentro também cobre "renomear") só
+          aparece pra um LOTE de itens idênticos — ver mesmoLote() (pedido do
+          usuário 2026-08-10: heterogêneo não deveria oferecer editar/renomear
+          em massa, só mover/dar baixa, que fazem sentido pra qualquer seleção). */}
       {isDiretor && selecionados.size > 0 && (
         <div style={{ ...styles.card, marginBottom: 16, padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', background: C.primaryBg, border: `1px solid ${C.primary}` }}>
           <span style={{ fontSize: 13, fontWeight: 700 }}>{selecionados.size} selecionado{selecionados.size > 1 ? 's' : ''}</span>
           {selecionados.size < idsFiltrados.length && (
             <Button variant="ghost" size="xs" onClick={selecionarTodosFiltrados}>Selecionar todos os {idsFiltrados.length} filtrados</Button>
           )}
-          <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            <Button variant="outline" size="xs" onClick={() => setModalBulkEditar(true)}>Editar em massa</Button>
-            <Button variant="outline" size="xs" onClick={() => setModalBulkMov(true)}>Mover em massa</Button>
-            <Button variant="outline" size="xs" onClick={() => setModalBulkBaixa(true)}>Dar baixa em massa</Button>
-            <Button variant="ghost" size="xs" onClick={limparSelecao}>Limpar</Button>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+            {mesmoLoteSelecionado && <Button variant="outline" size="xs" style={{ background: C.card, borderColor: C.primary, padding: '5px 12px', height: 'auto' }} onClick={() => setModalBulkEditar(true)}>Editar em massa</Button>}
+            {selecionados.size > 1 && <Button variant="outline" size="xs" style={{ background: C.card, borderColor: C.primary, padding: '5px 12px', height: 'auto' }} onClick={() => setModalBulkMov(true)}>Mover em massa</Button>}
+            <Button variant="outline" size="xs" style={{ background: C.card, borderColor: C.primary, padding: '5px 12px', height: 'auto' }} onClick={() => setModalBulkBaixa(true)}>Dar baixa em massa</Button>
+            <Button variant="ghost" size="xs" style={{ background: C.card, padding: '5px 12px', height: 'auto' }} onClick={limparSelecao}>Limpar</Button>
           </div>
+          {selecionados.size > 1 && !mesmoLoteSelecionado && (
+            <div style={{ width: '100%', fontSize: 11, color: C.text2 }}>
+              Editar/renomear em massa aparece só quando os selecionados são o mesmo item (nome, categoria, localização, marca/modelo, status e observações iguais) — nº de série, valor, data, NF, origem, garantia e responsável podem variar.
+            </div>
+          )}
         </div>
       )}
 
@@ -1026,13 +1081,20 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
 
 // Nó da árvore de localizações (expandir/colapsar filhas · pedido do usuário
 // 2026-07-29: "clique na localização-pai expande pra mostrar as salas").
-function LocTreeNode({ node, depth, expanded, toggleExpanded, isDiretor, podeExcluir, onEdit, removeLoc }) {
+// Localização FINAL (sem filhas) navega pra aba Bens já filtrada nela — pedido
+// do usuário 2026-08-08: achar rápido o que tem numa sala, sem passar pelo
+// select de filtro manual.
+function LocTreeNode({ node, depth, expanded, toggleExpanded, isDiretor, podeExcluir, onEdit, removeLoc, onIrParaBens }) {
   const temFilhas = node.children.length > 0;
   const aberto = expanded.has(node.id);
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', paddingLeft: depth * 18, borderBottom: `1px solid ${C.border}` }}>
-        <span style={{ fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 4, cursor: temFilhas ? 'pointer' : 'default' }} onClick={() => temFilhas && toggleExpanded(node.id)}>
+        <span
+          style={{ fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}
+          title={temFilhas ? undefined : 'Ver bens desta localização'}
+          onClick={() => (temFilhas ? toggleExpanded(node.id) : onIrParaBens?.(node.id))}
+        >
           {temFilhas ? <span style={{ width: 14, display: 'inline-block', fontSize: 11, color: C.text3 }}>{aberto ? '▾' : '▸'}</span> : <MapPin style={{ width: 14, height: 14, color: '#00B39D' }} />}
           {node.nome}
           {temFilhas && <span style={{ fontSize: 11, color: C.text3 }}>({node.children.length})</span>}
@@ -1045,13 +1107,13 @@ function LocTreeNode({ node, depth, expanded, toggleExpanded, isDiretor, podeExc
         )}
       </div>
       {temFilhas && aberto && node.children.map(c => (
-        <LocTreeNode key={c.id} node={c} depth={depth + 1} expanded={expanded} toggleExpanded={toggleExpanded} isDiretor={isDiretor} podeExcluir={podeExcluir} onEdit={onEdit} removeLoc={removeLoc} />
+        <LocTreeNode key={c.id} node={c} depth={depth + 1} expanded={expanded} toggleExpanded={toggleExpanded} isDiretor={isDiretor} podeExcluir={podeExcluir} onEdit={onEdit} removeLoc={removeLoc} onIrParaBens={onIrParaBens} />
       ))}
     </div>
   );
 }
 
-function CatLocTab({ categorias, localizacoes, locOptions, newCat, setNewCat, addCat, removeCat, updateCat, addLoc, removeLoc, updateLoc, isDiretor, podeExcluir }) {
+function CatLocTab({ categorias, localizacoes, locOptions, newCat, setNewCat, addCat, removeCat, updateCat, addLoc, removeLoc, updateLoc, isDiretor, podeExcluir, onIrParaBens }) {
   const [novoNomeLoc, setNovoNomeLoc] = useState('');
   const [novoPaiLoc, setNovoPaiLoc] = useState('');
   const [editLoc, setEditLoc] = useState(null); // { id, nome, pai_id }
@@ -1067,7 +1129,11 @@ function CatLocTab({ categorias, localizacoes, locOptions, newCat, setNewCat, ad
   }
   function salvarEdicaoLoc() {
     if (!editLoc.nome.trim()) return;
-    updateLoc(editLoc.id, { nome: editLoc.nome, pai_id: editLoc.pai_id || null });
+    updateLoc(editLoc.id, {
+      nome: editLoc.nome, pai_id: editLoc.pai_id || null,
+      revisao_intervalo_dias: editLoc.revisao_intervalo_dias === '' ? null : editLoc.revisao_intervalo_dias,
+      revisao_prazo_dias: editLoc.revisao_prazo_dias === '' ? null : editLoc.revisao_prazo_dias,
+    });
     setEditLoc(null);
   }
   function salvarEdicaoCat() {
@@ -1119,7 +1185,7 @@ function CatLocTab({ categorias, localizacoes, locOptions, newCat, setNewCat, ad
           )}
           {localizacoes.length === 0 && <div style={styles.empty}>Nenhuma localização</div>}
           {tree.map(node => (
-            <LocTreeNode key={node.id} node={node} depth={0} expanded={expanded} toggleExpanded={toggleExpanded} isDiretor={isDiretor} podeExcluir={podeExcluir} onEdit={setEditLoc} removeLoc={removeLoc} />
+            <LocTreeNode key={node.id} node={node} depth={0} expanded={expanded} toggleExpanded={toggleExpanded} isDiretor={isDiretor} podeExcluir={podeExcluir} onEdit={setEditLoc} removeLoc={removeLoc} onIrParaBens={onIrParaBens} />
           ))}
         </div>
       </div>
@@ -1131,6 +1197,13 @@ function CatLocTab({ categorias, localizacoes, locOptions, newCat, setNewCat, ad
               <option value="">— Nenhuma (raiz) —</option>
               {locOptions.filter(l => l.id !== editLoc.id).map(l => <option key={l.id} value={l.id}>{locIndent(l.depth)}{l.nome}</option>)}
             </Select>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              <Input label="Tempo de análise (dias)" type="number" min="1" placeholder="padrão do ciclo" value={editLoc.revisao_prazo_dias ?? ''} onChange={e => setEditLoc(p => ({ ...p, revisao_prazo_dias: e.target.value }))} />
+              <Input label="Intervalo até a próxima revisão (dias)" type="number" min="1" placeholder="todo ciclo" value={editLoc.revisao_intervalo_dias ?? ''} onChange={e => setEditLoc(p => ({ ...p, revisao_intervalo_dias: e.target.value }))} />
+            </div>
+            <div style={{ fontSize: 11, color: C.text3 }}>
+              Deixe em branco pra manter o padrão: entra em todo ciclo de revisão, com prazo distribuído dentro do período do ciclo.
+            </div>
           </>
         )}
       </Modal>
@@ -1729,7 +1802,7 @@ function NovoCicloModal({ open, responsaveis, onClose, onSave }) {
   return (
     <Modal open={open} onClose={onClose} title="Novo ciclo de revisão" footer={<Button onClick={handleSave}>Criar ciclo</Button>}>
       <div style={{ fontSize: 13, color: C.text2, marginBottom: 12 }}>
-        Cria um ciclo trimestral (3 meses) e gera automaticamente uma convocação por localização com bens ativos, com prazos distribuídos ao longo do período.
+        Cria um ciclo trimestral (3 meses) e gera automaticamente uma convocação por localização com bens ativos. Localização sem intervalo/prazo próprios configurados (aba Categorias/Localizações) entra em todo ciclo, com prazo distribuído ao longo do período; localização com intervalo configurado só entra quando já passou o número de dias definido desde a última revisão concluída, com o prazo próprio dela.
       </div>
       <Select label="Responsável pelas revisões *" value={f.responsavel_id || ''} onChange={e => upd('responsavel_id', e.target.value)}>
         <option value="">Selecionar</option>

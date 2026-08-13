@@ -252,6 +252,8 @@ export const events = {
   deleteSimpleTemplate: (id) => del(`/events/simple-templates/${id}`),
   toggleSimpleTemplate: (id) => patch(`/events/simple-templates/${id}/toggle`, {}),
   applySimpleTemplates: (eventId) => post(`/events/${eventId}/apply-simple-templates`, {}),
+  // null = automático por categoria · true = forçar mostrar · false = forçar esconder
+  setVisivelPainelRh: (id, visivel_painel_rh) => patch(`/events/${id}/visivel-painel-rh`, { visivel_painel_rh }),
 };
 
 // Módulo Propostas · ciclo anual (Fase 1A: configuração)
@@ -311,6 +313,9 @@ export const censo = {
   respostas: (pesquisaId, limite) =>
     get(`/censo/respostas?pesquisa_id=${pesquisaId}${limite ? `&limite=${limite}` : ''}`),
   resposta: (id) => get(`/censo/respostas/${id}`),
+  // Apaga a resposta de uma pessoa e a LIBERA para responder de novo (nível 4).
+  // Soft-delete no servidor: a régua do "já respondeu?" filtra deleted_at.
+  removerResposta: (id) => del(`/censo/respostas/${id}`),
   // Fila de cuidado: nominal é restrito à equipe designada; o resumo (contagens,
   // sem PII) é aberto para quem tem o módulo.
   cuidadoResumo: (pesquisaId) => get(`/censo/cuidado/resumo?pesquisa_id=${pesquisaId}`),
@@ -1958,6 +1963,19 @@ export const comunicados = {
   },
 };
 
+// ── Painel informativo de RH (home/Dashboard) ──
+export const painelRh = {
+  aniversariantes: () => get('/painel-rh/aniversariantes'),
+  eventos: () => get('/painel-rh/eventos'),
+  comunicados: () => get('/painel-rh/comunicados'),
+  comunicadosAdmin: () => get('/painel-rh/comunicados/admin'),
+  criarComunicado: (data) => post('/painel-rh/comunicados', data),
+  atualizarComunicado: (id, data) => put(`/painel-rh/comunicados/${id}`, data),
+  publicarComunicado: (id) => post(`/painel-rh/comunicados/${id}/publicar`, {}),
+  arquivarComunicado: (id) => post(`/painel-rh/comunicados/${id}/arquivar`, {}),
+  removerComunicado: (id) => del(`/painel-rh/comunicados/${id}`),
+};
+
 export const painelArea = {
   // params: { período?: '30d'|'90d'|'180d'|'365d', desde?: 'YYYY-MM-DD', até?: 'YYYY-MM-DD' }
   get: (area, params = {}) => {
@@ -3485,9 +3503,6 @@ export const kpis = {
   dashboard: (semanas) => get(`/kpis/dashboard?semanas=${semanas || 12}`),
   metas: () => get('/kpis/metas'),
   updateMeta: (id, data) => put(`/kpis/metas/${id}`, data),
-  // YouTube sync
-  youtubeSync: () => post('/kpis/youtube/sync', {}),
-  youtubeStatus: () => get('/kpis/youtube/status'),
   // Auto-criação semanal (idempotente). weeks=N para backfill retroativo
   cultosAutoCreate: (weeks) => post(`/kpis/cultos/auto-create${weeks ? `?weeks=${weeks}` : ''}`, {}),
   // ── Mandala Cultura ──

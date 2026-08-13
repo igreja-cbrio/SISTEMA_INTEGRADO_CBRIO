@@ -17,6 +17,7 @@
     "test:inscricao-qr": "node backend/services/inscricaoComprovante.test.js",
     "test:censo": "node backend/services/censoReconciliar.test.js",
     "test:nome-email": "node backend/services/nomeDerivadoEmail.test.js",
+    "test:nome-completo": "node backend/services/nomeMaisCompleto.test.js",
     "test:duplicidade": "node backend/services/duplicidadePolicy.test.js",
     "test:watch": "vitest",
     "test:e2e": "playwright test",

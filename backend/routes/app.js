@@ -3,10 +3,13 @@
  * Auth: Supabase JWT leve (sem sistema de permissões do ERP interno)
  */
 const router   = require('express').Router();
+const { semCache } = require('../middleware/semCache');
 const rateLimit = require('express-rate-limit');
 const multer = require('multer');
 const { supabase } = require('../utils/supabase');
-const { notificar } = require('../services/notificar');
+const { notificar, resolverDestinatarios } = require('../services/notificar');
+const { donosDoGrupo } = require('../services/gruposDestinatarios');
+const { avisarPedidoNovoNoApp } = require('../services/gruposAvisoApp');
 const { dispararAuto } = require('../services/whatsappAuto');
 const wpp = require('../services/whatsappService');
 const { analisarOracao } = require('../services/oracaoAnalise');
@@ -25,12 +28,20 @@ const { chaveMesMembro } = require('../services/nextMatricula');
 const { inscreverEspinha, eventoEspinhaPorId } = require('./publicEventoExterno');
 const { TEXTOS: TEXTOS_INSCRICAO } = require('../services/inscricaoContrato');
 const { gerarTokenComprovante } = require('../services/inscricaoComprovante');
+const checkoutExterno = require('../utils/checkoutExterno');
 // Reuso: núcleo de aprovação de pedidos de grupo (claim atômico + vínculo +
 // notificação) já validado no módulo web de grupos.
 const { aprovarPedidoCore } = require('./grupos');
 const { registrarEventoPedido } = require('../services/grupoPedidoEventos');
 const appIdentidade = require('../services/appIdentidade');
 const { acharRespostaDaPessoa } = require('../services/censoJaRespondeu');
+// ⚠️⚠️ O vocabulário de sexo DIVERGE por tabela, e a diferença é medida, não
+// suposta: `mem_membros.genero` é **masculino/feminino** (579 pessoas, ZERO com
+// M/F), `kids_criancas.sexo` e `batismo_inscricoes.sexo` são **M/F**, e
+// `vol_inscricoes.sexo`/`next_matriculas.sexo` voltam ao canônico do Contrato.
+// `sexoPara` traduz por destino; copiar cru grava valor que nenhum filtro acha.
+const { sexoPara, patchDoCadastro } = require('../utils/dadosDoCadastro');
+const { precisaPagerPorInclusao } = require('../utils/saudeCrianca');
 const { gerarTokenIdentidade } = require('../utils/censoRespostaToken');
 // Reuso dos helpers de permissão granular pra resolver o nível do módulo
 // "grupos" do usuário do app (authApp é leve e não computa permissões).
@@ -38,6 +49,9 @@ const { getModulos, getCargoMatrix, resolveEffectivePerms } = require('../middle
 // Régua PURA da capa do grupo (allowlist de formato + o caminho que PODE ser
 // apagado do Storage). Testada em `src/test/grupoCapaApp.test.ts`.
 const { MIMES_CAPA, caminhoDaCapa, extensaoDaCapa, caminhoNovoDaCapa } = require('../utils/grupoCapaApp');
+// Régua PURA de quem pode PEDIR pra entrar num grupo — a MESMA do site
+// (extraída de publicGrupos.js). Testada em `src/test/entradaGrupoApp.test.ts`.
+const { avaliarEntradaNoGrupo } = require('../utils/entradaGrupoApp');
 
 // ── Auth middleware leve ───────────────────────────────────────────────────
 async function authApp(req, res, next) {
@@ -158,16 +172,11 @@ const limiterNormal = limiterApp({
 //
 // Vale pro router INTEIRO de propósito: qualquer GET novo do app nasce sem
 // cache, sem ninguém precisar lembrar disso.
-router.use((req, res, next) => {
-  res.set('Cache-Control', 'no-store');
-  const enviarJson = (body) => {
-    if (!res.get('Content-Type')) res.type('application/json');
-    res.end(JSON.stringify(body));
-    return res;
-  };
-  res.json = enviarJson;
-  next();
-});
+// A régua vive em `middleware/semCache.js` — a MESMA que protege as telas
+// públicas de pagamento (que também fazem polling de estado). Duas cópias desta
+// lógica divergiriam, e o modo de divergir é silencioso: uma delas volta a
+// emitir ETag e ninguém percebe até a tela mostrar estado velho.
+router.use(semCache);
 
 // ── Versão mínima do app (PÚBLICO) · Onda 3 (07/08/2026) ──────────────────
 //
@@ -711,6 +720,81 @@ const LINK_POR_TIPO_INSCRICAO = {
   grupos: '/grupos?tab=entrada', batismo: '/batismo',
   next: '/ministerial/next?tab=turmas', voluntariado: '/ministerial/voluntariado/inscricoes',
 };
+/**
+ * Onde o fanout pousa cada tipo, e como o Contrato se chama LÁ.
+ *
+ * ⚠️⚠️ O VOCABULÁRIO E OS NOMES DE COLUNA DIVERGEM POR TABELA, e isso foi
+ * conferido no banco (não decorado): `vol_inscricoes.sexo` e
+ * `next_matriculas.sexo` são canônicos (`masculino`/`feminino`), mas
+ * `batismo_inscricoes.sexo` é **curto** (`M`/`F` — 5 F e 1 M em produção).
+ * Copiar cru de um pro outro grava valor que nenhum filtro encontra depois.
+ *
+ * ⚠️ `grupos` fica FORA de propósito: `mem_grupo_pedidos` **não tem** coluna de
+ * CPF, nascimento nem sexo (introspectado em 11/08) — o que o pedido de grupo faz
+ * com o CPF já é outro caminho, o `reconciliarCpfTardio` de 06/08. Inventar
+ * coluna aqui faria o PostgREST recusar o UPDATE inteiro (42703).
+ */
+const DESTINO_CONTRATO = {
+  voluntariado: {
+    tabela: 'vol_inscricoes',
+    mapa: { cpf: 'cpf', data_nascimento: 'data_nascimento', sexo: 'sexo' },
+    sexo: 'canonico',
+  },
+  batismo: {
+    tabela: 'batismo_inscricoes',
+    mapa: { cpf: 'cpf', data_nascimento: 'data_nascimento', sexo: 'sexo' },
+    sexo: 'curto',
+  },
+  next: {
+    tabela: 'next_matriculas',
+    mapa: { cpf: 'cpf', data_nascimento: 'data_nascimento', sexo: 'sexo' },
+    sexo: 'canonico',
+  },
+};
+
+/**
+ * Preenche, na linha que o fanout acabou de criar, o que o CADASTRO da pessoa já
+ * sabe e o app não mandou.
+ *
+ * ⚠️ Acha a linha por (membro, recém-criada) porque o fanout roda na MESMA
+ * transação do insert em `app_inscricoes` — sem a janela curta, uma inscrição
+ * ANTIGA da mesma pessoa seria reescrita a cada nova.
+ * ⚠️ Lê as colunas do mapa no SELECT: `patchDoCadastro` só toca campo que veio na
+ * linha, e é assim que ele sobrevive a tabela sem a coluna em vez de derrubar
+ * tudo com 42703.
+ */
+async function completarComCadastro(tipo, membroId) {
+  const destino = DESTINO_CONTRATO[tipo];
+  if (!destino) return null;
+
+  const { data: membro } = await supabase
+    .from('mem_membros')
+    .select('cpf, data_nascimento, genero, email, telefone')
+    .eq('id', membroId)
+    .is('deleted_at', null)
+    .maybeSingle();
+  if (!membro) return null;
+
+  const colunas = ['id', ...Object.values(destino.mapa)].join(', ');
+  const desde = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+  const { data: linha } = await supabase
+    .from(destino.tabela)
+    .select(colunas)
+    .eq('membro_id', membroId)
+    .gte('created_at', desde)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!linha) return null;
+
+  const patch = patchDoCadastro(linha, membro, destino.mapa, { sexo: destino.sexo });
+  if (!Object.keys(patch).length) return null;
+
+  const { error } = await supabase.from(destino.tabela).update(patch).eq('id', linha.id);
+  if (error) throw error;
+  return { tabela: destino.tabela, campos: Object.keys(patch) };
+}
+
 const LABEL_CUIDADOS = { aconselhamento: 'aconselhamento', oracao: 'oração', sos: 'SOS' };
 // Mapeia a urgência pra cor do sino (SEV_COLORS no AppShell)
 const SEV_CUIDADOS = { sos: 'urgente', aconselhamento: 'aviso', oracao: 'info' };
@@ -857,6 +941,62 @@ router.post('/inscricoes', limiterStrict, tryAuth, async (req, res) => {
     }
     dados = saneado.dados;
 
+    // ⚠️⚠️ TRAVA DE ENTRADA EM GRUPO — ESTE HANDLER NÃO VALIDAVA NADA (10/08/2026)
+    //
+    // Achado pelo Marcos testando no aparelho: *"eu sou homem e consigo ver os
+    // grupos apenas para mulheres e posso tentar me inscrever, e isso não é
+    // possível no nosso webapp."* Ele estava certo, e o buraco é MAIOR que a
+    // queixa: este `POST` não lia **categoria/gênero, `ativo`,
+    // `aceitando_inscricoes`, `modo_inscricao='fechado'` nem temporada** —
+    // cinco travas do site, nenhuma aqui. O app não "escapava" da trava do
+    // site: o site trava em `publicGrupos.js` (formulário público) e o app tem
+    // porta própria, que nasceu sem elas.
+    //
+    // A régua agora vive num lugar só (`utils/entradaGrupoApp.js`, 37 asserções
+    // no gate) e é a MESMA que o site usa. Duas cópias divergindo é a doença
+    // recorrente deste sistema.
+    //
+    // ⚠️ Roda DEPOIS do saneamento e ANTES do insert: recusar tem que acontecer
+    // sem deixar rastro, senão a coordenação passa a ver fila de pedido que
+    // nunca deveria ter existido.
+    if (tipo === 'grupos' && dados.grupo_id) {
+      const { data: grupoAlvo } = await supabase
+        .from('mem_grupos')
+        .select('id, nome, categoria, ativo, aceitando_inscricoes, modo_inscricao, temporada, deleted_at')
+        .eq('id', dados.grupo_id)
+        .maybeSingle();
+
+      // A temporada só é consultada quando o grupo depende dela — `null` diz
+      // "não havia o que consultar", que a régua trata diferente de "fechada".
+      let temporadaAberta = null;
+      if (grupoAlvo?.temporada && String(grupoAlvo.modo_inscricao || '') !== 'sempre_aberto') {
+        const { data: temp } = await supabase
+          .from('mem_temporadas')
+          .select('inscricoes_abertas')
+          .eq('id', grupoAlvo.temporada)
+          .maybeSingle();
+        temporadaAberta = temp?.inscricoes_abertas === true;
+      }
+
+      // ⚠️ O sexo NÃO vem de `resolveMembroApp` (ele seleciona só
+      // id/nome/cpf/email/telefone). Leitura ISOLADA: se falhar, a régua devolve
+      // `sexo_necessario` — pede o dado, em vez de deixar passar.
+      let genero = dados.genero || dados.sexo || null;
+      if (!genero && membroId) {
+        const { data: m } = await supabase
+          .from('mem_membros').select('genero').eq('id', membroId).maybeSingle();
+        genero = m?.genero || null;
+      }
+
+      const veredito = avaliarEntradaNoGrupo({ grupo: grupoAlvo, genero, temporadaAberta });
+      if (!veredito.ok) {
+        console.log(
+          `[APP] inscricoes · grupo recusado (${veredito.codigo}) · grupo=${dados.grupo_id} membro=${membroId || 'anon'}`,
+        );
+        return res.status(veredito.status).json({ error: veredito.erro, codigo: veredito.codigo });
+      }
+    }
+
     const { data: inserted, error } = await supabase
       .from('app_inscricoes')
       .insert({
@@ -955,6 +1095,30 @@ router.post('/inscricoes', limiterStrict, tryAuth, async (req, res) => {
       });
     }
 
+    // ⚠️⚠️ O APP PASSA A CARREGAR O QUE O CADASTRO JÁ TEM (11/08/2026).
+    //
+    // Pedido do Marcos, depois da auditoria das 7 portas: *"caso alguém tenha
+    // baixado e não tenha esses campos, já colocamos a tela de preencher; quando
+    // elas voltarem terão, e aí vamos passar isso."*
+    //
+    // O fanout grava nome/telefone/e-mail e **deixa CPF, nascimento e sexo
+    // vazios** — mas o CADASTRO da pessoa costuma ter os três (medido em 11/08:
+    // 10 das 12 linhas incompletas de origem `app` têm cadastro completo). O dado
+    // existia; o app é que não o carregava. Então **preencher, não exigir**:
+    // exigir na porta reprovaria as contas que ainda não passaram pelo portão de
+    // identidade e derrubaria inclusive o SOS.
+    //
+    // ⚠️ SÓ-ONDE-VAZIO e best-effort — a régua pura vive em
+    // `utils/dadosDoCadastro` (testável, sem Supabase). Nunca sobrescreve o que a
+    // pessoa digitou, e falhar aqui não desfaz a inscrição, que já está gravada.
+    if (membroId && DESTINO_CONTRATO[tipo]) {
+      try {
+        await completarComCadastro(tipo, membroId);
+      } catch (e) {
+        console.warn('[APP] inscricoes · completar do cadastro:', e.message);
+      }
+    }
+
     // ⚠️⚠️ INSCRIÇÃO DE GRUPO PELO APP AGORA AVISA O LÍDER (06/08/2026).
     //
     // Até aqui só o formulário público (`publicGrupos`) mandava o template
@@ -1012,6 +1176,16 @@ router.post('/inscricoes', limiterStrict, tryAuth, async (req, res) => {
             if (!r?.sent) {
               console.log('[APP] inscricoes · aviso ao líder não enviado:', r?.reason || r?.status);
             }
+
+            // ⚠️ O sino do APP, além do WhatsApp. São canais DIFERENTES: o
+            // WhatsApp alcança os 89 líderes, o sino alcança os 15 que têm
+            // conta — e é o único que funciona no Android sem Firebase.
+            await avisarPedidoNovoNoApp({
+              grupoId: grupo.id,
+              pedidoId: pedido.id,
+              grupoNome: grupo.nome,
+              pessoaNome: pedido.nome || dados.nome,
+            });
           }
         } else {
           console.warn('[APP] inscricoes · pedido de grupo não localizado pra avisar o líder:', inserted.id);
@@ -1169,11 +1343,25 @@ router.get('/censo', authApp, limiterNormal, async (req, res) => {
     const membro = await resolveMembroApp(req).catch(() => null);
     if (!membro) return res.json({ pesquisa: null, motivo: 'sem_cadastro' });
 
-    const { data: pesquisa } = await supabase
+    // ⚠️⚠️ A coluna é `created_at`. Ordenar por `criado_em` (que existe na VIEW
+    // do cuidado, não nesta tabela) faz o PostgREST recusar a consulta INTEIRA —
+    // e o `data` vem nulo. Foi assim que o app disse "Nenhum censo aberto" com o
+    // censo aberto e 43 perguntas no ar, por dias.
+    //
+    // ⚠️⚠️ E o motivo de ninguém notar: o erro era DESCARTADO. Falha de consulta
+    // não é ausência de dado — é a mesma lição do Cérebro (loader que engolia o
+    // `error` e o chamador concluía "entidade não encontrada"). Agora a falha
+    // tem motivo PRÓPRIO e vai pro log: "nenhuma_aberta" volta a significar
+    // exatamente isso.
+    const { data: pesquisa, error: erroPesquisa } = await supabase
       .from('cen_pesquisa')
       .select('id, slug, titulo, subtitulo, fecha_em')
       .eq('status', 'aberta').is('deleted_at', null)
-      .order('criado_em', { ascending: false }).limit(1).maybeSingle();
+      .order('created_at', { ascending: false }).limit(1).maybeSingle();
+    if (erroPesquisa) {
+      console.error('[APP] censo · consulta falhou:', erroPesquisa.message);
+      return res.status(500).json({ pesquisa: null, motivo: 'erro_consulta' });
+    }
     if (!pesquisa) return res.json({ pesquisa: null, motivo: 'nenhuma_aberta' });
 
     const ja = await acharRespostaDaPessoa({
@@ -1190,6 +1378,11 @@ router.get('/censo', authApp, limiterNormal, async (req, res) => {
       },
       ja_respondeu: !!ja,
       respondida_em: ja?.concluida_em || null,
+      // O TOKEN cru, para o app montar o formulário NATIVO e mandar a resposta
+      // pelos mesmos endpoints públicos da web (é ele que dá
+      // `identificado_por='cpf_nascimento'` sem a pessoa digitar CPF).
+      // Só sai para quem PODE responder — mesma régua da `url`.
+      token: token || null,
       // Só emite o link para quem PODE responder. Sem isto, um app
       // desatualizado que ignorasse `ja_respondeu` ainda abriria o formulário.
       url: token ? `${base}/censo/p/${pesquisa.slug}?t=${token}&canal=app` : null,
@@ -3597,7 +3790,11 @@ router.get('/grupos/:grupoId/membros', authApp, limiterNormal, async (req, res) 
     // não conseguia distinguir `funcao='lider'` (cadastro, pode ter vários) da
     // pessoa protegida — e escondia o menu de ações de TODOS os líderes.
     const { data: grupo } = await supabase.from('mem_grupos')
-      .select('id, nome, dia_semana, horario, local, endereco, bairro, descricao, categoria, aceitando_inscricoes, lider_id')
+      // ⚠️ `modo_inscricao` vai pro app desde 10/08: é ele que decide se o
+      // botão "Convidar" manda o link DIRETO do grupo ou o link geral. Sem
+      // ele, os 9 grupos 'fechado' (por convite do líder) distribuiriam um
+      // link que devolve 403 pra todo mundo. Ver `lib/convite.ts` no app.
+      .select('id, nome, dia_semana, horario, local, endereco, bairro, descricao, categoria, aceitando_inscricoes, modo_inscricao, lider_id')
       .eq('id', gid).is('deleted_at', null).maybeSingle();
     if (!grupo) return res.status(404).json({ error: 'Grupo não encontrado' });
 
@@ -3928,6 +4125,98 @@ router.delete('/grupos/:grupoId/foto', authApp, limiterNormal, async (req, res) 
   }
 });
 
+// ⚠️⚠️ FOTO DE PERFIL PELO APP — O ARQUIVO NUNCA CHEGAVA AO STORAGE (10/08/2026)
+//
+// Achado pelo Marcos no aparelho: *"quando tentei colocar minha foto de perfil
+// no sistema ele não recebeu, não alterou."*
+//
+// ⚠️ E NÃO era o mesmo defeito da capa de grupo — eu apostei nisso e estava
+// errado. Medido: **18 de 121 profiles TÊM `avatar_url`** e a RLS de UPDATE de
+// `profiles` é permissiva, ou seja o caminho de GRAVAÇÃO funciona. O que falhou
+// foi o UPLOAD: a pasta do Marcos **não existe** no bucket `avatars`.
+//
+// A causa é o mesmo padrão que a capa de grupo abandonou em 07/08: `perfil.tsx`
+// fazia `fetch(asset.uri)` → `.arrayBuffer()` → `storage.upload()`. No Android a
+// URI do `ImagePicker` é `content://…`, e ler os bytes por `fetch` é frágil ali
+// (buffer vazio sobe arquivo de 0 byte; exceção só pinta texto vermelho).
+//
+// Este endpoint recebe MULTIPART, que é o formato que o RN monta nativamente a
+// partir do `{uri, name, type}` — sem ler bytes no JS.
+//
+// ⚠️ Reusa `uploadCapaMw` e a régua `utils/grupoCapaApp.js` de propósito: mesmo
+// teto de 4MB (o corpo de request serverless tem limite ~4,5MB), mesma allowlist
+// de mime, e a MESMA função que decide a extensão pelo MIME e não pelo nome do
+// arquivo. Um lugar só pra as duas fotos do app.
+router.post('/membro/foto', authApp, limiterStrict, uploadCapaMw, async (req, res) => {
+  try {
+    if (!req.file?.buffer?.length) {
+      return res.status(400).json({ error: 'Nenhuma imagem foi enviada.' });
+    }
+    const ext = extensaoDaCapa(req.file.mimetype);
+    if (!ext) return res.status(400).json({ error: 'Use uma imagem JPG, PNG ou WEBP.' });
+
+    const uid = req.user.id;
+    // ⚠️ Caminho ÚNICO por upload, dentro da pasta da PESSOA. O `avatars` é
+    // público e o CDN guarda ~1h: caminho fixo faria a troca de foto não
+    // aparecer por uma hora (a mesma armadilha da capa). A pasta por `uid` é o
+    // que a policy do bucket já espera.
+    const path = `${uid}/avatar-${Date.now()}.${ext}`;
+
+    const { data: antes } = await supabase
+      .from('profiles').select('avatar_url').eq('id', uid).maybeSingle();
+
+    const { error: upErr } = await supabase.storage
+      .from('avatars')
+      .upload(path, req.file.buffer, { contentType: req.file.mimetype, upsert: true });
+    if (upErr) {
+      console.error('[APP] membro · foto · upload:', upErr.message);
+      return res.status(500).json({ error: 'Não foi possível enviar a imagem.' });
+    }
+
+    const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(path);
+    const avatar_url = urlData.publicUrl;
+
+    // ⚠️ `.select()` + conferir a linha: sem isso, 0 linhas afetadas voltam como
+    // sucesso e a tela diz "foto atualizada" sem ter gravado — a lição que custou
+    // duas vezes nesta semana (save do grupo e capa do grupo).
+    const { data: atualizado, error } = await supabase
+      .from('profiles')
+      .update({ avatar_url, updated_at: new Date().toISOString() })
+      .eq('id', uid)
+      .select('id, avatar_url')
+      .maybeSingle();
+
+    if (error || !atualizado) {
+      await supabase.storage.from('avatars').remove([path]).catch(() => {});
+      if (error) {
+        console.error('[APP] membro · foto · update:', error.message);
+        return res.status(500).json({ error: 'Não foi possível salvar a foto.' });
+      }
+      console.error('[APP] membro · foto: 0 linhas afetadas no profile', uid);
+      return res.status(409).json({ error: 'Não foi possível salvar a foto agora.' });
+    }
+
+    // Limpeza best-effort da foto anterior.
+    const marca = '/storage/v1/object/public/avatars/';
+    const s = String(antes?.avatar_url || '');
+    const i = s.indexOf(marca);
+    if (i >= 0) {
+      const antigo = s.slice(i + marca.length).split(/[?#]/)[0];
+      // ⚠️ Só apaga DENTRO da própria pasta — impede que uma URL colada à mão
+      // faça a limpeza remover o avatar de outra pessoa.
+      if (antigo && antigo.startsWith(`${uid}/`) && antigo !== path) {
+        supabase.storage.from('avatars').remove([antigo])
+          .catch((e) => console.warn('[APP] membro · foto · limpar antiga:', e.message));
+      }
+    }
+
+    return res.json({ ok: true, avatar_url: atualizado.avatar_url });
+  } catch (e) {
+    console.error('[APP] membro · foto:', e.message);
+    return res.status(500).json({ error: 'Não foi possível salvar a foto.' });
+  }
+});
+
 // ⚠️⚠️ DUAS COISAS DIFERENTES, e eu tinha confundido as duas (corrigido 05/08 por
 // esclarecimento do Marcos):
 //
@@ -4025,7 +4314,7 @@ router.post('/grupos/:grupoId/membros/:rowId/transferir', authApp, limiterNormal
       return res.status(400).json({ error: 'Escolha um grupo de destino diferente.' });
     }
     const { data: destino } = await supabase.from('mem_grupos')
-      .select('id, nome, ativo').eq('id', destinoId).is('deleted_at', null).maybeSingle();
+      .select('id, nome, ativo, lider_id').eq('id', destinoId).is('deleted_at', null).maybeSingle();
     if (!destino || destino.ativo === false) {
       return res.status(404).json({ error: 'Grupo de destino não encontrado' });
     }
@@ -4061,14 +4350,71 @@ router.post('/grupos/:grupoId/membros/:rowId/transferir', authApp, limiterNormal
     }).select('id').single();
     if (error) throw error;
 
-    notificar({
-      modulo: 'grupos',
-      tipo: 'grupo_transferencia_pedida',
-      titulo: 'Transferência pedida entre grupos',
-      mensagem: `${pessoa?.nome || 'Alguém'} foi indicada de "${g.grupo.nome}" para "${destino.nome}" pelo app. O pedido está na fila do grupo de destino.`,
-      link: '/grupos?tab=entrada',
-      chaveDedup: `grupo_transf_${novo?.id}`,
-    }).catch(e => console.warn('[APP] transferir · notificar:', e.message));
+    // ⚠️⚠️ QUEM PRECISA SABER É O LÍDER DO DESTINO — e ele não era avisado por
+    // NADA (10/08/2026). O comentário no topo desta rota diz que a transferência
+    // "é o mesmo fluxo de quem se inscreve", mas só a criação do pedido foi
+    // igual: os dois avisos daquele fluxo ficaram de fora. O pedido nascia
+    // `pendente` na fila de um grupo cujo líder nunca ouvia falar dele, e a
+    // única notificação existente ia pro público do módulo — pessoas que não
+    // aprovam nada naquele grupo.
+    //
+    // ⚠️ A funcionalidade tem ZERO uso histórico (medido: nenhuma linha em
+    // `mem_grupo_pedidos` com observação de transferência, desde sempre). Então
+    // isto é gatilho armado, não incêndio — e é por isso que dá pra consertar
+    // sem migração nem varredura de dado velho.
+    (async () => {
+      const donosDestino = await donosDoGrupo(destino.id).catch(() => []);
+      if (donosDestino.length) {
+        await notificar({
+          modulo: 'grupos',
+          tipo: 'grupo_transferencia_pedida',
+          titulo: `Transferência para ${destino.nome}`,
+          mensagem: `${pessoa?.nome || 'Alguém'} foi indicada pelo líder de "${g.grupo.nome}" para o seu grupo. `
+            + 'O pedido está na sua fila, aguardando você aprovar ou recusar.',
+          link: '/grupos?tab=entrada',
+          severidade: 'aviso',
+          chaveDedup: `grupo_transf_${novo?.id}`,
+          targetIds: donosDestino,
+        });
+      }
+
+      // A coordenação continua sabendo (transferência entre grupos é assunto de
+      // triagem), MENOS quem já foi avisado como dono do destino — senão a mesma
+      // pessoa recebe duas linhas do mesmo fato, que é o defeito que esta leva
+      // de consertos existe pra tirar.
+      const coordenacao = (await resolverDestinatarios('grupos').catch(() => []))
+        .filter(id => !donosDestino.includes(id));
+      if (coordenacao.length) {
+        await notificar({
+          modulo: 'grupos',
+          tipo: 'grupo_transferencia_pedida',
+          titulo: 'Transferência pedida entre grupos',
+          mensagem: `${pessoa?.nome || 'Alguém'} foi indicada de "${g.grupo.nome}" para "${destino.nome}" pelo app. `
+            + 'O pedido está na fila do grupo de destino.',
+          link: '/grupos?tab=entrada',
+          chaveDedup: `grupo_transf_coord_${novo?.id}`,
+          targetIds: coordenacao,
+        });
+      }
+    })().catch(e => console.warn('[APP] transferir · notificar:', e.message));
+
+    // ⚠️ E O WHATSAPP, que é o canal que de fato funciona: 368 das 388 decisões
+    // de pedido dos últimos 90 dias saíram pelo link do WhatsApp do líder, não
+    // pelo sistema. Mandar só notificação in-app pra um líder que, em 86 dos 102
+    // grupos ativos, não tem conta no sistema, seria manter o pedido invisível.
+    // Mesma função dos outros caminhos de pedido — o template leva link de
+    // aprovar sem login, amarrado ao líder e ao pedido.
+    if (novo?.id) {
+      gruposWpp.notificarLiderNovoPedido({
+        grupo: destino,
+        pedidoId: novo.id,
+        pessoa: {
+          nome: pessoa?.nome || 'Participante',
+          telefone: pessoa?.telefone || null,
+          email: pessoa?.email || null,
+        },
+      }).catch(e => console.warn('[APP] transferir · wpp líder destino:', e.message));
+    }
 
     res.status(201).json({ ok: true, destino: destino.nome, pedido_id: novo?.id || null });
   } catch (e) {
@@ -4189,13 +4535,22 @@ router.post('/grupos/:grupoId/encontros', authApp, limiterNormal, async (req, re
     });
     if (error) throw error;
 
-    notificar({
-      modulo: 'grupos',
-      tipo: 'grupo_encontro_registrado',
-      titulo: 'Encontro registrado pelo app',
-      mensagem: `${g.grupo.nome}: ${presentes.length} presente(s) em ${data.split('-').reverse().join('/')}${req.body?.observacoes ? ' · com comentário do líder' : ''}.`,
-      link: '/grupos',
-      chaveDedup: `grupo_enc_${encontroId}`,
+    // ⚠️ Só quem responde pelo grupo, MENOS quem acabou de registrar — avisar a
+    // pessoa da ação que ela mesma fez é ruído puro. Na prática: o líder
+    // registra e o supervisor fica sabendo (e vice-versa). Ia pro fan-out do
+    // módulo, ou seja ~16 pessoas que não têm nada a ver com este grupo.
+    donosDoGrupo(g.grupo.id).then((donos) => {
+      const alvos = donos.filter((id) => id !== req.user?.id);
+      if (!alvos.length) return;
+      return notificar({
+        modulo: 'grupos',
+        tipo: 'grupo_encontro_registrado',
+        titulo: 'Encontro registrado pelo app',
+        mensagem: `${g.grupo.nome}: ${presentes.length} presente(s) em ${data.split('-').reverse().join('/')}${req.body?.observacoes ? ' · com comentário do líder' : ''}.`,
+        link: '/grupos',
+        chaveDedup: `grupo_enc_${encontroId}`,
+        targetIds: alvos,
+      });
     }).catch(e => console.warn('[APP] encontro · notificar:', e.message));
 
     res.status(201).json({ ok: true, encontro_id: encontroId, presentes: presentes.length });
@@ -4301,13 +4656,19 @@ router.post('/grupos/:grupoId/visitas', authApp, limiterNormal, async (req, res)
       .single();
     if (error) throw error;
 
-    notificar({
-      modulo: 'grupos',
-      tipo: 'grupo_visita_registrada',
-      titulo: 'Visita de supervisão registrada pelo app',
-      mensagem: `${g.grupo.nome}: visita em ${data.split('-').reverse().join('/')}${observacao ? ' · com comentário' : ''}.`,
-      link: '/grupos?tab=visitas',
-      chaveDedup: `grupo_visita_${linha.id}`,
+    // Idem: dono do grupo, menos quem registrou.
+    donosDoGrupo(gid).then((donos) => {
+      const alvos = donos.filter((id) => id !== req.user?.id);
+      if (!alvos.length) return;
+      return notificar({
+        modulo: 'grupos',
+        tipo: 'grupo_visita_registrada',
+        titulo: 'Visita de supervisão registrada pelo app',
+        mensagem: `${g.grupo.nome}: visita em ${data.split('-').reverse().join('/')}${observacao ? ' · com comentário' : ''}.`,
+        link: '/grupos?tab=visitas',
+        chaveDedup: `grupo_visita_${linha.id}`,
+        targetIds: alvos,
+      });
     }).catch(e => console.warn('[APP] visita · notificar:', e.message));
 
     res.status(201).json({ ok: true, visita: linha });
@@ -4510,6 +4871,388 @@ router.delete('/tarefas/:id', authApp, limiterNormal, async (req, res) => {
   } catch (e) {
     console.error('[APP] tarefas delete:', e.message);
     res.status(500).json({ error: 'Erro ao excluir a tarefa' });
+  }
+});
+
+// ── Apresentação de criança · a porta que o app nunca teve ─────────────────
+// Pedido do Marcos (11/08/2026): *"Apresentação de Bebês está fora do app, quero
+// que tudo seja dentro do app. Quando a pessoa marcar que quer apresentar bebê,
+// já que já temos os dados dela, tem que perguntar se o filho é dela; se sim,
+// indicar o vínculo, completar os dados se a criança não existir como família
+// já. Se for outra pessoa, ela tem que preencher os dados completos dos
+// responsáveis e criança."*
+//
+// E a regra de identidade, dele: *"quando cadastrar uma criança deve gerar pessoa
+// no sistema que aparece em minha família, com as regras de criança, SEM CPF,
+// identificamos pelo pai."*
+//
+// ⚠️ A porta anterior era um LINK MORTO: `inscricoes.tsx` abria
+// `cbrio.org/apresentacao-criancas`, rota que NÃO existe no ERP (0 referências
+// em `src/`) e responde 200 só pelo catch-all do SPA. `apresentacao_bebes` tem
+// 0 linhas — ninguém nunca conseguiu se inscrever, por porta nenhuma.
+//
+// ⚠️⚠️ ESCREVE EM `apresentacao_criancas`, NÃO em `apresentacao_bebes` (corrigido
+// 11/08). **É `apresentacao_criancas` que a tela do Kids lê** (`totemKids.js`
+// `GET /apresentacoes` → aba Apresentação de crianças do `/kids`); ninguém lê
+// `apresentacao_bebes` além do próprio totem, pro dedup dele. Escolher a tabela
+// errada faria o pedido feito no app **nunca aparecer pra equipe** — a família
+// veria "recebemos" e o balcão não saberia de nada no domingo. E é ela que tem
+// `crianca_id` (o elo com a ficha do Kids) e os campos que o Contrato pede.
+// Troca sem custo: `apresentacao_bebes` tem 0 linhas (medido em 11/08).
+const {
+  proximoSegundoDomingo: _proxSegDom,
+  iso: _isoData,
+  acharCriancaNaFamilia,
+  validarPedido: _validarPedidoCrianca,
+  pessoaDaCrianca,
+  nomesDosPais,
+} = require('../utils/criancaApresentacao');
+
+/**
+ * Quem são os pais/mães de cada criança da lista (id → [ids dos responsáveis]).
+ *
+ * ⚠️ A direção importa: `vincularParentesco` grava a linha da CRIANÇA como
+ * `pessoa_id = criança, tipo = 'filho', relacionado_id = pai/mãe` (e a recíproca
+ * como `pai_mae`). Ler a direção errada devolveria os FILHOS de cada um.
+ */
+async function paisDasCriancas(ids) {
+  const mapa = new Map();
+  if (!ids?.length) return mapa;
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data } = await supabase.from('mem_vinculos_familiares')
+      .select('pessoa_id, relacionado_id')
+      .eq('tipo', 'filho')
+      .in('pessoa_id', ids.slice(i, i + 200))
+      .is('deleted_at', null);
+    for (const v of data || []) {
+      if (!mapa.has(v.pessoa_id)) mapa.set(v.pessoa_id, []);
+      mapa.get(v.pessoa_id).push(v.relacionado_id);
+    }
+  }
+  return mapa;
+}
+
+// GET /api/app/apresentacao-crianca — data da próxima cerimônia + o que já pedi
+router.get('/apresentacao-crianca', authApp, limiterNormal, async (req, res) => {
+  try {
+    const membro = await resolveMembroApp(req);
+    const data = _isoData(_proxSegDom());
+
+    // ⚠️ A FAMÍLIA VAI NA RESPOSTA de propósito, com os nomes. É a guarda contra
+    // o caso Benjamin/Mariane Gaia (lei de 22/07): quem está agrupada na família
+    // da irmã pela Membresia colocaria o próprio filho na família errada, e o
+    // único jeito honesto de evitar isso é a pessoa VER em qual família a criança
+    // vai entrar antes de confirmar.
+    let familia = null;
+    if (membro?.id) {
+      try {
+        const dados = await carregarFamiliaDoMembro(membro.id);
+        familia = {
+          nome: dados.familia?.nome || null,
+          membros: (dados.familiares || []).map((f) => f.nome).filter(Boolean).slice(0, 8),
+        };
+      } catch (e) { console.warn('[APP] apres familia:', e.message); }
+    }
+
+    let pedidos = [];
+    if (membro?.id) {
+      const { data: rows } = await supabase.from('apresentacao_criancas')
+        .select('id, crianca_nome, data_apresentacao, status')
+        .eq('responsavel_membro_id', membro.id)
+        .is('deleted_at', null)
+        .gte('data_apresentacao', _isoData(new Date()))
+        .order('data_apresentacao');
+      pedidos = rows || [];
+    }
+
+    res.json({
+      proxima_data: data,
+      familia,
+      pedidos,
+      // A tela usa isto pra decidir se pode oferecer o caminho "é meu filho".
+      pode_indicar_vinculo: !!membro?.id,
+    });
+  } catch (e) {
+    console.error('[APP] apresentacao-crianca GET:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar a apresentação de crianças' });
+  }
+});
+
+// POST /api/app/apresentacao-crianca
+// body: { propria: bool, crianca: {nome, data_nascimento, sexo?},
+//         responsavel?: {nome, telefone, email?, nome_pai?, nome_mae?}, observacoes? }
+router.post('/apresentacao-crianca', authApp, limiterStrict, async (req, res) => {
+  try {
+    const membro = await resolveMembroApp(req);
+    const v = _validarPedidoCrianca(req.body, membro);
+    if (!v.ok) return res.status(400).json({ error: v.erro });
+    const p = v.dados;
+
+    const dataApres = _isoData(_proxSegDom());
+
+    // Culto de domingo daquele dia (informativo · o balcão confirma)
+    let cultoId = null;
+    try {
+      const { data: cultos } = await supabase.from('cultos')
+        .select('id').eq('data', dataApres).is('deleted_at', null).order('id').limit(1);
+      if (cultos && cultos[0]) cultoId = cultos[0].id;
+    } catch (e) { /* informativo · não trava o pedido */ }
+
+    let criancaMembroId = null;
+    let reusou = false;
+    let familiaNome = null;
+    let extraMembroId = null;
+    let extraEmOutraFamilia = false;
+    let extraFalhou = false;
+
+    if (p.propria) {
+      // ── A criança vira PESSOA e entra na família de quem está pedindo ──────
+      //
+      // ⚠️ DEDUP PELA FAMÍLIA, não por quem preencheu: o pai e a mãe cadastrando
+      // o MESMO filho criariam duas pessoas, e a criança apareceria duplicada em
+      // "Minha família" das duas contas. Não existe CPF pra desempatar (é a regra
+      // do Marcos), então nome + nascimento DENTRO da família é a chave.
+      // ⚠️ `genero` é lido AQUI porque `resolveMembroApp` não o traz (ele seleciona
+      // id/nome/cpf/email/telefone). É o que decide se quem preencheu entra como
+      // mãe ou como pai no snapshot do balcão — sem sexo, fica em branco.
+      // ⚠️⚠️ Passa por `sexoPara`: a coluna guarda **masculino/feminino** e a
+      // comparação direta com 'M'/'F' que estava aqui **nunca era verdade**, então
+      // nome_pai/nome_mae saíam sempre nulos.
+      const { data: eu } = await supabase.from('mem_membros')
+        .select('id, familia_id, igreja_id, genero').eq('id', membro.id).maybeSingle();
+      const meuSexo = sexoPara('curto', eu?.genero);
+      if (meuSexo) p.responsavel.sexo = meuSexo;
+
+      // ── O outro responsável (o outro pai/mãe), quando informado ────────────
+      //
+      // ⚠⚠ ADULTO PASSA PELO MATCHER CANÔNICO — o oposto da criança, e de
+      // propósito: ele TEM CPF, que é a chave mais forte do Contrato de porta. É
+      // isso que faz "se esse pai baixar o app" reencontrar o cadastro em vez de
+      // criar um segundo. `soChaveForte` porque nome sozinho nunca identifica.
+      if (p.responsavel_extra) {
+        try {
+          const achou = await acharOuCriarGuardado({
+            cpf: p.responsavel_extra.cpf,
+            nome: p.responsavel_extra.nome,
+            telefone: p.responsavel_extra.telefone,
+            status: 'visitante',
+            extra: p.responsavel_extra.sexo ? { genero: p.responsavel_extra.sexo } : {},
+            origem: 'apresentacao_crianca_app',
+            origemId: membro.id,
+          });
+          if (achou?.id) {
+            extraMembroId = achou.id;
+            const { data: dele } = await supabase.from('mem_membros')
+              .select('familia_id').eq('id', achou.id).maybeSingle();
+
+            // ⚠⚠ NÃO ARRANCA NINGUÉM DA FAMÍLIA QUE JÁ TEM. `entrarNaFamilia` faz o
+            // convidado ADOTAR a família do anfitrião — se este pai já está agrupado
+            // com os pais dele, chamá-la o tiraria de lá em silêncio. Nesse caso
+            // gravamos só o parentesco (que é verdade e não destrói nada) e
+            // DECLARAMOS pra tela: a equipe alinha. Medido: 999 de 4.072 têm
+            // família, então o caso comum é ninguém ter e o caminho ficar limpo.
+            if (!dele?.familia_id || dele.familia_id === eu?.familia_id) {
+              const fx = await entrarNaFamilia(supabase, {
+                membroId: achou.id, anfitriaoId: membro.id, userId: req.user?.id || null,
+              });
+              if (fx?.ok) familiaNome = fx.familia_nome || familiaNome;
+            } else {
+              extraEmOutraFamilia = true;
+            }
+          }
+        } catch (e2) {
+          // ⚠️ Best-effort: falhar aqui não pode custar a apresentação da criança,
+          // que é o que a família veio pedir. A tela avisa que o outro responsável
+          // não entrou, em vez de fingir que entrou.
+          console.warn('[APP] apres responsavel extra:', e2.message);
+          extraFalhou = true;
+        }
+      }
+
+      if (eu?.familia_id) {
+        const { data: naFamilia } = await supabase.from('mem_membros')
+          .select('id, nome, data_nascimento')
+          .eq('familia_id', eu.familia_id).is('deleted_at', null);
+
+        // ⚠⚠ A CHAVE TEM 3 PARTES: nome + nascimento + PAI/MÃE (Marcos · 11/08).
+        // Sem a 3ª, dois primos homônimos de mesma data numa família estendida
+        // seriam fundidos e um deles sumiria da lista do domingo.
+        const paisPor = await paisDasCriancas((naFamilia || []).map((x) => x.id));
+        const achada = acharCriancaNaFamilia(
+          naFamilia, p.crianca.nome, p.crianca.data_nascimento,
+          paisPor, [membro.id, extraMembroId].filter(Boolean),
+        );
+        if (achada) { criancaMembroId = achada.id; reusou = true; }
+      }
+
+      if (!criancaMembroId) {
+        // ⚠️ NÃO passa pelo matcher canônico DE PROPÓSITO. O matcher liga por
+        // CPF → e-mail+nome → telefone+nome → nascimento+nome, e uma criança não
+        // tem nenhuma dessas chaves: o único ramo que alcançaria ela é
+        // nascimento+nome, que casaria com QUALQUER homônimo da mesma data. A
+        // identidade dela é o VÍNCULO com o responsável, que é o que o Marcos
+        // definiu ("identificamos pelo pai") e é o que gravamos abaixo.
+        const { data: nova, error: errNova } = await supabase.from('mem_membros')
+          .insert(pessoaDaCrianca(p.crianca, eu?.igreja_id || null))
+          .select('id').single();
+        if (errNova) throw errNova;
+        criancaMembroId = nova.id;
+      }
+
+      // Household + parentesco recíproco, pelos MESMOS helpers do convite de
+      // familiar (`services/familiaVinculo`) — duas réguas de "entrar na família"
+      // divergiriam, e é a de lá que a tela de Minha família lê.
+      const fam = await entrarNaFamilia(supabase, {
+        membroId: criancaMembroId, anfitriaoId: membro.id, userId: req.user?.id || null,
+      });
+      if (fam?.ok) familiaNome = fam.familia_nome || null;
+      await vincularParentesco(supabase, {
+        pessoaId: criancaMembroId, relacionadoId: membro.id, tipo: 'filho',
+        userId: req.user?.id || null,
+      });
+      // ⚠️ O parentesco com o outro responsável é gravado MESMO quando ele ficou
+      // na família dele: é fato ("esta criança é filha dele") e não destrói nada.
+      // O que depende do household é a criança APARECER em "Minha família" dele —
+      // e é disso que a tela avisa quando não dá.
+      if (extraMembroId) {
+        await vincularParentesco(supabase, {
+          pessoaId: criancaMembroId, relacionadoId: extraMembroId, tipo: 'filho',
+          userId: req.user?.id || null,
+        });
+      }
+    }
+
+    // ── A FICHA DO KIDS (`kids_criancas`) ─────────────────────────────────
+    //
+    // ⚠️⚠️ É aqui que as 3 respostas de saúde POUSAM, e é por isso que elas foram
+    // pedidas: `tem_espectro` e `tem_limitacao_fisica` são a **régua do PAGER** no
+    // totem (`totemKids.js`), obrigatória desde 03/08. Criança apresentada que
+    // chega no domingo com esses campos NULOS não cai na regra.
+    // ⚠️ Best-effort: falhar aqui NÃO pode custar a apresentação, que é o que a
+    // família veio pedir. Sem ficha, o pedido entra com `crianca_id` nulo — a
+    // equipe cadastra no check-in, como sempre fez.
+    let kidsCriancaId = null;
+    try {
+      // Mesma dedup do formulário público (nome + nascimento + ativa) — duas
+      // réguas fariam a mesma criança nascer duas vezes conforme a porta.
+      const { data: kidDup } = await supabase.from('kids_criancas')
+        .select('id, tem_alergia, alergia_qual, tem_espectro, espectro_qual, tem_limitacao_fisica, limitacao_fisica_qual')
+        .ilike('nome', p.crianca.nome)
+        .eq('data_nascimento', p.crianca.data_nascimento)
+        .eq('ativo', true)
+        .limit(1);
+      if (kidDup && kidDup.length) {
+        kidsCriancaId = kidDup[0].id;
+        // SÓ-ONDE-VAZIO: a ficha já existe e a família acabou de responder.
+        // Nunca sobrescreve — o que está lá pode ter sido corrigido no balcão.
+        const patch = {};
+        for (const [k, val] of Object.entries(p.crianca.saude || {})) {
+          if (kidDup[0][k] === null || kidDup[0][k] === undefined) patch[k] = val;
+        }
+        if (Object.keys(patch).length) {
+          await supabase.from('kids_criancas').update(patch).eq('id', kidsCriancaId);
+        }
+      } else {
+        const { data: kid } = await supabase.from('kids_criancas')
+          .insert({
+            nome: p.crianca.nome,
+            data_nascimento: p.crianca.data_nascimento,
+            sexo: p.crianca.sexo || null,            // Kids fala M/F, igual ao app
+            visitante: true,
+            observacoes_internas: `Cadastrado pela Apresentação de Crianças no app (${dataApres}).`,
+            ...(p.crianca.saude || {}),
+          })
+          .select('id').single();
+        kidsCriancaId = kid?.id || null;
+      }
+    } catch (e2) {
+      console.warn('[APP] apres ficha kids:', e2.message);
+    }
+
+    // ── O pedido em si (o que a equipe Kids/pastoral lê) ───────────────────
+    const linha = {
+      responsavel_membro_id: p.propria ? membro.id : null,
+      responsavel_nome: p.responsavel.nome,
+      responsavel_telefone: p.responsavel.telefone,
+      responsavel_email: p.responsavel.email || null,
+      crianca_nome: p.crianca.nome,
+      crianca_data_nascimento: p.crianca.data_nascimento,
+      // ⚠️ canônico aqui (a coluna do Contrato), M/F na ficha do Kids acima
+      crianca_sexo: sexoPara('canonico', p.crianca.sexo),
+      crianca_id: kidsCriancaId,
+      origem: 'app',
+      status: 'pendente',
+      // ⚠️ No caminho "é meu filho" os nomes são DERIVADOS do sexo dos responsáveis,
+      // e ficam NULOS quando não se sabe — chutar quem é pai e quem é mãe num
+      // registro que o balcão lê em voz alta no culto é pior que deixar em branco.
+      // ⚠⚠ No caminho de TERCEIRO valem os nomes que a pessoa DIGITOU — ali ela está
+      // informando os pais da criança, e derivar apagaria o que ela escreveu.
+      ...(p.propria
+        ? nomesDosPais(p.responsavel, p.responsavel_extra)
+        : { nome_pai: p.responsavel.nome_pai || null, nome_mae: p.responsavel.nome_mae || null }),
+      observacoes: p.observacoes,
+      data_apresentacao: dataApres,
+      registrado_por: req.user?.id || null,
+    };
+    // ⚠️ `culto_id` só existe em `apresentacao_bebes`; a tabela do Kids não tem a
+    // coluna, e mandar coluna inexistente faz o PostgREST recusar o INSERT
+    // INTEIRO (42703) — a família perderia o pedido por causa de um informativo.
+    void cultoId;
+
+    // ⚠️ Idempotência: reenviar o formulário não cria segundo pedido pra mesma
+    // criança na mesma cerimônia. Sem isso, um toque duplo no botão põe a família
+    // duas vezes na lista do domingo.
+    if (p.propria) {
+      const { data: jaTem } = await supabase.from('apresentacao_criancas')
+        .select('id').eq('responsavel_membro_id', membro.id)
+        .eq('data_apresentacao', dataApres)
+        .ilike('crianca_nome', p.crianca.nome)
+        .is('deleted_at', null).maybeSingle();
+      if (jaTem) {
+        return res.json({
+          ok: true, ja_inscrito: true, id: jaTem.id,
+          data_apresentacao: dataApres, crianca_membro_id: criancaMembroId,
+          familia: familiaNome, reusou_crianca: reusou,
+        });
+      }
+    }
+
+    const { data: criada, error } = await supabase.from('apresentacao_criancas')
+      .insert(linha).select('id').single();
+    if (error) throw error;
+
+    // Aviso pra quem cuida do Kids — AWAITED (a lei de 31/07: em porta pública
+    // serverless o container congela na resposta e fire-and-forget se perde).
+    try {
+      await notificar({
+        modulo: 'kids', tipo: 'apresentacao_crianca',
+        titulo: 'Apresentação de criança pelo app',
+        mensagem: `${p.responsavel.nome} pediu a apresentação de ${p.crianca.nome} em ${dataApres.split('-').reverse().join('/')}.`,
+        link: '/kids', severidade: 'info',
+        chaveDedup: `apres_app_${criada.id}`,
+      });
+    } catch (e2) { console.warn('[APP] apres notif:', e2.message); }
+
+    res.status(201).json({
+      ok: true, id: criada.id, data_apresentacao: dataApres,
+      crianca_membro_id: criancaMembroId, familia: familiaNome,
+      reusou_crianca: reusou,
+      // A tela AVISA a família que vai receber pager — quem decide é o totem no
+      // check-in; aqui é só não deixar a novidade pro domingo de manhã.
+      pager_inclusao: precisaPagerPorInclusao(p.crianca.saude),
+      // A tela precisa dizer a VERDADE sobre o outro responsável: entrou na
+      // família, ficou na dele, ou não entrou.
+      responsavel_extra: p.responsavel_extra
+        ? {
+            entrou: !!extraMembroId && !extraEmOutraFamilia && !extraFalhou,
+            em_outra_familia: extraEmOutraFamilia,
+            falhou: extraFalhou,
+          }
+        : null,
+    });
+  } catch (e) {
+    console.error('[APP] apresentacao-crianca POST:', e.message);
+    res.status(500).json({ error: 'Não foi possível registrar a apresentação agora' });
   }
 });
 
@@ -4744,7 +5487,7 @@ router.get('/eventos', authApp, limiterNormal, async (req, res) => {
   try {
     const nowIso = new Date().toISOString();
     const { data, error } = await supabase.from('insc_eventos')
-      .select('id, nome, slug, descricao, area, tipo, data, hora, local, capa_url, vagas, valor_centavos, pagamento_ativo, parcelas_max, inscricoes_abrem_em, inscricoes_encerram_em, tem_sorteio, campos, msg_sucesso_titulo, msg_sucesso_texto, created_at')
+      .select('id, nome, slug, descricao, area, tipo, data, hora, local, capa_url, vagas, valor_centavos, pagamento_ativo, pagamento_metodos, parcelas_max, inscricoes_abrem_em, inscricoes_encerram_em, tem_sorteio, campos, msg_sucesso_titulo, msg_sucesso_texto, checkout_externo_url, checkout_externo_nome, created_at')
       .eq('status', 'publicado').is('deleted_at', null)
       .order('data', { ascending: true, nullsFirst: false })
       .limit(100);
@@ -4759,6 +5502,18 @@ router.get('/eventos', authApp, limiterNormal, async (req, res) => {
     // "Todos | Meus eventos" usa, e o que decide form × minha inscrição.
     const membro = await resolveMembroApp(req).catch(() => null);
     const inscritos = new Set();
+    // ⚠️⚠️ VAGA RESERVADA NÃO É INSCRIÇÃO. `recebida` significa "a vaga está
+    // segura, o pagamento não veio" — e o app mostrava **"Inscrito"** pra quem
+    // nunca pagou, porque aqui só se excluía `cancelada`. Em evento pago isso é
+    // a pior mentira que a tela pode contar: a pessoa fecha o app achando que
+    // tem lugar no retiro.
+    //
+    // A régua canônica é a mesma da porta pública e da notificação da equipe
+    // ("reservou vaga e está aguardando o pagamento" × "se inscreveu"). Quem
+    // decide o que é válido é o BACKEND — o app só exibe (lei da auditoria de
+    // 05/08). Por isso vão os DOIS sinais, e `inscrito` continua significando o
+    // que sempre significou pra não quebrar bundle antigo.
+    const pendentes = new Set();
     if (membro && abertos.length) {
       const { data: minhas } = await supabase.from('inscricoes')
         .select('evento_id, status')
@@ -4766,7 +5521,10 @@ router.get('/eventos', authApp, limiterNormal, async (req, res) => {
         .in('evento_id', abertos.map((e) => e.id))
         .neq('status', 'cancelada')
         .is('deleted_at', null);
-      (minhas || []).forEach((i) => inscritos.add(i.evento_id));
+      (minhas || []).forEach((i) => {
+        inscritos.add(i.evento_id);
+        if (i.status === 'recebida') pendentes.add(i.evento_id);
+      });
     }
 
     // Vagas RESTANTES pela régua canônica (`fn_insc_vagas`, a MESMA do lock de
@@ -4791,6 +5549,9 @@ router.get('/eventos', authApp, limiterNormal, async (req, res) => {
       // simplesmente não era devolvido.
       inscricoes_encerram_em: e.inscricoes_encerram_em || null,
       vagas_restantes: restantes.has(e.id) ? restantes.get(e.id) : null,
+      // ⚠️ `pagamento_pendente` é o que separa "tem vaga garantida" de "reservou
+      // e não pagou". Sem ele o app não TEM como saber — e mostrava "Inscrito".
+      pagamento_pendente: pendentes.has(e.id),
       pago: !!e.pagamento_ativo,
       valor_centavos: e.pagamento_ativo ? (e.valor_centavos || null) : null,
       // Teto de parcelas do EVENTO (null = teto da conta do PSP). Só faz sentido
@@ -4803,6 +5564,16 @@ router.get('/eventos', authApp, limiterNormal, async (req, res) => {
       inscrito: inscritos.has(e.id),
       // Link do form público — fallback (build antigo do app) e compartilhamento.
       url: `https://www.cbrio.org/evento/${e.slug}`,
+      // ⚠️⚠️ Cartão cobrado numa plataforma externa (e-Inscrição): o app NÃO
+      // reimplementa a escolha de forma. `so_web` manda a tela abrir o
+      // formulário público, que é quem sabe perguntar Pix × cartão e mandar
+      // pra fora — o mesmo tratamento que o campo `imagem` já tem. Sem isto o
+      // app inscreveria por dentro e a pessoa cairia numa página de pagamento
+      // sem a opção de cartão, sem nunca saber que ela existia noutro lugar.
+      checkout_externo: checkoutExterno.temCheckoutExterno(e) ? {
+        nome: checkoutExterno.nomeExterno(e.checkout_externo_nome),
+      } : null,
+      so_web: checkoutExterno.temCheckoutExterno(e),
     }));
     res.json({
       eventos,
@@ -4874,7 +5645,21 @@ router.get('/eventos/minhas', authApp, limiterNormal, async (req, res) => {
         respostas: i.dados && typeof i.dados === 'object' ? i.dados : {},
         // Comprovante (QR da portaria) — token HMAC derivado do id, vale
         // retroativo pra inscrição migrada, sem coluna nova.
-        comprovante_url: `${baseUrl()}/i/c/${gerarTokenComprovante(i.id)}`,
+        // ⚠️ SÓ para inscrição `confirmada` (pedido do Matheus em 11/08/2026):
+        // `recebida` é VAGA RESERVADA, não inscrição — mostrar o QR ali entrega
+        // um comprovante de quem ainda não pagou, e é o mesmo QR que a portaria
+        // lê. Uma régua só: `confirmada` cobre evento gratuito (nasce assim),
+        // bolsa integral (idem) e evento pago (o handler confirma no `pago`);
+        // conferir o pagamento em separado criaria uma 2ª verdade que discorda
+        // do domínio em pagamento manual e em gratuidade (que não têm cobrança).
+        comprovante_url: i.status === 'confirmada'
+          ? `${baseUrl()}/i/c/${gerarTokenComprovante(i.id)}`
+          : null,
+        // Por que o comprovante não veio — a tela precisa dizer o motivo em vez
+        // de simplesmente não mostrar nada (some sem explicação se lê como bug).
+        comprovante_bloqueado: i.status === 'confirmada'
+          ? null
+          : (i.status === 'cancelada' ? 'cancelada' : 'aguardando_pagamento'),
         pagamento: pg ? {
           status: pg.status_pagamento, metodo: pg.metodo,
           valor_centavos: pg.valor_centavos, pago_em: pg.pago_em, expira_em: pg.expira_em,

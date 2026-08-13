@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import MandalaCultura from '../components/cultura/MandalaCultura';
 import MeusKpisResumo from '../components/MeusKpisResumo';
+import PainelRH from '../components/rh/PainelRH';
 
 // path='VOLUNTARIADO_DYNAMIC' e tratado no click handler (vai para painel do
 // voluntário ou visão admin conforme o perfil do usuário logado)
@@ -162,6 +163,9 @@ export default function Dashboard() {
         <p className="text-xs text-muted-foreground capitalize">{dateStr}</p>
         <h1 className="text-2xl font-bold text-foreground mt-1">{greeting}, {firstName}</h1>
       </div>
+
+      {/* Painel informativo de RH — aniversariantes, próximos eventos, comunicados */}
+      <PainelRH />
 
       {/* Mandala Cultura CBRio */}
       <MandalaCultura />

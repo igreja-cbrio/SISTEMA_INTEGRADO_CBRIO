@@ -76,6 +76,7 @@
 
 const crypto = require('crypto');
 const { STATUS, METODOS } = require('../tipos');
+const { resilientFetch } = require('../../../utils/resilientFetch');
 
 const nome = 'mercadopago';
 
@@ -277,10 +278,14 @@ async function req(metodo, caminho, corpo, { idempotencyKey } = {}) {
   // vira uma segunda cobrança na conta de quem está pagando.
   if (idempotencyKey) headers['X-Idempotency-Key'] = String(idempotencyKey).slice(0, 64);
 
-  const r = await fetch(`${BASE}${caminho}`, {
+  const r = await resilientFetch(`${BASE}${caminho}`, {
     method: metodo,
     headers,
     body: corpo ? JSON.stringify(corpo) : undefined,
+  }, {
+    dependency: 'Mercado Pago',
+    timeoutMs: 8_000,
+    maxRetries: 1,
   });
 
   const txt = await r.text();
@@ -340,7 +345,23 @@ const STATUS_POR_ORDER = {
   expired: STATUS.EXPIRADA,
   canceled: STATUS.CANCELADA,
   cancelled: STATUS.CANCELADA,          // grafia alternativa, defensivo
-  failed: STATUS.FALHOU,
+  // ⚠️⚠️ ORDER QUE FALHA NÃO MATA A COBRANÇA — mesma correção que o mapa da
+  // Payments API já tinha (`rejected: null`, logo abaixo) e que faltou aqui.
+  //
+  // Custou o PRIMEIRO Pix de produção (11/08): a order do Pix voltou 402
+  // `processing_error`, o MP notificou `order.failed`, o webhook mapeou pra
+  // `falhou` — que é TERMINAL e ABSORVENTE — e a inscrição CBR-2026-000245
+  // ficou sem NENHUM caminho de pagamento, com a tela dizendo "você pode tentar
+  // de novo com outro cartão ou por Pix". Mentira: naquele estado não aceita
+  // mais nada.
+  //
+  // ⚠️ Uma ORDER é UMA TENTATIVA, não a cobrança: cada troca de forma cria outra
+  // order, todas com o mesmo `external_reference` (é a régua deste adapter desde
+  // o início). Order falhada = aquela tentativa morreu; a cobrança segue viva.
+  //
+  // `null` = "não mexe no status". O motivo já fica em `ultimo_erro`, gravado
+  // por `definirMetodo`, e a tela explica sem trancar a porta.
+  failed: null,
 };
 
 /** Payments API (legada) — `status` do payment. Chega pelo tópico `payment`. */

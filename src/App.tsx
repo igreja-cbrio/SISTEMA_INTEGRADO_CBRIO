@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate, Outlet, useNavigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { TutorialProvider } from './contexts/TutorialContext';
@@ -49,6 +49,15 @@ const queryClient = new QueryClient({
 //   Safari/iOS  : "Importing a module script failed" + "'text/html' is not a valid JavaScript MIME type"
 //   Webpack     : "Loading chunk X failed" / "ChunkLoadError"
 const CHUNK_ERROR_RE = /Loading chunk|ChunkLoadError|Failed to fetch dynamically imported module|error loading dynamically imported module|Importing a module script failed|valid JavaScript MIME type|Expected a JavaScript(?: \w+)? module script/i;
+
+// Atalho do recarregamento forçado, por plataforma. `navigator.platform` está
+// depreciado mas é o único sinal disponível no navegador antigo que justamente
+// tende a cair aqui; qualquer coisa que não seja Mac cai no Ctrl.
+function atalhoRecarregarForcado() {
+  const mac = typeof navigator !== 'undefined'
+    && /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent || '');
+  return mac ? 'Cmd + Shift + R' : 'Ctrl + Shift + R';
+}
 
 // Conta tentativas via querystring (sobrevive ao reload, diferente de
 // sessionStorage que ficava preso entre deploys consecutivos e impedia
@@ -151,6 +160,18 @@ class ErrorBoundary extends Component<
               >
                 {this.state.updating ? 'Atualizando…' : 'Tentar atualizar agora'}
               </button>
+              {/* ⚠️ Quando as tentativas automáticas ACABARAM, "tente novamente" não
+                  é instrução suficiente — foi o que prendeu o Matheus em 10/08/2026:
+                  saíram 9 deploys de produção em 21 minutos (várias PRs mergeadas em
+                  sequência), e cada recarga suave caía num alvo em movimento. O
+                  recarregamento forçado ignora o cache do navegador e é o caminho que
+                  sempre sai dessa. Só aparece depois de o automático falhar, pra não
+                  ensinar atalho de teclado a quem não precisa. */}
+              {!this.state.updating && (
+                <p style={{ color: '#888', fontSize: 13, maxWidth: 480 }}>
+                  Se voltar a falhar, force o recarregamento: <b>{atalhoRecarregarForcado()}</b>.
+                </p>
+              )}
               <p style={{ color: '#aaa', fontSize: 12, marginTop: 8 }}>
                 Alterações ainda não salvas nesta página podem ser perdidas.
               </p>
@@ -290,6 +311,16 @@ const Cuidados = lazyWithRetry(() => import('./pages/ministerial/Cuidados'));
 const Comunicacao = lazyWithRetry(() => import('./pages/Comunicacao'));
 // Conversas / ConversasSetores viraram abas dentro de Comunicação (import interno).
 // As rotas antigas abaixo agora redirecionam pra /comunicacao.
+
+// Redirect pra /comunicacao que PRESERVA a query original (?telefone=&texto=&area=)
+// e só acrescenta/força o ?tab=. Navigate com `to` string substituía a URL inteira
+// e descartava os params — matando o deep-link dos botões "Conversas".
+function RedirectComunicacao({ tab }: { tab: string }) {
+  const location = useLocation();
+  const p = new URLSearchParams(location.search);
+  p.set('tab', tab);
+  return <Navigate to={`/comunicacao?${p.toString()}`} replace />;
+}
 const DevocionalMovido = lazyWithRetry(() => import('./pages/devocional/DevocionalMovido'));
 const Integracao = lazyWithRetry(() => import('./pages/ministerial/Integracao'));
 const Batismo = lazyWithRetry(() => import('./pages/ministerial/Batismos'));
@@ -690,8 +721,12 @@ function AppRoutes() {
         {/* Módulo central de Comunicação (C4) · absorve Conversas + Bot WhatsApp + Menu das Conversas */}
         <Route path="/comunicacao" element={<ModuleGuard moduleSlug="comunicacao"><Suspense fallback={<Loading />}><Comunicacao /></Suspense></ModuleGuard>} />
         {/* Redirects das rotas antigas → não quebrar bookmarks/links */}
-        <Route path="/conversas" element={<Navigate to="/comunicacao?tab=conversas" replace />} />
-        <Route path="/admin/conversas-setores" element={<Navigate to="/comunicacao?tab=bot" replace />} />
+        {/* ⚠️ Redirect PRESERVANDO a query: os botões "Conversas" de ~13 telas
+            (hrefConversa) e o link de transferência chegam com ?telefone=&texto=
+            &area= — o <Navigate to="string"> descartava tudo e a conversa da
+            pessoa não abria (bug da revisão de 05/08). */}
+        <Route path="/conversas" element={<RedirectComunicacao tab="conversas" />} />
+        <Route path="/admin/conversas-setores" element={<RedirectComunicacao tab="bot" />} />
         {/* Superfície interna do Sistema; não é mais um módulo autônomo. */}
         <Route path="/wifi" element={<SuperAdminGuard><Suspense fallback={<Loading />}><WifiModulo /></Suspense></SuperAdminGuard>} />
         <Route path="/ministerial/devocional" element={<Navigate to="/ministerial/cuidados?tab=devocional" replace />} />
@@ -762,7 +797,7 @@ function AppRoutes() {
         <Route path="/admin/app-analytics" element={<SuperAdminGuard><Suspense fallback={<Loading />}><AppAnalytics /></Suspense></SuperAdminGuard>} />
         <Route path="/sistema" element={<SuperAdminGuard><Suspense fallback={<Loading />}><Sistema /></Suspense></SuperAdminGuard>} />
         {/* Bot WhatsApp virou aba dentro de Comunicação */}
-        <Route path="/admin/whatsapp" element={<Navigate to="/comunicacao?tab=bot" replace />} />
+        <Route path="/admin/whatsapp" element={<RedirectComunicacao tab="bot" />} />
         {/* Apresentações: módulo desativado (2026-07-06 · pedido do Matheus) — rota redireciona */}
         <Route path="/admin/apresentacoes" element={<Navigate to="/dashboard" replace />} />
         <Route path="/admin/apresentacoes/*" element={<Navigate to="/dashboard" replace />} />

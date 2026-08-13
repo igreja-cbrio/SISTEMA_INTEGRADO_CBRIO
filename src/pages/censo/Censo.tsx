@@ -24,13 +24,14 @@ import EmptyState from '@/components/EmptyState';
 import AbaCobertura from '@/components/censo/AbaCobertura';
 import AbaPerfil from '@/components/censo/AbaPerfil';
 import AbaLeituraIA from '@/components/censo/AbaLeituraIA';
+import AbaRespostas from '@/components/censo/AbaRespostas';
 import QrLinkDialog from '@/components/QrLinkDialog';
 import ConstrutorPerguntas from '@/components/censo/ConstrutorPerguntas';
 import type { Pergunta as ConstrutorPergunta } from '@/components/censo/ConstrutorPerguntas';
 import { toast } from 'sonner';
 import {
   ClipboardList, Plus, Loader2, Copy, Trash2, Save, ArrowLeft,
-  Play, Square, ListChecks, BarChart3, Sparkles, Users, HeartHandshake, Lock, Clock,
+  Play, Square, ListChecks, BarChart3, Sparkles, Users, User, HeartHandshake, Lock, Clock,
   QrCode, Copy as CopyIcon, ExternalLink, AlertTriangle,
 } from 'lucide-react';
 
@@ -94,6 +95,7 @@ const TIPO_LABEL: Record<string, string> = {
 
 const TABS = [
   { id: 'pesquisas', label: 'Pesquisas', icon: ListChecks },
+  { id: 'respostas', label: 'Respostas', icon: User },
   { id: 'cuidado', label: 'Cuidado', icon: HeartHandshake },
   { id: 'cobertura', label: 'Cobertura', icon: BarChart3 },
   { id: 'perfil', label: 'Perfil', icon: Users },
@@ -290,7 +292,7 @@ export default function Censo() {
 
         {/* As três abas de análise compartilham o mesmo seletor de pesquisa: o
             número só quer dizer algo junto com "de qual censo". */}
-        {(['cobertura', 'perfil', 'ia'] as const).map((id) => (
+        {(['respostas', 'cobertura', 'perfil', 'ia'] as const).map((id) => (
           <TabsContent key={id} value={id}>
             <div className="space-y-4">
               {(lista || []).length > 1 && (
@@ -310,6 +312,9 @@ export default function Censo() {
                     </button>
                   ))}
                 </div>
+              )}
+              {id === 'respostas' && (
+                <AbaRespostas pesquisaId={pesquisaEscolhida} podeApagar={podeEditar} />
               )}
               {id === 'cobertura' && <AbaCobertura pesquisaId={pesquisaEscolhida} />}
               {id === 'perfil' && <AbaPerfil pesquisaId={pesquisaEscolhida} />}

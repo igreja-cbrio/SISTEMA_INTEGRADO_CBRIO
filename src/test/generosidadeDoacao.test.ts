@@ -123,17 +123,30 @@ describe('telaPublica · decidirForma (régua PURA)', () => {
     expect(d.status).toBe(200);
   });
 
-  it('o teto de parcelas do EVENTO é aplicado', () => {
+  it('o teto de parcelas é aplicado sobre o que a tela PEDE', () => {
     // Mutation-test: confiar no número que vem da tela deixaria alguém parcelar
     // em 21x algo configurado pra 6x.
-    const d = T.decidirForma(cobrancaFake({ parcelas_max: 6 }), { metodo: 'cartao', parcelas: 21 }, 12);
+    const d = T.decidirForma(cobrancaFake({ parcelas_max: 6 }), { metodo: 'cartao', parcelas: 21 }, 6);
     expect(d).toMatchObject({ acao: 'aplicar', metodo: 'cartao', parcelas: 6 });
   });
 
-  it('`parcelas_max` NULL cai no teto do PROVIDER, nunca em 1', () => {
-    // Tratar NULL como 1x tiraria o parcelado de tudo que não configurou teto.
-    const d = T.decidirForma(cobrancaFake({ parcelas_max: null }), { metodo: 'cartao', parcelas: 99 }, 12);
-    expect(d.parcelas).toBe(12);
+  it('⚠️ o teto vem PRONTO no parâmetro — a régua não relê `parcelas_max`', () => {
+    // Recalcular aqui era uma 2ª cópia da mesma decisão, e foi assim que "sem
+    // teto" significou 1x num lugar e 36x no outro. Quem resolve é `tetoParcelas`.
+    const d = T.decidirForma(cobrancaFake({ parcelas_max: 99 }), { metodo: 'cartao', parcelas: 99 }, 3);
+    expect(d.parcelas).toBe(3);
+  });
+
+  it('⚠️⚠️ SEM teto gravado = À VISTA (1x), nunca o teto do provedor', () => {
+    // A regra anterior era o oposto e mentia na direção CARA: a tela do evento
+    // dizia "vazio = sem parcelar" e o servidor liberava o teto do PSP (36x no
+    // Mercado Pago), com o custo do parcelado saindo da margem da igreja.
+    // Quem define política de preço é a igreja, no evento — não o provedor.
+    expect(T.tetoParcelas({ parcelas_max: null, provider: 'mercadopago' })).toBe(1);
+    expect(T.tetoParcelas({ parcelas_max: 0, provider: 'mercadopago' })).toBe(1);
+    // Teto configurado continua mandando — isto NÃO tira parcelamento de quem
+    // definiu (o outro sentido do mutante).
+    expect(T.tetoParcelas({ parcelas_max: 6, provider: 'mercadopago' })).toBe(6);
   });
 
   it('Pix e boleto SEMPRE vão com parcelas 1', () => {

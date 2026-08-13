@@ -5,9 +5,10 @@
 // erra menos (valida 6 campos por vez em vez de 93 no final) e a condicional
 // encurta o formulário de verdade — bloco cujo conteúdo todo ficou invisível
 // simplesmente não existe.
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import type { Pergunta, Respostas } from '@/lib/censoForm';
 import { blocosVisiveis, faltando, progresso } from '@/lib/censoForm';
+import { aplicarEndereco, buscarCep, cepCompleto } from '@/lib/cepAutopreenche';
 import PerguntaCampo from './PerguntaCampo';
 import { usePublicPalette } from '@/pages/public/publicTheme';
 
@@ -51,11 +52,56 @@ export default function CensoForm({
   );
   const faltandoIds = new Set(faltandoNoBloco.map((p) => p.id));
 
+  // ── CEP preenche endereço, bairro e cidade ────────────────────────────────
+  // Pedido do Matheus (10/08): no culto o preenchimento é em pé, no celular,
+  // com fila atrás — digitar 8 dígitos e receber três campos prontos é a
+  // diferença entre terminar e desistir no meio.
+  //
+  // ⚠️ Vive AQUI, e não no campo: quem sabe quais perguntas recebem o endereço é
+  // a lista inteira (pelo `preenche_de` do construtor), e o campo só conhece a
+  // própria pergunta.
+  const [buscandoCep, setBuscandoCep] = useState(false);
+  const [avisoCep, setAvisoCep] = useState<string | null>(null);
+  // Quais perguntas foram preenchidas pelo CEP. É o que permite corrigir o CEP
+  // e trocar o endereço antigo SEM apagar o que a pessoa digitou à mão.
+  const doCep = useRef<Set<string>>(new Set());
+  const ultimoCep = useRef<string>('');
+
+  async function consultarCep(cep: string) {
+    const so = cep.replace(/\D/g, '');
+    if (so === ultimoCep.current) return;      // não repete a mesma consulta
+    ultimoCep.current = so;
+    setAvisoCep(null);
+    setBuscandoCep(true);
+    try {
+      const dados = await buscarCep(so);
+      if (!dados) {
+        // ⚠️ Não apaga nada quando o CEP não existe: o endereço que a pessoa já
+        // escreveu vale mais que a nossa consulta.
+        setAvisoCep('Não achamos esse CEP. Você pode preencher o endereço à mão.');
+        return;
+      }
+      const r = aplicarEndereco(perguntas, respostas, dados, doCep.current);
+      r.preenchidas.forEach((id) => doCep.current.add(id));
+      if (r.preenchidas.length) onChange(r.respostas);
+      else setAvisoCep('Esse CEP não traz rua nem bairro — preencha o endereço à mão.');
+    } finally {
+      setBuscandoCep(false);
+    }
+  }
+
   function setResposta(id: string, valor: unknown) {
     const proximas = { ...respostas };
     if (valor === null || valor === undefined || valor === '') delete proximas[id];
     else proximas[id] = valor;
     onChange(proximas);
+
+    // Dispara a consulta assim que os 8 dígitos entram — sem botão "buscar",
+    // que é um toque a mais numa tela onde o objetivo é ganhar segundos.
+    const p = perguntas.find((q) => q.id === id);
+    if (p?.formato === 'cep' && typeof valor === 'string' && cepCompleto(valor)) {
+      void consultarCep(valor);
+    }
   }
 
   function avancar() {
@@ -116,6 +162,11 @@ export default function CensoForm({
               <p style={{ fontSize: 13, color: c.text3, margin: '0 0 8px', lineHeight: 1.4 }}>{p.descricao}</p>
             )}
             {!p.descricao && <div style={{ height: 6 }} />}
+            {p.formato === 'cep' && (buscandoCep || avisoCep) && (
+              <p style={{ fontSize: 12.5, color: buscandoCep ? c.text3 : '#b45309', margin: '0 0 6px' }}>
+                {buscandoCep ? 'Buscando o endereço…' : avisoCep}
+              </p>
+            )}
             <PerguntaCampo
               pergunta={p}
               valor={respostas[p.id]}

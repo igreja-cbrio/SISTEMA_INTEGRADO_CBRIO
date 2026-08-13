@@ -9,8 +9,57 @@ const SERVICES = [
   { id: 'observability', name: 'Erros e performance', surface: 'observability', runtime: 'Sentry', state: 'external_pending' },
 ];
 
+const ALERT_POLICY_DEFAULT = Object.freeze({
+  enabled: true,
+  threshold: 3,
+  recoveryThreshold: 2,
+  severity: 'warning',
+  ownerLabel: 'Tecnologia e responsavel do modulo',
+  runbook: 'Abra Sistema, correlacione o request ID com o Sentry e valide a dependencia da rotina antes de reexecutar.',
+  runbookUrl: '/sistema?view=incidents',
+});
+
+const ALERT_POLICY_BY_CATEGORY = Object.freeze({
+  platform: {
+    threshold: 3, severity: 'critical', ownerLabel: 'Tecnologia',
+    runbook: 'Valide API, Vercel, Supabase e o release atual; use o request ID para localizar a causa no Sentry.',
+  },
+  payments: {
+    threshold: 2, severity: 'error', ownerLabel: 'Financeiro e Tecnologia',
+    runbook: 'Confira Asaas e Mercado Pago, identifique a etapa que falhou e nao reenvie cobrancas sem reconciliar o estado.',
+  },
+  finance: {
+    threshold: 2, severity: 'error', ownerLabel: 'Financeiro e Tecnologia',
+    runbook: 'Confira credenciais e disponibilidade bancaria; antes de repetir, valide se os lancamentos ja foram importados.',
+  },
+  data: {
+    threshold: 3, severity: 'error', ownerLabel: 'Tecnologia e Dados',
+    runbook: 'Valide Supabase e a origem dos dados; confira contagens e duplicidade antes de repetir a rotina.',
+  },
+  agents: {
+    threshold: 3, severity: 'warning', ownerLabel: 'Tecnologia e dono do agente',
+    runbook: 'Valide a fila, o worker Railway e o provedor de IA; confirme idempotencia antes de reprocessar.',
+  },
+});
+
+function alertPolicyFor(path, category) {
+  const categoryPolicy = ALERT_POLICY_BY_CATEGORY[category] || {};
+  const healthOverride = path === '/api/health'
+    ? { threshold: 3, severity: 'critical', ownerLabel: 'Tecnologia' }
+    : {};
+  return { ...ALERT_POLICY_DEFAULT, ...categoryPolicy, ...healthOverride };
+}
+
 const JOBS = [
   ['/api/health', '*/5 * * * *', 'platform'],
+  // ⚠️ ENTROU NO CATÁLOGO EM 11/08/2026 e o motivo é a lição do próprio caso:
+  // este cron existia no vercel.json, era interceptado pelo `authenticate` do
+  // `routes/sistema.js` e levava 401 a cada 15 minutos — invisível, porque cron
+  // fora do catálogo não tem política de alerta e não abre incidente. Resultado
+  // medido: 0 de 4.509 tickets de push com `receipt_status`, dois meses depois
+  // de um conserto que acreditou ter resolvido isso.
+  ['/api/sistema/cron/push-receipts', '*/15 * * * *', 'platform'],
+  ['/api/sistema/cron/incident-triage', '*/5 * * * *', 'agents'],
   ['/api/voluntariado/cron/emails', '*/5 * * * *', 'volunteers'],
   ['/api/pagamentos-webhook/cron/tick', '*/10 * * * *', 'payments'],
   ['/api/totem-kids/cron/age-out', '0 5 * * *', 'kids'],
@@ -19,7 +68,6 @@ const JOBS = [
   ['/api/integracao/cron/gerar-cultos-recorrentes', '0 4 1 * *', 'ministry'],
   ['/api/cerebro/processar', '0 3 * * *', 'data'],
   ['/api/cerebro/sync-erp', '30 3 * * *', 'data'],
-  ['/api/kpis/youtube/sync', '0 13 * * *', 'online'],
   ['/api/governanca/cron/lembrete', '0 10 * * 1', 'governance'],
   ['/api/public/grupos/cron/frequencia-mensal', '0 15 28 * *', 'groups'],
   ['/api/kpis/cultos/auto-create', '5 3 * * 0', 'ministry'],
@@ -62,6 +110,7 @@ const JOBS = [
   path,
   schedule,
   category,
+  alertPolicy: alertPolicyFor(path, category),
   executionState: 'awaiting_canonical_runs',
 }));
 
@@ -156,6 +205,9 @@ module.exports = {
   JOBS,
   WORKFLOWS,
   INTEGRATIONS,
+  ALERT_POLICY_DEFAULT,
+  ALERT_POLICY_BY_CATEGORY,
+  alertPolicyFor,
   getReleaseInfo,
   getFoundationPayload,
 };

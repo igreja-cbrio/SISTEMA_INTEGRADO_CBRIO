@@ -16,7 +16,19 @@ const govIA = require('../services/governancaIA');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: govDocs.MAX_BYTES } });
 
-router.use(authenticate);
+// ⚠️ PADRÃO POR PREFIXO, copiado do `routes/totemKids.js` (que já resolvia isto
+// desde antes). Prefiro ele a uma lista de caminhos por um motivo prático: lista
+// exige manutenção, e "alguém acrescentou rota de cron e esqueceu de liberar" é
+// EXATAMENTE o bug que este conserto está tirando. `/cron/*` é convenção do
+// repo, então a regra se mantém sozinha.
+//
+// ⚠️ Fail-closed de verdade: só pula com segredo VÁLIDO (`isAuthorizedCron`).
+// Chamada manual de admin (JWT, sem segredo) segue pelo `authenticate` normal.
+router.use((req, res, next) => (
+  req.path.startsWith('/cron/') && isAuthorizedCron(req)
+    ? next()
+    : authenticate(req, res, next)
+));
 
 // ── Helpers ──
 const hoje = () => new Date().toISOString().split('T')[0];

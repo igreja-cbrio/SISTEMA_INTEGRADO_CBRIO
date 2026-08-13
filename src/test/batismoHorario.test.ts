@@ -49,6 +49,17 @@ describe('avaliarHorarioBatismo', () => {
     expect(r.motivo).toBe('lotado');
   });
 
+  // ⚠️ Herdado do `vagaNoHorario` (11/08), que esta função absorveu: a mensagem
+  // do lotado tem que NOMEAR o horário e mandar pro OUTRO. Dizer só "lotado"
+  // deixa a pessoa sem saída — foi o pedido explícito do Marcos.
+  it('lotado nomeia o horário, o limite e manda pro outro', () => {
+    const r = avaliarHorarioBatismo('10:00', { configurados: CONFIG, ocupacao: { '10:00': 11 } });
+    expect(r.label).toBe('Domingo · 10:00 (2º culto da manhã)');
+    expect(r.limite).toBe(11);
+    expect(r.mensagem).toContain('11 pessoas');
+    expect(r.mensagem).toContain('Escolha outro horário');
+  });
+
   it('limite null = sem teto', () => {
     const semLimite = [{ horario: '08:30', aberto: true, limite: null }];
     const r = avaliarHorarioBatismo('08:30', { configurados: semLimite, ocupacao: { '08:30': 999 } });

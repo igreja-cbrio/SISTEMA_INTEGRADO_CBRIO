@@ -10,7 +10,7 @@
 // A segunda regra: pergunta condicional só pode depender de uma pergunta
 // ANTERIOR. O seletor abaixo só oferece as anteriores, e o servidor recusa o
 // resto — condicional que aponta para frente é campo que nunca aparece.
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -19,10 +19,14 @@ import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   Plus, Trash2, ChevronUp, ChevronDown, ChevronRight, Save, Loader2,
-  Heading, Copy, AlertTriangle, Lock,
+  Heading, Copy, AlertTriangle, Lock, GripVertical,
 } from 'lucide-react';
 import type { Pergunta } from '@/lib/censoConstrutor';
-import { trocarTipoPergunta, validarOrdem, renomearOpcao } from '@/lib/censoConstrutor';
+import {
+  trocarTipoPergunta, renomearOpcao, moverPergunta, indiceApos,
+  removerPerguntas, selecionadasComResposta, moverOpcao,
+} from '@/lib/censoConstrutor';
+import { velocidadeAutoScroll, containerDeScroll, podeRolar } from '@/lib/autoScrollArrasto';
 
 export type { Pergunta };
 
@@ -50,6 +54,8 @@ const CUIDADO_LABEL: Record<string, string> = {
 const FORMATO_LABEL: Record<string, string> = {
   texto: 'Texto comum', telefone: 'Telefone (com máscara)',
   email: 'E-mail (validado)', instagram: 'Instagram (@)',
+  // Preenche endereço, bairro e cidade das perguntas com `preenche_de`.
+  cep: 'CEP (preenche o endereço)',
 };
 
 type Props = {
@@ -76,18 +82,77 @@ export default function ConstrutorPerguntas({ perguntas, respostas, podeEditar, 
     setLista((l) => l.map((q, j) => (j === i ? trocarTipoPergunta(q, tipo) : q)));
   }
 
-  function mover(i: number, dir: -1 | 1) {
-    const j = i + dir;
-    if (j < 0 || j >= lista.length) return;
-    // Mover uma pergunta para ANTES da que ela depende quebraria a condicional.
-    // Em vez de deixar o servidor recusar no fim, avisamos na hora.
-    const proximo = [...lista];
-    [proximo[i], proximo[j]] = [proximo[j], proximo[i]];
-    const erro = validarOrdem(proximo);
-    if (erro) { alert(erro); return; }
-    setLista(proximo);
-    setAberta(aberta === i ? j : aberta === j ? i : aberta);
+  // Caminho ÚNICO de reordenação: os botões subir/descer e o arrastar chamam
+  // daqui. Duas cópias da regra divergiriam, e é ela que protege a condicional.
+  function reordenar(de: number, para: number) {
+    const r = moverPergunta(lista, de, para);
+    if (r.erro) { alert(r.erro); return; }
+    if (r.lista === lista) return;
+    setLista(r.lista);
+    setAberta(indiceApos(aberta, de, Math.max(0, Math.min(lista.length - 1, para))));
+    // ⚠️ A seleção é por ÍNDICE: depois de reordenar ela apontaria para outras
+    // perguntas, e o "apagar selecionadas" apagaria as erradas.
+    setSelecao([]);
   }
+
+  function mover(i: number, dir: -1 | 1) {
+    reordenar(i, i + dir);
+  }
+
+  // ── arrastar (HTML5 · sem dependência nova, como o Planner do Marketing) ──
+  // ⚠️ O arrastar NÃO substitui subir/descer: drag do HTML5 não funciona no
+  // TOQUE (celular/tablet) e não é alcançável por teclado. Os botões continuam
+  // sendo o caminho acessível; a alça é conveniência para quem usa mouse.
+  const [arrastando, setArrastando] = useState<number | null>(null);
+  const [alvo, setAlvo] = useState<number | null>(null);
+  const refLista = useRef<HTMLDivElement | null>(null);
+
+  function aoSoltar(i: number) {
+    if (arrastando !== null && arrastando !== i) reordenar(arrastando, i);
+    setArrastando(null);
+    setAlvo(null);
+  }
+
+  // ── rolagem automática ao arrastar para as bordas ─────────────────────────
+  // Com muitas perguntas, o destino fica fora da tela e o arrasto do HTML5 não
+  // rola nada sozinho — sem isto não há como levar a primeira pergunta para o
+  // fim de uma lista longa.
+  //
+  // ⚠️ O `dragover` é ouvido no DOCUMENTO, não nas linhas: junto à borda da
+  // janela o ponteiro pode estar sobre área sem linha nenhuma, e aí o evento da
+  // linha nunca chega. No documento ele chega sempre (o evento borbulha de
+  // qualquer elemento sob o ponteiro).
+  useEffect(() => {
+    if (arrastando === null) return;
+
+    let frame = 0;
+    let y = 0;
+    const alvoScroll = containerDeScroll(refLista.current);
+
+    const aoMover = (e: DragEvent) => { y = e.clientY; };
+    // `passive: true` de propósito: aqui só LEMOS a posição. Quem chama
+    // preventDefault (necessário para permitir o drop) é o handler da linha —
+    // fazer isso no documento marcaria a página inteira como área de soltura.
+    document.addEventListener('dragover', aoMover, { passive: true, capture: true });
+
+    const passo = () => {
+      const delta = velocidadeAutoScroll(y, window.innerHeight);
+      if (podeRolar(alvoScroll, delta)) {
+        if (alvoScroll) alvoScroll.scrollTop += delta;
+        else window.scrollBy(0, delta);
+      }
+      frame = requestAnimationFrame(passo);
+    };
+    frame = requestAnimationFrame(passo);
+
+    // ⚠️ Limpeza obrigatória: um rAF vazado continuaria rolando a página depois
+    // do arrasto, e o efeito também roda no desmonte da tela (trocar de aba no
+    // meio de um arrasto).
+    return () => {
+      cancelAnimationFrame(frame);
+      document.removeEventListener('dragover', aoMover, { capture: true });
+    };
+  }, [arrastando]);
 
   function adicionar(tipo: string) {
     setLista((l) => [...l, tipo === 'secao'
@@ -105,6 +170,36 @@ export default function ConstrutorPerguntas({ perguntas, respostas, podeEditar, 
     }
     if (p.id && respostas > 0 && !confirm('Esta pesquisa já tem respostas. Remover a pergunta esconde as respostas dela dos gráficos. Continuar?')) return;
     setLista((l) => l.filter((_, j) => j !== i));
+    setAberta(null);
+    setSelecao([]);   // os índices seguintes deslizaram
+  }
+
+  // ── seleção múltipla ──────────────────────────────────────────────────────
+  // Guarda os ÍNDICES, e por isso é limpa a cada mudança de ordem ou remoção:
+  // índice guardado depois de reordenar aponta para outra pergunta, e aí o
+  // "apagar selecionadas" apagaria as erradas. Chave por id não serve — pergunta
+  // nova ainda não tem id (o servidor gera).
+  const [selecao, setSelecao] = useState<number[]>([]);
+  const selecionadas = new Set(selecao);
+
+  function alternar(i: number) {
+    setSelecao((s) => (s.includes(i) ? s.filter((j) => j !== i) : [...s, i]));
+  }
+
+  function apagarSelecionadas() {
+    const r = removerPerguntas(lista, selecao);
+    if (r.erro) { alert(r.erro); return; }
+    if (r.lista === lista) return;
+
+    // ⚠️ UMA confirmação com o total, não uma por pergunta — lição do lote de
+    // aprovação da membresia: N diálogos iguais viram cliques automáticos.
+    const gravadas = selecionadasComResposta(lista, selecao);
+    if (gravadas > 0 && respostas > 0 && !confirm(
+      `Esta pesquisa já tem ${respostas} resposta(s). Apagar ${gravadas} pergunta(s) já gravada(s) esconde as respostas delas dos gráficos. Continuar?`,
+    )) return;
+
+    setLista(r.lista);
+    setSelecao([]);
     setAberta(null);
   }
 
@@ -148,7 +243,24 @@ export default function ConstrutorPerguntas({ perguntas, respostas, podeEditar, 
           </p>
         )}
 
-        <div className="space-y-2">
+        {podeEditar && selecao.length > 0 && (
+          <div className="flex items-center justify-between gap-3 flex-wrap rounded-lg border border-primary/40 bg-primary/5 px-3 py-2">
+            <span className="text-sm font-medium">
+              {selecao.length} pergunta(s) selecionada(s)
+            </span>
+            <div className="flex items-center gap-2">
+              <Button variant="ghost" size="sm" onClick={() => setSelecao([])}>
+                Limpar seleção
+              </Button>
+              <Button variant="destructive" size="sm" onClick={apagarSelecionadas}>
+                <Trash2 className="h-4 w-4 mr-1" />
+                Apagar selecionadas
+              </Button>
+            </div>
+          </div>
+        )}
+
+        <div ref={refLista} className="space-y-2">
           {lista.map((p, i) => {
             const anteriores = lista.slice(0, i).filter((q) => q.tipo !== 'secao' && q.id);
             const dep = p.mostrar_se?.pergunta
@@ -157,9 +269,41 @@ export default function ConstrutorPerguntas({ perguntas, respostas, podeEditar, 
 
             return (
               <div key={p.id || `novo-${i}`}
-                className={`rounded-lg border ${p.tipo === 'secao' ? 'border-primary/30 bg-primary/5' : 'border-border'}`}>
+                onDragOver={podeEditar ? (e) => { e.preventDefault(); setAlvo(i); } : undefined}
+                onDragLeave={podeEditar ? () => setAlvo((a) => (a === i ? null : a)) : undefined}
+                onDrop={podeEditar ? (e) => { e.preventDefault(); aoSoltar(i); } : undefined}
+                className={`rounded-lg border transition-colors ${
+                  p.tipo === 'secao' ? 'border-primary/30 bg-primary/5' : 'border-border'
+                } ${arrastando === i ? 'opacity-40' : ''} ${
+                  alvo === i && arrastando !== null && arrastando !== i ? 'ring-2 ring-primary' : ''
+                }`}>
                 {/* cabeçalho da linha */}
                 <div className="flex items-center gap-2 p-3">
+                  {podeEditar && (
+                    <input
+                      type="checkbox"
+                      checked={selecionadas.has(i)}
+                      onChange={() => alternar(i)}
+                      title="Selecionar para apagar em lote"
+                      aria-label={`Selecionar “${p.texto || 'sem texto'}”`}
+                      className="shrink-0 size-4 accent-primary cursor-pointer"
+                    />
+                  )}
+                  {podeEditar && (
+                    /* A alça é o que arrasta — não a linha inteira. A linha tem um
+                       botão que expande a edição, e deixar os dois no mesmo gesto
+                       fazia o clique virar arrasto por acidente. */
+                    <span
+                      draggable
+                      onDragStart={(e) => { setArrastando(i); e.dataTransfer.effectAllowed = 'move'; }}
+                      onDragEnd={() => { setArrastando(null); setAlvo(null); }}
+                      title="Arraste para reordenar"
+                      aria-hidden="true"
+                      className="shrink-0 cursor-grab active:cursor-grabbing p-1 -ml-1 text-muted-foreground/60 hover:text-foreground"
+                    >
+                      <GripVertical className="size-4" />
+                    </span>
+                  )}
                   <button type="button" onClick={() => setAberta(expandida ? null : i)}
                     className="flex-1 flex items-center gap-2 text-left min-w-0">
                     {expandida ? <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
@@ -402,11 +546,44 @@ function Opcoes({ pergunta: p, podeEditar, onMudar }:
 
   const setOpcao = (i: number, v: string) => onMudar(renomearOpcao(p, i, v));
 
+  // Arrastar para reordenar as opções — mesmo gesto das perguntas.
+  // ⚠️ Reordenar opção NÃO mexe em resposta coletada: a resposta é gravada pelo
+  // TEXTO da opção, não pela posição (conferido em cen_resposta_item).
+  const [arrastando, setArrastando] = useState<number | null>(null);
+  const [alvoSolta, setAlvoSolta] = useState<number | null>(null);
+
+  function soltarEm(i: number) {
+    if (arrastando !== null && arrastando !== i) {
+      const patch = moverOpcao(p, arrastando, i);
+      if (patch.opcoes) onMudar(patch);
+    }
+    setArrastando(null);
+    setAlvoSolta(null);
+  }
+
   return (
     <Campo label="Opções" ajuda='Marque "não conta" nas opções que não são resposta (ex.: "Prefiro não dizer"). Elas ficam fora de médias e percentuais, e numa múltipla limpam as outras marcações.'>
       <div className="space-y-1.5">
         {opcoes.map((o, i) => (
-          <div key={i} className="flex items-center gap-2">
+          <div key={i}
+            onDragOver={podeEditar ? (e) => { e.preventDefault(); setAlvoSolta(i); } : undefined}
+            onDragLeave={podeEditar ? () => setAlvoSolta((a) => (a === i ? null : a)) : undefined}
+            onDrop={podeEditar ? (e) => { e.preventDefault(); soltarEm(i); } : undefined}
+            className={`flex items-center gap-2 rounded-md ${arrastando === i ? 'opacity-40' : ''} ${
+              alvoSolta === i && arrastando !== null && arrastando !== i ? 'ring-2 ring-primary' : ''
+            }`}>
+            {podeEditar && (
+              <span
+                draggable
+                onDragStart={(e) => { setArrastando(i); e.dataTransfer.effectAllowed = 'move'; }}
+                onDragEnd={() => { setArrastando(null); setAlvoSolta(null); }}
+                title="Arraste para reordenar"
+                aria-hidden="true"
+                className="shrink-0 cursor-grab active:cursor-grabbing text-muted-foreground/60 hover:text-foreground"
+              >
+                <GripVertical className="size-3.5" />
+              </span>
+            )}
             <Input value={o} disabled={!podeEditar} onChange={(e) => setOpcao(i, e.target.value)} />
             <label className="flex items-center gap-1 text-[11px] text-muted-foreground shrink-0 cursor-pointer">
               <input type="checkbox" checked={neutras.includes(o)} disabled={!podeEditar} className="size-3.5 accent-primary"

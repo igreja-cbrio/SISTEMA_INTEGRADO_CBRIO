@@ -66,12 +66,23 @@ function avaliarHorarioBatismo(escolhido, { configurados, ocupacao = {} } = {}) 
     };
   }
 
+  // ⚠️ `limite` NULO = SEM TETO, de propósito: é como a coordenação abre um
+  // horário sem limite. Tratar nulo como 0 fecharia o horário; como 11,
+  // inventaria uma regra que ninguém escreveu.
   if (conf.limite != null && (ocupacao[horario] || 0) >= conf.limite) {
+    const label = conf.label || horario;
     return {
       ok: false,
       horario,
       motivo: 'lotado',
-      mensagem: 'Esse horário lotou. Por favor, escolha outro.',
+      label,
+      limite: conf.limite,
+      // ⚠️ A mensagem manda pro OUTRO horário — dizer só "lotado" deixa a pessoa
+      // sem saída, e o pedido do Marcos (11/08) foi exatamente "liberar apenas o
+      // outro". Texto herdado do `vagaNoHorario` que esta função absorveu.
+      mensagem:
+        `O horário ${label} já está completo (${conf.limite} pessoas). `
+        + 'Escolha outro horário — os que ainda têm vaga aparecem na lista.',
     };
   }
 

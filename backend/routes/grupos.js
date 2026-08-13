@@ -10,6 +10,8 @@ const { montarPatchFusao } = require('../services/fusaoCampos');
 const multer = require('multer');
 const { uploadModuleFile, SHAREPOINT_CONFIGURED } = require('../services/storageService');
 const { notificar } = require('../services/notificar');
+const { donosDoGrupo, donosDeVariosGrupos } = require('../services/gruposDestinatarios');
+const { avisarPedidoNovoNoApp } = require('../services/gruposAvisoApp');
 const { importarParticipantes } = require('../services/gruposImporter');
 const { notificarPessoaAprovada, notificarPessoaSugestao, montarEnvioRenovacao } = require('../services/gruposWhatsapp');
 const { enfileirarLote } = require('../services/whatsappFila');
@@ -1210,17 +1212,30 @@ router.post('/:id/pedidos', async (req, res) => {
     }).select().single();
     if (error) throw error;
 
-    // Notificar líder (em background) + admins via fallback
+    // Avisa QUEM RESPONDE POR ESTE GRUPO (líder + supervisor) — nunca o fan-out
+    // do módulo. Ver services/gruposDestinatarios.js: sem lista nomeada em
+    // `notificacao_regras`, o fallback escrevia para ~16 admins, uma linha cada.
+    // Sino do app do líder (ver services/gruposAvisoApp.js). Aqui NÃO precisa
+    // ser awaited: é rota autenticada de tela interna, não porta pública
+    // serverless — mas fica awaited de qualquer forma porque o custo é 1 insert
+    // e a lei da casa é "o que não pode se perder vai awaited".
+    try {
+      const { data: gApp } = await supabase.from('mem_grupos').select('nome').eq('id', grupoId).maybeSingle();
+      await avisarPedidoNovoNoApp({
+        grupoId, pedidoId: data.id, grupoNome: gApp?.nome, pessoaNome: b.nome,
+      });
+    } catch (err) { console.warn('[Pedidos] aviso app:', err.message); }
+
     (async () => {
       try {
-        const { data: grupo } = await supabase.from('mem_grupos').select('nome, lider_id').eq('id', grupoId).single();
+        const { data: grupo } = await supabase.from('mem_grupos').select('nome').eq('id', grupoId).single();
         if (!grupo) return;
-        let liderAuthUserId = null;
-        if (grupo.lider_id) {
-          const { data: liderProf } = await supabase.from('vol_profiles')
-            .select('auth_user_id').eq('membresia_id', grupo.lider_id).maybeSingle();
-          liderAuthUserId = liderProf?.auth_user_id || null;
-        }
+        const donos = await donosDoGrupo(grupoId);
+        // Sem dono com conta de sistema, o aviso in-app não tem a quem ir: o
+        // líder já recebe o link do WhatsApp (por onde 95% das decisões saem) e
+        // a coordenação vê no resumo diário. Escrever pra 16 pessoas aqui era o
+        // que enchia o sino de todo mundo.
+        if (!donos.length) return;
         await notificar({
           modulo: 'grupos',
           tipo: 'pedido_grupo',
@@ -1229,7 +1244,7 @@ router.post('/:id/pedidos', async (req, res) => {
           link: '/grupos',
           severidade: 'aviso',
           chaveDedup: `pedido_grupo_${data.id}`,
-          extraTargetIds: liderAuthUserId ? [liderAuthUserId] : [],
+          targetIds: donos,
         });
       } catch (notifErr) { console.error('[Pedidos notify]', notifErr.message); }
     })();
@@ -2774,8 +2789,18 @@ async function aprovarPedidoCore(pedidoId, user) {
           });
         }
 
-        // Notifica o líder — novo membro chegando
-        if (liderAuthUserId) {
+        // Notifica quem responde pelo grupo — novo membro chegando.
+        //
+        // ⚠️ O `liderAuthUserId` acima vem de `vol_profiles` (a tabela do
+        // VOLUNTARIADO) e por isso alcança 8 dos 100 grupos com líder, contra 12
+        // por `profiles.membro_id` — e nunca o supervisor. É a mesma
+        // sub-cobertura silenciosa consertada nos caminhos de pedido em 10/08:
+        // aqui ela deixava o líder sem saber que alguém entrou no grupo dele.
+        // A UNIÃO das duas fontes é o que existe de vínculo; mantenho o
+        // `liderAuthUserId` no conjunto pra não perder quem só ele alcança.
+        const donosDoDestino = await donosDoGrupo(grupo.id).catch(() => []);
+        const avisarEntrada = [...new Set([...donosDoDestino, liderAuthUserId].filter(Boolean))];
+        if (avisarEntrada.length) {
           await notificar({
             modulo: 'grupos',
             tipo: 'novo_membro_grupo',
@@ -2784,7 +2809,7 @@ async function aprovarPedidoCore(pedidoId, user) {
             link: `/grupos`,
             severidade: 'info',
             chaveDedup: `novo_membro_${pedido.id}`,
-            targetIds: [liderAuthUserId],
+            targetIds: avisarEntrada,
           });
         }
 
@@ -4222,7 +4247,12 @@ router.post('/:id/membros', authorizeModule('grupos', 3), async (req, res) => {
           supabase.from('mem_grupos').select('nome').eq('id', req.params.id).single(),
           supabase.from('mem_membros').select('nome').eq('id', membro_id).single(),
         ]);
-        if (grupo && membro) {
+        // ⚠️ "Novo membro NO GRUPO X" é assunto do grupo X. Este ponto era o
+        // contraste mais claro do problema: o MESMO tipo `novo_membro_grupo`
+        // disparado pela aprovação de pedido já ia dirigido ao líder, e aqui
+        // (inclusão à mão) ia pro fan-out de ~16 admins.
+        const donos = await donosDoGrupo(req.params.id);
+        if (grupo && membro && donos.length) {
           await notificar({
             modulo: 'grupos',
             tipo: 'novo_membro_grupo',
@@ -4231,6 +4261,7 @@ router.post('/:id/membros', authorizeModule('grupos', 3), async (req, res) => {
             link: '/grupos',
             severidade: 'info',
             chaveDedup: `novo_membro_${req.params.id}_${membro_id}`,
+            targetIds: donos,
           });
         }
       } catch (notifErr) { console.error('[Grupos notify add]', notifErr.message); }

@@ -17,6 +17,7 @@ import type { Pergunta, Respostas } from '@/lib/censoForm';
 import { limparInvisiveis } from '@/lib/censoForm';
 import CensoForm from '@/components/censo/CensoForm';
 import { PublicPaletteCtx, PublicThemeToggle, usePublicTheme } from './publicTheme';
+import { usePermitirZoom } from '@/lib/viewportZoom';
 import AnimatedBackground from './AnimatedBackground';
 
 type Pesquisa = {
@@ -30,6 +31,11 @@ const uuid = () => (crypto.randomUUID ? crypto.randomUUID()
   : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
 export default function CensoPublica() {
+  // Devolve o pinch-zoom nesta página: o index.html do sistema trava o zoom por
+  // causa dos elementos fixos do ERP, e quem responde no culto precisa poder
+  // aproximar. Restaura a trava ao sair.
+  usePermitirZoom();
+
   const { slug = '' } = useParams();
   const [searchParams] = useSearchParams();
   // ⚠️ `usePublicTheme()` devolve { isDark, toggle, C } — a PALETA vem em `C`.
@@ -284,7 +290,7 @@ export default function CensoPublica() {
         {palette.shapes && <AnimatedBackground />}
         <div style={{ position: 'relative', maxWidth: 620, margin: '0 auto', padding: '28px 18px 64px' }}>
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 10 }}>
-            <PublicThemeToggle />
+            <PublicThemeToggle emFluxo />
           </div>
 
           {retomado && !pronto && !jaRespondeu && (

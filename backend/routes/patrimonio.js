@@ -303,9 +303,19 @@ router.post('/localizacoes', authorizeModule('patrimonio', 3), async (req, res) 
   } catch (e) { res.status(500).json({ error: 'Erro ao criar localização' }); }
 });
 
+// Intervalo e prazo de revisão são NULLABLE de propósito (pedido do usuário
+// 2026-08-10): NULL mantém o comportamento legado (localização entra em todo
+// ciclo · prazo distribuído proporcionalmente). Só grava número > 0.
+function sanitizarDiasRevisao(v) {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return undefined; // undefined = inválido, distinto de null
+  return Math.round(n);
+}
+
 router.put('/localizacoes/:id', authorizeModule('patrimonio', 3), async (req, res) => {
   try {
-    const { nome, pai_id } = req.body;
+    const { nome, pai_id, revisao_intervalo_dias, revisao_prazo_dias } = req.body;
     const update = {};
     if (nome !== undefined) update.nome = nome;
     if (pai_id !== undefined) {
@@ -313,6 +323,16 @@ router.put('/localizacoes/:id', authorizeModule('patrimonio', 3), async (req, re
         return res.status(400).json({ error: 'Localização pai inválida (criaria um ciclo)' });
       }
       update.pai_id = pai_id || null;
+    }
+    if (revisao_intervalo_dias !== undefined) {
+      const v = sanitizarDiasRevisao(revisao_intervalo_dias);
+      if (v === undefined) return res.status(400).json({ error: 'Intervalo de revisão precisa ser um número de dias maior que zero (ou vazio)' });
+      update.revisao_intervalo_dias = v;
+    }
+    if (revisao_prazo_dias !== undefined) {
+      const v = sanitizarDiasRevisao(revisao_prazo_dias);
+      if (v === undefined) return res.status(400).json({ error: 'Prazo (tempo de análise) precisa ser um número de dias maior que zero (ou vazio)' });
+      update.revisao_prazo_dias = v;
     }
     const { data, error } = await supabase.from('pat_localizacoes')
       .update(update).eq('id', req.params.id).select().single();
@@ -334,7 +354,13 @@ router.get('/bens', async (req, res) => {
   try {
     const { status, categoria_id, localizacao_id, busca } = req.query;
     const montarQuery = (offset, pageSize) => {
-      let query = supabase.from('pat_bens').select('*, pat_categorias(nome, vida_util_meses), pat_localizacoes(nome), responsavel:profiles!responsavel_id(name), alerta:pat_revisao_itens!alerta_divergencia_item_id(data_revisao, localizacao_encontrada:pat_localizacoes!localizacao_encontrada_id(nome))').order('nome');
+      // .order('nome') sozinho não é estável entre páginas: bens com o mesmo
+      // nome (comum aqui — ex. "10 Un Luminaria...") podem trocar de ordem
+      // entre duas chamadas de range() separadas, fazendo a paginação repetir
+      // um bem em 2 páginas e pular outro. `id` como desempate garante ordem
+      // determinística (achado do usuário: "Selecionar todos" selecionava
+      // menos ids que o total filtrado).
+      let query = supabase.from('pat_bens').select('*, pat_categorias(nome, vida_util_meses), pat_localizacoes(nome), responsavel:profiles!responsavel_id(name), alerta:pat_revisao_itens!alerta_divergencia_item_id(data_revisao, localizacao_encontrada:pat_localizacoes!localizacao_encontrada_id(nome))').order('nome').order('id');
       if (status) query = query.eq('status', status);
       // Sentinela "__sem__" filtra bens SEM categoria/localização — pra
       // priorizar o saneamento de cadastro (pedido do usuário 2026-07-28).
@@ -836,7 +862,8 @@ router.post('/revisao/ciclos', authorizeModule('patrimonio', 4), async (req, res
       .select().single();
     if (error) return res.status(400).json({ error: error.message });
 
-    const { data: localizacoes } = await supabase.from('pat_localizacoes').select('id');
+    const { data: localizacoes } = await supabase.from('pat_localizacoes')
+      .select('id, revisao_intervalo_dias, revisao_prazo_dias');
     const { data: bens } = await supabase.from('pat_bens').select('id, localizacao_id')
       .eq('status', 'ativo').not('localizacao_id', 'is', null);
     const bensPorLoc = new Map();
@@ -844,13 +871,45 @@ router.post('/revisao/ciclos', authorizeModule('patrimonio', 4), async (req, res
       if (!bensPorLoc.has(b.localizacao_id)) bensPorLoc.set(b.localizacao_id, []);
       bensPorLoc.get(b.localizacao_id).push(b.id);
     }
-    const locsComBens = (localizacoes || []).filter((l) => bensPorLoc.has(l.id));
+    const todasComBens = (localizacoes || []).filter((l) => bensPorLoc.has(l.id));
+
+    // Intervalo variável (pedido do usuário 2026-08-10): localização com
+    // `revisao_intervalo_dias` preenchido só entra neste ciclo se já passou
+    // esse número de dias desde a ÚLTIMA convocação concluída dela (em
+    // qualquer ciclo anterior). Nunca revisada = sempre entra (não tem "última
+    // vez" pra contar). Sem `revisao_intervalo_dias` = comportamento legado
+    // (entra em todo ciclo).
+    const idsComIntervalo = todasComBens.filter((l) => l.revisao_intervalo_dias).map((l) => l.id);
+    const ultimaConclusaoPorLoc = new Map();
+    if (idsComIntervalo.length) {
+      const { data: concluidas } = await supabase.from('pat_revisao_convocacoes')
+        .select('localizacao_id, data_conclusao')
+        .in('localizacao_id', idsComIntervalo).eq('status', 'concluida').not('data_conclusao', 'is', null);
+      for (const c of concluidas || []) {
+        const atual = ultimaConclusaoPorLoc.get(c.localizacao_id);
+        if (!atual || c.data_conclusao > atual) ultimaConclusaoPorLoc.set(c.localizacao_id, c.data_conclusao);
+      }
+    }
+    const locsComBens = todasComBens.filter((l) => {
+      if (!l.revisao_intervalo_dias) return true; // legado: sempre entra
+      const ultima = ultimaConclusaoPorLoc.get(l.id);
+      if (!ultima) return true; // nunca revisada: sempre entra
+      const diasDesde = Math.floor((inicio.getTime() - new Date(ultima).getTime()) / 86400000);
+      return diasDesde >= l.revisao_intervalo_dias;
+    });
+
     const spanMs = fim.getTime() - inicio.getTime();
     const n = locsComBens.length;
     for (let i = 0; i < n; i++) {
       const loc = locsComBens[i];
       const bensIds = bensPorLoc.get(loc.id);
-      const prazoMs = n > 1 ? inicio.getTime() + Math.round((spanMs * (i + 1)) / n) : fim.getTime();
+      // Prazo variável (pedido do usuário 2026-08-10): localização com
+      // `revisao_prazo_dias` preenchido usa prazo próprio (data_inicio + N
+      // dias, no lugar dos limites do ciclo). Sem isso, cai no legado
+      // (distribuído proporcionalmente dentro do período do ciclo).
+      const prazoMs = loc.revisao_prazo_dias
+        ? inicio.getTime() + loc.revisao_prazo_dias * 86400000
+        : (n > 1 ? inicio.getTime() + Math.round((spanMs * (i + 1)) / n) : fim.getTime());
       const { data: conv, error: convErr } = await supabase.from('pat_revisao_convocacoes')
         .insert({ ciclo_id: ciclo.id, localizacao_id: loc.id, prazo: new Date(prazoMs).toISOString().slice(0, 10), total_bens_esperados: bensIds.length })
         .select().single();

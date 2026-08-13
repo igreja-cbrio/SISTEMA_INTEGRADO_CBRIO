@@ -9,7 +9,7 @@ const {
   getFoundationPayload,
 } = require('../config/systemCatalog');
 
-assert.equal(JOBS.length, 45, 'o catálogo deve cobrir todos os crons do vercel.json');
+assert.equal(JOBS.length, 46, 'o catálogo deve cobrir todos os crons do vercel.json');
 assert.equal(WORKFLOWS.length, 10, 'o catálogo deve cobrir os workflows inventariados');
 assert.equal(new Set(JOBS.map((job) => job.id)).size, JOBS.length, 'IDs de jobs devem ser únicos');
 assert.equal(new Set(INTEGRATIONS.map((item) => item.id)).size, INTEGRATIONS.length, 'IDs de integrações devem ser únicos');
@@ -31,7 +31,7 @@ assert.equal(release.environment, 'production');
 
 const payload = getFoundationPayload({ NODE_ENV: 'test' });
 assert.equal(payload.contractVersion, 1);
-assert.equal(payload.counts.jobs, 45);
+assert.equal(payload.counts.jobs, 46);
 assert.equal(payload.boundaries.executionRegistry, 'migration_required');
 
 console.log('systemFoundation: ok');

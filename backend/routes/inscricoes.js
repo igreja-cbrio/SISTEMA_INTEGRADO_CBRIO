@@ -15,6 +15,10 @@ const { escapePostgrestValue } = require('../utils/sanitize');
 const { fetchAllRows } = require('../utils/pagination');
 const { verificarTokenComprovanteAtivo, extrairToken } = require('../services/inscricaoComprovante');
 const { portasSatelites, fontesUnificadas, catalogoPublico } = require('../services/inscricaoPortas');
+// ⚠️ Contagem de inscritos NÃO usa o embed `inscricoes(count)` (não filtra
+// soft-delete — ver o cabeçalho do serviço).
+const { contarInscritosVivos } = require('../services/inscricaoContagem');
+const checkoutExterno = require('../utils/checkoutExterno');
 const {
   previewTemplate,
   esqueletoPadrao,
@@ -103,6 +107,9 @@ const CAMPOS_EVENTO = [
   // Aparece na lista do totem do lounge? Default false no banco: publicar um
   // evento NÃO o expõe no hall (migration 20260805150000).
   'no_totem',
+  // Cartão cobrado FORA (e-Inscrição) · migration 20260811180000. Preenchido,
+  // remove 'cartao' do nosso checkout — ver backend/utils/checkoutExterno.js.
+  'checkout_externo_url', 'checkout_externo_nome',
 ];
 
 // ⚠️ INCIDENTE 2026-08-04 · colunas NOT NULL da whitelist acima.
@@ -133,6 +140,33 @@ function aplicarCamposEvento(b, patch) {
     patch[k] = b[k];
   }
   return patch;
+}
+
+/**
+ * Link do checkout externo: recusa ANTES do banco, com mensagem que diz o que
+ * fazer. O CHECK da migration é a rede de segurança; quem tem que explicar o
+ * erro é a rota — 23514 cru chega na tela como "Erro ao salvar evento".
+ *
+ * ⚠️ Limpar é edição legítima (string vazia ⇒ NULL ⇒ o cartão volta pro nosso
+ * checkout), então vazio NÃO é erro. Distinguir "não mandou o campo"
+ * (`undefined`, não mexe) de "mandou vazio" (limpa) é o que permite tirar o
+ * e-Inscrição de um evento sem ter que apagar o evento.
+ */
+function conferirCheckoutExterno(patch) {
+  if (patch.checkout_externo_url === undefined) return null;
+  const bruto = String(patch.checkout_externo_url ?? '').trim();
+  if (!bruto) { patch.checkout_externo_url = null; return null; }
+  const url = checkoutExterno.linkExternoValido(bruto);
+  if (!url) {
+    return 'O link do checkout externo precisa começar com https:// e apontar para um site '
+      + '(ex.: https://www.e-inscricao.com/…). Deixe em branco para cobrar o cartão por aqui.';
+  }
+  patch.checkout_externo_url = url;
+  if (patch.checkout_externo_nome !== undefined) {
+    const nome = String(patch.checkout_externo_nome ?? '').trim();
+    patch.checkout_externo_nome = nome ? nome.slice(0, 40) : null;
+  }
+  return null;
 }
 
 // `pagamento_metodos` é TEXT[] e fica FORA do loop de whitelist de propósito:
@@ -757,11 +791,12 @@ router.patch('/qrs/:id/reativar', authorizeModule('inscricoes', 3), async (req, 
 router.get('/eventos', authorizeModule('inscricoes', 1), async (_req, res) => {
   try {
     const { data, error } = await supabase.from('insc_eventos')
-      .select('id, nome, slug, area, tipo, data, hora, local, capa_url, status, vagas, tem_sorteio, checkin_ativo, no_totem, pagamento_ativo, valor_centavos, edicao_rotulo, serie_id, serie:insc_series(id, nome, periodicidade, recorre_ate, slug_base), inscritos:inscricoes(count)')
+      .select('id, nome, slug, area, tipo, data, hora, local, capa_url, status, vagas, tem_sorteio, checkin_ativo, no_totem, pagamento_ativo, valor_centavos, edicao_rotulo, serie_id, serie:insc_series(id, nome, periodicidade, recorre_ate, slug_base)')
       .is('deleted_at', null)
       .order('data', { ascending: false, nullsFirst: false });
     if (error) throw error;
-    res.json((data || []).map(e => ({ ...e, inscritos: e.inscritos?.[0]?.count ?? 0 })));
+    const contagem = await contarInscritosVivos(supabase, (data || []).map((e) => e.id));
+    res.json((data || []).map(e => ({ ...e, inscritos: contagem.get(e.id) || 0 })));
   } catch (e) {
     console.error('[inscricoes] eventos:', e.message);
     res.status(500).json({ error: 'Erro ao listar eventos' });
@@ -772,12 +807,14 @@ router.get('/eventos', authorizeModule('inscricoes', 1), async (_req, res) => {
 router.get('/eventos/:id', authorizeModule('inscricoes', 1), async (req, res) => {
   try {
     const { data, error } = await supabase.from('insc_eventos')
-      .select('*, serie:insc_series(id, nome, periodicidade, slug_base), inscritos:inscricoes(count), sorteios:insc_sorteios(id, premio, numero_sorteado, inscricao_id, ganhador_nome, sorteado_em)')
+      .select('*, serie:insc_series(id, nome, periodicidade, slug_base), sorteios:insc_sorteios(id, premio, numero_sorteado, inscricao_id, ganhador_nome, sorteado_em)')
       .eq('id', req.params.id).is('deleted_at', null).maybeSingle();
     if (error) throw error;
     if (!data) return res.status(404).json({ error: 'Evento não encontrado' });
     const sorteios = (data.sorteios || []).sort((a, b) => String(b.sorteado_em).localeCompare(String(a.sorteado_em)));
-    res.json({ ...data, inscritos: data.inscritos?.[0]?.count ?? 0, sorteios });
+    // Mesmo helper da lista (o embed `inscricoes(count)` contava apagadas).
+    const contagem = await contarInscritosVivos(supabase, [data.id]);
+    res.json({ ...data, inscritos: contagem.get(data.id) || 0, sorteios });
   } catch (e) {
     console.error('[inscricoes] evento:', e.message);
     res.status(500).json({ error: 'Erro ao carregar evento' });
@@ -1491,14 +1528,17 @@ router.get('/eventos/:id/resumo', authorizeModule('inscricoes', 1), async (req, 
 router.get('/app/eventos', authorizeModule('inscricoes', 1), async (req, res) => {
   try {
     let q = supabase.from('insc_eventos')
-      .select('id, nome, slug, area, data, hora, local, status, vagas, pagamento_ativo, valor_centavos, checkin_ativo, edicao_rotulo, inscritos:inscricoes(count)')
+      .select('id, nome, slug, area, data, hora, local, status, vagas, pagamento_ativo, valor_centavos, checkin_ativo, edicao_rotulo')
       .is('deleted_at', null);
     // Rascunho e arquivado ficam fora por padrão: o app é pra acompanhar o que
     // está acontecendo, não pra ver esboço.
     if (req.query.todos !== '1') q = q.in('status', ['publicado', 'encerrado']);
     const { data, error } = await q.order('data', { ascending: false, nullsFirst: false }).limit(100);
     if (error) throw error;
-    res.json((data || []).map((e) => ({ ...e, inscritos: e.inscritos?.[0]?.count ?? 0 })));
+    // Mesmo helper da tela do sistema — o app do staff tinha o MESMO bug do
+    // embed: mostraria "14 inscritos" num evento com 14 inscrições apagadas.
+    const contagem = await contarInscritosVivos(supabase, (data || []).map((e) => e.id));
+    res.json((data || []).map((e) => ({ ...e, inscritos: contagem.get(e.id) || 0 })));
   } catch (e) {
     console.error('[inscricoes] app/eventos:', e.message);
     res.status(500).json({ error: 'Erro ao listar eventos' });
@@ -1952,6 +1992,8 @@ router.post('/eventos', authorizeModule('inscricoes', 3), async (req, res) => {
     }
     const metodos = sanitizeMetodos(b.pagamento_metodos);
     if (metodos) payload.pagamento_metodos = metodos;
+    const erroCheckout = conferirCheckoutExterno(payload);
+    if (erroCheckout) return res.status(400).json({ error: erroCheckout });
 
     const { data, error } = await supabase.from('insc_eventos').insert(payload).select('id, slug').single();
     if (error) throw error;
@@ -2005,6 +2047,8 @@ router.put('/eventos/:id', authorizeModule('inscricoes', 3), async (req, res) =>
       const metodos = sanitizeMetodos(b.pagamento_metodos);
       if (metodos) patch.pagamento_metodos = metodos;
     }
+    const erroCheckout = conferirCheckoutExterno(patch);
+    if (erroCheckout) return res.status(400).json({ error: erroCheckout });
     if (b.status !== undefined) {
       if (!['rascunho', 'publicado', 'encerrado', 'arquivado'].includes(b.status)) {
         return res.status(400).json({ error: 'Status inválido' });

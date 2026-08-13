@@ -10,13 +10,25 @@
 // mesma latência de antes). Falhou → fica pendente com backoff crescente;
 // processarFila() (cron /api/public/grupos/cron/whatsapp-fila) reenvia.
 //
-// Gate: mesma condição do whatsappService (WHATSAPP_ENABLED + credenciais).
-// Desligado → NÃO grava nada e devolve { sent:false, reason:'disabled' } —
-// o comportamento do sistema fica idêntico ao de hoje (e nenhum link
-// tokenizado para em log/banco à toa).
+// Gate (revisto 2026-08-05 · achado da revisão do módulo Comunicação):
+// - CREDENCIAL AUSENTE (dev/preview sem env de WhatsApp) → NÃO grava nada e
+//   devolve { sent:false, reason:'disabled' } — ambiente sem WhatsApp não pode
+//   encher a fila de produção com linha que o cron de prod enviaria depois.
+// - CREDENCIAL PRESENTE + WHATSAPP_ENABLED desligado (kill-switch operacional)
+//   → GRAVA como 'pendente' e NÃO tenta enviar: a mensagem espera e sai quando
+//   religar (é o contrato documentado do notificarMembro — antes disso, o
+//   kill-switch engolia confirmação de inscrição/kids/batismo SEM RASTRO).
+//   O cron respeita o switch (processarFila retorna 'disabled' sem enviar).
 const { supabase } = require('../utils/supabase');
 const { sendTemplate, sendText, configurado } = require('./whatsappService');
+const waSender = require('./waSender');
 const { notificar } = require('./notificar');
+
+// true = dá pra REGISTRAR (credencial existe), mesmo que o envio esteja
+// bloqueado pelo kill-switch. false = ambiente sem WhatsApp, não grava.
+function podeRegistrar() {
+  return waSender.isConfigured();
+}
 
 const TEMPLATE_LANG = process.env.WHATSAPP_TEMPLATE_LANG || 'pt_BR';
 
@@ -129,7 +141,7 @@ async function avisarFalhaTerminal(e, razao) {
 // C2: aceita TEMPLATE (proativo) ou TEXTO (janela 24h · `texto`). Toda saída
 // fica registrada — é a fila que dá o histórico universal do módulo Comunicação.
 async function enfileirar({ telefone, template, texto, params, contexto, refId, idioma }) {
-  if (!configurado()) return { queued: false, sent: false, reason: 'disabled' };
+  if (!podeRegistrar()) return { queued: false, sent: false, reason: 'disabled' };
   if (!telefone || (!template && !texto)) return { queued: false, sent: false, reason: 'dados_incompletos' };
   const tipo = texto && !template ? 'texto' : 'template';
 
@@ -153,6 +165,10 @@ async function enfileirar({ telefone, template, texto, params, contexto, refId, 
       : await sendTemplate(telefone, template, idioma || TEMPLATE_LANG, params || []);
     return { queued: false, sent: direto.sent === true, reason: direto.sent ? null : (direto.reason || 'api_error'), messageId: direto.messageId || null };
   }
+
+  // Kill-switch desligado: registrado e esperando — NÃO tenta agora (a
+  // tentativa devolveria 'disabled' sem queimar tentativa, mas é round-trip à toa).
+  if (!configurado()) return { queued: true, id: row.id, sent: false, reason: 'disabled' };
 
   const r = await tentarEnvio(row.id);
   return { queued: true, id: row.id, ...r };
@@ -211,7 +227,7 @@ async function tentarEnvio(id) {
 // mensal de frequência dos grupos): um loop síncrono de Meta API na function
 // serverless estoura o tempo de execução conforme a base de grupos cresce.
 async function enfileirarLote(itens) {
-  if (!configurado()) return { queued: 0, motivo: 'disabled' };
+  if (!podeRegistrar()) return { queued: 0, motivo: 'disabled' };
   const linhas = (itens || [])
     .filter(i => i && i.telefone && (i.template || i.texto))
     .map(i => {

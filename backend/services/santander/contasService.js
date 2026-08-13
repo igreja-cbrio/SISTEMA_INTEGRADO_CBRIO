@@ -15,6 +15,12 @@ function balanceId() {
   return `${padAgencia(AGENCIA)}.${padConta(CONTA)}`;
 }
 
+function transactionsPath({ agencia = AGENCIA, conta = CONTA } = {}) {
+  if (!agencia || !conta) throw new Error('SANTANDER_AGENCIA / SANTANDER_CONTA nao configurados');
+  const transactionId = padAgencia(agencia) + '.' + padConta(conta);
+  return BASE + '/transactions/' + transactionId;
+}
+
 async function listarContas({ userId } = {}) {
   return callApi(`${BASE}/banks/${BANK_ID}/accounts`, { userId });
 }
@@ -137,7 +143,7 @@ function fatiarPeriodo(inicio, fim) {
   const fimDate = new Date(fim);
   while (cursor <= fimDate) {
     const proxFim = new Date(cursor);
-    proxFim.setDate(proxFim.getDate() + 29);
+    proxFim.setDate(proxFim.getDate());
     const fimFatia = proxFim > fimDate ? fimDate : proxFim;
     fatias.push({
       inicio: cursor.toISOString().slice(0, 10),
@@ -150,15 +156,27 @@ function fatiarPeriodo(inicio, fim) {
 }
 
 async function buscarExtratoSantander({ inicio, fim, userId }) {
-  return callApi(`${BASE}/banks/${BANK_ID}/statements`, {
-    query: {
-      branchCode: padAgencia(AGENCIA),
-      accountNumber: padConta(CONTA),
-      initialDate: inicio,
-      finalDate: fim,
-    },
-    userId,
-  });
+  const limit = 50;
+  let offset = 0;
+  const content = [];
+
+  for (let page = 0; page < 100; page += 1) {
+    const response = await callApi(transactionsPath(), {
+      query: { initialDate: inicio, finalDate: fim, _limit: limit, _offset: offset },
+      userId,
+    });
+    const pageContent = Array.isArray(response?._content) ? response._content : [];
+    content.push(...pageContent);
+
+    // O gateway nem sempre sinaliza _moreElements corretamente. Uma pagina
+    // cheia exige consultar o proximo offset; pagina parcial encerra o lote.
+    if (pageContent.length < limit) {
+      return { ...response, _content: content };
+    }
+    offset += pageContent.length;
+  }
+
+  throw new Error('Limite de paginacao do extrato Santander excedido');
 }
 
 async function consultarExtrato({ inicio, fim, usarCache = true, userId } = {}) {
@@ -212,4 +230,5 @@ module.exports = {
   snapshotSaldoDoDia,
   historicoSaldo,
   consultarExtrato,
+  transactionsPath,
 };

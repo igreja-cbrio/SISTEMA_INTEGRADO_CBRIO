@@ -341,45 +341,66 @@ export default function PagamentoInscricao() {
   // Polling enquanto está em aberto. Para sozinho quando resolve — e o backend
   // consulta o provedor quando a cobrança está parada há mais de 2 min, então
   // não dependemos do webhook chegar.
-  // ⚠️ Backoff progressivo, não 6s pra sempre. Uma aba esquecida aberta a 6s
-  // dava 10 requisições/min; no lançamento, com dezenas de pessoas esperando o
-  // Pix cair no WiFi da igreja (1 IP), isso saturava o limiter por IP e ainda
-  // batia na API key do provedor. O Pix cai em segundos — quem não pagou nos
-  // primeiros minutos não precisa de 6s de resolução.
+  //
+  // ⚠️⚠️ O QUE DECIDE O RITMO É "TEM ALGUÉM OLHANDO?", não o tempo decorrido
+  // (11/08/2026 · pedido do Matheus: *"na hora que o Pix for feito, a página da
+  // pessoa tem que atualizar o mais rápido possível, sem ela ficar
+  // recarregando"*). A versão anterior degradava até 60s **mesmo com a pessoa
+  // na frente da tela** e continuava consultando **de aba escondida**: era
+  // lento justamente pra quem estava esperando e caro justamente pra quem tinha
+  // ido embora. Agora:
+  //   · aba ESCONDIDA  → polling PARADO (0 requisição). É onde mora a aba
+  //     esquecida que motivou o backoff original — e também o minuto em que a
+  //     pessoa está DENTRO do app do banco pagando.
+  //   · aba VISÍVEL    → 3s no primeiro minuto (a janela em que o Pix cai),
+  //     depois 8s, com teto de 20s.
+  // No total isso gera MENOS carga que antes (aba escondida era o grosso do
+  // volume) e resolve em ~3s pra quem está com o QR na frente.
+  //
+  // ⚠️ O caminho mais comum no celular nem depende disso: sair pro app do banco
+  // esconde a aba, e voltar dispara consulta IMEDIATA no `visibilitychange`. O
+  // ritmo de 3s existe pra quem paga em OUTRO aparelho (QR no computador), em
+  // que a aba nunca perde o foco e nada avisaria a página.
   const tentativas = useRef(0);
   // ⚠️ Depende do STATUS, não do objeto `pag`: cada poll troca a referência de
-  // `pag`, o effect re-rodaria e o backoff seria zerado a cada volta — ficando
-  // em 6s pra sempre, que é exatamente o que estamos consertando.
+  // `pag`, o effect re-rodaria e o ritmo seria zerado a cada volta.
   const statusAberto = pag && ABERTOS.includes(pag.status) ? pag.status : null;
   useEffect(() => {
     if (!statusAberto) return;
     tentativas.current = 0;
     let vivo = true;
-    let timer: ReturnType<typeof setTimeout>;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const parar = () => { if (timer) { clearTimeout(timer); timer = null; } };
     const proximo = () => {
+      parar();
+      // ⚠️ Não agenda nada com a aba escondida. Sem isto, uma aba deixada aberta
+      // no fim do dia seguiria consultando o provedor a noite inteira.
+      if (!vivo || document.visibilityState !== 'visible') return;
       const n = tentativas.current;
-      // 6s nos 10 primeiros (1 min, cobre o Pix), depois 15s, 30s e teto de 60s.
-      const espera = n < 10 ? 6000 : n < 20 ? 15000 : n < 30 ? 30000 : 60000;
+      const espera = n < 20 ? 3000 : n < 40 ? 8000 : 20000;
       timer = setTimeout(async () => {
         if (!vivo) return;
         tentativas.current += 1;
         await carregar();
-        if (vivo) proximo();
+        proximo();
       }, espera);
     };
     proximo();
-    // Voltar do checkout dispara uma consulta na hora e RESETA o backoff — é
-    // sinal de que a pessoa está ativa, e é o momento mais provável de ter pago.
-    const aoVoltar = () => {
-      if (document.visibilityState !== 'visible') return;
+
+    // Voltar pra aba dispara uma consulta na hora e RESETA o ritmo — é sinal de
+    // que a pessoa está ativa, e é o momento mais provável de ter acabado de
+    // pagar. Sair da aba PARA o laço.
+    const aoTrocarVisibilidade = () => {
+      if (document.visibilityState !== 'visible') { parar(); return; }
       tentativas.current = 0;
-      carregar();
+      carregar().finally(proximo);
     };
-    document.addEventListener('visibilitychange', aoVoltar);
+    document.addEventListener('visibilitychange', aoTrocarVisibilidade);
     return () => {
       vivo = false;
-      clearTimeout(timer);
-      document.removeEventListener('visibilitychange', aoVoltar);
+      parar();
+      document.removeEventListener('visibilitychange', aoTrocarVisibilidade);
     };
   }, [statusAberto, carregar]);
 

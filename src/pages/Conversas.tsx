@@ -181,7 +181,15 @@ export default function Conversas() {
     texto: searchParams.get('texto') || undefined,
   }));
   useEffect(() => {
-    if (searchParams.get('telefone') || searchParams.get('texto')) setSearchParams({}, { replace: true });
+    // ⚠️ Remove SÓ os params consumidos — setSearchParams({}) apagava também o
+    // ?tab=conversas e a página Comunicação (que embute esta) voltava pro
+    // dashboard no meio da abertura da conversa.
+    if (searchParams.get('telefone') || searchParams.get('texto')) {
+      const p = new URLSearchParams(searchParams);
+      p.delete('telefone');
+      p.delete('texto');
+      setSearchParams(p, { replace: true });
+    }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (

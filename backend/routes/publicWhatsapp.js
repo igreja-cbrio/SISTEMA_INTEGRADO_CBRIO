@@ -80,7 +80,16 @@ async function processarEvento(req) {
   }
 
   // Respeita o toggle global da IA
-  const { data: cfg } = await supabase.from('whatsapp_config').select('ia_ativa, institucional').eq('id', 1).maybeSingle();
+  // ⚠️⚠️ `ia_ativa === false` corta o webhook INTEIRO — inclusive o
+  // `registrarInbound`, ou seja a mensagem da pessoa não aparece na aba
+  // Conversas. É o freio de emergência, não o jeito de "calar o bot": pra isso
+  // existe `respostas_automaticas` (migration 20260812130000), lida em
+  // `processarMensagem`, que desliga só o que o bot RESPONDE e mantém o inbox
+  // recebendo.
+  const { data: cfg } = await supabase
+    .from('whatsapp_config')
+    .select('ia_ativa, institucional, respostas_automaticas')
+    .eq('id', 1).maybeSingle();
   if (cfg && cfg.ia_ativa === false) return;
 
   const entry = req.body?.entry || [];
@@ -91,6 +100,13 @@ async function processarEvento(req) {
   for (const e of entry) {
     for (const ch of (e.changes || [])) {
       const value = ch.value || {};
+      // Multi-número (2026-08-12): a WABA entrega no MESMO webhook os eventos de
+      // TODOS os números dela. O institucional (env WHATSAPP_PHONE_NUMBER_ID) é o
+      // do BOT; qualquer outro (ex.: o CBZap, quando migrar da Multi360) é
+      // atendimento humano puro — mensagem vai direto pro inbox, sem personas, e
+      // a conversa registra o número pra resposta do time sair por ele.
+      const pnid = value.metadata?.phone_number_id ? String(value.metadata.phone_number_id) : null;
+      const institucional = ehNumeroBot(pnid);
       const mensagens = value.messages || [];
       for (const m of mensagens) {
         const ehTexto = m.type === 'text';
@@ -106,19 +122,86 @@ async function processarEvento(req) {
           console.warn('[whatsapp webhook] limite de mensagens por evento atingido · ignorando excedente');
           return;
         }
-        if (ehFlowReply) {
+        if (!institucional) {
+          await inboxDireto(m, pnid).catch(err =>
+            console.error('[whatsapp webhook] inbox direto:', err.message));
+        } else if (ehFlowReply) {
           await processarFlowReply(m).catch(err =>
             console.error('[whatsapp webhook] flow:', err.message));
         } else if (ehBotao) {
           await processarBotaoAprovacao(m).catch(err =>
             console.error('[whatsapp webhook] botao:', err.message));
         } else {
-          await processarMensagem(m, cfg).catch(err =>
+          await processarMensagem(m, cfg, pnid).catch(err =>
             console.error('[whatsapp webhook] mensagem:', err.message));
         }
       }
     }
   }
+}
+
+// Multi-número: true quando o evento veio do número do BOT (institucional =
+// WHATSAPP_PHONE_NUMBER_ID da env). Payload sem metadata (payload antigo/teste)
+// conta como bot — comportamento idêntico ao histórico.
+function ehNumeroBot(pnid) {
+  const padrao = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  return !pnid || !padrao || String(pnid) === String(padrao);
+}
+
+// Pesquisa de satisfação 0-5 — conversa finalizada aguardando a nota. Vale pra
+// QUALQUER número da WABA (a pesquisa é da CONVERSA, não do bot); por isso vive
+// aqui fora, usada pelo fluxo do bot (processarMensagem) E pelo multi-número
+// (inboxDireto) — a régua é UMA. Devolve true quando assumiu a mensagem.
+async function tratarPesquisaSatisfacao({ telefone, texto, messageId, pnid = null }) {
+  const { data: convP } = await supabase.from('wa_conversas')
+    .select('id, pesquisa_estado, protocolo').eq('telefone', telefone)
+    .eq('pesquisa_estado', 'aguardando').is('deleted_at', null).maybeSingle();
+  if (!convP) return false;
+  const waInbox = require('../services/waInbox');
+  const t = String(texto || '').trim();
+  const nota = /^[0-5]$/.test(t) ? Number(t) : null;
+  const agora = new Date().toISOString();
+  if (nota != null) {
+    await supabase.from('wa_mensagens').insert({
+      conversa_id: convP.id, direcao: 'in', tipo: 'avaliacao', texto: t, wa_message_id: messageId,
+    }).catch(() => {});
+    await supabase.from('wa_conversas').update({
+      satisfacao: nota, satisfacao_em: agora, pesquisa_estado: 'respondida',
+      last_message_at: agora, ultima_previa: `Avaliação: ${nota}/5`,
+    }).eq('id', convP.id);
+    const agr = `Obrigado pela sua avaliação (${nota}/5)! 🙏 Se precisar, é só chamar de novo.`;
+    // Agradece pelo número por onde a conversa aconteceu (default = env).
+    await enviarTexto(telefone, agr, pnid ? { phoneNumberId: pnid } : {}).catch(() => {});
+    await waInbox.registrarOutbound({ telefone, texto: agr, tipo: 'bot', phoneNumberId: pnid }).catch(() => {});
+  } else {
+    // não foi 0-5 → encerra a espera e deixa a mensagem no inbox pro time
+    await supabase.from('wa_conversas').update({ pesquisa_estado: 'ignorada' }).eq('id', convP.id);
+    await waInbox.registrarInbound({ telefone, texto, messageId, tipo: 'text', phoneNumberId: pnid }).catch(() => {});
+  }
+  return true;
+}
+
+// Mensagem chegando por número que NÃO é o do bot: atendimento humano puro —
+// nada de opt-out/triagem/coleta/institucional (personas são do número do bot).
+// Só a pesquisa de satisfação (que é da CONVERSA, não do bot) e o inbox.
+async function inboxDireto(m, pnid) {
+  const messageId = m.id;
+  const telefone = normalizarTelefone(m.from);
+  const texto = (m.text?.body
+    || m.button?.text
+    || m.interactive?.button_reply?.title
+    || m.interactive?.list_reply?.title
+    || '').slice(0, 2000);
+  if (m.type === 'text') {
+    const assumiu = await tratarPesquisaSatisfacao({ telefone, texto, messageId, pnid });
+    if (assumiu) return;
+  }
+  await require('../services/waInbox').registrarInbound({
+    telefone, texto, messageId,
+    tipo: m.type === 'image' ? 'image' : m.type === 'audio' ? 'audio' : m.type === 'document' ? 'document' : 'text',
+    mediaId: m.image?.id || m.audio?.id || m.document?.id,
+    phoneNumberId: pnid,
+  });
 }
 
 // C0 · Processa os recibos de status da Meta (value.statuses[]).
@@ -217,7 +300,7 @@ async function processarBotaoAprovacao(m) {
   }).catch(() => {});
 }
 
-async function processarMensagem(m, cfg) {
+async function processarMensagem(m, cfg, pnid = null) {
   const messageId = m.id;
   const telefone = normalizarTelefone(m.from);
   // Cap de tamanho · evita mandar payload gigante pro parser (LLM) e pro banco.
@@ -278,32 +361,8 @@ async function processarMensagem(m, cfg) {
   // ── PESQUISA DE SATISFAÇÃO ── conversa finalizada aguardando a nota (0-5).
   // Captura a resposta como avaliação e agradece (não reabre o ticket).
   if (m.type === 'text') {
-    const { data: convP } = await supabase.from('wa_conversas')
-      .select('id, pesquisa_estado, protocolo').eq('telefone', telefone)
-      .eq('pesquisa_estado', 'aguardando').is('deleted_at', null).maybeSingle();
-    if (convP) {
-      const waInbox = require('../services/waInbox');
-      const t = String(texto || '').trim();
-      const nota = /^[0-5]$/.test(t) ? Number(t) : null;
-      const agora = new Date().toISOString();
-      if (nota != null) {
-        await supabase.from('wa_mensagens').insert({
-          conversa_id: convP.id, direcao: 'in', tipo: 'avaliacao', texto: t, wa_message_id: messageId,
-        }).catch(() => {});
-        await supabase.from('wa_conversas').update({
-          satisfacao: nota, satisfacao_em: agora, pesquisa_estado: 'respondida',
-          last_message_at: agora, ultima_previa: `Avaliação: ${nota}/5`,
-        }).eq('id', convP.id);
-        const agr = `Obrigado pela sua avaliação (${nota}/5)! 🙏 Se precisar, é só chamar de novo.`;
-        await enviarTexto(telefone, agr).catch(() => {});
-        await waInbox.registrarOutbound({ telefone, texto: agr, tipo: 'bot' }).catch(() => {});
-      } else {
-        // não foi 0-5 → encerra a espera e deixa a mensagem no inbox pro time
-        await supabase.from('wa_conversas').update({ pesquisa_estado: 'ignorada' }).eq('id', convP.id);
-        await waInbox.registrarInbound({ telefone, texto, messageId, tipo: 'text' }).catch(() => {});
-      }
-      return;
-    }
+    const assumiu = await tratarPesquisaSatisfacao({ telefone, texto, messageId, pnid });
+    if (assumiu) return;
   }
 
   // ── INBOX HUMANO ASSUMIDO ── se a igreja já iniciou/assumiu uma conversa
@@ -322,6 +381,7 @@ async function processarMensagem(m, cfg) {
         telefone, texto, messageId,
         tipo: m.type === 'image' ? 'image' : m.type === 'audio' ? 'audio' : m.type === 'document' ? 'document' : 'text',
         mediaId: m.image?.id || m.audio?.id || m.document?.id,
+        phoneNumberId: pnid,
       }).catch(e => console.error('[whatsapp webhook] inbox assumida:', e.message));
       return; // não aciona bot nem resposta institucional
     }
@@ -351,8 +411,27 @@ async function processarMensagem(m, cfg) {
       telefone, texto, messageId,
       tipo: m.type === 'image' ? 'image' : m.type === 'audio' ? 'audio' : m.type === 'document' ? 'document' : 'text',
       mediaId: m.image?.id || m.audio?.id || m.document?.id,
+      phoneNumberId: pnid,
     }).catch(e => console.error('[whatsapp webhook] inbox in:', e.message));
     if (m.type !== 'text') return; // mídia: já no inbox; não custa LLM institucional
+
+    // ⚠️⚠️ SEM RESPOSTA AUTOMÁTICA (Matheus · 12/08/2026): *"não quero bot; o que
+    // a pessoa falar não deve abrir o menu. Será apenas atendimento humanizado
+    // por enquanto."* A mensagem JÁ está no inbox (logo acima) — daqui pra
+    // frente é gente que responde.
+    // ⚠️ O gate é AQUI e não no topo do webhook: `ia_ativa` faz `return` ANTES
+    // do `registrarInbound`, então usá-lo calaria o bot CEGANDO a aba Conversas.
+    // ⚠️ E é depois do `podeColetar`: o formulário de números de culto dos
+    // COORDENADORES é ferramenta de trabalho, não atendimento — não é o "bot"
+    // de que ele está falando.
+    if (cfg && cfg.respostas_automaticas === false) {
+      await supabase.from('whatsapp_coletas').insert({
+        whatsapp_message_id: messageId, telefone, raw_text: texto,
+        status: 'ignorado', erro: 'respostas_automaticas_desligadas',
+        modulo_destino: 'conversas',
+      }).catch(() => {});
+      return;
+    }
 
     // ── BOT DE TRIAGEM ── número realmente desconhecido (não-líder): o bot
     // pergunta o setor + nome, tria pra área e notifica a equipe. Substitui a

@@ -46,11 +46,15 @@ async function acharRespostaDaPessoa({ pesquisaId, membroId, cpf }) {
   if (!pesquisaId) return null;
 
   if (membroId) {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('cen_resposta').select('id, concluida_em')
       .eq('pesquisa_id', pesquisaId).eq('membro_id', membroId)
       .not('concluida_em', 'is', null).is('deleted_at', null)
       .order('concluida_em', { ascending: false }).limit(1).maybeSingle();
+    // ⚠️ Falha de consulta é REGISTRADA. Ela devolve "não respondeu" (fail-open
+    // de propósito: barrar por erro nosso deixaria a pessoa sem responder), mas
+    // em silêncio isso vira resposta duplicada sem ninguém saber por quê.
+    if (error) console.error('[censo ja-respondeu] por membro:', error.message);
     if (data) return { ...data, por: 'membro' };
   }
 
@@ -59,7 +63,7 @@ async function acharRespostaDaPessoa({ pesquisaId, membroId, cpf }) {
 
   // O `!inner` é obrigatório: sem ele o PostgREST TRAZ a resposta mas não
   // FILTRA por ela, e isto passaria a dizer "já respondeu" para todo mundo.
-  const { data } = await supabase
+  const { data, error: erroCpf } = await supabase
     .from('cen_resposta_item')
     .select('cen_resposta!inner(id, concluida_em, pesquisa_id, deleted_at)')
     .eq('pergunta_id', 'cpf').eq('valor_texto', doc)
@@ -68,6 +72,7 @@ async function acharRespostaDaPessoa({ pesquisaId, membroId, cpf }) {
     .is('cen_resposta.deleted_at', null)
     .limit(1).maybeSingle();
 
+  if (erroCpf) console.error('[censo ja-respondeu] por CPF:', erroCpf.message);
   const r = data?.cen_resposta;
   return r ? { id: r.id, concluida_em: r.concluida_em, por: 'cpf' } : null;
 }

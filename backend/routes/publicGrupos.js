@@ -397,6 +397,8 @@ router.get('/lideres/:liderId/grupos', async (req, res) => {
 
 // ── Inscrição publica em grupo (POST sem auth) ──
 const { notificar } = require('../services/notificar');
+const { donosDoGrupo } = require('../services/gruposDestinatarios');
+const { avisarPedidoNovoNoApp } = require('../services/gruposAvisoApp');
 
 function soDigitos(v) { return (v || '').toString().replace(/\D+/g, ''); }
 
@@ -954,14 +956,27 @@ router.post('/inscrever', async (req, res) => {
     if (!grupo || !grupo.ativo) {
       return res.status(404).json({ error: 'Grupo não encontrado ou inativo.' });
     }
-    // Grupo por convite do líder (Marcos · 15/07): nunca aceita inscrição
-    // pública — não aparece no form, e um deep-link antigo cai aqui.
-    if (grupo.modo_inscricao === 'fechado') {
-      return res.status(403).json({
-        error: 'Este grupo é por convite do líder — fale com ele para participar.',
-        codigo: 'inscricoes_fechadas',
-      });
-    }
+    // ⚠️⚠️ 'fechado' NÃO BLOQUEIA MAIS A INSCRIÇÃO POR LINK (Marcos · 11/08/2026)
+    //
+    // A regra de 15/07 era "nunca aceita inscrição pública". Ela criava um beco:
+    // a própria mensagem mandava "fale com ele para participar", e o líder **não
+    // tinha como** trazer ninguém — o app agora gera o link do grupo (apontamento
+    // 2), e nesses grupos ele caía aqui em 403.
+    //
+    // Palavras dele: *"libera o link direto para os grupos por convite também,
+    // mesmo fechados. eles não devem ser achados na lista de grupos públicos,
+    // mas se o líder quiser convidar alguém, deve poder."*
+    //
+    // ⚠️ O QUE MANTÉM ISSO SEGURO, e foi conferido antes de mudar:
+    //  1. grupo 'fechado' **continua fora de toda lista pública** — `:132` (form
+    //     do site) e `:386` (`/buscar`, que alimenta o app) filtram com `.neq`.
+    //     Só chega quem recebeu o link do líder: o UUID não é adivinhável.
+    //  2. a inscrição **não vincula ninguém** — cria `mem_grupo_pedidos` com
+    //     status 'pendente' (`:808`), e o líder continua aprovando um a um.
+    // ⇒ ter o link é o convite; a aprovação segue sendo do líder.
+    //
+    // ⚠️ Se um dia for preciso barrar link VAZADO, o caminho é expirar/assinar o
+    // convite — não voltar o 403, que barra junto o convite legítimo.
     if (grupo.aceitando_inscricoes === false) {
       return res.status(403).json({
         error: 'Este grupo não está recebendo novas inscrições no momento.',
@@ -982,6 +997,21 @@ router.post('/inscrever', async (req, res) => {
       }
     }
 
+    // ⚠️⚠️ ESTAS TRAVAS FORAM EXTRAÍDAS PRA `utils/entradaGrupoApp.js` (10/08/2026)
+    // O app tinha porta PRÓPRIA (`POST /api/app/inscricoes`) que não validava
+    // NADA — nem gênero, nem `ativo`, nem `aceitando_inscricoes`, nem
+    // `fechado`, nem temporada. A régua virou função pura testada (37
+    // asserções) e o app já usa dela.
+    // ⚠️ ESTE ARQUIVO AINDA TEM A CÓPIA, de propósito: ele é a porta pública
+    // principal (462 dos 463 pedidos) e trocar aqui no mesmo PR somaria risco.
+    // **AS DUAS TÊM QUE CONCORDAR.** Mudou uma, mude a outra — ou, melhor,
+    // troque este bloco pela chamada de `avaliarEntradaNoGrupo` quando houver
+    // uma janela pra testar o formulário público com calma.
+    // ⚠️ Uma diferença é DE PROPÓSITO: aqui o sexo é campo OBRIGATÓRIO do
+    // formulário (400 acima), então o caso "sexo desconhecido" não existe. No
+    // app ele existe (só 16 de 54 contas têm `genero`) e devolve
+    // `codigo='sexo_necessario'`, que pede pra completar o perfil.
+    //
     // ── Trava de compatibilidade (Marcos · 2026-07-14: SÓ GÊNERO bloqueia) ──
     // Gênero: categoria Homens/Mulheres não aceita o sexo oposto — única trava.
     // Idade fora da faixa, vários grupos ao mesmo tempo e grupos no mesmo
@@ -1146,18 +1176,32 @@ router.post('/inscrever', async (req, res) => {
         }
       } catch (err) { console.error('[public grupos inscrever wpp]', err.message); }
 
-      // Notificação in-app da coordenação: fica fire-and-forget de propósito.
-      // Sem regra configurada em notificacao_regras, o fallback escreve pra ~16
-      // admins (1 count + 1 insert cada) — não vale segurar a resposta da pessoa
-      // por isso, e a coordenação tem a Caixa de entrada como caminho garantido.
+      // Notificação in-app de quem RESPONDE POR ESTE GRUPO (líder + supervisor),
+      // fire-and-forget de propósito — não vale segurar a resposta da pessoa que
+      // está preenchendo o formulário.
+      // ⚠️ Era aqui que estava o comentário admitindo o problema: "sem regra
+      // configurada em notificacao_regras, o fallback escreve pra ~16 admins".
+      // Agora não escreve: sem dono com conta de sistema o aviso não sai, porque
+      // o líder já recebe o link do WhatsApp e a coordenação vê no resumo diário.
+      // ⚠️⚠️ AWAITED, e só esta perna: o sino do app é o canal do líder que só
+      // tem o app do membro (74 dos 89 líderes não têm conta de sistema), e em
+      // serverless o container CONGELA na resposta — fire-and-forget aqui é
+      // aviso perdido (a lei de 31/07, que já custou o aviso da líder Jane).
+      // `avisarPedidoNovoNoApp` nunca lança, então o await não arrisca a
+      // resposta de quem está preenchendo o formulário.
+      try {
+        await avisarPedidoNovoNoApp({
+          grupoId: grupo.id,
+          pedidoId: criados[0].pedidoId,
+          grupoNome: grupo.nome,
+          pessoaNome: nomes,
+        });
+      } catch (err) { console.warn('[public grupos] aviso app:', err.message); }
+
       (async () => {
         try {
-          let liderAuthUserId = null;
-          if (grupo.lider_id) {
-            const { data: liderProf } = await supabase.from('vol_profiles')
-              .select('auth_user_id').eq('membresia_id', grupo.lider_id).maybeSingle();
-            liderAuthUserId = liderProf?.auth_user_id || null;
-          }
+          const donos = await donosDoGrupo(grupo.id);
+          if (!donos.length) return;
           await notificar({
             modulo: 'grupos',
             tipo: 'pedido_grupo',
@@ -1168,7 +1212,7 @@ router.post('/inscrever', async (req, res) => {
             link: '/grupos',
             severidade: 'aviso',
             chaveDedup: `pedido_grupo_${criados[0].pedidoId}`,
-            extraTargetIds: liderAuthUserId ? [liderAuthUserId] : [],
+            targetIds: donos,
           });
         } catch (err) { console.error('[public grupos inscrever notify]', err.message); }
       })();
@@ -1429,7 +1473,10 @@ router.post('/inscrever-lider', async (req, res) => {
 // ─────────────────────────────────────────────────────────────
 // F3 · aprovação pelo líder via link do WhatsApp (sem login).
 // Token HMAC assinado (services/gruposWhatsapp) dá acesso a UM pedido e
-// expira em 7 dias. Fail-closed: sem CRON_SECRET nenhum token valida.
+// expira em 30 dias (era 7 · Natasha 12/08/2026). Fail-closed: sem CRON_SECRET
+// nenhum token valida. ⚠️ O TTL é a 2ª camada: quem manda são as travas daqui —
+// pedido ainda 'pendente' e `payload.l` = líder ATUAL do grupo. É por isso que
+// o link vencido pode ser prorrogado no serviço sem abrir buraco de segurança.
 // Rota com 2 segmentos de propósito — o GET /:id (acima) captura qualquer
 // caminho de 1 segmento.
 // ─────────────────────────────────────────────────────────────
