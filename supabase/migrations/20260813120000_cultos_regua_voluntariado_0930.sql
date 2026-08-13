@@ -3,29 +3,39 @@
 -- ============================================================================
 -- Mudança dos cultos de DOMINGO (corte 24/08/2026 · docs/cultos-domingo/ na
 -- branch claude/cultos-domingo-handoff). A régua dos dashboards de voluntariado
--- classifica check-in por PREFIXO DO NOME do culto ('Domingo 08%' / 'Domingo
--- 10%' / 'Domingo 11%'…) e DESCARTA culto desconhecido — sem 'Domingo 09%',
--- todo check-in do culto novo sumiria dos dashboards SEM erro, SEM log e SEM
--- zero visível (achado nº 1 da varredura de 11/08). Por isso esta migration
--- vai ao ar ANTES de o tipo "Domingo 09:30" existir.
+-- classifica check-in pelo NOME do culto e DESCARTA culto desconhecido — sem o
+-- 'Domingo 09:30' na régua, todo check-in do culto novo sumiria dos dashboards
+-- SEM erro, SEM log e SEM zero visível (achado nº 1 da varredura de 11/08).
 --
 -- ⚠️ APLICAR ANTES DE 24/08/2026 (antes de o tipo nascer no script do corte).
 --
--- PATCH DINÂMICO (técnica da casa · 20260722250000/20260729060000/20260806160000):
--- lê a definição VIVA via pg_get_functiondef/pg_get_viewdef e acrescenta
--- «OR <ident> ~~* 'Domingo 09%'» logo após CADA comparação com 'Domingo 08%'.
--- NUNCA colar aqui um corpo estático do repo: CREATE OR REPLACE a partir de
--- arquivo reverteria patch aplicado só em produção (drift real neste conjunto).
+-- ⚠️⚠️ HISTÓRICO DESTA MIGRATION (13/08): a 1ª versão assumia a forma do REPO
+-- (listas literais '~~* ''Domingo 08%''' em cada função · 20260705140000) e
+-- ABORTOU em produção — corretamente: prod foi REFATORADA fora do git e a
+-- régua agora vive em DUAS funções centrais, `fn_dash_vol_bloco_nome(text)` e
+-- `fn_dash_vol_bloco_id(text)` (gate/view/irmãs só delegam a elas), e essas
+-- centrais JÁ classificam 'Domingo 09:30' → 'Domingo Manhã' / bloco
+-- b10c0000-…-001 (sondado funcionalmente em 13/08). ⚠️ As duas centrais NÃO
+-- estão em nenhuma migration do repo — mesmo drift do handle_new_user;
+-- commitar a definição viva é follow-up alinhado com o Matheus.
 --
--- 100% INVISÍVEL até o corte: 'Domingo 09%' não casa com nenhum culto enquanto
--- o tipo não existir. Idempotente: definição que já contém 'Domingo 09' é
--- pulada com NOTICE. Aborta (rollback total) se a forma viva divergir do
--- esperado — nunca aplicar às cegas.
+-- Esta versão reconhece as DUAS formas:
+--   · FORMA REFATORADA (prod): verificação FUNCIONAL — 09:30 tem que cair no
+--     MESMO bloco da manhã que o 08:30. Tudo certo → NOTICE e encerra sem
+--     tocar em nada. Errado → aborta apontando a função CENTRAL (nunca
+--     "conserta" as consumidoras, que só delegam).
+--   · FORMA DO REPO (banco montado das migrations · listas literais): PATCH
+--     DINÂMICO textual (pg_get_functiondef/viewdef + regexp_replace · técnica
+--     da 20260729060000) — acrescenta «OR <ident> ~~* 'Domingo 09%'» após
+--     CADA comparação com 'Domingo 08%'. NUNCA colar corpo estático (drift).
+--
+-- Idempotente nas duas formas. Aborta (rollback total) se a forma viva
+-- divergir do esperado — nunca aplica às cegas.
 --
 -- ⚠️ O que esta migration NÃO faz, de propósito (fica pro script do corte,
 -- Lote 5): mudar o anchor do bloco 'Domingo Manhã' (recurrence_time
--- '08:30:00' → '09:30:00' no VALUES da view) — isso mexe em ordenação/rótulo
--- visível nos dashboards e violaria a regra "nada fica à vista até 24/08".
+-- '08:30:00' no VALUES da view) — isso mexe em ordenação/rótulo visível nos
+-- dashboards e violaria a regra "nada fica à vista até 24/08".
 -- ============================================================================
 
 DO $mig$
@@ -44,7 +54,37 @@ DECLARE
   v_achou  boolean;
 BEGIN
   ---------------------------------------------------------------------------
-  -- 1 · FUNÇÕES (todas as overloads de cada nome, pelo catálogo)
+  -- 0 · FORMA REFATORADA (produção desde ~12/08 · fora do git): a régua vive
+  --     em fn_dash_vol_bloco_nome/fn_dash_vol_bloco_id. Verificação é
+  --     FUNCIONAL — checagem textual não enxerga padrão genérico.
+  ---------------------------------------------------------------------------
+  IF to_regprocedure('public.fn_dash_vol_bloco_nome(text)') IS NOT NULL THEN
+    -- sanidade da própria régua: manhã e noite são blocos DISTINTOS
+    IF public.fn_dash_vol_bloco_nome('Domingo 08:30') IS NULL
+       OR public.fn_dash_vol_bloco_nome('Domingo 08:30') IS NOT DISTINCT FROM public.fn_dash_vol_bloco_nome('Domingo 19:00') THEN
+      RAISE EXCEPTION '[0930] fn_dash_vol_bloco_nome não distingue manhã de noite — régua central quebrada; investigar antes de aplicar';
+    END IF;
+    -- o culto novo tem que cair no MESMO bloco da manhã que o 08:30
+    IF public.fn_dash_vol_bloco_nome('Domingo 09:30')
+         IS DISTINCT FROM public.fn_dash_vol_bloco_nome('Domingo 08:30') THEN
+      RAISE EXCEPTION '[0930] fn_dash_vol_bloco_nome NÃO classifica ''Domingo 09:30'' no bloco da manhã — patchar a função CENTRAL (vive fora do git · pedir a definição viva), nunca as consumidoras';
+    END IF;
+    IF to_regprocedure('public.fn_dash_vol_bloco_id(text)') IS NOT NULL
+       AND public.fn_dash_vol_bloco_id('Domingo 09:30')
+             IS DISTINCT FROM public.fn_dash_vol_bloco_id('Domingo 08:30') THEN
+      RAISE EXCEPTION '[0930] fn_dash_vol_bloco_id não dá ao ''Domingo 09:30'' o mesmo bloco do 08:30 — patchar a função central';
+    END IF;
+    -- o gate (consumidor) tem que refletir a régua central
+    IF NOT public.fn_dash_vol_service_no_bloco('Domingo 09:30')
+       OR NOT public.fn_dash_vol_service_no_bloco('Domingo 08:30') THEN
+      RAISE EXCEPTION '[0930] fn_dash_vol_service_no_bloco não acompanha a régua central — investigar (deveria só delegar)';
+    END IF;
+    RAISE NOTICE '[0930] régua central (fn_dash_vol_bloco_nome/_id) JÁ cobre o Domingo 09:30 — nada a aplicar (verificado funcionalmente)';
+    RETURN;
+  END IF;
+
+  ---------------------------------------------------------------------------
+  -- 1 · FORMA DO REPO · FUNÇÕES (todas as overloads de cada nome)
   --     · fn_dash_vol_service_no_bloco  = o GATE (lista própria OBRIGATÓRIA)
   --     · composicao/resumo/pessoas     = podem ter lista própria (versões
   --       antigas) ou delegar ao gate (versões novas) — o vivo decide.
@@ -109,7 +149,7 @@ BEGIN
   END LOOP;
 
   ---------------------------------------------------------------------------
-  -- 2 · VIEW vw_dashboard_voluntariado (CASE de blocos com lista própria)
+  -- 2 · FORMA DO REPO · VIEW vw_dashboard_voluntariado (CASE com lista própria)
   ---------------------------------------------------------------------------
   IF to_regclass('public.vw_dashboard_voluntariado') IS NULL THEN
     RAISE EXCEPTION '[0930] vw_dashboard_voluntariado não existe neste banco';
@@ -120,9 +160,11 @@ BEGIN
 
   IF position('Domingo 09' in v_codigo) > 0 THEN
     RAISE NOTICE '[0930] vw_dashboard_voluntariado: já contém ''Domingo 09'' — nada a fazer (idempotente)';
+  ELSIF position('fn_dash_vol_bloco_id' in v_codigo) > 0 THEN
+    RAISE NOTICE '[0930] vw_dashboard_voluntariado: delega à régua central (fn_dash_vol_bloco_id) — nada a patchar aqui';
   ELSE
     IF position('Domingo 08' in v_codigo) = 0 THEN
-      RAISE EXCEPTION '[0930] vw_dashboard_voluntariado: o CASE com ''Domingo 08%%'' não está na definição viva — investigar antes de aplicar';
+      RAISE EXCEPTION '[0930] vw_dashboard_voluntariado: nem CASE com ''Domingo 08%%'' nem delegação à régua central — forma desconhecida; investigar antes de aplicar';
     END IF;
 
     SELECT count(*) INTO v_antes FROM regexp_matches(v_def, v_regex, 'g');
@@ -158,8 +200,15 @@ BEGIN
 END $mig$;
 
 -- ============================================================================
--- Conferência no CATÁLOGO (o SQL Editor não mostra NOTICE · lei da casa):
+-- Conferência no CATÁLOGO/FUNÇÃO (o SQL Editor não mostra NOTICE · lei da casa):
 --
+--   -- forma refatorada (produção): tudo funcional
+--   select public.fn_dash_vol_bloco_nome('Domingo 09:30');       -- 'Domingo Manhã'
+--   select public.fn_dash_vol_bloco_id('Domingo 09:30');         -- b10c0000-…-000000000001
+--   select public.fn_dash_vol_service_no_bloco('Domingo 09:30'); -- true
+--   select public.fn_dash_vol_service_no_bloco('Domingo 08:30'); -- true (atual segue)
+--
+--   -- forma do repo (banco montado das migrations): presença textual
 --   select p.proname,
 --          position('Domingo 09' in regexp_replace(pg_get_functiondef(p.oid), '--[^\n]*', '', 'g')) > 0 as tem_0930
 --     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
@@ -168,11 +217,5 @@ END $mig$;
 --                        'fn_dashboard_voluntariado_composicao',
 --                        'fn_dashboard_voluntariado_resumo',
 --                        'fn_dashboard_voluntariado_pessoas');
---   -- gate = true obrigatório; composicao/resumo/pessoas true OU delegam ao gate
---
 --   select position('Domingo 09' in pg_get_viewdef('public.vw_dashboard_voluntariado'::regclass, true)) > 0;
---   -- true obrigatório
---
---   select public.fn_dash_vol_service_no_bloco('Domingo 09:30');  -- true
---   select public.fn_dash_vol_service_no_bloco('Domingo 08:30');  -- true (atual segue)
 -- ============================================================================
