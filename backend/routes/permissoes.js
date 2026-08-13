@@ -11,7 +11,7 @@ router.use(authenticate, authorize('admin', 'diretor'));
 // Criar LOGIN é restrito a "devs" (você + Marcos Paulo) · mesmo critério do
 // requireDev de agents.js (sobrescrevível por env DEV_EMAILS). Não confundir
 // com o authorize('admin','diretor') do router — isto restringe ainda mais.
-const DEV_EMAILS = (process.env.DEV_EMAILS || 'gestao@cbrio.com.br,infra@cbrio.com.br,matheus.toscano@cbrio.org')
+const DEV_EMAILS = (process.env.DEV_EMAILS || 'gestao@cbrio.com.br,infra@cbrio.com.br,matheus.toscano@cbrio.org,diego.assis@cbrio.org')
   .split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
 // Dev = lista fixa (env) OU super-admin (app_super_admins) — robusto a qual
 // e-mail o Matheus usa pra logar. Async por causa da consulta ao super-admin.
