@@ -40,7 +40,7 @@ export default function Generosidade() {
       <div className="flex gap-1 border-b border-border overflow-x-auto">
         {[
           { k: 'overview',  label: 'Visão geral',     icon: TrendingUp },
-          { k: 'topo',      label: 'Topo contribuintes', icon: Trophy },
+          { k: 'topo',      label: 'Top contribuintes', icon: Trophy },
           { k: 'anonimos',  label: 'Doadores anônimos', icon: UserX },
           { k: 'pararam',   label: 'Pararam de doar',  icon: AlertTriangle },
         ].map(t => (
@@ -297,19 +297,31 @@ function AbaAnonimos() {
 }
 
 const TIPO_LABEL = { dizimo: 'Dízimo', oferta: 'Oferta', campanha: 'Campanha', outro: 'Outra', doacao_pix: 'PIX' };
+const MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+
+function labelPeriodo(p) {
+  if (p === 'tudo') return 'Todo o período';
+  if (p === '12m') return 'Últimos 12 meses';
+  const [a, m] = p.split('-').map(Number);
+  return `${MESES[m - 1]} de ${a}`;
+}
 
 function AbaTopo() {
-  const [periodo, setPeriodo] = useState('12m');
+  const [periodoMode, setPeriodoMode] = useState('12m'); // '12m' | 'tudo' | 'mes'
+  const [mes, setMes] = useState(new Date().toISOString().slice(0, 7));
+  const [ordem, setOrdem] = useState('desc'); // 'desc' = maior valor · 'asc' = menor valor
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selecionado, setSelecionado] = useState(null);
 
+  const periodoEfetivo = periodoMode === 'mes' && mes ? mes : periodoMode;
+
   useEffect(() => {
     setLoading(true);
-    financeiro.generosidade.top(periodo)
+    financeiro.generosidade.top(periodoEfetivo, ordem)
       .then(r => setItems(Array.isArray(r?.top) ? r.top : []))
       .finally(() => setLoading(false));
-  }, [periodo]);
+  }, [periodoEfetivo, ordem]);
 
   return (
     <>
@@ -319,26 +331,57 @@ function AbaTopo() {
             <div>
               <h3 className="text-sm font-semibold flex items-center gap-2">
                 <Trophy className="h-4 w-4 text-amber-500" />
-                Topo contribuintes
+                Top contribuintes
               </h3>
               <p className="text-[11px] text-muted-foreground mt-1">
-                Membros que mais contribuíram, por valor total no período. Considera as
-                contribuições cadastradas (<code>mem_contribuicoes</code>) — doações via PIX
-                ainda não identificadas ficam na aba "Doadores anônimos".
+                Membros que {ordem === 'desc' ? 'mais' : 'menos'} contribuíram, por valor total
+                no período. Considera as contribuições cadastradas (<code>mem_contribuicoes</code>)
+                — doações via PIX ainda não identificadas ficam na aba "Doadores anônimos".
               </p>
             </div>
-            <div className="flex rounded-lg border border-border overflow-hidden">
-              {[['12m', 'Últimos 12 meses'], ['tudo', 'Todo o período']].map(([k, label]) => (
-                <button
-                  key={k}
-                  onClick={() => setPeriodo(k)}
-                  className={`px-3 py-1.5 text-xs font-medium transition-colors ${
-                    periodo === k ? 'bg-primary text-white' : 'text-muted-foreground hover:text-foreground'
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
+            <div className="flex flex-col items-end gap-2">
+              <div className="flex rounded-lg border border-border overflow-hidden">
+                {[
+                  ['12m', '12 meses'],
+                  ['tudo', 'Todo período'],
+                  ['mes', 'Mês'],
+                ].map(([k, label]) => (
+                  <button
+                    key={k}
+                    onClick={() => setPeriodoMode(k)}
+                    className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                      periodoMode === k ? 'bg-primary text-white' : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {periodoMode === 'mes' && (
+                <input
+                  type="month"
+                  value={mes}
+                  onChange={e => setMes(e.target.value)}
+                  className="h-8 rounded-lg border border-border bg-input px-2 text-xs"
+                />
+              )}
+              <div className="flex rounded-lg border border-border overflow-hidden">
+                {[
+                  ['desc', 'Maior valor', ArrowDown],
+                  ['asc', 'Menor valor', ArrowUp],
+                ].map(([k, label, Icon]) => (
+                  <button
+                    key={k}
+                    onClick={() => setOrdem(k)}
+                    className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                      ordem === k ? 'bg-primary text-white' : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    <Icon className="h-3 w-3 inline mr-1" />
+                    {label}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 
@@ -384,7 +427,7 @@ function AbaTopo() {
 
       <AnimatePresence>
         {selecionado && (
-          <HistoricoDialog contribuinte={selecionado} periodo={periodo} onClose={() => setSelecionado(null)} />
+          <HistoricoDialog contribuinte={selecionado} periodo={periodoEfetivo} onClose={() => setSelecionado(null)} />
         )}
       </AnimatePresence>
     </>
@@ -418,7 +461,7 @@ function HistoricoDialog({ contribuinte, periodo, onClose }) {
             <Badge variant="outline" className="text-[10px] mb-1">{contribuinte.nome || 'Membro'}</Badge>
             <h3 className="text-base font-bold">Histórico de contribuições</h3>
             <p className="text-[11px] text-muted-foreground">
-              {periodo === '12m' ? 'Últimos 12 meses' : 'Todo o período'}
+              {labelPeriodo(periodo)}
             </p>
           </div>
           <button onClick={onClose}><X className="h-5 w-5" /></button>

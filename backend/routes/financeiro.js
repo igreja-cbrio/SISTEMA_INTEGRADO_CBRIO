@@ -524,17 +524,31 @@ router.get('/generosidade/pararam', async (req, res) => {
 // os braços fin_transacoes/fin_pix_detalhe têm membro_id NULL). Empréstimo fica fora
 // por construção: a view só agrega fin_transacoes com plano 3.01% (3.02.06 = empréstimo).
 // Agregação em JS sobre fetchAllRows (cap 1000 do PostgREST subcontaria o total).
+// Período aceito: '12m' (últimos 12 meses) · 'tudo' · '<AAAA-MM>' (mês específico).
+function parsePeriodo(periodo) {
+  if (typeof periodo === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(periodo)) {
+    const [ano, mes] = periodo.split('-').map(Number);
+    const desde = `${periodo}-01`;
+    const ate = new Date(Date.UTC(ano, mes, 1)).toISOString().slice(0, 10); // 1º dia do mês seguinte
+    return { periodo, desde, ate };
+  }
+  if (periodo === 'tudo') return { periodo: 'tudo', desde: null, ate: null };
+  const corte = new Date();
+  corte.setFullYear(corte.getFullYear() - 1);
+  return { periodo: '12m', desde: corte.toISOString().slice(0, 10), ate: null };
+}
+
 router.get('/generosidade/top', async (req, res) => {
   try {
-    const periodo = req.query.periodo === 'tudo' ? 'tudo' : '12m';
-    const corte = new Date();
-    if (periodo === '12m') corte.setFullYear(corte.getFullYear() - 1);
+    const { periodo, desde, ate } = parsePeriodo(req.query.periodo);
+    const ordem = req.query.ordem === 'asc' ? 'asc' : 'desc';
 
     const linhas = await fetchAllRows(() => {
       let q = supabase
         .from('vw_doacoes_unificada')
         .select('membro_id, data, valor, tipo');
-      if (periodo === '12m') q = q.gte('data', corte.toISOString().slice(0, 10));
+      if (desde) q = q.gte('data', desde);
+      if (ate) q = q.lt('data', ate);
       return q.not('membro_id', 'is', null);
     }, { max: 20000 });
 
@@ -552,7 +566,9 @@ router.get('/generosidade/top', async (req, res) => {
       porMembro.set(l.membro_id, acc);
     }
 
-    const top = Array.from(porMembro.values()).sort((a, b) => b.total - a.total).slice(0, 20);
+    const ordenado = Array.from(porMembro.values())
+      .sort((a, b) => ordem === 'asc' ? a.total - b.total : b.total - a.total);
+    const top = ordenado.slice(0, 20);
 
     if (top.length > 0) {
       const { data: membros } = await supabase
@@ -564,7 +580,7 @@ router.get('/generosidade/top', async (req, res) => {
       for (const m of top) m.nome = nomes.get(m.membro_id) || null;
     }
 
-    res.json({ periodo, top });
+    res.json({ periodo, ordem, top });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -574,9 +590,7 @@ router.get('/generosidade/top/:membroId/historico', async (req, res) => {
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(req.params.membroId)) {
       return res.status(400).json({ error: 'membro_id inválido' });
     }
-    const periodo = req.query.periodo === 'tudo' ? 'tudo' : '12m';
-    const corte = new Date();
-    if (periodo === '12m') corte.setFullYear(corte.getFullYear() - 1);
+    const { periodo, desde, ate } = parsePeriodo(req.query.periodo);
 
     const linhas = await fetchAllRows(() => {
       let q = supabase
@@ -584,7 +598,8 @@ router.get('/generosidade/top/:membroId/historico', async (req, res) => {
         .select('id, data, valor, tipo, forma_pagamento, campanha, origem, fonte')
         .eq('membro_id', req.params.membroId)
         .order('data', { ascending: false });
-      if (periodo === '12m') q = q.gte('data', corte.toISOString().slice(0, 10));
+      if (desde) q = q.gte('data', desde);
+      if (ate) q = q.lt('data', ate);
       return q;
     }, { max: 10000 });
 

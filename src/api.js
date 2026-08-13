@@ -1286,7 +1286,8 @@ export const financeiro = {
     overview: () => get('/financeiro/generosidade/overview'),
     anonimos: () => get('/financeiro/generosidade/anonimos'),
     pararam: () => get('/financeiro/generosidade/pararam'),
-    top: (periodo = '12m') => get(`/financeiro/generosidade/top?periodo=${encodeURIComponent(periodo)}`),
+    top: (periodo = '12m', ordem = 'desc') =>
+      get(`/financeiro/generosidade/top?periodo=${encodeURIComponent(periodo)}&ordem=${encodeURIComponent(ordem)}`),
     historico: (membroId, periodo = '12m') =>
       get(`/financeiro/generosidade/top/${encodeURIComponent(membroId)}/historico?periodo=${encodeURIComponent(periodo)}`),
   },
