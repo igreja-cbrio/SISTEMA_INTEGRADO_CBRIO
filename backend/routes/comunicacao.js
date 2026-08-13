@@ -37,8 +37,14 @@ router.get('/cron/agendamentos', requireCron, async (req, res, next) => {
     const diaSemana = agora.getUTCDay();
     const diaMes = agora.getUTCDate();
 
-    const { data: ativos } = await supabase.from('wa_agendamentos')
-      .select('*').eq('ativo', true).limit(200);
+    const { data: ativos, error: errAtivos } = await supabase.from('wa_agendamentos')
+      .select('*').eq('ativo', true).order('created_at', { ascending: true }).limit(200);
+    if (errAtivos) {
+      // Falha de consulta NÃO é "zero agendamentos" — responder ok esconderia
+      // um cron morto (lição do cerebroSync).
+      console.error('[comunicacao] cron agendamentos query:', errAtivos.message);
+      return res.status(500).json({ error: 'Falha ao consultar os agendamentos' });
+    }
 
     let disparados = 0;
     const resultados = [];
@@ -72,6 +78,14 @@ router.get('/cron/agendamentos', requireCron, async (req, res, next) => {
           refId: a.id,
         }));
         const r = await enfileirarLote(itens);
+        // Só consome o disparo se ALGO entrou na fila. Antes, com o kill-switch
+        // WHATSAPP_ENABLED desligado, enfileirarLote devolvia queued=0 e mesmo
+        // assim o agendamento era marcado como disparado (único até se
+        // auto-desativava) — a mensagem sumia sem rastro.
+        if (!r.queued) {
+          resultados.push({ id: a.id, nome: a.nome, pulado: r.motivo || 'nada_enfileirado' });
+          continue;
+        }
         await supabase.from('wa_agendamentos')
           .update({ ultimo_disparo: new Date().toISOString(), ...(a.quando ? { ativo: false } : {}) })
           .eq('id', a.id);
@@ -83,14 +97,30 @@ router.get('/cron/agendamentos', requireCron, async (req, res, next) => {
         resultados.push({ id: a.id, erro: 'falha_no_agendamento', request_id: req.requestId });
       }
     }
-    res.json({ ok: true, disparados, resultados });
+    // Faxina diária da mídia do inbox (retenção · decisão do Marcos 12/08:
+    // "acaba vindo muito lixo"). Pega carona neste cron HORÁRIO de propósito —
+    // o vercel.json já tem 45 crons e slot novo é risco (lição dos pagamentos).
+    // Roda 1×/dia na janela das 4h BRT (o cron dispara a cada hora no :05).
+    let faxina_midia = null;
+    if (horaAtual === 4) {
+      faxina_midia = await require('../services/waInbox').limparMidiasAntigas()
+        .catch((e) => ({ ok: false, erro: e.message }));
+      if (faxina_midia && faxina_midia.ok === false) {
+        console.error('[comunicacao] faxina de mídia:', faxina_midia.erro);
+      }
+    }
+
+    res.json({ ok: true, disparados, resultados, ...(faxina_midia ? { faxina_midia } : {}) });
   } catch (e) {
     console.error('[comunicacao] cron agendamentos:', e.message);
     next(communicationError(e, 'Erro no cron de agendamentos.'));
   }
 });
 
-router.use(authenticate, authorizeModule('comunicacao'));
+// Leitura = nível 1 (front, menu e RLS da migration 20260728230000 já assumem
+// isso; o default 2 do middleware deixava as 9 abas em 403 pra quem tem nível 1).
+// As escritas seguem com guard próprio por rota (3/4/5).
+router.use(authenticate, authorizeModule('comunicacao', 1));
 
 // ── Números ──────────────────────────────────────────────────────────
 router.get('/numeros', async (_req, res) => {
@@ -205,6 +235,25 @@ router.put('/agendamentos/:id', authorizeModule('comunicacao', 3), async (req, r
   const patch = {};
   ['nome', 'template_nome', 'texto', 'params', 'audiencia', 'quando', 'recorrencia', 'dia_semana', 'dia_mes', 'hora', 'ativo']
     .forEach(k => { if (k in b) patch[k] = b[k]; });
+
+  const { data: atual, error: errAtual } = await supabase.from('wa_agendamentos')
+    .select('*').eq('id', req.params.id).maybeSingle();
+  if (errAtual) return res.status(400).json({ error: errAtual.message });
+  if (!atual) return res.status(404).json({ error: 'Agendamento não encontrado' });
+
+  // Edição passa pela MESMA régua da criação — o teto de 500 telefones e a
+  // coerência dia×recorrência só valiam no POST (criar com 10 e editar colando
+  // 600 salvava sem erro e o cron disparava pros 600). Valida o estado FINAL.
+  const erro = validarAgendamento({ ...atual, ...patch });
+  if (erro) return res.status(400).json({ error: erro });
+
+  // Reagendar um disparo ÚNICO já executado precisa voltar a disparar: o cron
+  // exige ultimo_disparo NULO pra única, e a coluna não era limpável por
+  // nenhum caminho — reagendar+reativar mostrava "ativa" e ficava mudo pra
+  // sempre. Trocar a data (quando) zera o marcador; recorrente NÃO zera
+  // (zeraria o "já saiu hoje" e dispararia 2× no mesmo dia).
+  if ('quando' in patch && patch.quando) patch.ultimo_disparo = null;
+
   const { data, error } = await supabase.from('wa_agendamentos')
     .update(patch).eq('id', req.params.id).select().maybeSingle();
   if (error) return res.status(400).json({ error: error.message });
@@ -250,6 +299,120 @@ router.put('/atendentes/:id', authorizeModule('comunicacao', 3), async (req, res
   res.json(data);
 });
 
+// ── Contatos (decisão do Marcos · 13/08) ─────────────────────────────
+// A audiência REAL de mensagens proativas: membros com OPT-IN explícito +
+// líderes do bot (o papel implica o aceite — quem quer liderar grupo aprova
+// pedidos por WhatsApp). Cada contato carrega DE ONDE veio ("virou uma
+// necessidade"): a porta do consentimento (inscricao_consentimentos tipo
+// 'whatsapp') ou o vínculo de líder (auto-sync do cadastro de grupos).
+router.get('/contatos', async (req, res) => {
+  try {
+    const { contemNormalizado } = require('../services/busca');
+    const busca = String(req.query.busca || '').trim();
+    const dig = (t) => String(t || '').replace(/\D+/g, '');
+
+    // Líderes do bot (dezenas · 1 query)
+    const { data: lids, error: e1 } = await supabase.from('whatsapp_lideres')
+      .select('id, telefone, nome_exibicao, papel, escopo, ativo, recebe_lembretes, origem, grupo_id')
+      .is('deleted_at', null).limit(1000);
+    if (e1) throw e1;
+
+    // Membros com opt-in (paginado · cap DECLARADO — silêncio de truncamento
+    // é a classe de bug do cap de 1000 do PostgREST)
+    const membros = [];
+    const PAGE = 1000; const CAP = 5000;
+    for (let from = 0; from < CAP; from += PAGE) {
+      const { data, error } = await supabase.from('mem_membros')
+        .select('id, nome, telefone, whatsapp_optin_em')
+        .eq('whatsapp_optin', true).is('deleted_at', null)
+        .not('telefone', 'is', null)
+        .order('id', { ascending: true })
+        .range(from, from + PAGE - 1);
+      if (error) throw error;
+      membros.push(...(data || []));
+      if (!data || data.length < PAGE) break;
+    }
+    const truncado = membros.length >= CAP;
+
+    // Nome do grupo dos líderes sincronizados (lote ≤200 — URL do PostgREST)
+    const grupoIds = [...new Set((lids || []).map(l => l.grupo_id).filter(Boolean))];
+    const grupoNome = new Map();
+    for (let i = 0; i < grupoIds.length; i += 200) {
+      const { data } = await supabase.from('mem_grupos').select('id, nome').in('id', grupoIds.slice(i, i + 200));
+      (data || []).forEach(g => grupoNome.set(g.id, g.nome));
+    }
+
+    // Origem do opt-in: consentimento 'whatsapp' mais recente por membro
+    const consent = new Map();
+    const ids = membros.map(m => m.id);
+    for (let i = 0; i < ids.length; i += 200) {
+      const { data } = await supabase.from('inscricao_consentimentos')
+        .select('membro_id, porta, em')
+        .eq('tipo', 'whatsapp').eq('aceito', true).is('deleted_at', null)
+        .in('membro_id', ids.slice(i, i + 200))
+        .order('em', { ascending: false });
+      (data || []).forEach(c => { if (c.membro_id && !consent.has(c.membro_id)) consent.set(c.membro_id, c); });
+    }
+
+    // Junta por TELEFONE (a mesma pessoa pode ser membro opt-in E líder)
+    const PORTA_LABEL = {
+      batismo: 'inscrição de batismo', apresentacao: 'apresentação de crianças',
+      grupos: 'inscrição em grupo', grupos_lider: 'inscrição de líder',
+      next: 'inscrição no Next', voluntariado: 'ficha de voluntariado',
+      evento_externo: 'inscrição em evento', inscricoes: 'inscrição em evento',
+    };
+    const porTel = new Map();
+    for (const m of membros) {
+      const tel = dig(m.telefone);
+      if (!tel) continue;
+      const c = consent.get(m.id);
+      porTel.set(tel, {
+        telefone: m.telefone, nome: m.nome, membro_id: m.id, papeis: ['optin'],
+        origem: c ? `Opt-in na ${PORTA_LABEL[c.porta] || c.porta}` : 'Opt-in registrado no cadastro',
+        desde: c?.em || m.whatsapp_optin_em || null,
+      });
+    }
+    for (const l of lids || []) {
+      const tel = dig(l.telefone);
+      if (!tel) continue;
+      const gNome = grupoNome.get(l.grupo_id);
+      const origemLider = l.origem === 'auto'
+        ? `Líder de grupo${gNome ? ` · ${gNome}` : ''} (aprova pedidos por WhatsApp)`
+        : 'Vinculado manualmente ao bot';
+      const ex = porTel.get(tel);
+      if (ex) {
+        ex.papeis.push('lider');
+        ex.origem_lider = origemLider;
+        ex.lider_id = l.id;
+        ex.lider_ativo = l.ativo !== false;
+        ex.recebe_lembretes = l.recebe_lembretes !== false;
+      } else {
+        porTel.set(tel, {
+          telefone: l.telefone, nome: l.nome_exibicao || null, membro_id: null, papeis: ['lider'],
+          origem: origemLider, desde: null,
+          lider_id: l.id, lider_ativo: l.ativo !== false, recebe_lembretes: l.recebe_lembretes !== false,
+        });
+      }
+    }
+
+    let contatos = [...porTel.values()];
+    if (busca) {
+      contatos = contatos.filter(c =>
+        contemNormalizado(c.nome || '', busca) || (dig(busca) && dig(c.telefone).includes(dig(busca))));
+    }
+    contatos.sort((a, b) => String(a.nome || '￿').localeCompare(String(b.nome || '￿'), 'pt-BR'));
+    res.json({
+      contatos,
+      total: contatos.length,
+      resumo: { optin: membros.length, lideres: (lids || []).length },
+      truncado,
+    });
+  } catch (e) {
+    console.error('[comunicacao] contatos:', e.message);
+    res.status(500).json({ error: 'Erro ao listar os contatos' });
+  }
+});
+
 // ── Tarifas ──────────────────────────────────────────────────────────
 router.get('/tarifas', async (_req, res) => {
   const { data, error } = await supabase.from('wa_tarifas').select('*').order('categoria');
@@ -276,7 +439,10 @@ router.get('/envios', async (req, res, next) => {
       .select('id, telefone, tipo, template, texto, contexto, status, tentativas, erro, erro_status, message_id, criado_em, enviado_em, delivered_at, read_at, failed_at', { count: 'exact' })
       .order('criado_em', { ascending: false })
       .range(offset, offset + limite - 1);
-    if (req.query.status) q = q.eq('status', String(req.query.status));
+    // 'falha_meta' não é um status da fila: é envio ACEITO (status=enviado) que
+    // a Meta depois reportou como não entregue — o recorte é pelo failed_at.
+    if (req.query.status === 'falha_meta') q = q.not('failed_at', 'is', null);
+    else if (req.query.status) q = q.eq('status', String(req.query.status));
     if (req.query.contexto) q = q.ilike('contexto', `${String(req.query.contexto)}%`);
     if (req.query.telefone) q = q.ilike('telefone', `%${String(req.query.telefone).replace(/\D/g, '')}%`);
     if (req.query.de) q = q.gte('criado_em', String(req.query.de));
@@ -337,7 +503,16 @@ router.get('/envios/resumo', async (req, res, next) => {
       conta(q => q.not('read_at', 'is', null)),
       conta(q => q.not('failed_at', 'is', null)),
     ]);
-    res.json({ dias, total, enviados, pendentes, erros, entregues, lidos, falhos_meta: falhosMeta });
+    // Órfãos (recibo da Meta sem envio correspondente) — best-effort: a aba
+    // Envios (que absorveu a Erros) mostra o selo quando > 0.
+    let orfaos = 0;
+    try {
+      const { count, error: errOrf } = await supabase.from('whatsapp_status_orfaos')
+        .select('id', { count: 'exact', head: true }).gte('criado_em', desde);
+      if (errOrf) console.warn('[comunicacao] resumo orfaos:', errOrf.message);
+      orfaos = count || 0;
+    } catch { /* tabela ausente → 0 */ }
+    res.json({ dias, total, enviados, pendentes, erros, entregues, lidos, falhos_meta: falhosMeta, orfaos });
   } catch (e) {
     console.error('[comunicacao] resumo:', e.message);
     next(communicationError(e, 'Erro no resumo de envios.'));
@@ -361,9 +536,13 @@ router.get('/custo', async (req, res, next) => {
     const envios = await (async () => {
       const out = []; let from = 0; const page = 1000;
       while (true) {
+        // ⚠️ .order() obrigatório: range() sem ORDER BY tem ordem indefinida no
+        // PostgREST — páginas podiam duplicar/perder linhas e o custo estimado
+        // saía errado em silêncio. id no desempate (criado_em pode empatar).
         const { data, error } = await supabase.from('whatsapp_envios')
           .select('tipo, template, contexto, criado_em')
           .eq('status', 'enviado').gte('criado_em', desdeISO)
+          .order('criado_em', { ascending: true }).order('id', { ascending: true })
           .range(from, from + page - 1);
         if (error) throw error;
         out.push(...(data || []));

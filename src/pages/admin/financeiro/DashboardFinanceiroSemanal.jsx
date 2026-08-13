@@ -3914,7 +3914,8 @@ function SlideDizimoOferta() {
               Dízimo × Oferta · {ano}
             </h3>
             <p className="text-xs text-muted-foreground">
-              Proporção da base de contribuição · dízimo é recorrente, oferta é eventual ·
+              Proporção da base de contribuição · dízimo é recorrente, oferta é eventual
+              {semExtra ? ' (sem as extraordinárias)' : ' (inclui as extraordinárias)'} ·
               ano: <strong>{pctDizGeral.toFixed(0)}% dízimo</strong> / {(100 - pctDizGeral).toFixed(0)}% oferta
             </p>
           </div>

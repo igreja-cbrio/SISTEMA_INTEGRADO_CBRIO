@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate, Outlet, useNavigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { TutorialProvider } from './contexts/TutorialContext';
@@ -311,6 +311,16 @@ const Cuidados = lazyWithRetry(() => import('./pages/ministerial/Cuidados'));
 const Comunicacao = lazyWithRetry(() => import('./pages/Comunicacao'));
 // Conversas / ConversasSetores viraram abas dentro de Comunicação (import interno).
 // As rotas antigas abaixo agora redirecionam pra /comunicacao.
+
+// Redirect pra /comunicacao que PRESERVA a query original (?telefone=&texto=&area=)
+// e só acrescenta/força o ?tab=. Navigate com `to` string substituía a URL inteira
+// e descartava os params — matando o deep-link dos botões "Conversas".
+function RedirectComunicacao({ tab }: { tab: string }) {
+  const location = useLocation();
+  const p = new URLSearchParams(location.search);
+  p.set('tab', tab);
+  return <Navigate to={`/comunicacao?${p.toString()}`} replace />;
+}
 const DevocionalMovido = lazyWithRetry(() => import('./pages/devocional/DevocionalMovido'));
 const Integracao = lazyWithRetry(() => import('./pages/ministerial/Integracao'));
 const Batismo = lazyWithRetry(() => import('./pages/ministerial/Batismos'));
@@ -711,8 +721,12 @@ function AppRoutes() {
         {/* Módulo central de Comunicação (C4) · absorve Conversas + Bot WhatsApp + Menu das Conversas */}
         <Route path="/comunicacao" element={<ModuleGuard moduleSlug="comunicacao"><Suspense fallback={<Loading />}><Comunicacao /></Suspense></ModuleGuard>} />
         {/* Redirects das rotas antigas → não quebrar bookmarks/links */}
-        <Route path="/conversas" element={<Navigate to="/comunicacao?tab=conversas" replace />} />
-        <Route path="/admin/conversas-setores" element={<Navigate to="/comunicacao?tab=bot" replace />} />
+        {/* ⚠️ Redirect PRESERVANDO a query: os botões "Conversas" de ~13 telas
+            (hrefConversa) e o link de transferência chegam com ?telefone=&texto=
+            &area= — o <Navigate to="string"> descartava tudo e a conversa da
+            pessoa não abria (bug da revisão de 05/08). */}
+        <Route path="/conversas" element={<RedirectComunicacao tab="conversas" />} />
+        <Route path="/admin/conversas-setores" element={<RedirectComunicacao tab="bot" />} />
         {/* Superfície interna do Sistema; não é mais um módulo autônomo. */}
         <Route path="/wifi" element={<SuperAdminGuard><Suspense fallback={<Loading />}><WifiModulo /></Suspense></SuperAdminGuard>} />
         <Route path="/ministerial/devocional" element={<Navigate to="/ministerial/cuidados?tab=devocional" replace />} />
@@ -783,7 +797,7 @@ function AppRoutes() {
         <Route path="/admin/app-analytics" element={<SuperAdminGuard><Suspense fallback={<Loading />}><AppAnalytics /></Suspense></SuperAdminGuard>} />
         <Route path="/sistema" element={<SuperAdminGuard><Suspense fallback={<Loading />}><Sistema /></Suspense></SuperAdminGuard>} />
         {/* Bot WhatsApp virou aba dentro de Comunicação */}
-        <Route path="/admin/whatsapp" element={<Navigate to="/comunicacao?tab=bot" replace />} />
+        <Route path="/admin/whatsapp" element={<RedirectComunicacao tab="bot" />} />
         {/* Apresentações: módulo desativado (2026-07-06 · pedido do Matheus) — rota redireciona */}
         <Route path="/admin/apresentacoes" element={<Navigate to="/dashboard" replace />} />
         <Route path="/admin/apresentacoes/*" element={<Navigate to="/dashboard" replace />} />

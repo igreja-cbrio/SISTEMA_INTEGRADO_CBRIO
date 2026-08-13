@@ -398,6 +398,7 @@ router.get('/lideres/:liderId/grupos', async (req, res) => {
 // ── Inscrição publica em grupo (POST sem auth) ──
 const { notificar } = require('../services/notificar');
 const { donosDoGrupo } = require('../services/gruposDestinatarios');
+const { avisarPedidoNovoNoApp } = require('../services/gruposAvisoApp');
 
 function soDigitos(v) { return (v || '').toString().replace(/\D+/g, ''); }
 
@@ -1182,6 +1183,21 @@ router.post('/inscrever', async (req, res) => {
       // configurada em notificacao_regras, o fallback escreve pra ~16 admins".
       // Agora não escreve: sem dono com conta de sistema o aviso não sai, porque
       // o líder já recebe o link do WhatsApp e a coordenação vê no resumo diário.
+      // ⚠️⚠️ AWAITED, e só esta perna: o sino do app é o canal do líder que só
+      // tem o app do membro (74 dos 89 líderes não têm conta de sistema), e em
+      // serverless o container CONGELA na resposta — fire-and-forget aqui é
+      // aviso perdido (a lei de 31/07, que já custou o aviso da líder Jane).
+      // `avisarPedidoNovoNoApp` nunca lança, então o await não arrisca a
+      // resposta de quem está preenchendo o formulário.
+      try {
+        await avisarPedidoNovoNoApp({
+          grupoId: grupo.id,
+          pedidoId: criados[0].pedidoId,
+          grupoNome: grupo.nome,
+          pessoaNome: nomes,
+        });
+      } catch (err) { console.warn('[public grupos] aviso app:', err.message); }
+
       (async () => {
         try {
           const donos = await donosDoGrupo(grupo.id);
@@ -1457,7 +1473,10 @@ router.post('/inscrever-lider', async (req, res) => {
 // ─────────────────────────────────────────────────────────────
 // F3 · aprovação pelo líder via link do WhatsApp (sem login).
 // Token HMAC assinado (services/gruposWhatsapp) dá acesso a UM pedido e
-// expira em 7 dias. Fail-closed: sem CRON_SECRET nenhum token valida.
+// expira em 30 dias (era 7 · Natasha 12/08/2026). Fail-closed: sem CRON_SECRET
+// nenhum token valida. ⚠️ O TTL é a 2ª camada: quem manda são as travas daqui —
+// pedido ainda 'pendente' e `payload.l` = líder ATUAL do grupo. É por isso que
+// o link vencido pode ser prorrogado no serviço sem abrir buraco de segurança.
 // Rota com 2 segmentos de propósito — o GET /:id (acima) captura qualquer
 // caminho de 1 segmento.
 // ─────────────────────────────────────────────────────────────

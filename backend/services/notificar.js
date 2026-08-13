@@ -55,12 +55,43 @@ async function enviarEmailNotificacao(userIds, { titulo, mensagem, link, emailsE
  * 1. Verifica regras personalizadas (notificacao_regras)
  * 2. Fallback: todos admin/diretor
  */
-async function resolverDestinatarios(modulo) {
-  const { data: regras } = await supabase
+async function resolverDestinatarios(modulo, tipo = null) {
+  // ⚠️ REGRA DE TIPO VENCE REGRA DE MÓDULO (11/08/2026). Um mesmo módulo emite
+  // coisas de naturezas diferentes: `inscricoes` manda 2.146 avisos de
+  // "nova inscrição" por mês pra coordenação E o alerta técnico de webhook
+  // recusado, que é de quem MANTÉM o sistema. Sem esta dimensão, restringir um
+  // significava restringir o outro.
+  //
+  // `tipo` NULL na regra = "todos os tipos do módulo" — o comportamento
+  // histórico, e é o que as regras que já existiam continuam fazendo.
+  //
+  // ⚠️⚠️ DEGRADA SOZINHO SE A COLUNA AINDA NÃO EXISTIR (deploy em 2 etapas).
+  // Pedir coluna inexistente faz o PostgREST recusar a query INTEIRA — e aqui
+  // isso não deixaria "algumas pessoas de fora": deixaria TODO MUNDO, em módulo
+  // nenhum, até a migration rodar. Mesma lição do `is_servico` logo abaixo e do
+  // `event_id` (telemetria morta 5 dias em silêncio).
+  let regras = null;
+  const comTipo = await supabase
     .from('notificacao_regras')
-    .select('profile_id')
+    .select('profile_id, tipo')
     .eq('modulo', modulo)
     .eq('ativo', true);
+
+  if (!comTipo.error) {
+    const todas = comTipo.data || [];
+    const doTipo = tipo ? todas.filter(r => r.tipo === tipo) : [];
+    // Específica primeiro; se não há, as genéricas (tipo NULL). Regra de OUTRO
+    // tipo nunca entra — senão configurar um tipo mudaria o destino dos demais.
+    regras = doTipo.length ? doTipo : todas.filter(r => !r.tipo);
+  } else {
+    console.warn('[notificar] sem a coluna tipo em notificacao_regras — usando regra por módulo:', comTipo.error.message);
+    const { data } = await supabase
+      .from('notificacao_regras')
+      .select('profile_id')
+      .eq('modulo', modulo)
+      .eq('ativo', true);
+    regras = data || [];
+  }
 
   if (regras?.length) return regras.map(r => r.profile_id);
 
@@ -107,7 +138,7 @@ async function resolverDestinatarios(modulo) {
  * chaveDedup: string única que identifica o evento (ex: "ferias_vencendo_uuid123")
  */
 async function notificar({ modulo, tipo, titulo, mensagem, link, severidade = 'info', chaveDedup, targetIds, extraTargetIds, email = false, emailsExtra }) {
-  let destinatarios = targetIds || await resolverDestinatarios(modulo);
+  let destinatarios = targetIds || await resolverDestinatarios(modulo, tipo);
   if (extraTargetIds?.length) {
     destinatarios = [...new Set([...(destinatarios || []), ...extraTargetIds.filter(Boolean)])];
   }

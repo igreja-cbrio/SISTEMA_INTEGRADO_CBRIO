@@ -109,11 +109,13 @@ async function pagarComCartao(cobrancaOuId, dados = {}) {
     return { ok: false, motivo: 'provider_sem_tokenizacao' };
   }
 
-  // Teto de parcelas: o da cobrança (que veio do evento) e, na ausência, o do
-  // provider. O número que a tela manda é PEDIDO, não decisão.
-  const teto = Number(c.parcelas_max) > 0
-    ? Number(c.parcelas_max)
-    : Number(adapter.capacidades.parcelas_max) || 1;
+  // Teto de parcelas: o da cobrança, que veio do evento. O número que a tela
+  // manda é PEDIDO, não decisão.
+  // ⚠️⚠️ SEM teto gravado = **1x**, nunca o do provider (11/08/2026 · mesma
+  // correção do `telaPublica.tetoParcelas`, e tem que ser IDÊNTICA aqui: é o
+  // caminho do cartão na nossa página, e réguas diferentes fariam a mesma
+  // cobrança aceitar 36x por um caminho e 1x pelo outro).
+  const teto = Number(c.parcelas_max) > 0 ? Number(c.parcelas_max) : 1;
   const pedidas = Number(dados.installments) > 0 ? Math.floor(Number(dados.installments)) : 1;
   if (pedidas > teto) {
     return { ok: false, motivo: `Este evento aceita no máximo ${teto}x.` };

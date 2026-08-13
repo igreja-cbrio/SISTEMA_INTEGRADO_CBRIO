@@ -15,6 +15,14 @@ const { montarPatchFusao } = require('../services/fusaoCampos');
 const { normalizarCpf: normCpf11, cpfValido } = require('../utils/cpf');
 const censoDisparo = require('../services/censoDisparo');
 const { avaliarProntidao } = require('../utils/prontidaoCadastro');
+// ⚠️⚠️ `donosDoGrupo` era CHAMADO em `/totem/grupos/:id/entrar` e NUNCA foi
+// importado neste arquivo — ReferenceError latente. O insert do pedido roda
+// ANTES, então o primeiro uso real do totem gravaria o pedido e responderia
+// 500 pra pessoa. Medido em 11/08: **0 pedidos com origem 'totem'** na base
+// inteira (570 do formulário público, 2 do app), ou seja a rota nunca foi
+// exercitada e o erro nunca disparou. Achado ao ligar o sino do app.
+const { donosDoGrupo } = require('../services/gruposDestinatarios');
+const { avisarPedidoNovoNoApp } = require('../services/gruposAvisoApp');
 
 const uploadMw = multer({
   storage: multer.memoryStorage(),
@@ -187,10 +195,18 @@ router.get('/qr-lookup/:token', async (req, res) => {
       const [grupoAtualRes, ministeriosRes, ultContribRes, ultCheckinRes, trilhaRes] = await Promise.all([
         supabase
           .from('mem_grupo_membros')
-          .select('grupo:mem_grupos(id, nome, categoria, local, dia_semana, horario)')
+          // !inner + filtros no embed: sem eles, quem tem vinculo aberto em
+          // grupo ja ENCERRADO mostrava grupo morto no cartao — e .maybeSingle()
+          // sem limit ERRAVA ("multiple rows") pra quem tem 2+ vinculos abertos
+          // (257 pessoas medidas em 11/08). Mostra o vinculo mais recente.
+          .select('grupo:mem_grupos!inner(id, nome, categoria, local, dia_semana, horario)')
           .is('deleted_at', null)
           .eq('membro_id', membro.id)
           .is('saiu_em', null)
+          .eq('grupo.ativo', true)
+          .is('grupo.deleted_at', null)
+          .order('entrou_em', { ascending: false })
+          .limit(1)
           .maybeSingle(),
         supabase
           .from('mem_voluntarios')
@@ -326,10 +342,18 @@ router.get('/cpf-lookup/:cpf', authorizeModule('membros-totem', 1), async (req, 
       const [grupoAtualRes, ministeriosRes, ultContribRes, ultCheckinRes, trilhaRes] = await Promise.all([
         supabase
           .from('mem_grupo_membros')
-          .select('grupo:mem_grupos(id, nome, categoria, local, dia_semana, horario)')
+          // !inner + filtros no embed: sem eles, quem tem vinculo aberto em
+          // grupo ja ENCERRADO mostrava grupo morto no cartao — e .maybeSingle()
+          // sem limit ERRAVA ("multiple rows") pra quem tem 2+ vinculos abertos
+          // (257 pessoas medidas em 11/08). Mostra o vinculo mais recente.
+          .select('grupo:mem_grupos!inner(id, nome, categoria, local, dia_semana, horario)')
           .is('deleted_at', null)
           .eq('membro_id', membro.id)
           .is('saiu_em', null)
+          .eq('grupo.ativo', true)
+          .is('grupo.deleted_at', null)
+          .order('entrou_em', { ascending: false })
+          .limit(1)
           .maybeSingle(),
         supabase
           .from('mem_voluntarios')
@@ -1843,6 +1867,12 @@ router.post('/totem/grupos/:id/entrar', async (req, res) => {
     // Só quem responde por ESTE grupo (líder + supervisor). Sem dono com conta
     // de sistema, o aviso não sai — o líder recebe o WhatsApp e a coordenação vê
     // no resumo diário. Ver services/gruposDestinatarios.js.
+    // Sino do app do líder (ver services/gruposAvisoApp.js) — AWAITED, como nas
+    // outras origens: é o canal do líder que só tem o app do membro.
+    await avisarPedidoNovoNoApp({
+      grupoId, pedidoId: pedido.id, grupoNome: grupo.nome, pessoaNome: pessoa.nome,
+    });
+
     donosDoGrupo(grupoId).then((donos) => {
       if (!donos.length) return;
       return notificar({
@@ -2186,8 +2216,12 @@ function _fmtDate(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+// Regra do culto da apresentação (D3 · 09:30 primário, overflow 11:30 por
+// limite · docs/cultos-domingo §12.1) — régua PURA, no gate de deploy.
+const { escolherCultoApresentacao, rotuloHora } = require('../utils/criancaApresentacao');
+
 // GET /api/membresia/totem/apresentacao-bebe/status?membro_id=X
-// Retorna { proxima_data, culto?, apresentacao_existente? }
+// Retorna { proxima_data, horario_previsto?, horario_rotulo?, apresentacao_existente? }
 router.get('/totem/apresentacao-bebe/status', async (req, res) => {
   try {
     const { membro_id } = req.query;
@@ -2199,7 +2233,12 @@ router.get('/totem/apresentacao-bebe/status', async (req, res) => {
       .from('cultos')
       .select('id, data, service_type:vol_service_types(name, recurrence_time)')
       .eq('data', proximaStr)
+      .is('deleted_at', null)
       .limit(5);
+
+    // Horário previsto pela MESMA régua do POST — era o "às 10h" hardcoded na
+    // tela, que ficaria errado depois do corte de 24/08 (o 10:00 encerra).
+    const previsto = escolherCultoApresentacao(cultos || []);
 
     let apresentacao_existente = null;
     if (membro_id) {
@@ -2216,6 +2255,8 @@ router.get('/totem/apresentacao-bebe/status', async (req, res) => {
     res.json({
       proxima_data: proximaStr,
       cultos: cultos || [],
+      horario_previsto: previsto.hora,
+      horario_rotulo: rotuloHora(previsto.hora),
       apresentacao_existente,
     });
   } catch (e) {
@@ -2293,24 +2334,42 @@ router.post('/totem/apresentacao-bebe', async (req, res) => {
       return res.status(409).json({ error: `${bebeNomeLimpo} já está com a apresentação agendada para ${proximaStr.split('-').reverse().join('/')}.` });
     }
 
-    // Culto da cerimônia: a apresentação é SEMPRE no culto das 10:00 (regra do
-    // Marcos 2026-07-23 · sem escolha). Vincula ao culto de 10:00 do 2º domingo;
-    // se não houver, cai no primeiro por horário (não trava o agendamento).
+    // Culto da cerimônia: 09:30 primário com overflow pro 11:30 por LIMITE
+    // (D3 · Marcos+Matheus 11/08 · docs/cultos-domingo §12.1). Bebês estão SEM
+    // limite por enquanto (Marcos 12/08) ⇒ env vazia = nunca transborda; ligar
+    // o overflow no futuro é setar APRESENTACAO_LIMITE_POR_CULTO, sem deploy
+    // de regra. Antes do corte de 24/08 o 09:30 não existe e a régua cai no
+    // 10:00 — comportamento IDÊNTICO ao atual até lá.
+    // ⚠️ Sem candidato: agenda SEM culto (culto_id null) — o fallback antigo
+    // "primeiro por horário" penduraria a cerimônia no fantasma de 08:30 (B9).
     let culto_id = null;
+    let cultoHora = null;
     const { data: cultosDia } = await supabase
       .from('cultos')
       .select('id, service_type:vol_service_types(recurrence_time)')
-      .eq('data', proximaStr);
-    if (cultosDia && cultosDia.length) {
-      const das10 = cultosDia.find((c) => String(c.service_type?.recurrence_time || '').startsWith('10:00'));
-      if (das10) {
-        culto_id = das10.id;
-      } else {
-        const ordenados = [...cultosDia].sort((a, b) =>
-          String(a.service_type?.recurrence_time || '99:99').localeCompare(String(b.service_type?.recurrence_time || '99:99')));
-        culto_id = ordenados[0].id;
+      .eq('data', proximaStr)
+      .is('deleted_at', null);
+    const limiteApres = parseInt(process.env.APRESENTACAO_LIMITE_POR_CULTO || '', 10) || null;
+    let contagemApres = null;
+    if (limiteApres && cultosDia?.length) {
+      // Contagem só quando há limite — cancelada não ocupa vaga.
+      const { data: agendadas } = await supabase
+        .from('apresentacao_bebes')
+        .select('culto_id')
+        .eq('data_apresentacao', proximaStr)
+        .is('deleted_at', null)
+        .neq('status', 'cancelada');
+      contagemApres = {};
+      for (const a of agendadas || []) {
+        if (a.culto_id) contagemApres[a.culto_id] = (contagemApres[a.culto_id] || 0) + 1;
       }
     }
+    const escolhido = escolherCultoApresentacao(cultosDia || [], {
+      limite: limiteApres,
+      contagem: contagemApres,
+    });
+    culto_id = escolhido.culto?.id || null;
+    cultoHora = escolhido.hora;
 
     // Identidade da família: resolve/cria o membro do responsável pelo CPF
     // (matcher canônico) — sem isso a família não fica ligada pro Kids depois.
@@ -2380,12 +2439,15 @@ router.post('/totem/apresentacao-bebe', async (req, res) => {
         enfileirar({
           telefone: cleanTel,
           template: process.env.WHATSAPP_TEMPLATE_BEBE_CONF || 'apresentacao_bebes_confirmacao',
-          // {{1}} responsável · {{2}} bebê · {{3}} data · {{4}} horário (10h fixo)
+          // {{1}} responsável · {{2}} bebê · {{3}} data · {{4}} horário — o do
+          // culto escolhido pela régua D3 (era '10:00' fixo; pós-corte 09:30).
+          // ⚠️ Conferir na Meta se o CORPO do template cita "10h" fora do {{4}}
+          // — se citar, é template _v2 (edição volta pra revisão e o envio para).
           params: [
             String(responsavel_nome).split(' ')[0] || 'Olá',
             String(bebe_nome).trim(),
             proximaStr.split('-').reverse().join('/'),
-            '10:00',
+            cultoHora || 'a confirmar',
           ],
           contexto: 'apresentacao_bebe_totem',
           refId: data.id,
@@ -2442,7 +2504,7 @@ router.post('/totem/apresentacao-bebe', async (req, res) => {
       }
     }
 
-    res.status(201).json({ ok: true, apresentacao: data, data_apresentacao: proximaStr });
+    res.status(201).json({ ok: true, apresentacao: data, data_apresentacao: proximaStr, horario_rotulo: rotuloHora(cultoHora) });
   } catch (e) {
     console.error('[TOTEM] apresentacao-bebe POST error:', e.message);
     res.status(500).json({ error: 'Erro ao agendar apresentação: ' + e.message });

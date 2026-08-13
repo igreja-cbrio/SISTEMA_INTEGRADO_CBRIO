@@ -252,6 +252,8 @@ export const events = {
   deleteSimpleTemplate: (id) => del(`/events/simple-templates/${id}`),
   toggleSimpleTemplate: (id) => patch(`/events/simple-templates/${id}/toggle`, {}),
   applySimpleTemplates: (eventId) => post(`/events/${eventId}/apply-simple-templates`, {}),
+  // null = automático por categoria · true = forçar mostrar · false = forçar esconder
+  setVisivelPainelRh: (id, visivel_painel_rh) => patch(`/events/${id}/visivel-painel-rh`, { visivel_painel_rh }),
 };
 
 // Módulo Propostas · ciclo anual (Fase 1A: configuração)
@@ -760,6 +762,8 @@ export const integracao = {
 
 export const dashboardSemanal = {
   cultos: () => get('/dashboard-semanal/cultos'),
+  // Prévia do novo formato de domingo (atrás do véu · docs/cultos-domingo/)
+  lentesDomingo: (params = {}) => get('/dashboard-semanal/lentes-domingo?' + new URLSearchParams(params)),
   semanasDisponiveis: (ano) => get(`/dashboard-semanal/semanas-disponiveis?ano=${ano}`),
   semanal: (params) => get('/dashboard-semanal/semanal?' + new URLSearchParams(params)),
   resumoSemana: (ano, semana) => get(`/dashboard-semanal/resumo-semana?ano=${ano}&semana=${semana}`),
@@ -1961,6 +1965,19 @@ export const comunicados = {
   },
 };
 
+// ── Painel informativo de RH (home/Dashboard) ──
+export const painelRh = {
+  aniversariantes: () => get('/painel-rh/aniversariantes'),
+  eventos: () => get('/painel-rh/eventos'),
+  comunicados: () => get('/painel-rh/comunicados'),
+  comunicadosAdmin: () => get('/painel-rh/comunicados/admin'),
+  criarComunicado: (data) => post('/painel-rh/comunicados', data),
+  atualizarComunicado: (id, data) => put(`/painel-rh/comunicados/${id}`, data),
+  publicarComunicado: (id) => post(`/painel-rh/comunicados/${id}/publicar`, {}),
+  arquivarComunicado: (id) => post(`/painel-rh/comunicados/${id}/arquivar`, {}),
+  removerComunicado: (id) => del(`/painel-rh/comunicados/${id}`),
+};
+
 export const painelArea = {
   // params: { período?: '30d'|'90d'|'180d'|'365d', desde?: 'YYYY-MM-DD', até?: 'YYYY-MM-DD' }
   get: (area, params = {}) => {
@@ -2322,6 +2339,11 @@ export const solicitacoes = {
   retomar:        (id) => post(`/solicitacoes/${id}/retomar`, {}),
   // Cotação (compras/serviço) · logística registra valor+fornecedor antes do financeiro
   registrarCotacao: (id, payload) => post(`/solicitacoes/${id}/registrar-cotacao`, payload),
+  // Aprovação por ALÇADA · quem atende a área aprova a compra dentro do teto,
+  // sem passar pelo financeiro. MESMO endpoint da aprovação financeira (uma
+  // régua só de dinheiro) — quem decide qual caminho vale é o servidor.
+  aprovarNaAlcada: (id, { observacao, forma_pagamento } = {}) =>
+    post(`/solicitacoes/${id}/aprovar-financeiro`, { observacao, forma_pagamento }),
   // Cotações múltiplas · lista de fornecedores + botão de envio ao financeiro
   listarCotacoes:   (id) => get(`/solicitacoes/${id}/cotacoes`),
   adicionarCotacao: (id, payload) => post(`/solicitacoes/${id}/cotacoes`, payload),
@@ -3483,9 +3505,6 @@ export const kpis = {
   dashboard: (semanas) => get(`/kpis/dashboard?semanas=${semanas || 12}`),
   metas: () => get('/kpis/metas'),
   updateMeta: (id, data) => put(`/kpis/metas/${id}`, data),
-  // YouTube sync
-  youtubeSync: () => post('/kpis/youtube/sync', {}),
-  youtubeStatus: () => get('/kpis/youtube/status'),
   // Auto-criação semanal (idempotente). weeks=N para backfill retroativo
   cultosAutoCreate: (weeks) => post(`/kpis/cultos/auto-create${weeks ? `?weeks=${weeks}` : ''}`, {}),
   // ── Mandala Cultura ──
@@ -3647,6 +3666,8 @@ export const comunicacao = {
     list: () => get('/comunicacao/tarifas'),
     atualizar: (categoria, tarifa) => put(`/comunicacao/tarifas/${encodeURIComponent(categoria)}`, { tarifa }),
   },
+  // Contatos = membros com opt-in + líderes do bot, com a ORIGEM de cada um
+  contatos: (busca) => get('/comunicacao/contatos' + (busca ? `?busca=${encodeURIComponent(busca)}` : '')),
   envios: {
     list: (params = {}) => {
       const p = new URLSearchParams();

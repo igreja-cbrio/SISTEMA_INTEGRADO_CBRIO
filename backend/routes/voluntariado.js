@@ -2826,7 +2826,12 @@ router.get('/service-types', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao listar tipos de culto' }); }
 });
 
-router.post('/service-types', async (req, res) => {
+// ⚠️ Escrita em tipo de culto é ADMIN do voluntariado (nível 5) — o herdado do
+// router (`membresia`, 1 = LEITURA) deixava 27 cargos alcançarem POST/PUT/DELETE
+// (achado 🔴 da varredura de cultos de domingo · docs/cultos-domingo/).
+// ⚠️ O POST NÃO cobre has_kids/has_online/presencial_label — tipo de culto NOVO
+// nasce por SQL (senão nasce sem Kids e nenhuma criança faz check-in).
+router.post('/service-types', authorizeModule('voluntariado', 5), async (req, res) => {
   try {
     const { name, description, recurrence_day, recurrence_time, color } = req.body;
     if (!name) return res.status(400).json({ error: 'name obrigatorio' });
@@ -2837,7 +2842,7 @@ router.post('/service-types', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao criar tipo de culto' }); }
 });
 
-router.put('/service-types/:id', async (req, res) => {
+router.put('/service-types/:id', authorizeModule('voluntariado', 5), async (req, res) => {
   try {
     const { name, description, recurrence_day, recurrence_time, color, is_active } = req.body;
     const { data, error } = await supabase.from('vol_service_types')
@@ -2848,8 +2853,20 @@ router.put('/service-types/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar tipo de culto' }); }
 });
 
-router.delete('/service-types/:id', async (req, res) => {
+router.delete('/service-types/:id', authorizeModule('voluntariado', 5), async (req, res) => {
   try {
+    // ⚠️ (docs/cultos-domingo/ · mina nº 5) DELETE de tipo anula service_type_id
+    // nos cultos (somem dos KPIs) e apaga em CASCADE roteiro de produção,
+    // checklist e vínculo de template de escala. Tipo com culto vinculado NUNCA
+    // é deletável — o caminho é ENCERRAR (is_active=false). Contagem head-only;
+    // falha na contagem BLOQUEIA (fail-closed: este é o caminho destrutivo).
+    const { count, error: cErr } = await supabase.from('cultos')
+      .select('id', { count: 'exact', head: true })
+      .eq('service_type_id', req.params.id);
+    if (cErr) return res.status(500).json({ error: 'Não deu pra conferir os cultos vinculados — exclusão bloqueada por segurança.' });
+    if ((count || 0) > 0) {
+      return res.status(409).json({ error: `Este tipo tem ${count} culto(s) vinculado(s). Encerre o tipo (desativar) em vez de excluir — excluir apagaria roteiro de produção e escalas em cascata.` });
+    }
     const { error } = await supabase.from('vol_service_types').delete().eq('id', req.params.id);
     if (error) return res.status(400).json({ error: error.message });
     res.json({ success: true });

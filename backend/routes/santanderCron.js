@@ -23,6 +23,7 @@ const { isAuthorizedCron } = require('../utils/cronAuth');
 const { AppError, ERROR_CODES } = require('../utils/appError');
 const { captureHandledException } = require('../utils/sentry');
 const { setSystemJobOutcome } = require('../services/systemJobOutcome');
+const { reconcileTransactions } = require('../services/santander/reconciliation');
 
 function bankSyncError(error, publicMessage) {
   return new AppError(error?.message || publicMessage, {
@@ -105,6 +106,7 @@ async function handlerSync(req, res, next) {
 
   try {
     const { dias = 3, conta_id_override } = req.body || {};
+    const dryRun = req.body?.dry_run === true || req.body?.dry_run === 'true';
     const hoje = new Date();
     const desde = new Date(hoje.getTime() - dias * 86400000);
     const inicio = desde.toISOString().slice(0, 10);
@@ -151,7 +153,37 @@ async function handlerSync(req, res, next) {
         periodo: { inicio, fim },
       });
     }
-    const extrato = { transacoes };
+    const reconciliation = await reconcileTransactions(supabase, transacoes);
+    if (dryRun) {
+      setSystemJobOutcome(res, {
+        status: 'skipped', effectStatus: 'not_applicable', inputCount: transacoes.length,
+        outputCount: reconciliation.candidates.length, result: 'simulacao_concluida',
+      });
+      return res.json({
+        ok: true,
+        dry_run: true,
+        conta_id: contaLocal.id,
+        periodo: { inicio, fim },
+        origem_total: transacoes.length,
+        ja_existentes_brutos: reconciliation.existingRaw.size,
+        ja_existentes_transacoes: reconciliation.existingFinal.size,
+        duplicados_na_origem: reconciliation.duplicateInOrigin,
+        candidatos_novos: reconciliation.candidates.length,
+        por_data: reconciliation.byDate,
+      });
+    }
+    const extrato = { transacoes: reconciliation.candidates };
+    if (extrato.transacoes.length === 0) {
+      setSystemJobOutcome(res, {
+        status: 'success', effectStatus: 'confirmed', inputCount: transacoes.length,
+        outputCount: 0, result: 'todos_lancamentos_ja_existentes',
+      });
+      return res.json({
+        ok: true, conta_id: contaLocal.id, periodo: { inicio, fim },
+        origem_total: transacoes.length, inseridos: 0,
+        duplicados: reconciliation.existingRaw.size + reconciliation.existingFinal.size + reconciliation.duplicateInOrigin,
+      });
+    }
 
     // 4. Cria registro de upload
     const { data: uploadRow } = await supabase
@@ -170,7 +202,7 @@ async function handlerSync(req, res, next) {
 
     // 5. Insere lancamentos brutos
     let inseridos = 0;
-    let duplicados = 0;
+    let duplicados = reconciliation.existingRaw.size + reconciliation.existingFinal.size + reconciliation.duplicateInOrigin;
     let erros = 0;
 
     for (const t of extrato.transacoes) {
@@ -195,7 +227,7 @@ async function handlerSync(req, res, next) {
         memo,
         nome_contraparte: t.partieNome || null,
         documento_contraparte: documento,
-        fitid: t.id || `santander-${t.data}-${t.valor}-${Math.random().toString(36).slice(2, 8)}`,
+        fitid: t.fitid,
         raw_data: { santander_api: t.raw || t },
         upload_id: uploadRow?.id,
       };

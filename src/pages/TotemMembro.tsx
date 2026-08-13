@@ -2943,6 +2943,9 @@ function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onEndSession, onAct
   const guest = !!member.guest;
   const [loading, setLoading] = useState(true);
   const [proximaData, setProximaData] = useState<string | null>(null);
+  // Horário da cerimônia vem do SERVIDOR (régua D3 · 09:30 pós-corte de 24/08).
+  // Era "10h" hardcoded em 2 textos; sem horário do servidor, o texto é omitido.
+  const [horarioRotulo, setHorarioRotulo] = useState<string | null>(null);
   const [existente, setExistente] = useState<any>(null);
   const [step, setStep] = useState<'check' | 'form' | 'success'>('check');
   const [form, setForm] = useState({
@@ -2974,6 +2977,7 @@ function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onEndSession, onAct
     membresia.totem.apresentacaoBebe.status(params)
       .then((r: any) => {
         setProximaData(r.proxima_data);
+        setHorarioRotulo(r.horario_rotulo ?? null);
         setExistente(r.apresentacao_existente);
       })
       .catch(() => {})
@@ -3046,7 +3050,7 @@ function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onEndSession, onAct
           {proximaData && (
             <p className="text-white/70 mt-3 text-lg">
               {fmtDateBR(proximaData).replace(/^(\w)/, c => c.toUpperCase())}
-              {' · '}<span className="text-[#EC4899] font-semibold">às 10h</span>
+              {horarioRotulo && <>{' · '}<span className="text-[#EC4899] font-semibold">às {horarioRotulo}</span></>}
             </p>
           )}
           <p className="text-white/50 mt-2 text-sm">
@@ -3104,7 +3108,7 @@ function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onEndSession, onAct
               <div className="rounded-2xl border border-[#EC4899]/30 bg-[#EC4899]/10 p-4">
                 <p className="text-white/60 text-xs uppercase tracking-wider">Próxima cerimônia</p>
                 <p className="text-xl font-bold text-[#EC4899] mt-1">{fmtDateBR(proximaData)}</p>
-                <p className="text-white/70 text-sm mt-1">no culto das 10h</p>
+                {horarioRotulo && <p className="text-white/70 text-sm mt-1">no culto das {horarioRotulo}</p>}
               </div>
             )}
             <Button

@@ -17,6 +17,7 @@ import KpiCard from './KpiCard';
 import OcupacaoGauge from './OcupacaoGauge';
 import { ChartGradients, gradFill } from '../charts/ChartGradients';
 import { ResumoSemanaCard } from './ResumoCards';
+import LentesDomingoCard from './LentesDomingoCard';
 
 const C = { primary: '#00B39D', media: '#7BAEC2', taxa: '#E97A3F' };
 
@@ -403,6 +404,11 @@ export default function DashSemanalAba() {
       <div className="col-span-12 lg:col-span-10 space-y-4">
         {/* Resumo da semana · números consolidados */}
         <ResumoSemanaCard ano={ano} semana={semana} />
+
+        {/* Prévia do novo formato de domingo (corte 24/08) — ATRÁS DO VÉU:
+            o card se busca sozinho e só renderiza quando o backend diz
+            visível (flag ligada OU super-admin). docs/cultos-domingo/. */}
+        <LentesDomingoCard />
 
         {/* Filtros topo */}
         <div className="flex flex-wrap items-end gap-3">

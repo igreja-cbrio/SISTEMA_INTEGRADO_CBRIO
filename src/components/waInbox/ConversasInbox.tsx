@@ -25,7 +25,7 @@ import {
   Loader2, Send, Search, Check, MessageCircle, RefreshCw, ExternalLink, Clock,
   User, CheckCheck, UserPlus, ChevronDown, UserCheck, Tag, Plus, Inbox, Filter,
   Users, Droplets, HandHelping, Sparkles, StickyNote, Paperclip, ArrowLeftRight, Hash, Star,
-  Zap,
+  Zap, Megaphone, AlertTriangle,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -39,11 +39,32 @@ type Conversa = {
   protocolo: string | null; satisfacao: number | null; pesquisa_estado: string | null;
   dentro_janela: boolean; janela_expira_em: string | null;
 };
-type Msg = { id: string; direcao: 'in' | 'out'; tipo: string; texto: string | null; media_url: string | null; criado_em: string };
+type Msg = {
+  id: string; direcao: 'in' | 'out'; tipo: string; texto: string | null; media_url: string | null; criado_em: string;
+  delivered_at?: string | null; read_at?: string | null; failed_at?: string | null; erro_status?: string | null;
+};
+
+// Recibo VERDADEIRO da Meta (antes o ✓✓ era decorativo — aparecia sempre):
+// ✓ aceito · ✓✓ entregue · ✓✓ azul lido · ⚠ NÃO chegou (com o motivo no hover).
+function ReciboMsg({ m }: { m: Msg }) {
+  if (m.failed_at) {
+    return <AlertTriangle className="h-3 w-3 text-red-300" aria-label="não entregue" />;
+  }
+  if (m.read_at) return <CheckCheck className="h-3 w-3 text-sky-300" aria-label="lida" />;
+  if (m.delivered_at) return <CheckCheck className="h-3 w-3" aria-label="entregue" />;
+  return <Check className="h-3 w-3 opacity-70" aria-label="enviada" />;
+}
 type Perfil = {
   membro: { id: string; nome: string; foto_url: string | null; data_nascimento: string | null; status: string | null } | null;
   grupo?: string | null; grupo_funcao?: string | null; batizado?: boolean;
   serve?: boolean; ministerios?: string[]; fez_next?: boolean;
+  /** Disparos que a igreja mandou pra este telefone antes (mais recente primeiro). */
+  origem?: Disparo[]; origem_erro?: string | null;
+};
+type Disparo = {
+  id: string; contexto: string | null; rotulo: string; modulo: string | null;
+  link: string | null; conhecido: boolean; template: string | null;
+  status: string | null; em: string | null; entregue: boolean;
 };
 
 function horaCurta(iso?: string | null) {
@@ -447,7 +468,12 @@ export default function ConversasInbox({
                         {m.tipo === 'document' && m.media_url && <a href={m.media_url} target="_blank" rel="noreferrer" className="mb-1 flex items-center gap-1 underline"><ExternalLink className="h-3.5 w-3.5" />documento</a>}
                         {m.texto && <p className="leading-relaxed">{m.texto}</p>}
                         {!m.texto && !m.media_url && <p className="italic opacity-60">[{m.tipo}]</p>}
-                        <div className={`mt-1 flex items-center justify-end gap-1 text-[10px] ${m.direcao === 'out' ? 'text-primary-foreground/70' : 'text-muted-foreground'}`}>{horaCurta(m.criado_em)}{m.direcao === 'out' && <CheckCheck className="h-3 w-3" />}</div>
+                        {m.failed_at && (
+                          <p className="mt-1 text-[10px] font-medium text-red-200" title={m.erro_status || undefined}>
+                            ⚠ não entregue{m.erro_status ? ` · ${String(m.erro_status).slice(0, 60)}` : ''}
+                          </p>
+                        )}
+                        <div className={`mt-1 flex items-center justify-end gap-1 text-[10px] ${m.direcao === 'out' ? 'text-primary-foreground/70' : 'text-muted-foreground'}`} title={m.read_at ? 'lida' : m.delivered_at ? 'entregue' : m.failed_at ? 'não entregue' : 'enviada'}>{horaCurta(m.criado_em)}{m.direcao === 'out' && <ReciboMsg m={m} />}</div>
                       </div>
                     </div>
                   ))}
@@ -525,27 +551,66 @@ export default function ConversasInbox({
 
         {/* ── Detalhes ──────────────────────────────────────── */}
         {conv && (
-          <div className="hidden w-[268px] shrink-0 flex-col border-l border-border xl:flex">
+          <div className="hidden min-w-0 max-w-full shrink flex-col overflow-hidden border-l border-border xl:flex xl:basis-[240px] 2xl:basis-[268px]">
             <ScrollArea className="flex-1">
               <div className="flex flex-col items-center gap-2 border-b border-border p-5">
-                <Avatar className="h-16 w-16">{conv.foto_url && <AvatarImage src={conv.foto_url} alt={conv.nome || ''} />}<AvatarFallback className="bg-primary/15 text-primary text-lg font-semibold">{iniciais(conv.nome, conv.telefone)}</AvatarFallback></Avatar>
-                <p className="text-sm font-semibold text-center">{conv.nome || telBonito(conv.telefone)}</p>
+                <Avatar className="h-16 w-16 shrink-0">{conv.foto_url && <AvatarImage src={conv.foto_url} alt={conv.nome || ''} />}<AvatarFallback className="bg-primary/15 text-primary text-lg font-semibold">{iniciais(conv.nome, conv.telefone)}</AvatarFallback></Avatar>
+                {/* ⚠️ `break-words` e não `truncate` no NOME: nome cortado com
+                    "…" é pior que nome em duas linhas — quem vai responder
+                    precisa saber com quem está falando. */}
+                <p className="w-full break-words text-center text-sm font-semibold">{conv.nome || telBonito(conv.telefone)}</p>
                 <p className="text-xs text-muted-foreground">{telBonito(conv.telefone)}{perfil?.membro?.data_nascimento && idade(perfil.membro.data_nascimento) != null ? ` · ${idade(perfil.membro.data_nascimento)} anos` : ''}</p>
                 {conv.protocolo && (
-                  <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium tabular-nums text-muted-foreground"><Hash className="h-3 w-3" />{conv.protocolo}</span>
+                  <span className="inline-flex max-w-full items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium tabular-nums text-muted-foreground"><Hash className="h-3 w-3 shrink-0" /><span className="truncate">{conv.protocolo}</span></span>
                 )}
                 {conv.satisfacao != null && (
                   <span className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-600 dark:text-amber-400"><Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />Satisfação: {conv.satisfacao}/5</span>
                 )}
-                <a href={`https://wa.me/${conv.telefone.replace(/\D+/g, '')}`} target="_blank" rel="noreferrer" className="mt-1"><Button variant="outline" size="sm" className="h-7 gap-1 text-xs"><ExternalLink className="h-3 w-3" />Abrir no WhatsApp</Button></a>
+                <a href={`https://wa.me/${conv.telefone.replace(/\D+/g, '')}`} target="_blank" rel="noreferrer" className="mt-1 max-w-full"><Button variant="outline" size="sm" className="h-7 max-w-full gap-1 text-xs"><ExternalLink className="h-3 w-3 shrink-0" /><span className="truncate">Abrir no WhatsApp</span></Button></a>
               </div>
               <div className="flex flex-col gap-3.5 p-4">
+                {/* ⚠️ VEM ANTES DO PERFIL de propósito: com o bot calado, a
+                    primeira pergunta de quem vai responder é "o que a gente
+                    mandou pra essa pessoa?". Enterrar isso embaixo do perfil
+                    faria a equipe responder no escuro, que é o problema que
+                    este bloco existe pra resolver. */}
+                <div>
+                  <p className="mb-2 flex items-center gap-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    <Megaphone className="h-3.5 w-3.5" />Veio deste disparo
+                  </p>
+                  {perfil?.origem_erro ? (
+                    <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-300">
+                      {perfil.origem_erro}
+                    </div>
+                  ) : perfil?.origem?.length ? (
+                    <div className="space-y-1.5">
+                      {perfil.origem.map((d, i) => (
+                        <div key={d.id} className={`rounded-lg border p-2 text-xs ${i === 0 ? 'border-primary/30 bg-primary/5' : 'border-border'}`}>
+                          <p className={`break-words font-medium ${d.conhecido ? '' : 'font-mono text-[11px]'}`}>{d.rotulo}</p>
+                          <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+                            {d.em && <span className="tabular-nums">{new Date(d.em).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>}
+                            {/* ⚠️ Envio que NÃO saiu é informação pra quem atende:
+                                muda o que a pessoa está respondendo se a mensagem
+                                ficou na fila ou falhou. */}
+                            {!d.entregue && <span className="rounded-full bg-amber-500/15 px-1.5 text-amber-600 dark:text-amber-400">{d.status || 'não enviado'}</span>}
+                            {d.modulo && <span>· {d.modulo}</span>}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="rounded-lg border border-dashed border-border p-2 text-xs text-muted-foreground">
+                      Nenhum disparo nosso nos últimos 60 dias — ela escreveu por conta própria.
+                    </p>
+                  )}
+                </div>
+                <Separator />
                 {/* resumo da pessoa */}
                 <div>
                   <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Perfil</p>
                   {perfil?.membro ? (
                     <div className="space-y-1.5 text-sm">
-                      <div className="flex items-center gap-2"><Users className="h-4 w-4 text-muted-foreground shrink-0" /><span className="text-muted-foreground">Grupo:</span> <span className="truncate">{perfil.grupo || <span className="text-muted-foreground">nenhum</span>}</span></div>
+                      <div className="flex items-center gap-2"><Users className="h-4 w-4 text-muted-foreground shrink-0" /><span className="shrink-0 text-muted-foreground">Grupo:</span> <span className="min-w-0 break-words">{perfil.grupo || <span className="text-muted-foreground">nenhum</span>}</span></div>
                       <div className="flex items-center gap-2"><Droplets className="h-4 w-4 text-muted-foreground shrink-0" /><span className="text-muted-foreground">Batizado:</span> {perfil.batizado ? <Badge variant="outline" className="h-5 border-blue-500/25 bg-blue-500/10 text-[10px] text-blue-600 dark:text-blue-400">Sim</Badge> : <span>Não</span>}</div>
                       <div className="flex items-start gap-2"><HandHelping className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" /><span className="text-muted-foreground">Serve:</span> <span className="flex-1">{perfil.serve ? (perfil.ministerios?.join(', ') || 'Sim') : 'Não'}</span></div>
                       <div className="flex items-center gap-2"><Sparkles className="h-4 w-4 text-muted-foreground shrink-0" /><span className="text-muted-foreground">Fez o NEXT:</span> {perfil.fez_next ? <Badge variant="outline" className="h-5 border-primary/25 bg-primary/10 text-[10px] text-primary">Sim</Badge> : <span>Não</span>}</div>

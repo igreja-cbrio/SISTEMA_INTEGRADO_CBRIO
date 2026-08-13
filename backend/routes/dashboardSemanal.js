@@ -16,9 +16,10 @@
 // ============================================================================
 
 const router = require('express').Router();
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, authorize, isSuperAdminEmail } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const Anthropic = require('@anthropic-ai/sdk');
+const { montarLentes, CORTE_DOMINGO_0930 } = require('../utils/lentesDomingo');
 
 router.use(authenticate);
 
@@ -89,6 +90,103 @@ router.get('/cultos', async (req, res) => {
   } catch (e) {
     console.error('[DASH-SEM] cultos', e.message);
     res.status(500).json({ error: 'Erro ao listar cultos' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /lentes-domingo?semanas=16 · prévia do novo formato de domingo ATRÁS DO
+// VÉU (docs/cultos-domingo/ · Lotes 3-4). Devolve as 3 lentes (separada /
+// continuidade / consolidação) + ocupação sobre lugares OFERECIDOS (1050 ×
+// cultos vigentes no domingo) + o marcador do corte (24/08/2026).
+//
+// O VÉU: só responde dado quando cultos_config.lentes_domingo_publicas = true
+// OU o usuário é super-admin (é assim que Marcos/Matheus testam em produção
+// antes do corte; destravar pra todos = 1 UPDATE na config, sem deploy).
+// Falha ao ler a config = véu FECHADO (fail-closed — a prévia não vaza).
+//
+// Deploy em 2 etapas: as colunas novas de vol_service_types (migration
+// 20260813150000) vão em SELECT ISOLADO — sem elas o endpoint segue de pé e
+// avisa (chaves_ok=false · as lentes degradam pra separada). Lição parcelas_max.
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/lentes-domingo', async (req, res) => {
+  try {
+    let flagPublica = false;
+    try {
+      const { data: cfg } = await supabase
+        .from('cultos_config')
+        .select('lentes_domingo_publicas')
+        .eq('id', true)
+        .maybeSingle();
+      flagPublica = cfg?.lentes_domingo_publicas === true;
+    } catch { /* config ausente → véu fechado */ }
+    const souSuper = await isSuperAdminEmail(req.user?.email);
+    if (!flagPublica && !souSuper) return res.json({ visivel: false });
+
+    const nSemanas = Math.min(Math.max(parseInt(req.query.semanas, 10) || 16, 4), 60);
+
+    // tipos de DOMINGO — inclui inativos de propósito (pós-corte o 08:30/10:00
+    // encerram mas o histórico deles continua nas lentes)
+    const { data: tiposBase, error: tErr } = await supabase
+      .from('vol_service_types')
+      .select('id, name, recurrence_time, is_active, color')
+      .eq('recurrence_day', 0)
+      .order('recurrence_time', { ascending: true });
+    if (tErr) throw tErr;
+
+    // colunas do Lote 3 em SELECT ISOLADO e best-effort
+    let chavesOk = true;
+    const extras = {};
+    try {
+      const { data: ext, error: eErr } = await supabase
+        .from('vol_service_types')
+        .select('id, vigente_de, vigente_ate, linhagem_key, consolidacao_key')
+        .eq('recurrence_day', 0);
+      if (eErr) throw eErr;
+      for (const e of ext || []) extras[e.id] = e;
+    } catch { chavesOk = false; }
+    const tipos = (tiposBase || []).map((t) => ({ ...t, ...(extras[t.id] || {}) }));
+
+    // linhas semanais da view (2 anos ISO cobrem qualquer janela ≤60 semanas) —
+    // paginado: anos × semanas × tipos passa do cap de 1000 do PostgREST
+    const ids = tipos.map((t) => t.id);
+    const hj = hojeBrt();
+    const linhas = ids.length ? await selectPaginado(() =>
+      supabase
+        .from('vw_dashboard_semanal')
+        .select('ano_iso, semana_iso, service_type_id, frequencia')
+        .in('service_type_id', ids)
+        .in('ano_iso', [hj.ano - 1, hj.ano])) : [];
+
+    const hojeISO = `${hj.ano}-${String(hj.mes).padStart(2, '0')}-${String(hj.dia).padStart(2, '0')}`;
+    const out = montarLentes({
+      tipos,
+      linhas: (linhas || []).map((r) => ({
+        ano_iso: r.ano_iso, semana_iso: r.semana_iso,
+        service_type_id: r.service_type_id, valor: Number(r.frequencia) || 0,
+      })),
+      capacidadeUnitaria: CAPACIDADE_TEMPLO,
+      hoje: hojeISO,
+      nSemanas,
+    });
+
+    res.json({
+      visivel: true,
+      flag_publica: flagPublica,
+      sou_super_admin: souSuper,
+      chaves_ok: chavesOk,
+      capacidade_unitaria: CAPACIDADE_TEMPLO,
+      corte_data: CORTE_DOMINGO_0930,
+      tipos: tipos.map((t) => ({
+        id: t.id, nome: t.name, hora: String(t.recurrence_time || '').slice(0, 5),
+        is_active: t.is_active !== false,
+        vigente_de: t.vigente_de || null, vigente_ate: t.vigente_ate || null,
+        linhagem_key: t.linhagem_key || null, consolidacao_key: t.consolidacao_key || null,
+      })),
+      ...out,
+    });
+  } catch (e) {
+    console.error('[DASH-SEM] lentes-domingo', e.message);
+    res.status(500).json({ error: 'Erro ao montar a prévia dos cultos de domingo' });
   }
 });
 
@@ -2044,43 +2142,45 @@ router.delete('/indicadores-custom/:id', async (req, res) => {
   }
 });
 
-// GET /next-presenca-mensal?meses=12 · quantas pessoas estiveram PRESENTES no
-// NEXT por mês (aba simples do Dashboard Semanal). Presença = inscrição do NEXT
-// com check-in feito (next_inscricoes.check_in_at) — mesma régua do módulo /next.
-// Agrupa pelo mês do EVENTO (next_eventos.data · "no NEXT de tal mês"); se o
-// evento não tiver data, cai no mês do próprio check-in. Paginado (cap 1000).
+// GET /next-presenca-mensal?meses=12 · quantas PESSOAS estiveram presentes no
+// NEXT por mês (aba simples do Dashboard Semanal).
+//
+// ⚠️⚠️ A FONTE É A CHAMADA DOS ENCONTROS (`vw_next_presenca_mes` · migration
+// 20260811150000), não mais `next_inscricoes.check_in_at`. Aquele é o modelo
+// ANTERIOR ao cutover de turmas (17/06/2026) e sua última data é 2026-04 — era
+// por isso que mai/2026 em diante aparecia "sem dado" e jun/jul tiveram que ser
+// digitados na mão. Pedido do Matheus em 11/08: "a presença do NEXT inputada de
+// forma automática, a partir da presença das pessoas."
+//
+// ⚠️ O número do histórico DIMINUI, e está certo: o legado contava LINHAS
+// (participações — a mesma pessoa nos 2 encontros do mês contava 2) e a pergunta
+// do card é quantas PESSOAS estiveram. set/2025 eram 44 linhas de 31 pessoas.
+//
+// ⚠️ A view devolve o mês inteiro (12 linhas hoje); a janela é recortada aqui.
+// ⚠️ Se a view ainda não existir (deploy em 2 etapas), o automático vira 0 e o
+// ajuste MANUAL segue mandando — a aba não quebra (lição do `parcelas_max`).
 router.get('/next-presenca-mensal', async (req, res) => {
   try {
     const meses = Math.min(Math.max(parseInt(req.query.meses, 10) || 12, 1), 36);
     // Janela: início do mês, `meses` meses atrás.
     const hoje = new Date();
     const inicio = new Date(Date.UTC(hoje.getUTCFullYear(), hoje.getUTCMonth() - (meses - 1), 1));
+    const mesInicio = inicio.toISOString().slice(0, 7);
 
-    // Puxa os check-ins do NEXT (volume pequeno) paginando pra fugir do cap de 1000.
-    let linhas = [];
-    let offset = 0;
-    const page = 1000;
-    while (true) {
-      const { data, error } = await supabase
-        .from('next_inscricoes')
-        .select('id, check_in_at, evento:next_eventos(data)')
-        .not('check_in_at', 'is', null)
-        .range(offset, offset + page - 1);
-      if (error) throw error;
-      if (!data || !data.length) break;
-      linhas = linhas.concat(data);
-      if (data.length < page) break;
-      offset += page;
-    }
-
-    // Agrupa por mês (AAAA-MM) do evento; fallback pro mês do check-in.
     const porMes = {};
-    for (const l of linhas) {
-      const ref = l.evento?.data || l.check_in_at;
-      if (!ref) continue;
-      const ym = String(ref).slice(0, 7); // AAAA-MM
-      if (ym < inicio.toISOString().slice(0, 7)) continue; // fora da janela
-      porMes[ym] = (porMes[ym] || 0) + 1;
+    let avisoFonte = null;
+    {
+      const { data, error } = await supabase
+        .from('vw_next_presenca_mes')
+        .select('ano_mes, pessoas')
+        .gte('ano_mes', mesInicio);
+      if (error) {
+        // ⚠️ Falha de CONSULTA não é ausência de PRESENÇA: declara em vez de
+        // devolver zero com cara de "ninguém foi ao NEXT".
+        console.error('[DASH-SEM] vw_next_presenca_mes', error.message);
+        avisoFonte = 'Não foi possível ler a chamada dos encontros do NEXT — o automático está indisponível neste carregamento.';
+      }
+      for (const l of data || []) porMes[l.ano_mes] = l.pessoas || 0;
     }
 
     // Ajuste MANUAL por mês (lista de presença · quando o check-in não foi
@@ -2105,11 +2205,11 @@ router.get('/next-presenca-mensal', async (req, res) => {
         presentes: temManual ? manual[ym] : auto,
         auto,
         manual: temManual ? manual[ym] : null,
-        fonte: temManual ? 'manual' : 'checkin',
+        fonte: temManual ? 'manual' : 'chamada',
       });
     }
     const total = serie.reduce((s, m) => s + m.presentes, 0);
-    res.json({ serie, total });
+    res.json({ serie, total, aviso: avisoFonte });
   } catch (e) {
     console.error('[DASH-SEM] next-presenca-mensal', e.message);
     res.status(500).json({ error: 'Erro ao carregar presença do NEXT' });

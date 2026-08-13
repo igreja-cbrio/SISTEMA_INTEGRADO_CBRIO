@@ -14,6 +14,7 @@
 // Montado ANTES do publicLimiter global (evento presencial em massa = 1 IP).
 // ============================================================================
 const express = require('express');
+const { semCache } = require('../middleware/semCache');
 const router = express.Router();
 const rateLimit = require('express-rate-limit');
 const multer = require('multer');
@@ -36,6 +37,7 @@ const {
 // Fachada do núcleo de pagamentos. ⚠️ NUNCA importar `providers/*` aqui — é o
 // que faz trocar de PSP custar 1 arquivo + 1 env (ver services/pagamentos/tipos.js).
 const pagamentos = require('../services/pagamentos');
+const checkoutExterno = require('../utils/checkoutExterno');
 // Régua ÚNICA da tela pública de pagamento (compartilhada com a doação). É onde
 // vivem as leis do parcelado e da forma que o provedor CONFIRMOU — uma segunda
 // cópia dessa lógica seria a garantia de que uma das duas telas ia divergir.
@@ -83,7 +85,7 @@ const EXT_COMPROVANTE = {
 // aparecem (encerrado mostra "inscrições encerradas" em vez de sumir o link).
 async function eventoEspinhaPorSlug(slug) {
   const { data } = await supabase.from('insc_eventos')
-    .select('id, nome, slug, area, data, hora, local, descricao, campos, capa_url, vagas, inscricoes_abrem_em, inscricoes_encerram_em, msg_sucesso_titulo, msg_sucesso_texto, tem_sorteio, pagamento_ativo, valor_centavos, pagamento_metodos, pagamento_expira_horas, parcelas_max, juros_repassados, status')
+    .select('id, nome, slug, area, data, hora, local, descricao, campos, capa_url, vagas, inscricoes_abrem_em, inscricoes_encerram_em, msg_sucesso_titulo, msg_sucesso_texto, tem_sorteio, pagamento_ativo, valor_centavos, pagamento_metodos, pagamento_expira_horas, parcelas_max, juros_repassados, status, checkout_externo_url, checkout_externo_nome')
     .eq('slug', slug).is('deleted_at', null).maybeSingle();
   if (!data || data.status === 'rascunho' || data.status === 'arquivado') return null;
   return data;
@@ -95,7 +97,7 @@ async function eventoEspinhaPorSlug(slug) {
 // evento que a página pública — rascunho/arquivado não abrem em lugar nenhum.
 async function eventoEspinhaPorId(id) {
   const { data } = await supabase.from('insc_eventos')
-    .select('id, nome, slug, area, data, hora, local, descricao, campos, capa_url, vagas, inscricoes_abrem_em, inscricoes_encerram_em, msg_sucesso_titulo, msg_sucesso_texto, tem_sorteio, pagamento_ativo, valor_centavos, pagamento_metodos, pagamento_expira_horas, parcelas_max, juros_repassados, status, no_totem')
+    .select('id, nome, slug, area, data, hora, local, descricao, campos, capa_url, vagas, inscricoes_abrem_em, inscricoes_encerram_em, msg_sucesso_titulo, msg_sucesso_texto, tem_sorteio, pagamento_ativo, valor_centavos, pagamento_metodos, pagamento_expira_horas, parcelas_max, juros_repassados, status, no_totem, checkout_externo_url, checkout_externo_nome')
     .eq('id', id).is('deleted_at', null).maybeSingle();
   if (!data || data.status === 'rascunho' || data.status === 'arquivado') return null;
   return data;
@@ -175,11 +177,19 @@ function gerarSorteio() { return Math.floor(Math.random() * 9000) + 1000; } // 1
 function metodosDoEvento(ev) {
   const desejados = Array.isArray(ev.pagamento_metodos) && ev.pagamento_metodos.length
     ? ev.pagamento_metodos : null;
+  let lista;
   try {
-    return pagamentos.metodosDisponiveis(desejados);
+    lista = pagamentos.metodosDisponiveis(desejados);
   } catch {
-    return desejados || [];
+    lista = desejados || [];
   }
+  // ⚠️⚠️ Cartão terceirizado sai daqui — e é ESTE campo que vira
+  // `metodos_ofertados` da cobrança, que o servidor confere em `decidirForma`
+  // ("forma fora da lista não é oferecida nem por chamada direta"). Esconder o
+  // botão só na tela deixaria o app, um link antigo de /pagamento/<token> ou uma
+  // chamada direta cobrando cartão por dentro — e a mesma inscrição poderia ser
+  // paga nos DOIS lugares.
+  return checkoutExterno.metodosProprios(lista, ev);
 }
 
 /**
@@ -190,6 +200,11 @@ function metodosDoEvento(ev) {
  */
 function bloqueioPagamento(ev) {
   if (!ev.pagamento_ativo) return null;
+  // ⚠️ Evento 100% no checkout externo (sobrou ZERO método nosso) não depende
+  // do nosso PSP pra nada: quem cobra é a outra plataforma. Exigir PSP aqui
+  // fecharia um evento que está perfeitamente configurado — e a inscrição por
+  // dentro nem acontece (o POST recusa e aponta o link).
+  if (checkoutExterno.temCheckoutExterno(ev) && !metodosDoEvento(ev).length) return null;
   if (!(Number(ev.valor_centavos) > 0)) {
     return 'Este evento está marcado como pago mas ainda não tem valor definido. A equipe já foi avisada.';
   }
@@ -407,6 +422,19 @@ function respostaCobranca(cobranca, ev) {
     tem_sorteio: ev.tem_sorteio,
   };
 }
+
+// ⚠️ Estas duas famílias devolvem ESTADO e são consultadas em POLLING: a tela de
+// pagamento pergunta de 6 em 6 segundos "já caiu?", e o comprovante é o que a
+// portaria lê na entrada. Resposta cacheada aqui mostra o estado de ANTES do
+// pagamento — a mesma classe do incidente do app em 05/08 (ver
+// `middleware/semCache.js`).
+//
+// ⚠️ Escopo por PREFIXO, não no router inteiro, e isso é decisão: `GET /:slug`
+// (a página do evento) é o endereço que leva a multidão no lançamento, e ali um
+// pouco de cache AJUDA. O `vagas_restantes` dela já é declaradamente aproximado
+// — quem decide a vaga é o advisory lock da RPC, não o número na tela.
+router.use('/pagamento', semCache);
+router.use('/comprovante', semCache);
 
 // GET /textos — textos canônicos de consentimento (o front EXIBE estes; o
 // snapshot gravado vem sempre do backend, então tela e registro nunca divergem)
@@ -763,6 +791,16 @@ router.get('/:slug', async (req, res) => {
       pagamento_ativo: pago,
       valor_centavos: pago ? Number(esp.valor_centavos) : null,
       pagamento_metodos: pago ? metodosDoEvento(esp) : [],
+      // Cartão numa plataforma externa (e-Inscrição): a tela pergunta a forma
+      // ANTES do formulário e manda pra lá quem escolher cartão. `null` = o
+      // cartão é cobrado aqui, e a tela nem faz a pergunta.
+      checkout_externo: pago && checkoutExterno.temCheckoutExterno(esp) ? {
+        url: checkoutExterno.linkExternoValido(esp.checkout_externo_url),
+        nome: checkoutExterno.nomeExterno(esp.checkout_externo_nome),
+        // Não sobrou método nosso ⇒ TODA inscrição acontece lá fora, e a tela
+        // não pergunta nada: pergunta de uma alternativa só é atrito puro.
+        exclusivo: !metodosDoEvento(esp).length,
+      } : null,
       pagamento_expira_horas: pago ? (esp.pagamento_expira_horas || 48) : null,
       // ⚠️ Evento marcado como pago mas sem valor (ou sem PSP configurado) NÃO
       // pode receber inscrição gratuita por acidente — avisa e não abre.
@@ -816,6 +854,16 @@ async function inscreverEspinha(req, res, ev, opts = {}) {
   // e sobretudo não vira inscrição gratuita por acidente.
   const bloqueio = bloqueioPagamento(ev);
   if (bloqueio) return res.status(503).json({ error: bloqueio });
+  // ⚠️ Evento 100% no checkout externo: recusa com o LINK na resposta, nunca um
+  // "não pode" seco. Quem chega aqui é bundle antigo ou chamada direta — a
+  // pessoa não tem culpa e precisa saber para onde ir.
+  if (checkoutExterno.temCheckoutExterno(ev) && !metodosDoEvento(ev).length) {
+    const op = checkoutExterno.opcoesPagamento(ev);
+    return res.status(409).json({
+      error: `A inscrição deste evento é feita pelo ${op.externo_nome}.`,
+      checkout_externo: { url: op.externo_url, nome: op.externo_nome },
+    });
+  }
   const ehPago = !!ev.pagamento_ativo;
 
   // Campos padrão do contrato (D1–D9 + 28/07)

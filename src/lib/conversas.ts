@@ -1,12 +1,14 @@
 // Helper dos botões de WhatsApp dos módulos: em vez de abrir o wa.me externo,
-// direciona pro inbox interno (/conversas) já abrindo a conversa da pessoa.
+// direciona pro inbox interno (aba Conversas do /comunicacao) já abrindo a
+// conversa da pessoa. Endereço direto — o /conversas antigo segue existindo
+// como redirect (que agora preserva a query), mas link novo nasce no destino.
 export function hrefConversa(telefone: string | number | null | undefined, texto?: string): string {
   const d = String(telefone ?? '').replace(/\D+/g, '');
-  if (!d) return '/conversas';
   const p = new URLSearchParams();
-  p.set('telefone', d);
-  if (texto) p.set('texto', texto);
-  return `/conversas?${p.toString()}`;
+  p.set('tab', 'conversas');
+  if (d) p.set('telefone', d);
+  if (d && texto) p.set('texto', texto);
+  return `/comunicacao?${p.toString()}`;
 }
 
 // Link que abre o WhatsApp DE QUEM CLICA (app do computador/celular, com a conta
