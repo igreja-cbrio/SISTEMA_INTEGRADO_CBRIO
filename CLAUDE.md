@@ -825,6 +825,105 @@ não "corrigir" removendo esse acesso.
 ⚠️ Pela LEI de não nomear pessoa como dono de fluxo, o que vale aqui é o PAPEL.
 Quem ocupa o papel vive no banco (`usuario_areas` / cargo), não neste arquivo.
 
+## ⚠️⚠️ Voluntariado · o agente lia telefone da CÓPIA LOCAL (2026-08-13 · SEM migration)
+
+Pergunta do Matheus: *"esse agente de voluntariado traz várias pessoas que não têm
+número de celular, só que sempre reparo que são muitas, tá certo isso mesmo?"* —
+**não estava**. E ele reparou de um jeito que o número mascarava: eram TODAS.
+
+### O que foi medido em produção (13/08)
+
+| tabela | telefone preenchido |
+|---|---|
+| `vol_profiles` | **8 de 930 (0,9%)** · 24 com CPF · 922 com `origem='planning_center'` |
+| `mem_membros` | 3.587 de 3.995 (90%) |
+| `vol_inscricoes` | 775 de 827 (94%) |
+
+O agente lia SÓ `vol_profiles.phone`, e **o import do Planning Center nunca trouxe
+telefone**. Resultado: das **87** escalas pendentes de confirmação, as **87**
+apareciam como "sem telefone" — e **59 (68%)** tinham telefone no sistema (43 no
+cadastro da pessoa via `membresia_id`, 16 no formulário público que a própria
+pessoa preencheu). Só **28** realmente não têm telefone em lugar nenhum. O botão
+"Lembrar todos" era, na prática, **inalcançável desde sempre** (0 com telefone).
+
+⚠️ **É a LEI do Contrato de porta aplicada à LEITURA**: uma pessoa = um cadastro
+(`mem_membros`) = fonte única. `vol_profiles` é linha-satélite e aponta pro membro
+por `membresia_id`. Ler contato da satélite e concluir "não tem" confunde **"não
+procurei no lugar certo"** com **"a pessoa não tem telefone"**. E o silêncio era o
+pior: campo vazio PARECE dado, então ninguém investiga.
+
+### A cadeia (régua PURA em `backend/utils/telefoneVoluntario.js`)
+
+perfil → cadastro da pessoa (`membresia_id`) → cadastro por **CPF** → **formulário
+de voluntariado** (e-mail + NOME) → contato secundário (`mem_contatos`). Primeira
+fonte alcançável vence. Quem não resolve segue exibido como "sem telefone
+cadastrado" — honesto.
+
+- ⚠️⚠️ **A régua de nome é `duplicidadePolicy.nomesPodemSerMesmaPessoa`, NÃO
+  `membroMatch.nomesMesmaPessoa`** — e a diferença decide **10 dos 16** casos. O
+  Planning Center guarda o nome CURTO e o formulário tem o civil completo, então o
+  Dice global desaba: `nomesMesmaPessoa` **recusa** "Eliane Santana" × "Eliane dos
+  Santos Santana Sobrinho". A régua certa exige **mesmo primeiro nome + ≥75% dos
+  tokens do nome menor**, que é o padrão "versão abreviada". Medida nos 16 pares
+  reais: aceita 13/13 e recusa as 6 contraprovas de parentesco.
+- ⚠️ **O canal do formulário casa por E-MAIL, e ali o nome é EXIGÊNCIA, não veto** —
+  e-mail é o sinal que a família compartilha; sem o nome o lembrete de escala iria
+  pro telefone do cônjuge.
+- ⚠️ **VETO de nome nos canais fortes, rodando ANTES da evidência**: `membresia_id`
+  **não é prova** — o backfill de 2026-06-10 ligou perfis órfãos a membros "por
+  CPF/e-mail", e e-mail sozinho nunca identifica. Nome ausente de um lado **não é
+  divergência** (é ausência de sinal, o caso comum do perfil do PCO).
+  ⚠️ Veto disparado no canal do vínculo vai pro **log agregado**: significa perfil
+  ligado ao cadastro de OUTRA pessoa, o que conta gente errada no valor **Servir** —
+  não é só um telefone perdido.
+- ⚠️ **Número alcançável é `contatoPessoa.telefoneAlcancavel`, reusado** (DDD real +
+  o 9 do celular): número que o envio transforma em OUTRO número (o suíço
+  `41765764538` → Curitiba) é **pior** que telefone ausente — a mensagem chega a um
+  estranho.
+- A tela **declara a origem** ("telefone do cadastro da pessoa"): número recuperado
+  por caminho indireto é indistinguível de um digitado ali se a origem não aparecer.
+
+### ⚠️⚠️ O conserto LIGOU um botão que estava desarmado — e o caminho de envio não estava pronto
+
+`POST /lembrar` era `for` sequencial com `wpp.sendTemplate` e **nenhum registro do
+que já havia saído**. Inofensivo enquanto o botão nunca aparecia; com 59
+destinatários vira a armadilha da lei de 04/08 — cada envio tem timeout de 15s
+contra `maxDuration` 300s, então a função **morre no meio com as mensagens
+entregues e nada gravado**, e a próxima tentativa reenvia pra todos.
+
+⇒ Passou pela **fila `whatsapp_envios`** (`enfileirarLote`): o INSERT do lote
+acontece ANTES de qualquer envio, o cron horário drena com retry/backoff e falha
+permanente avisa gente. Era o **único** disparo do sistema fora desse funil.
+`contexto: 'voluntariado.escala_lembrete'` (o prefixo é lido por
+`utils/whatsappModulo` pra decidir quem é avisado na falha · `voluntariado` tem
+regra própria, não cai no fallback de 16 admins). Teto de rodada 200 com `adiados`
+declarado. A tela diz **"na fila de envio"**, não "enviado" — a entrega é da fila.
+
+⚠️ **RESÍDUO CONSCIENTE**: segue **sem gate de `whatsapp_optin`**, como antes.
+Template é UTILITY sobre compromisso que a pessoa assumiu, mas quem marcou "não
+quero receber" recebe. Ligar o gate é decisão de POLÍTICA do Marcos, não efeito
+colateral de um conserto de leitura — e o caminho seria `notificarMembro` (que já
+lê o opt-in), nunca uma 2ª régua no arquivo.
+
+⚠️ Paginação: as 3 leituras de `vol_services`/`vol_schedules` eram `.in()` sem
+lote nem `.range()` — cap de 1000 truncando em silêncio. Viraram `fetchAllRows` +
+lotes de 200.
+
+**A pedido dele, o painel nasce RECOLHIDO** (`AgenteVoluntariadoPainel.tsx`): o
+cabeçalho já carrega total e resumo por categoria, então recolher não esconde que
+existe trabalho pendente.
+
+Teste: `src/test/telefoneVoluntario.test.ts` (30 casos, **no gate**), com os pares
+REAIS de produção. **Mutation-testado de verdade** (4 mutantes rodados): voltar pro
+Dice puro → 9 vermelhos · canal do formulário sem exigir nome → 6 · sem
+`telefoneAlcancavel` → 3 · veto de nome desligado → 2.
+
+⚠️ **Follow-up de CADASTRO, não de código**: os 28 sem telefone nenhum são 100%
+`planning_center`; 10 deles têm vínculo com membro que também não tem telefone.
+E `vol_inscricoes.vol_profile_id` está **100% vazio** (0 de 827) — o vínculo
+perfil↔inscrição nunca foi preenchido, e é por isso que o canal do formulário
+precisa casar por e-mail em vez de seguir a FK que existe no schema.
+
 ## ⚠️ Membresia · aprovação em massa da fila de cadastros (2026-08-04 · SEM migration)
 
 Pedido do Matheus: selecionar alguns ou todos e aprovar de uma vez, *"mas o sistema deve ter uma
