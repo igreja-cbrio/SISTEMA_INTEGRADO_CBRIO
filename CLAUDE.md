@@ -5711,6 +5711,60 @@ origem-app na história inteira** (o do Marcos, `d1907c7a`, no grupo da Natasha)
   push *"o líder recebeu seu pedido"* **antes** do fanout (ordem alfabética de
   trigger), inclusive quando o fanout falha. Já registrado na Onda 1a.
 
+## ⚠️ Batismo pelo APP escolhe o HORÁRIO (2026-08-13 · migration `20260813120000`)
+
+Pedido do Marcos: *"no app de membros, na inscrição de batismo, tenha a mesma
+opção de escolher os horários abertos que tem no formulário de inscrição."*
+O app já **chamava** `GET /public/batismo/horarios` — só pra pegar o
+`grupo_url`, **jogando a lista fora**. Estado medido em 13/08: 08:30 e 10:00
+abertos (limite 11 cada), 11:30 e 19:00 fechados; **1** inscrição de batismo com
+origem app na história inteira × **40** públicas com horário.
+
+**Régua ÚNICA em 2 camadas** — o app é cliente da porta, não uma 2ª régua:
+- **`backend/utils/batismoHorario.js`** = decisão PURA (entra no gate) ·
+  `avaliarHorarioBatismo` / `horariosDisponiveis` / `normalizarHorario`.
+- **`backend/services/batismoHorarios.js`** = as consultas, compartilhadas pelo
+  formulário público e pelo `POST /app/inscricoes`. Duas cópias das consultas é
+  como o app e o web passam a discordar sobre o que está aberto.
+
+⚠️⚠️ **O conserto de segurança que veio junto: a validação do público FALHAVA
+ABERTA.** `publicBatismo.js` envolvia a regra inteira num `if (!hErr)` — consulta
+que falhasse **PULAVA a validação** e gravava em `horario_culto` o texto CRU do
+cliente. Esse campo alimenta o **`{{2}}` do template de lembrete**
+(`whatsappCron.js`), ou seja: texto arbitrário saindo numa mensagem pelo número
+oficial da igreja. Agora não conseguir conferir **RECUSA** (`motivo:
+'indisponivel'`), e é isso que o mutante do teste trava — rodado de verdade:
+trocar o `ok:false` por `true` deixa exatamente 1 caso vermelho.
+
+- ⚠️ **Ausência de horário NÃO é erro, e tem que continuar assim**: o binário da
+  loja e todo bundle sem o OTA não sabem que o campo existe. Exigir aqui
+  trancaria essa gente fora do batismo — a mecânica do portão que trancou todo
+  mundo em 06/08.
+- ⚠️ `ocupacaoPorHorario` virou **paginada**: o cap de 1000 do PostgREST trunca
+  em silêncio e um batismo grande faria o limite por horário parar de valer sem
+  erro nenhum aparecer.
+- **Migration = PATCH DINÂMICO** (`pg_get_functiondef` + `replace`), obrigatório:
+  a definição VIVA de `fn_app_inscricoes_fanout` não é a do repo (foi reescrita
+  em prod em 29/07 e 06/08), e `CREATE OR REPLACE` de arquivo reverteria aquilo
+  em silêncio. Âncoras conferidas 1× cada ANTES de substituir — `'sede')` sozinho
+  aparece **2×** no corpo, por isso a âncora do VALUES leva a linha do
+  `observacoes` junto. Conferido no CATÁLOGO depois de aplicar (não no
+  `success:true`): 2 ocorrências de `horario_culto`, e as 3 proteções anteriores
+  intactas (`vi.deleted_at IS NULL` 1 · `fanout_erro` 1 · 4 blocos de
+  `GET STACKED DIAGNOSTICS`).
+- **Teste funcional com INSERT real** em transação revertida (a lição do "fluxo
+  com dinheiro se confere no BANCO"): `horario=[08:30] status=[pendente]
+  app_status=[processado]`, e **0 resíduo** conferido depois.
+
+### ⚠️ De brinde: `'duplicado'` caía no caminho de SUCESSO
+
+O `POST /app/inscricoes` relia a linha pós-fanout e tratava só `'erro'`. Quem já
+tinha inscrição lia **"Solicitação recebida! Nossa equipe entrará em contato."**
+e a equipe recebia aviso de "nova inscrição" que não existe — a versão silenciosa
+do mesmo defeito. Agora responde 200 com `duplicado: true` e texto honesto, sem
+disparar os avisos. É a lei do Contrato de Inscrição: `ja_inscrito`/`duplicado`
+são **EXIBIDOS**, nunca engolidos como confirmação.
+
 ## ⚠️⚠️ AUDITORIA DO APP · ONDA 1b · O SAVE PARA DE MENTIR E O LGPD GANHA FILA (2026-08-06)
 
 Itens 4 e 5 do plano. **Sem migration** — é rota + tela + régua pura.

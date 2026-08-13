@@ -8,6 +8,8 @@ const {
   temAbreviacaoNome, splitNomeCompleto, validarNascimento, honeypotPreenchido,
   registrarConsentimentos, TEXTOS, cpfValido, emailValido,
 } = require('../services/inscricaoContrato');
+const { avaliarHorarioBatismo, horariosDisponiveis } = require('../utils/batismoHorario');
+const { horariosConfigurados, ocupacaoPorHorario } = require('../services/batismoHorarios');
 
 // Limiter GENEROSO do router (padrão grupos/NPS/eventos): o form roda em
 // Wi-Fi único (lounge da igreja num domingo) — 10/15min por IP dava 429 na
@@ -97,38 +99,21 @@ router.get('/textos', (_req, res) => {
   });
 });
 
-// Conta inscrições ativas por horário numa data (pra calcular vagas restantes).
-async function ocupacaoPorHorario(dataBatismo) {
-  const { data } = await supabase
-    .from('batismo_inscricoes')
-    .select('horario_culto')
-    .eq('data_batismo', dataBatismo)
-    .is('deleted_at', null)
-    .not('status', 'in', '(cancelado,rejeitado)');
-  const c = {};
-  (data || []).forEach(i => { if (i.horario_culto) c[i.horario_culto] = (c[i.horario_culto] || 0) + 1; });
-  return c;
-}
+// ⚠️ `horariosConfigurados` e `ocupacaoPorHorario` vivem em
+// `services/batismoHorarios.js` — o app de membros usa as MESMAS consultas.
 
 // GET /api/public/batismo/horarios
 // Horários ABERTOS e COM VAGA pro próximo batismo · alimenta o seletor do form.
 router.get('/horarios', async (_req, res) => {
   try {
     const dataBatismo = proximoQuartoDomingoISO();
-    const { data: horarios, error } = await supabase
-      .from('batismo_horarios')
-      .select('horario, label, limite')
-      .is('deleted_at', null)
-      .eq('aberto', true)
-      .order('ordem');
-    if (error) throw error;
+    const configurados = await horariosConfigurados();
+    if (configurados === null) throw new Error('catalogo_indisponivel');
     const ocup = await ocupacaoPorHorario(dataBatismo);
-    const lista = (horarios || [])
-      .map(h => {
-        const vagas = h.limite != null ? Math.max(0, h.limite - (ocup[h.horario] || 0)) : null;
-        return { horario: h.horario, label: h.label, vagas_restantes: vagas };
-      })
-      .filter(h => h.vagas_restantes === null || h.vagas_restantes > 0); // esconde lotados
+    // Régua ÚNICA (utils/batismoHorario) — a MESMA que o app e o formulário
+    // consomem, e a mesma que o POST usa pra validar. Duas cópias é como o
+    // seletor passa a oferecer horário que o servidor recusa.
+    const lista = horariosDisponiveis(configurados, ocup);
     let grupoUrl = null;
     try {
       const { data: cfg } = await supabase.from('batismo_config').select('grupo_url').eq('id', 1).maybeSingle();
@@ -268,27 +253,24 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
 
     const dataBatismo = proximoQuartoDomingoISO();
 
-    // Valida o horário escolhido contra os horários configurados (aberto + vaga).
-    // Tolerante: se a tabela ainda não existe ou nada foi enviado, segue sem travar.
-    let horarioEscolhido = horario_culto ? String(horario_culto).trim().slice(0, 80) : null;
-    if (horarioEscolhido) {
-      const { data: hConf, error: hErr } = await supabase
-        .from('batismo_horarios')
-        .select('horario, label, aberto, limite')
-        .eq('horario', horarioEscolhido)
-        .is('deleted_at', null)
-        .maybeSingle();
-      if (!hErr) {
-        if (!hConf || !hConf.aberto) {
-          return res.status(409).json({ error: 'Esse horário não está mais disponível. Escolha outro.' });
-        }
-        if (hConf.limite != null) {
-          const ocup = await ocupacaoPorHorario(dataBatismo);
-          if ((ocup[horarioEscolhido] || 0) >= hConf.limite) {
-            return res.status(409).json({ error: 'Esse horário lotou. Por favor, escolha outro.' });
-          }
-        }
-      }
+    // Horário escolhido · régua ÚNICA em utils/batismoHorario (compartilhada com
+    // o GET /horarios e com o POST /app/inscricoes).
+    // ⚠️ FALHA FECHADA: a versão anterior envolvia a validação num `if (!hErr)`,
+    // então consulta que falhava PULAVA a regra e gravava em `horario_culto` o
+    // texto cru do cliente — campo que alimenta o {{2}} do lembrete enviado pelo
+    // número oficial da igreja. Não conseguir conferir agora RECUSA.
+    // Ausência de horário segue passando (o campo é opcional desde sempre).
+    // As 2 consultas só rodam quando há horário a conferir — quem não escolheu
+    // não paga round-trip nenhum.
+    let horarioEscolhido = null;
+    if (horario_culto && String(horario_culto).trim()) {
+      const [configurados, ocupacao] = await Promise.all([
+        horariosConfigurados(),
+        ocupacaoPorHorario(dataBatismo),
+      ]);
+      const av = avaliarHorarioBatismo(horario_culto, { configurados, ocupacao });
+      if (!av.ok) return res.status(409).json({ error: av.mensagem });
+      horarioEscolhido = av.horario;
     }
 
     // Observações agora so guarda o que não tem coluna própria.
