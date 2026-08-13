@@ -6520,6 +6520,21 @@ em horário que ainda não existe.
   corpo estático de arquivo (reverteria patch de prod). ⚠️ **Aplicar ANTES de
   24/08.** ⚠️ O anchor do bloco 'Domingo Manhã' (`'08:30:00'` no VALUES da
   view) NÃO muda aqui — é visível; fica pro script do corte (Lote 5).
+- **⚠️⚠️ DESCOBERTA na 1ª aplicação (13/08 — a guarda ABORTOU, como devia):**
+  produção foi REFATORADA fora do git — a régua vive em DUAS funções centrais,
+  **`fn_dash_vol_bloco_nome(text)` e `fn_dash_vol_bloco_id(text)`** (gate/view/
+  irmãs só DELEGAM), e elas **JÁ classificam 'Domingo 09:30' → 'Domingo Manhã'
+  / bloco `b10c…001`** (sondado funcionalmente via RPC em 13/08 — noite intacta,
+  'GC 12 HORAS' → null). Provável trabalho do Matheus (a varredura de 11/08
+  ainda media a forma antiga) — **confirmar com ele**. A migration virou v2:
+  reconhece as duas formas — forma refatorada = verificação FUNCIONAL (09:30 no
+  MESMO bloco do 08:30 · manhã ≠ noite · NOTICE e encerra sem tocar em nada);
+  forma do repo (banco montado das migrations) = patch textual como antes.
+  ⚠️ **As 2 centrais NÃO estão em nenhuma migration do repo** — mesmo drift do
+  handle_new_user; commitar a definição viva é follow-up alinhado com o Matheus.
+  ⚠️ Régua de leitura que fica: quem quiser mexer na classificação de bloco do
+  voluntariado mexe nas CENTRAIS (fora do git, pedir def viva), nunca nas
+  consumidoras.
 - **volMatch.ts** (espelho JS da régua) ganhou `m(/^domingo 09/)` no bloco da
   manhã + `src/test/volMatch.test.ts` (mutante: 09 na noite fica vermelho).
 - **Totem Kids** — régua do relógio virou PURA em `src/lib/cultoRelogioKids.ts`
