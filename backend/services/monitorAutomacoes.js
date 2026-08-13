@@ -17,7 +17,16 @@ const HORA = 3600000;
 const PIPELINES = [
   { chave: 'fin_sync',     label: 'Sincronização financeira',     tabela: 'fin_transacoes',          coluna: 'created_at', maxHoras: 48,  modulo: 'financeiro' },
   { chave: 'contribuicoes',label: 'Contribuições (dízimos/ofertas)',tabela: 'mem_contribuicoes',      coluna: 'created_at', maxHoras: 72,  modulo: 'financeiro' },
-  { chave: 'wifi',         label: 'Captura de visitantes (WiFi)',  tabela: 'wifi_visitantes',         coluna: 'created_at', maxHoras: 120, modulo: 'integracao' },
+  // ⚠️ WiFi SAIU do monitor em 13/08/2026 (decisão do Matheus). O portal
+  // cativo que pedia dados da pessoa foi DESATIVADO — última conexão real em
+  // 26/06 —, então "sem registro novo" deixou de ser sintoma de pipeline
+  // quebrado e virou o estado NORMAL. Medido antes de tirar: **619 alertas
+  // `automacao_sem_atualizar`, 515 não lidos**, um por dia desde 03/07,
+  // enterrando o sino com um aviso que ninguém pode resolver.
+  // ⚠️ NÃO reintroduzir sem o portal voltar a coletar: pipeline que nunca vai
+  // atualizar não é automação vigiada, é alarme permanente. Se o WiFi voltar,
+  // esta linha volta com ele (label/tabela/maxHoras inalterados) e o cron
+  // `/api/wifi/cron/sync` volta ao vercel.json + systemCatalog.
   { chave: 'youtube_snap', label: 'Snapshot do canal (YouTube)',   tabela: 'online_canal_snapshot',   coluna: 'created_at', maxHoras: 48,  modulo: 'online' },
   { chave: 'youtube_vids', label: 'Vídeos do YouTube',             tabela: 'online_videos',           coluna: 'created_at', maxHoras: 72,  modulo: 'online' },
   { chave: 'app_telemetria',label: 'Telemetria do app',            tabela: 'app_eventos',             coluna: 'created_at', maxHoras: 72,  modulo: 'dashboard' },
