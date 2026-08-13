@@ -700,6 +700,64 @@ não é tratado por ninguém.
 - O aviso **nomeia a pessoa** quando dá (`ref_id` é o membro nos contextos de
   `notificarMembro`) — "o telefone 21…" não diz a quem avisar.
 
+## ⚠️ Wi-Fi · a COLETA AUTOMÁTICA foi DESLIGADA (2026-08-13 · SEM migration)
+
+Pedido do Matheus: *"em relação à automação do wifi, pode desligar ela, pois fica
+chegando notificação à toa, pois não estamos usando mais o wifi privado que pede
+dados da pessoa."* Medido antes de tocar, e o barulho era real:
+
+| sonda | resultado |
+|---|---|
+| última conexão em `wifi_conexoes` | **26/06/2026** (~48 dias antes) |
+| alertas `automacao_sem_atualizar` (WiFi) | **619 · 515 não lidos** · 1/dia desde 03/07 · último **hoje 09:00** |
+| execuções do cron `/api/wifi/cron/sync` | **falhando desde 02/08** (6 seguidas) |
+
+**Eram TRÊS fontes de barulho, não uma**, e desligar só a que aparece no sino
+deixaria as outras duas vivas:
+1. `monitorAutomacoes.PIPELINES` → 1 aviso/dia de "automação parada" (o do sino);
+2. o **cron falhando** → `system_job_runs` + 2 incidentes abertos ("Falhas
+   consecutivas: cron · sync" e o HTTP 500), que viram **push no celular**;
+3. `wifiSync` → `wifi_novos_visitantes` (parou sozinho em 22/06, sem gente nova).
+
+⚠️ **A causa da falha do cron era o `ON CONFLICT` com índice PARCIAL, de novo**
+(lei de 04/08): `fn_wifi_processar_vinculos` faz
+`ON CONFLICT (tipo, membro_id, membro_conflito_id) WHERE status='pendente'`, e a
+migration `20260731120000` acrescentou `AND tipo <> 'inscricao_sem_vinculo'` ao
+índice `uniq_identidade_pendencia_aberta` → o Postgres deixou de inferir (42P10).
+⚠️ **Conferido no catálogo que o estrago está CONTIDO**: aquela é a **única**
+função viva com esse `ON CONFLICT` em `identidade_pendencias`, e nenhum `.upsert`
+do JS toca a tabela — se `fn_link_or_create_membro` ou o gatilho do auth também
+usassem, entrada de PESSOA estaria quebrada em produção, que é bem pior que o
+WiFi. Por isso **não consertei a função**: ela morre com o cron, e reativar o
+WiFi exige consertar o predicado ANTES de repor o cron.
+
+**O que saiu:** a entrada `wifi` de `monitorAutomacoes.PIPELINES` · o cron do
+`vercel.json` · o job do `systemCatalog` (46 → 45, com o teste
+`systemFoundation` acompanhando na MESMA leva — número de cobertura que se mexe
+sozinho é como o catálogo passa a declarar cron que não roda).
+
+**O que FICA, de propósito:** os dados (**4.535 visitantes · 10.121 conexões**,
+com `membro_id` ligado), as rotas de LEITURA (`/api/wifi/*`, a aba de histórico
+na ficha do membro) e o `POST /api/wifi/sync` manual, que é a porta de
+reativação. Nada foi apagado.
+
+**Barulho acumulado limpo no banco:** 584 notificações marcadas como lidas
+(backup dos ids em `_bk_20260813_notif_wifi`) e os 2 incidentes resolvidos com
+o motivo escrito na descrição. ⚠️ Isso é **3,5% do sino** — as 16.675 não lidas
+seguem lá, e a causa delas é a de 10/08 (38 módulos sem regra em
+`notificacao_regras` → fallback de 16 admin/diretor).
+
+⚠️ **Régua que fica: pipeline que NUNCA mais vai atualizar não é automação
+vigiada, é alarme permanente.** Quando um sistema é desativado, tirá-lo do
+monitor faz parte de desativá-lo — senão ele vira ruído que ninguém pode
+resolver, e ruído assim treina a equipe a não ler o sino.
+
+⚠️ **Follow-up (preexistente, não introduzido aqui):** `/api/notificacoes/cron`
+está no `vercel.json` e **não** no `systemCatalog` — ou seja roda sem política de
+alerta e sem abrir incidente, que é exatamente a armadilha que o catálogo
+documenta. Não entrou nesta leva porque acrescentá-lo LIGA alarme novo, e o
+pedido do dia era o contrário.
+
 ## Comunicação · aba "Automáticas" · quem recebe o que o sistema manda sozinho (2026-08-05)
 
 Pedido do Matheus: *"queria conseguir saber quem são as pessoas que recebem as
