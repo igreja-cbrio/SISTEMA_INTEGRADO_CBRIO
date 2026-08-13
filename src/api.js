@@ -3333,6 +3333,9 @@ export const voluntariado = {
     bulk: (service_id, assignments) => post('/voluntariado/schedules/bulk', { service_id, assignments }),
     copy: (from_service_id, to_service_id) => post('/voluntariado/schedules/copy', { from_service_id, to_service_id }),
     autoFill: (service_id, team_id) => post('/voluntariado/schedules/auto-fill', { service_id, team_id }),
+    // Contexto de montagem: pool anotado com indisponibilidade do dia + quem já
+    // serve em outros cultos do mesmo dia (evita sobreposição na escala).
+    contextoMontagem: (service_id) => get(`/voluntariado/services/${service_id}/contexto-montagem`),
   },
   // Templates de escala (composição esperada do culto + pré-preenchimento)
   scheduleTemplates: {

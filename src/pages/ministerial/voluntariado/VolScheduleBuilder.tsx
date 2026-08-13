@@ -10,15 +10,22 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   useUpcomingServices, useServiceSchedules, useVolTeamsManaged,
-  useCreateSchedule, useDeleteSchedule,
+  useCreateSchedule, useDeleteSchedule, useUpdateSchedule,
   useAutoFillSchedule, useCopySchedule, useCreateService,
   useVolServiceTypes, useVolunteersPool, useSyncPlanningCenter,
+  useMontagemContexto,
 } from './hooks';
-import { Plus, Trash2, Wand2, Copy, UserPlus, X, Calendar, Users, ChevronDown, ChevronUp, RefreshCw, Search } from 'lucide-react';
+import { Plus, Trash2, Wand2, Copy, UserPlus, X, Calendar, Users, ChevronDown, ChevronUp, RefreshCw, Search, GripVertical } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { toast } from 'sonner';
 import type { VolSchedule, VolTeam, VolService } from './types';
+
+// MIME types custom do drag & drop HTML5 (padrão usado no Planner do Marketing).
+const MIME_VOL = 'application/x-cbrio-vol';
+const MIME_SCHED = 'application/x-cbrio-sched';
+
+type PoolVol = any;
 
 export default function VolScheduleBuilder() {
   const { data: services = [], isLoading: servicesLoading } = useUpcomingServices();
@@ -28,8 +35,15 @@ export default function VolScheduleBuilder() {
   const [showCreateService, setShowCreateService] = useState(false);
   const [showAddVolunteer, setShowAddVolunteer] = useState(false);
   const [showCopyDialog, setShowCopyDialog] = useState(false);
+  const { data: contexto } = useMontagemContexto(selectedServiceId || undefined);
 
   const selectedService = services.find(s => s.id === selectedServiceId);
+
+  // Pool de voluntários do culto: sem os já escalados neste culto.
+  const poolDisponiveis = useMemo(() => {
+    if (!contexto?.pool) return [];
+    return (contexto.pool as PoolVol[]).filter((v: PoolVol) => !v.jaEscalado);
+  }, [contexto]);
 
   // Group schedules by team
   const schedulesByTeam = useMemo(() => {
@@ -64,6 +78,39 @@ export default function VolScheduleBuilder() {
     const pre = calc.reduce((a: number, i: any) => a + i.preenchidas, 0);
     return { itens: calc, porEquipe, alvo, preenchidas: pre, faltam: Math.max(0, alvo - pre), pct: alvo ? Math.round((pre / alvo) * 100) : null };
   }, [coberturaRaw, schedules]);
+
+  const createSchedule = useCreateSchedule();
+  const updateSchedule = useUpdateSchedule();
+
+  // Drop numa equipe: (a) voluntário vindo do pool → cria a escala; (b) voluntário
+  // vindo de outra equipe → move (atualiza a equipe).
+  const handleDropOnTeam = (e: React.DragEvent, teamId: string | null, teamName: string) => {
+    e.preventDefault();
+    const volRaw = e.dataTransfer.getData(MIME_VOL);
+    if (volRaw) {
+      const v = JSON.parse(volRaw);
+      createSchedule.mutate({
+        service_id: selectedServiceId,
+        volunteer_id: v.volunteer_id,
+        volunteer_name: v.volunteer_name,
+        team_id: teamId || undefined,
+        team_name: teamName,
+        planning_center_person_id: v.planning_center_person_id || undefined,
+      }, {
+        onSuccess: () => toast.success(`${v.volunteer_name} escalado em ${teamName || 'Sem equipe'}`),
+        onError: (err: any) => toast.error(err.message || 'Erro ao escalar'),
+      });
+      return;
+    }
+    const schedRaw = e.dataTransfer.getData(MIME_SCHED);
+    if (schedRaw) {
+      const s = JSON.parse(schedRaw);
+      updateSchedule.mutate({ id: s.id, data: { team_id: teamId, team_name: teamName, position_id: null, position_name: null } }, {
+        onSuccess: () => toast.success(`${s.volunteer_name} movido para ${teamName || 'Sem equipe'}`),
+        onError: (err: any) => toast.error(err.message || 'Erro ao mover'),
+      });
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -146,7 +193,27 @@ export default function VolScheduleBuilder() {
             </Card>
           )}
 
-          {/* Schedule list by team */}
+          {/* Pool de voluntários disponíveis · arrastar pra vaga/equipe */}
+          <PoolSection
+            pool={poolDisponiveis}
+            contexto={contexto}
+            teams={teams}
+            onAdd={({ volunteer_id, volunteer_name, planning_center_person_id, team_id, team_name }) =>
+              createSchedule.mutate({
+                service_id: selectedServiceId,
+                volunteer_id,
+                volunteer_name,
+                team_id: team_id || undefined,
+                team_name: team_name || undefined,
+                planning_center_person_id: planning_center_person_id || undefined,
+              }, {
+                onSuccess: () => toast.success(`${volunteer_name} escalado`),
+                onError: (err: any) => toast.error(err.message || 'Erro ao escalar'),
+              })
+            }
+          />
+
+          {/* Schedule list by team (drop targets) */}
           {schedulesLoading ? (
             <div className="text-center py-8 text-muted-foreground">Carregando escala...</div>
           ) : schedulesByTeam.length === 0 ? (
@@ -154,7 +221,7 @@ export default function VolScheduleBuilder() {
               <CardContent className="flex flex-col items-center justify-center py-12 text-center">
                 <Users className="h-10 w-10 text-muted-foreground/30 mb-3" />
                 <p className="text-muted-foreground">Nenhum voluntário escalado</p>
-                <p className="text-sm text-muted-foreground/60">Use os botoes acima para montar a escala</p>
+                <p className="text-sm text-muted-foreground/60">Arraste voluntários do painel acima ou use os botoes</p>
               </CardContent>
             </Card>
           ) : (
@@ -165,6 +232,8 @@ export default function VolScheduleBuilder() {
                 teamId={group.teamId}
                 schedules={group.schedules}
                 teams={teams}
+                contexto={contexto}
+                onDropTeam={handleDropOnTeam}
               />
             ))
           )}
@@ -191,6 +260,7 @@ export default function VolScheduleBuilder() {
           teams={teams}
           existingSchedules={schedules}
           initialTeamId={addPreselectTeam}
+          poolAnotado={poolDisponiveis}
           onClose={() => { setShowAddVolunteer(false); setAddPreselectTeam(''); }}
         />
       )}
@@ -206,11 +276,140 @@ export default function VolScheduleBuilder() {
   );
 }
 
-function TeamScheduleGroup({ teamName, teamId, schedules, teams }: {
+// Painel de voluntários disponíveis: filtra indisponíveis (toggle), mostra quem
+// já serve em outro culto do mesmo dia e permite arrastar pra vaga/equipe.
+function PoolSection({ pool, contexto, teams, onAdd }: {
+  pool: PoolVol[]; contexto: any; teams: VolTeam[]; onAdd: (v: any) => void;
+}) {
+  const [open, setOpen] = useState(true);
+  const [hideUnavailable, setHideUnavailable] = useState(true);
+  const [search, setSearch] = useState('');
+
+  const list = useMemo(() => {
+    let l = pool;
+    if (hideUnavailable) l = l.filter((v: PoolVol) => !v.indisponivel);
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      l = l.filter((v: PoolVol) => v.full_name.toLowerCase().includes(q));
+    }
+    return l;
+  }, [pool, hideUnavailable, search]);
+
+  if (!contexto) return null;
+  const totalDisponiveis = pool.filter((v: PoolVol) => !v.indisponivel).length;
+  const totalIndisponiveis = pool.length - totalDisponiveis;
+
+  const handleDragStart = (e: React.DragEvent, v: PoolVol) => {
+    e.dataTransfer.setData(MIME_VOL, JSON.stringify({
+      volunteer_id: v.id,
+      volunteer_name: v.full_name,
+      planning_center_person_id: v.planning_center_id || null,
+    }));
+    e.dataTransfer.effectAllowed = 'copy';
+  };
+
+  return (
+    <Card className={hideUnavailable ? '' : 'border-red-200'}>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex flex-wrap items-center justify-between gap-2">
+          <span className="flex items-center gap-2 cursor-pointer select-none" onClick={() => setOpen(!open)}>
+            {open ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+            Voluntários disponíveis
+            <Badge variant="outline" className="text-xs">{list.length}</Badge>
+          </span>
+          <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={hideUnavailable}
+              onChange={e => setHideUnavailable(e.target.checked)}
+              className="accent-[#00B39D]"
+            />
+            Ocultar indisponíveis
+            {totalIndisponiveis > 0 && (
+              <span className="text-xs text-red-600">({totalIndisponiveis} indisponível(is))</span>
+            )}
+          </label>
+        </CardTitle>
+      </CardHeader>
+      {open && (
+        <CardContent className="pt-0 space-y-3">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+            <Input
+              placeholder="Buscar por nome..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="pl-8 h-9 text-sm"
+            />
+          </div>
+          {list.length === 0 ? (
+            <p className="text-xs text-muted-foreground text-center py-3">
+              {pool.length === 0
+                ? 'Nenhum voluntário sincronizado. Use "Sincronizar" no modal de adicionar.'
+                : 'Todos os voluntários já estão escalados ou indisponíveis neste dia.'}
+            </p>
+          ) : (
+            <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
+              {list.map((v: PoolVol) => {
+                const over = (v.escaladoEm || []) as Array<{ service_id: string; name: string; scheduled_at: string }>;
+                return (
+                  <div
+                    key={v.id}
+                    draggable
+                    onDragStart={e => handleDragStart(e, v)}
+                    className="flex items-center gap-2.5 px-3 py-2 rounded-lg border bg-card/50 cursor-grab active:cursor-grabbing hover:border-[#00B39D]/60 transition-colors"
+                    title={over.length
+                      ? `Já serve às ${over.map(o => format(new Date(o.scheduled_at), 'HH:mm')).join(', ')} em outro(s) culto(s) deste dia`
+                      : 'Arraste para uma equipe para escalar'}
+                  >
+                    <GripVertical className="h-4 w-4 text-muted-foreground/40 shrink-0" />
+                    <div className="h-8 w-8 rounded-full bg-muted flex items-center justify-center text-xs font-medium shrink-0 overflow-hidden">
+                      {v.avatar_url
+                        ? <img data-foto-avatar="" src={v.avatar_url} alt={v.full_name} className="h-full w-full object-cover" />
+                        : v.full_name.charAt(0).toUpperCase()}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium truncate">{v.full_name}</p>
+                      <div className="flex flex-wrap gap-1">
+                        {over.length > 0 && (
+                          <Badge variant="outline" className="text-[10px] px-1.5 py-0 bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
+                            já serve às {format(new Date(over[0].scheduled_at), 'HH:mm')}
+                          </Badge>
+                        )}
+                        {(v.team_members || []).slice(0, 1).map((tm: any) => (
+                          <span key={tm.id} className="text-[10px] text-muted-foreground inline-flex items-center gap-1">
+                            {tm.team?.color && <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ backgroundColor: tm.team.color }} />}
+                            {tm.team?.name}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    <Button
+                      size="icon"
+                      className="h-7 w-7 shrink-0 bg-[#00B39D] hover:bg-[#00B39D]/80 text-white"
+                      onClick={() => onAdd(v)}
+                      title="Escalar (usa a primeira equipe do voluntário)"
+                    >
+                      <Plus className="h-4 w-4" />
+                    </Button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      )}
+    </Card>
+  );
+}
+
+function TeamScheduleGroup({ teamName, teamId, schedules, teams, contexto, onDropTeam }: {
   teamName: string; teamId: string | null; schedules: VolSchedule[]; teams: VolTeam[];
+  contexto: any; onDropTeam: (e: React.DragEvent, teamId: string | null, teamName: string) => void;
 }) {
   const deleteSchedule = useDeleteSchedule();
   const [expanded, setExpanded] = useState(true);
+  const [over, setOver] = useState(false);
   const team = teams.find(t => t.id === teamId);
 
   const handleRemove = (scheduleId: string, name: string) => {
@@ -222,7 +421,12 @@ function TeamScheduleGroup({ teamName, teamId, schedules, teams }: {
   };
 
   return (
-    <Card>
+    <Card
+      className={`transition-colors ${over ? 'border-[#00B39D] bg-[#00B39D]/5' : ''}`}
+      onDragOver={e => { e.preventDefault(); setOver(true); }}
+      onDragLeave={() => setOver(false)}
+      onDrop={e => { setOver(false); onDropTeam(e, teamId, teamName); }}
+    >
       <CardHeader className="pb-2 cursor-pointer" onClick={() => setExpanded(!expanded)}>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -236,40 +440,64 @@ function TeamScheduleGroup({ teamName, teamId, schedules, teams }: {
       {expanded && (
         <CardContent className="pt-0">
           <div className="space-y-1">
-            {schedules.map(sch => (
-              <div key={sch.id} className="flex items-center justify-between p-2.5 rounded-lg border bg-card/50">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="h-8 w-8 rounded-full bg-muted flex items-center justify-center text-xs font-medium shrink-0">
-                    {sch.volunteer_name.charAt(0)}
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium truncate">{sch.volunteer_name}</p>
-                    <div className="flex items-center gap-2">
-                      {sch.position_name && <span className="text-xs text-muted-foreground">{sch.position_name}</span>}
-                      <Badge variant="outline" className={`text-[10px] px-1.5 py-0 ${
-                        sch.confirmation_status === 'confirmed' ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300' :
-                        sch.confirmation_status === 'declined' ? 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300' :
-                        'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300'
-                      }`}>
-                        {sch.confirmation_status === 'confirmed' ? 'Confirmado' :
-                         sch.confirmation_status === 'declined' ? 'Recusou' : 'Pendente'}
-                      </Badge>
-                      {sch.source !== 'planning_center' && (
-                        <Badge variant="outline" className="text-[10px] px-1.5 py-0">
-                          {sch.source === 'auto_rotation' ? 'Auto' : 'Manual'}
+            {schedules.map(sch => {
+              // Sobreposição/indisponibilidade da pessoa neste dia (do contexto).
+              const info = (contexto?.pool || []).find((v: PoolVol) =>
+                (sch.volunteer_id && v.id === sch.volunteer_id) ||
+                (sch.planning_center_person_id && v.planning_center_id === sch.planning_center_person_id));
+              const over = (info?.escaladoEm || []) as Array<{ service_id: string; name: string; scheduled_at: string }>;
+              return (
+                <div
+                  key={sch.id}
+                  draggable
+                  onDragStart={e => {
+                    e.dataTransfer.setData(MIME_SCHED, JSON.stringify({ id: sch.id, volunteer_name: sch.volunteer_name }));
+                    e.dataTransfer.effectAllowed = 'move';
+                  }}
+                  className="flex items-center justify-between p-2.5 rounded-lg border bg-card/50 cursor-grab active:cursor-grabbing"
+                  title={over.length
+                    ? `Atenção: já serve às ${over.map(o => format(new Date(o.scheduled_at), 'HH:mm')).join(', ')} em outro(s) culto(s) deste dia`
+                    : 'Arraste para mover de equipe'}
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <GripVertical className="h-4 w-4 text-muted-foreground/30 shrink-0" />
+                    <div className="h-8 w-8 rounded-full bg-muted flex items-center justify-center text-xs font-medium shrink-0">
+                      {sch.volunteer_name.charAt(0)}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium truncate">{sch.volunteer_name}</p>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {sch.position_name && <span className="text-xs text-muted-foreground">{sch.position_name}</span>}
+                        <Badge variant="outline" className={`text-[10px] px-1.5 py-0 ${
+                          sch.confirmation_status === 'confirmed' ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300' :
+                          sch.confirmation_status === 'declined' ? 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300' :
+                          'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300'
+                        }`}>
+                          {sch.confirmation_status === 'confirmed' ? 'Confirmado' :
+                           sch.confirmation_status === 'declined' ? 'Recusou' : 'Pendente'}
                         </Badge>
-                      )}
+                        {sch.source !== 'planning_center' && (
+                          <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+                            {sch.source === 'auto_rotation' ? 'Auto' : 'Manual'}
+                          </Badge>
+                        )}
+                        {over.length > 0 && (
+                          <Badge variant="outline" className="text-[10px] px-1.5 py-0 bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
+                            já serve às {format(new Date(over[0].scheduled_at), 'HH:mm')}
+                          </Badge>
+                        )}
+                      </div>
                     </div>
                   </div>
+                  <Button
+                    variant="ghost" size="icon" className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
+                    onClick={() => handleRemove(sch.id, sch.volunteer_name)}
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </Button>
                 </div>
-                <Button
-                  variant="ghost" size="icon" className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
-                  onClick={() => handleRemove(sch.id, sch.volunteer_name)}
-                >
-                  <X className="h-3.5 w-3.5" />
-                </Button>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </CardContent>
       )}
@@ -320,15 +548,20 @@ function AutoFillButton({ serviceId, teams }: { serviceId: string; teams: VolTea
   );
 }
 
-function AddVolunteerDialog({ serviceId, teams, existingSchedules, initialTeamId, onClose }: {
-  serviceId: string; teams: VolTeam[]; existingSchedules: VolSchedule[]; initialTeamId?: string; onClose: () => void;
+function AddVolunteerDialog({ serviceId, teams, existingSchedules, initialTeamId, poolAnotado, onClose }: {
+  serviceId: string; teams: VolTeam[]; existingSchedules: VolSchedule[]; initialTeamId?: string;
+  poolAnotado?: PoolVol[]; onClose: () => void;
 }) {
   const createSchedule = useCreateSchedule();
   const sync = useSyncPlanningCenter();
-  const { data: pool = [], isLoading: poolLoading, refetch } = useVolunteersPool();
+  const { data: poolLegacy = [], isLoading: poolLoading, refetch } = useVolunteersPool();
+  // Quando o contexto de montagem já veio anotado (indisponibilidade + sobreposição),
+  // usa ele — senão cai no pool genérico.
+  const pool = (poolAnotado && poolAnotado.length > 0) ? poolAnotado : poolLegacy;
   const [selectedTeamId, setSelectedTeamId] = useState(initialTeamId || '');
   const [searchQuery, setSearchQuery] = useState('');
   const [addedIds, setAddedIds] = useState<Set<string>>(new Set());
+  const [hideUnavailable, setHideUnavailable] = useState(true);
   // Quando o voluntário serve em mais de uma equipe e não há filtro de equipe,
   // guarda qual vínculo (equipe/função) o coordenador escolheu por pessoa.
   const [choice, setChoice] = useState<Record<string, number>>({});
@@ -347,6 +580,7 @@ function AddVolunteerDialog({ serviceId, teams, existingSchedules, initialTeamId
   const filtered = useMemo(() => {
     let list: any[] = pool.filter((v: any) => !alreadyScheduledIds.has(v.id) &&
       !alreadyScheduledIds.has(v.planning_center_id));
+    if (hideUnavailable) list = list.filter((v: any) => !v.indisponivel);
 
     if (selectedTeamId && selectedTeamId !== 'all') {
       list = list.filter((v: any) =>
@@ -359,7 +593,7 @@ function AddVolunteerDialog({ serviceId, teams, existingSchedules, initialTeamId
         v.email?.toLowerCase().includes(q));
     }
     return list;
-  }, [pool, selectedTeamId, searchQuery, alreadyScheduledIds]);
+  }, [pool, selectedTeamId, searchQuery, alreadyScheduledIds, hideUnavailable]);
 
   const handleAdd = (vol: any) => {
     // Escolhe o vínculo (equipe/função) a usar: (1) se há filtro de equipe, o
@@ -397,6 +631,11 @@ function AddVolunteerDialog({ serviceId, teams, existingSchedules, initialTeamId
     });
   };
 
+  const countIndisponiveis = useMemo(() =>
+    pool.filter((v: any) => !alreadyScheduledIds.has(v.id) &&
+      !alreadyScheduledIds.has(v.planning_center_id) && v.indisponivel).length,
+  [pool, alreadyScheduledIds]);
+
   return (
     <Dialog open onOpenChange={onClose}>
       <DialogContent className="w-full max-w-lg h-[90vh] sm:h-[80vh] flex flex-col p-0 gap-0">
@@ -418,7 +657,7 @@ function AddVolunteerDialog({ serviceId, teams, existingSchedules, initialTeamId
         </div>
 
         {/* Filters */}
-        <div className="flex gap-2 px-4 py-3 border-b shrink-0">
+        <div className="flex flex-wrap gap-2 px-4 py-3 border-b shrink-0">
           <Select value={selectedTeamId} onValueChange={setSelectedTeamId}>
             <SelectTrigger className="w-36 h-9 text-sm"><SelectValue placeholder="Equipe" /></SelectTrigger>
             <SelectContent>
@@ -428,7 +667,7 @@ function AddVolunteerDialog({ serviceId, teams, existingSchedules, initialTeamId
               ))}
             </SelectContent>
           </Select>
-          <div className="relative flex-1">
+          <div className="relative flex-1 min-w-[140px]">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
             <Input
               placeholder="Buscar por nome..."
@@ -437,11 +676,23 @@ function AddVolunteerDialog({ serviceId, teams, existingSchedules, initialTeamId
               className="pl-8 h-9 text-sm"
             />
           </div>
+          <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={hideUnavailable}
+              onChange={e => setHideUnavailable(e.target.checked)}
+              className="accent-[#00B39D]"
+            />
+            Ocultar indisponíveis
+            {countIndisponiveis > 0 && (
+              <span className="text-xs text-red-600">({countIndisponiveis})</span>
+            )}
+          </label>
         </div>
 
         {/* List */}
         <div className="flex-1 overflow-y-auto px-2 py-2 min-h-0">
-          {poolLoading ? (
+          {poolLoading && pool.length === 0 ? (
             <div className="flex items-center justify-center py-12">
               <RefreshCw className="h-5 w-5 animate-spin text-muted-foreground" />
             </div>
@@ -458,6 +709,7 @@ function AddVolunteerDialog({ serviceId, teams, existingSchedules, initialTeamId
             <div className="space-y-1">
               {filtered.map((vol: any) => {
                 const teams_of = (vol.team_members || []) as any[];
+                const over = (vol.escaladoEm || []) as Array<{ service_id: string; name: string; scheduled_at: string }>;
                 return (
                   <div key={vol.id} className="flex items-center gap-3 px-3 py-2.5 rounded-lg border hover:bg-accent/50 transition-colors">
                     {/* Avatar */}
@@ -481,6 +733,16 @@ function AddVolunteerDialog({ serviceId, teams, existingSchedules, initialTeamId
                         }
                         {teams_of.length > 2 && (
                           <span className="text-[10px] text-muted-foreground/60">+{teams_of.length - 2}</span>
+                        )}
+                        {over.length > 0 && (
+                          <Badge variant="outline" className="text-[10px] px-1.5 py-0 bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
+                            já serve às {format(new Date(over[0].scheduled_at), 'HH:mm')}
+                          </Badge>
+                        )}
+                        {vol.indisponivel && (
+                          <Badge variant="outline" className="text-[10px] px-1.5 py-0 bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300" title={vol.indisponivelMotivo || 'Indisponível'}>
+                            Indisponível{vol.indisponivelMotivo ? ` · ${vol.indisponivelMotivo}` : ''}
+                          </Badge>
                         )}
                       </div>
                     </div>

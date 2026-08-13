@@ -1,5 +1,15 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { voluntariado } from '@/api';
+
+// Contexto de montagem de escala: pool anotado com indisponibilidade do dia do
+// culto + quem já serve em outros cultos do mesmo dia (evita sobreposição).
+export function useMontagemContexto(serviceId: string | undefined) {
+  return useQuery({
+    queryKey: ['vol', 'montagem-contexto', serviceId],
+    enabled: !!serviceId,
+    queryFn: () => voluntariado.schedules.contextoMontagem(serviceId!),
+  });
+}
 
 export function useCreateSchedule() {
   const qc = useQueryClient();
