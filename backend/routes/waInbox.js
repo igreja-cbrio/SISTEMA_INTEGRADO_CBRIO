@@ -126,40 +126,78 @@ router.get('/resumo-areas', authorizeModule('conversas', 1), async (req, res) =>
 // GET /setores — lista (todos, p/ admin) · usado pelo painel e pela config
 router.get('/setores', authorizeModule('conversas', 1), async (req, res) => {
   try {
+    // select('*'): os campos de FLUXO entram quando a migration existir —
+    // pedi-los nominalmente derrubaria a rota antes dela.
     const { data } = await supabase.from('conversas_setores')
-      .select('id, ordem, rotulo, area, ativo').order('ordem', { ascending: true });
+      .select('*').order('ordem', { ascending: true });
     res.json({ setores: data || [] });
   } catch (e) {
     console.error('[wa-inbox] setores get:', e.message);
     res.status(500).json({ error: 'Erro ao listar setores' });
   }
 });
+// Campos do FLUXO da opção (F3 · migration 20260813150000). Devolve
+// { fluxo, erro } — o erro cobre a única combinação inválida.
+function camposFluxoSetor(body) {
+  const b = body || {};
+  const fluxo = {};
+  if ('mensagem_resposta' in b) fluxo.mensagem_resposta = b.mensagem_resposta ? String(b.mensagem_resposta).slice(0, 1000) : null;
+  if ('pedir_nome' in b) fluxo.pedir_nome = b.pedir_nome !== false;
+  if ('destino_tipo' in b) fluxo.destino_tipo = b.destino_tipo === 'atendente' ? 'atendente' : 'area';
+  if ('atendente_id' in b) fluxo.atendente_id = b.atendente_id || null;
+  if (fluxo.destino_tipo === 'atendente' && !fluxo.atendente_id) {
+    return { fluxo, erro: 'Destino "atendente" exige escolher o atendente.' };
+  }
+  return { fluxo };
+}
+
 // POST /setores — cria (admin do módulo)
 router.post('/setores', authorizeModule('conversas', 3), async (req, res) => {
   try {
     const { rotulo, area, ordem, ativo } = req.body || {};
     if (!rotulo || !area) return res.status(400).json({ error: 'Rótulo e área são obrigatórios.' });
-    const { data, error } = await supabase.from('conversas_setores')
-      .insert({ rotulo: String(rotulo).trim(), area: String(area).trim(), ordem: Number(ordem) || 0, ativo: ativo !== false })
-      .select().single();
+    const { fluxo, erro: erroFluxo } = camposFluxoSetor(req.body);
+    if (erroFluxo) return res.status(400).json({ error: erroFluxo });
+    const base = { rotulo: String(rotulo).trim(), area: String(area).trim(), ordem: Number(ordem) || 0, ativo: ativo !== false };
+    let aviso;
+    let { data, error } = await supabase.from('conversas_setores')
+      .insert({ ...base, ...fluxo }).select().single();
+    if (error && error.code === '42703' && Object.keys(fluxo).length) {
+      // Migration do fluxo ainda não aplicada → salva o básico e AVISA
+      // (silêncio aqui viraria "salvei o fluxo" que não existe).
+      aviso = 'Campos de fluxo ignorados — a migration 20260813150000 ainda não foi aplicada.';
+      ({ data, error } = await supabase.from('conversas_setores').insert(base).select().single());
+    }
     if (error) throw error;
-    res.json(data);
+    res.json(aviso ? { ...data, aviso } : data);
   } catch (e) {
     console.error('[wa-inbox] setores post:', e.message);
     res.status(500).json({ error: 'Erro ao criar setor' });
   }
 });
-// PUT /setores/:id — edita
+// PUT /setores/:id — edita (inclui os campos de FLUXO da opção)
 router.put('/setores/:id', authorizeModule('conversas', 3), async (req, res) => {
   try {
     const patch = {};
     for (const k of ['rotulo', 'area']) if (k in (req.body || {})) patch[k] = String(req.body[k] || '').trim();
     if ('ordem' in (req.body || {})) patch.ordem = Number(req.body.ordem) || 0;
     if ('ativo' in (req.body || {})) patch.ativo = !!req.body.ativo;
-    if (!Object.keys(patch).length) return res.status(400).json({ error: 'Nada para atualizar' });
-    const { data, error } = await supabase.from('conversas_setores').update(patch).eq('id', req.params.id).select().single();
+    const { fluxo, erro: erroFluxo } = camposFluxoSetor(req.body);
+    if (erroFluxo) return res.status(400).json({ error: erroFluxo });
+    if (!Object.keys(patch).length && !Object.keys(fluxo).length) return res.status(400).json({ error: 'Nada para atualizar' });
+    let aviso;
+    let { data, error } = await supabase.from('conversas_setores')
+      .update({ ...patch, ...fluxo }).eq('id', req.params.id).select().single();
+    if (error && error.code === '42703' && Object.keys(fluxo).length) {
+      aviso = 'Campos de fluxo ignorados — a migration 20260813150000 ainda não foi aplicada.';
+      if (Object.keys(patch).length) {
+        ({ data, error } = await supabase.from('conversas_setores').update(patch).eq('id', req.params.id).select().single());
+      } else {
+        return res.status(409).json({ error: aviso });
+      }
+    }
     if (error) throw error;
-    res.json(data);
+    res.json(aviso ? { ...data, aviso } : data);
   } catch (e) {
     console.error('[wa-inbox] setores put:', e.message);
     res.status(500).json({ error: 'Erro ao atualizar setor' });
