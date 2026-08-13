@@ -15,6 +15,66 @@ const tabBtn = (ativo) => ({
   border: 'none', background: ativo ? C.primary : 'transparent', color: ativo ? '#fff' : C.t2,
 });
 
+// Eixo estratégico da CBRio: 2026-2030. Cada ano é um ciclo de planejamento;
+// as propostas de um ciclo compõem o eixo anual daquele ano. A régua é só
+// contexto visual (decisão do Yago 2026-08-13) — não toca o /expansao.
+const EIXO_INICIO = 2026;
+const EIXO_FIM = 2030;
+
+function ReguaEixo({ ciclos, cicloAtual, aoSelecionar, aoCriar, podeCriar }) {
+  const anoCorrente = new Date().getFullYear();
+  const porAno = Object.fromEntries((ciclos || []).map((c) => [c.ano, c]));
+  const anos = [];
+  for (let a = EIXO_INICIO; a <= EIXO_FIM; a += 1) anos.push(a);
+
+  return (
+    <div style={{ display: 'grid', gap: 6 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 11.5, fontWeight: 700, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+          Eixo estratégico {EIXO_INICIO}–{EIXO_FIM}
+        </span>
+        <span style={{ fontSize: 11.5, color: C.t3 }}>
+          · as propostas de cada ciclo compõem o eixo anual
+        </span>
+      </div>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        {anos.map((ano) => {
+          const c = porAno[ano];
+          const ativo = c && cicloAtual?.id === c.id;
+          const publicado = Boolean(c?.publicado_em);
+          const corBorda = ativo ? C.primary : publicado ? C.green : c ? C.border : 'var(--hairline)';
+          return (
+            <button
+              key={ano}
+              onClick={() => (c ? aoSelecionar(c.id) : podeCriar && aoCriar(ano))}
+              disabled={!c && !podeCriar}
+              title={c ? (publicado ? 'Calendário publicado' : 'Ciclo em andamento') : podeCriar ? 'Criar ciclo deste ano' : 'Ciclo ainda não criado'}
+              style={{
+                flex: '1 1 110px', minWidth: 100, padding: '8px 10px', borderRadius: 10, textAlign: 'left',
+                border: `1px solid ${corBorda}`, cursor: c || podeCriar ? 'pointer' : 'default',
+                background: ativo ? C.primaryBg : 'transparent',
+                opacity: c ? 1 : 0.6,
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <strong style={{ fontSize: 14, color: ativo ? C.primary : C.text }}>{ano}</strong>
+                {ano === anoCorrente && (
+                  <span style={{ fontSize: 9.5, fontWeight: 700, color: C.t3, border: `1px solid ${C.border}`, borderRadius: 999, padding: '0 5px' }}>
+                    ano corrente
+                  </span>
+                )}
+              </div>
+              <div style={{ fontSize: 10.5, color: publicado ? C.green : c ? C.t2 : C.t3, marginTop: 2 }}>
+                {publicado ? 'publicado' : c ? (c.submissao_aberta ? 'submissão aberta' : c.avaliacao_aberta ? 'em avaliação' : 'em preparação') : podeCriar ? '+ criar ciclo' : 'sem ciclo'}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function PlanejamentoAnual() {
   const { profile } = useAuth();
   const [ciclos, setCiclos] = useState([]);
@@ -80,6 +140,21 @@ export default function PlanejamentoAnual() {
 
       {ciclo && (
         <>
+          <ReguaEixo
+            ciclos={ciclos}
+            cicloAtual={ciclo}
+            aoSelecionar={carregarCiclo}
+            podeCriar={ehPastor}
+            aoCriar={async (ano) => {
+              try {
+                const novo = await api.ciclos.create(ano);
+                toast.success(`Ciclo ${ano} criado`);
+                setCiclos((cs) => [novo, ...cs].sort((a, b) => b.ano - a.ano));
+                await carregarCiclo(novo.id);
+              } catch (e) { toast.error(e.message || 'Não foi possível criar o ciclo'); }
+            }}
+          />
+
           <div style={{
             display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
             padding: '10px 14px', borderRadius: 12, background: 'var(--panel, var(--cbrio-card))',

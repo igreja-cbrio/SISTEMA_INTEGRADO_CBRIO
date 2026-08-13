@@ -8,6 +8,35 @@ import {
   C, cardStyle, btn, input, hint, Badge, EstadoBadge, fmtBRL, fmtData, fmtQuando,
   MESES, MESES_LONGOS, DIAS_SEMANA, thStyle, tdStyle,
 } from './comum';
+import CalendarioAno from './CalendarioAno';
+
+// Gráfico caixa livre × custo · reusado na visão do Pastor e na simulação de
+// UMA proposta na tela de decisão ("se você aprovar"). Coluna sólida = o que
+// já está no calendário; hachurada = o que a decisão em jogo acrescenta.
+function GraficoOrcamento({ visao, alturaPx = 260, rotuloPendente = 'Aguardando decisão' }) {
+  const dados = MESES.map((m, i) => ({
+    mes: m,
+    caixa: visao.caixa_livre?.[i] ?? 0,
+    aprovado: visao.comprometido?.[i] ?? 0,
+    pendente: visao.propostos?.[i] ?? 0,
+  }));
+  return (
+    <div style={{ height: alturaPx }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <ComposedChart data={dados}>
+          <XAxis dataKey="mes" tick={{ fontSize: 11 }} />
+          <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => (v / 1000) + 'k'} />
+          <Tooltip formatter={(v) => fmtBRL(v)} />
+          <Legend />
+          <ReferenceLine y={0} stroke="var(--hairline)" />
+          <Bar dataKey="aprovado" name="Já no calendário" stackId="c" fill={C.primary} />
+          <Bar dataKey="pendente" name={rotuloPendente} stackId="c" fill={C.amber} fillOpacity={0.55} />
+          <Line dataKey="caixa" name="Caixa livre" stroke={C.text} strokeWidth={2} dot={false} />
+        </ComposedChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
 
 const SUBS = ['Decisões', 'Retificações', 'Ressalvas', 'Orçamento', 'Calendário', 'Ciclo e publicação'];
 
@@ -127,6 +156,7 @@ function DetalheProposta({ id, constantes, aoVoltar }) {
   const [ressalva, setRessalva] = useState(null);   // {texto, responsavel_id, prazo}
   const [exigencia, setExigencia] = useState(null); // {texto}
   const [salvando, setSalvando] = useState(false);
+  const [simulacao, setSimulacao] = useState(null); // efeito no orçamento se aprovar
 
   const criterios = constantes?.criterios || [];
   const campos = constantes?.campos_apontaveis || [];
@@ -136,6 +166,14 @@ function DetalheProposta({ id, constantes, aoVoltar }) {
   }, [id]);
   useEffect(() => { carregar(); }, [carregar]);
   useEffect(() => { usersApi.list().then((u) => setPessoas(Array.isArray(u) ? u : [])).catch(() => {}); }, []);
+  // Simulação isolada: o endpoint tira TODAS as outras pendentes e deixa só esta
+  // proposta na parte hachurada — é o "e se eu aprovar isto?" do spec.
+  useEffect(() => {
+    if (!p?.ciclo_id) return;
+    api.ciclos.orcamentoPastor(p.ciclo_id, p.id)
+      .then((r) => setSimulacao(r))
+      .catch(() => setSimulacao(null));
+  }, [p?.ciclo_id, p?.id]);
 
   if (!p) return <p style={{ fontSize: 13, color: C.t3 }}>Carregando…</p>;
   const quorumCompleto = Array.isArray(p.avaliacoes);
@@ -232,6 +270,33 @@ function DetalheProposta({ id, constantes, aoVoltar }) {
           </div>
         ))}
       </div>
+
+      {simulacao && !simulacao.sem_orcamento && (
+        <div style={{ ...cardStyle, padding: 14, display: 'grid', gap: 6 }}>
+          <div>
+            <strong style={{ fontSize: 13, color: C.text }}>
+              {p.situacao_decisao ? 'Efeito desta proposta no orçamento' : 'Efeito no orçamento, se você aprovar'}
+            </strong>
+            <p style={{ ...hint, marginTop: 2 }}>
+              A parte sólida é o que já está no calendário; a hachurada é o custo desta proposta.
+              Quando a coluna passa da linha do caixa livre, o mês estoura. Demais propostas
+              pendentes ficam de fora desta simulação.
+            </p>
+          </div>
+          <GraficoOrcamento visao={simulacao} alturaPx={230} rotuloPendente="Esta proposta" />
+          {simulacao.meses_negativos > 0 && (
+            <span style={{ fontSize: 12.5, color: C.red, fontWeight: 600 }}>
+              {simulacao.meses_negativos} mês(es) ficariam com saldo negativo neste cenário.
+            </span>
+          )}
+        </div>
+      )}
+      {simulacao?.sem_orcamento && (
+        <p style={{ ...hint, margin: 0 }}>
+          Sem o orçamento do ciclo (a diretoria Financeira ainda não enviou), não há referência de
+          caixa pra simular o efeito desta proposta.
+        </p>
+      )}
 
       {!p.situacao_decisao && quorumCompleto && (
         <div style={{ ...cardStyle, padding: 14, display: 'grid', gap: 10 }}>
@@ -424,13 +489,6 @@ function OrcamentoPastor({ ciclo }) {
   if (!visao) return <p style={{ fontSize: 13, color: C.t3 }}>Carregando…</p>;
   if (visao.sem_orcamento) return <p style={{ fontSize: 13, color: C.t3 }}>{visao.mensagem}</p>;
 
-  const dados = MESES.map((m, i) => ({
-    mes: m,
-    caixa: visao.caixa_livre[i],
-    aprovado: visao.comprometido[i],
-    pendente: visao.propostos[i],
-  }));
-
   return (
     <div style={{ display: 'grid', gap: 12 }}>
       <p style={{ margin: 0, fontSize: 12.5, color: C.t3, maxWidth: 800 }}>
@@ -444,19 +502,8 @@ function OrcamentoPastor({ ciclo }) {
           : 'Nenhum mês estoura o caixa livre no cenário atual.'}
       </div>
 
-      <div style={{ ...cardStyle, padding: 14, height: 320 }}>
-        <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={dados}>
-            <XAxis dataKey="mes" tick={{ fontSize: 11 }} />
-            <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => (v / 1000) + 'k'} />
-            <Tooltip formatter={(v) => fmtBRL(v)} />
-            <Legend />
-            <ReferenceLine y={0} stroke="var(--hairline)" />
-            <Bar dataKey="aprovado" name="Aprovado" stackId="c" fill={C.primary} />
-            <Bar dataKey="pendente" name="Aguardando decisão" stackId="c" fill={C.amber} fillOpacity={0.55} />
-            <Line dataKey="caixa" name="Caixa livre" stroke={C.text} strokeWidth={2} dot={false} />
-          </ComposedChart>
-        </ResponsiveContainer>
+      <div style={{ ...cardStyle, padding: 14 }}>
+        <GraficoOrcamento visao={visao} alturaPx={300} />
       </div>
       <span style={hint}>
         Linha: caixa livre do mês. Coluna: custo previsto, com a parte sólida já aprovada e a translúcida aguardando sua
@@ -520,7 +567,7 @@ function OrcamentoPastor({ ciclo }) {
 // ─── Calendário (planejamento + definitivo) ───────────────────────────────
 function Calendario({ ciclo, recarregarCiclo }) {
   const [dados, setDados] = useState(null);
-  const [visao, setVisao] = useState('plan');
+  const [visao, setVisao] = useState('ano');
   const carregar = useCallback(async () => {
     try { setDados(await api.ciclos.calendario(ciclo.id)); }
     catch { toast.error('Erro ao carregar o calendário'); }
@@ -547,9 +594,12 @@ function Calendario({ ciclo, recarregarCiclo }) {
   return (
     <div style={{ display: 'grid', gap: 12 }}>
       <div style={{ display: 'flex', gap: 6 }}>
+        <button style={subBtn(visao === 'ano')} onClick={() => setVisao('ano')}>Ano {ciclo.ano}</button>
         <button style={subBtn(visao === 'plan')} onClick={() => setVisao('plan')}>Planejamento</button>
         <button style={subBtn(visao === 'def')} onClick={() => setVisao('def')}>Definitivo</button>
       </div>
+
+      {visao === 'ano' && <CalendarioAno ano={ciclo.ano} itens={dados.planejamento?.itens || []} />}
 
       {visao === 'plan' && (
         <>
