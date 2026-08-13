@@ -943,7 +943,20 @@ function CopyScheduleDialog({ targetServiceId, services, onClose }: {
   const handleCopy = () => {
     if (!sourceId) return toast.error('Selecione o culto de origem');
     copySchedule.mutate({ from_service_id: sourceId, to_service_id: targetServiceId }, {
-      onSuccess: (data: any) => { toast.success(`${data.copied} escala(s) copiada(s)`); onClose(); },
+      onSuccess: (data: any) => {
+        toast.success(`${data.copied} escala(s) copiada(s)`);
+        // Quem ficou de fora por ter avisado que não pode neste culto é
+        // DECLARADO — senão a coordenação copia a escala e não percebe que
+        // faltou gente até o domingo.
+        const pulados = data.pulados || [];
+        if (pulados.length) {
+          toast.warning(
+            `${pulados.length} não copiado(s) por indisponibilidade: ${pulados.slice(0, 4).join(', ')}${pulados.length > 4 ? '…' : ''}`,
+            { duration: 12000 },
+          );
+        }
+        onClose();
+      },
       onError: (err: any) => toast.error(err.message || 'Erro ao copiar'),
     });
   };

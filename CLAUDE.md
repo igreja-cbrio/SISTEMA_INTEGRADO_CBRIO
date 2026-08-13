@@ -8484,6 +8484,12 @@ Filtro que só existe no cliente não é regra — é sugestão.
 - **Sem toggle de "ocultar indisponíveis"** em lugar nenhum: o servidor recusa de
   qualquer jeito, então mostrar o nome só produziria erro.
 
+⚠️ **`POST /schedules/copy` também fechou.** Ele faz INSERT EM LOTE direto (não
+passa pelo `POST /schedules`), então a trava de lá não o alcançava — e "copiar a
+escala do domingo passado" é justamente o caminho que traria de volta quem avisou
+que não pode NESTE domingo. Quem está indisponível no DESTINO é pulado e
+declarado (`pulados` na resposta + toast); ninguém disponível ⇒ 409.
+
 ⚠️ **O DnD e o pool anotado do PR #2444 (outra sessão, mesmo dia) foram
 PRESERVADOS** — `MIME_VOL`/`MIME_SCHED`, drop por equipe e as anotações
 `indisponivel`/`jaEscalado`/`escaladoEm` seguem intactos.

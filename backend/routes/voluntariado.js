@@ -3435,7 +3435,45 @@ router.post('/schedules/copy', async (req, res) => {
       .select('*').eq('service_id', from_service_id);
     if (!source || !source.length) return res.status(404).json({ error: 'Nenhuma escala encontrada no culto de origem' });
 
-    const rows = source.map(s => ({
+    // ⚠️ Copiar não pode furar a regra de disponibilidade. Este endpoint faz
+    // INSERT EM LOTE direto (não passa pelo POST /schedules), então a trava de
+    // lá não o alcança — e "copiar a escala do domingo passado" é justamente o
+    // caminho que traria de volta quem avisou que não pode NESTE domingo.
+    // Quem está indisponível no culto de DESTINO é pulado e DECLARADO.
+    const { data: svcDestino } = await supabase.from('vol_services')
+      .select('id, scheduled_at').eq('id', to_service_id).maybeSingle();
+    const diaDestino = diaBRT(svcDestino?.scheduled_at);
+    const idsOrigem = [...new Set(source.flatMap(s => [s.volunteer_id, s.planning_center_person_id]).filter(Boolean))];
+    let idxIndispon = new Map();
+    if (idsOrigem.length) {
+      const linhas = [];
+      for (let i = 0; i < idsOrigem.length; i += 200) {
+        const bloco = idsOrigem.slice(i, i + 200);
+        const [{ data: a }, { data: b }] = await Promise.all([
+          supabase.from('vol_availability')
+            .select('service_id, unavailable_from, unavailable_to, reason, volunteer_profile_id, planning_center_person_id')
+            .in('volunteer_profile_id', bloco),
+          supabase.from('vol_availability')
+            .select('service_id, unavailable_from, unavailable_to, reason, volunteer_profile_id, planning_center_person_id')
+            .in('planning_center_person_id', bloco),
+        ]);
+        linhas.push(...(a || []), ...(b || []));
+      }
+      idxIndispon = indexarPorPessoa(linhas);
+    }
+    const indispon = (s) => [s.volunteer_id, s.planning_center_person_id].filter(Boolean).some((id) =>
+      avaliarIndisponibilidade({ serviceId: to_service_id, dia: diaDestino }, idxIndispon.get(id) || []).indisponivel);
+
+    const pulados = source.filter(indispon).map(s => s.volunteer_name).filter(Boolean);
+    const copiaveis = source.filter(s => !indispon(s));
+    if (!copiaveis.length) {
+      return res.status(409).json({
+        error: 'Ninguém do culto de origem está disponível neste culto.',
+        codigo: 'todos_indisponiveis', pulados,
+      });
+    }
+
+    const rows = copiaveis.map(s => ({
       service_id: to_service_id,
       volunteer_id: s.volunteer_id,
       volunteer_name: s.volunteer_name,
@@ -3451,7 +3489,7 @@ router.post('/schedules/copy', async (req, res) => {
     const { data, error } = await supabase.from('vol_schedules')
       .insert(rows).select();
     if (error) return res.status(400).json({ error: error.message });
-    res.json({ copied: data.length, schedules: data });
+    res.json({ copied: data.length, schedules: data, pulados });
   } catch (e) { res.status(500).json({ error: 'Erro ao copiar escalas' }); }
 });
 
