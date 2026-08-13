@@ -12,7 +12,7 @@
 // lider/preenchido_por/created_by da proposta.
 // =====================================================================
 const router = require('express').Router();
-const { authenticate, authorizeModule } = require('../middleware/auth');
+const { authenticate, authorizeModule, isSuperAdminEmail } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const PA = require('../services/planejamentoAnualRegras');
@@ -27,7 +27,15 @@ function hojeSaoPaulo() {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
 }
 
-const ehPastor = (req) => req.user?.granular?.cargoSlug === 'pastor-presidente';
+// Pastor presidente por CARGO · ou SUPER-ADMIN (decisão do Yago 2026-08-13:
+// super-admin vê tudo sem restrição — é quem testa e administra o sistema;
+// segue o padrão is_super_admin() usado em todos os módulos). O papel de
+// decisão "de negócio" continua sendo exclusivo do cargo pastor-presidente.
+async function ehPastorOuSuper(req) {
+  if (req.user?.granular?.cargoSlug === 'pastor-presidente') return true;
+  if (req.user?.is_super_admin === true) return true;
+  return isSuperAdminEmail(req.user?.email);
+}
 
 async function carregarCiclo(cicloId) {
   const { data, error } = await supabase.from('plan_ciclos').select('*').eq('id', cicloId).single();
@@ -80,8 +88,8 @@ async function decisoesPorProposta(propostaIds) {
   return grupos;
 }
 
-function papelPara(req, avaliadores, proposta) {
-  if (ehPastor(req)) return { papel: 'pastor', minhaDiretoria: null };
+function papelPara(req, avaliadores, proposta, pastorFlag) {
+  if (pastorFlag) return { papel: 'pastor', minhaDiretoria: null };
   const assento = avaliadores.find((a) => a.profile_id === req.user.id);
   if (assento) return { papel: 'avaliador', minhaDiretoria: assento.diretoria };
   const uid = req.user.id;
@@ -133,7 +141,7 @@ router.get('/ciclos/:id', authorizeModule(MOD, 1), async (req, res) => {
       nome: a.profiles?.name || null,
     })),
     quorum: avaliadores.length,
-    meu_papel: papelPara(req, avaliadores, null).papel,
+    meu_papel: papelPara(req, avaliadores, null, await ehPastorOuSuper(req)).papel,
   });
 });
 
@@ -149,7 +157,7 @@ router.post('/ciclos', authorizeModule(MOD, 5), async (req, res) => {
 
 // Janelas de submissão/avaliação: exclusivas do Pastor (spec)
 router.patch('/ciclos/:id/janelas', authorizeModule(MOD, 1), async (req, res) => {
-  if (!ehPastor(req)) return res.status(403).json({ error: 'Abrir e fechar janelas é exclusivo do Pastor presidente' });
+  if (!(await ehPastorOuSuper(req))) return res.status(403).json({ error: 'Abrir e fechar janelas é exclusivo do Pastor presidente' });
   const patch = {};
   if (typeof req.body?.submissao_aberta === 'boolean') patch.submissao_aberta = req.body.submissao_aberta;
   if (typeof req.body?.avaliacao_aberta === 'boolean') patch.avaliacao_aberta = req.body.avaliacao_aberta;
@@ -192,8 +200,9 @@ router.get('/ciclos/:id/propostas', authorizeModule(MOD, 1), async (req, res) =>
   const decs = await decisoesPorProposta(ids);
 
   // Lista leve: projeção por papel SEM notas detalhadas (o detalhe traz)
+  const pastorFlag = await ehPastorOuSuper(req);
   const lista = (propostas || []).map((p) => {
-    const { papel, minhaDiretoria } = papelPara(req, avaliadores, p);
+    const { papel, minhaDiretoria } = papelPara(req, avaliadores, p, pastorFlag);
     const proj = PA.projetarProposta({
       proposta: p,
       avaliacoes: avs[p.id] || [],
@@ -264,7 +273,7 @@ router.get('/propostas/:id', authorizeModule(MOD, 1), async (req, res) => {
   const p = await carregarProposta(req.params.id);
   if (!p) return res.status(404).json({ error: 'Proposta não encontrada' });
   const avaliadores = await carregarAvaliadores(p.ciclo_id);
-  const { papel, minhaDiretoria } = papelPara(req, avaliadores, p);
+  const { papel, minhaDiretoria } = papelPara(req, avaliadores, p, await ehPastorOuSuper(req));
   const avs = await avaliacoesPorProposta([p.id]);
   const decs = await decisoesPorProposta([p.id]);
   const { data: apontamentos } = await supabase
@@ -283,7 +292,7 @@ router.get('/propostas/:id', authorizeModule(MOD, 1), async (req, res) => {
 router.put('/propostas/:id', authorizeModule(MOD, 2), async (req, res) => {
   const p = await carregarProposta(req.params.id);
   if (!p) return res.status(404).json({ error: 'Proposta não encontrada' });
-  if (!proponenteIds(p).includes(req.user.id) && !ehPastor(req)) {
+  if (!proponenteIds(p).includes(req.user.id) && !(await ehPastorOuSuper(req))) {
     return res.status(403).json({ error: 'Só o proponente edita a proposta' });
   }
   if (p.estado !== 'rascunho') {
@@ -394,7 +403,7 @@ router.put('/propostas/:id/avaliacao', authorizeModule(MOD, 1), async (req, res)
 
 // ── Ranking (painel de decisões · exclusivo do Pastor) ──────────────────
 router.get('/ciclos/:id/ranking', authorizeModule(MOD, 1), async (req, res) => {
-  if (!ehPastor(req)) return res.status(403).json({ error: 'O ranking de decisão é exclusivo do Pastor presidente' });
+  if (!(await ehPastorOuSuper(req))) return res.status(403).json({ error: 'O ranking de decisão é exclusivo do Pastor presidente' });
   const avaliadores = await carregarAvaliadores(req.params.id);
   const { data: propostas } = await supabase
     .from('plan_propostas').select('*').eq('ciclo_id', req.params.id).is('deleted_at', null);
@@ -466,7 +475,7 @@ async function aplicarDecisao({ proposta, corpo, pastorId }) {
 }
 
 router.post('/propostas/:id/decisao', authorizeModule(MOD, 1), async (req, res) => {
-  if (!ehPastor(req)) return res.status(403).json({ error: 'Decidir é exclusivo do Pastor presidente' });
+  if (!(await ehPastorOuSuper(req))) return res.status(403).json({ error: 'Decidir é exclusivo do Pastor presidente' });
   const p = await carregarProposta(req.params.id);
   if (!p) return res.status(404).json({ error: 'Proposta não encontrada' });
 
@@ -494,7 +503,7 @@ router.post('/propostas/:id/decisao', authorizeModule(MOD, 1), async (req, res) 
 
 // Lote: aprovar várias · reprovar várias com a MESMA exigência (spec)
 router.post('/ciclos/:id/decisoes-lote', authorizeModule(MOD, 1), async (req, res) => {
-  if (!ehPastor(req)) return res.status(403).json({ error: 'Decidir é exclusivo do Pastor presidente' });
+  if (!(await ehPastorOuSuper(req))) return res.status(403).json({ error: 'Decidir é exclusivo do Pastor presidente' });
   const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
   const tipo = req.body?.decisao;
   if (!ids.length || !['aprovada', 'reprovada'].includes(tipo)) {
@@ -528,7 +537,7 @@ router.post('/ciclos/:id/decisoes-lote', authorizeModule(MOD, 1), async (req, re
 
 // Ressalva: verificar / reabrir (Pastor)
 router.post('/propostas/:id/ressalva/verificar', authorizeModule(MOD, 1), async (req, res) => {
-  if (!ehPastor(req)) return res.status(403).json({ error: 'Gerir ressalvas é exclusivo do Pastor presidente' });
+  if (!(await ehPastorOuSuper(req))) return res.status(403).json({ error: 'Gerir ressalvas é exclusivo do Pastor presidente' });
   const p = await carregarProposta(req.params.id);
   if (!p || p.estado !== 'aprovada_ressalvas') return res.status(409).json({ error: 'Proposta não está aprovada com ressalvas' });
   const decs = await decisoesPorProposta([p.id]);
@@ -542,7 +551,7 @@ router.post('/propostas/:id/ressalva/verificar', authorizeModule(MOD, 1), async 
 });
 
 router.post('/propostas/:id/ressalva/reabrir', authorizeModule(MOD, 1), async (req, res) => {
-  if (!ehPastor(req)) return res.status(403).json({ error: 'Gerir ressalvas é exclusivo do Pastor presidente' });
+  if (!(await ehPastorOuSuper(req))) return res.status(403).json({ error: 'Gerir ressalvas é exclusivo do Pastor presidente' });
   const decs = await decisoesPorProposta([req.params.id]);
   const vigente = PA.decisaoVigente(decs[req.params.id] || []);
   if (!vigente || vigente.decisao !== 'aprovada_ressalvas') return res.status(409).json({ error: 'Sem ressalva vigente' });
@@ -555,7 +564,7 @@ router.post('/propostas/:id/ressalva/reabrir', authorizeModule(MOD, 1), async (r
 
 // Retirar do calendário: revoga a decisão vigente · volta ao ranking
 router.post('/propostas/:id/retirar', authorizeModule(MOD, 1), async (req, res) => {
-  if (!ehPastor(req)) return res.status(403).json({ error: 'Retirar do calendário é exclusivo do Pastor presidente' });
+  if (!(await ehPastorOuSuper(req))) return res.status(403).json({ error: 'Retirar do calendário é exclusivo do Pastor presidente' });
   const p = await carregarProposta(req.params.id);
   if (!p || !PA.podeTransicionar(p.estado, 'enviada')) {
     return res.status(409).json({ error: 'Esta proposta não está no calendário' });
@@ -612,7 +621,7 @@ router.post('/propostas/:id/retificar', authorizeModule(MOD, 2), async (req, res
 
 // Decisão pós-retificação: aprovar / ressalvas / arquivar / reabrir pros diretores
 router.post('/propostas/:id/decisao-retificacao', authorizeModule(MOD, 1), async (req, res) => {
-  if (!ehPastor(req)) return res.status(403).json({ error: 'Reavaliar retificação é exclusivo do Pastor presidente' });
+  if (!(await ehPastorOuSuper(req))) return res.status(403).json({ error: 'Reavaliar retificação é exclusivo do Pastor presidente' });
   const p = await carregarProposta(req.params.id);
   if (!p || p.estado !== 'retificada') return res.status(409).json({ error: 'Proposta não está retificada' });
 
@@ -659,7 +668,7 @@ router.post('/propostas/:id/decisao-retificacao', authorizeModule(MOD, 1), async
 
 // ── Apontamentos (Pastor → proponente) ───────────────────────────────────
 router.post('/propostas/:id/apontamentos', authorizeModule(MOD, 1), async (req, res) => {
-  if (!ehPastor(req)) return res.status(403).json({ error: 'Apontar respostas é prerrogativa do Pastor presidente' });
+  if (!(await ehPastorOuSuper(req))) return res.status(403).json({ error: 'Apontar respostas é prerrogativa do Pastor presidente' });
   const campo = req.body?.campo;
   const texto = (req.body?.texto || '').trim();
   if (!PA.CAMPOS_APONTAVEIS.some((c) => c.chave === campo)) return res.status(400).json({ error: 'Campo inválido' });
@@ -680,7 +689,7 @@ router.post('/propostas/:id/apontamentos', authorizeModule(MOD, 1), async (req, 
 });
 
 router.delete('/apontamentos/:id', authorizeModule(MOD, 1), async (req, res) => {
-  if (!ehPastor(req)) return res.status(403).json({ error: 'Remover apontamento é prerrogativa do Pastor presidente' });
+  if (!(await ehPastorOuSuper(req))) return res.status(403).json({ error: 'Remover apontamento é prerrogativa do Pastor presidente' });
   const { error } = await supabase.from('plan_apontamentos')
     .update({ deleted_at: new Date().toISOString() }).eq('id', req.params.id);
   if (error) return res.status(500).json({ error: 'Erro ao remover o apontamento' });
@@ -715,7 +724,7 @@ router.get('/ciclos/:id/conflitos', authorizeModule(MOD, 1), async (req, res) =>
 });
 
 router.post('/ciclos/:id/conflitos/aceitar', authorizeModule(MOD, 1), async (req, res) => {
-  if (!ehPastor(req)) return res.status(403).json({ error: 'Aceitar conflito é exclusivo do Pastor presidente' });
+  if (!(await ehPastorOuSuper(req))) return res.status(403).json({ error: 'Aceitar conflito é exclusivo do Pastor presidente' });
   const justificativa = (req.body?.justificativa || '').trim();
   if (justificativa.length < 5) return res.status(422).json({ error: 'Por que esta coincidência é tolerável? (justificativa obrigatória)' });
   const [a, b] = [req.body?.proposta_a, req.body?.proposta_b].sort();
@@ -727,7 +736,7 @@ router.post('/ciclos/:id/conflitos/aceitar', authorizeModule(MOD, 1), async (req
 });
 
 router.delete('/ciclos/:id/conflitos/aceites/:aceiteId', authorizeModule(MOD, 1), async (req, res) => {
-  if (!ehPastor(req)) return res.status(403).json({ error: 'Reabrir conflito é exclusivo do Pastor presidente' });
+  if (!(await ehPastorOuSuper(req))) return res.status(403).json({ error: 'Reabrir conflito é exclusivo do Pastor presidente' });
   const { error } = await supabase.from('plan_conflitos_aceitos')
     .delete().eq('id', req.params.aceiteId).eq('ciclo_id', req.params.id);
   if (error) return res.status(500).json({ error: 'Erro ao reabrir o conflito' });
@@ -784,7 +793,7 @@ router.get('/ciclos/:id/calendario', authorizeModule(MOD, 1), async (req, res) =
 
 // Remanejar (Pastor · mesma mudança vale pro calendário e pro orçamento)
 router.put('/propostas/:id/remanejar', authorizeModule(MOD, 1), async (req, res) => {
-  if (!ehPastor(req)) return res.status(403).json({ error: 'Remanejar é exclusivo do Pastor presidente' });
+  if (!(await ehPastorOuSuper(req))) return res.status(403).json({ error: 'Remanejar é exclusivo do Pastor presidente' });
   const p = await carregarProposta(req.params.id);
   if (!p) return res.status(404).json({ error: 'Proposta não encontrada' });
   const permitidos = ['data_inicio', 'precisao_inicio', 'multi_dia', 'data_fim', 'precisao_fim', 'recorrencia', 'dia_semana', 'hora_inicio', 'hora_fim', 'local_id'];
@@ -798,7 +807,7 @@ router.put('/propostas/:id/remanejar', authorizeModule(MOD, 1), async (req, res)
 
 // ── Travas e publicação ──────────────────────────────────────────────────
 router.get('/ciclos/:id/travas', authorizeModule(MOD, 1), async (req, res) => {
-  if (!ehPastor(req)) return res.status(403).json({ error: 'Publicação é exclusiva do Pastor presidente' });
+  if (!(await ehPastorOuSuper(req))) return res.status(403).json({ error: 'Publicação é exclusiva do Pastor presidente' });
   const ctx = await contextoCalendario(req.params.id);
   const travas = PA.validarTravas({
     propostas: ctx.propostas,
@@ -817,7 +826,7 @@ router.get('/ciclos/:id/travas', authorizeModule(MOD, 1), async (req, res) => {
 });
 
 router.post('/ciclos/:id/publicar', authorizeModule(MOD, 1), async (req, res) => {
-  if (!ehPastor(req)) return res.status(403).json({ error: 'Publicar o calendário é exclusivo do Pastor presidente' });
+  if (!(await ehPastorOuSuper(req))) return res.status(403).json({ error: 'Publicar o calendário é exclusivo do Pastor presidente' });
   // Pré-checagem amigável (a RPC re-verifica DENTRO da transação · anti-TOCTOU)
   const ctx = await contextoCalendario(req.params.id);
   const travas = PA.validarTravas({
@@ -855,7 +864,7 @@ async function assentoFinanceiro(req, cicloId) {
 
 router.get('/ciclos/:id/orcamento', authorizeModule(MOD, 1), async (req, res) => {
   const fin = await assentoFinanceiro(req, req.params.id);
-  if (!fin && !ehPastor(req)) {
+  if (!fin && !(await ehPastorOuSuper(req))) {
     return res.status(403).json({ error: 'O orçamento do ciclo é preenchido pela diretoria Financeira e avaliado pelo Pastor presidente.' });
   }
   const [{ data: header }, { data: valores }] = await Promise.all([
@@ -916,7 +925,7 @@ router.post('/ciclos/:id/orcamento/enviar', authorizeModule(MOD, 1), async (req,
 
 // Visão orçamentária do Pastor (+ simulação de 1 proposta isolada)
 router.get('/ciclos/:id/orcamento/pastor', authorizeModule(MOD, 1), async (req, res) => {
-  if (!ehPastor(req)) return res.status(403).json({ error: 'Esta visão é exclusiva do Pastor presidente' });
+  if (!(await ehPastorOuSuper(req))) return res.status(403).json({ error: 'Esta visão é exclusiva do Pastor presidente' });
   const [{ data: header }, { data: valores }] = await Promise.all([
     supabase.from('plan_orcamentos').select('*').eq('ciclo_id', req.params.id).maybeSingle(),
     supabase.from('plan_orcamento_valores').select('linha, mes, valor').eq('ciclo_id', req.params.id),
