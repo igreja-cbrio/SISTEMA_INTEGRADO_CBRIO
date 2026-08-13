@@ -4557,6 +4557,114 @@ router.post('/schedule-templates/:id/apply', authEscalaEscrita, async (req, res)
   } catch (e) { res.status(500).json({ error: e.message || 'Erro ao aplicar template' }); }
 });
 
+// Contexto de montagem de escala: tudo que a tela "Montar Escala" precisa numa
+// única chamada — pool de voluntários (mesmo shape do /volunteers-pool) anotado
+// com (a) indisponibilidade pro DIA do culto (por culto `vol_availability.
+// service_id` E por período que cobre a data — os DOIS modelos coexistem na
+// tabela, ver comentário em /services-availability), (b) se a pessoa já está
+// escalada NESTE culto e (c) os outros cultos do MESMO DIA em que ela já serve
+// (sobreposição — quem monta escala precisa ver se o voluntário não vai ficar
+// dobrado no domingo de manhã). Evita 3 chamadas no front e centraliza a lógica
+// de "quem pode ser escalado".
+router.get('/services/:serviceId/contexto-montagem', async (req, res) => {
+  try {
+    const sid = req.params.serviceId;
+    const { data: service } = await supabase
+      .from('vol_services').select('id, name, service_type_name, scheduled_at').eq('id', sid).single();
+    if (!service) return res.status(404).json({ error: 'Culto não encontrado' });
+
+    // Dia local BRT do culto (scheduled_at vem com offset -03:00 → UTC == BRT).
+    const d = new Date(service.scheduled_at);
+    const y = d.getUTCFullYear();
+    const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(d.getUTCDate()).padStart(2, '0');
+    const dia = `${y}-${mm}-${dd}`;
+
+    // Pool de voluntários paginado (cap 1000 do PostgREST · 1 a 1 com o pool).
+    let all = []; let offset = 0;
+    while (true) {
+      let q = supabase
+        .from('vol_profiles')
+        .select(`
+          id, full_name, email, avatar_url, planning_center_id, qr_code, phone, cpf, arquivado, membresia_id,
+          team_members:vol_team_members(
+            id, team_id, position_id,
+            team:vol_teams(id, name, color),
+            position:vol_positions(id, name)
+          )
+        `)
+        .order('full_name').range(offset, offset + 999);
+      const { data, error } = await q;
+      if (error) return res.status(400).json({ error: error.message });
+      if (!data || !data.length) break;
+      all = all.concat(data);
+      if (data.length < 1000) break;
+      offset += 1000;
+    }
+
+    // Indisponibilidade: por culto específico + por período que cobre a data.
+    const chave = (pid, pcid) => `${pid || ''}::${pcid || ''}`;
+    const [{ data: unavCulto }, { data: unavPeriodo }] = await Promise.all([
+      supabase.from('vol_availability')
+        .select('volunteer_profile_id, planning_center_person_id, reason')
+        .eq('service_id', sid),
+      supabase.from('vol_availability')
+        .select('volunteer_profile_id, planning_center_person_id, reason, unavailable_from, unavailable_to')
+        .is('service_id', null)
+        .lte('unavailable_from', dia)
+        .gte('unavailable_to', dia),
+    ]);
+    const unavCultoMap = new Map();
+    (unavCulto || []).forEach(u => unavCultoMap.set(chave(u.volunteer_profile_id, u.planning_center_person_id), u.reason));
+    const unavPeriodoMap = new Map();
+    (unavPeriodo || []).forEach(u => {
+      const k = chave(u.volunteer_profile_id, u.planning_center_person_id);
+      if (!unavPeriodoMap.has(k)) unavPeriodoMap.set(k, u);
+    });
+
+    // Outros cultos do MESMO DIA (exclui o atual) e suas escalas.
+    const [{ data: outrosCultosDia }, { data: escalasEste }] = await Promise.all([
+      supabase.from('vol_services').select('id, name, scheduled_at')
+        .gte('scheduled_at', `${dia}T00:00:00-03:00`)
+        .lte('scheduled_at', `${dia}T23:59:59-03:00`)
+        .neq('id', sid).order('scheduled_at'),
+      supabase.from('vol_schedules')
+        .select('volunteer_id, planning_center_person_id').eq('service_id', sid),
+    ]);
+    const escaladoEste = new Set((escalasEste || []).map(s => chave(s.volunteer_id, s.planning_center_person_id)));
+    const servicoPorId = Object.fromEntries((outrosCultosDia || []).map(o => [o.id, o]));
+    const escaladoOutrosMap = new Map();
+    if (outrosCultosDia && outrosCultosDia.length) {
+      const { data: escalasOutros } = await supabase.from('vol_schedules')
+        .select('volunteer_id, planning_center_person_id, service_id')
+        .in('service_id', outrosCultosDia.map(o => o.id));
+      (escalasOutros || []).forEach(s => {
+        const k = chave(s.volunteer_id, s.planning_center_person_id);
+        const o = servicoPorId[s.service_id];
+        if (!escaladoOutrosMap.has(k)) escaladoOutrosMap.set(k, []);
+        escaladoOutrosMap.get(k).push({ service_id: s.service_id, name: o?.name || 'Outro culto', scheduled_at: o?.scheduled_at || null });
+      });
+    }
+
+    const pool = (all || []).map(v => {
+      const k = chave(v.id, v.planning_center_id);
+      const uPeriodo = unavPeriodoMap.get(k);
+      const uCulto = unavCultoMap.get(k);
+      const motivo = uPeriodo?.reason || uCulto || null;
+      return {
+        ...v,
+        indisponivel: !!(uPeriodo || uCulto),
+        indisponivelMotivo: motivo,
+        indisponivelOrigem: uPeriodo ? 'periodo' : (uCulto ? 'culto' : null),
+        jaEscalado: escaladoEste.has(k),
+        escaladoEm: escaladoOutrosMap.get(k) || [],
+      };
+    });
+
+    res.json({ service, pool, outrosCultosDia: outrosCultosDia || [] });
+  } catch (e) { res.status(500).json({ error: 'Erro ao montar contexto da escala' }); }
+});
+
 // Cobertura da escala de um culto: alvo (vol_escala_culto_itens) × preenchidas
 // (vol_schedules com voluntário). Agrupado por equipe.
 router.get('/services/:serviceId/escala-cobertura', async (req, res) => {
